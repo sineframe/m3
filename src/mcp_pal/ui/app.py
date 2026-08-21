@@ -2,6 +2,7 @@
 import json, os, re, time
 import requests
 import streamlit as st
+from mcp_pal.ui.health import health_state
 
 API = os.getenv("MCP_PAL_API_URL", "http://localhost:8000/api/v1")
 MAX_PREVIEW = 4000
@@ -40,12 +41,28 @@ def render_report(report):
             if event.get("event_type") == "thinking": st.code(truncate(event.get("payload",{})))
     with st.expander("stderr", expanded=False): st.code(report.get("stderr") or "")
 
-st.set_page_config(page_title="MCP Testing Platform", layout="wide")
+st.set_page_config(page_title="MCP Testing Platform", page_icon="🧪", layout="wide")
 if "page" not in st.session_state: st.session_state["page"]="New Run"
-page=st.sidebar.radio("Page", ["New Run", "MCP Profiles", "Run History"], key="page")
-health=api("GET","/health") or {"ready":False,"status":"unavailable","checks":{}}
-if not health.get("ready"): st.sidebar.error("Backend not ready; run submission disabled")
-else: st.sidebar.success("Backend ready")
+def _new_run_page(): pass
+def _profiles_page(): pass
+def _history_page(): pass
+navigation = st.navigation([
+    st.Page(_new_run_page, title="New Run", icon="▶️"),
+    st.Page(_profiles_page, title="MCP Profiles", icon="🧩"),
+    st.Page(_history_page, title="Run History", icon="🕘"),
+])
+navigation.run()
+page=navigation.title
+st.session_state["page"] = page
+try:
+    health_payload=api("GET","/health")
+    health=health_state(health_payload)
+except Exception:
+    health=health_state(request_error=True)
+if health["connected"]:
+    st.caption("● Backend connected" + (" · runner ready" if health["runner_ready"] else " · runner setup required"))
+else:
+    st.error("Backend unavailable")
 caps=api("GET","/capabilities") or {"models":[]}
 
 if page == "MCP Profiles":
@@ -104,7 +121,11 @@ elif page == "New Run":
             modes=["mcp_only","mcp_read_only","full"]; mode=st.selectbox("Tool mode",modes,index=modes.index(prefill.get("tool_mode")) if prefill.get("tool_mode") in modes else 0)
             if mode == "full": st.error("HIGH RISK: full mode grants unrestricted auto-approval.")
             prompt=st.text_area("Prompt",value=prefill.get("prompt",""),height=180); expected=st.text_area("Expected output (required)",value=prefill.get("expected_output",""),height=100)
-            submitted=st.form_submit_button("Run",disabled=not health.get("ready"))
+            if not health["runner_ready"]:
+                with st.container(border=True):
+                    st.subheader("Runner setup required")
+                    for message in health["messages"]: st.warning(message)
+            submitted=st.form_submit_button("Run",disabled=not health["runner_ready"])
             if submitted:
                 if not prompt.strip() or not expected.strip(): st.error("Prompt and expected output are required")
                 else:

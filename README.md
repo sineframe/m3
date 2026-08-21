@@ -25,6 +25,11 @@ The API is documented at `http://localhost:8000/docs`. Set `MCP_PAL_API_URL` if 
 
 Profiles contain a standard `mcpServers` object and support stdio, HTTP, and SSE servers. Secrets should be `${ENVIRONMENT_VARIABLE}` references. Complete profiles and reports are intentionally stored unredacted in SQLite for local debugging. Tool mode `full` is high risk and enables Claude's unrestricted permission bypass.
 
+If the UI says “Backend connected · runner setup required”, the API is reachable
+and profiles/history remain usable; run submission is disabled until the health
+checks pass. Add a missing `ANTHROPIC_API_KEY` to `.env` and restart the API (and
+check the Claude executable, CLI flags, database path, and permissions as needed).
+
 On startup queued/running runs from a previous process are marked failed with an interruption message. The queue executes one run at a time in FIFO order. Claude output is expected to be NDJSON; malformed lines are retained as error events.
 
 ## Tests

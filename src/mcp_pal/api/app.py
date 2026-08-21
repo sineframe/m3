@@ -57,7 +57,7 @@ def create_app(settings: Settings | None = None, engine_override=None, session_f
             except (OSError, subprocess.SubprocessError): pass
         checks={"api_key":bool(settings.anthropic_api_key),"database":db_ok,"claude_executable":bool(executable),"required_cli_flags":{"ok":flags_ok,"missing":missing}}
         ready=checks["api_key"] and db_ok and bool(executable) and flags_ok
-        return {"status":"ok" if ready else "degraded","ready":ready,"checks":checks}
+        return {"status":"connected" if db_ok else "degraded","ready":ready,"run_ready":ready,"checks":checks}
     @router.get("/capabilities")
     def capabilities(): return {"harnesses":["claude-code"],"models":settings.model_ids(),"tool_modes":["mcp_only","mcp_read_only","full"],"limits":{"timeout_seconds":settings.run_timeout_seconds,"max_turns":settings.claude_max_turns,"max_budget_usd":settings.claude_max_budget_usd}}
     @router.get("/profiles")
