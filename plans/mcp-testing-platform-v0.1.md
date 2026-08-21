@@ -7,7 +7,7 @@
 - Primary user: MCP server developer.
 - Primary workflow: debug one MCP interaction, inspect it, clone it, and retry.
 - v0.1 is a local side project; Docker, hosting, multi-user behavior, and production hardening are deferred.
-- Supported harness: installed Claude Code CLI only.
+- Supported harnesses: installed Claude Code and OpenCode CLIs.
 - Prompts are plain text only, passed exactly as entered.
 - No prompt templates, prompt improvement, attachments, workspaces, or batch experiments.
 - Excalidraw is the initial use case, but no third-party Excalidraw server is bundled.
@@ -19,7 +19,7 @@
 - One active run at a time with a FIFO queue.
 - Every run is an immutable input-and-result snapshot; there is no separate test-case entity.
 - A prior run can be cloned into a new run without modifying history.
-- Active runs can be cancelled, terminating Claude and its MCP subprocesses.
+- Active runs can be cancelled, terminating the harness and its MCP subprocesses.
 - Stored runs remain until manually deleted; support individual deletion and confirmed clear-all.
 
 ### MCP configuration
@@ -36,23 +36,25 @@
 
 ### Harness execution
 
-- Use Claude Code bare mode, strict MCP configuration, structured streaming output, and a fresh temporary directory.
-- Ignore user settings, plugins, hooks, memory, `CLAUDE.md`, and unrelated MCP servers.
+- Use each harness's non-interactive structured-output mode and a fresh temporary directory.
+- Ignore plugins and project configuration where supported, and expose only the selected MCP server.
 - Model selection is a fixed UI dropdown populated from backend-configured exact model IDs.
-- Default limits: two minutes, five agent turns, and USD 0.50.
+- Default limits: two minutes for both harnesses; Claude additionally enforces five agent turns and USD 0.50.
+- OpenCode does not expose equivalent turn/budget flags, so its API run snapshots report those fields as unavailable rather than pretending they are enforced.
 - Limits are backend settings, not per-run UI controls.
 - Tool scope is selectable per run:
   - `mcp_only`, the default: selected MCP server only.
   - `mcp_read_only`: selected MCP plus a pinned non-writing allowlist, including agents and web tools.
-  - `full`: Claude’s default tools with unrestricted auto-approval.
+  - `full`: the harness’s default tools with unrestricted auto-approval.
 - Full mode requires no extra confirmation but must carry a persistent high-risk label.
 
 ### Reports and verdicts
 
-- Show the MCP lifecycle, tool inputs/results, errors, timing, and final Claude response.
-- Persist normalized events and raw Claude events.
+- Show the MCP lifecycle, tool inputs/results, errors, timing, and final harness response.
+- Persist backend-normalized canonical events and raw harness events.
+- Harness adapters own native parsing; the API returns canonical events and the UI never parses Claude/OpenCode-specific schemas.
 - Do not redact stored trace data.
-- Preserve and display raw thinking payloads if Claude emits them; unavailable or encrypted reasoning remains unavailable.
+- Preserve and display reasoning payloads if the harness emits them; unavailable or encrypted reasoning remains unavailable.
 - Large payloads use truncated inline previews with complete JSON downloads.
 - MCP artifacts use generic JSON/text rendering with clickable detected links.
 - While running, the UI shows status only; the trace appears after termination.
@@ -84,7 +86,10 @@
   - `RUN_TIMEOUT_SECONDS=120`
   - `CLAUDE_MAX_TURNS=5`
   - `CLAUDE_MAX_BUDGET_USD=0.50`
-- Add backend readiness checks for the API key, database, Claude executable, and required CLI flags.
+  - `OPENCODE_API_KEY`
+  - `OPENCODE_EXECUTABLE`
+  - ordered exact `OPENCODE_MODEL_IDS`
+- Add per-harness readiness checks for credentials, executable, required CLI flags, and database access.
 
 ### Data model
 
@@ -92,14 +97,14 @@ Create:
 
 - `McpProfile`: ID, name, description, archived state, current revision, and timestamps.
 - `McpProfileRevision`: ID, profile ID, revision number, immutable MCP JSON, and timestamp.
-- `Run`: ID, optional parent-run ID, profile revision, enabled server, model, tool mode, prompt, expected output, resolved limits, lifecycle state, Claude result, exit/error metadata, cost, turns, session ID, and timestamps.
+- `Run`: ID, optional parent-run ID, profile revision, enabled server, harness, model, tool mode, prompt, expected output, resolved limits, lifecycle state, harness result, exit/error metadata, cost, turns, session ID, and timestamps.
 - `RunEvent`: run ID, sequence, timestamp, normalized event type/payload, and raw event payload.
 
 On backend startup, mark previously queued or running records as interrupted failures rather than attempting to resume their processes.
 
 ### Profile validation
 
-- Require a Claude-compatible `mcpServers` object with at least one server.
+- Require a harness-neutral `mcpServers` object with at least one server; adapters translate the selected server to native config.
 - Validate unique safe server names and a maximum JSON size of 100 KB.
 - Validate stdio `command`, `args`, and `env` fields.
 - Validate HTTP/SSE type, URL, headers, and environment references.
@@ -135,6 +140,20 @@ For each Claude run:
 8. Persist raw events unchanged and derive normalized events.
 9. On cancellation or timeout, terminate the entire process group and retain partial output.
 10. Delete temporary files after termination.
+
+### OpenCode CLI adapter
+
+For each OpenCode run:
+
+1. Translate the selected `mcpServers` entry to OpenCode's local/remote `mcp` format, including `${VAR}` to `{env:VAR}` references.
+2. Build explicit tool and permission patterns for `mcp_only`, `mcp_read_only`, or `full` mode.
+3. Run `opencode --pure run --format json --thinking --model <provider/model>` without a shell and pass the prompt through stdin.
+4. Supply `OPENCODE_API_KEY` only through the child environment; credentials saved by `opencode auth login` are also accepted for readiness.
+5. Parse `step_start`, `reasoning`, `tool_use`, `text`, `step_finish`, and error records into the same canonical event schema as Claude.
+6. Treat a completed OpenCode tool part as a correlated canonical tool call and tool result.
+7. If the installed CLI persists a completed session but its JSON process does not exit, recover the completed session export, deduplicate events, terminate the stuck process, and return the recovered result.
+8. Isolate HOME/config/plugin discovery for each run while preserving provider credentials through `OPENCODE_API_KEY` or the user's saved credential data path.
+9. Delete the temporary OpenCode session after all events and any recovered export have been persisted.
 
 ### Status and assertions
 
@@ -195,7 +214,7 @@ Expose versioned JSON endpoints:
 {
   "harness": "claude-code",
   "model": "configured-exact-model-id",
-  "prompt": "Exact text sent to Claude",
+  "prompt": "Exact text sent to the selected harness",
   "expected_output": "Required natural-language goal",
   "profile_revision_id": "uuid",
   "enabled_server": "server-name",
@@ -210,6 +229,7 @@ Return `202 Accepted` with the run ID and queued status. Clone accepts optional 
 Create three pages:
 
 - New Run:
+  - Harness dropdown.
   - Model dropdown.
   - Profile and revision selection.
   - Enabled-server selection.
@@ -236,7 +256,7 @@ Create three pages:
 Report layout:
 
 - Lifecycle, MCP assertion, and semantic assertion cards.
-- Final Claude response beside expected output.
+- Final harness response beside expected output.
 - MCP initialization and activity summary.
 - Collapsible normalized timeline.
 - Collapsible raw events, thinking payloads, and stderr.
@@ -257,7 +277,7 @@ Report layout:
   - Event normalization and raw preservation.
   - MCP pass/warning/fail derivation.
   - Report serialization.
-- Fake-Claude integration tests:
+- Fake-harness integration tests:
   - Successful MCP initialization/call/result.
   - No selected-server call.
   - Only failed calls.
@@ -266,6 +286,7 @@ Report layout:
   - API retries and malformed NDJSON.
   - Large tool output.
   - Non-zero exit, timeout, cancellation, and partial trace retention.
+  - OpenCode MCP-config translation, native event normalization, exact stdin prompt, model/harness validation, queue dispatch, and completed-session recovery.
 - Backend tests:
   - FIFO queue behavior.
   - Profile revision references.
@@ -283,10 +304,11 @@ Report layout:
   - Submit a diagram prompt.
   - Observe MCP initialization and at least one successful selected-server tool result.
   - Inspect final output, raw/normalized trace, and downloadable report.
+  - Run the dependency-free local MCP echo server through OpenCode and verify one correlated successful tool call/result.
 
 ## Deferred
 
-- Other harnesses and agent/model combinations.
+- Additional harnesses and agent/model combinations beyond Claude Code and OpenCode.
 - LLM judging and semantic pass/fail.
 - Prompt templates, optimization, Braintrust, regression suites, and batch comparisons.
 - Network-level verification that a remote MCP endpoint was hit.

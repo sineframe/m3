@@ -27,14 +27,14 @@ def render_report(report):
     c1,c2,c3=st.columns(3); c1.metric("Lifecycle",assertions.get("lifecycle",run.get("status"))); c2.metric("MCP assertion",assertions.get("mcp",{}).get("status")); c3.metric("Semantic assertion",assertions.get("semantic",{}).get("status"))
     if report.get("high_risk"): st.error("HIGH RISK: full tool mode used unrestricted auto-approval.")
     st.warning(report.get("warning","SQLite and reports contain unredacted data."))
-    left,right=st.columns(2); left.subheader("Final Claude response"); left.markdown(linkify(truncate(run.get("claude_result") or ""))); right.subheader("Expected output"); right.write(run.get("expected_output", ""))
+    left,right=st.columns(2); left.subheader(f"Final {run.get('harness','harness')} response"); left.markdown(linkify(truncate(run.get("claude_result") or ""))); right.subheader("Expected output"); right.write(run.get("expected_output", ""))
     st.subheader("MCP activity summary"); st.json(report.get("mcp_summary",{}))
     events=report.get("events",[])
     with st.expander(f"Normalized timeline ({len(events)} events)", expanded=False):
         for event in events:
             st.caption(f"#{event.get('sequence')} · {event.get('timestamp')} · {event.get('event_type')}")
             st.markdown(linkify(truncate(event.get("payload",{}))))
-    with st.expander("Raw Claude events", expanded=False):
+    with st.expander("Raw harness events", expanded=False):
         for event in events: st.code(truncate(event.get("raw_event",{})))
     with st.expander("Thinking payloads", expanded=False):
         for event in events:
@@ -54,6 +54,7 @@ navigation = st.navigation([
 navigation.run()
 page=navigation.title
 st.session_state["page"] = page
+health_payload=None
 try:
     health_payload=api("GET","/health")
     health=health_state(health_payload)
@@ -116,20 +117,22 @@ elif page == "New Run":
         p,r=st.selectbox("Profile and revision",options,index=default_index,format_func=lambda x:f"{x[0]['name']} · revision {x[1]['revision_number']}")
         servers=list((r.get("mcp_json") or {}).get("mcpServers",{})); default_server=prefill.get("enabled_server") if prefill.get("enabled_server") in servers else (servers[0] if servers else None)
         with st.form("run"):
-            models=caps.get("models",[]); model=prefill.get("model") if prefill.get("model") in models else (models[0] if models else "")
+            harnesses=caps.get("harnesses",["claude-code"]); preferred=prefill.get("harness") if prefill.get("harness") in harnesses else harnesses[0]
+            harness=st.selectbox("Harness",harnesses,index=harnesses.index(preferred)); models=caps.get("models_by_harness",{}).get(harness,caps.get("models",[])); model=prefill.get("model") if prefill.get("model") in models else (models[0] if models else "")
             model=st.selectbox("Model",models,index=models.index(model) if model in models else 0); server=st.selectbox("Enabled server",servers,index=servers.index(default_server) if default_server else 0)
             modes=["mcp_only","mcp_read_only","full"]; mode=st.selectbox("Tool mode",modes,index=modes.index(prefill.get("tool_mode")) if prefill.get("tool_mode") in modes else 0)
             if mode == "full": st.error("HIGH RISK: full mode grants unrestricted auto-approval.")
             prompt=st.text_area("Prompt",value=prefill.get("prompt",""),height=180); expected=st.text_area("Expected output (required)",value=prefill.get("expected_output",""),height=100)
-            if not health["runner_ready"]:
+            harness_health=(health_payload or {}).get("harnesses",{}).get(harness,{}); selected_ready=harness_health.get("ready",health["runner_ready"])
+            if not selected_ready:
                 with st.container(border=True):
-                    st.subheader("Runner setup required")
-                    for message in health["messages"]: st.warning(message)
-            submitted=st.form_submit_button("Run",disabled=not health["runner_ready"])
+                    st.subheader(f"{harness} setup required")
+                    st.warning("Check this harness's executable, CLI version, and API key or saved authentication.")
+            submitted=st.form_submit_button("Run",disabled=not selected_ready)
             if submitted:
                 if not prompt.strip() or not expected.strip(): st.error("Prompt and expected output are required")
                 else:
-                    result=api("POST","/runs",json={"model":model,"prompt":prompt,"expected_output":expected,"profile_revision_id":r['id'],"enabled_server":server,"tool_mode":mode})
+                    result=api("POST","/runs",json={"harness":harness,"model":model,"prompt":prompt,"expected_output":expected,"profile_revision_id":r['id'],"enabled_server":server,"tool_mode":mode})
                     if result: st.session_state["active_run"]=result['id']; st.session_state["prefill"]={}; st.rerun()
         active=st.session_state.get("active_run")
         if active:
@@ -154,7 +157,7 @@ else:
             if report: render_report(report); st.download_button("Download complete JSON report",json.dumps(report,indent=2),f"{run['id']}.json","application/json")
             c1,c2,c3=st.columns(3)
             if c1.button("Clone to New Run",key=f"clone-{run['id']}"):
-                st.session_state["prefill"]={"profile_revision_id":run["profile_revision_id"],"enabled_server":run["enabled_server"],"model":run["model"],"tool_mode":run["tool_mode"],"prompt":run["prompt"],"expected_output":run["expected_output"]}; st.session_state["page"]="New Run"; st.rerun()
+                st.session_state["prefill"]={"profile_revision_id":run["profile_revision_id"],"enabled_server":run["enabled_server"],"harness":run["harness"],"model":run["model"],"tool_mode":run["tool_mode"],"prompt":run["prompt"],"expected_output":run["expected_output"]}; st.session_state["page"]="New Run"; st.rerun()
             if c2.button("Cancel",key=f"cancel-{run['id']}"): api("POST",f"/runs/{run['id']}/cancel"); st.rerun()
             if c3.button("Delete",key=f"delete-{run['id']}"):
                 if run["status"] in ("queued","running"): st.warning("Cancel and wait for completion before deleting")

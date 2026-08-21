@@ -1,7 +1,9 @@
 """FIFO execution, cancellation, and persistence orchestration for runs."""
 import asyncio, threading
 from concurrent.futures import ThreadPoolExecutor
-from ..harness.claude_cli import ClaudeCodeRunner, RunSpec
+from ..harness.base import RunSpec
+from ..harness.claude_cli import ClaudeCodeRunner
+from ..harness.opencode_cli import OpenCodeRunner
 from ..domain.events import derive_mcp_assertion
 from ..persistence.models import McpProfileRevision, Run, RunEvent, now
 
@@ -9,10 +11,14 @@ class RunManager:
     def __init__(self, session_factory, settings):
         self.session_factory, self.settings = session_factory, settings; self.executor = ThreadPoolExecutor(max_workers=1); self.runners={}; self.done_events={}; self.lock=threading.Lock()
     def submit(self, run_id): self.executor.submit(self.execute, run_id)
+    def runner_for(self, harness):
+        if harness == "claude-code": return ClaudeCodeRunner(self.settings.claude_executable)
+        if harness == "opencode": return OpenCodeRunner(self.settings.opencode_executable,self.settings.opencode_api_key,self.settings.opencode_provider_credentials())
+        raise ValueError(f"Unsupported harness: {harness}")
     def execute(self, run_id):
         db=self.session_factory(); run=db.get(Run,run_id)
         if not run or run.status != "queued": db.close(); return
-        run.status,run.started_at="running",now(); db.commit(); rev=db.get(McpProfileRevision,run.profile_revision_id); cancel=asyncio.Event(); runner=ClaudeCodeRunner(self.settings.claude_executable); done=threading.Event()
+        run.status,run.started_at="running",now(); db.commit(); rev=db.get(McpProfileRevision,run.profile_revision_id); cancel=asyncio.Event(); runner=self.runner_for(run.harness); done=threading.Event()
         with self.lock: self.runners[run_id],self.done_events[run_id]=runner,done
         seq=db.query(RunEvent).filter_by(run_id=run_id).count()
         async def callback(raw,event_type,payload):

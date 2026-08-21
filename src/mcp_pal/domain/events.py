@@ -2,9 +2,27 @@ import json
 from typing import Any
 
 def normalize_events(raw: Any, selected_server: str | None = None) -> list[tuple[str, dict]]:
-    """Return one normalized event for every Claude content block."""
+    """Translate supported harness events into the backend's canonical events."""
     if not isinstance(raw, dict): return [("error", {"message": str(raw)})]
     typ, subtype = raw.get("type", ""), raw.get("subtype", "")
+    # OpenCode JSON output. A completed tool part contains both the call and its
+    # result, so expose both canonical events and correlate them by call ID.
+    if typ in ("step_start", "step_finish", "text", "reasoning", "tool_use"):
+        part = raw.get("part") if isinstance(raw.get("part"), dict) else {}
+        session_id = raw.get("sessionID") or part.get("sessionID")
+        common = {"harness": "opencode", "session_id": session_id}
+        if typ == "step_start": return [("step_start", {**common, "step": part})]
+        if typ == "step_finish":
+            return [("step_finish", {**common, "step": part, "cost_usd": part.get("cost"), "tokens": part.get("tokens")})]
+        if typ == "text": return [("assistant_text", {**common, "text": part.get("text", "")})]
+        if typ == "reasoning": return [("thinking", {**common, "text": part.get("text", "")})]
+        state = part.get("state") if isinstance(part.get("state"), dict) else {}
+        call_id = part.get("callID") or part.get("callId") or part.get("id")
+        name = part.get("tool", "")
+        server_name = selected_server if selected_server and name.lower().startswith(selected_server.lower()+"_") else None
+        call = ("tool_call", {**common, "tool_use_id": call_id, "tool_name": name, "server_name": server_name, "input": state.get("input")})
+        result = ("tool_result", {**common, "tool_use_id": call_id, "tool_name": name, "server_name": server_name, "result": state.get("output"), "is_error": state.get("status") == "error", "error": state.get("error")})
+        return [call, result]
     if typ in ("assistant", "message"):
         content = raw.get("message", {}).get("content", raw.get("content", []))
         if isinstance(content, str): return [("assistant_text", {"text": content, "raw": raw})]
@@ -16,10 +34,11 @@ def normalize_events(raw: Any, selected_server: str | None = None) -> list[tuple
                 btype=block.get("type")
                 if btype == "thinking": out.append(("thinking", {"content": block, "raw": raw}))
                 elif btype in ("tool_use", "tool_call"):
-                    out.append(("tool_call", {"content": [block], "raw": raw, "tool_use_id": block.get("id"), "tool_name": block.get("name")}))
+                    name=block.get("name", ""); server_name=selected_server if selected_server and f"mcp__{selected_server.lower()}__" in name.lower() else None
+                    out.append(("tool_call", {"content": [block], "tool_use_id": block.get("id"), "tool_name": name, "server_name": server_name, "input": block.get("input")}))
                 elif btype == "tool_result":
-                    out.append(("tool_result", {"content": [block], "raw": raw, "tool_use_id": block.get("tool_use_id")}))
-                elif btype == "text": out.append(("assistant_text", {"text": block.get("text", ""), "content": block, "raw": raw}))
+                    out.append(("tool_result", {"content": [block], "tool_use_id": block.get("tool_use_id"), "is_error": bool(block.get("is_error"))}))
+                elif btype == "text": out.append(("assistant_text", {"text": block.get("text", ""), "content": block}))
             return out or [("system", raw)]
     if typ == "user":
         content = raw.get("message", {}).get("content", raw.get("content", []))
@@ -60,13 +79,18 @@ def _result_error(payload: Any) -> bool:
 
 def _normalized(raw_events: list[Any], server: str):
     out=[]
-    seen=set()
+    seen=set(); canonical_seen=set()
     for raw in raw_events:
         try: key=json.dumps(raw,sort_keys=True,ensure_ascii=False)
         except TypeError: key=repr(raw)
         if key in seen: continue
         seen.add(key)
-        for typ,payload in normalize_events(raw, server): out.append((typ,payload))
+        for typ,payload in normalize_events(raw, server):
+            if typ in ("tool_call", "tool_result") and payload.get("harness") == "opencode":
+                canonical=(typ,payload.get("session_id"),payload.get("tool_use_id"),payload.get("tool_name"))
+                if canonical in canonical_seen: continue
+                canonical_seen.add(canonical)
+            out.append((typ,payload))
     return out
 
 def derive_mcp_summary(raw_events: list[Any], selected_server: str) -> dict:
@@ -100,7 +124,7 @@ def derive_mcp_summary(raw_events: list[Any], selected_server: str) -> dict:
     for typ,payload in normalized:
         if typ != "tool_call": continue
         ident,name=_call_info(payload)
-        if ns in name.lower() or payload.get("server_name") == selected_server or payload.get("server") == selected_server:
+        if ns in name.lower() or name.lower().startswith(selected_server.lower()+"_") or payload.get("server_name") == selected_server or payload.get("server") == selected_server:
             calls.append({"tool_use_id":ident,"name":name}); call_ids.add(ident) if ident else None
     matched_results=[]; unmatched=[]
     for typ,payload in normalized:

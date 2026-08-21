@@ -20,7 +20,7 @@ class RevisionCreate(BaseModel):
         validate_mcp_config(v); return v
 
 class RunCreate(BaseModel):
-    harness: Literal["claude-code"] = "claude-code"
+    harness: Literal["claude-code", "opencode"] = "claude-code"
     model: str
     prompt: str
     expected_output: str = Field(min_length=1)
@@ -34,7 +34,7 @@ class RunCreate(BaseModel):
         return v
 
 class RunClone(BaseModel):
-    harness: Literal["claude-code"] | None = None
+    harness: Literal["claude-code", "opencode"] | None = None
     model: str | None = None
     prompt: str | None = None
     expected_output: str | None = None
@@ -58,7 +58,7 @@ class EventOut(BaseModel):
 class RunOut(BaseModel):
     id: str; parent_run_id: str | None = None; profile_revision_id: str; enabled_server: str
     harness: str; model: str; tool_mode: str; prompt: str; expected_output: str
-    timeout_seconds: int; max_turns: int; max_budget_usd: float; status: str
+    timeout_seconds: int; max_turns: int | None; max_budget_usd: float | None; status: str
     claude_result: str | None = None; exit_code: int | None = None; error_message: str | None = None
     stderr: str | None = None; cost_usd: float | None = None; turns: int | None = None; session_id: str | None = None
     mcp_assertion: str; semantic_assertion: str; semantic_reason: str

@@ -5,6 +5,7 @@ from mcp_pal.api import create_app
 from mcp_pal.config import Settings
 from mcp_pal.domain.events import derive_mcp_assertion, derive_mcp_summary, normalize_events
 from mcp_pal.harness.claude_cli import ClaudeCodeRunner, RunSpec
+from mcp_pal.harness.opencode_cli import OpenCodeRunner, opencode_config
 
 def fake(path, body):
     path.write_text("#!/usr/bin/env python3\n"+body); path.chmod(path.stat().st_mode | stat.S_IXUSR); return str(path)
@@ -36,6 +37,233 @@ print(json.dumps({'type':'result','result':'final','total_cost_usd':0.13,'num_tu
     assert isinstance(result.events[3],str) and any(t == "thinking" for t,_ in result.normalized)
     assert derive_mcp_assertion(result.events,"draw") == "passed"
     summary=derive_mcp_summary(result.events,"draw"); assert summary["selected_server_call_count"] == 1 and summary["success_count"] == 1
+
+def test_opencode_config_command_and_native_events(tmp_path):
+    profile={"mcpServers":{"draw":{"command":"node","args":["server.js"],"env":{"TOKEN":"${DRAW_TOKEN}"}},"other":{"command":"ignored"}}}
+    config=opencode_config(profile,"draw","mcp_only")
+    assert config["mcp"] == {"draw":{"type":"local","command":["node","server.js"],"enabled":True,"environment":{"TOKEN":"{env:DRAW_TOKEN}"}}}
+    assert config["tools"] == {"*":False,"draw_*":True}
+    runner=OpenCodeRunner("opencode")
+    command=runner.build_command(RunSpec("prompt","opencode/model",profile,"draw"))
+    assert command[:3] == ["opencode","--pure","run"] and "--format" in command and "--model" in command
+    assert "prompt" not in command
+
+    script=fake(tmp_path/"opencode.py", """
+import json,os,sys
+assert sys.stdin.read() == 'exact prompt\\n'
+config=json.load(open(os.environ['OPENCODE_CONFIG']))
+assert list(config['mcp']) == ['draw']
+print(json.dumps({'type':'step_start','sessionID':'ses-1','part':{'type':'step-start'}}))
+print(json.dumps({'type':'reasoning','sessionID':'ses-1','part':{'type':'reasoning','text':'thought'}}))
+print(json.dumps({'type':'tool_use','sessionID':'ses-1','part':{'type':'tool','callID':'call-1','tool':'draw_create','state':{'status':'completed','input':{'x':1},'output':'ok'}}}))
+print(json.dumps({'type':'text','sessionID':'ses-1','part':{'type':'text','text':'done'}}))
+print(json.dumps({'type':'step_finish','sessionID':'ses-1','part':{'type':'step-finish','cost':0.02,'tokens':{'input':2,'output':1}}}))
+""")
+    result=asyncio.run(OpenCodeRunner(script).run(RunSpec("exact prompt\n","opencode/model",profile,"draw")))
+    assert result.status == "completed" and result.final_text == "done" and result.session_id == "ses-1"
+    assert result.cost_usd == .02 and result.turns == 1
+    assert derive_mcp_assertion(result.events,"draw") == "passed"
+    assert {event for event,_ in result.normalized} >= {"step_start","thinking","tool_call","tool_result","assistant_text","step_finish"}
+
+def test_opencode_embedded_env_refs_and_hostile_home_isolation(tmp_path):
+    profile={"mcpServers":{"draw":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer ${DRAW_TOKEN}"}}}}
+    config=opencode_config(profile,"draw","mcp_only")
+    assert config["mcp"]["draw"]["headers"]["Authorization"] == "Bearer {env:DRAW_TOKEN}"
+    hostile=tmp_path/"home"; (hostile/".config/opencode").mkdir(parents=True)
+    (hostile/".config/opencode/opencode.json").write_text('{"permission":{"*":"allow"}}')
+    marker=tmp_path/"env.json"
+    script=fake(tmp_path/"opencode-isolated.py", f"""
+import json,os
+assert os.environ['HOME'] != {str(hostile)!r}
+assert os.environ['OPENCODE_CONFIG_DIR'].startswith(os.environ['HOME'])
+config=json.load(open(os.environ['OPENCODE_CONFIG']))
+assert config['permission']['*'] == 'deny'
+open({str(marker)!r},'w').write('isolated')
+print(json.dumps({{'type':'text','sessionID':'iso','part':{{'type':'text','text':'ok'}}}}))
+print(json.dumps({{'type':'step_finish','sessionID':'iso','part':{{'type':'step-finish'}}}}))
+""")
+    old=os.environ.get("HOME")
+    os.environ["HOME"]=str(hostile)
+    try:
+        result=asyncio.run(OpenCodeRunner(script,"secret-not-printed").run(RunSpec("prompt","open/model",profile,"draw")))
+    finally:
+        if old is None: os.environ.pop("HOME",None)
+        else: os.environ["HOME"]=old
+    assert result.status == "completed" and marker.exists()
+
+def test_opencode_clean_exit_recovers_export_before_classification(tmp_path):
+    script=fake(tmp_path/"opencode-early.py", """
+import json,sys
+if 'export' in sys.argv:
+    print(json.dumps({'messages':[{'info':{'role':'assistant'},'parts':[{'type':'step-start'},{'type':'text','text':'recovered'},{'type':'step-finish','cost':0.02}]}]})); raise SystemExit(0)
+if 'session' in sys.argv: raise SystemExit(0)
+print(json.dumps({'type':'step_start','sessionID':'early','part':{'type':'step-start'}}))
+""")
+    result=asyncio.run(OpenCodeRunner(script).run(spec(script,timeout=2)))
+    assert result.status == "completed" and result.final_text == "recovered"
+
+def test_opencode_recovers_after_intermediate_tool_step(tmp_path):
+    script=fake(tmp_path/"opencode-tool-early.py", """
+import json,sys
+if 'export' in sys.argv:
+    print(json.dumps({'messages':[{'info':{'role':'assistant'},'parts':[{'type':'step-start'},{'type':'tool','callID':'call-1','tool':'draw_echo','state':{'status':'completed','input':{'text':'ok'},'output':'ok'}},{'type':'step-finish'}]},{'info':{'role':'assistant'},'parts':[{'type':'step-start'},{'type':'text','text':'final'},{'type':'step-finish'}]}]})); raise SystemExit(0)
+if 'session' in sys.argv: raise SystemExit(0)
+print(json.dumps({'type':'step_start','sessionID':'tool-early','part':{'type':'step-start'}}))
+print(json.dumps({'type':'tool_use','sessionID':'tool-early','part':{'type':'tool','callID':'call-1','tool':'draw_echo','state':{'status':'completed','input':{'text':'ok'},'output':'ok'}}}))
+print(json.dumps({'type':'step_finish','sessionID':'tool-early','part':{'type':'step-finish','reason':'tool-calls'}}))
+""")
+    result=asyncio.run(OpenCodeRunner(script).run(spec(script,timeout=2)))
+    assert result.status == "completed" and result.final_text == "final"
+    assert derive_mcp_assertion(result.events,"draw") == "passed"
+    assert derive_mcp_summary(result.events,"draw")["selected_server_call_count"] == 1
+
+def test_opencode_clean_exit_without_complete_trace_fails(tmp_path):
+    script=fake(tmp_path/"opencode-incomplete.py", """
+import json,sys
+if 'session' in sys.argv: raise SystemExit(0)
+print(json.dumps({'type':'step_start','sessionID':'incomplete','part':{'type':'step-start'}}))
+""")
+    result=asyncio.run(OpenCodeRunner(script).run(spec(script,timeout=2)))
+    assert result.status == "failed" and "complete JSON trace" in (result.error or "")
+
+def test_opencode_session_is_deleted_after_terminal_trace(tmp_path):
+    marker=tmp_path/"deleted"
+    script=fake(tmp_path/"opencode-delete.py", f"""
+import json,os,sys
+if 'session' in sys.argv:
+    open({str(marker)!r},'w').write(sys.argv[-1]); raise SystemExit(0)
+print(json.dumps({{'type':'text','sessionID':'delete-me','part':{{'type':'text','text':'ok'}}}}))
+print(json.dumps({{'type':'step_finish','sessionID':'delete-me','part':{{'type':'step-finish'}}}}))
+""")
+    result=asyncio.run(OpenCodeRunner(script).run(spec(script,timeout=2)))
+    assert result.status == "completed" and marker.read_text() == "delete-me"
+
+def test_opencode_provider_credentials_are_injected_without_exposing_values(tmp_path):
+    marker=tmp_path/"credential-presence.json"
+    script=fake(tmp_path/"opencode-env.py", f"""
+import json,os
+json.dump({{'openrouter':bool(os.environ.get('OPENROUTER_API_KEY')),'anthropic':bool(os.environ.get('ANTHROPIC_API_KEY')),'opencode_go':bool(os.environ.get('OPENCODE_API_KEY'))}},open({str(marker)!r},'w'))
+print(json.dumps({{'type':'text','sessionID':'env','part':{{'type':'text','text':'ok'}}}}))
+print(json.dumps({{'type':'step_finish','sessionID':'env','part':{{'type':'step-finish'}}}}))
+""")
+    runner=OpenCodeRunner(script,provider_api_keys={"openrouter":"router-key","anthropic":"anthropic-key","opencode-go":"go-key"})
+    result=asyncio.run(runner.run(spec(script,timeout=2)))
+    assert result.status == "completed" and json.loads(marker.read_text()) == {"openrouter":True,"anthropic":True,"opencode_go":True}
+
+def test_opencode_zero_output_run_leaves_no_session_data(tmp_path):
+    marker=tmp_path/"data-path"
+    script=fake(tmp_path/"opencode-empty.py", f"""
+import os
+open({str(marker)!r},'w').write(os.environ['XDG_DATA_HOME'])
+""")
+    result=asyncio.run(OpenCodeRunner(script).run(spec(script,timeout=2)))
+    assert result.status == "failed"
+    assert not os.path.exists(marker.read_text())
+
+def test_opencode_saved_auth_is_copied_into_isolated_data_store(tmp_path):
+    original=tmp_path/"original-data"; auth=original/"opencode/auth.json"; auth.parent.mkdir(parents=True); auth.write_text("credential")
+    marker=tmp_path/"auth-presence"
+    script=fake(tmp_path/"opencode-saved-auth.py", f"""
+import json,os,stat
+path=os.path.join(os.environ['XDG_DATA_HOME'],'opencode','auth.json')
+json.dump({{'exists':os.path.isfile(path),'mode':stat.S_IMODE(os.stat(path).st_mode) if os.path.isfile(path) else 0,'isolated':os.environ['XDG_DATA_HOME'] != {str(original)!r}}},open({str(marker)!r},'w'))
+print(json.dumps({{'type':'text','sessionID':'saved','part':{{'type':'text','text':'ok'}}}}))
+print(json.dumps({{'type':'step_finish','sessionID':'saved','part':{{'type':'step-finish'}}}}))
+""")
+    old=os.environ.get("XDG_DATA_HOME"); os.environ["XDG_DATA_HOME"]=str(original)
+    try: result=asyncio.run(OpenCodeRunner(script).run(spec(script,timeout=2)))
+    finally:
+        if old is None: os.environ.pop("XDG_DATA_HOME",None)
+        else: os.environ["XDG_DATA_HOME"]=old
+    assert result.status == "completed" and json.loads(marker.read_text()) == {"exists":True,"mode":0o600,"isolated":True}
+
+def test_opencode_harness_limits_are_not_reported_as_enforced(tmp_path):
+    settings=Settings(database_path=str(tmp_path/"limits.db"),opencode_api_key="key",opencode_executable="opencode",opencode_model_ids=["open/model"],claude_model_ids=["claude/model"])
+    app=create_app(settings); app.state.manager.submit=lambda _: None; client=TestClient(app)
+    caps=client.get("/api/v1/capabilities").json()
+    assert caps["limits_by_harness"]["opencode"] == {"timeout_seconds":120,"max_turns":None,"max_budget_usd":None}
+    profile=client.post("/api/v1/profiles",json={"name":"x","mcp_json":{"mcpServers":{"draw":{"command":"x"}}}}).json()
+    run=client.post("/api/v1/runs",json={"harness":"opencode","model":"open/model","prompt":"p","expected_output":"e","profile_revision_id":profile["current_revision_id"],"enabled_server":"draw"}).json()
+    assert run["max_turns"] is None and run["max_budget_usd"] is None
+
+def test_opencode_readiness_accepts_non_zen_saved_provider_auth(tmp_path):
+    script=fake(tmp_path/"opencode-auth.py", """
+import sys
+if 'auth' in sys.argv: print('Credentials\\n● OpenRouter api'); raise SystemExit(0)
+if '--help' in sys.argv: print('run --format --model --thinking --pure'); raise SystemExit(0)
+""")
+    settings=Settings(database_path=str(tmp_path/"auth.db"),opencode_api_key=None,openrouter_api_key=None,opencode_executable=script,opencode_model_ids=["openrouter/model"])
+    health=TestClient(create_app(settings)).get("/api/v1/health").json()
+    assert health["harnesses"]["opencode"]["ready"]
+
+def test_opencode_go_saved_auth_is_provider_aware(tmp_path):
+    script=fake(tmp_path/"opencode-go-auth.py", """
+import sys
+if 'auth' in sys.argv: print('Credentials\\n● OpenCode Go api'); raise SystemExit(0)
+if '--help' in sys.argv: print('run --format --model --thinking --pure'); raise SystemExit(0)
+""")
+    settings=Settings(database_path=str(tmp_path/"go-auth.db"),opencode_api_key=None,opencode_executable=script,opencode_model_ids=["opencode-go/model"])
+    health=TestClient(create_app(settings)).get("/api/v1/health").json()
+    assert health["harnesses"]["opencode"]["ready"]
+
+def test_hanging_opencode_export_is_killed_and_reaped(tmp_path):
+    pid_marker=tmp_path/"export-pid"
+    script=fake(tmp_path/"opencode-export-hang.py", f"""
+import os,sys,time
+if 'export' in sys.argv:
+    open({str(pid_marker)!r},'w').write(str(os.getpid()))
+    time.sleep(20)
+""")
+    async def run_export():
+        runner=OpenCodeRunner(script)
+        started=time.monotonic()
+        value=await runner._export_completed_session('ses-hang',os.environ.copy(),str(tmp_path))
+        return value,time.monotonic()-started
+    value,elapsed=asyncio.run(run_export())
+    assert value is None and elapsed < 8
+    pid=int(pid_marker.read_text())
+    try: os.kill(pid,0)
+    except ProcessLookupError: pass
+    else: raise AssertionError("timed-out export subprocess is still alive")
+
+def test_api_dispatches_opencode_and_validates_models(tmp_path):
+    script=fake(tmp_path/"opencode-api.py", """
+import json,sys
+if '--help' in sys.argv: print('run --format --model --thinking --pure'); raise SystemExit(0)
+print(json.dumps({'type':'text','sessionID':'s','part':{'type':'text','text':'open response'}}))
+print(json.dumps({'type':'step_finish','sessionID':'s','part':{'type':'step-finish','cost':0,'tokens':{}}}))
+""")
+    settings=Settings(database_path=str(tmp_path/"open.db"),anthropic_api_key=None,claude_executable="/missing",claude_model_ids=["claude-model"],opencode_api_key="key",opencode_executable=script,opencode_model_ids=["open/model"],run_timeout_seconds=5)
+    app=create_app(settings); client=TestClient(app)
+    capabilities=client.get("/api/v1/capabilities").json()
+    assert capabilities["harnesses"] == ["claude-code","opencode"]
+    assert capabilities["models_by_harness"]["opencode"] == ["open/model"]
+    assert client.get("/api/v1/health").json()["harnesses"]["opencode"]["ready"]
+    profile=client.post("/api/v1/profiles",json={"name":"x","mcp_json":{"mcpServers":{"draw":{"command":"x"}}}}).json()
+    body={"harness":"opencode","model":"open/model","prompt":"p","expected_output":"e","profile_revision_id":profile["current_revision_id"],"enabled_server":"draw"}
+    created=client.post("/api/v1/runs",json=body); assert created.status_code == 202
+    run_id=created.json()["id"]
+    for _ in range(100):
+        run=client.get(f"/api/v1/runs/{run_id}").json()
+        if run["status"] not in ("queued","running"): break
+        time.sleep(.02)
+    assert run["status"] == "completed" and run["harness"] == "opencode" and run["claude_result"] == "open response"
+    assert client.post("/api/v1/runs",json={**body,"model":"claude-model"}).status_code == 422
+
+def test_opencode_recovers_completed_session_when_run_process_hangs(tmp_path):
+    script=fake(tmp_path/"opencode-hang.py", """
+import json,sys,time
+if 'export' in sys.argv:
+    print(json.dumps({'messages':[{'info':{'role':'assistant'},'parts':[{'type':'step-start'},{'type':'tool','callID':'c','tool':'draw_echo','state':{'status':'completed','input':{'text':'ok'},'output':'ok'}},{'type':'step-finish'}]},{'info':{'role':'assistant'},'parts':[{'type':'step-start'},{'type':'text','text':'ok'},{'type':'step-finish','cost':0.01}]}]})); raise SystemExit(0)
+if 'session' in sys.argv:
+    raise SystemExit(0)
+print(json.dumps({'type':'step_start','sessionID':'recovered-session','part':{'type':'step-start'}}),flush=True)
+time.sleep(20)
+""")
+    started=time.monotonic()
+    result=asyncio.run(OpenCodeRunner(script,"key").run(spec(script,timeout=10)))
+    assert time.monotonic()-started < 8 and result.status == "completed" and result.final_text == "ok"
+    assert derive_mcp_assertion(result.events,"draw") == "passed"
 
 def test_timeout_and_cancel_reap(tmp_path):
     script=fake(tmp_path/"slow.py", """
