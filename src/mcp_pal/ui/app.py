@@ -75,12 +75,15 @@ def render_trace(trace, key_suffix="active"):
         st.info("Trace unavailable for this legacy run.")
         return
     summary=trace.get("summary") or {}; spans=trace.get("spans") or []; harness=str(trace.get("harness") or "claude-code")
+    transport=str(summary.get("transport") or "unknown").upper()
+    call_count=len(trace.get("mcp_calls") or [])
     if harness == "opencode" and not spans:
+        transport_col,calls_col=st.columns(2)
+        transport_col.metric("Transport",transport)
+        calls_col.metric("MCP calls",call_count)
         st.info("OpenCode trace contains native emitted MCP calls; transport wire frames and server latency are unavailable.")
         return
-    transport=str(summary.get("transport") or "unknown").upper()
     display=lambda key: summary[key] if summary.get(key) is not None else "—"
-    call_count=len(trace.get("mcp_calls") or [])
     metrics=[("Transport", transport), ("Total time", format_duration(summary.get("duration_ms"))), ("Claude turns", display("turns")), ("MCP calls", call_count), ("Tokens", display("total_tokens")), ("Cost", f"${summary['cost_usd']:.4f}" if isinstance(summary.get("cost_usd"),(int,float)) else "—")]
     cols=st.columns(len(metrics))
     for col,(label,value) in zip(cols,metrics): col.metric(label,value)
@@ -209,10 +212,14 @@ elif page == "New Run":
         default_index=next((i for i,x in enumerate(options) if x[1]["id"]==prefill.get("profile_revision_id")),0)
         p,r=st.selectbox("Profile and revision",options,index=default_index,format_func=lambda x:f"{x[0]['name']} · revision {x[1]['revision_number']}")
         servers=list((r.get("mcp_json") or {}).get("mcpServers",{})); default_server=prefill.get("enabled_server") if prefill.get("enabled_server") in servers else (servers[0] if servers else None)
+        # Harness and model must stay outside the form: Streamlit batches form
+        # widget changes until submission, but the model options depend on the
+        # selected harness and need to refresh immediately.
+        harnesses=caps.get("harnesses",["claude-code"]); preferred=prefill.get("harness") if prefill.get("harness") in harnesses else harnesses[0]
+        harness=st.selectbox("Harness",harnesses,index=harnesses.index(preferred)); models=caps.get("models_by_harness",{}).get(harness,caps.get("models",[])); model=prefill.get("model") if prefill.get("model") in models else (models[0] if models else "")
+        model=st.selectbox("Model",models,index=models.index(model) if model in models else 0)
         with st.form("run"):
-            harnesses=caps.get("harnesses",["claude-code"]); preferred=prefill.get("harness") if prefill.get("harness") in harnesses else harnesses[0]
-            harness=st.selectbox("Harness",harnesses,index=harnesses.index(preferred)); models=caps.get("models_by_harness",{}).get(harness,caps.get("models",[])); model=prefill.get("model") if prefill.get("model") in models else (models[0] if models else "")
-            model=st.selectbox("Model",models,index=models.index(model) if model in models else 0); server=st.selectbox("Enabled server",servers,index=servers.index(default_server) if default_server else 0)
+            server=st.selectbox("Enabled server",servers,index=servers.index(default_server) if default_server else 0)
             modes=["mcp_only","mcp_read_only","full"]; mode=st.selectbox("Tool mode",modes,index=modes.index(prefill.get("tool_mode")) if prefill.get("tool_mode") in modes else 0)
             if mode == "full": st.error("HIGH RISK: full mode grants unrestricted auto-approval.")
             prompt=st.text_area("Prompt",value=prefill.get("prompt",""),height=180); expected=st.text_area("Expected output (required)",value=prefill.get("expected_output",""),height=100)
