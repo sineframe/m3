@@ -1,0 +1,1112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCPJam Teardown</title>
+<style>
+:root{
+  --bg:#EFEEF2; --surface:#FCFBFD; --surface-2:#F4F2F7; --sunk:#E7E4EC;
+  --ink:#17141C; --ink-2:#544E60; --ink-3:#847C92;
+  --rule:#DAD5E2; --rule-2:#BFB7CC; --grid:#DEDAE6;
+  --accent:#6B2E7A; --accent-2:#8E4CA0; --accent-soft:#F0E4F4;
+  --ok:#0B6B4F; --ok-soft:#DCEFE7;
+  --warn:#8A5300; --warn-soft:#F8EEDA;
+  --crit:#9C1526; --crit-soft:#FAE2E5;
+  --info:#1B4FA8; --info-soft:#E2EAF8;
+  --shadow:0 1px 2px rgba(23,20,28,.06),0 10px 28px -18px rgba(23,20,28,.22);
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0D0B11; --surface:#16131C; --surface-2:#1B1723; --sunk:#100E15;
+    --ink:#EDE9F2; --ink-2:#A79FB5; --ink-3:#7A7288;
+    --rule:#282232; --rule-2:#3C3448; --grid:#1D1826;
+    --accent:#C68FD6; --accent-2:#A96FBC; --accent-soft:#2A1B31;
+    --ok:#4CC79E; --ok-soft:#0E2A22;
+    --warn:#DDA451; --warn-soft:#2B2011;
+    --crit:#FF8090; --crit-soft:#2E1318;
+    --info:#7FA8F0; --info-soft:#141E33;
+    --shadow:0 1px 2px rgba(0,0,0,.5),0 14px 36px -22px rgba(0,0,0,.9);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0D0B11; --surface:#16131C; --surface-2:#1B1723; --sunk:#100E15;
+  --ink:#EDE9F2; --ink-2:#A79FB5; --ink-3:#7A7288;
+  --rule:#282232; --rule-2:#3C3448; --grid:#1D1826;
+  --accent:#C68FD6; --accent-2:#A96FBC; --accent-soft:#2A1B31;
+  --ok:#4CC79E; --ok-soft:#0E2A22;
+  --warn:#DDA451; --warn-soft:#2B2011;
+  --crit:#FF8090; --crit-soft:#2E1318;
+  --info:#7FA8F0; --info-soft:#141E33;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 14px 36px -22px rgba(0,0,0,.9);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; color:var(--ink);
+  background:var(--bg);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:32px 32px;
+  font-family:var(--sans); font-size:16.5px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1200px;margin:0 auto;padding:0 26px}
+.col{max-width:70ch}
+
+h1,h2,h3,h4,.mono,code,pre,th,.eyebrow,.pill,.stat b{font-family:var(--mono)}
+h1,h2,h3,h4{font-weight:600;text-wrap:balance;margin:0;letter-spacing:-.028em}
+h1{font-size:clamp(2rem,5.2vw,3.4rem);line-height:1.03;letter-spacing:-.042em}
+h2{font-size:clamp(1.44rem,2.9vw,2rem);line-height:1.1}
+h3{font-size:1.08rem;letter-spacing:-.014em}
+h4{font-size:.92rem;letter-spacing:-.006em}
+p{margin:0}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 32%,transparent)}
+a:hover{border-bottom-color:var(--accent)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+code{font-size:.86em;background:var(--surface-2);border:1px solid var(--rule);border-radius:3px;padding:.05em .3em;color:var(--ink)}
+.lede{font-size:1.14rem;line-height:1.55;color:var(--ink-2)}
+.eyebrow{font-size:.66rem;font-weight:650;letter-spacing:.17em;text-transform:uppercase;color:var(--ink-3)}
+.small{font-size:.855rem;line-height:1.55;color:var(--ink-2)}
+.tiny{font-size:.72rem;line-height:1.45;color:var(--ink-3)}
+.num{font-variant-numeric:tabular-nums}
+strong{font-weight:640;color:var(--ink)}
+
+.progress{position:fixed;top:0;left:0;height:2px;background:var(--accent);z-index:80;width:0}
+.topbar{position:sticky;top:0;z-index:70;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--rule)}
+.topbar-in{max-width:1200px;margin:0 auto;padding:9px 26px;display:flex;align-items:center;gap:18px}
+.brand{font-family:var(--mono);font-size:.79rem;font-weight:650;white-space:nowrap;letter-spacing:-.02em}
+.brand em{font-style:normal;color:var(--accent)}
+.navlinks{display:flex;gap:1px;overflow-x:auto;scrollbar-width:none;flex:1}
+.navlinks::-webkit-scrollbar{display:none}
+.navlinks a{font-size:.74rem;color:var(--ink-2);border:0;padding:5px 8px;border-radius:5px;white-space:nowrap}
+.navlinks a:hover{background:var(--accent-soft);color:var(--accent)}
+.tglr{font-size:.72rem;font-family:var(--sans);background:var(--surface);color:var(--ink-2);border:1px solid var(--rule);border-radius:5px;padding:5px 10px;cursor:pointer}
+
+.hero{padding:70px 0 52px;border-bottom:1px solid var(--rule)}
+.stamp{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:.7rem;border:1px solid var(--rule-2);border-radius:3px;padding:5px 11px;color:var(--ink-2);background:var(--surface)}
+.stamp b{color:var(--accent)}
+.hero h1{margin:16px 0 20px}
+.verdict{
+  margin-top:36px;display:grid;gap:0;grid-template-columns:repeat(auto-fit,minmax(184px,1fr));
+  border:1px solid var(--rule-2);border-radius:6px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow);
+}
+.verdict > div{padding:15px 17px;border-right:1px solid var(--rule);display:flex;flex-direction:column;gap:5px}
+.verdict > div:last-child{border-right:0}
+.verdict b{font-family:var(--mono);font-size:1.5rem;font-weight:600;letter-spacing:-.035em;line-height:1;font-variant-numeric:tabular-nums}
+
+section{padding:60px 0;border-bottom:1px solid var(--rule)}
+.sec-head{display:flex;flex-direction:column;gap:9px;margin-bottom:28px}
+.sec-head h2{max-width:34ch}
+.sec-head p{max-width:68ch}
+.stack{display:flex;flex-direction:column;gap:16px}
+.stack-lg{display:flex;flex-direction:column;gap:32px}
+.grid{display:grid;gap:13px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(292px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(216px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(162px,1fr))}
+
+.reveal{opacity:0;transform:translateY(12px);transition:opacity .5s ease,transform .5s ease}
+.reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:18px 20px;display:flex;flex-direction:column;gap:9px}
+.card.sunk{background:var(--surface-2)}
+.stat{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.stat b{font-family:var(--mono);font-size:1.52rem;font-weight:600;letter-spacing:-.035em;line-height:1;font-variant-numeric:tabular-nums}
+
+.tw{overflow-x:auto;border:1px solid var(--rule);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.815rem;min-width:560px;font-family:var(--sans)}
+th{text-align:left;font-size:.65rem;font-weight:650;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);padding:10px 13px;border-bottom:1px solid var(--rule-2);white-space:nowrap;background:var(--surface-2)}
+td{padding:9px 13px;border-bottom:1px solid var(--rule);vertical-align:top;color:var(--ink-2);line-height:1.44}
+tr:last-child td{border-bottom:0}
+td:first-child{color:var(--ink);font-weight:550}
+.mono{font-family:var(--mono);font-size:.94em}
+.num-td{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+.pill{display:inline-block;font-size:.63rem;font-weight:650;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:3px;white-space:nowrap;border:1px solid transparent}
+.p-crit{background:var(--crit-soft);color:var(--crit);border-color:color-mix(in srgb,var(--crit) 26%,transparent)}
+.p-warn{background:var(--warn-soft);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 28%,transparent)}
+.p-ok{background:var(--ok-soft);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 26%,transparent)}
+.p-info{background:var(--info-soft);color:var(--info);border-color:color-mix(in srgb,var(--info) 26%,transparent)}
+.p-neu{background:var(--surface-2);color:var(--ink-3);border-color:var(--rule)}
+.p-acc{background:var(--accent-soft);color:var(--accent);border-color:color-mix(in srgb,var(--accent) 26%,transparent)}
+
+.finding{background:var(--surface);border:1px solid var(--rule);border-radius:6px;display:grid;grid-template-columns:4px 1fr;overflow:hidden}
+.finding > .stripe{background:var(--rule-2)}
+.finding.crit > .stripe{background:var(--crit)}
+.finding.warn > .stripe{background:var(--warn)}
+.finding.ok > .stripe{background:var(--ok)}
+.finding.info > .stripe{background:var(--info)}
+.finding > .fb{padding:16px 19px;display:flex;flex-direction:column;gap:9px}
+.fmeta{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.fmeta .where{font-family:var(--mono);font-size:.7rem;color:var(--ink-3)}
+
+.topo{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:0;overflow:hidden;box-shadow:var(--shadow)}
+.topo-h{padding:13px 17px;border-bottom:1px solid var(--rule);background:var(--surface-2);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.topo-b{padding:20px 18px;overflow-x:auto}
+.tiers{min-width:640px;display:flex;flex-direction:column;gap:0}
+.tier{display:flex;flex-direction:column;gap:8px;padding:0}
+.tier-lbl{font-family:var(--mono);font-size:.64rem;font-weight:650;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
+.row{display:flex;gap:9px;flex-wrap:wrap}
+.box{
+  background:var(--surface-2);border:1px solid var(--rule-2);border-radius:5px;padding:9px 12px;
+  display:flex;flex-direction:column;gap:3px;min-width:132px;flex:1;
+}
+.box .bt{font-family:var(--mono);font-size:.76rem;font-weight:600;color:var(--ink)}
+.box .bs{font-size:.66rem;color:var(--ink-3);line-height:1.4}
+.box.core{border-color:var(--accent);background:var(--accent-soft)}
+.box.core .bt{color:var(--accent)}
+.box.ext{border-style:dashed}
+.box.closed{border-color:var(--crit);background:var(--crit-soft)}
+.box.closed .bt{color:var(--crit)}
+.link{display:flex;align-items:center;gap:8px;padding:7px 0 7px 4px;font-family:var(--mono);font-size:.67rem;color:var(--ink-3)}
+.vline{width:1px;height:16px;background:var(--rule-2);margin-left:36px}
+.vline.dash{background:transparent;border-left:1px dashed var(--rule-2)}
+.edge{font-family:var(--mono);font-size:.66rem;color:var(--ink-3);padding-left:8px}
+
+.hops{display:flex;flex-direction:column;gap:0;counter-reset:hop}
+.hop{display:grid;grid-template-columns:34px 1fr;gap:0;align-items:stretch}
+.hopn{position:relative}
+.hopn::before{content:"";position:absolute;left:15px;top:0;bottom:0;width:1px;background:var(--rule-2)}
+.hop:first-child .hopn::before{top:14px}
+.hop:last-child .hopn::before{bottom:calc(100% - 14px)}
+.hopn i{
+  counter-increment:hop;position:absolute;left:8px;top:8px;width:16px;height:16px;border-radius:99px;
+  background:var(--surface);border:1px solid var(--rule-2);font-style:normal;font-family:var(--mono);
+  font-size:.6rem;display:flex;align-items:center;justify-content:center;color:var(--ink-3);z-index:2;
+}
+.hopn i::before{content:counter(hop)}
+.hopb{padding:5px 0 16px 12px;display:flex;flex-direction:column;gap:3px}
+.hop:last-child .hopb{padding-bottom:0}
+.hopb .ht{font-size:.9rem;color:var(--ink);font-weight:550}
+.hopb .hf{font-family:var(--mono);font-size:.68rem;color:var(--accent)}
+.hopb .hd{font-size:.82rem;color:var(--ink-2);line-height:1.5}
+
+pre{margin:0;background:var(--sunk);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;overflow-x:auto;font-size:.765rem;line-height:1.62;color:var(--ink-2)}
+pre b{color:var(--accent);font-weight:600}
+pre i{color:var(--ok);font-style:normal}
+pre u{color:var(--ink-3);text-decoration:none}
+pre s{color:var(--crit);text-decoration:none}
+
+.callout{border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:0 6px 6px 0;padding:15px 19px;display:flex;flex-direction:column;gap:7px}
+.callout.crit{border-left-color:var(--crit);background:var(--crit-soft)}
+.callout.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+.callout.ok{border-left-color:var(--ok);background:var(--ok-soft)}
+.callout p{font-size:.86rem;line-height:1.55;color:var(--ink-2)}
+
+blockquote{margin:0;background:var(--surface);border:1px solid var(--rule);border-left:3px solid var(--rule-2);border-radius:0 6px 6px 0;padding:14px 17px;display:flex;flex-direction:column;gap:8px}
+blockquote p{font-size:.93rem;line-height:1.5;color:var(--ink)}
+blockquote cite{font-size:.71rem;font-style:normal;color:var(--ink-3);font-family:var(--mono)}
+.quotes{display:grid;gap:13px;grid-template-columns:repeat(auto-fit,minmax(296px,1fr))}
+
+dl{margin:0}
+.kv{display:grid;grid-template-columns:118px 1fr;gap:9px 12px;font-size:.83rem;line-height:1.48}
+.kv dt{color:var(--ink-3);font-size:.65rem;letter-spacing:.07em;text-transform:uppercase;font-weight:650;font-family:var(--mono);padding-top:2px}
+.kv dd{margin:0;color:var(--ink-2)}
+
+.bars{display:flex;flex-direction:column;gap:8px}
+.bar{display:grid;grid-template-columns:150px 1fr 88px;gap:11px;align-items:center;font-family:var(--mono);font-size:.73rem}
+.bar .track{height:18px;background:var(--sunk);border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+.bar .fill{height:100%;background:linear-gradient(90deg,var(--accent-2),var(--accent));width:0;transition:width 1s cubic-bezier(.22,.9,.24,1)}
+.bar.on .fill{width:var(--w)}
+.bar .v{text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:reduce){.bar .fill{transition:none}}
+
+.phase{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start}
+.pnum{font-family:var(--mono);font-size:2rem;font-weight:600;color:var(--rule-2);line-height:1;letter-spacing:-.05em;min-width:44px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-family:var(--mono);font-size:.68rem;background:var(--surface-2);border:1px solid var(--rule);border-radius:3px;padding:3px 8px;color:var(--ink-2)}
+.chip.acc{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+
+footer{padding:48px 0 72px}
+hr.soft{border:0;border-top:1px solid var(--rule);margin:0}
+@media (max-width:660px){
+  body{font-size:16px;background-size:24px 24px}
+  .bar{grid-template-columns:104px 1fr 68px}
+  .kv{grid-template-columns:1fr;gap:2px 0}
+  .kv dt{padding-top:8px}
+  .phase{grid-template-columns:1fr;gap:6px}
+  .pnum{font-size:1.5rem}
+}
+</style>
+</head>
+<body>
+
+<div class="progress" id="prog"></div>
+<div class="topbar">
+  <div class="topbar-in">
+    <div class="brand">MCPJam&nbsp;<em>//</em>&nbsp;teardown</div>
+    <nav class="navlinks">
+      <a href="#scope">Scope</a>
+      <a href="#topology">Topology</a>
+      <a href="#stack">Stack</a>
+      <a href="#trace">Trace</a>
+      <a href="#debugger">Debugger</a>
+      <a href="#data">Data</a>
+      <a href="#evals">Evals</a>
+      <a href="#conformance">Conformance</a>
+      <a href="#ship">Ship</a>
+      <a href="#risk">Risk</a>
+      <a href="#build">Build plan</a>
+    </nav>
+    <button class="tglr" id="tgl" type="button">Theme</button>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="stamp">Read at commit <b>14 Aug 2026</b> &middot; @mcpjam/inspector <b>2.38.0</b> &middot; 2,135&nbsp;stars</div>
+    <h1>An open-core debugger<br>with a closed database<br>and an unlocked door.</h1>
+    <p class="lede col">MCPJam is the most complete MCP developer tool that exists. It is also a 1.15-million-line monorepo where the durable data model lives in another repository you cannot see, the evals engine is under a paid licence, and two publicly disclosed remote-code-execution reports have been open since February. This is what a rebuild has to reckon with.</p>
+
+    <div class="verdict reveal">
+      <div><span class="eyebrow">Codebase</span><b class="num">1.15M</b><span class="small">lines of TS/TSX across 11 workspaces</span></div>
+      <div><span class="eyebrow">Release cadence</span><b class="num">1.19 d</b><span class="small">median between the last 15 releases</span></div>
+      <div><span class="eyebrow">Bus factor</span><b class="num">58%</b><span class="small">of commits from one author</span></div>
+      <div><span class="eyebrow">Open security</span><b class="num">2</b><span class="small">disclosed RCE reports, unfixed at the auth layer</span></div>
+      <div><span class="eyebrow">Type erosion</span><b class="num">4,451</b><span class="num small"><code>any</code> casts across 628 files</span></div>
+    </div>
+  </div>
+</header>
+
+<section id="scope">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">01 &mdash; What it actually is</div>
+      <h2>Four products wearing one repository</h2>
+      <p class="lede">"MCP Inspector" undersells it. MCPJam ships a debugger, a CLI, an SDK, and a hosted SaaS, plus Slack and Discord bots, a Cloudflare Worker that is itself an MCP server, and a widget renderer for ChatGPT Apps.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="card">
+        <h3>The four surfaces</h3>
+        <dl class="kv">
+          <dt>Inspector</dt><dd>A local web app (<code>npx</code>, port 6274), an Electron desktop app, or the hosted cloud version. Connect, poke, watch traffic.</dd>
+          <dt>CLI</dt><dd><code>@mcpjam/cli</code> &mdash; 27 command modules. Inspection, conformance, OAuth, evals, tunnels, projects. Built for CI.</dd>
+          <dt>SDK</dt><dd><code>@mcpjam/sdk</code> &mdash; the reusable core: client manager, eval framework, OAuth, conformance suites. 201k lines.</dd>
+          <dt>Hosted</dt><dd><code>app.mcpjam.com</code> &mdash; accounts, orgs, projects, shared results, metered LLM credits, scheduled evals, GitHub PR checks.</dd>
+        </dl>
+      </div>
+      <div class="card">
+        <h3>Adoption, in context</h3>
+        <div class="bars" id="bars1" style="margin-top:4px">
+          <div class="bar" style="--w:100%"><span>official inspector</span><span class="track"><span class="fill"></span></span><span class="v">905k/mo</span></div>
+          <div class="bar" style="--w:3.7%"><span>@mcpjam/sdk</span><span class="track"><span class="fill"></span></span><span class="v">33k/mo</span></div>
+          <div class="bar" style="--w:2%"><span>@mcpjam/inspector</span><span class="track"><span class="fill"></span></span><span class="v">18k/mo</span></div>
+          <div class="bar" style="--w:1.2%"><span>@mcpjam/cli</span><span class="track"><span class="fill"></span></span><span class="v">11k/mo</span></div>
+        </div>
+        <p class="small" style="margin-top:8px">npm downloads, last 30 days. The official inspector outdraws MCPJam roughly <strong>50 to 1</strong>. MCPJam is not winning on distribution &mdash; it is winning on depth, and betting that depth converts to a hosted subscription. Note the SDK out-downloads the inspector: people are embedding the engine more than running the app.</p>
+      </div>
+    </div>
+
+    <div class="finding warn reveal">
+      <div class="stripe"></div>
+      <div class="fb">
+        <div class="fmeta"><span class="pill p-warn">licence</span><span class="where">LICENSE &middot; mcpjam-inspector/server/evals/LICENSE</span></div>
+        <h3>It is open-core, and the split is not where you would guess</h3>
+        <p class="small">Apache 2.0 for the app, SDK and CLI &mdash; <strong>except everything under <code>server/services/</code> and <code>server/routes/mcp/evals.ts</code></strong>, which fall under a separate "MCPJam Enterprise Edition" licence: source-available, free for development and testing, paid subscription required for production use, modifications assigned back to MCPJam.</p>
+        <p class="small">That carve-out is not a corner of the codebase. <code>server/services/</code> is where <code>evals-runner.ts</code>, the RPC log bus, the tunnel manager, the connection worker and the GitHub checks worker all live. Entitlement language is pervasive: <code>subscription</code> appears in 158 files, <code>billing</code> in 213, <code>isPro</code> in 52. If you are rebuilding, you cannot lift that directory &mdash; you must reimplement it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="topology">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">02 &mdash; Topology</div>
+      <h2>One Hono app, three deployments, and a hole where the database should be</h2>
+      <p class="lede">The whole system is a single Hono application factory reused across web, Electron and Docker, differentiated only by environment variables. Everything durable lives in a Convex deployment in a repository that is not published.</p>
+    </div>
+
+    <div class="topo reveal">
+      <div class="topo-h">
+        <div><div class="eyebrow">Figure 1 &mdash; runtime component graph</div><p class="small" style="margin-top:3px">Dashed = optional. Red = not in the open-source repository.</p></div>
+        <div class="chips"><span class="chip acc">core</span><span class="chip">external</span><span class="chip" style="border-color:var(--crit);color:var(--crit)">closed source</span></div>
+      </div>
+      <div class="topo-b">
+        <div class="tiers">
+          <div class="tier">
+            <span class="tier-lbl">Presentation</span>
+            <div class="row">
+              <div class="box"><span class="bt">Browser SPA</span><span class="bs">React 19 + Vite 7, Zustand, Tailwind 4, 577k lines</span></div>
+              <div class="box"><span class="bt">Electron shell</span><span class="bs">Electron 37 + Forge; renderer talks HTTP to an embedded server</span></div>
+              <div class="box ext"><span class="bt">Widget iframes</span><span class="bs">double (MCP Apps) or triple (ChatGPT Apps) nesting for origin isolation</span></div>
+            </div>
+          </div>
+          <div class="vline"></div><div class="edge">HTTP &middot; SSE &middot; WebSocket &middot; postMessage &nbsp;&darr;</div>
+          <div class="tier">
+            <span class="tier-lbl">Local server &mdash; the whole product</span>
+            <div class="row">
+              <div class="box core"><span class="bt">Hono app</span><span class="bs">createHonoApp() &middot; one factory for web + Electron + Docker &middot; 281k lines</span></div>
+              <div class="box core"><span class="bt">MCPClientManager</span><span class="bs">@mcpjam/sdk &middot; 4,339 lines &middot; pooling, 3 transports, capability cache</span></div>
+              <div class="box core"><span class="bt">rpcLogBus</span><span class="bs">every JSON-RPC frame, 500-event ring per server, in memory</span></div>
+            </div>
+            <div class="row">
+              <div class="box"><span class="bt">/api/mcp/*</span><span class="bs">local, session-token auth</span></div>
+              <div class="box"><span class="bt">/api/web/*</span><span class="bs">browser, bearer auth</span></div>
+              <div class="box"><span class="bt">/api/v1/*</span><span class="bs">public hosted API, 1 MB cap</span></div>
+              <div class="box"><span class="bt">/relay, /tlm</span><span class="bs">PostHog proxy &mdash; not MCP</span></div>
+            </div>
+          </div>
+          <div class="vline"></div><div class="edge">stdio (child_process) &middot; Streamable HTTP &rarr; SSE fallback &nbsp;&darr;</div>
+          <div class="tier">
+            <span class="tier-lbl">Targets under test</span>
+            <div class="row">
+              <div class="box ext"><span class="bt">stdio MCP server</span><span class="bs">spawned as a child process. stderr drained, capped at 16,384 chars</span></div>
+              <div class="box ext"><span class="bt">Remote MCP server</span><span class="bs">Streamable HTTP first, auto-fallback to SSE</span></div>
+              <div class="box ext"><span class="bt">LLM providers</span><span class="bs">10 providers via Vercel AI SDK, or MCPJam's metered pool</span></div>
+            </div>
+          </div>
+          <div class="vline dash"></div><div class="edge">HTTPS + x-inspector-service-token &nbsp;&darr;&nbsp; (hosted only)</div>
+          <div class="tier">
+            <span class="tier-lbl">Control plane</span>
+            <div class="row">
+              <div class="box closed"><span class="bt">Convex (mcpjam-backend)</span><span class="bs">users, orgs, projects, servers, environments, evals, runs, OAuth token vault &mdash; SCHEMA NOT PUBLISHED</span></div>
+              <div class="box ext"><span class="bt">WorkOS AuthKit</span><span class="bs">identity, orgs, API keys</span></div>
+              <div class="box ext"><span class="bt">Sentry + PostHog</span><span class="bs">crash and product analytics</span></div>
+            </div>
+          </div>
+          <div class="vline dash"></div><div class="edge">outbound WebSocket &mdash; mcpjam-tunnel.v1 &nbsp;&darr;</div>
+          <div class="tier">
+            <span class="tier-lbl">Reachability</span>
+            <div class="row">
+              <div class="box ext"><span class="bt">Tunnel relay edge</span><span class="bs">local inspector dials out; edge forwards public HTTPS down the socket. Auth = a ?k= secret in the URL</span></div>
+              <div class="box ext"><span class="bt">E2B sandbox</span><span class="bs">"Project Computer" &mdash; cloud Linux VM for agent bash</span></div>
+              <div class="box ext"><span class="bt">Slack / Discord</span><span class="bs">separate services, same hosted backend</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="finding crit">
+        <div class="stripe"></div>
+        <div class="fb">
+          <div class="fmeta"><span class="pill p-crit">blocking for a rebuild</span><span class="where">server/services/internal-backend.ts:3-22</span></div>
+          <h3>The database is a hole in the diagram</h3>
+          <p class="small">Every durable write goes out as <code>fetch(${CONVEX_HTTP_URL}${path})</code> with a single static <code>x-inspector-service-token</code> header. There is no schema, no migrations, no query functions in the open repository. Searching for <code>schema.ts</code> finds only an unrelated toy example app.</p>
+          <p class="small">The giveaway is a helper called <code>isEntityNotFound</code> that inspects 404 response <em>shapes</em> to tell "row missing" apart from "route not deployed". The open-source client is guessing at its own backend's contract by status code. A rebuilder gets the wire protocol and must invent the entire data model.</p>
+        </div>
+      </div>
+      <div class="finding ok">
+        <div class="stripe"></div>
+        <div class="fb">
+          <div class="fmeta"><span class="pill p-ok">copy this</span><span class="where">server/app.ts:91-602</span></div>
+          <h3>One app factory, three deployments</h3>
+          <p class="small"><code>createHonoApp()</code> is the single entry point for the local web server, the Electron-embedded server and the Docker image. The differences are environment variables: <code>ELECTRON_APP</code>, <code>IS_PACKAGED</code>, <code>NODE_ENV</code>. No forked server, no duplicated route table.</p>
+          <p class="small">This is the highest-value structural idea in the codebase and it is free to copy. It is also why the earlier Next.js build failed: they migrated to Vite + Hono explicitly because Next.js dragged 241 MB of dependencies into a package meant to be run with <code>npx</code>. The maintainer's public post-mortem is refreshingly blunt about it.</p>
+        </div>
+      </div>
+    </div>
+
+    <blockquote class="reveal">
+      <p>"It made no sense to do it in hindsight. We chose Next initially because that's just what we were used to using to build web apps. The lesson here is that your stack matters a lot, depending on the use case."</p>
+      <cite>MCPJam maintainer, r/nextjs &mdash; 49 comments, mostly unkind</cite>
+    </blockquote>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">03 &mdash; Stack and scale</div>
+      <h2>Eleven workspaces, and where the weight sits</h2>
+    </div>
+
+    <div class="stack reveal">
+      <div class="bars" id="bars2">
+        <div class="bar" style="--w:100%"><span>inspector/client</span><span class="track"><span class="fill"></span></span><span class="v">576,907</span></div>
+        <div class="bar" style="--w:48.8%"><span>inspector/server</span><span class="track"><span class="fill"></span></span><span class="v">281,298</span></div>
+        <div class="bar" style="--w:34.9%"><span>sdk</span><span class="track"><span class="fill"></span></span><span class="v">201,536</span></div>
+        <div class="bar" style="--w:7.3%"><span>cli</span><span class="track"><span class="fill"></span></span><span class="v">42,088</span></div>
+        <div class="bar" style="--w:3.8%"><span>inspector/shared</span><span class="track"><span class="fill"></span></span><span class="v">21,917</span></div>
+        <div class="bar" style="--w:3.4%"><span>mcp (worker)</span><span class="track"><span class="fill"></span></span><span class="v">19,808</span></div>
+        <div class="bar" style="--w:1.1%"><span>chat-ui</span><span class="track"><span class="fill"></span></span><span class="v">6,574</span></div>
+        <div class="bar" style="--w:0.6%"><span>design-system</span><span class="track"><span class="fill"></span></span><span class="v">3,744</span></div>
+      </div>
+      <p class="tiny">Lines of <code>.ts</code> / <code>.tsx</code>, node_modules excluded. Total &asymp; 1,153,000.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="card">
+        <h3>Choices worth noting</h3>
+        <dl class="kv">
+          <dt>Server</dt><dd><strong>Hono</strong> 4.11 on <code>@hono/node-server</code> with <code>@hono/node-ws</code>. Chosen for small install size.</dd>
+          <dt>Client</dt><dd><strong>React 19 + Vite 7</strong>, strict TypeScript.</dd>
+          <dt>State</dt><dd><strong>Zustand</strong> with persistence. Notably <em>not</em> TanStack Query &mdash; the architecture doc claims it is used, but the dependency does not exist. First documentation drift found.</dd>
+          <dt>Styling</dt><dd>Tailwind 4 + Radix, with an in-repo design system package.</dd>
+          <dt>Desktop</dt><dd>Electron 37 via Forge; makers for dmg, deb, rpm, squirrel, zip.</dd>
+          <dt>Testing</dt><dd>Vitest for units, Playwright for end-to-end including a dedicated OAuth-debugger config.</dd>
+          <dt>Protocol</dt><dd><code>@modelcontextprotocol/client</code> and <code>@modelcontextprotocol/server</code> 2.x. A CI check bans <code>@modelcontextprotocol/sdk</code> v1 imports from runtime paths.</dd>
+          <dt>Notable</dt><dd><code>@xterm/xterm</code> for an in-app terminal, <code>@xyflow/react</code> + Dagre for flow diagrams, <code>e2b</code> for the cloud sandbox, Playwright bundled <em>at runtime</em> to render widgets.</dd>
+        </dl>
+      </div>
+      <div class="stack">
+        <div class="finding info">
+          <div class="stripe"></div>
+          <div class="fb">
+            <div class="fmeta"><span class="pill p-info">good practice</span><span class="where">root package.json &middot; scripts</span></div>
+            <h4>The CI checks are the interesting part</h4>
+            <p class="small">Four bespoke guard scripts run before tests: ban v1 SDK imports from runtime code; verify bundled-runtime paths; and assert <code>sdk/src/platform</code> contains no <code>node:</code> imports or <code>process.env</code> access &mdash; twice, once on source and once on the built <code>dist</code>. That last one enforces a browser/edge-safe subset by grep, in both directions. It is cheap, blunt, and it works.</p>
+          </div>
+        </div>
+        <div class="finding warn">
+          <div class="stripe"></div>
+          <div class="fb">
+            <div class="fmeta"><span class="pill p-warn">smell</span><span class="where">wc -l across the repo</span></div>
+            <h4>God files</h4>
+            <p class="small"><code>MCPClientManager.ts</code> 4,339 &middot; <code>use-server-state.ts</code> 5,682 (a single React hook) &middot; <code>PlaygroundMain.tsx</code> 5,145 &middot; <code>App.tsx</code> 4,700 &middot; <code>evals-runner.ts</code> 3,781 &middot; <code>routes/v1/evals.ts</code> 3,272 &middot; <code>routes/mcp/xaa.ts</code> 2,655.</p>
+            <p class="small">Two of the three largest are the load-bearing state machines for connection and playground. Only 27 TODO markers repo-wide, which reads less like low debt and more like debt nobody is annotating.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="trace">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">04 &mdash; One request, end to end</div>
+      <h2>What happens when you click "Run" on a tool</h2>
+      <p class="lede">Twelve hops. Worth reading closely, because the shape of hops 4, 6 and 7 is the shape of the whole product.</p>
+    </div>
+
+    <div class="hops reveal">
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">Form generated from JSON Schema</span>
+        <span class="hf">client/src/components/ToolsTab.tsx &rarr; generateFormFieldsFromSchema</span>
+        <span class="hd">The tool's <code>inputSchema</code> becomes a form. No hand-written UI per tool.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">Click Run</span>
+        <span class="hf">client/src/lib/mcp-tools-api.ts:47</span>
+        <span class="hd"><code>executeToolApi(serverName, tool, params)</code>.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">POST to the local server</span>
+        <span class="hf">POST /api/mcp/tools/execute</span>
+        <span class="hd">Body: <code>{ serverId, toolName, parameters }</code>. Plain HTTP; the browser never speaks MCP itself.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">One execution at a time &mdash; else 409</span>
+        <span class="hf">server/routes/mcp/tools.ts:142-236</span>
+        <span class="hd">The route builds an <code>ExecutionContext</code> and refuses a second concurrent execution with <code>409 Conflict</code>. This is a deliberate trade: a single in-flight call makes multi-round elicitation tractable as a race between the execution promise and the next elicitation, instead of concurrent bookkeeping.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">Manager issues the real JSON-RPC</span>
+        <span class="hf">sdk/src/mcp-client-manager/MCPClientManager.ts</span>
+        <span class="hd">Looks up the pooled <code>Client</code> for that <code>serverId</code> and sends <code>tools/call</code> over whichever transport that server uses.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">Every frame is teed to the log bus</span>
+        <span class="hf">server/services/rpc-log-bus.ts &middot; wired at app.ts:150-169</span>
+        <span class="hd">A <code>rpcLogger</code> callback fires on send and receive; a separate <code>httpLogger</code> channel carries headers, because headers arrive at a different point in the request lifecycle than the parsed body. Both publish to the bus.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">Fan-out to the UI, two different ways</span>
+        <span class="hf">GET /api/mcp/servers/rpc/stream (SSE) &middot; data-rpc-log parts (hosted)</span>
+        <span class="hd">Locally it is Server-Sent Events with buffer replay and a 15-second keepalive. In hosted mode it piggybacks on the AI SDK chat data stream as custom <code>data-rpc-log</code> parts. Two transports for the same events.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">If the tool asks a question</span>
+        <span class="hf">202 { status: "elicitation_required", requestId, request }</span>
+        <span class="hd">The route races the execution against the next enqueued elicitation and returns <code>202</code> so the UI can render a form. Timeout is 300,000 ms on the chat path.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">Result returns</span>
+        <span class="hf">200 { status: "completed", result }</span>
+        <span class="hd">Front end stores <code>result</code> and <code>structuredContent</code>, then validates against the declared <code>outputSchema</code>.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">Widget detection, in priority order</span>
+        <span class="hf">_meta.ui.resourceUri &rarr; openai/outputTemplate &rarr; inline ui:// resource</span>
+        <span class="hd">MCP Apps, then ChatGPT Apps, then MCP-UI. First match wins.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">Widget context stored server-side</span>
+        <span class="hf">in-memory Map, 1 hour TTL</span>
+        <span class="hd">Deliberately not <code>localStorage</code>: the iframe sandbox boundary prevents cross-iframe sharing. The docs recommend swapping the Map for Redis in production, which is an admission it does not survive a restart.</span>
+      </div></div>
+      <div class="hop"><div class="hopn"><i></i></div><div class="hopb">
+        <span class="ht">Render, next to the log entry from hop 6</span>
+        <span class="hf">ResultsPanel / ToolPart + JsonRpcLoggerView</span>
+        <span class="hd">The whole point: the human sees the rendered result and the raw wire traffic that produced it, side by side.</span>
+      </div></div>
+    </div>
+
+    <div class="callout reveal">
+      <h4>The one architectural idea to steal</h4>
+      <p>The browser never speaks MCP. A local Node process owns every connection, and the UI is a thin HTTP client over it. That is what makes stdio inspection possible at all &mdash; a browser cannot spawn a subprocess &mdash; and it is why the same code serves a web app, a desktop app and a CLI. Everything else in this teardown is detail; this is the decision.</p>
+    </div>
+  </div>
+</section>
+
+<section id="debugger">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">05 &mdash; The debugger</div>
+      <h2>Eighteen screens, and five features nobody else has</h2>
+      <p class="lede">Most of the surface is table stakes. Five parts are genuinely differentiated, and they are the ones a competitor has to match.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="stack">
+        <h3>The differentiated five</h3>
+        <div class="finding ok"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-ok">1</span><span class="where">sdk/src/server-doctor.ts &middot; http-server-doctor.ts</span></div>
+          <h4>Server Doctor &mdash; eight sequenced checks</h4>
+          <p class="small">Stateless HTTP probe &rarr; full client connect &rarr; capture <code>initInfo</code> &rarr; capture capabilities &rarr; list tools &rarr; list resources &rarr; list resource templates &rarr; list prompts. Rolls up to <code>ready</code> / <code>oauth_required</code> / <code>partial</code> / <code>error</code>, and short-circuits to <code>oauth_required</code> before connecting if credentials are missing &mdash; so a failing probe tells the user "log in first", not "your server is down". Shipped twice: a Node version and a browser-safe version using the transports directly.</p>
+        </div></div>
+        <div class="finding ok"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-ok">2</span><span class="where">sdk/src/error-describer/catalog.ts:162</span></div>
+          <h4>Error describer &mdash; 34 catalogued failures</h4>
+          <p class="small">Each entry carries a title, a one-liner, likely causes, next steps, a docs anchor, a severity, and an <code>origin</code>: <code>user_server</code> / <code>user_config</code> / <code>mcpjam</code> / <code>ambiguous</code>. The comment is explicit that origin means "who has to act", not blame &mdash; it routes a failure to the right person. A <code>credentialOwner</code> flag re-labels auth errors as MCPJam's problem when MCPJam holds the token. Covers JSON-RPC codes, transport errno codes, OAuth failures, provider quota errors, and its own sentinel errors matched by class-name regex because class identity is lost across JS realms.</p>
+        </div></div>
+        <div class="finding ok"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-ok">3</span><span class="where">sdk/src/server-snapshot.ts &middot; server-diff.ts</span></div>
+          <h4>Snapshot and diff &mdash; regression detection in CI</h4>
+          <p class="small">Capture a server's full surface, diff two captures, classify every field change as <code>breaking</code> / <code>non_breaking</code> / <code>informational</code>, roll up per entity by max severity, and gate CI on <code>failOn: breaking | any | none</code>. Schema changes go through a narrowing-versus-widening comparison rather than a raw diff. Run it either side of a deploy.</p>
+        </div></div>
+        <div class="finding ok"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-ok">4</span><span class="where">docs/inspector/guided-oauth.mdx &middot; sdk/src/oauth-proxy.ts</span></div>
+          <h4>Guided OAuth debugger</h4>
+          <p class="small">Steps the five phases &mdash; discovery, client registration, PKCE, authorization redirect, token exchange &mdash; showing the HTTP request and response for each, against four OAuth spec versions. Captures the exact <code>resource</code> value sent, validates <code>iss</code> per RFC 9207 where the version requires it, redacts tokens, and persists the trace across reloads. The backend fetcher DNS-pins the resolved IP, refuses loopback and private hosts, forces HTTPS, uses manual redirect mode and bounds body reads. That is a properly paranoid SSRF story.</p>
+        </div></div>
+        <div class="finding ok"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-ok">5</span><span class="where">sdk/src/host-compat/catalog.generated.ts</span></div>
+          <h4>Host compatibility catalogue</h4>
+          <p class="small">Connect-time capability probes for sixteen real hosts, recorded with dates and provenance, plus a full-capability reference profile to diff against. This is the only place a public dataset of "what Cursor 3.4.20 actually declares" exists. It is also the asset that took the longest to build and would take a competitor longest to reproduce, because it requires physically probing every host on every release.</p>
+        </div></div>
+      </div>
+      <div class="stack">
+        <h3>The rest of the surface</h3>
+        <div class="tw">
+          <table style="min-width:300px">
+            <thead><tr><th>Screen</th><th>What you get</th></tr></thead>
+            <tbody>
+              <tr><td>Servers / Hosts</td><td>stdio + HTTP config, transport picker, protocol-version pin, env vars, headers, auth mode</td></tr>
+              <tr><td>Playground</td><td>Chat with a real model; Chat / Trace / Raw views; per-step latency and tokens</td></tr>
+              <tr><td>Tools</td><td>Invoke, elicitation dialog, multi-round input, saved requests, quality badges</td></tr>
+              <tr><td>Resources</td><td>Read, templates, subscription streams in both protocol eras</td></tr>
+              <tr><td>Prompts</td><td>Fetch with arguments; inject into chat with <code>/</code></td></tr>
+              <tr><td>OAuth Flow</td><td>The guided debugger above</td></tr>
+              <tr><td>XAA Flow</td><td>Cross-App Access / ID-JAG debugger with a negative-test scorecard</td></tr>
+              <tr><td>Conformance</td><td>Four suites, one 0&ndash;100 score</td></tr>
+              <tr><td>Compatibility</td><td>Per-host "can I use this" checks</td></tr>
+              <tr><td>Host Compare</td><td>Same tool call rendered under several host presets</td></tr>
+              <tr><td>Tracing</td><td>Dedicated trace view</td></tr>
+              <tr><td>Skills</td><td>Discover, upload, inject agent skills</td></tr>
+              <tr><td>Computer</td><td>Cloud Linux sandbox with a terminal and a bash tool</td></tr>
+              <tr><td>Registry</td><td>Server discovery</td></tr>
+              <tr><td>Evals</td><td>Suite authoring, runs, CI evals</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="finding warn"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-warn">gap</span><span class="where">sdk/src/server-diff.ts:232-237</span></div>
+          <h4>The diff misses the attack it was built for</h4>
+          <p class="small">A tool <em>description</em> change is classified <code>informational</code>. Removing a tool is <code>breaking</code>; rewriting what a tool claims to do is not. But rewriting the description <em>is</em> the classic MCP rug pull &mdash; the tool's behaviour and intent change while its schema stays identical. A CI gate on <code>failOn: breaking</code> will wave it straight through. This is a two-line fix with real security value, and the highest-leverage thing a competitor could get right on day one.</p>
+        </div></div>
+      </div>
+    </div>
+
+    <div class="stack reveal">
+      <h3>How the log bus actually works</h3>
+      <p class="small col">This is the core of any MCP debugger, so the mechanism matters more than the feature list.</p>
+      <div class="grid g3">
+        <div class="card sunk"><h4>Event identity</h4><p class="small">Every event gets <code>rpc:&lt;processNonce&gt;:&lt;counter&gt;</code>, minted once per <em>physical</em> event &mdash; never per JSON-RPC id or method. So replays are idempotent on the client, but a retry and its original still occupy separate rows. Correct, and easy to get wrong.</p></div>
+        <div class="card sunk"><h4>Listener isolation</h4><p class="small">Subscriber exceptions are caught and logged, because "an unguarded listener would propagate into the PRODUCER" &mdash; a broken UI panel must never fail the MCP call it is observing. Worth stealing verbatim.</p></div>
+        <div class="card sunk"><h4>Bounds</h4><p class="small">500 events per server, enforced by <code>splice</code> on write. Count-based only &mdash; there is no byte cap, so 500 large tool results is 500 large tool results in RAM.</p></div>
+        <div class="card sunk"><h4>Progress is separate</h4><p class="small">A different store keyed <code>serverId &rarr; progressToken &rarr; latest</code>. Last-write-wins per token, not a log. Auto-expires after 5 minutes on a 60-second sweep.</p></div>
+        <div class="card sunk"><h4>Nothing survives restart</h4><p class="small">Both buses are pure in-memory <code>EventEmitter</code>s. Restart the server and every captured frame is gone. For a debugger, that is a real product limitation, not just an implementation note.</p></div>
+        <div class="card sunk"><h4>No session export</h4><p class="small">Searched for HAR-style capture: nothing. You can download the log buffer and you get per-flow OAuth HTTP history, but there is no "export this whole debugging session and send it to a colleague".</p></div>
+      </div>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="finding crit"><div class="stripe"></div><div class="fb">
+        <div class="fmeta"><span class="pill p-crit">trust</span><span class="where">sdk/src/mcp-client-manager/MCPClientManager.ts:2576</span></div>
+        <h4>The server under test is not sandboxed</h4>
+        <p class="small"><code>sandbox-policy.ts</code> is thorough &mdash; but it sandboxes rendered <em>widget</em> content, resolving CSP directives and iframe permissions with a documented precedence and a hosted-mode hard clamp that strips wildcards and private-network targets regardless of what a profile asks for. Good work, wrong target.</p>
+        <p class="small">The stdio MCP server itself is spawned with a plain <code>StdioClientTransport</code>. No container, no seccomp, no user drop, no CPU or memory limit. A search for <code>cgroup</code>, <code>rlimit</code>, <code>resourceLimits</code> finds nothing. The only real process isolation in the product is the E2B cloud VM, and that is for MCPJam's own agent feature, not a safety wrapper around your code.</p>
+      </div></div>
+      <div class="finding warn"><div class="stripe"></div><div class="fb">
+        <div class="fmeta"><span class="pill p-warn">trust</span><span class="where">sdk/src/telemetry.ts &middot; EvalTest.ts:310-317</span></div>
+        <h4>The debugger phones home by default</h4>
+        <p class="small">Redaction is genuinely careful: <code>Authorization</code> and <code>Cookie</code> headers, bearer tokens, access/refresh/id tokens, <code>client_secret</code>, <code>code_verifier</code> and PKCE codes are stripped both by key name and by regex over free text. Conformance reports go further and <em>drop whole containers</em> &mdash; <code>httpAttempts</code>, <code>http</code>, <code>logs</code>, <code>credentials</code>, <code>headers</code> &mdash; because an OAuth conformance run's raw evidence contains live tokens. A client-side ratchet test freezes the list of files allowed to call <code>posthog.capture</code> directly.</p>
+        <p class="small">But it is opt-out, not opt-in: <code>DO_NOT_TRACK=1</code> or <code>MCPJAM_TELEMETRY_DISABLED=1</code>. And every local <code>EvalTest.run()</code> fires an <code>eval_test_run_triggered</code> event with iteration and concurrency counts to a hardcoded PostHog key &mdash; not mentioned in any eval documentation. Sentry crash reporting is on by default with a DSN hardcoded in source.</p>
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<section id="data">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">06 &mdash; Data and secrets</div>
+      <h2>Ten stores, and the durable one is somewhere else</h2>
+    </div>
+
+    <div class="tw reveal">
+      <table style="min-width:800px">
+        <thead><tr><th>Store</th><th>Where</th><th>Holds</th><th>Survives restart</th></tr></thead>
+        <tbody>
+          <tr><td>Convex <span class="tiny">(mcpjam-backend)</span></td><td>hosted, closed source</td><td>Users, orgs, projects, servers, environments, evals, runs, hosted tasks, the OAuth token vault</td><td><span class="pill p-ok">yes</span></td></tr>
+          <tr><td><code>~/.config/mcpjam/auth.json</code></td><td>local disk (CLI)</td><td>Platform login: access token, refresh token, client id, token endpoint. Mode 0600, <strong>plaintext</strong></td><td><span class="pill p-ok">yes</span></td></tr>
+          <tr><td><code>~/.mcpjam/</code></td><td>local disk (server, dev only)</td><td>Guest JWT signing key, XAA IdP keypair, plugin bundle cache, sandbox state, skills. Plaintext, 0600</td><td><span class="pill p-ok">yes</span></td></tr>
+          <tr><td>localStorage <span class="tiny">legacy</span></td><td>browser</td><td>Pre-migration project tree and name-scoped OAuth tokens including <code>client_secret</code>, <strong>plaintext</strong></td><td><span class="pill p-ok">yes</span></td></tr>
+          <tr><td>localStorage <span class="tiny">tasks</span></td><td>browser</td><td>Hosted-task handles. <strong>Primary</strong> tracker, evicts at 50 entries</td><td><span class="pill p-warn">lossy</span></td></tr>
+          <tr><td>localStorage <span class="tiny">prefs</span></td><td>browser</td><td>Theme, viewport, panel widths, onboarding state, consent flags, drafts, selections</td><td><span class="pill p-ok">yes</span></td></tr>
+          <tr><td>sessionStorage</td><td>browser</td><td>OAuth debug traces. Cleared on first read by design</td><td><span class="pill p-crit">no</span></td></tr>
+          <tr><td>RPC log ring buffer</td><td>server memory</td><td>Every JSON-RPC frame, 500 per server</td><td><span class="pill p-crit">no</span></td></tr>
+          <tr><td>Progress store</td><td>server memory</td><td>Latest progress per token, 5-minute expiry</td><td><span class="pill p-crit">no</span></td></tr>
+          <tr><td>Tunnel registry &amp; locks</td><td>server memory</td><td>Live tunnel bindings, per-server locks, 50-entry request log</td><td><span class="pill p-crit">no</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="finding crit"><div class="stripe"></div><div class="fb">
+        <div class="fmeta"><span class="pill p-crit">secrets</span><span class="where">cli/src/lib/auth-store.ts:132 &middot; local-state-migration.ts:11-17</span></div>
+        <h4>Every local secret is plaintext behind a file mode</h4>
+        <p class="small">CLI access and refresh tokens are written to <code>~/.config/mcpjam/auth.json</code> in the clear, protected only by <code>chmod 0600</code>. No OS keychain. Any process running as the same user reads them, and so does any backup or sync tool that ignores POSIX modes. Server-side dev secrets follow the same pattern in <code>~/.mcpjam/</code> &mdash; though correctly gated to development, with production forced to supply them by environment variable.</p>
+        <p class="small">Worse in the browser: legacy per-server OAuth entries stored <code>client_secret</code> in <code>localStorage</code>, readable by any XSS or extension. Encryption is referenced only in comments &mdash; "a decrypted access token", <code>rotateStoredCredential</code> &mdash; meaning it happens server-side in the closed repository. A search for <code>encrypt</code>, <code>cipher</code> or <code>keytar</code> in the open server code finds nothing.</p>
+      </div></div>
+      <div class="stack">
+        <div class="finding crit"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-crit">secrets</span><span class="where">server/services/internal-backend.ts:17-21</span></div>
+          <h4>One token to impersonate every tenant</h4>
+          <p class="small"><code>INSPECTOR_SERVICE_TOKEN</code> is a single shared credential gating <em>all</em> internal backend calls. Anyone holding it can act as the inspector for every organisation. There is no per-instance identity, no rotation visible in the open code.</p>
+        </div></div>
+        <div class="finding warn"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-warn">design</span><span class="where">services/tunnel-manager.ts:26-29</span></div>
+          <h4>Tunnel auth is a secret in a URL</h4>
+          <p class="small">The public tunnel URL carries <code>?k=&lt;secret&gt;</code>. Holding the URL is holding the credential. The comment is candid &mdash; "Full bearer URL (contains the ?k= secret). Held in memory ONLY" &mdash; and the mitigations are short-lived possession plus backend revocation. Close codes are properly split into permanent (bad token, revoked, replaced) versus transient (edge restart, network drop with 1&ndash;30 s jittered backoff), and the socket does 64 KB chunking with a 1 MB backpressure watermark and a 25-second heartbeat. The plumbing is good; the auth model is a URL secret.</p>
+        </div></div>
+      </div>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="card">
+        <h3>Multi-tenancy</h3>
+        <p class="small">Hierarchy: <strong>Organisation &rarr; Project &rarr; Environment (revisioned) &rarr; Run</strong>, with a Host config pinned per environment. Launches pin an immutable <code>(environmentId, revision)</code> plus the host's config id at resolve time, so a host rotating underneath an unchanged revision is reported as detectable <em>drift</em> rather than silently executed. That is a genuinely good idea for reproducible evals.</p>
+        <p class="small">Connection requests are isolated per row with lease-based single-worker ownership &mdash; a <code>409</code> means someone else holds the lease. Guest sessions get a real user row and the same authorisation model: "There is no guest branch." Organisation membership syncs to WorkOS on independent, individually-failable timelines, so API-key minting checks a live readiness endpoint rather than trusting session state.</p>
+        <p class="small"><strong>But the enforcement is invisible.</strong> Row-level access control lives in Convex functions that are not published. The open code only assumes membership gates access.</p>
+      </div>
+      <div class="card">
+        <h3>Migrations</h3>
+        <p class="small">What exists is client-side and pragmatic: the CLI auth file carries a <code>version</code> and rejects mismatches outright; the browser ships a one-time, resumable localStorage-to-Convex migration gated by a flag, tracking per-project progress so a partial failure retries without duplicating rows; the progress record itself was upgraded in place from a bare string array to a keyed object.</p>
+        <p class="small">Cross-version tolerance is by optional field, not negotiation &mdash; newer backend fields are optional on the client "so an older backend still parses". There are no server schema migrations in the repository, because there is no server schema in the repository.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="evals">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">07 &mdash; The evals engine</div>
+      <h2>Deterministic predicates gate; the LLM judge only advises</h2>
+      <p class="lede">This is the most commercially important part of MCPJam and the best-designed idea in it: code-checkable assertions decide pass or fail, and the language model's opinion is a separate, advisory number. Most eval products get this backwards.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="stack">
+        <h3>The object model</h3>
+        <dl class="kv" style="grid-template-columns:132px 1fr">
+          <dt>Suite</dt><dd>Cases plus shared defaults: servers, models, checks, judge config, argument-matching mode.</dd>
+          <dt>Case / EvalTest</dt><dd>One scenario: prompt turns, expected tools, checks.</dd>
+          <dt>Run</dt><dd>One execution of a suite &rarr; N iterations, case &times; model.</dd>
+          <dt>Iteration</dt><dd>One execution with a transcript, tool calls, token counts, verdict.</dd>
+          <dt>Predicate</dt><dd>A pure function over the transcript. Deterministic. <strong>This is the gate.</strong></dd>
+          <dt>Matcher</dt><dd>Separate tool-call comparator producing missing / extra / out-of-order / argument-mismatch.</dd>
+          <dt>Judge</dt><dd>LLM "goal completion" score. <strong>Advisory unless you opt in.</strong></dd>
+          <dt>Verdict</dt><dd>predicates AND tool-match AND (unless disabled) no tool errors.</dd>
+        </dl>
+        <p class="small">A predicate that <em>cannot be evaluated</em> fails. It never passes by default. <code>responseMatches</code> carries a ReDoS guard against nested quantifiers.</p>
+      </div>
+      <div class="stack">
+        <h3>Authoring</h3>
+        <p class="small">Two surfaces over one shape. Code-first is plain Vitest or Jest &mdash; no bespoke config format, discovery is a standard glob:</p>
+        <pre>test("list-workspaces accuracy &gt; 80%", async () =&gt; {
+  const t = new <b>EvalTest</b>({
+    name: "list-workspaces",
+    test: async (runner: <b>HostRunner</b>) =&gt; {
+      const r = await runner.run("Show me all my workspaces");
+      return r.<i>hasToolCall</i>("asana_list_workspaces");
+    },
+  });
+  await t.run(testAgent, {
+    <u>iterations: 5, retries: 1, timeoutMs: 60000,</u>
+    onFailure: (report) =&gt; console.log(report),
+  });
+  expect(t.<i>accuracy</i>()).toBeGreaterThan(0.8);
+});</pre>
+        <p class="small">The hosted surface authors the same cases as JSON through the CLI or the UI, in four parts: scenario, prompt turns, expected tools, expected output. SDK-reported runs get a "CI" chip in the UI, and the metric label flips between "Pass Rate" and "Accuracy" depending on origin.</p>
+      </div>
+    </div>
+
+    <div class="grid g3 reveal">
+      <div class="card sunk">
+        <h4>13 predicate types</h4>
+        <p class="small"><code>toolCalledWith</code>, <code>toolCalledAtLeastOnce</code>, <code>toolNeverCalled</code>, <code>firstToolWas</code>, <code>responseContains</code>, <code>responseMatches</code>, <code>noToolErrors</code>, <code>finalAssistantMessageNonEmpty</code>, <code>tokenBudgetUnder</code>, <code>widgetRendered</code>, <code>widgetRenderLatencyUnder</code>, <code>widgetNoConsoleErrors</code>, <code>turnCountUnder</code>.</p>
+        <p class="tiny">The docs say twelve. The code has thirteen &mdash; <code>turnCountUnder</code> is undocumented.</p>
+      </div>
+      <div class="card sunk">
+        <h4>9 tool-call validators</h4>
+        <p class="small"><code>matchToolCalls</code>, <code>&hellip;Subset</code>, <code>matchAnyToolCall</code>, <code>matchToolCallCount</code>, <code>matchNoToolCalls</code>, <code>matchToolCallWithArgs</code>, <code>&hellip;WithPartialArgs</code>, <code>matchToolArgument</code>, <code>&hellip;With</code>. Argument matching runs in <code>partial</code> (default), <code>exact</code> or <code>ignore</code> mode, with type placeholders so you can assert "a string here" without pinning the value.</p>
+      </div>
+      <div class="card sunk">
+        <h4>The judge</h4>
+        <p class="small">Default model <code>openai/gpt-5.4-mini</code>, default threshold <code>0.7</code>, scale 0.0&ndash;1.0 plus a one-line reason and rubric hits. Capped at <strong>0.85</strong> when there is no <code>expectedOutput</code> to grade against &mdash; a self-acknowledged weak baseline. The grading prompt itself is a Convex mutation in the closed repository, so its calibration cannot be audited.</p>
+      </div>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="card">
+        <h3>Execution, client side</h3>
+        <dl class="kv" style="grid-template-columns:124px 1fr">
+          <dt>Concurrency</dt><dd>Semaphore-gated, default 5.</dd>
+          <dt>Retries</dt><dd><code>sleep(100 * 2^attempt)</code>. No jitter, no maximum delay.</dd>
+          <dt>Isolation</dt><dd>A freshly cloned executor per iteration, to avoid cross-iteration races.</dd>
+          <dt>Timeout</dt><dd><code>AbortController</code> plus a grace period, raced against the test function.</dd>
+          <dt>Turn cap</dt><dd><code>maxSteps</code> default 10, with an always-applied <code>stepCountIs</code> guard.</dd>
+          <dt>Suite order</dt><dd>Tests run sequentially; each test's iterations run concurrently.</dd>
+        </dl>
+      </div>
+      <div class="card">
+        <h3>Execution, hosted side</h3>
+        <dl class="kv" style="grid-template-columns:124px 1fr">
+          <dt>Run cap</dt><dd>20 minutes.</dd>
+          <dt>Iteration cap</dt><dd>10 minutes.</dd>
+          <dt>Liveness</dt><dd>Cancel poll every 10 s, heartbeat every 15 s, 30 s abort grace.</dd>
+          <dt>Retries</dt><dd><span class="pill p-crit">none</span> Only the client SDK retries. A slow provider gets one attempt.</dd>
+          <dt>Concurrency</dt><dd><span class="pill p-warn">unbounded</span> All tests mapped at once, except headless-browser cases behind a limiter. The 20-minute timeout is the only backpressure.</dd>
+          <dt>Scheduled</dt><dd>A separate worker polls every 15 s (+5 s jitter), claims one run atomically so several instances race safely, and runs <strong>one at a time per instance</strong>. Mints a short-lived delegated org JWT per run, re-verifying membership each time.</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="card">
+        <h3>Reporting</h3>
+        <p class="small">Five ingestion endpoints proxied to Convex: <code>report</code>, <code>runs/start</code>, <code>runs/iterations</code>, <code>runs/finalize</code>, <code>artifacts/upload-url</code>. Caps at 6 MiB body and 60 s. One request if a run has &le;200 results and &le;1 MiB; otherwise chunked through the three-phase path. Upload retries on 429, 5xx, network and timeout with 250/750/1750 ms base delays and &plusmn;20% jitter &mdash; but never on a billing-limit error, which is the right call.</p>
+        <p class="small">Traces export as <strong>OTLP JSON using OpenInference semantic conventions</strong> plus custom <code>mcp.app.*</code> extensions, so they land in Phoenix or Datadog. Latency percentiles (p50, p95) are computed across end-to-end, LLM and MCP legs. Artifacts ingest from JUnit XML, Jest JSON, Vitest JSON or a custom parser.</p>
+      </div>
+      <div class="finding warn"><div class="stripe"></div><div class="fb">
+        <div class="fmeta"><span class="pill p-warn">CI</span><span class="where">docs/cli/ci.mdx:418-423</span></div>
+        <h4>The CI gate is not built in</h4>
+        <p class="small"><code>mcpjam eval run</code> and <code>eval status</code> exit non-zero only on transport or API errors &mdash; <strong>not on eval failure</strong>. The documented workflow ends with the user's own shell assertion: <code>[ "$(jq -r '.run.result' &hellip;)" = "passed" ]</code>. There is a <code>passCriteria.minimumPassRate</code> field, but wiring it to the exit code is left to you.</p>
+        <p class="small">Conformance is better served here: it emits JUnit XML natively through a config-driven matrix runner. Evals have no native JUnit path at all.</p>
+      </div></div>
+    </div>
+
+    <div class="stack reveal">
+      <h3>Where the evals engine is weak</h3>
+      <div class="grid g2">
+        <div class="finding crit"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-crit">reproducibility</span></div>
+          <h4>There is no seed</h4>
+          <p class="small">No seed parameter exists anywhere in <code>EvalTest</code> or <code>HostRunner</code>. The documented answer is "use low temperature" and average over thirty-plus iterations. You can never get a byte-identical reproduction of one specific failure &mdash; which is exactly what you want when debugging a flaky tool call. This is the single largest functional gap in the product and an obvious place to beat it.</p>
+        </div></div>
+        <div class="finding crit"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-crit">regression</span></div>
+          <h4>No datasets, no baselines</h4>
+          <p class="small">There is no golden-dataset primitive and no baseline pinning. The closest features are a manual two-run Compare view and a per-case "pass rate across runs" column. Nothing automatically alerts on regression, and nothing feeds a historical baseline into the CI gate. For a product whose pitch is "catch it before you ship", that is a conspicuous hole.</p>
+        </div></div>
+        <div class="finding warn"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-warn">testing</span></div>
+          <h4>The riskiest file is the least tested</h4>
+          <p class="small"><code>evals-runner.ts</code> is 3,781 lines mixing trace building, timeout orchestration, attachment seeding and iteration streaming &mdash; and has <strong>no colocated test file</strong>. Its neighbours (<code>recorder.ts</code>, <code>step-handlers.ts</code>) are covered. The SDK layer is fine: 215 test files, 15 eval-specific, plus predicate tests and a JSON parity fixture.</p>
+        </div></div>
+        <div class="finding warn"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-warn">cost</span></div>
+          <h4>Estimates, not caps</h4>
+          <p class="small">Hosted runs consume organisation credits per iteration, with a pre-run <em>estimate</em> and no hard ceiling. Combine that with unbounded server-side concurrency and a suite times a model matrix, and a mistyped iteration count is a billing event. Failure classification is at least narrowly anchored to two markers so a transient server error that merely mentions "quota" cannot pause a schedule.</p>
+        </div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="conformance">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">08 &mdash; Conformance</div>
+      <h2>The scoring model is the best thing in the repository</h2>
+      <p class="lede">Conformance and evals answer different questions. Conformance asks "does this obey the specification" &mdash; stateless, no model involved. Evals ask "can a model use this well" &mdash; stochastic, judged over many runs. Four suites, one number, and a genuinely principled way of producing it.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="stack">
+        <h3>Four suites</h3>
+        <dl class="kv" style="grid-template-columns:130px 1fr">
+          <dt>mcp-conformance</dt><dd>Protocol compliance. <strong>50 checks</strong> &mdash; <code>server-initialize</code>, <code>ping</code>, <code>tools-x-mcp-header-declarations-valid</code>, and so on.</dd>
+          <dt>oauth-conformance</dt><dd>The authorization stack, across four spec versions.</dd>
+          <dt>apps-conformance</dt><dd>MCP Apps and ChatGPT Apps widget contracts, including SEP-1865 visibility validation.</dd>
+          <dt>tasks-conformance</dt><dd>The Tasks extension.</dd>
+        </dl>
+        <p class="small"><code>conformance-catalog.ts</code> is a deliberately dependency-free mirror of every check's title and description across three suites, so a UI can preview "what will run" without importing Node-only transport code. A dedicated parity test catches drift from the canonical source. That is a small, disciplined piece of engineering.</p>
+      </div>
+      <div class="stack">
+        <h3>The 0&ndash;100 score, and why it is right</h3>
+        <div class="finding ok"><div class="stripe"></div><div class="fb">
+          <div class="fmeta"><span class="pill p-ok">steal this</span><span class="where">sdk/src/conformance-score.ts:31-72</span></div>
+          <p class="small"><strong>MUSTs own 95 of the 100 points.</strong> Advice &mdash; SHOULDs and MAYs &mdash; owns the remaining 5, deducted at 2 and 1 points, and capped so advice can never fail a MUST-clean server. The doctrine of the specification is encoded in the arithmetic.</p>
+          <p class="small"><strong>Not-applicable checks leave the denominator entirely.</strong> HTTP checks against a stdio server are free, not failures.</p>
+          <p class="small"><strong>Could-not-run checks stay in the denominator as unearned points.</strong> So an incomplete run can never show 100 &mdash; you cannot game the score by breaking the harness.</p>
+          <p class="small"><strong>The score is <code>null</code> when nothing was applicable.</strong> It refuses to invent a number for a vacuous run.</p>
+          <p class="small">100 means exactly: every applicable check ran, passed, and nothing was advised.</p>
+        </div></div>
+      </div>
+    </div>
+
+    <div class="callout warn reveal">
+      <h4>One caveat on the shareable score</h4>
+      <p>Results are published at <code>results/:runToken</code> and, per the router's own comment, are "deliberately readable with no session at all &mdash; the link IS the credential." That is why conformance redaction drops whole containers rather than scrubbing fields: an OAuth conformance run's raw HTTP evidence contains live access and refresh tokens. The redaction is correct <em>because</em> the sharing model is loose. If you copy the sharing model, copy the redaction with it.</p>
+    </div>
+  </div>
+</section>
+
+<section id="ship">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">09 &mdash; How it ships</div>
+      <h2>Changesets, a manual trigger, and a release almost every day</h2>
+    </div>
+
+    <div class="grid g4 reveal">
+      <div class="stat"><b class="num">1.19 d</b><span class="small">median between last 15 releases</span><span class="tiny">shortest gap: ~2 hours</span></div>
+      <div class="stat"><b class="num">100</b><span class="small">GitHub releases returned by the API</span><span class="tiny">v2.24 &rarr; v2.38 in 5 weeks</span></div>
+      <div class="stat"><b class="num">~20</b><span class="small">commits per day</span><span class="tiny">peaks of 40&ndash;41</span></div>
+      <div class="stat"><b class="num">3</b><span class="small">npm packages published in lockstep</span><span class="tiny">identical publish minute</span></div>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="card">
+        <h3>The pipeline</h3>
+        <p class="small">Changesets-based, <code>baseBranch: main</code>, <code>access: public</code>. Six internal packages are excluded from versioning. <code>release.yml</code> is <strong><code>workflow_dispatch</code> only</strong> &mdash; a human picks a scope (packages-only, inspector-only, or full), the job checks <code>changeset status</code>, gates the scope against pending changesets, versions, builds, injects Sentry source maps, publishes, then optionally triggers the macOS and Windows desktop builds by <code>workflow_call</code> and a Railway production deploy plus a backend deploy dispatch.</p>
+        <p class="small">Three packages &mdash; <code>@mcpjam/sdk</code>, <code>@mcpjam/cli</code>, <code>@mcpjam/inspector</code> &mdash; carry identical <code>time.modified</code> timestamps to the minute, confirming a single lockstep publish per run.</p>
+      </div>
+      <div class="finding warn"><div class="stripe"></div><div class="fb">
+        <div class="fmeta"><span class="pill p-warn">process</span><span class="where">CONTRIBUTING.md</span></div>
+        <h4>Contributors are never told about changesets</h4>
+        <p class="small"><code>CONTRIBUTING.md</code> contains <strong>zero</strong> mentions of "changeset". Versioning is maintainer-driven after merge &mdash; consistent with one author writing 58% of commits in the visible window, and an AI coding bot being the second-largest contributor by volume. That is not a fatal flaw, but it tells you where the institutional knowledge lives, and that outside contributions do not carry their own release metadata.</p>
+      </div></div>
+    </div>
+
+    <div class="stack reveal">
+      <h3>GitHub PR checks: the most ambitious feature in the repository</h3>
+      <p class="small col">A separate worker subsystem from the eval CLI. It claims jobs from the backend, then has to work out <em>how to build and start an arbitrary repository's MCP server</em> before it can test anything. It does that with a three-rung ladder:</p>
+      <div class="grid g3">
+        <div class="card sunk"><h4>1. Operator override</h4><p class="small">A recipe table keyed by repository. <strong>Deliberately kept empty in production</strong> &mdash; the escape hatch exists but is not used, which is the right discipline.</p></div>
+        <div class="card sunk"><h4>2. Declared config</h4><p class="small">An <code>mcpjam.yaml</code> in the target repository. The path they want people on.</p></div>
+        <div class="card sunk"><h4>3. Agentic detection</h4><p class="small">An agent reads the repository and figures out the build and start commands. 1,947 lines in the detector alone.</p></div>
+      </div>
+      <p class="small col"><code>check-plan.ts</code> models attempt phases, failure kinds and actions as an explicit state machine with a <code>PlanUnreachableError</code> &mdash; so "we could not work out how to start your server" is a distinct, reportable outcome rather than a generic failure. The whole path is 1,690 lines of sandbox plus 1,473 of worker plus 763 of resolve-and-start. It is the hardest thing in the product and the least likely to be reproduced.</p>
+    </div>
+  </div>
+</section>
+
+<section id="risk">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">10 &mdash; Risk register</div>
+      <h2>46 open issues, and two of them are remote code execution</h2>
+      <p class="lede">Issue themes, then the security picture. The security picture is the part that should change how you think about this product.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="stack">
+        <h3>Open issues by theme</h3>
+        <div class="tw">
+          <table style="min-width:340px">
+            <thead><tr><th>Theme</th><th>Count</th></tr></thead>
+            <tbody>
+              <tr><td>UI, UX and workflow</td><td class="num-td">12</td></tr>
+              <tr><td>Connectivity and protocol compliance</td><td class="num-td">11</td></tr>
+              <tr><td>Platform, distribution, providers</td><td class="num-td">7</td></tr>
+              <tr><td><strong>Security</strong></td><td class="num-td">6</td></tr>
+              <tr><td>OAuth flow bugs (functional)</td><td class="num-td">5</td></tr>
+              <tr><td>Internal dogfooding and triage</td><td class="num-td">5</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">Eleven protocol-compliance bugs against a spec that changed underneath them &mdash; a duplicate protocol-version header breaking connections with a 502, object schemas throwing, output schema not reaching the model, elicitation dialogs stuck open. The oldest open OAuth bug is <strong>252 days</strong> old. This is a team sprinting to keep up with the specification, and visibly not fully caught up.</p>
+      </div>
+      <div class="stack">
+        <h3>Documentation drift found</h3>
+        <div class="tw">
+          <table style="min-width:340px">
+            <thead><tr><th>Claim</th><th>Reality</th></tr></thead>
+            <tbody>
+              <tr><td>Architecture doc describes TanStack Query as a core state layer</td><td>Dependency absent; zero matches in client source</td></tr>
+              <tr><td>Docs say twelve predicate types</td><td>Code has thirteen</td></tr>
+              <tr><td>Docs cite <code>sdk/mcp-client-manager/index.ts</code></td><td>Real path is <code>sdk/src/&hellip;</code></td></tr>
+              <tr><td>Eval docs make no mention of telemetry</td><td>Every local run fires a PostHog event</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">Minor individually. Collectively they mean the architecture documents are a starting point for reading the code, not a substitute &mdash; which matters if you plan to learn the design from the docs rather than the source.</p>
+      </div>
+    </div>
+
+    <div class="finding crit reveal"><div class="stripe"></div><div class="fb">
+      <div class="fmeta"><span class="pill p-crit">critical</span><span class="pill p-neu">issues #2406 &middot; #1891 &middot; #2362</span><span class="where">CVE-2026-23744</span></div>
+      <h3>The trust boundary is "not being reachable", and Docker breaks it</h3>
+      <p class="small">This tool spawns arbitrary user-supplied commands. That is the product, not a bug &mdash; and a code comment in the local-machine executor says so plainly: <em>"This is NOT a sandbox. Commands run as the OS user with all of that user's permissions&hellip; it is NOT a security boundary."</em> Honest, and correct as a design statement.</p>
+      <p class="small">The problem is what protects that capability. Not authentication &mdash; <strong>network binding</strong>. Two reporters filed <code>[SECURITY]</code> issues, both say they disclosed privately first and went public after being ignored, and both are still open:</p>
+      <dl class="kv" style="grid-template-columns:74px 1fr;margin-top:2px">
+        <dt>#2406</dt><dd>Unauthenticated MCP manager and adapter HTTP endpoints &rarr; remote code execution if the connected server can run commands. Advisory GHSA-2v3v-5588-2h53, disclosed 12 Feb 2026.</dd>
+        <dt>#1891</dt><dd>The session-token endpoint's <code>Host</code>-header allowlist can be spoofed to mint a valid session token, which then unlocks <code>/api/mcp/connect</code>. Reported 20 Feb 2026.</dd>
+        <dt>#2362</dt><dd>Live proof of concept for the related advisory GHSA-232v-j27c-5pp6 (CVE-2026-23744): <code>curl</code> the connect endpoint with <code>{"command":"/bin/sh","args":["-c","sleep 10"]}</code> and time the response.</dd>
+      </dl>
+      <p class="small" style="margin-top:6px"><strong>Current state, verified in the code:</strong> the native default bind is now <code>127.0.0.1</code>, and a comment tells Docker users to publish as <code>-p 127.0.0.1:6274:6274</code>. Desktop and <code>npx</code> installs are protected. <strong>Docker still binds <code>0.0.0.0</code></strong>, because port forwarding requires it &mdash; so anyone following an older <code>docker run -p 6274:6274</code> example is exposed exactly as the proof of concept describes. No application-layer authentication was added to <code>/api/mcp/connect</code> itself. The fix is a network default, not an authorisation check.</p>
+      <p class="small">Secondary finding in the same area: the global CORS policy uses a configured allowlist, but <strong>seven individual SSE and stream routes override it with a hardcoded wildcard</strong> &mdash; in <code>servers.ts</code>, <code>subscribe.ts</code>, <code>subscriptions.ts</code>, <code>mrtr.ts</code>, <code>widget-files.ts</code> and two XAA metadata routes. Whether each leaks depends on that stream's payload, but ad-hoc wildcards sitting next to a stricter global default is a maintenance hazard on its own.</p>
+      <p class="small"><code>SECURITY.md</code> is one line: email <code>founders@mcpjam.com</code>. No PGP key, no scope, no response-time commitment, no bounty. For a tool whose core capability is arbitrary command execution, that is the wrong level of investment.</p>
+    </div></div>
+
+    <div class="grid g3 reveal">
+      <div class="card sunk"><h4>Hand-mirrored contracts</h4><p class="small">The tunnel WebSocket frame and close-code protocol is "HAND-MIRRORED" across three repositories &mdash; inspector, backend, CLI &mdash; with no shared package. The Convex record shapes are similarly mirrored by hand into TypeScript interfaces. Every one of those is a silent-drift waiting to happen.</p></div>
+      <div class="card sunk"><h4>Naming collision</h4><p class="small"><code>routes/relay.ts</code> is a <strong>PostHog analytics proxy</strong>, mounted at <code>/relay</code> to defeat ad blockers. The actual MCP tunnel machinery is <code>relay-client.ts</code> and <code>tunnel-manager.ts</code>. Anyone grepping "relay" to understand tunnelling lands on the wrong file first. I nearly did.</p></div>
+      <div class="card sunk"><h4>Swallowed errors</h4><p class="small">39 empty <code>catch {}</code> blocks in server code. Many are documented as intentionally ignoring close errors, but the pattern is repeated ad hoc rather than expressed once as a helper &mdash; so you cannot tell deliberate from accidental without reading each one.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="build">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">11 &mdash; If you are building this</div>
+      <h2>What to copy, what to skip, what to beat</h2>
+      <p class="lede">The honest read: matching MCPJam feature-for-feature is a multi-year project for a team. Beating it on the four gaps below is a quarter for two people. Pick the second one.</p>
+    </div>
+
+    <div class="grid g3 reveal">
+      <div class="card">
+        <h3 style="color:var(--ok)">Copy outright</h3>
+        <ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:7px">
+          <li><strong>Local Node process owns all connections</strong>; the UI is a thin HTTP client. Non-negotiable &mdash; it is what makes stdio inspection possible.</li>
+          <li><strong>One app factory for every deployment</strong>, switched by environment variable.</li>
+          <li><strong>Log bus with per-physical-event ids</strong> and caught listener exceptions, so a broken panel cannot fail an MCP call.</li>
+          <li><strong>The conformance scoring model</strong>: MUSTs own 95 points, not-applicable leaves the denominator, could-not-run stays unearned, <code>null</code> for vacuous runs.</li>
+          <li><strong>Predicates gate, judge advises.</strong> A predicate that cannot be evaluated fails.</li>
+          <li><strong>Error catalogue with an <code>origin</code> field</strong> that routes a failure to whoever must act.</li>
+          <li><strong>Grep-based CI guards</strong> for platform-safety invariants, run on source and on <code>dist</code>.</li>
+          <li><strong>Streamable HTTP first, automatic SSE fallback.</strong> Never make the user choose.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--warn)">Skip, at least at first</h3>
+        <ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:7px">
+          <li><strong>The tunnel relay.</strong> Three hand-mirrored protocol copies and URL-secret auth, to solve a problem <code>ngrok</code> already solves.</li>
+          <li><strong>The XAA / ID-JAG bench.</strong> 2,655 route lines for a draft standard almost nobody deploys yet.</li>
+          <li><strong>The widget renderer.</strong> Double and triple iframe nesting, a <code>window.openai</code> shim, Playwright at runtime, and two separate sandbox type systems. Enormous surface for one narrow audience.</li>
+          <li><strong>The E2B "Computer".</strong> A different product wearing the same badge.</li>
+          <li><strong>Slack and Discord surfaces.</strong> Distribution, not debugging.</li>
+          <li><strong>Agentic build detection for PR checks.</strong> Require a config file instead. Ship rung 2 of their ladder and skip rung 3.</li>
+          <li><strong>Tasks support.</strong> MCPJam itself removed it for "lack of adoption and a complete rework coming in the new spec". One host declares it.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--accent)">Beat them here</h3>
+        <ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:7px">
+          <li><strong>Determinism.</strong> Record and replay every LLM and tool interaction, keyed by a seed. There is no seed anywhere in their engine. This is the biggest single gap.</li>
+          <li><strong>Durable debug history.</strong> Their RPC log dies with the process, capped at 500 events with no byte limit and no session export. Persist it, index it, make it shareable as a file.</li>
+          <li><strong>Regression baselines.</strong> Pin a golden run, diff every subsequent run against it, fail CI natively with a non-zero exit code. They make you write the shell assertion yourself.</li>
+          <li><strong>Rug-pull detection that works.</strong> Classify tool-description changes as breaking, or at minimum surface them behind their own flag. Theirs are <code>informational</code>.</li>
+          <li><strong>Sandbox the server under test.</strong> Container or seccomp, with CPU and memory limits. They have none, and it is the recurring theme of every security report against them.</li>
+          <li><strong>Real authentication on the local API.</strong> Not a bind address.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="stack-lg reveal" style="margin-top:8px">
+      <h3>A build order that gets to useful in four phases</h3>
+      <div class="stack">
+        <div class="phase">
+          <div class="pnum">01</div>
+          <div class="stack" style="gap:7px">
+            <h4>The proxy and the log &mdash; about two weeks</h4>
+            <p class="small">Node process, official MCP client SDK, three transports with automatic fallback, spawn stdio children and drain stderr. Tee every frame to a log bus with per-event ids. Stream to a browser over SSE. Write it to disk from day one &mdash; that is your first differentiator and it costs nothing to add early. Add real bearer auth on the local API immediately; do not inherit their bind-address-as-security model.</p>
+            <div class="chips"><span class="chip acc">@modelcontextprotocol/client</span><span class="chip acc">Hono</span><span class="chip">SSE</span><span class="chip">SQLite for the log</span></div>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="pnum">02</div>
+          <div class="stack" style="gap:7px">
+            <h4>The inspector surface &mdash; about three weeks</h4>
+            <p class="small">Schema-driven forms for tools, resource reader, prompt renderer, raw-log panel with request and response paired. Then the doctor: eight sequenced checks with an <code>oauth_required</code> short-circuit. Then the error catalogue with an <code>origin</code> field &mdash; start with twenty entries covering JSON-RPC codes, transport errnos and the four common OAuth failures. Ship snapshot-and-diff here too; it is small, and classify description changes as breaking.</p>
+            <div class="chips"><span class="chip acc">JSON Schema forms</span><span class="chip acc">doctor</span><span class="chip acc">error catalogue</span><span class="chip">snapshot + diff</span></div>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="pnum">03</div>
+          <div class="stack" style="gap:7px">
+            <h4>Record, replay, evaluate &mdash; about five weeks</h4>
+            <p class="small">This is the product. Put a real model in front of the server through the Vercel AI SDK. Record every request and response &mdash; model calls and tool calls &mdash; into a cassette keyed by a seed. Replay makes eval runs deterministic and free. Then layer predicates on top: start with the eight that matter (<code>toolCalledWith</code>, <code>firstToolWas</code>, <code>toolNeverCalled</code>, <code>noToolErrors</code>, <code>responseContains</code>, <code>tokenBudgetUnder</code>, <code>turnCountUnder</code>, <code>finalAssistantMessageNonEmpty</code>). Predicates gate; add an advisory judge later. Baseline pinning and a native non-zero exit code are the features that sell this.</p>
+            <div class="chips"><span class="chip acc">cassette record/replay</span><span class="chip acc">predicates</span><span class="chip acc">baselines</span><span class="chip">JUnit XML out</span><span class="chip">OpenInference OTLP</span></div>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="pnum">04</div>
+          <div class="stack" style="gap:7px">
+            <h4>Conformance and hardening &mdash; about four weeks</h4>
+            <p class="small">Protocol conformance suite with their scoring arithmetic. Then dual-era support, which is unavoidable now: probe <code>server/discover</code>, fall back to the legacy <code>initialize</code> handshake, keep both code paths. Sandbox the spawned server in a container with resource limits &mdash; this is the thing nobody in the market has done. Only then consider a hosted tier, and if you do, encrypt tokens at rest with a per-tenant key rather than deferring it to an unpublished service.</p>
+            <div class="chips"><span class="chip acc">conformance score</span><span class="chip acc">dual-era client</span><span class="chip acc">container sandbox</span><span class="chip">per-tenant encryption</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout crit reveal">
+      <h4>The strategic read</h4>
+      <p>MCPJam's moat is not its code. It is the <strong>host compatibility catalogue</strong> &mdash; connect-time probes of sixteen real hosts, re-run every release &mdash; and the <strong>near-daily release cadence</strong> that keeps it current against a specification that just deleted its own handshake. Those are operational assets, not architectural ones, and they are expensive precisely because they are boring.</p>
+      <p>Its weakness is that everything durable, everything monetised, and everything auditable sits outside the open repository, behind either a Convex deployment you cannot see or an Enterprise Edition licence you must pay for. Combine that with two unfixed public RCE reports, a one-line security policy, and 58% of commits from a single author, and the risk of building <em>on</em> MCPJam is materially higher than the risk of building <em>beside</em> it.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap stack">
+    <hr class="soft">
+    <div class="eyebrow" style="margin-top:24px">Method</div>
+    <p class="small col">The <code>MCPJam/inspector</code> repository was cloned and read directly on 14 August 2026, with file and line references retained for every claim. Line counts, file sizes, <code>any</code>-cast counts, test-file ratios and commit statistics were produced by commands run against that clone, not estimated. Issue counts, release dates and star counts come from the GitHub API; download figures from the npm registry; both on the same date.</p>
+    <p class="small col"><strong>Two limits worth stating.</strong> The clone is shallow &mdash; 201 commits covering 5 to 14 August 2026 &mdash; so commit-velocity and contributor figures describe that ten-day window, not the project's life; releases trace back at least to June 2026. And the Convex backend, the LLM judge prompt, the token-encryption layer and the tenant-isolation rules are in a repository that is not published, so statements about them are inferences from the client-side contracts that call them, and are labelled as such throughout.</p>
+    <p class="small col">Community quotations are from public Reddit threads, attributed inline. Security findings reference the reporters' own public issue text; where the current code contradicts a report, both are stated.</p>
+    <p class="tiny" style="margin-top:18px">Companion document: <em>The MCP Field Manual</em> &mdash; the protocol itself, ground up.</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var root=document.documentElement, btn=document.getElementById('tgl');
+  function cur(){var s=root.getAttribute('data-theme'); if(s) return s;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}
+  btn.addEventListener('click',function(){root.setAttribute('data-theme',cur()==='dark'?'light':'dark');});
+
+  var prog=document.getElementById('prog');
+  function onScroll(){var h=document.documentElement.scrollHeight-window.innerHeight;
+    prog.style.width=(h>0?(window.scrollY/h)*100:0)+'%';}
+  window.addEventListener('scroll',onScroll,{passive:true}); onScroll();
+
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){
+    if(e.isIntersecting){e.target.classList.add('in'); io.unobserve(e.target);}});},
+    {rootMargin:'0px 0px -8% 0px',threshold:0.05});
+  document.querySelectorAll('.reveal').forEach(function(el){io.observe(el);});
+
+  var bio=new IntersectionObserver(function(es){es.forEach(function(e){
+    if(e.isIntersecting){
+      e.target.querySelectorAll('.bar').forEach(function(b,i){
+        setTimeout(function(){b.classList.add('on');}, i*95);});
+      bio.unobserve(e.target);}});},{threshold:0.2});
+  ['bars1','bars2'].forEach(function(id){var n=document.getElementById(id); if(n) bio.observe(n);});
+})();
+</script>
+</body>
+</html>

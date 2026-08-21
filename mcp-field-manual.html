@@ -1,0 +1,1394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The MCP Field Manual</title>
+<style>
+:root{
+  --bg:#F1F4F8; --surface:#FFFFFF; --surface-2:#F7F9FC;
+  --ink:#0F141E; --ink-2:#4A5666; --ink-3:#78849A;
+  --rule:#D7DEE8; --rule-strong:#B6C1D1;
+  --accent:#1B3ED4; --accent-2:#5A76F0; --accent-soft:#E5EAFC;
+  --added:#0C6B58; --added-soft:#DDF0EA;
+  --warn:#8E5300; --warn-soft:#FAEEDC;
+  --danger:#9E1428; --danger-soft:#FBE4E7;
+  --shadow:0 1px 2px rgba(15,20,30,.06),0 8px 24px -16px rgba(15,20,30,.18);
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0A0E15; --surface:#111823; --surface-2:#0E141D;
+    --ink:#E7ECF4; --ink-2:#98A5B9; --ink-3:#6B788D;
+    --rule:#1F2836; --rule-strong:#334055;
+    --accent:#8AA0FF; --accent-2:#6C86F5; --accent-soft:#182147;
+    --added:#4CCCAE; --added-soft:#0E2A26;
+    --warn:#E0A855; --warn-soft:#2C2113;
+    --danger:#FF8393; --danger-soft:#2E1419;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px -20px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0A0E15; --surface:#111823; --surface-2:#0E141D;
+  --ink:#E7ECF4; --ink-2:#98A5B9; --ink-3:#6B788D;
+  --rule:#1F2836; --rule-strong:#334055;
+  --accent:#8AA0FF; --accent-2:#6C86F5; --accent-soft:#182147;
+  --added:#4CCCAE; --added-soft:#0E2A26;
+  --warn:#E0A855; --warn-soft:#2C2113;
+  --danger:#FF8393; --danger-soft:#2E1419;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px -20px rgba(0,0,0,.8);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:var(--serif); font-size:18px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1160px; margin:0 auto; padding:0 28px}
+.col{max-width:68ch}
+
+h1,h2,h3,h4{font-family:var(--mono); font-weight:600; text-wrap:balance; margin:0}
+h1{font-size:clamp(2.1rem,5.4vw,3.5rem); line-height:1.04; letter-spacing:-.035em}
+h2{font-size:clamp(1.5rem,3vw,2.1rem); line-height:1.12; letter-spacing:-.028em}
+h3{font-size:1.12rem; letter-spacing:-.012em}
+h4{font-size:.95rem; letter-spacing:-.005em}
+p{margin:0}
+a{color:var(--accent); text-decoration:none; border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+a:hover{border-bottom-color:var(--accent)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:2px}
+code,.mono{font-family:var(--mono); font-size:.86em}
+code{background:var(--surface-2); border:1px solid var(--rule); border-radius:3px; padding:.06em .32em; color:var(--ink)}
+.lede{font-size:1.22rem; line-height:1.55; color:var(--ink-2)}
+.eyebrow{
+  font-family:var(--sans); font-size:.68rem; font-weight:650;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--ink-3);
+}
+.small{font-family:var(--sans); font-size:.83rem; line-height:1.5; color:var(--ink-2)}
+.tiny{font-family:var(--sans); font-size:.72rem; line-height:1.45; color:var(--ink-3)}
+.num{font-variant-numeric:tabular-nums}
+
+.topbar{
+  position:sticky; top:0; z-index:60; background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(12px); border-bottom:1px solid var(--rule);
+}
+.topbar-in{max-width:1160px;margin:0 auto;padding:9px 28px;display:flex;align-items:center;gap:20px}
+.brand{font-family:var(--mono);font-size:.8rem;font-weight:650;letter-spacing:-.01em;white-space:nowrap}
+.brand span{color:var(--accent)}
+.navlinks{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;flex:1}
+.navlinks::-webkit-scrollbar{display:none}
+.navlinks a{
+  font-family:var(--sans); font-size:.75rem; color:var(--ink-2); border:0;
+  padding:5px 9px; border-radius:5px; white-space:nowrap;
+}
+.navlinks a:hover{background:var(--accent-soft); color:var(--accent)}
+.tglr{
+  font-family:var(--sans);font-size:.72rem;background:var(--surface);color:var(--ink-2);
+  border:1px solid var(--rule);border-radius:5px;padding:5px 10px;cursor:pointer;white-space:nowrap;
+}
+.progress{position:fixed;top:0;left:0;height:2px;background:var(--accent);z-index:70;width:0}
+
+.hero{padding:74px 0 56px; border-bottom:1px solid var(--rule)}
+.hero h1{margin:16px 0 22px}
+.hero .lede{max-width:60ch}
+.specstamp{
+  display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:.72rem;
+  border:1px solid var(--rule-strong);border-radius:99px;padding:5px 13px;color:var(--ink-2);
+}
+.dot{width:6px;height:6px;border-radius:99px;background:var(--added);box-shadow:0 0 0 3px var(--added-soft)}
+
+.wire{
+  margin:44px 0 0; background:var(--surface); border:1px solid var(--rule); border-radius:10px;
+  padding:22px 24px 18px; box-shadow:var(--shadow); overflow-x:auto;
+}
+.wire-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:18px}
+.wirefig{min-width:520px}
+.wirefig .lane{stroke:var(--rule-strong);stroke-width:1}
+.wirefig .arrow{stroke:var(--accent);stroke-width:1.5;fill:none}
+.wirefig .arrowb{stroke:var(--added);stroke-width:1.5;fill:none}
+.wirefig text{font-family:var(--mono);font-size:10.5px;fill:var(--ink-2)}
+.wirefig .actor{font-size:11px;fill:var(--ink);font-weight:600}
+.pkt{fill:var(--accent)}
+.pkt2{fill:var(--added)}
+@keyframes travel{0%{opacity:0}6%{opacity:1}94%{opacity:1}100%{opacity:0}}
+.pk{animation:travel 4.4s linear infinite}
+.pk path{stroke:none}
+@media (prefers-reduced-motion:reduce){.pk,.pk *{animation:none!important;opacity:1!important}}
+
+section{padding:64px 0; border-bottom:1px solid var(--rule)}
+.sec-head{display:flex;flex-direction:column;gap:10px;margin-bottom:30px}
+.sec-head h2{max-width:32ch}
+.sec-head p{max-width:66ch}
+.stack{display:flex;flex-direction:column;gap:18px}
+.stack-lg{display:flex;flex-direction:column;gap:34px}
+
+.reveal{opacity:0;transform:translateY(14px);transition:opacity .55s ease,transform .55s ease}
+.reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:9px;padding:20px 22px;display:flex;flex-direction:column;gap:10px}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(268px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(212px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(158px,1fr))}
+
+.stat{background:var(--surface);border:1px solid var(--rule);border-radius:9px;padding:16px 18px;display:flex;flex-direction:column;gap:5px}
+.stat b{font-family:var(--mono);font-size:1.68rem;font-weight:600;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+.stat .tiny{margin-top:2px}
+
+.tw{overflow-x:auto;border:1px solid var(--rule);border-radius:9px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-family:var(--sans);font-size:.82rem;min-width:560px}
+th{
+  text-align:left;font-weight:650;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);padding:11px 14px;border-bottom:1px solid var(--rule-strong);white-space:nowrap;
+  background:var(--surface-2);position:sticky;top:0;
+}
+td{padding:10px 14px;border-bottom:1px solid var(--rule);vertical-align:top;color:var(--ink-2);line-height:1.45}
+tr:last-child td{border-bottom:0}
+td:first-child{color:var(--ink);font-weight:550}
+td .mono,th .mono{font-size:.95em}
+.num-td{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+.pill{
+  display:inline-block;font-family:var(--sans);font-size:.66rem;font-weight:650;letter-spacing:.05em;
+  text-transform:uppercase;padding:2px 7px;border-radius:4px;white-space:nowrap;
+  border:1px solid transparent;
+}
+.p-must{background:var(--danger-soft);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 24%,transparent)}
+.p-should{background:var(--warn-soft);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 26%,transparent)}
+.p-may{background:var(--surface-2);color:var(--ink-3);border-color:var(--rule)}
+.p-add{background:var(--added-soft);color:var(--added);border-color:color-mix(in srgb,var(--added) 24%,transparent)}
+.p-dep{background:var(--warn-soft);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 26%,transparent)}
+.p-rm{background:var(--danger-soft);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 24%,transparent)}
+.p-new{background:var(--accent-soft);color:var(--accent);border-color:color-mix(in srgb,var(--accent) 24%,transparent)}
+
+.seq{background:var(--surface);border:1px solid var(--rule);border-radius:9px;padding:0;overflow:hidden}
+.seq-h{padding:14px 18px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--surface-2)}
+.seq-h h4{font-size:.86rem}
+.seq-body{padding:18px 18px 20px;display:flex;flex-direction:column;gap:0}
+.seq-actors{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-bottom:6px}
+.seq-actors div{
+  font-family:var(--mono);font-size:.72rem;font-weight:650;text-align:center;color:var(--ink);
+  padding:6px 4px;border:1px solid var(--rule-strong);border-radius:5px;background:var(--surface-2);
+}
+.seq-actors div:first-child{margin-right:8px}
+.seq-actors div:last-child{margin-left:8px}
+.msg{display:grid;grid-template-columns:1fr;padding:7px 0;position:relative}
+.msg .bar{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:.7rem;color:var(--ink-2)}
+.msg .line{flex:1;height:1px;background:var(--rule-strong);position:relative}
+.msg.r .line::after{content:"";position:absolute;right:0;top:-3px;border:3.5px solid transparent;border-left-color:var(--rule-strong)}
+.msg.l .line::before{content:"";position:absolute;left:0;top:-3px;border:3.5px solid transparent;border-right-color:var(--rule-strong)}
+.msg .lbl{font-family:var(--mono);font-size:.71rem;color:var(--ink);white-space:nowrap}
+.msg .side{font-size:.64rem;color:var(--ink-3);font-family:var(--sans)}
+.msg.gone .lbl{color:var(--ink-3);text-decoration:line-through}
+.msg.gone .line{background:var(--rule);border-top:1px dashed var(--rule-strong);height:0}
+.msg.hi .lbl{color:var(--accent)}
+.msg.hi .line{background:var(--accent)}
+.msg.hi.r .line::after{border-left-color:var(--accent)}
+.msg.hi.l .line::before{border-right-color:var(--accent)}
+.seq-note{
+  font-family:var(--sans);font-size:.74rem;color:var(--ink-2);background:var(--surface-2);
+  border-left:2px solid var(--rule-strong);padding:7px 11px;margin:8px 0;border-radius:0 4px 4px 0;
+}
+.loopwrap{border:1px dashed var(--rule-strong);border-radius:5px;padding:6px 10px 2px;margin:8px 0;position:relative}
+.loopwrap .looplbl{
+  position:absolute;top:-9px;left:9px;background:var(--surface);padding:0 6px;
+  font-family:var(--sans);font-size:.62rem;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)
+}
+
+.tl{display:flex;flex-direction:column;gap:0;position:relative;padding-left:0}
+.tlrow{display:grid;grid-template-columns:132px 1fr;gap:0}
+.tlgut{position:relative;padding-right:22px}
+.tlgut::before{content:"";position:absolute;right:0;top:0;bottom:0;width:1px;background:var(--rule-strong)}
+.tlrow:first-child .tlgut::before{top:16px}
+.tlrow:last-child .tlgut::before{bottom:calc(100% - 16px)}
+.tlgut .knob{
+  position:absolute;right:-4.5px;top:11px;width:9px;height:9px;border-radius:99px;
+  background:var(--surface);border:2px solid var(--accent);
+}
+.tlrow.major .tlgut .knob{background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+.tlgut .ver{font-family:var(--mono);font-size:.86rem;font-weight:650;letter-spacing:-.02em;display:block;text-align:right;padding-top:3px}
+.tlgut .gap{font-family:var(--sans);font-size:.68rem;color:var(--ink-3);display:block;text-align:right;margin-top:2px}
+.tlbody{padding:0 0 30px 24px;display:flex;flex-direction:column;gap:11px}
+.tlrow:last-child .tlbody{padding-bottom:0}
+.tlbody h3{font-size:1rem}
+.chg{display:flex;flex-direction:column;gap:5px}
+.chg-row{display:grid;grid-template-columns:78px 1fr;gap:10px;align-items:start;font-family:var(--sans);font-size:.81rem;color:var(--ink-2);line-height:1.5}
+
+.bars{display:flex;flex-direction:column;gap:9px}
+.bar{display:grid;grid-template-columns:96px 1fr 78px;gap:12px;align-items:center;font-family:var(--mono);font-size:.74rem}
+.bar .track{height:20px;background:var(--surface-2);border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+.bar .fill{height:100%;background:linear-gradient(90deg,var(--accent-2),var(--accent));width:0;transition:width 1.1s cubic-bezier(.22,.9,.24,1)}
+.bar.on .fill{width:var(--w)}
+.bar .v{text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:reduce){.bar .fill{transition:none}}
+
+.callout{border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:0 8px 8px 0;padding:16px 20px;display:flex;flex-direction:column;gap:8px}
+.callout.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+.callout.danger{border-left-color:var(--danger);background:var(--danger-soft)}
+.callout h4{font-size:.88rem}
+.callout p{font-family:var(--sans);font-size:.85rem;line-height:1.55;color:var(--ink-2)}
+
+.quotes{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(292px,1fr))}
+blockquote{
+  margin:0;background:var(--surface);border:1px solid var(--rule);border-left:3px solid var(--rule-strong);
+  border-radius:0 8px 8px 0;padding:16px 18px;display:flex;flex-direction:column;gap:9px;
+}
+blockquote p{font-size:.98rem;line-height:1.52;color:var(--ink)}
+blockquote cite{font-family:var(--sans);font-size:.72rem;font-style:normal;color:var(--ink-3)}
+
+pre{
+  margin:0;background:var(--surface-2);border:1px solid var(--rule);border-radius:8px;
+  padding:15px 17px;overflow-x:auto;font-family:var(--mono);font-size:.78rem;line-height:1.6;color:var(--ink-2);
+}
+pre b{color:var(--accent);font-weight:600}
+pre i{color:var(--added);font-style:normal}
+pre u{color:var(--ink-3);text-decoration:none}
+
+.tcard{background:var(--surface);border:1px solid var(--rule);border-radius:9px;overflow:hidden;display:flex;flex-direction:column}
+.tcard-h{padding:14px 17px;border-bottom:1px solid var(--rule);display:flex;flex-direction:column;gap:6px;background:var(--surface-2)}
+.tcard-b{padding:15px 17px;display:flex;flex-direction:column;gap:11px;flex:1}
+.kv{display:grid;grid-template-columns:88px 1fr;gap:10px;font-family:var(--sans);font-size:.79rem;line-height:1.45}
+.kv dt{color:var(--ink-3);font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;font-weight:650;padding-top:2px}
+.kv dd{margin:0;color:var(--ink-2)}
+dl{margin:0}
+
+.chain{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch}
+.chain .node{
+  background:var(--surface);border:1px solid var(--rule);border-radius:7px;padding:9px 13px;
+  font-family:var(--mono);font-size:.74rem;display:flex;flex-direction:column;gap:3px;min-width:104px;
+}
+.chain .node small{font-family:var(--sans);font-size:.64rem;color:var(--ink-3)}
+.chain .ar{display:flex;align-items:center;color:var(--rule-strong);font-size:1rem;font-family:var(--mono)}
+.chain .node.fin{border-color:var(--added);background:var(--added-soft)}
+.chain .node.dead{border-style:dashed;color:var(--ink-3)}
+
+footer{padding:52px 0 76px}
+.srcs{display:grid;gap:6px;grid-template-columns:repeat(auto-fit,minmax(268px,1fr))}
+.srcs a{font-family:var(--sans);font-size:.78rem;border:0;color:var(--ink-2)}
+.srcs a:hover{color:var(--accent)}
+hr.soft{border:0;border-top:1px solid var(--rule);margin:0}
+@media (max-width:640px){
+  body{font-size:17px}
+  .tlrow{grid-template-columns:1fr}
+  .tlgut{padding-right:0;padding-bottom:8px}
+  .tlgut::before{display:none}
+  .tlgut .knob{display:none}
+  .tlgut .ver,.tlgut .gap{text-align:left}
+  .tlbody{padding-left:0;border-left:1px solid var(--rule);padding-left:14px}
+  .chg-row{grid-template-columns:1fr;gap:2px}
+  .bar{grid-template-columns:74px 1fr 62px}
+}
+</style>
+</head>
+<body>
+
+<div class="progress" id="prog"></div>
+
+<div class="topbar">
+  <div class="topbar-in">
+    <div class="brand">MCP&nbsp;<span>/</span>&nbsp;field manual</div>
+    <nav class="navlinks">
+      <a href="#model">Model</a>
+      <a href="#wire">Wire</a>
+      <a href="#lifecycle">Lifecycle</a>
+      <a href="#primitives">Primitives</a>
+      <a href="#transports">Transports</a>
+      <a href="#history">History</a>
+      <a href="#governance">Governance</a>
+      <a href="#auth">Auth</a>
+      <a href="#security">Security</a>
+      <a href="#clients">Clients</a>
+      <a href="#testing">Ecosystem</a>
+      <a href="#broken">What's broken</a>
+    </nav>
+    <button class="tglr" id="tgl" type="button">Theme</button>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="specstamp"><span class="dot"></span> Current spec revision <b class="mono">2026-07-28</b> &middot; verified 14 Aug 2026</div>
+    <h1>MCP is a small protocol<br>with a large blast radius.</h1>
+    <p class="lede">The wire format takes an afternoon to learn. The version churn, the auth stack, the client-support gaps and the security model are what actually cost you months. This manual covers all of it, ground up, with every claim traced to the specification text or a primary source.</p>
+
+    <div class="wire reveal">
+      <div class="wire-head">
+        <div>
+          <div class="eyebrow">Figure 1 &mdash; one tool call, modern MCP</div>
+          <p class="small" style="margin-top:4px">No handshake. Every request carries its own version and capabilities.</p>
+        </div>
+        <div class="tiny">Streamable&nbsp;HTTP &middot; 2026-07-28</div>
+      </div>
+      <svg class="wirefig" viewBox="0 0 560 168" width="100%" height="168" role="img" aria-label="Sequence: client posts tools slash call with meta, server streams back a result">
+        <text class="actor" x="52" y="12" text-anchor="middle">CLIENT</text>
+        <text class="actor" x="508" y="12" text-anchor="middle">SERVER</text>
+        <line class="lane" x1="52" y1="22" x2="52" y2="160"/>
+        <line class="lane" x1="508" y1="22" x2="508" y2="160"/>
+
+        <path class="arrow" d="M56 48 H500"/>
+        <path class="arrow" d="M494 43 L502 48 L494 53" />
+        <text x="70" y="42">POST /mcp &nbsp;Mcp-Method: tools/call</text>
+        <text x="70" y="64" fill="currentColor" opacity=".62">_meta: protocolVersion + clientCapabilities</text>
+
+        <path class="arrowb" d="M504 100 H60"/>
+        <path class="arrowb" d="M66 95 L58 100 L66 105"/>
+        <text x="70" y="94" text-anchor="start">200 &nbsp;text/event-stream</text>
+        <text x="70" y="116" fill="currentColor" opacity=".62">resultType: "complete" &nbsp;+&nbsp; ttlMs, cacheScope</text>
+
+        <text x="70" y="150" fill="currentColor" opacity=".5">connection closes &mdash; server keeps no state</text>
+
+        <g class="pk"><circle class="pkt" r="3.4"><animateMotion dur="4.4s" repeatCount="indefinite" keyPoints="0;0;1;1;1" keyTimes="0;0.06;0.44;0.5;1" calcMode="linear" path="M56 48 H500"/></circle></g>
+        <g class="pk"><circle class="pkt2" r="3.4"><animateMotion dur="4.4s" repeatCount="indefinite" keyPoints="0;0;0;1;1" keyTimes="0;0.5;0.56;0.94;1" calcMode="linear" path="M504 100 H60"/></circle></g>
+      </svg>
+    </div>
+  </div>
+</header>
+
+<section id="model">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">01 &mdash; The mental model</div>
+      <h2>Three parties, six verbs, one bad name</h2>
+      <p class="lede">MCP stands for Model Context Protocol. Ignore the name. It is a way for a program that talks to a language model to borrow tools and data from other programs, without either side knowing anything about the other in advance.</p>
+    </div>
+
+    <div class="col stack reveal">
+      <p>Think of it as USB for model tools, which is the analogy everybody reaches for, and it is a decent one as far as it goes. But USB has one useful property MCP lacks: when you plug in a USB device, you do not have to care which laptop you own. In MCP you very much do. Half of this manual exists because of that gap.</p>
+      <p>Three roles matter, and people mix them up constantly:</p>
+    </div>
+
+    <div class="grid g3 reveal">
+      <div class="card">
+        <div class="eyebrow">Role</div>
+        <h3>Host</h3>
+        <p class="small">The application a person actually uses: Claude Code, Cursor, ChatGPT, your own agent. It owns the model, the conversation, and the consent decisions. It is the only party a human trusts.</p>
+      </div>
+      <div class="card">
+        <div class="eyebrow">Role</div>
+        <h3>Client</h3>
+        <p class="small">The connector inside the host, one per server. It speaks the protocol. When people say "Cursor supports MCP" they mean Cursor ships a client, and that client's gaps are what you fight.</p>
+      </div>
+      <div class="card">
+        <div class="eyebrow">Role</div>
+        <h3>Server</h3>
+        <p class="small">Your code. Exposes tools, resources and prompts. Runs as a local subprocess over stdio, or as a web service over HTTP. This is the part you write and the part nobody can see inside.</p>
+      </div>
+    </div>
+
+    <div class="col stack reveal">
+      <p>The server offers three things and the client offers three things back. That symmetry was the elegant part of the original design, and as of the <code>2026-07-28</code> revision it has been half dismantled &mdash; the three client-side features are all deprecated or restructured. More on that below, because it is the single biggest thing to know about MCP right now.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="card">
+        <div class="eyebrow" style="color:var(--accent)">Server offers &rarr;</div>
+        <dl class="kv" style="grid-template-columns:104px 1fr;gap:10px 12px">
+          <dt>Tools</dt><dd>Functions the model may call. <code>tools/list</code>, <code>tools/call</code>. Model-controlled.</dd>
+          <dt>Resources</dt><dd>Readable data addressed by URI. <code>resources/list</code>, <code>resources/read</code>. Application-controlled.</dd>
+          <dt>Prompts</dt><dd>Named, parameterised message templates. <code>prompts/list</code>, <code>prompts/get</code>. User-controlled.</dd>
+        </dl>
+      </div>
+      <div class="card">
+        <div class="eyebrow" style="color:var(--warn)">Client offers &larr; <span class="pill p-dep" style="margin-left:6px">mostly deprecated</span></div>
+        <dl class="kv" style="grid-template-columns:104px 1fr;gap:10px 12px">
+          <dt>Sampling</dt><dd>Server borrows the host's model. <code>sampling/createMessage</code>. Deprecated 2026-07-28.</dd>
+          <dt>Elicitation</dt><dd>Server asks the human a question mid-call. <code>elicitation/create</code>. Alive and growing.</dd>
+          <dt>Roots</dt><dd>Which directories are in scope. <code>roots/list</code>. Deprecated; never was access control.</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="callout reveal">
+      <h4>The one distinction that saves you a week</h4>
+      <p>Tools are <em>model-controlled</em>: the model decides when to fire them. Resources are <em>application-controlled</em>: the host decides what to attach. Prompts are <em>user-controlled</em>: a person picks them from a menu. If you expose a slow, expensive operation as a resource because "it is just data", nothing will ever read it. If you expose reference data as a tool, the model will burn turns fetching it. Almost every disappointing MCP server has this backwards.</p>
+    </div>
+  </div>
+</section>
+
+<section id="wire">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">02 &mdash; The wire</div>
+      <h2>JSON-RPC 2.0, minus the parts people abused</h2>
+      <p class="lede">Three message shapes, a frozen error-code range, and no batching. That is the entire transport-independent layer.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="stack">
+        <pre><u>// request &mdash; id MUST be string or integer, MUST be unique per connection</u>
+{ "jsonrpc":"2.0", "id":7, "method":<b>"tools/call"</b>,
+  "params":{ "name":"search", "arguments":{...},
+    "_meta":{ <i>"io.modelcontextprotocol/protocolVersion"</i>:"2026-07-28",
+              <i>"io.modelcontextprotocol/clientCapabilities"</i>:{...} } } }
+
+<u>// response &mdash; every result now carries resultType</u>
+{ "jsonrpc":"2.0", "id":7,
+  "result":{ <b>"resultType"</b>:"complete", "content":[...] } }
+
+<u>// notification &mdash; MUST NOT include an id</u>
+{ "jsonrpc":"2.0", "method":"notifications/progress",
+  "params":{ "progressToken":"t1", "progress":40, "total":100 } }</pre>
+        <p class="tiny">Shapes per <span class="mono">docs/specification/2026-07-28/basic/index.mdx</span> lines 46&ndash;85, 172.</p>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <h4>Batching: removed, twice over</h4>
+          <p class="small">Arrays of JSON-RPC messages were added in <code>2025-03-26</code> and deleted in <code>2025-06-18</code> ("Remove support for JSON-RPC batching", PR&nbsp;#416). The <code>2026-07-28</code> schema has no array variant of <code>JSONRPCMessage</code>. If a library still emits batches, it is out of spec.</p>
+        </div>
+        <div class="card">
+          <h4><code>resultType</code>: the new fork in every response</h4>
+          <p class="small">A result is <code>"complete"</code>, <code>"input_required"</code>, or extension-defined. A missing <code>resultType</code> from a legacy server MUST be read as <code>"complete"</code>. This one field is how the protocol replaced server-initiated requests &mdash; see Lifecycle.</p>
+        </div>
+        <div class="card">
+          <h4>Message size limit</h4>
+          <p class="small"><strong>Not specified.</strong> There is no stated cap anywhere in the spec or schema. Your practical limit is the model's context window and whatever your HTTP stack allows, and both will bite you before the protocol does.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="stack reveal">
+      <h3>Error codes, and the range policy that finally fixed them</h3>
+      <p class="small col">MCP spent two years allocating codes ad hoc in the <code>-32000</code> block. The <code>2026-07-28</code> revision froze that block and opened a governed one.</p>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Code</th><th>Name</th><th>Origin</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">-32700</td><td>Parse error</td><td>JSON-RPC 2.0</td><td>Malformed JSON.</td></tr>
+            <tr><td class="mono">-32600</td><td>Invalid request</td><td>JSON-RPC 2.0</td><td>Not a valid request object.</td></tr>
+            <tr><td class="mono">-32601</td><td>Method not found</td><td>JSON-RPC 2.0</td><td>Also the correct answer for an un-negotiated capability.</td></tr>
+            <tr><td class="mono">-32602</td><td>Invalid params</td><td>JSON-RPC 2.0</td><td>Now <em>also</em> resource-not-found, replacing <code>-32002</code>.</td></tr>
+            <tr><td class="mono">-32603</td><td>Internal error</td><td>JSON-RPC 2.0</td><td>Server fault.</td></tr>
+            <tr><td class="mono">-32002</td><td>Resource not found</td><td>Legacy MCP</td><td><span class="pill p-dep">superseded</span> Clients SHOULD still accept it from old servers.</td></tr>
+            <tr><td class="mono">-32020</td><td>HeaderMismatch</td><td>2026-07-28</td><td><span class="pill p-new">new</span> HTTP header disagrees with body. Returned as <code>400</code>.</td></tr>
+            <tr><td class="mono">-32021</td><td>MissingRequiredClientCapability</td><td>2026-07-28</td><td><span class="pill p-new">new</span> Server needs a capability the client did not declare.</td></tr>
+            <tr><td class="mono">-32022</td><td>UnsupportedProtocolVersion</td><td>2026-07-28</td><td><span class="pill p-new">new</span> Carries a <code>supported</code> list so the client can retry.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout warn reveal">
+        <h4>Range policy</h4>
+        <p><code>-32000</code>&nbsp;to&nbsp;<code>-32019</code> is legacy and closed: "New codes MUST NOT be allocated" there. <code>-32020</code>&nbsp;to&nbsp;<code>-32099</code> is reserved for the specification itself. Anything you invent goes outside both. This is a small thing that will keep your server valid for years.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="lifecycle">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">03 &mdash; Lifecycle</div>
+      <h2>There are now two MCPs, and you must support both</h2>
+      <p class="lede">Every revision through <code>2025-11-25</code> is stateful: a session, a handshake, a session id header. <code>2026-07-28</code> deletes all three. This is not a version bump. It is a different protocol wearing the same name.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="seq">
+        <div class="seq-h">
+          <h4>Legacy era &mdash; up to 2025-11-25</h4>
+          <span class="pill p-dep">stateful</span>
+        </div>
+        <div class="seq-body">
+          <div class="seq-actors"><div>CLIENT</div><div>SERVER</div></div>
+          <div class="msg r hi"><div class="bar"><span class="lbl">initialize</span><span class="line"></span></div><span class="side">client sends its highest supported version</span></div>
+          <div class="msg l hi"><div class="bar"><span class="line"></span><span class="lbl">InitializeResult</span></div><span class="side">server answers with a version + its capabilities</span></div>
+          <div class="msg r"><div class="bar"><span class="lbl">notifications/initialized</span><span class="line"></span></div><span class="side">only now may other requests be sent</span></div>
+          <div class="seq-note">On HTTP, every later request MUST carry <code>MCP-Protocol-Version</code> and echo the <code>Mcp-Session-Id</code> the server minted.</div>
+          <div class="loopwrap">
+            <span class="looplbl">session</span>
+            <div class="msg r"><div class="bar"><span class="lbl">tools/call, resources/read, &hellip;</span><span class="line"></span></div></div>
+            <div class="msg l"><div class="bar"><span class="line"></span><span class="lbl">sampling/createMessage &nbsp;<span class="tiny">(server asks client)</span></span></div></div>
+          </div>
+          <div class="msg r"><div class="bar"><span class="lbl">ping / logging&#8203;/setLevel</span><span class="line"></span></div><span class="side">keep-alive and log control both exist</span></div>
+        </div>
+      </div>
+
+      <div class="seq">
+        <div class="seq-h">
+          <h4>Modern era &mdash; 2026-07-28</h4>
+          <span class="pill p-add">stateless</span>
+        </div>
+        <div class="seq-body">
+          <div class="seq-actors"><div>CLIENT</div><div>SERVER</div></div>
+          <div class="msg r"><div class="bar"><span class="lbl">server/discover <span class="tiny">(optional)</span></span><span class="line"></span></div><span class="side">servers MUST implement it; clients MAY skip it</span></div>
+          <div class="msg l"><div class="bar"><span class="line"></span><span class="lbl">DiscoverResult</span></div><span class="side">supportedVersions, capabilities, ttlMs, cacheScope</span></div>
+          <div class="msg gone r"><div class="bar"><span class="lbl">initialize</span><span class="line"></span></div><span class="side">removed</span></div>
+          <div class="msg gone r"><div class="bar"><span class="lbl">notifications/initialized</span><span class="line"></span></div><span class="side">removed</span></div>
+          <div class="seq-note">Version and capabilities now ride in <code>params._meta</code> on <em>every single request</em>. Miss a required field and you get <code>-32602</code>.</div>
+          <div class="msg r hi"><div class="bar"><span class="lbl">tools/call &nbsp;+ _meta</span><span class="line"></span></div></div>
+          <div class="msg l hi"><div class="bar"><span class="line"></span><span class="lbl">resultType: "input_required"</span></div><span class="side">MRTR: the new way a server asks for anything</span></div>
+          <div class="msg gone r"><div class="bar"><span class="lbl">ping &nbsp;&middot;&nbsp; logging/setLevel</span><span class="line"></span></div><span class="side">removed</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col stack reveal">
+      <h3>MRTR: the pattern that replaced server-initiated requests</h3>
+      <p>In the old protocol, a server could turn around and send the client a request &mdash; that is how sampling, elicitation and roots worked. That required a duplex, stateful connection. Statelessness killed it.</p>
+      <p>The replacement is called <strong>MRTR</strong>, Multi Round-Trip Requests. Instead of asking, the server <em>returns early</em>: a result with <code>resultType: "input_required"</code> and a list of <code>inputRequests</code>. The client satisfies them and re-sends the original request with the answers attached. The spec is blunt about it: "The previous pattern &hellip; is no longer supported. This is a breaking change."</p>
+    </div>
+
+    <div class="seq reveal">
+      <div class="seq-h"><h4>Figure 2 &mdash; MRTR round trip: a tool that needs the human</h4><span class="pill p-new">2026-07-28</span></div>
+      <div class="seq-body">
+        <div class="seq-actors"><div>CLIENT</div><div>SERVER</div></div>
+        <div class="msg r hi"><div class="bar"><span class="lbl">tools/call &nbsp;{ name:"deploy" }</span><span class="line"></span></div></div>
+        <div class="msg l hi"><div class="bar"><span class="line"></span><span class="lbl">{ resultType:"input_required", inputRequests:[elicitation], requestState }</span></div></div>
+        <div class="seq-note">The server has now finished and forgotten you. <code>requestState</code> is the opaque token that lets it resume.</div>
+        <div class="msg r"><div class="bar"><span class="lbl">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ask the human &nbsp;&#8635;</span><span class="line" style="background:transparent;border-top:1px dashed var(--rule-strong)"></span></div><span class="side">client renders a form, gets consent</span></div>
+        <div class="msg r hi"><div class="bar"><span class="lbl">tools/call &nbsp;+ requestState + answers</span><span class="line"></span></div></div>
+        <div class="msg l hi"><div class="bar"><span class="line"></span><span class="lbl">{ resultType:"complete", content:[&hellip;] }</span></div></div>
+      </div>
+    </div>
+
+    <div class="callout danger reveal">
+      <h4>If you have shipped MCP code, read this line twice</h4>
+      <p>Any client or server written against <code>2025-06-18</code> or <code>2025-11-25</code> semantics &mdash; <code>initialize</code> then <code>initialized</code>, a session id, <code>resources/subscribe</code>, a server that calls <code>sampling/createMessage</code> &mdash; is <strong>incompatible</strong> with <code>2026-07-28</code>. There is no graceful degradation built in. You detect the era per server (probe <code>server/discover</code>; a legacy server errors or times out) and you keep two code paths. Every serious MCP tool now ships exactly this dual-era branch.</p>
+    </div>
+
+    <div class="stack reveal">
+      <h3>Capability negotiation</h3>
+      <p class="small col">Capabilities are declared per-request now (client side, in <code>_meta</code>) and in <code>DiscoverResult</code> (server side). A capability you do not declare is a method the other side must not call.</p>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Side</th><th>Capability</th><th>Sub-flags</th><th>Unlocks</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>Client</td><td class="mono">experimental</td><td>free-form map</td><td>Anything non-standard.</td><td><span class="pill p-may">stable</span></td></tr>
+            <tr><td>Client</td><td class="mono">roots</td><td>&mdash;</td><td><code>roots/list</code>. Informational only, never access control.</td><td><span class="pill p-dep">deprecated</span></td></tr>
+            <tr><td>Client</td><td class="mono">sampling</td><td class="mono">context, tools</td><td><code>sampling/createMessage</code>; <code>tools</code> enables tool use inside sampling.</td><td><span class="pill p-dep">deprecated</span></td></tr>
+            <tr><td>Client</td><td class="mono">elicitation</td><td class="mono">form, url</td><td>Empty object == <code>form</code> only. <code>url</code> is for OAuth/payment side-trips.</td><td><span class="pill p-add">growing</span></td></tr>
+            <tr><td>Client</td><td class="mono">extensions</td><td>keyed by id</td><td>e.g. <code>io.modelcontextprotocol/tasks</code>, <code>&hellip;/ui</code>.</td><td><span class="pill p-new">new</span></td></tr>
+            <tr><td>Server</td><td class="mono">tools</td><td class="mono">listChanged</td><td><code>tools/list</code>, <code>tools/call</code>; change notifications.</td><td><span class="pill p-may">stable</span></td></tr>
+            <tr><td>Server</td><td class="mono">resources</td><td class="mono">subscribe, listChanged</td><td>Reads, templates, per-URI update streams.</td><td><span class="pill p-may">stable</span></td></tr>
+            <tr><td>Server</td><td class="mono">prompts</td><td class="mono">listChanged</td><td><code>prompts/list</code>, <code>prompts/get</code>.</td><td><span class="pill p-may">stable</span></td></tr>
+            <tr><td>Server</td><td class="mono">completions</td><td>&mdash;</td><td><code>completion/complete</code> &mdash; argument autocomplete.</td><td><span class="pill p-may">stable</span></td></tr>
+            <tr><td>Server</td><td class="mono">logging</td><td>&mdash;</td><td><code>notifications/message</code>, now per-request opt-in only.</td><td><span class="pill p-dep">deprecated</span></td></tr>
+            <tr><td>Server</td><td class="mono">extensions</td><td>keyed by id</td><td>Tasks, UI/Apps, anything out of core.</td><td><span class="pill p-new">new</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tiny">Capability shapes from <span class="mono">schema/2026-07-28/schema.ts</span> lines 716&ndash;883.</p>
+    </div>
+  </div>
+</section>
+
+<section id="primitives">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">04 &mdash; Method reference</div>
+      <h2>Every method, and whether it still exists</h2>
+      <p class="lede">One table you can keep open while you build. Columns are what you need at 2am.</p>
+    </div>
+
+    <div class="tw reveal">
+      <table style="min-width:760px">
+        <thead><tr><th>Method</th><th>Direction</th><th>Key params</th><th>Returns</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">server/discover</td><td>C&rarr;S</td><td>&mdash;</td><td><code>supportedVersions</code>, <code>capabilities</code>, <code>instructions</code>, <code>ttlMs</code>, <code>cacheScope</code></td><td><span class="pill p-new">new &middot; server MUST</span></td></tr>
+          <tr><td class="mono">tools/list</td><td>C&rarr;S</td><td><code>cursor?</code></td><td><code>tools[]</code>, <code>nextCursor?</code>, cache hints</td><td><span class="pill p-may">stable</span></td></tr>
+          <tr><td class="mono">tools/call</td><td>C&rarr;S</td><td><code>name</code>, <code>arguments</code></td><td><code>content[]</code>, <code>structuredContent?</code>, <code>isError?</code></td><td><span class="pill p-may">stable</span></td></tr>
+          <tr><td class="mono">resources/list</td><td>C&rarr;S</td><td><code>cursor?</code></td><td><code>resources[]</code></td><td><span class="pill p-may">stable</span></td></tr>
+          <tr><td class="mono">resources/read</td><td>C&rarr;S</td><td><code>uri</code></td><td><code>contents[]</code> &mdash; MAY be several</td><td><span class="pill p-may">stable</span></td></tr>
+          <tr><td class="mono">resources/templates/list</td><td>C&rarr;S</td><td><code>cursor?</code></td><td>RFC&nbsp;6570 URI templates</td><td><span class="pill p-may">stable</span></td></tr>
+          <tr><td class="mono">resources/subscribe</td><td>C&rarr;S</td><td><code>uri</code></td><td>&mdash;</td><td><span class="pill p-rm">removed 2026-07-28</span></td></tr>
+          <tr><td class="mono">subscriptions/listen</td><td>C&rarr;S</td><td><code>notifications:{ resourceSubscriptions[], toolsListChanged, &hellip; }</code></td><td>long-lived SSE stream</td><td><span class="pill p-new">new</span></td></tr>
+          <tr><td class="mono">prompts/list</td><td>C&rarr;S</td><td><code>cursor?</code></td><td><code>prompts[]</code></td><td><span class="pill p-may">stable</span></td></tr>
+          <tr><td class="mono">prompts/get</td><td>C&rarr;S</td><td><code>name</code>, <code>arguments</code></td><td><code>messages[]</code>, <code>description?</code></td><td><span class="pill p-may">stable</span></td></tr>
+          <tr><td class="mono">completion/complete</td><td>C&rarr;S</td><td><code>ref</code>, <code>argument</code>, <code>context?</code></td><td><code>values[]</code> (max 100), <code>hasMore</code></td><td><span class="pill p-may">stable</span></td></tr>
+          <tr><td class="mono">sampling/createMessage</td><td>S&rarr;C</td><td><code>messages</code>, <code>tools?</code>, <code>toolChoice?</code></td><td>a model completion</td><td><span class="pill p-dep">deprecated &middot; via MRTR only</span></td></tr>
+          <tr><td class="mono">elicitation/create</td><td>S&rarr;C</td><td><code>mode: form | url</code>, flat schema</td><td>user's answer</td><td><span class="pill p-add">via MRTR only</span></td></tr>
+          <tr><td class="mono">roots/list</td><td>S&rarr;C</td><td>&mdash;</td><td><code>roots[]</code></td><td><span class="pill p-dep">deprecated</span></td></tr>
+          <tr><td class="mono">initialize</td><td>C&rarr;S</td><td><code>protocolVersion</code>, <code>capabilities</code></td><td><code>InitializeResult</code></td><td><span class="pill p-rm">removed 2026-07-28</span></td></tr>
+          <tr><td class="mono">ping</td><td>both</td><td>&mdash;</td><td>empty</td><td><span class="pill p-rm">removed 2026-07-28</span></td></tr>
+          <tr><td class="mono">logging/setLevel</td><td>C&rarr;S</td><td><code>level</code></td><td>empty</td><td><span class="pill p-rm">removed</span> &mdash; now per-request <code>_meta</code></td></tr>
+          <tr><td class="mono">notifications/progress</td><td>both</td><td><code>progressToken</code>, <code>progress</code>, <code>total?</code></td><td>&mdash;</td><td><span class="pill p-may">stable</span></td></tr>
+          <tr><td class="mono">notifications/cancelled</td><td>C&rarr;S</td><td><code>requestId</code>, <code>reason?</code></td><td>&mdash;</td><td><span class="pill p-may">stdio only</span></td></tr>
+          <tr><td class="mono">notifications/message</td><td>S&rarr;C</td><td><code>level</code>, <code>data</code></td><td>&mdash;</td><td><span class="pill p-dep">opt-in per request</span></td></tr>
+          <tr><td class="mono">tasks/get &middot; tasks/update</td><td>C&rarr;S</td><td><code>taskId</code></td><td><code>working | input_required | completed | failed | cancelled</code></td><td><span class="pill p-new">extension, not core</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid g3 reveal">
+      <div class="card">
+        <h4>Tool result content types</h4>
+        <p class="small"><code>text</code>, <code>image</code>, <code>audio</code>, <code>resource_link</code> (a pointer, not the bytes), and <code>resource</code> (embedded bytes). All carry <code>annotations</code>: <code>audience</code>, <code>priority</code>, <code>lastModified</code>. Use <code>resource_link</code> for anything large &mdash; it is the only mechanism in the protocol that lets you hand back a gigabyte without paying for a gigabyte of context.</p>
+      </div>
+      <div class="card">
+        <h4><code>structuredContent</code> is not "structured output"</h4>
+        <p class="small">The spec says so explicitly: it is "server-produced result data &hellip; unrelated to LLM 'structured outputs'". Declare an <code>outputSchema</code> on the tool and return matching <code>structuredContent</code>, and well-behaved clients will validate it. Most clients ignore both.</p>
+      </div>
+      <div class="card">
+        <h4>Caching became mandatory metadata</h4>
+        <p class="small"><code>2026-07-28</code> requires <code>ttlMs</code> and <code>cacheScope</code> (<code>public</code> | <code>private</code>) on all six list/read/discover results. Statelessness moved the cost of repeated discovery onto the network, and this is how the spec pays it back. Set real values; a <code>ttlMs</code> of 0 means every client re-lists forever.</p>
+      </div>
+      <div class="card">
+        <h4>Pagination has one trap</h4>
+        <p class="small">Cursors are opaque. Clients "MUST NOT make any determination based on cursor value other than whether a non-null value was provided". An <strong>empty string is a valid cursor</strong>, not end-of-list. Treating falsy as done is the single most common pagination bug in MCP clients.</p>
+      </div>
+      <div class="card">
+        <h4>Progress is opt-in and monotonic</h4>
+        <p class="small">Only fires if the caller supplied <code>_meta.progressToken</code>. The <code>progress</code> value MUST increase. No token, no progress &mdash; which is why your long tool looks hung in most hosts.</p>
+      </div>
+      <div class="card">
+        <h4>Cancellation differs by transport</h4>
+        <p class="small">On stdio you send <code>notifications/cancelled</code>. On Streamable HTTP you just <em>close the SSE stream</em> &mdash; closing <em>is</em> the signal, no message. And races are explicit: a client "SHOULD ignore any response to the cancelled request that arrives afterward".</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="transports">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">05 &mdash; Transports</div>
+      <h2>Two live, one walking dead</h2>
+      <p class="lede">stdio for local subprocesses, Streamable HTTP for everything remote, and HTTP+SSE which will not die because half the deployed servers still speak it.</p>
+    </div>
+
+    <div class="grid g3 reveal">
+      <div class="tcard">
+        <div class="tcard-h">
+          <h3>stdio</h3>
+          <div><span class="pill p-add">alive</span> <span class="tiny">since 2024-11-05</span></div>
+        </div>
+        <div class="tcard-b">
+          <dl class="kv">
+            <dt>Framing</dt><dd>Newline-delimited JSON. No embedded newlines, ever.</dd>
+            <dt>Headers</dt><dd>None. All metadata inline in <code>_meta</code>.</dd>
+            <dt>Server push</dt><dd>Responses plus request-scoped and subscription notifications only. Never an independent request.</dd>
+            <dt>Shutdown</dt><dd>Close stdin, wait, then <code>SIGTERM</code> &rarr; <code>SIGKILL</code>.</dd>
+            <dt>Cancel</dt><dd><code>notifications/cancelled</code> &mdash; the only notification a client may send here.</dd>
+            <dt>Auth</dt><dd>Environment variables. The spec says implementations SHOULD NOT do OAuth over stdio.</dd>
+          </dl>
+          <div class="callout danger" style="padding:12px 14px">
+            <p style="font-size:.8rem"><strong>stdout is the protocol.</strong> One stray <code>print()</code> in your server corrupts the stream. This single design fact is the root of nearly every MCP debugging complaint in this document.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="tcard">
+        <div class="tcard-h">
+          <h3>Streamable HTTP</h3>
+          <div><span class="pill p-add">alive</span> <span class="tiny">since 2025-03-26 &middot; rewritten 2026-07-28</span></div>
+        </div>
+        <div class="tcard-b">
+          <dl class="kv">
+            <dt>Endpoint</dt><dd>A single <strong>POST-only</strong> path. The GET endpoint was removed.</dd>
+            <dt>Headers in</dt><dd><code>Accept: application/json, text/event-stream</code>, <code>MCP-Protocol-Version</code>, <code>Mcp-Method</code> on all requests, <code>Mcp-Name</code> on <code>tools/call</code>&thinsp;/&thinsp;<code>resources/read</code>&thinsp;/&thinsp;<code>prompts/get</code>.</dd>
+            <dt>Sessions</dt><dd><span class="pill p-rm">gone</span> <code>Mcp-Session-Id</code> removed. Clients neither mint nor echo it.</dd>
+            <dt>Resumability</dt><dd><span class="pill p-rm">gone</span> "Resumable SSE streams via <code>Last-Event-ID</code> are not supported."</dd>
+            <dt>Server push</dt><dd>Only inside the open SSE response of a <code>subscriptions/listen</code> request.</dd>
+            <dt>Security</dt><dd>Servers MUST validate <code>Origin</code> and MUST answer <code>403</code> if it is wrong. Header/body disagreement &rarr; <code>-32020</code> as <code>400</code>.</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="tcard">
+        <div class="tcard-h">
+          <h3>HTTP + SSE</h3>
+          <div><span class="pill p-rm">deprecated</span> <span class="tiny">2024-11-05 &middot; superseded 2025-03-26</span></div>
+        </div>
+        <div class="tcard-b">
+          <dl class="kv">
+            <dt>Shape</dt><dd>Two endpoints: a GET that opens an SSE stream, a POST that sends messages.</dd>
+            <dt>Status</dt><dd>Formally reclassified <em>Deprecated</em> under the new feature-lifecycle policy, and now eligible for removal.</dd>
+            <dt>Why it lingers</dt><dd>It shipped first, so a long tail of servers and hosted platforms only speak this. Good clients try Streamable HTTP and silently fall back.</dd>
+          </dl>
+          <div class="callout warn" style="padding:12px 14px">
+            <p style="font-size:.8rem">Build the fallback. Every mature MCP client &mdash; including MCPJam's &mdash; attempts Streamable HTTP first and drops to SSE on failure. Do not make your users pick.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout reveal">
+      <h4>The odd new one: params-as-headers</h4>
+      <p><code>2026-07-28</code> adds an <code>x-mcp-header</code> schema extension that mirrors selected tool-input parameters into <code>Mcp-Param-{Name}</code> HTTP headers. It exists so gateways, proxies and WAFs can route and police calls without parsing the JSON body. If you deploy MCP behind infrastructure you do not control, this is the hook that makes it manageable.</p>
+    </div>
+  </div>
+</section>
+
+<section id="history">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">06 &mdash; Release history</div>
+      <h2>Five revisions in twenty-one months</h2>
+      <p class="lede">Versions are dates, not semver: each string marks "the last date backwards-incompatible changes were made". The gaps are irregular and getting longer, which is what a maturing standard looks like.</p>
+    </div>
+
+    <div class="grid g4 reveal">
+      <div class="stat"><b class="num">5</b><span class="small">released revisions</span><span class="tiny">2024-11-05 &rarr; 2026-07-28</span></div>
+      <div class="stat"><b class="num">158</b><span class="small">median days between</span><span class="tiny">gaps: 141, 84, 160, 245</span></div>
+      <div class="stat"><b class="num">+186%</b><span class="small">schema growth</span><span class="tiny">1,117 &rarr; 3,197 lines</span></div>
+      <div class="stat"><b class="num">43</b><span class="small">SEPs finalised</span><span class="tiny">all marked Final in the repo</span></div>
+    </div>
+
+    <div class="tl reveal">
+      <div class="tlrow major">
+        <div class="tlgut"><span class="knob"></span><span class="ver">2024-11-05</span><span class="gap">baseline</span></div>
+        <div class="tlbody">
+          <h3>The original protocol</h3>
+          <div class="chg">
+            <div class="chg-row"><span class="pill p-add">Added</span><span>JSON-RPC base, stateful <code>initialize</code> handshake, Resources, Prompts, Tools, Sampling, stdio and HTTP+SSE transports.</span></div>
+          </div>
+          <p class="small">66 interfaces, 1,117 lines of schema. Everything after this is either filling a hole or undoing a decision.</p>
+        </div>
+      </div>
+      <div class="tlrow">
+        <div class="tlgut"><span class="knob"></span><span class="ver">2025-03-26</span><span class="gap">+141 days</span></div>
+        <div class="tlbody">
+          <h3>Auth arrives; the transport is replaced</h3>
+          <div class="chg">
+            <div class="chg-row"><span class="pill p-add">Added</span><span>OAuth 2.1 authorization framework (PR&nbsp;#133), Streamable HTTP transport, JSON-RPC batching, tool annotations, audio content, <code>completions</code> capability.</span></div>
+            <div class="chg-row"><span class="pill p-dep">Changed</span><span>"Replaced the previous HTTP+SSE transport with &hellip; Streamable HTTP transport."</span></div>
+          </div>
+          <p class="small">Four months in and the flagship transport is already superseded. Two interfaces added &mdash; the change was in prose, not shape.</p>
+        </div>
+      </div>
+      <div class="tlrow">
+        <div class="tlgut"><span class="knob"></span><span class="ver">2025-06-18</span><span class="gap">+84 days</span></div>
+        <div class="tlbody">
+          <h3>The shortest cycle, and the first deletion</h3>
+          <div class="chg">
+            <div class="chg-row"><span class="pill p-add">Added</span><span>Structured tool output, <strong>elicitation</strong>, resource links, a security-best-practices page, <code>title</code> fields, completion <code>context</code>.</span></div>
+            <div class="chg-row"><span class="pill p-rm">Removed</span><span>JSON-RPC batching (PR&nbsp;#416) &mdash; shipped and deleted within 84 days.</span></div>
+            <div class="chg-row"><span class="pill p-dep">Changed</span><span><code>MCP-Protocol-Version</code> header now required on HTTP. Several lifecycle SHOULDs promoted to MUSTs.</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="tlrow">
+        <div class="tlgut"><span class="knob"></span><span class="ver">2025-11-25</span><span class="gap">+160 days</span></div>
+        <div class="tlbody">
+          <h3>Enterprise polish, and governance gets real</h3>
+          <div class="chg">
+            <div class="chg-row"><span class="pill p-add">Added</span><span>Icons (SEP-973), incremental OAuth scope consent (SEP-835), URL-mode elicitation (SEP-1036), tool-calling inside sampling (SEP-1577), Client ID Metadata Documents (SEP-991), experimental Tasks (SEP-1686).</span></div>
+            <div class="chg-row"><span class="pill p-dep">Changed</span><span>OpenID Connect Discovery accepted for auth-server discovery. Input-validation failures reclassified as <em>tool execution</em> errors, not protocol errors.</span></div>
+            <div class="chg-row"><span class="pill p-new">Process</span><span>"Formalize Model Context Protocol governance structure" (SEP-932).</span></div>
+          </div>
+          <p class="small">Schema jumps from 76 to 120 interfaces &mdash; the biggest single expansion in the protocol's life.</p>
+        </div>
+      </div>
+      <div class="tlrow major">
+        <div class="tlgut"><span class="knob"></span><span class="ver">2026-07-28</span><span class="gap">+245 days &middot; RC 60 days earlier</span></div>
+        <div class="tlbody">
+          <h3>The stateless rewrite</h3>
+          <div class="chg">
+            <div class="chg-row"><span class="pill p-rm">Removed</span><span>The <code>initialize</code>&thinsp;/&thinsp;<code>initialized</code> handshake. Protocol-level sessions and <code>Mcp-Session-Id</code>. <code>ping</code>. <code>logging/setLevel</code>. <code>notifications/roots/list_changed</code>. SSE resumability and <code>Last-Event-ID</code>. <code>resources/subscribe</code>.</span></div>
+            <div class="chg-row"><span class="pill p-dep">Deprecated</span><span>Roots, Sampling, Logging (SEP-2577). OAuth Dynamic Client Registration. HTTP+SSE transport.</span></div>
+            <div class="chg-row"><span class="pill p-add">Added</span><span><code>server/discover</code>, <code>subscriptions/listen</code>, the MRTR pattern and <code>InputRequiredResult</code>, <code>resultType</code> on every result, mandatory cache hints, an error-code allocation policy, a formal feature-lifecycle and deprecation policy, OpenTelemetry trace context in <code>_meta</code>, Tasks as an official extension.</span></div>
+          </div>
+          <p class="small">128 interfaces, 3,197 lines. First cycle with a real RC gate: <code>2026-07-28-RC</code> was tagged 2026-05-29, sixty days before GA.</p>
+        </div>
+      </div>
+      <div class="tlrow">
+        <div class="tlgut"><span class="knob" style="border-color:var(--ink-3)"></span><span class="ver" style="color:var(--ink-3)">draft</span><span class="gap">now</span></div>
+        <div class="tlbody">
+          <h3 style="color:var(--ink-3)">Empty</h3>
+          <p class="small">"Changes since the most recent release will accumulate here." The draft changelog is byte-identical to <code>2026-07-28</code> apart from link paths, and all 43 SEPs in the repo are marked <em>Final</em>. The pipeline resets draft on every promotion, so this is expected state, not a stalled project &mdash; but it does mean nothing is publicly queued for the next revision as of today.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="stack reveal">
+      <h3>Schema size, by revision</h3>
+      <p class="small col">A proxy for surface area you have to implement. Lines of <code>schema.ts</code>, with interface counts.</p>
+      <div class="bars" id="bars">
+        <div class="bar" style="--w:35%"><span>2024-11-05</span><span class="track"><span class="fill"></span></span><span class="v">1,117 &middot; 66</span></div>
+        <div class="bar" style="--w:39%"><span>2025-03-26</span><span class="track"><span class="fill"></span></span><span class="v">1,258 &middot; 68</span></div>
+        <div class="bar" style="--w:50%"><span>2025-06-18</span><span class="track"><span class="fill"></span></span><span class="v">1,613 &middot; 76</span></div>
+        <div class="bar" style="--w:81%"><span>2025-11-25</span><span class="track"><span class="fill"></span></span><span class="v">2,582 &middot; 120</span></div>
+        <div class="bar" style="--w:100%"><span>2026-07-28</span><span class="track"><span class="fill"></span></span><span class="v">3,197 &middot; 128</span></div>
+      </div>
+      <p class="tiny">Counted directly from the specification repository, 14 Aug 2026.</p>
+    </div>
+  </div>
+</section>
+
+<section id="governance">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">07 &mdash; Governance</div>
+      <h2>Who actually decides what MCP is</h2>
+      <p class="lede">It stopped being an Anthropic project. MCP is now "Model Context Protocol a Series of LF Projects, LLC" &mdash; a Linux Foundation entity with a written ladder, a proposal process, and a deprecation policy with teeth.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="stack">
+        <h3>The ladder</h3>
+        <div class="tw">
+          <table style="min-width:420px">
+            <thead><tr><th>Role</th><th>Power</th></tr></thead>
+            <tbody>
+              <tr><td>Lead Maintainers</td><td>Final veto. Currently David Soria Parra and Den Delimarsky.</td></tr>
+              <tr><td>Core Maintainers</td><td>Steer the spec, vote on proposals, can veto Maintainers by majority. "Meets every two weeks to discuss and vote on proposals."</td></tr>
+              <tr><td>Maintainers</td><td>Own working groups, SDKs, components.</td></tr>
+              <tr><td>Contributors</td><td>Open SEPs and PRs.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">Working Groups produce deliverables; Interest Groups only identify problems. Leading either needs "Member" status on the contributor ladder plus sponsorship by two Core Maintainers or one Lead.</p>
+      </div>
+      <div class="stack">
+        <h3>The SEP pipeline</h3>
+        <p class="small">"Proposed changes to the specification must be submitted as Specification Enhancement Proposals." Files live in <code>seps/</code>, numbered by PR. Four types: Standards Track, Informational, Process, Extensions Track.</p>
+        <div class="chain">
+          <div class="node">Idea<small>anyone</small></div><div class="ar">&rarr;</div>
+          <div class="node">Awaiting&nbsp;Sponsor<small>6 mo, else dormant</small></div><div class="ar">&rarr;</div>
+          <div class="node">Draft<small>written up</small></div><div class="ar">&rarr;</div>
+          <div class="node">In-Review<small>core maintainers vote</small></div><div class="ar">&rarr;</div>
+          <div class="node fin">Final<small>needs ref impl + conformance test</small></div>
+        </div>
+        <div class="callout" style="margin-top:6px">
+          <h4>The gate that matters to you</h4>
+          <p>A SEP cannot reach <em>Final</em> without a reference implementation <strong>and</strong> a conformance test. That rule is why the ecosystem now has real conformance suites at all, and it is the strongest signal that the protocol's second year was run differently from its first.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout warn reveal">
+      <h4>Deprecation is now a contract, not a vibe</h4>
+      <p>Removing a feature is itself SEP-gated with a <strong>minimum twelve-month window</strong>, cut to 90 days only for an active security risk. So Roots, Sampling and Logging &mdash; deprecated on 2026-07-28 &mdash; cannot legally vanish before late 2027. That is your planning horizon, and it is the first time MCP has given you one.</p>
+    </div>
+  </div>
+</section>
+
+<section id="auth">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">08 &mdash; Authorization</div>
+      <h2>Six RFCs to say "log in"</h2>
+      <p class="lede">Remote MCP auth is a full OAuth 2.1 deployment. Not a token in a header &mdash; a resource server, a discovery chain, audience binding, and a hard rule against the shortcut everybody wants to take.</p>
+    </div>
+
+    <div class="stack reveal">
+      <div class="tw">
+        <table style="min-width:700px">
+          <thead><tr><th>Specification</th><th>Who</th><th>Level</th><th>What it buys you</th></tr></thead>
+          <tbody>
+            <tr><td>OAuth 2.1 (draft&nbsp;13)</td><td>Auth server</td><td><span class="pill p-must">MUST</span></td><td>The base grant. Authorization Code only, in practice.</td></tr>
+            <tr><td>RFC&nbsp;9728 &mdash; Protected Resource Metadata</td><td>MCP server</td><td><span class="pill p-must">MUST</span></td><td>Serve <code>/.well-known/oauth-protected-resource</code> so a client can find your auth server.</td></tr>
+            <tr><td>RFC&nbsp;8414 <em>or</em> OIDC Discovery</td><td>Auth server</td><td><span class="pill p-must">MUST (one of)</span></td><td>Endpoint discovery. Clients MUST support <em>both</em>.</td></tr>
+            <tr><td>PKCE, <code>S256</code></td><td>Client</td><td><span class="pill p-must">MUST</span></td><td>Code-interception defence. <code>plain</code> is not acceptable.</td></tr>
+            <tr><td>RFC&nbsp;8707 &mdash; Resource Indicators</td><td>Client</td><td><span class="pill p-must">MUST</span></td><td>The <code>resource</code> parameter. This is what makes audience binding possible at all.</td></tr>
+            <tr><td>RFC&nbsp;9207 &mdash; Issuer identification</td><td>Client</td><td><span class="pill p-must">MUST</span> <span class="pill p-new">2026-07-28</span></td><td>Mix-up attack mitigation when more than one auth server is in play.</td></tr>
+            <tr><td>Client ID Metadata Documents</td><td>Client</td><td><span class="pill p-should">SHOULD</span></td><td>URL-as-client-id. The intended replacement for dynamic registration.</td></tr>
+            <tr><td>RFC&nbsp;7591 &mdash; Dynamic Client Registration</td><td>Auth server</td><td><span class="pill p-may">MAY</span> <span class="pill p-dep">deprecated</span></td><td>Was the answer to "how does an unknown client get credentials". Now on the way out.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tiny">Normative levels quoted from <span class="mono">docs/specification/2026-07-28/basic/authorization/index.mdx</span> lines 62&ndash;217 and <span class="mono">security-considerations.mdx</span> lines 50&ndash;53.</p>
+    </div>
+
+    <div class="seq reveal">
+      <div class="seq-h"><h4>Figure 3 &mdash; the full discovery-to-token dance, no prior knowledge</h4><span class="tiny">6 round trips before the first tool call</span></div>
+      <div class="seq-body">
+        <div class="seq-actors"><div>MCP CLIENT</div><div>MCP SERVER&nbsp;/&nbsp;AUTH SERVER</div></div>
+        <div class="msg r"><div class="bar"><span class="lbl">1 &nbsp;any MCP request, no token</span><span class="line"></span></div></div>
+        <div class="msg l hi"><div class="bar"><span class="line"></span><span class="lbl">401 + WWW-Authenticate</span></div><span class="side">points at the PRM document</span></div>
+        <div class="msg r"><div class="bar"><span class="lbl">2 &nbsp;GET /.well-known/oauth-protected-resource</span><span class="line"></span></div></div>
+        <div class="msg l"><div class="bar"><span class="line"></span><span class="lbl">{ authorization_servers:[&hellip;], resource }</span></div></div>
+        <div class="msg r"><div class="bar"><span class="lbl">3 &nbsp;GET auth-server metadata (8414 or OIDC)</span><span class="line"></span></div></div>
+        <div class="msg l"><div class="bar"><span class="line"></span><span class="lbl">{ authorization_endpoint, token_endpoint, &hellip; }</span></div></div>
+        <div class="msg r"><div class="bar"><span class="lbl">4 &nbsp;register &mdash; DCR, or present a CIMD URL</span><span class="line"></span></div><span class="side">CIMD: the client_id IS a URL you host</span></div>
+        <div class="msg r hi"><div class="bar"><span class="lbl">5 &nbsp;/authorize &nbsp;+ PKCE S256 &nbsp;+ resource=&hellip;</span><span class="line"></span></div><span class="side">browser round trip; human consents</span></div>
+        <div class="msg l hi"><div class="bar"><span class="line"></span><span class="lbl">code &rarr; /token &rarr; access_token</span></div><span class="side">aud bound to this MCP server</span></div>
+        <div class="msg r"><div class="bar"><span class="lbl">6 &nbsp;retry the original request with the token</span><span class="line"></span></div></div>
+        <div class="seq-note">The MCP server is a <strong>Resource Server</strong>, never an Authorization Server. "A protected MCP server acts as an OAuth 2.1 resource server."</div>
+      </div>
+    </div>
+
+    <div class="grid g3 reveal">
+      <div class="callout danger">
+        <h4>The audience rule</h4>
+        <p>"Servers MUST validate that access tokens were issued specifically for them as the intended audience." A token that is valid but issued for someone else must be refused. Skipping this is how you become a confused deputy.</p>
+      </div>
+      <div class="callout danger">
+        <h4>The passthrough ban</h4>
+        <p>"MCP servers MUST NOT accept or transit any other tokens" and "MUST NOT pass through the token it received from the MCP client." Taking the client's token and reusing it against a downstream API is the single most tempting shortcut in MCP, and it is explicitly forbidden.</p>
+      </div>
+      <div class="callout">
+        <h4>stdio is exempt, on purpose</h4>
+        <p>"Implementations using an STDIO transport SHOULD NOT follow this specification, and instead retrieve credentials from the environment." Unchanged since 2025-03-26. Local servers get env vars, and that is correct &mdash; there is no browser and no third party.</p>
+      </div>
+    </div>
+
+    <div class="col stack reveal">
+      <h3>What changed, revision by revision</h3>
+      <div class="chg">
+        <div class="chg-row"><span class="mono" style="color:var(--ink)">2025-03-26</span><span>Auth introduced. No PRM at all. Included a "third-party authorization flow" section, later deleted.</span></div>
+        <div class="chg-row"><span class="mono" style="color:var(--ink)">2025-06-18</span><span>RFC&nbsp;9728 PRM and RFC&nbsp;8707 <code>resource</code> both promoted to MUST. Third-party flow dropped.</span></div>
+        <div class="chg-row"><span class="mono" style="color:var(--ink)">2025-11-25</span><span>Client ID Metadata Documents added. OIDC Discovery accepted alongside RFC&nbsp;8414. Incremental scope consent.</span></div>
+        <div class="chg-row"><span class="mono" style="color:var(--ink)">2026-07-28</span><span>RFC&nbsp;9207 issuer validation, scope-selection strategy, step-up authorization, refresh-token guidance, authorization-server binding. "Session Hijacking" renamed "State Handle Hijacking" to match statelessness. DCR deprecated.</span></div>
+      </div>
+      <p class="small">Read that list as a story: MCP shipped auth, discovered it was under-specified against real attacks, and spent three revisions closing holes. It is now genuinely rigorous &mdash; and genuinely hard to implement, which is exactly what developers complain about.</p>
+    </div>
+
+    <blockquote class="reveal">
+      <p>"I spent an entire weekend &hellip; to build out a remote MCP server. I ran into so many confusing bugs with oauth, despite following the latest official guides, examples, etc. &hellip; you give up your valuable time to build a remote server but find official clients literally just don't work with the official recommended&hellip;"</p>
+      <cite>r/mcp, "How can the MCP community drive adoption and excitement?"</cite>
+    </blockquote>
+  </div>
+</section>
+
+<section id="security">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">09 &mdash; Security</div>
+      <h2>The protocol is fine. The deployments are on fire.</h2>
+      <p class="lede">MCP hands an untrusted third party a channel straight into a tool-using agent. The spec now names ten threat classes; the field has produced considerably more.</p>
+    </div>
+
+    <div class="stack reveal">
+      <h3>Threats the specification names</h3>
+      <div class="tw">
+        <table style="min-width:660px">
+          <thead><tr><th>Threat</th><th>Mechanism, in one line</th></tr></thead>
+          <tbody>
+            <tr><td>Confused deputy</td><td>Server holds more authority than the caller and is talked into using it.</td></tr>
+            <tr><td>Token passthrough</td><td>Server accepts or forwards a token it did not validate as its own audience.</td></tr>
+            <tr><td>SSRF</td><td>"Attacker can induce an MCP client to make HTTP requests to unintended destinations."</td></tr>
+            <tr><td>State handle hijacking</td><td>"Unauthorized party obtains or guesses such a handle and uses it to access" &mdash; the stateless successor to session hijacking.</td></tr>
+            <tr><td>Local server compromise</td><td>"Attacker includes a malicious 'startup' command in a client configuration." Your <code>mcp.json</code> is executable content.</td></tr>
+            <tr><td>Malicious authorize URL</td><td>"Malicious MCP server provides a <code>javascript:</code> URL as the authorization endpoint." XSS into the host.</td></tr>
+            <tr><td>stdio proxy escalation</td><td>"Critical escalation path from web-based attacks to full system compromise."</td></tr>
+            <tr><td>Mix-up attacks</td><td>With several auth servers, one malicious server redirects the client's code to itself. <span class="pill p-new">2026-07-28</span></td></tr>
+            <tr><td>Localhost redirect impersonation</td><td>"It cannot prove which local process is listening on a <code>localhost</code> redirect URI." <span class="pill p-new">2026-07-28</span></td></tr>
+            <tr><td>Excessive scope</td><td>"Poor scope design increases token compromise impact &hellip; obscures audit trails."</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="stack reveal">
+      <h3>What has actually happened</h3>
+      <p class="small col">Documented incidents and vulnerability classes, with primary sources. This is the list to hand anyone who says MCP security is theoretical.</p>
+      <div class="tw">
+        <table style="min-width:820px">
+          <thead><tr><th>Incident</th><th>When</th><th>ID</th><th>Mechanism</th><th>Found by</th></tr></thead>
+          <tbody>
+            <tr><td>mcp-remote RCE</td><td class="num-td">Jul 2025</td><td class="mono">CVE-2025-6514<br><span class="tiny">CVSS 9.6</span></td><td>Crafted <code>authorization_endpoint</code> URL in the auth response triggers OS command injection in the client process.</td><td><a href="https://jfrog.com/blog/2025-6514-critical-mcp-remote-rce-vulnerability/">JFrog</a></td></tr>
+            <tr><td>MCP Inspector RCE</td><td class="num-td">Jun 2025</td><td class="mono">CVE-2025-49596<br><span class="tiny">CVSS 9.4</span></td><td>The official inspector's proxy accepted arbitrary stdio commands from <em>any</em> browser origin. Visiting a web page was enough, via DNS rebinding.</td><td><a href="https://www.oligo.security/blog/critical-rce-vulnerability-in-anthropic-mcp-inspector-cve-2025-49596">Oligo</a></td></tr>
+            <tr><td>Copilot config-rewrite RCE</td><td class="num-td">Aug 2025</td><td class="mono">CVE-2025-53773</td><td>Prompt injection rewrites <code>.vscode/tasks.json</code> and <em>adds a malicious MCP server</em>, turning a file-write into code execution.</td><td><a href="https://embracethered.com/blog/posts/2025/github-copilot-remote-code-execution-via-prompt-injection/">Embrace The Red</a></td></tr>
+            <tr><td>Asana cross-tenant leak</td><td class="num-td">Jun 2025</td><td>&mdash;</td><td>A flawed tenant-isolation check in Asana's own MCP server let one organisation read another's projects, tasks and comments.</td><td><a href="https://www.bleepingcomputer.com/news/security/asana-warns-mcp-ai-feature-exposed-customer-data-to-other-orgs/">Asana / BleepingComputer</a></td></tr>
+            <tr><td>GitHub MCP exfiltration</td><td class="num-td">May 2025</td><td>&mdash;</td><td>Text in a public issue hijacks the agent into reading private repositories and leaking them. The canonical "lethal trifecta" demo.</td><td><a href="https://invariantlabs.ai/blog/mcp-github-vulnerability">Invariant Labs</a></td></tr>
+            <tr><td>Supabase SQL exfiltration</td><td class="num-td">Jul 2025</td><td>&mdash;</td><td>A <code>service_role</code> MCP tool runs attacker-injected SQL arriving through a support message, straight past row-level security.</td><td><a href="https://simonwillison.net/2025/Jul/6/supabase-mcp-lethal-trifecta/">Simon Willison</a></td></tr>
+            <tr><td>Tool poisoning <span class="tiny">(class)</span></td><td class="num-td">Apr 2025</td><td>&mdash;</td><td>Instructions hidden in tool descriptions and metadata are executed as trusted context the moment you connect.</td><td><a href="https://invariantlabs.ai/blog/mcp-security-notification-tool-poisoning-attacks">Invariant Labs</a></td></tr>
+            <tr><td>Line jumping <span class="tiny">(class)</span></td><td class="num-td">Apr 2025</td><td>&mdash;</td><td>Malicious descriptions and server instructions land <em>before any tool is ever called</em>, so per-invocation human approval never fires.</td><td><a href="https://blog.trailofbits.com/2025/04/21/jumping-the-line-how-mcp-servers-can-attack-you-before-you-ever-use-them/">Trail of Bits</a></td></tr>
+            <tr><td>Rug pull <span class="tiny">(class)</span></td><td class="num-td">2025</td><td class="mono">CVE-2025-54136<br><span class="tiny">single source</span></td><td>An approved tool is silently redefined server-side after consent. Every later call runs the poisoned version.</td><td><a href="https://www.practical-devsecops.com/glossary/rug-pull-attack-in-mcp/">ETDI paper</a></td></tr>
+            <tr><td>Claude Desktop extension RCE</td><td class="num-td">Feb 2026</td><td class="mono">CVSS 10.0</td><td>An unsandboxed extension lets a benign connector be chained into a local executor with no consent step. Anthropic declined to fix, calling it expected functionality.</td><td><a href="https://layerxsecurity.com/blog/claude-desktop-extensions-rce/">LayerX</a></td></tr>
+            <tr><td>Agentjacking (Sentry MCP)</td><td class="num-td">Jun 2026</td><td>&mdash;</td><td>Fake error events injected via a public DSN are trusted as diagnostics; 85% success rate at getting coding agents to run commands.</td><td><a href="https://labs.cloudsecurityalliance.org/research/csa-research-note-agentjacking-mcp-sentry-injection-20260612/">CSA / Tenet</a></td></tr>
+            <tr><td>SDK stdio shell injection</td><td class="num-td">Apr 2026</td><td>&mdash;</td><td>Official Python, TS, Java and Rust SDKs passed stdio config parameters to the host shell unsanitised.</td><td><a href="https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-by-design-rce-ox-security-20260420-csa/">OX Security</a></td></tr>
+            <tr><td>Malicious packages</td><td class="num-td">to 2026</td><td>&mdash;</td><td>~471 npm and PyPI artifacts with install-time payloads harvesting GitHub, npm and cloud tokens from developer machines.</td><td><a href="https://research.jfrog.com/post/3-malicious-mcps-pypi-reverse-shell/">JFrog / GitGuardian</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="callout danger">
+        <h4>Two numbers worth memorising</h4>
+        <p><strong>84%</strong> &mdash; attack success rate when auto-approve is enabled on tool calls. <strong>82%</strong> &mdash; share of surveyed MCP servers found vulnerable, with 43% carrying shell or exec injection. Auto-approve is not a convenience setting; it is the whole control.</p>
+      </div>
+      <div class="stack">
+        <h4>What the ecosystem does about it</h4>
+        <dl class="kv" style="grid-template-columns:120px 1fr">
+          <dt>Scan</dt><dd><code>mcp-scan</code> checks for tool poisoning, cross-origin escalation and rug pulls.</dd>
+          <dt>Pin</dt><dd>Gateways hash tool names, descriptions and schemas into a signed baseline, then alarm on drift. This is the only real rug-pull defence.</dd>
+          <dt>Gate</dt><dd>A proxy in front of every server, enforcing an allowlist and central access control (OWASP MCP cheat sheet).</dd>
+          <dt>Sandbox</dt><dd>Run local servers in containers with restricted filesystem and network.</dd>
+          <dt>Confirm</dt><dd>The spec's own words: "there SHOULD always be a human in the loop with the ability to deny tool invocations."</dd>
+          <dt>Analyse</dt><dd>Toxic Flow Analysis &mdash; model the agent's data flows at design time and find the trifecta before shipping.</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="callout warn reveal">
+      <h4>The pattern behind almost all of it</h4>
+      <p>Nine of the incidents above are the same shape: <em>private data access</em> + <em>exposure to untrusted content</em> + <em>an outbound channel</em>, all inside one agent. Simon Willison named it the lethal trifecta. MCP does not create it, but MCP makes it one config line away, because adding a server silently adds all three. When you review an MCP deployment, do not start with the code. Start by asking which of the three legs you can remove.</p>
+    </div>
+  </div>
+</section>
+
+<section id="clients">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">10 &mdash; Client support</div>
+      <h2>The spec is one thing. What hosts implement is another.</h2>
+      <p class="lede">If you only remember one section, make it this one. Almost every "MCP is broken" story is really a story about a host that does not implement the part of the spec you relied on.</p>
+    </div>
+
+    <div class="callout warn reveal">
+      <h4>First finding: the official client list is gone</h4>
+      <p><code>modelcontextprotocol.io/clients</code> no longer exists &mdash; it now redirects to the getting-started page, which carries no client table. The organisation's remaining published data is an <em>extension</em>-support matrix and a protocol-era compatibility note, neither of which tells you whether a given host implements sampling or roots. There is no authoritative, maintained, per-client core-primitive matrix from the MCP project. The data below is assembled from vendor documentation, MCPJam's connect-time capability probes, and the community <a href="https://canimcp.dev">canimcp.dev</a> project.</p>
+    </div>
+
+    <div class="stack reveal">
+      <h3>Core primitive support, by host</h3>
+      <p class="small col"><span class="mono">Y</span> declared or documented &middot; <span class="mono">N</span> explicitly absent or documented as unsupported &middot; <span class="mono">?</span> not stated by any source. "Declared" means the host actually sends the capability at connect time, which is the only claim worth trusting.</p>
+      <div class="tw">
+        <table style="min-width:900px">
+          <thead><tr>
+            <th>Host</th><th>stdio</th><th>SSE</th><th>HTTP</th><th>Tools</th><th>Res.</th><th>Prompts</th><th>Sampling</th><th>Elicit.</th><th>Roots</th><th>OAuth</th><th>Version</th>
+          </tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td>Y</td><td>Y<span class="tiny">dep</span></td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td class="mono">2025-11-25</td></tr>
+            <tr><td>Claude Desktop</td><td>Y</td><td>?</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>?</td><td>?</td><td>?</td><td>Y</td><td>?</td></tr>
+            <tr><td>Claude.ai web</td><td>&mdash;</td><td>?</td><td>Y</td><td>Y</td><td>Y</td><td>N</td><td>N</td><td>N</td><td>N</td><td>Y</td><td class="mono">2025-11-25</td></tr>
+            <tr><td>Claude API connector</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>N</td><td>N</td><td>N</td><td>N</td><td>N</td><td>token only</td><td class="mono">own beta hdr</td></tr>
+            <tr><td>ChatGPT connectors</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>?</td><td>?</td><td>?</td><td>Y</td><td class="mono">2025-06-18</td></tr>
+            <tr><td>ChatGPT Apps SDK</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>?</td><td>?</td><td>Y</td><td class="mono">2025-06-18</td></tr>
+            <tr><td>Cursor</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>N</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td class="mono">2025-11-25</td></tr>
+            <tr><td>VS Code / Copilot</td><td>Y</td><td>Y<span class="tiny">dep</span></td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td><strong>Y</strong></td><td>Y</td><td>Y</td><td>Y</td><td class="mono">2025-11-25</td></tr>
+            <tr><td>Windsurf / Cascade</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>?</td><td>Y</td><td>Y</td><td>?</td></tr>
+            <tr><td>Zed</td><td>Y</td><td>?</td><td>Y</td><td>Y</td><td><strong>N</strong></td><td>Y</td><td><strong>N</strong></td><td><strong>N</strong></td><td>?</td><td>Y</td><td>?</td></tr>
+            <tr><td>Cline</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>?</td><td>?</td><td>Y</td><td class="mono">2025-11-25</td></tr>
+            <tr><td>Continue</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>?</td><td>?</td><td>Y</td><td>?</td></tr>
+            <tr><td>Gemini CLI</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>?</td><td>Y</td><td>?</td></tr>
+            <tr><td>Codex CLI</td><td>Y</td><td>N</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>N</td><td>Y</td><td>N</td><td>?</td><td class="mono">2025-06-18</td></tr>
+            <tr><td>JetBrains AI</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>?</td><td>?</td><td>?</td><td>?</td><td>?</td></tr>
+            <tr><td>Goose</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td><strong>Y</strong></td><td>Y</td><td>Y</td><td>Y<span class="tiny">buggy</span></td><td class="mono">2025-03-26</td></tr>
+            <tr><td>LibreChat</td><td>Y<span class="tiny">dev</span></td><td>Y</td><td>Y</td><td>Y</td><td>N</td><td>N</td><td>N</td><td>N</td><td>N</td><td>Y</td><td>?</td></tr>
+            <tr><td>n8n</td><td>Y</td><td>Y<span class="tiny">dep</span></td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>?</td><td>?</td><td class="mono">2025-11-25</td></tr>
+            <tr><td>Postman</td><td>Y</td><td>?</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>?</td><td>Y</td><td>?</td></tr>
+            <tr><td>M365 Copilot</td><td>N</td><td>?</td><td>Y</td><td>Y</td><td>N</td><td>N</td><td>N</td><td>N</td><td>N</td><td>Y</td><td class="mono">2025-11-25</td></tr>
+            <tr><td>Bedrock AgentCore</td><td>?</td><td>?</td><td>Y</td><td>Y</td><td>?</td><td>?</td><td>N</td><td>Y</td><td>N</td><td>?</td><td class="mono">2025-06-18</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tiny">Capability declarations read from MCPJam's probe catalogue (<span class="mono">sdk/src/host-compat/catalog.generated.ts</span>) plus each vendor's own documentation. "dep" = deprecated path. Version column is the protocol revision the host pins or was observed negotiating.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="callout danger">
+        <h4>Sampling is effectively dead on arrival</h4>
+        <p>Across twenty-one hosts, exactly <strong>two</strong> declare <code>sampling</code>: Goose and VS Code. Claude Code, Claude.ai, Cursor, Cline, n8n and others send no sampling key at all; Zed's docs list it as "not yet implemented". If your server's design depends on borrowing the host's model, it does not work anywhere your users are. The spec deprecating sampling in <code>2026-07-28</code> is the spec catching up to reality.</p>
+      </div>
+      <div class="callout danger">
+        <h4>Tasks exists in one host</h4>
+        <p>The Tasks extension &mdash; long-running async tool calls &mdash; is declared by <strong>VS Code and nothing else</strong> in MCPJam's entire probe catalogue of sixteen hosts. MCPJam itself removed Tasks support from its CLI, its maintainer citing "lack of adoption and a complete rework coming in the new spec". Treat Tasks as a 2027 feature.</p>
+      </div>
+    </div>
+
+    <div class="stack reveal">
+      <h3>The quirks that will actually bite you</h3>
+      <p class="small col">Not spec violations &mdash; just hard limits and behaviours real hosts have, which no specification document will tell you.</p>
+      <div class="tw">
+        <table style="min-width:720px">
+          <thead><tr><th>Host</th><th>Quirk</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td>Tool output truncated to a file beyond a token cap</td><td class="mono">25,000 tokens</td></tr>
+            <tr><td>Claude Code</td><td>Default connect timeout</td><td class="mono">30 s</td></tr>
+            <tr><td>Claude Desktop</td><td>Launched with a minimal <code>PATH</code> &mdash; bare <code>npx</code> or <code>docker</code> often fails</td><td>needs absolute path</td></tr>
+            <tr><td>Windsurf&nbsp;/&nbsp;Cascade</td><td>Hard ceiling on total tools the agent can see</td><td class="mono">100 tools</td></tr>
+            <tr><td>Cursor</td><td>Widely reported practical tool ceiling</td><td class="mono">~80 tools</td></tr>
+            <tr><td>Cursor 3.4.20</td><td>Ignores SEP-1865 <code>_meta.ui.visibility</code> &mdash; app-only tools still reach the model</td><td>spec ignored</td></tr>
+            <tr><td>ChatGPT Apps</td><td>Tool status text length cap</td><td class="mono">64 chars</td></tr>
+            <tr><td>ChatGPT Apps</td><td><code>structuredContent</code> must match <code>outputSchema</code> exactly or the call dies with a generic 424</td><td>exact match</td></tr>
+            <tr><td>Gemini CLI</td><td>Server names must not contain underscores; tool names truncated</td><td class="mono">63 chars</td></tr>
+            <tr><td>Gemini CLI</td><td>Default tool timeout</td><td class="mono">600,000 ms</td></tr>
+            <tr><td>Goose</td><td>Re-runs the whole OAuth flow on every new chat session</td><td>open bug</td></tr>
+            <tr><td>LibreChat</td><td>Vendor says SSE is unsuitable for production; use Streamable HTTP</td><td>vendor guidance</td></tr>
+            <tr><td>JetBrains AI</td><td>File operations restricted to the project directory</td><td>sandbox</td></tr>
+            <tr><td>Claude API connector</td><td>"Only tool calls are currently supported"</td><td>tools only</td></tr>
+            <tr><td>Spec conformance</td><td>Tool names SHOULD be 1&ndash;128 chars matching <code>[A-Za-z0-9_\-.]+</code></td><td class="mono">128 chars</td></tr>
+            <tr><td>Official client default</td><td><code>tools/list</code> pagination page cap</td><td class="mono">64 pages</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout reveal">
+      <h4>The rule that follows from all of this</h4>
+      <p>Design your server for the intersection, not the union: <strong>tools, resources, prompts, elicitation, and OAuth over Streamable HTTP with an SSE fallback</strong>. That set works nearly everywhere. Anything outside it &mdash; sampling, roots, tasks, widgets, subscriptions &mdash; is a bet on one or two specific hosts, and you should know which ones before you write the code.</p>
+    </div>
+  </div>
+</section>
+
+<section id="testing">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">11 &mdash; Ecosystem, SDKs and testing</div>
+      <h2>Eight official SDKs, eleven thousand servers, and no real test culture</h2>
+      <p class="lede">The distribution side of MCP is genuinely impressive. The quality side is not: the tools for proving an MCP server works are thin, fragmented, and in several cases abandoned.</p>
+    </div>
+
+    <div class="grid g4 reveal">
+      <div class="stat"><b class="num">198M</b><span class="small">monthly npm downloads</span><span class="tiny">@modelcontextprotocol/sdk</span></div>
+      <div class="stat"><b class="num">89.5k</b><span class="small">stars on the servers repo</span><span class="tiny">the reference collection</span></div>
+      <div class="stat"><b class="num">&ge;5,900</b><span class="small">unique servers in the registry</span><span class="tiny">a floor &mdash; pagination timed out</span></div>
+      <div class="stat"><b class="num">50</b><span class="small">open SEPs</span><span class="tiny">direct listing, not search</span></div>
+    </div>
+
+    <div class="stack reveal">
+      <h3>Official SDK health</h3>
+      <p class="small col">Read the open-issue column against the star column. Python and TypeScript carry the ecosystem, and they carry the backlog with it.</p>
+      <div class="tw">
+        <table style="min-width:760px">
+          <thead><tr><th>Repository</th><th>Stars</th><th>Open</th><th>Latest release</th><th>Median gap</th><th>Since</th></tr></thead>
+          <tbody>
+            <tr><td>servers <span class="tiny">reference collection</span></td><td class="num-td">89,553</td><td class="num-td">509</td><td class="mono">2026.7.10</td><td class="num-td">34.6 d</td><td class="num-td">Nov 2024</td></tr>
+            <tr><td>python-sdk</td><td class="num-td">24,001</td><td class="num-td">436</td><td class="mono">v2.0.0 &middot; 28 Jul 26</td><td class="num-td">4.4 d</td><td class="num-td">Sep 2024</td></tr>
+            <tr><td>typescript-sdk</td><td class="num-td">13,167</td><td class="num-td">579</td><td class="mono">1.30.0 &middot; 27 Jul 26</td><td class="num-td">~5 d</td><td class="num-td">Sep 2024</td></tr>
+            <tr><td>inspector <span class="tiny">official debugger</span></td><td class="num-td">10,663</td><td class="num-td">77</td><td class="mono">2.2.0 &middot; 12 Aug 26</td><td class="num-td">7.0 d</td><td class="num-td">Oct 2024</td></tr>
+            <tr><td>modelcontextprotocol <span class="tiny">the spec</span></td><td class="num-td">8,954</td><td class="num-td">167</td><td class="mono">2026-07-28</td><td class="num-td">70.1 d</td><td class="num-td">Sep 2024</td></tr>
+            <tr><td>registry</td><td class="num-td">7,150</td><td class="num-td">132</td><td class="mono">v1.8.1 &middot; 6 Aug 26</td><td class="tiny">low signal</td><td class="num-td">Feb 2025</td></tr>
+            <tr><td>go-sdk</td><td class="num-td">4,976</td><td class="num-td">94</td><td class="mono">v1.7.0 &middot; 28 Jul 26</td><td class="num-td">14.0 d</td><td class="num-td">Apr 2025</td></tr>
+            <tr><td>csharp-sdk</td><td class="num-td">4,474</td><td class="num-td">155</td><td class="mono">v2.2.0 &middot; 13 Aug 26</td><td class="num-td">7.3 d</td><td class="num-td">Mar 2025</td></tr>
+            <tr><td>rust-sdk</td><td class="num-td">3,799</td><td class="num-td">43</td><td class="mono">rmcp-v3.1.2 &middot; 7 Aug 26</td><td class="num-td">~2 d</td><td class="num-td">Feb 2025</td></tr>
+            <tr><td>java-sdk</td><td class="num-td">3,657</td><td class="num-td">293</td><td class="mono">v2.0.0 &middot; 11 Jun 26</td><td class="num-td">5.0 d</td><td class="num-td">Jan 2025</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tiny">GitHub API, 14 Aug 2026. Median gap computed over the last ten releases; TypeScript and Rust use monorepo release trains that stamp several tags at once, so their figures are per ship-day rather than per tag. Open-issue counts include pull requests, per GitHub's field.</p>
+      <p class="small col">Two observations worth acting on. <strong>SDKs ship weekly; the spec ships twice a year.</strong> The version you pin matters more than the SDK version you pin. And <strong>Java has 293 open issues against 3,657 stars</strong> &mdash; the worst ratio in the set, and its last release was two months ago. If you are a JVM shop, budget for that.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="stack">
+        <h3>The official registry</h3>
+        <dl class="kv" style="grid-template-columns:112px 1fr">
+          <dt>Status</dt><dd>API frozen at v0.1 since Oct 2025. No GA date committed.</dd>
+          <dt>Stores</dt><dd>Metadata only &mdash; name, description, version, and pointers to npm/PyPI/NuGet/OCI. The code stays where it already lives.</dd>
+          <dt>Naming</dt><dd>Reverse-DNS namespaced: <code>io.github.&lt;user&gt;/&lt;name&gt;</code>.</dd>
+          <dt>Publishing</dt><dd>Publish to the native registry first, add an ownership marker in the package (e.g. an <code>mcpName</code> field in <code>package.json</code>), then run <code>mcp-publisher</code>.</dd>
+          <dt>API</dt><dd><code>GET /v0/servers</code>, cursor-paginated, max 100 per page, with <code>search</code>, <code>updated_since</code> and <code>version=latest</code> filters.</dd>
+          <dt>Built on</dt><dd>Go and Postgres, deployed with Pulumi. Governed by a community working group, not Anthropic alone.</dd>
+          <dt>Size</dt><dd>&ge;5,900 unique servers, &ge;11,400 version entries &mdash; both floors, because there is no total-count field and pagination did not finish. Only about 65% of sampled entries were the latest version of their server.</dd>
+        </dl>
+      </div>
+      <div class="stack">
+        <h3>Where the spec itself still hurts</h3>
+        <p class="small">The most-discussed open issues on the specification repository, by comment count. These are the arguments that have not been settled.</p>
+        <div class="tw">
+          <table style="min-width:400px">
+            <thead><tr><th>#</th><th>Issue</th></tr></thead>
+            <tbody>
+              <tr><td class="num-td">35</td><td>SEP-1488: <code>securitySchemes</code> in tool metadata for mixed-auth servers</td></tr>
+              <tr><td class="num-td">25</td><td>SSE server: "received request before initialization was complete"</td></tr>
+              <tr><td class="num-td">22</td><td>Define a standard MCP client configuration schema <span class="tiny">&mdash; open since the early days</span></td></tr>
+              <tr><td class="num-td">21</td><td>Make the <code>resource</code> parameter optional, per RFC 8707</td></tr>
+              <tr><td class="num-td">17</td><td>Hooks for sandboxing file and network access in tools</td></tr>
+              <tr><td class="num-td">15</td><td>Base64 in JSON-RPC will not scale for file content</td></tr>
+              <tr><td class="num-td">15</td><td>SEP-2575 regression: server identity is now completely optional</td></tr>
+              <tr><td class="num-td">15</td><td>Proposal: Events as a new protocol element</td></tr>
+              <tr><td class="num-td">13</td><td>Cancellation race: "request already responded to"</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">Three clusters: <strong>auth ambiguity in the spec text</strong>, <strong>session-lifecycle and cancellation races</strong> recurring across SDK versions, and <strong>still no standard client config schema</strong> &mdash; which is why every host invents its own <code>mcp.json</code> dialect.</p>
+      </div>
+    </div>
+
+    <div class="stack reveal">
+      <h3>The testing and debugging tool landscape</h3>
+      <p class="small col">Every tool verified to exist, with its last push date. The maintenance column is the point of this table.</p>
+      <div class="tw">
+        <table style="min-width:820px">
+          <thead><tr><th>Tool</th><th>What it does</th><th>Lang</th><th>Stars</th><th>Health</th></tr></thead>
+          <tbody>
+            <tr><td>fastmcp</td><td>Server framework with a real in-memory transport for unit tests &mdash; server and client in one process, no sockets</td><td>Python</td><td class="num-td">27,208</td><td><span class="pill p-add">active</span></td></tr>
+            <tr><td>@modelcontextprotocol/inspector</td><td>The official visual + CLI debugger. 905k npm downloads a month</td><td>TS</td><td class="num-td">10,663</td><td><span class="pill p-add">active</span></td></tr>
+            <tr><td>mcp-use</td><td>Full-stack framework for building MCP servers, apps and clients</td><td>Py&thinsp;/&thinsp;TS</td><td class="num-td">10,488</td><td><span class="pill p-add">active</span></td></tr>
+            <tr><td>mcp-agent</td><td>Composable-agent framework with example test harnesses</td><td>Python</td><td class="num-td">8,507</td><td><span class="pill p-should">slowing &middot; 7 mo</span></td></tr>
+            <tr><td>langchain-mcp-adapters</td><td>Calls MCP tools from LangChain/LangGraph; tracing is incidental, not MCP-specific</td><td>Python</td><td class="num-td">3,627</td><td><span class="pill p-add">active</span></td></tr>
+            <tr><td>agent-scan <span class="tiny">was mcp-scan</span></td><td>Security scanner for tool poisoning, cross-origin escalation, rug pulls. Invariant Labs was absorbed by Snyk</td><td>Python</td><td class="num-td">2,913</td><td><span class="pill p-add">active</span></td></tr>
+            <tr><td>MCPJam/inspector</td><td>Community inspector and eval platform &mdash; the subject of the companion teardown</td><td>TS</td><td class="num-td">2,135</td><td><span class="pill p-add">active</span> <span class="pill p-rm">had CVE-2026-23744</span></td></tr>
+            <tr><td>IBM/mcp-cli</td><td>CLI client used as a manual smoke-test harness</td><td>Python</td><td class="num-td">2,020</td><td><span class="pill p-add">active</span></td></tr>
+            <tr><td>openinference-instrumentation-mcp</td><td>OpenTelemetry auto-instrumentation of MCP client and server calls, into Phoenix/Arize</td><td>Py&thinsp;/&thinsp;TS</td><td class="num-td">1,144</td><td><span class="pill p-add">active</span></td></tr>
+            <tr><td>cloudflare/workers-mcp</td><td>Scaffolds a Cloudflare Worker as an MCP server</td><td>TS</td><td class="num-td">644</td><td><span class="pill p-should">slowing &middot; 4 mo</span></td></tr>
+            <tr><td>mcp-shield</td><td>Static scanner flagging risky server configs</td><td>TS</td><td class="num-td">555</td><td><span class="pill p-rm">stale &middot; 16 mo</span></td></tr>
+            <tr><td>wong2/mcp-cli</td><td>Terminal chat client for exercising any server by hand</td><td>JS</td><td class="num-td">443</td><td><span class="pill p-add">active</span></td></tr>
+            <tr><td>postman-mcp-server</td><td>Official Postman bridge &mdash; agents drive Postman collections</td><td>&mdash;</td><td class="num-td">297</td><td><span class="pill p-add">active</span></td></tr>
+            <tr><td>mcp-guardian</td><td>Proxy that sandboxes and audits MCP traffic</td><td>&mdash;</td><td class="num-td">199</td><td><span class="pill p-rm">stale &middot; 12 mo</span></td></tr>
+            <tr><td>mcp-evals</td><td>Node package + GitHub Action, LLM-as-judge scoring of tool implementations</td><td>JS</td><td class="num-td">132</td><td><span class="pill p-rm">stale &middot; 14 mo</span></td></tr>
+            <tr><td>mcpvals</td><td>MCP evaluation library</td><td>TS</td><td class="num-td">46</td><td><span class="pill p-rm">stale &middot; 8 mo</span></td></tr>
+            <tr><td>gleanwork/mcp-server-tester</td><td>Playwright-based test and eval framework with LLM-as-judge</td><td>TS</td><td class="num-td">19</td><td><span class="pill p-add">active</span></td></tr>
+            <tr><td>mcp-conformance-action</td><td>GitHub Action running protocol conformance tests in CI</td><td>&mdash;</td><td class="num-td">4</td><td><span class="pill p-add">active</span> <span class="tiny">no adoption</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tiny">Star counts and last-push dates from the GitHub API, 14 Aug 2026. Cloudflare's hosted AI Playground and Braintrust have no verifiable public MCP repository; LangSmith has no MCP-specific tracing repository.</p>
+    </div>
+
+    <div class="grid g2 reveal">
+      <div class="callout danger">
+        <h4>The gap, stated plainly</h4>
+        <p>Look at the star counts of the purpose-built <em>eval</em> tools: 132, 46, 19. Three of the five are stale. There is no dominant MCP conformance suite &mdash; the two that exist have four stars and one star between them. Compare that to OpenAPI, where Schemathesis-class property testing is standard practice. MCP is a two-year-old protocol with 198 million monthly SDK downloads and effectively no shared notion of what "tested" means. That is the opportunity anyone building in this space is looking at.</p>
+      </div>
+      <div class="stack">
+        <h4>What people actually do today</h4>
+        <dl class="kv" style="grid-template-columns:118px 1fr">
+          <dt>Unit</dt><dd>Call the tool function directly, bypassing the protocol. Fast, and misses every protocol bug.</dd>
+          <dt>In-memory</dt><dd>Wire a client to a server in one process (fastmcp's memory transport). The best available middle ground.</dd>
+          <dt>Hand-rolled</dt><dd>A throwaway script that spawns the server and speaks JSON-RPC. The most-cited approach in debugging threads, because it needs no tools.</dd>
+          <dt>Manual</dt><dd>The official inspector, or a CLI chat client. Still where most verification happens.</dd>
+          <dt>Scan</dt><dd>Run a security scanner before publishing. Increasingly a release gate.</dd>
+          <dt>Judge</dt><dd>LLM-as-judge evals over N iterations. The right idea; the tooling has not consolidated.</dd>
+          <dt>Trace</dt><dd>OpenTelemetry via OpenInference. Beware: a failed tool call still closes a green span.</dd>
+        </dl>
+        <p class="small">The uncomfortable finding from the issue trackers: the bugs that actually bite &mdash; init races, cancellation races, OAuth edge cases &mdash; are caught by <em>none</em> of these. Real-world testing still leans on hand-written integration tests against the official SDKs.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="broken">
+  <div class="wrap stack-lg">
+    <div class="sec-head reveal">
+      <div class="eyebrow">12 &mdash; What's actually broken</div>
+      <h2>Six real problems, in order of how much they cost</h2>
+      <p class="lede">Not opinions. Each of these is something developers hit repeatedly, with numbers or primary quotes attached.</p>
+    </div>
+
+    <div class="stack-lg">
+      <div class="card reveal">
+        <div class="eyebrow" style="color:var(--danger)">Problem 1 &mdash; the expensive one</div>
+        <h3>Every tool you expose costs context, before anyone says hello</h3>
+        <p class="small">Tool definitions are injected into the model's context at the start of every conversation. They are not lazy-loaded. A server with twenty tools can eat a fifth of a 200k window before the first message.</p>
+        <div class="grid g3" style="margin-top:6px">
+          <div class="stat"><b class="num">62k</b><span class="small">tokens for the GitHub MCP server alone</span><span class="tiny">reported in r/mcp</span></div>
+          <div class="stat"><b class="num">142</b><span class="small">tools across nine installed servers</span><span class="tiny">one developer's real setup</span></div>
+          <div class="stat"><b class="num">100 / 80</b><span class="small">hard tool ceilings in Windsurf / Cursor</span><span class="tiny">vendor limits</span></div>
+        </div>
+        <blockquote style="margin-top:10px">
+          <p>"Every one of those tool definitions lands in your context&hellip; What nobody warns you about."</p>
+          <cite>r/ClaudeAI &mdash; "Configured 9 MCP servers in Claude Code over 4 months"</cite>
+        </blockquote>
+        <p class="small" style="margin-top:4px"><strong>What people actually do:</strong> ship fewer, coarser tools; add a discovery tool that returns tool descriptions on demand rather than up front; or abandon MCP for that use case entirely and convert the server into a skill or a CLI the agent shells out to. That last option is now common enough to be a genuine competitive threat to MCP &mdash; one popular write-up converted <code>chrome-devtools-mcp</code> into Agent Skills specifically because "it has too many tools and takes up so many tokens".</p>
+      </div>
+
+      <div class="card reveal">
+        <div class="eyebrow" style="color:var(--danger)">Problem 2 &mdash; the one you cannot work around</div>
+        <h3>stdout is the protocol, so you have no debug channel</h3>
+        <p class="small">On stdio &mdash; still the default for local servers &mdash; your server's standard output <em>is</em> the wire. You cannot print to it. And nothing outside the two processes can see the traffic, because it is a private pipe.</p>
+        <div class="quotes" style="margin-top:8px">
+          <blockquote>
+            <p>"The fundamental problem is stdio. Your server's stdout IS the protocol, so you lose the normal debugging channel. No external tool can observe the traffic between Claude/Cursor and your server because it's a private pipe between two processes."</p>
+            <cite>r/modelcontextprotocol</cite>
+          </blockquote>
+          <blockquote>
+            <p>"If you're building an stdio server and connecting it to a client like Claude or Cursor, the only way to observe messages would be to console log within the server itself."</p>
+            <cite>MCPJam maintainer, r/modelcontextprotocol</cite>
+          </blockquote>
+          <blockquote>
+            <p>"Debugging MCP servers has felt like building web apps with no devtools &mdash; you call a tool through an agent and just get the model's paraphrase back, not the real request/response."</p>
+            <cite>r/mcp, MCP Peek author</cite>
+          </blockquote>
+          <blockquote>
+            <p>"MCP Inspector: had to disable auth locally to connect. And it only shows the JSON-RPC protocol messages. Can't see console.log output because stdout is&hellip;"</p>
+            <cite>r/modelcontextprotocol &mdash; "How is everyone debugging their MCP servers?"</cite>
+          </blockquote>
+        </div>
+        <p class="small" style="margin-top:4px"><strong>What people actually do:</strong> log to <code>stderr</code> or a file and <code>tail</code> it; write a throwaway script that spawns the server and speaks JSON-RPC at it directly, skipping the host entirely; or run a proxy that sits between host and server. Every one of those is a workaround for a missing platform feature, which is precisely why a market for MCP debuggers exists.</p>
+      </div>
+
+      <div class="card reveal">
+        <div class="eyebrow" style="color:var(--warn)">Problem 3</div>
+        <h3>Remote auth is a multi-week project, and the clients disagree</h3>
+        <p class="small">Six RFCs, six round trips, and then you discover the host you are targeting implements a different subset. The OAuth section above is the specification; this is the experience.</p>
+        <div class="quotes" style="margin-top:8px">
+          <blockquote>
+            <p>"I spent an entire weekend (plus like two weeks more preceding that with general research) to build out a remote MCP server. I ran into so many confusing bugs with oauth, despite following the latest official guides&hellip; the whole ordeal made me lose a lot of faith."</p>
+            <cite>r/mcp</cite>
+          </blockquote>
+          <blockquote>
+            <p>"One small thing that annoys me is that I have to re-add Client ID and Client Secret for OAuth every time I reconnect to the same server."</p>
+            <cite>r/mcp, on a leading MCP dev tool</cite>
+          </blockquote>
+        </div>
+        <p class="small" style="margin-top:4px">Concrete evidence of the fragmentation: Goose re-runs the entire OAuth flow on every new chat session; the Claude Agent SDK in headless mode does no OAuth at all and requires a pre-obtained bearer token; the Claude API connector supports only a static token. Meanwhile the spec deprecated Dynamic Client Registration &mdash; the mechanism most existing implementations rely on &mdash; in favour of Client ID Metadata Documents, which almost nothing supports yet.</p>
+      </div>
+
+      <div class="card reveal">
+        <div class="eyebrow" style="color:var(--warn)">Problem 4</div>
+        <h3>Failures come back as success</h3>
+        <p class="small">A tool that fails returns <code>isError: true</code> inside a perfectly normal <code>200</code> response. HTTP-level monitoring sees green. Standard OpenTelemetry spans close green. The agent reads the error text, shrugs, and carries on.</p>
+        <blockquote style="margin-top:8px">
+          <p>"A tool call over Streamable HTTP comes back 200. The span closes green, normal latency, no error recorded&hellip; The call still failed, and nothing in the trace says so."</p>
+          <cite>r/mcp, Aug 2026</cite>
+        </blockquote>
+        <p class="small" style="margin-top:4px">This is a deliberate protocol design &mdash; tool errors are <em>results</em>, so the model can see and recover from them &mdash; but it means your existing observability stack is blind to MCP failures unless you explicitly instrument <code>isError</code>. Anyone building MCP tooling should treat this as a first-class feature, not an edge case. The same thread's author later found that four features of their own instrumentation library "were silently doing nothing on stateless HTTP", because in-memory per-session state does not survive a stateless deployment &mdash; a direct consequence of the <code>2026-07-28</code> rewrite.</p>
+      </div>
+
+      <div class="card reveal">
+        <div class="eyebrow" style="color:var(--warn)">Problem 5</div>
+        <h3>Most published servers are not usable by a model</h3>
+        <p class="small">Spec compliance and agent usability are different things. One developer built a linter and scanned thirty-six popular servers.</p>
+        <div class="grid g3" style="margin-top:6px">
+          <div class="stat"><b class="num">1 / 3</b><span class="small">of 36 popular servers failed an agent-usability scan</span></div>
+          <div class="stat"><b class="num">132 / 134</b><span class="small">errors in one server were parameters with no description</span><span class="tiny">firecrawl</span></div>
+          <div class="stat"><b class="num">110</b><span class="small">undescribed parameters in another</span><span class="tiny">todoist</span></div>
+        </div>
+        <p class="small" style="margin-top:4px">A parameter with no description is a parameter the model guesses at. This is the least glamorous and highest-leverage fix available to any MCP server author: write the descriptions.</p>
+      </div>
+
+      <div class="card reveal">
+        <div class="eyebrow" style="color:var(--warn)">Problem 6</div>
+        <h3>The protocol moves faster than anyone can follow</h3>
+        <p class="small">Batching shipped and was deleted in 84 days. The flagship transport was replaced four months after launch. Then the whole thing went stateless and deprecated three of its six primitives.</p>
+        <blockquote style="margin-top:8px">
+          <p>"I think overcomplexity might be killing MCP. Too many movable parts, changing too fast. Anybody that can't pay attention to it fulltime is absolutely lost."</p>
+          <cite>r/mcp</cite>
+        </blockquote>
+        <p class="small" style="margin-top:4px">The counter-argument, from a maintainer in the same thread: "This is more of a problem from the developer side, less on the user side. I think this will resolve itself over time as the protocol matures." Both are true. The twelve-month deprecation policy introduced in <code>2026-07-28</code> is the first structural fix for this, and it is a real one.</p>
+      </div>
+    </div>
+
+    <div class="callout reveal">
+      <h4>What the ecosystem is actually short of</h4>
+      <p>Ask people what MCP needs and the answers converge, in this order: <strong>a killer application</strong> that shows a non-developer why they should care; <strong>better host implementations</strong>, because the two hosts most people use are also the weakest at MCP; <strong>less setup friction</strong> around auth and configuration; and <strong>models good enough</strong> to handle large tool catalogues without drowning. Notice that only one of those four is a protocol problem. That is the honest summary of MCP's state: the specification is now in decent shape, and everything expensive is somewhere else.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap stack">
+    <hr class="soft">
+    <div class="eyebrow" style="margin-top:26px">Primary sources</div>
+    <p class="small col">Every specification claim in this manual was read from the <code>modelcontextprotocol/modelcontextprotocol</code> repository at commit-time on 14 August 2026, with file and line references retained. Version dates come from the specification's own changelog files; schema line and interface counts were counted directly. Repository statistics come from the GitHub API and npm registry on the same date. Community quotes are from public Reddit threads, attributed inline.</p>
+    <div class="srcs" style="margin-top:12px">
+      <a href="https://modelcontextprotocol.io/specification/2026-07-28">Specification &mdash; 2026-07-28</a>
+      <a href="https://github.com/modelcontextprotocol/modelcontextprotocol">Spec &amp; schema repository</a>
+      <a href="https://modelcontextprotocol.io/clients">Official client list</a>
+      <a href="https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html">OWASP MCP Security Cheat Sheet</a>
+      <a href="https://invariantlabs-ai.github.io/docs/mcp-scan/">mcp-scan</a>
+      <a href="https://simonwillison.net/2025/Jul/6/supabase-mcp-lethal-trifecta/">The lethal trifecta</a>
+    </div>
+    <p class="tiny" style="margin-top:20px">Compiled 14 August 2026. Where the specification says nothing, this document says so rather than guessing.</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var root=document.documentElement, btn=document.getElementById('tgl');
+  function cur(){ var s=root.getAttribute('data-theme'); if(s) return s;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'; }
+  btn.addEventListener('click',function(){ root.setAttribute('data-theme', cur()==='dark'?'light':'dark'); });
+
+  var prog=document.getElementById('prog');
+  function onScroll(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    prog.style.width=(h>0?(window.scrollY/h)*100:0)+'%';
+  }
+  window.addEventListener('scroll',onScroll,{passive:true}); onScroll();
+
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+  },{rootMargin:'0px 0px -8% 0px',threshold:0.06});
+  document.querySelectorAll('.reveal').forEach(function(el){ io.observe(el); });
+
+  var bio=new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting){
+      var bars=e.target.querySelectorAll('.bar');
+      bars.forEach(function(b,i){ setTimeout(function(){ b.classList.add('on'); }, i*110); });
+      bio.unobserve(e.target);
+    }});
+  },{threshold:0.25});
+  var bs=document.getElementById('bars'); if(bs) bio.observe(bs);
+})();
+</script>
+</body>
+</html>
