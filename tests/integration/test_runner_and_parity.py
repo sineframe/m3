@@ -1,4 +1,4 @@
-import asyncio, json, os, stat, tempfile, time
+import asyncio, json, os, stat, tempfile, time, sys
 from pathlib import Path
 from fastapi.testclient import TestClient
 from mcp_pal.api import create_app
@@ -6,7 +6,9 @@ from mcp_pal.config import Settings
 from mcp_pal.domain.events import derive_mcp_assertion, derive_mcp_summary, normalize_events
 from mcp_pal.harness.claude_cli import ClaudeCodeRunner, RunSpec
 from mcp_pal.harness.opencode_cli import OpenCodeRunner, opencode_config
+import mcp_pal.harness.opencode_cli as opencode_module
 from mcp_pal.harness.base import HarnessResult
+from mcp_pal.trace.normalized import build_opencode_trace
 
 def fake(path, body):
     path.write_text("#!/usr/bin/env python3\n"+body); path.chmod(path.stat().st_mode | stat.S_IXUSR); return str(path)
@@ -66,13 +68,51 @@ print(json.dumps({'type':'step_finish','sessionID':'ses-1','part':{'type':'step-
     assert derive_mcp_assertion(result.events,"draw") == "passed"
     assert {event for event,_ in result.normalized} >= {"step_start","thinking","tool_call","tool_result","assistant_text","step_finish"}
 
+def test_opencode_stdio_wrapper_captures_real_jsonrpc_roundtrip(tmp_path):
+    fixture = Path(__file__).parents[1] / 'fixtures' / 'mcp_echo_server.py'
+    script = fake(tmp_path / 'opencode-relay.py', f"""
+import json, os, subprocess, sys
+config=json.load(open(os.environ['OPENCODE_CONFIG']))
+command=config['mcp']['draw']['command']
+server=subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+def rpc(identifier, method, params=None):
+    request={{'jsonrpc':'2.0','id':identifier,'method':method}}
+    if params is not None: request['params']=params
+    server.stdin.write(json.dumps(request)+'\\n'); server.stdin.flush()
+    return json.loads(server.stdout.readline())
+rpc(1, 'initialize', {{'protocolVersion':'2024-11-05','capabilities':{{}},'clientInfo':{{'name':'fake','version':'1'}}}})
+rpc(2, 'tools/list')
+response=rpc(3, 'tools/call', {{'name':'echo','arguments':{{'text':'wire hello'}}}})
+server.terminate(); server.wait()
+print(json.dumps({{'type':'tool_use','sessionID':'wire','part':{{'type':'tool','callID':'call-wire','tool':'draw_echo','state':{{'status':'completed','input':{{'text':'wire hello'}},'output':response['result']}}}}}}), flush=True)
+print(json.dumps({{'type':'text','sessionID':'wire','part':{{'type':'text','text':'done'}}}}), flush=True)
+print(json.dumps({{'type':'step_finish','sessionID':'wire','part':{{'type':'step-finish'}}}}), flush=True)
+""")
+    profile={"mcpServers":{"draw":{"command":sys.executable,"args":[str(fixture)]}}}
+    result=asyncio.run(OpenCodeRunner(script).run(RunSpec('prompt','model',profile,'draw',timeout_seconds=3)))
+    assert result.status == 'completed'
+    assert result.transport == 'stdio'
+    methods=[event.get('payload',{}).get('method') for event in result.protocol_events]
+    assert 'tools/call' in methods
+    request=next(event for event in result.protocol_events if event.get('payload',{}).get('method') == 'tools/call')
+    response=next(event for event in result.protocol_events if event.get('payload',{}).get('id') == request['payload']['id'] and event.get('direction') == 'server_to_client')
+    assert request['payload']['params']['name'] == 'echo'
+    assert response['payload']['result']['content'][0]['text'] == 'wire hello'
+    trace=build_opencode_trace(events=result.event_records, protocol_events=result.protocol_events, selected_server='draw', transport=result.transport, status=result.status, session_id=result.session_id)
+    call=trace['mcp_calls'][0]
+    assert call['wire_request']['method'] == 'tools/call'
+    assert call['wire_response']['result']['content'][0]['text'] == 'wire hello'
+    assert isinstance(call['server_latency_ms'], (int, float)) and call['server_latency_ms'] >= 0
+    assert call['provenance']['wire'] is True and call['limitations'] == [] and trace['limitations'] == []
+
 def test_opencode_embedded_env_refs_and_hostile_home_isolation(tmp_path):
-    profile={"mcpServers":{"draw":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer ${DRAW_TOKEN}"}}}}
-    config=opencode_config(profile,"draw","mcp_only")
+    remote_profile={"mcpServers":{"draw":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer ${DRAW_TOKEN}"}}}}
+    config=opencode_config(remote_profile,"draw","mcp_only")
     assert config["mcp"]["draw"]["headers"]["Authorization"] == "Bearer {env:DRAW_TOKEN}"
     hostile=tmp_path/"home"; (hostile/".config/opencode").mkdir(parents=True)
     (hostile/".config/opencode/opencode.json").write_text('{"permission":{"*":"allow"}}')
     marker=tmp_path/"env.json"
+    profile={"mcpServers":{"draw":{"command":"echo"}}}
     script=fake(tmp_path/"opencode-isolated.py", f"""
 import json,os
 assert os.environ['HOME'] != {str(hostile)!r}
@@ -91,6 +131,54 @@ print(json.dumps({{'type':'step_finish','sessionID':'iso','part':{{'type':'step-
         if old is None: os.environ.pop("HOME",None)
         else: os.environ["HOME"]=old
     assert result.status == "completed" and marker.exists()
+
+def test_opencode_remote_proxy_rewrites_local_config_and_stops(tmp_path, monkeypatch):
+    seen = tmp_path / "config.json"
+    script = fake(tmp_path / "remote-opencode.py", f"""
+import json, os
+config=json.load(open(os.environ['OPENCODE_CONFIG']))
+json.dump(config, open({str(seen)!r}, 'w'))
+assert config['mcp']['draw']['url'] == 'http://127.0.0.1:9191/mcp'
+assert 'headers' not in config['mcp']['draw']
+print(json.dumps({{'type':'text','sessionID':'remote','part':{{'type':'text','text':'ok'}}}}))
+print(json.dumps({{'type':'step_finish','sessionID':'remote','part':{{'type':'step-finish'}}}}))
+""")
+    class Proxy:
+        instances = []
+        def __init__(self, **kwargs): self.kwargs = kwargs; self.stopped = False; self.__class__.instances.append(self)
+        async def start(self): return 'http://127.0.0.1:9191/mcp'
+        async def stop(self): self.stopped = True
+    monkeypatch.setattr(opencode_module, 'McpHttpProxy', Proxy)
+    profile={"mcpServers":{"draw":{"type":"http","url":"https://upstream.example/mcp","headers":{"Authorization":"Bearer TOP-SECRET"}}}}
+    result=asyncio.run(OpenCodeRunner(script).run(RunSpec('prompt','model',profile,'draw',timeout_seconds=2)))
+    assert result.status == 'completed' and Proxy.instances[0].stopped
+    assert Proxy.instances[0].kwargs['upstream_url'] == 'https://upstream.example/mcp'
+    assert Proxy.instances[0].kwargs['configured_headers']['Authorization'] == 'Bearer TOP-SECRET'
+    assert json.loads(seen.read_text())['mcp']['draw'].get('headers') is None
+
+def test_opencode_remote_proxy_failure_is_stable_and_stops(tmp_path, monkeypatch):
+    class Proxy:
+        instance = None
+        def __init__(self, **kwargs): Proxy.instance = self
+        async def start(self): raise RuntimeError('upstream secret https://upstream.example')
+        async def stop(self): self.stopped = True
+    monkeypatch.setattr(opencode_module, 'McpHttpProxy', Proxy)
+    profile={"mcpServers":{"draw":{"type":"sse","url":"https://upstream.example/sse","headers":{"Authorization":"Bearer SECRET"}}}}
+    result=asyncio.run(OpenCodeRunner('missing-opencode').run(RunSpec('prompt','model',profile,'draw',timeout_seconds=1)))
+    assert result.status == 'failed' and result.error == 'OpenCode transport setup failed'
+    assert Proxy.instance.stopped and 'SECRET' not in (result.error or '') and 'upstream' not in (result.error or '')
+
+def test_opencode_proxy_is_stopped_when_config_write_fails(tmp_path, monkeypatch):
+    class Proxy:
+        instance = None
+        def __init__(self, **kwargs): Proxy.instance = self
+        async def start(self): return 'http://127.0.0.1:9191/mcp'
+        async def stop(self): self.stopped = True
+    monkeypatch.setattr(opencode_module, 'McpHttpProxy', Proxy)
+    monkeypatch.setattr(opencode_module.Path, 'write_text', lambda *args, **kwargs: (_ for _ in ()).throw(OSError('nope')))
+    profile={"mcpServers":{"draw":{"type":"http","url":"https://upstream.example/mcp"}}}
+    result=asyncio.run(OpenCodeRunner('missing-opencode').run(RunSpec('prompt','model',profile,'draw',timeout_seconds=1)))
+    assert result.status == 'failed' and result.error == 'OpenCode run setup failed' and Proxy.instance.stopped
 
 def test_opencode_clean_exit_recovers_export_before_classification(tmp_path):
     script=fake(tmp_path/"opencode-early.py", """
@@ -145,9 +233,13 @@ def test_fake_opencode_api_persists_normalized_trace_and_report(tmp_path):
     class FakeRunner:
         async def run(self, spec, on_event=None, cancel_event=None):
             raw={"type":"tool_use","sessionID":"fake-session","part":{"type":"tool","callID":"c1","tool":"draw_echo","state":{"status":"completed","input":{"text":"hello"},"output":{"text":"hello"}}}}
+            protocol=[
+                {"offset_ms":4,"transport":"stdio","direction":"client_to_server","payload":{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"echo","arguments":{"text":"hello","api_key":"SUPER-SECRET"}}}},
+                {"offset_ms":9,"transport":"stdio","direction":"server_to_client","payload":{"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"hello"}]}}},
+            ]
             if on_event:
                 for kind,payload in normalize_events(raw,spec.enabled_server): await on_event(raw,kind,payload)
-            return HarnessResult(status="completed", events=[raw], event_records=[{"raw_event":raw,"offset_ms":4,"type":"tool_use"}], final_text="done", session_id="fake-session")
+            return HarnessResult(status="completed", events=[raw], event_records=[{"raw_event":raw,"offset_ms":4,"type":"tool_use"}], final_text="done", session_id="fake-session", protocol_events=protocol)
         def request_cancel(self): pass
     app.state.manager.runner_for=lambda harness: FakeRunner()
     with TestClient(app) as client:
@@ -163,8 +255,13 @@ def test_fake_opencode_api_persists_normalized_trace_and_report(tmp_path):
         call=trace["mcp_calls"][0]
         assert {call[k] for k in ("server","tool","status")}=={"draw","echo","completed"}
         assert call["arguments"]=={"text":"hello"} and call["result"]=={"text":"hello"}
-        assert call["wire_request"] is None and call["wire_response"] is None and call["server_latency_ms"] is None
-        assert trace["limitations"]
+        assert call["wire_request"]["method"] == "tools/call"
+        assert call["wire_response"]["result"]["content"][0]["text"] == "hello"
+        assert call["server_latency_ms"] == 5 and call["provenance"]["wire"] is True
+        assert call["limitations"] == []
+        assert call["wire_request"]["params"]["arguments"]["api_key"] == "[REDACTED]"
+        assert not trace["limitations"]
+        assert "SUPER-SECRET" not in json.dumps(report)
 
 def test_opencode_provider_credentials_are_injected_without_exposing_values(tmp_path):
     marker=tmp_path/"credential-presence.json"

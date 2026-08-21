@@ -78,10 +78,12 @@ def render_trace(trace, key_suffix="active"):
     transport=str(summary.get("transport") or "unknown").upper()
     call_count=len(trace.get("mcp_calls") or [])
     if harness == "opencode" and not spans:
-        transport_col,calls_col=st.columns(2)
-        transport_col.metric("Transport",transport)
-        calls_col.metric("MCP calls",call_count)
-        st.info("OpenCode trace contains native emitted MCP calls; transport wire frames and server latency are unavailable.")
+        cols=st.columns(2); cols[0].metric("Transport", transport); cols[1].metric("MCP calls", call_count)
+        if trace.get("limitations"): st.warning(" ".join(str(x) for x in trace["limitations"]))
+        with st.expander(f"Captured MCP protocol frames ({len(trace.get('protocol_events') or [])})", expanded=False):
+            for event in trace.get("protocol_events") or []:
+                st.caption(f"{event.get('offset_ms','—')} ms · {event.get('direction','—')}")
+                st.code(truncate(event.get("payload",{})), language="json")
         return
     display=lambda key: summary[key] if summary.get(key) is not None else "—"
     metrics=[("Transport", transport), ("Total time", format_duration(summary.get("duration_ms"))), ("Claude turns", display("turns")), ("MCP calls", call_count), ("Tokens", display("total_tokens")), ("Cost", f"${summary['cost_usd']:.4f}" if isinstance(summary.get("cost_usd"),(int,float)) else "—")]
@@ -108,7 +110,13 @@ def render_trace(trace, key_suffix="active"):
     st.markdown(f'<div class="trace-shell"><div class="trace-kicker">{html.escape(harness)} trace · {html.escape(str(trace.get("schema", "claude.v1")))}</div><div class="trace-transport">● MCP TRANSPORT: {html.escape(transport)}</div></div>', unsafe_allow_html=True)
     st.caption(f"Input {display('input_tokens')} · Output {display('output_tokens')} · Cache read {display('cache_read_input_tokens')} · Cache write {display('cache_creation_input_tokens')} · First output {format_duration(summary.get('time_to_first_output_ms')) if summary.get('time_to_first_output_ms') is not None else '—'}")
     if not spans:
-        st.caption("No spans were captured.")
+        st.caption("No agent waterfall spans were captured; backend MCP calls and protocol frames are shown below.")
+        if trace.get("limitations"):
+            st.warning(" ".join(str(x) for x in trace["limitations"]))
+        with st.expander(f"Captured MCP protocol frames ({len(trace.get('protocol_events') or [])})", expanded=False):
+            for event in trace.get("protocol_events") or []:
+                st.caption(f"{event.get('offset_ms','—')} ms · {event.get('direction','—')}")
+                st.code(truncate(event.get("payload",{})), language="json")
         return
     show_protocol=st.toggle("Show protocol events",value=False,key=f"trace-protocol-{key_suffix}",help="Adds initialize, tools/list, tools/call, notifications, and response frames.")
     visible=visible_spans(spans,include_protocol=show_protocol)

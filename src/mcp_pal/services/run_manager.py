@@ -43,7 +43,7 @@ class RunManager:
                 db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "claude.v1")), capture_status=str(safe_trace.get("capture_status", "complete")), trace=safe_trace))
             elif run.harness == "opencode":
                 transport = transport_for_server((rev.mcp_json.get("mcpServers", {}).get(run.enabled_server) or {}))
-                trace = build_opencode_trace(events=result.event_records or result.events, selected_server=run.enabled_server, transport=transport, status=result.status, session_id=result.session_id)
+                trace = build_opencode_trace(events=result.event_records or result.events, protocol_events=result.protocol_events, selected_server=run.enabled_server, transport=transport, status=result.status, session_id=result.session_id)
                 safe_trace, _ = redact(trace)
                 db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "opencode.v1")), capture_status=str(safe_trace.get("capture_status", "complete")), trace=safe_trace))
             db.commit()
@@ -57,7 +57,7 @@ class RunManager:
                 db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "claude.v1")), capture_status="partial", trace=safe_trace))
             elif result is not None and run.harness == "opencode":
                 transport = transport_for_server((rev.mcp_json.get("mcpServers", {}).get(run.enabled_server) or {}))
-                trace = build_opencode_trace(events=result.event_records or result.events, selected_server=run.enabled_server, transport=transport, status="failed", session_id=result.session_id)
+                trace = build_opencode_trace(events=result.event_records or result.events, protocol_events=result.protocol_events, selected_server=run.enabled_server, transport=transport, status="failed", session_id=result.session_id)
                 safe_trace, _ = redact(trace)
                 db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version="opencode.v1", capture_status="partial", trace=safe_trace))
             db.commit()

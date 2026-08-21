@@ -1,5 +1,5 @@
 """OpenCode CLI harness adapter."""
-import asyncio, json, os, re, shutil, signal, tempfile, threading, time
+import asyncio, json, os, re, shutil, signal, tempfile, threading, time, sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -7,6 +7,9 @@ from typing import Any
 from .base import HarnessResult, HarnessRunner, RunSpec
 from ..domain.events import normalize_events
 from ..domain.validation import selected_server_config
+from ..trace.capture import read_capture
+from ..trace.claude import transport_for_server
+from ..transport.http_proxy import McpHttpProxy
 
 READ_ONLY_TOOLS = ["read", "glob", "grep", "lsp", "webfetch", "websearch"]
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -147,34 +150,78 @@ class OpenCodeRunner(HarnessRunner):
         baseline = time.perf_counter_ns()
         with tempfile.TemporaryDirectory(prefix="mcp-pal-opencode-") as td:
             config_path = os.path.join(td, "opencode.json")
-            Path(config_path).write_text(json.dumps(opencode_config(spec.mcp_config, spec.enabled_server, spec.tool_mode)), encoding="utf-8")
-            os.chmod(config_path, 0o600)
-            environment = os.environ.copy(); environment["OPENCODE_CONFIG"] = config_path; environment["PWD"] = td
-            environment["XDG_CONFIG_HOME"] = os.path.join(td,"xdg-config")
-            environment["OPENCODE_CONFIG_DIR"] = os.path.join(td,"opencode-config")
-            # Keep provider credentials discoverable while preventing global HOME
-            # and project config files from changing the selected tool policy.
-            original_home = environment.get("HOME") or os.path.expanduser("~")
-            environment["HOME"] = td
-            original_data = environment.get("XDG_DATA_HOME") or os.path.join(original_home,".local","share")
-            run_data = os.path.join(td,"xdg-data")
-            environment["XDG_DATA_HOME"] = run_data
-            environment["XDG_STATE_HOME"] = os.path.join(td,"xdg-state")
-            environment["XDG_CACHE_HOME"] = os.path.join(td,"xdg-cache")
-            auth_source = os.path.join(original_data,"opencode","auth.json")
-            auth_target = os.path.join(run_data,"opencode","auth.json")
-            if os.path.isfile(auth_source):
-                try:
-                    os.makedirs(os.path.dirname(auth_target),mode=0o700,exist_ok=True)
-                    shutil.copyfile(auth_source,auth_target)
-                    os.chmod(auth_target,0o600)
-                except OSError:
-                    pass
-            if self.api_key: environment["OPENCODE_API_KEY"] = self.api_key
-            for provider,key in self.provider_api_keys.items():
-                normalized=provider.lower().replace("-", "_").upper()
-                variable="OPENCODE_API_KEY" if provider.lower() in ("opencode", "opencode-go") else f"{normalized}_API_KEY"
-                environment[variable]=key
+            capture_path = os.path.join(td, "mcp-capture.jsonl")
+            configured_server = selected_server_config(spec.mcp_config, spec.enabled_server)["mcpServers"][spec.enabled_server]
+            result.transport = transport_for_server(configured_server)
+            native_config = opencode_config(spec.mcp_config, spec.enabled_server, spec.tool_mode)
+            proxy: McpHttpProxy | None = None
+            try:
+                if result.transport == "stdio":
+                    server = native_config["mcp"][spec.enabled_server]
+                    command = list(server.get("command") or [])
+                    server["command"] = [sys.executable, "-m", "mcp_pal.transport.stdio_proxy", "--capture", capture_path, "--baseline", str(baseline), "--", *command]
+                elif result.transport in {"http", "sse"}:
+                    proxy = McpHttpProxy(upstream_url=configured_server["url"], configured_headers=configured_server.get("headers"), transport=result.transport, capture_path=capture_path, baseline_ns=baseline)
+                    native_config["mcp"][spec.enabled_server]["url"] = await proxy.start()
+                    # Credentials are injected only by the proxy; never send
+                    # configured upstream headers to the local proxy endpoint.
+                    native_config["mcp"][spec.enabled_server].pop("headers", None)
+            except Exception as error:
+                result.status, result.error = "failed", "OpenCode transport setup failed"
+                try: result.protocol_events = read_capture(capture_path)
+                except Exception: result.protocol_events = []
+                if proxy is not None:
+                    try: await proxy.stop()
+                    except Exception: pass
+                return result
+            try:
+                Path(config_path).write_text(json.dumps(native_config), encoding="utf-8")
+                os.chmod(config_path, 0o600)
+            except Exception:
+                # Proxy lifetime begins before config materialization; ensure
+                # setup failures cannot strand its task/socket.
+                if proxy is not None:
+                    try: await proxy.stop()
+                    except Exception: pass
+                result.status, result.error = "failed", "OpenCode run setup failed"
+                try: result.protocol_events = read_capture(capture_path)
+                except Exception: result.protocol_events = []
+                return result
+            try:
+                environment = os.environ.copy(); environment["OPENCODE_CONFIG"] = config_path; environment["PWD"] = td
+                environment["XDG_CONFIG_HOME"] = os.path.join(td,"xdg-config")
+                environment["OPENCODE_CONFIG_DIR"] = os.path.join(td,"opencode-config")
+                # Keep provider credentials discoverable while preventing global HOME
+                # and project config files from changing the selected tool policy.
+                original_home = environment.get("HOME") or os.path.expanduser("~")
+                environment["HOME"] = td
+                original_data = environment.get("XDG_DATA_HOME") or os.path.join(original_home,".local","share")
+                run_data = os.path.join(td,"xdg-data")
+                environment["XDG_DATA_HOME"] = run_data
+                environment["XDG_STATE_HOME"] = os.path.join(td,"xdg-state")
+                environment["XDG_CACHE_HOME"] = os.path.join(td,"xdg-cache")
+                auth_source = os.path.join(original_data,"opencode","auth.json")
+                auth_target = os.path.join(run_data,"opencode","auth.json")
+                if os.path.isfile(auth_source):
+                    try:
+                        os.makedirs(os.path.dirname(auth_target),mode=0o700,exist_ok=True)
+                        shutil.copyfile(auth_source,auth_target)
+                        os.chmod(auth_target,0o600)
+                    except OSError:
+                        pass
+                if self.api_key: environment["OPENCODE_API_KEY"] = self.api_key
+                for provider,key in self.provider_api_keys.items():
+                    normalized=provider.lower().replace("-", "_").upper()
+                    variable="OPENCODE_API_KEY" if provider.lower() in ("opencode", "opencode-go") else f"{normalized}_API_KEY"
+                    environment[variable]=key
+            except Exception:
+                result.status, result.error = "failed", "OpenCode run setup failed"
+                try: result.protocol_events = read_capture(capture_path)
+                except Exception: result.protocol_events = []
+                if proxy is not None:
+                    try: await proxy.stop()
+                    except Exception: pass
+                return result
             try:
                 self.process = await asyncio.create_subprocess_exec(*self.build_command(spec), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=td, env=environment, start_new_session=True)
                 self.process.stdin.write(spec.prompt.encode()); await self.process.stdin.drain(); self.process.stdin.close()
@@ -266,7 +313,13 @@ class OpenCodeRunner(HarnessRunner):
                 if self.process and self.process.returncode is None: await self._terminate_and_reap()
             finally:
                 if result.session_id:
-                    await self._delete_session(result.session_id,environment,td)
+                    try: await self._delete_session(result.session_id,environment,td)
+                    except Exception: pass
+                if proxy is not None:
+                    try: await proxy.stop()
+                    except Exception: pass
+                try: result.protocol_events = read_capture(capture_path)
+                except Exception: result.protocol_events = []
         return result
 
     async def _terminate_and_reap(self):

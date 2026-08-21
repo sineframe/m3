@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 SCHEMA_VERSION = "mcp.v1"
-LIMITATION = "OpenCode output has no MCP transport interception; wire request/response and server latency are unavailable and this is not wire-level verification."
+UNMATCHED_LIMITATION = "No correlated MCP transport capture was available for this call; wire request/response and server latency are unavailable."
 
 def _tool_name(value: Any, server: str | None = None) -> str:
     name = str(value or "")
@@ -73,16 +73,43 @@ def from_opencode_events(events: Iterable[dict[str, Any]], selected_server: str,
         result = state.get("output"); err = _error(result, state.get("error") if state.get("status") == "error" else None)
         native_status = str(state.get("status") or "unknown").lower()
         normalized_status = "error" if err or native_status == "error" else (native_status if native_status in {"running", "pending"} else "completed")
-        item = _call(id=ident, server=selected_server, tool=_tool_name(tool_full, selected_server), status=normalized_status, error=err, start_ms=start, end_ms=end, duration_ms=duration, arguments=state.get("input"), result=result, harness="opencode", transport=transport, limitations=[LIMITATION])
+        item = _call(id=ident, server=selected_server, tool=_tool_name(tool_full, selected_server), status=normalized_status, error=err, start_ms=start, end_ms=end, duration_ms=duration, arguments=state.get("input"), result=result, harness="opencode", transport=transport, limitations=[])
         # Terminal records supersede an earlier in-progress duplicate.
         rank = 2 if item["status"] in {"completed", "error", "failed"} and (result is not None or err is not None or duration is not None) else 1
         previous = candidates.get(ident)
         if previous is None or rank >= previous[0]: candidates[ident] = (rank, item)
-    return [item for _, item in candidates.values()]
+    output = [item for _, item in candidates.values()]
+    for item in output:
+        if not item["provenance"].get("wire"):
+            item["limitations"] = [UNMATCHED_LIMITATION]
+    return output
 
-def build_opencode_trace(*, events: Iterable[dict[str, Any]], selected_server: str, transport: str, status: str, session_id: str | None = None) -> dict[str, Any]:
-    raw = list(events); calls = from_opencode_events(raw, selected_server, transport)
+def build_opencode_trace(*, events: Iterable[dict[str, Any]], protocol_events: Iterable[dict[str, Any]] = (), selected_server: str, transport: str, status: str, session_id: str | None = None) -> dict[str, Any]:
+    raw = list(events); protocol = []
+    for sequence, record in enumerate(sorted(list(protocol_events), key=lambda x: float(x.get("offset_ms", 0) or 0)), 1):
+        item = dict(record); payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        item.setdefault("sequence", sequence); item.setdefault("jsonrpc_id", payload.get("id")); item.setdefault("method", payload.get("method")); item.setdefault("status", "error" if payload.get("error") is not None else ("request" if payload.get("method") else "response")); protocol.append(item)
+    calls = from_opencode_events(raw, selected_server, transport)
+    pending = {}
+    for record in sorted(protocol, key=lambda x: float(x.get("offset_ms", 0) or 0)):
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        ident = payload.get("id")
+        if record.get("direction") in {"client_to_server", "request"} and ident is not None and payload.get("method") == "tools/call":
+            pending[str(ident)] = record
+        elif ident is not None and str(ident) in pending:
+            request = pending.pop(str(ident)); request_payload = request.get("payload") or {}
+            tool = str(request_payload.get("params", {}).get("name") or "")
+            target = next((c for c in calls if c["tool"] == tool and c["wire_request"] is None), None)
+            if target:
+                target["wire_request"] = request_payload; target["wire_response"] = payload; target["server_latency_ms"] = max(0.0, float(record.get("offset_ms", 0) or 0) - float(request.get("offset_ms", 0) or 0)); target["provenance"]["wire"] = True
+                target["limitations"] = [limitation for limitation in target.get("limitations", []) if limitation != UNMATCHED_LIMITATION]
+                if isinstance(payload, dict) and payload.get("error"):
+                    target["status"], target["error"] = "error", payload["error"]
+    for call in calls:
+        if not call["provenance"].get("wire"):
+            call["limitations"] = [UNMATCHED_LIMITATION]
     capture = "empty" if not raw else ("complete" if status == "completed" else "partial")
-    return {"schema": "opencode.v1", "harness": "opencode", "capture_status": capture, "summary": {"transport": transport, "mcp_calls": len(calls)}, "mcp_calls_schema": SCHEMA_VERSION, "mcp_calls": calls, "spans": [], "protocol_events": [], "result_metadata": {"session_id": session_id, "status": status}, "limitations": [LIMITATION]}
+    limitations = [] if calls and all(c["provenance"].get("wire") for c in calls) else ([UNMATCHED_LIMITATION] if calls else [])
+    return {"schema": "opencode.v1", "harness": "opencode", "capture_status": capture, "summary": {"transport": transport, "mcp_calls": len(calls)}, "mcp_calls_schema": SCHEMA_VERSION, "mcp_calls": calls, "spans": [], "protocol_events": protocol, "result_metadata": {"session_id": session_id, "status": status}, "limitations": limitations}
 
 __all__ = ["SCHEMA_VERSION", "from_claude_trace", "from_opencode_events", "build_opencode_trace"]

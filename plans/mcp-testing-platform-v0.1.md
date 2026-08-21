@@ -53,7 +53,7 @@
 - Show the MCP lifecycle, tool inputs/results, errors, timing, and final harness response.
 - Persist backend-normalized canonical events and raw harness events.
 - Harness adapters own native parsing; the API returns canonical events and the UI never parses Claude/OpenCode-specific schemas.
-- Persist a versioned backend-normalized `trace.mcp_calls` (`mcp.v1`) contract with selected-server tool, status, timing, arguments, result, harness, and transport. Claude may include redacted wire JSON-RPC request/response and server latency; OpenCode records emitted native calls but truthfully has no wire-level verification or server latency.
+- Persist a versioned backend-normalized `trace.mcp_calls` (`mcp.v1`) contract with selected-server tool, status, timing, arguments, result, harness, and transport. Claude and OpenCode capture stdio, HTTP, and SSE wire JSON-RPC request/response and server latency where frames correlate; unmatched calls retain explicit unavailable fields.
 - Redact trace, event, and downloaded-report values before persistence; profile revisions remain local configuration snapshots.
 - Preserve and display reasoning payloads if the harness emits them; unavailable or encrypted reasoning remains unavailable.
 - Large payloads use truncated inline previews with complete JSON downloads.

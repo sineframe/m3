@@ -58,7 +58,7 @@ def test_completed_opencode_report_shows_configured_transport(monkeypatch):
                 if url.endswith("/profiles"):
                     return [{"id":"profile-1","name":"Profile","current_revision_id":"revision-1"}]
                 if url.endswith("/runs/run-1/report"):
-                    return {"run":{"id":"run-1","harness":"opencode","status":"completed","expected_output":"ok"},"assertions":{},"trace":{"available":True,"harness":"opencode","schema":"opencode.v1","summary":{"transport":"stdio"},"mcp_calls":[{"server":"draw","tool":"echo","status":"completed","harness":"opencode","transport":"stdio","arguments":{},"result":"ok"}]}}
+                    return {"run":{"id":"run-1","harness":"opencode","status":"completed","expected_output":"ok"},"assertions":{},"trace":{"available":True,"harness":"opencode","schema":"opencode.v1","summary":{"transport":"stdio"},"protocol_events":[],"mcp_calls":[{"server":"draw","tool":"echo","status":"completed","harness":"opencode","transport":"stdio","arguments":{},"result":"ok","wire_request":{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{}}},"wire_response":{"jsonrpc":"2.0","id":3,"result":{"content":[]}},"server_latency_ms":4.0,"provenance":{"wire":True}}]}}
                 if url.endswith("/runs/run-1"):
                     return {"id":"run-1","status":"completed"}
                 return []
@@ -70,3 +70,5 @@ def test_completed_opencode_report_shows_configured_transport(monkeypatch):
     app = app.run()
     transport = next(metric for metric in app.metric if metric.label == "Transport")
     assert transport.value == "STDIO"
+    assert any("server latency" in str(item.value).lower() for item in app.caption)
+    assert not any("Wire capture unavailable" in str(item.value) for item in app.caption)
