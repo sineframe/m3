@@ -7,10 +7,12 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 from ..config import Settings, get_settings
 from ..persistence.database import Base, get_db, init_db, make_engine
-from ..persistence.models import McpProfile, McpProfileRevision, Run, RunEvent, now, uid
+from ..persistence.models import McpProfile, McpProfileRevision, Run, RunEvent, RunTrace, now, uid
 from .schemas import ProfileCreate, RevisionCreate, RunClone, RunCreate, RunOut
 from ..domain.validation import ProfileValidationError, referenced_environment_variables, selected_server_config, validate_mcp_config
 from ..services.run_manager import RunManager
+from ..trace.claude import transport_for_server
+from ..trace.redaction import redact
 
 def _iso(v): return v.isoformat() if v else None
 REQUIRED_CLI_FLAGS=("--print","--bare","--output-format","--verbose","--strict-mcp-config","--mcp-config","--no-session-persistence")
@@ -137,6 +139,11 @@ def create_app(settings: Settings | None = None, engine_override=None, session_f
         out["queue_position"]=None
         if d is not None and r.status == "queued":
             out["queue_position"]=d.query(Run).filter(Run.status == "queued", Run.created_at < r.created_at).count()+1
+        out["trace_available"] = bool(d is not None and d.get(RunTrace, r.id))
+        if d is not None:
+            revision = d.get(McpProfileRevision, r.profile_revision_id)
+            server = (revision.mcp_json.get("mcpServers", {}).get(r.enabled_server) if revision else None) or {}
+            out["transport"] = transport_for_server(server)
         return out
     @router.post("/runs", status_code=202)
     def create_run(body:RunCreate,d:Session=Depends(db_dep)):
@@ -202,7 +209,7 @@ def create_app(settings: Settings | None = None, engine_override=None, session_f
         r=d.get(Run,run_id)
         if not r: raise HTTPException(404,"Run not found")
         if r.status in ("queued", "running"): raise HTTPException(409,"Active runs cannot be deleted; cancel and wait first")
-        d.query(RunEvent).filter_by(run_id=run_id).delete(synchronize_session=False); d.delete(r); d.commit(); return Response(status_code=204)
+        d.query(RunEvent).filter_by(run_id=run_id).delete(synchronize_session=False); d.query(RunTrace).filter_by(run_id=run_id).delete(synchronize_session=False); d.delete(r); d.commit(); return Response(status_code=204)
     @router.delete("/runs", status_code=204)
     def clear_runs(confirm:bool=False, body:dict|None=Body(None), d:Session=Depends(db_dep)):
         confirm = confirm or bool(body and body.get("confirm"))
@@ -210,7 +217,7 @@ def create_app(settings: Settings | None = None, engine_override=None, session_f
         active=d.query(Run).filter(Run.status.in_(["queued", "running"])).count()
         if active: raise HTTPException(409,"Active runs must be cancelled and finished before clearing history")
         for r in d.query(Run).all():
-            d.query(RunEvent).filter_by(run_id=r.id).delete(synchronize_session=False); d.delete(r)
+            d.query(RunEvent).filter_by(run_id=r.id).delete(synchronize_session=False); d.query(RunTrace).filter_by(run_id=r.id).delete(synchronize_session=False); d.delete(r)
         d.commit(); return Response(status_code=204)
     @router.get("/runs/{run_id}/report")
     def report(run_id:str,d:Session=Depends(db_dep)):
@@ -218,7 +225,14 @@ def create_app(settings: Settings | None = None, engine_override=None, session_f
         if not r: raise HTTPException(404,"Run not found")
         rev=d.get(McpProfileRevision,r.profile_revision_id); ev=d.query(RunEvent).filter_by(run_id=run_id).order_by(RunEvent.sequence).all()
         from ..domain.events import derive_mcp_summary
-        return {"run":run_json(r,d),"profile_revision":{"id":rev.id,"revision_number":rev.revision_number,"mcp_json":rev.mcp_json},"assertions":{"lifecycle":r.status,"mcp":{"status":r.mcp_assertion},"semantic":{"status":r.semantic_assertion,"reason":r.semantic_reason}},"events":[{"sequence":e.sequence,"timestamp":_iso(e.timestamp),"event_type":e.event_type,"payload":e.payload,"raw_event":e.raw_event} for e in ev],"stderr":r.stderr,"mcp_summary":derive_mcp_summary([e.raw_event for e in ev],r.enabled_server),"high_risk":r.tool_mode == "full","warning":"SQLite and reports contain unredacted trace data"}
+        stored_trace=d.get(RunTrace, run_id)
+        trace_value = stored_trace.trace if stored_trace else None
+        transport = transport_for_server(((rev.mcp_json.get("mcpServers", {}).get(r.enabled_server) if rev else None) or {}))
+        mcp_summary=derive_mcp_summary([e.raw_event for e in ev],r.enabled_server); mcp_summary["transport"]=transport
+        safe_profile, _ = redact(rev.mcp_json)
+        trace_schema = stored_trace.schema_version if stored_trace else ("claude.v1" if r.harness == "claude-code" else None)
+        unavailable_reason = "Trace unavailable for legacy run." if r.harness == "claude-code" else f"Trace parsing is not implemented for {r.harness}."
+        return {"run":run_json(r,d),"profile_revision":{"id":rev.id,"revision_number":rev.revision_number,"mcp_json":safe_profile},"assertions":{"lifecycle":r.status,"mcp":{"status":r.mcp_assertion},"semantic":{"status":r.semantic_assertion,"reason":r.semantic_reason}},"events":[{"sequence":e.sequence,"timestamp":_iso(e.timestamp),"event_type":e.event_type,"payload":e.payload,"raw_event":e.raw_event} for e in ev],"stderr":r.stderr,"mcp_summary":mcp_summary,"high_risk":r.tool_mode == "full","warning":"Downloaded reports and persisted trace payloads redact detected credentials.","trace":{"available":stored_trace is not None,"schema":trace_schema,"harness":(trace_value or {}).get("harness",r.harness),"capture_status":stored_trace.capture_status if stored_trace else "unavailable","summary":(trace_value or {}).get("summary",{"transport":transport}),"spans":(trace_value or {}).get("spans",[]),"protocol_events":(trace_value or {}).get("protocol_events",[]),"result_metadata":(trace_value or {}).get("result_metadata",{}),"limitations":(trace_value or {}).get("limitations",[unavailable_reason])}}
     app.include_router(router)
     return app
 

@@ -1,9 +1,13 @@
-import asyncio, json, os, signal, tempfile, threading, time
+import asyncio, json, os, signal, sys, tempfile, threading, time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from .base import HarnessResult, HarnessRunner, RunSpec
 from ..domain.events import normalize_events
 from ..domain.validation import selected_server_config
+from ..trace.capture import read_capture
+from ..trace.claude import transport_for_server
+from ..transport.http_proxy import McpHttpProxy
 
 READ_ONLY_TOOLS = ["Agent", "Read", "Glob", "Grep", "LSP", "WebFetch", "WebSearch", "ToolSearch", "ListMcpResourcesTool", "ReadMcpResourceTool", "TaskGet", "TaskList", "TaskOutput"]
 
@@ -14,31 +18,66 @@ class ClaudeCodeRunner(HarnessRunner):
         """Thread-safe cancellation request; the async runner performs reap."""
         self.cancel_requested.set(); self._terminate()
     def build_command(self, spec: RunSpec, config_path: str) -> list[str]:
-        cmd = [self.executable, "--print", "--input-format", "text", "--bare", "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--mcp-config", config_path, "--no-session-persistence", "--model", spec.model, "--max-turns", str(spec.max_turns), "--max-budget-usd", str(spec.max_budget_usd)]
+        cmd = [self.executable, "--print", "--input-format", "text", "--bare", "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--strict-mcp-config", "--mcp-config", config_path, "--no-session-persistence", "--model", spec.model, "--max-turns", str(spec.max_turns), "--max-budget-usd", str(spec.max_budget_usd)]
         if spec.tool_mode == "mcp_only": cmd += ["--tools", "", "--allowedTools", f"mcp__{spec.enabled_server}__*"]
         elif spec.tool_mode == "mcp_read_only": cmd += ["--tools", ",".join(READ_ONLY_TOOLS), "--allowedTools", ",".join(READ_ONLY_TOOLS + [f"mcp__{spec.enabled_server}__*"])]
         else: cmd += ["--tools", "default", "--dangerously-skip-permissions"]
         return cmd
     async def run(self, spec: RunSpec, on_event=None, cancel_event=None) -> HarnessResult:
         result = HarnessResult(status="running")
+        partial_text_seen = False
         with tempfile.TemporaryDirectory(prefix="mcp-pal-") as td:
             path = os.path.join(td, "mcp.json")
-            Path(path).write_text(json.dumps(selected_server_config(spec.mcp_config, spec.enabled_server)), encoding="utf-8")
+            capture_path = os.path.join(td, "mcp-capture.jsonl")
+            baseline_ns = time.perf_counter_ns()
+            config = selected_server_config(spec.mcp_config, spec.enabled_server)
+            server = config["mcpServers"][spec.enabled_server]
+            result.transport = transport_for_server(server)
+            proxy: McpHttpProxy | None = None
+            if result.transport == "stdio":
+                original = dict(server)
+                command = original.get("command")
+                args = original.get("args", [])
+                # The relay receives an argv vector after `--`; no shell or
+                # user-controlled command interpolation is involved.
+                original["command"] = sys.executable
+                original["args"] = ["-m", "mcp_pal.transport.stdio_proxy", "--capture", capture_path, "--baseline", str(baseline_ns), "--", command, *args]
+                config["mcpServers"][spec.enabled_server] = original
+            elif result.transport in {"http", "sse"}:
+                proxy = McpHttpProxy(upstream_url=server["url"], configured_headers=server.get("headers"), transport=result.transport, capture_path=capture_path, baseline_ns=baseline_ns)
+                try:
+                    local_url = await proxy.start()
+                except Exception:
+                    try:
+                        await proxy.stop()
+                    except Exception:
+                        pass
+                    result.status, result.error = "failed", f"MCP {result.transport} proxy could not start"
+                    result.protocol_events = read_capture(capture_path)
+                    return result
+                config["mcpServers"][spec.enabled_server] = {**server, "url": local_url}
+            Path(path).write_text(json.dumps(config), encoding="utf-8")
             os.chmod(path, 0o600)
             try:
                 self.process = await asyncio.create_subprocess_exec(*self.build_command(spec, path), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=td, start_new_session=True)
                 self.process.stdin.write(spec.prompt.encode()); await self.process.stdin.drain(); self.process.stdin.close()
                 async def read_stdout():
+                    nonlocal partial_text_seen
                     async for line in self.process.stdout:
                         rawline = line.decode(errors="replace").rstrip("\n")
                         try: raw = json.loads(rawline)
                         except Exception: raw = rawline
                         result.events.append(raw)
+                        result.event_records.append({"source": "claude", "occurred_at": datetime.now(timezone.utc).isoformat(), "offset_ms": max(0.0, (time.perf_counter_ns() - baseline_ns) / 1_000_000), "raw_event": raw, "type": raw.get("type") if isinstance(raw, dict) else "malformed"})
                         normalized = normalize_events(raw, spec.enabled_server)
                         result.normalized.extend(normalized)
                         for et, payload in normalized:
                             if et != "assistant_text": continue
                             if not result.final_result_seen:
+                                if payload.get("partial"):
+                                    partial_text_seen = True
+                                elif partial_text_seen:
+                                    continue
                                 txt = payload.get("text") or ""; result.final_text += txt if isinstance(txt, str) else (json.dumps(txt, ensure_ascii=False) if txt else "")
                         if isinstance(raw, dict):
                             result.session_id = result.session_id or raw.get("session_id")
@@ -84,6 +123,10 @@ class ClaudeCodeRunner(HarnessRunner):
             except Exception as e:
                 result.status, result.error = "failed", str(e)
                 if self.process and self.process.returncode is None: await self._terminate_and_reap()
+            finally:
+                if proxy is not None:
+                    await proxy.stop()
+            result.protocol_events = read_capture(capture_path)
         return result
     async def _terminate_and_reap(self):
         if self.process and self.process.returncode is None:

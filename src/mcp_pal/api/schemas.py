@@ -62,5 +62,6 @@ class RunOut(BaseModel):
     claude_result: str | None = None; exit_code: int | None = None; error_message: str | None = None
     stderr: str | None = None; cost_usd: float | None = None; turns: int | None = None; session_id: str | None = None
     mcp_assertion: str; semantic_assertion: str; semantic_reason: str
+    transport: str | None = None; trace_available: bool = False
     created_at: datetime; started_at: datetime | None = None; finished_at: datetime | None = None
     model_config = {"from_attributes": True}

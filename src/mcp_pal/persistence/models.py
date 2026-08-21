@@ -67,3 +67,12 @@ class RunEvent(Base):
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     raw_event: Mapped[dict | str] = mapped_column(JSON, nullable=False)
     __table_args__ = (UniqueConstraint("run_id", "sequence"),)
+
+class RunTrace(Base):
+    __tablename__ = "run_traces"
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True)
+    harness: Mapped[str] = mapped_column(String(50), nullable=False, default="claude-code")
+    schema_version: Mapped[str] = mapped_column(String(30), nullable=False, default="claude.v1")
+    capture_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    trace: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

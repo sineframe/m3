@@ -23,7 +23,7 @@ compile/import checks. Focused suites are available as `just test-unit` and
 
 The API is documented at `http://localhost:8000/docs`. Set `MCP_PAL_API_URL` if the UI should use another backend URL.
 
-Profiles contain one harness-neutral `mcpServers` object and support stdio, HTTP, and SSE servers. The backend translates the selected server to each harness's native config. Secrets should be `${ENVIRONMENT_VARIABLE}` references. Complete profiles and reports are intentionally stored unredacted in SQLite for local debugging. Tool mode `full` is high risk and enables unrestricted automatic tool approval.
+Profiles contain one harness-neutral `mcpServers` object and support stdio, HTTP, and SSE servers. The backend translates the selected server to each harness's native config. Secrets should be `${ENVIRONMENT_VARIABLE}` references. Claude/MCP trace payloads and downloaded reports redact detected credentials; profile revisions remain local configuration snapshots. Tool mode `full` is high risk and enables unrestricted automatic tool approval. Completed Claude reports show the configured transport (`stdio`, `http`, or `sse`) and a Braintrust-style waterfall.
 
 If the UI says “Backend connected · runner setup required”, the API is reachable
 and profiles/history remain usable; run submission is disabled until the health

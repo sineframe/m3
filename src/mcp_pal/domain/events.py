@@ -23,6 +23,27 @@ def normalize_events(raw: Any, selected_server: str | None = None) -> list[tuple
         call = ("tool_call", {**common, "tool_use_id": call_id, "tool_name": name, "server_name": server_name, "input": state.get("input")})
         result = ("tool_result", {**common, "tool_use_id": call_id, "tool_name": name, "server_name": server_name, "result": state.get("output"), "is_error": state.get("status") == "error", "error": state.get("error")})
         return [call, result]
+    # Claude's --include-partial-messages stream wraps Anthropic streaming
+    # events. Preserve each emitted delta so the trace can show first-output
+    # timing and incremental thinking/text without inventing hidden reasoning.
+    if typ == "stream_event":
+        event = raw.get("event") if isinstance(raw.get("event"), dict) else {}
+        event_type = event.get("type", "")
+        if event_type == "content_block_start":
+            block = event.get("content_block") if isinstance(event.get("content_block"), dict) else {}
+            block_type = block.get("type")
+            if block_type == "thinking": return [("thinking", {"content": block, "partial": True, "raw": raw})]
+            if block_type in ("tool_use", "tool_call"): return [("tool_call", {"content": [block], "partial": True, "raw": raw, "tool_use_id": block.get("id"), "tool_name": block.get("name")})]
+            if block_type == "text": return [("assistant_text", {"text": block.get("text", ""), "content": block, "partial": True, "raw": raw})]
+        if event_type == "content_block_delta":
+            delta = event.get("delta") if isinstance(event.get("delta"), dict) else {}
+            delta_type = delta.get("type", "")
+            if delta_type in ("thinking_delta", "signature_delta"): return [("thinking", {"content": delta, "partial": True, "raw": raw})]
+            if delta_type == "text_delta": return [("assistant_text", {"text": delta.get("text", ""), "partial": True, "raw": raw})]
+            if delta_type == "input_json_delta": return [("tool_call", {"content": [delta], "partial": True, "raw": raw})]
+        if event_type in ("message_start", "message_delta", "message_stop"):
+            return [("model_stream", {"event": event, "partial": True, "raw": raw})]
+        return [("stream_event", {"event": event, "partial": True, "raw": raw})]
     if typ in ("assistant", "message"):
         content = raw.get("message", {}).get("content", raw.get("content", []))
         if isinstance(content, str): return [("assistant_text", {"text": content, "raw": raw})]
@@ -120,11 +141,14 @@ def derive_mcp_summary(raw_events: list[Any], selected_server: str) -> dict:
             for key in ("tools", "mcp_tools", "advertised_tools"):
                 value=raw.get(key)
                 if isinstance(value,list): advertised.extend(_name(x.get("name") if isinstance(x,dict) else x) for x in value)
-    calls=[]; call_ids=set()
+    calls=[]; call_ids=set(); seen_calls=set()
     for typ,payload in normalized:
         if typ != "tool_call": continue
         ident,name=_call_info(payload)
         if ns in name.lower() or name.lower().startswith(selected_server.lower()+"_") or payload.get("server_name") == selected_server or payload.get("server") == selected_server:
+            call_key=("id", ident) if ident else ("name", name, json.dumps(payload.get("content", []), sort_keys=True, ensure_ascii=False))
+            if call_key in seen_calls: continue
+            seen_calls.add(call_key)
             calls.append({"tool_use_id":ident,"name":name}); call_ids.add(ident) if ident else None
     matched_results=[]; unmatched=[]
     for typ,payload in normalized:

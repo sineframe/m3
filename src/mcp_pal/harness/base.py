@@ -10,6 +10,11 @@ class RunSpec:
 @dataclass
 class HarnessResult:
     status: str; events: list[Any] = field(default_factory=list); normalized: list[tuple[str,dict]] = field(default_factory=list)
+    # Receipt-timed Claude stream events and decoded MCP frames are kept in
+    # memory until RunManager builds the redacted, versioned persisted trace.
+    event_records: list[dict[str, Any]] = field(default_factory=list)
+    protocol_events: list[dict[str, Any]] = field(default_factory=list)
+    transport: str = "stdio"
     final_text: str = ""; stderr: str = ""; exit_code: int | None = None; error: str | None = None
     cost_usd: float | None = None; turns: int | None = None; session_id: str | None = None
     final_result_seen: bool = False

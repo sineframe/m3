@@ -1,5 +1,5 @@
 """Streamlit client for the MCP Testing Platform API."""
-import json, os, re, time
+import html, json, os, re, time
 import requests
 import streamlit as st
 from mcp_pal.ui.health import health_state
@@ -26,8 +26,9 @@ def render_report(report):
     run=report.get("run",{}); assertions=report.get("assertions",{})
     c1,c2,c3=st.columns(3); c1.metric("Lifecycle",assertions.get("lifecycle",run.get("status"))); c2.metric("MCP assertion",assertions.get("mcp",{}).get("status")); c3.metric("Semantic assertion",assertions.get("semantic",{}).get("status"))
     if report.get("high_risk"): st.error("HIGH RISK: full tool mode used unrestricted auto-approval.")
-    st.warning(report.get("warning","SQLite and reports contain unredacted data."))
-    left,right=st.columns(2); left.subheader(f"Final {run.get('harness','harness')} response"); left.markdown(linkify(truncate(run.get("claude_result") or ""))); right.subheader("Expected output"); right.write(run.get("expected_output", ""))
+    st.warning(report.get("warning","Trace payloads are redacted before persistence."))
+    left,right=st.columns(2); left.subheader(f"Final {run.get('harness','harness')} response"); left.code(truncate(run.get("claude_result") or ""), language="text"); right.subheader("Expected output"); right.code(truncate(run.get("expected_output", "")), language="text")
+    if run.get("harness") == "claude-code": render_trace(report.get("trace") or {}, key_suffix=str(run.get("id", "active")))
     st.subheader("MCP activity summary"); st.json(report.get("mcp_summary",{}))
     events=report.get("events",[])
     with st.expander(f"Normalized timeline ({len(events)} events)", expanded=False):
@@ -40,6 +41,65 @@ def render_report(report):
         for event in events:
             if event.get("event_type") == "thinking": st.code(truncate(event.get("payload",{})))
     with st.expander("stderr", expanded=False): st.code(report.get("stderr") or "")
+
+
+def _ms(value, default=0.0):
+    try: return float(value)
+    except (TypeError, ValueError): return default
+
+
+def render_trace(trace, key_suffix="active"):
+    """Render a safe, dense Braintrust-style post-run waterfall."""
+    if not trace.get("available"):
+        st.info("Trace unavailable for this legacy run. New runs record Claude stream and MCP transport frames.")
+        return
+    summary=trace.get("summary") or {}; spans=trace.get("spans") or []
+    transport=str(summary.get("transport") or "unknown").upper()
+    display=lambda key, suffix="": f"{summary[key]}{suffix}" if summary.get(key) is not None else "—"
+    metrics=[("Transport", transport), ("Wall time", display("duration_ms", " ms")), ("API time", display("duration_api_ms", " ms")), ("Turns", display("turns")), ("Tokens", display("total_tokens")), ("Cost", f"${summary['cost_usd']}" if summary.get("cost_usd") is not None else "—")]
+    cols=st.columns(len(metrics))
+    for col,(label,value) in zip(cols,metrics): col.metric(label,value)
+    st.markdown("""
+    <style>
+      .trace-shell { background:#11151a; border:1px solid #2b333d; border-radius:8px; padding:14px 16px 8px; color:#d8e0e8; }
+      .trace-kicker { color:#8795a5; font:600 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing:.14em; text-transform:uppercase; }
+      .trace-transport { color:#7ee787; font:700 12px ui-monospace, SFMono-Regular, Menlo, monospace; margin:4px 0 12px; }
+      .trace-row { display:grid; grid-template-columns:minmax(210px,1.35fr) 72px minmax(180px,2fr) 72px; align-items:center; gap:9px; min-height:27px; border-top:1px solid #202831; font:12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .trace-name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#c9d1d9; }
+      .trace-bar-wrap { height:12px; background:#1d252e; border-radius:2px; position:relative; }
+      .trace-bar { height:100%; border-radius:2px; min-width:3px; } .trace-ok { background:#3fb950; } .trace-error { background:#f85149; } .trace-blue { background:#58a6ff; }
+      .trace-head { color:#81909f; font-size:10px; letter-spacing:.08em; text-transform:uppercase; padding-bottom:5px; }
+      .trace-dur { color:#8b949e; text-align:right; } .trace-kind { color:#8b949e; }
+    </style>
+    """, unsafe_allow_html=True)
+    st.markdown(f'<div class="trace-shell"><div class="trace-kicker">Claude trace · {html.escape(str(trace.get("schema", "claude.v1")))}</div><div class="trace-transport">● MCP TRANSPORT: {html.escape(transport)}</div></div>', unsafe_allow_html=True)
+    st.caption(f"Input {display('input_tokens')} · Output {display('output_tokens')} · Cache read {display('cache_read_input_tokens')} · Cache write {display('cache_creation_input_tokens')} · First output {display('time_to_first_output_ms', ' ms')}")
+    if not spans:
+        st.caption("No spans were captured.")
+        return
+    kinds=sorted({str(x.get("kind","unknown")) for x in spans})
+    selected=st.multiselect("Span types", kinds, default=kinds, key=f"trace-span-filter-{key_suffix}")
+    visible=[x for x in spans if str(x.get("kind","unknown")) in selected]
+    total=max((_ms(x.get("end_ms"), _ms(x.get("start_ms"))) for x in visible), default=_ms(summary.get("duration_ms"),1.0)) or 1.0
+    rows=['<div class="trace-row trace-head"><div>Span</div><div>Kind</div><div>Timeline</div><div>Time</div></div>']
+    for span in visible:
+        start=max(0.0,_ms(span.get("start_ms"))); end=max(start,_ms(span.get("end_ms"),start)); duration=max(0.0,end-start)
+        left=min(100.0,start/total*100); width=max(0.7,min(100.0,duration/total*100)); status=str(span.get("status","completed"))
+        color="trace-error" if status in {"error","failed"} else ("trace-blue" if span.get("kind") in {"model_turn","text","thinking"} else "trace-ok")
+        indent=0 if span.get("parent_id") in (None,"run") else 16
+        name=html.escape(str(span.get("name","span"))); kind=html.escape(str(span.get("kind","unknown")))
+        rows.append(f'<div class="trace-row"><div class="trace-name" style="padding-left:{indent}px">{name}</div><div class="trace-kind">{kind}</div><div class="trace-bar-wrap"><div class="trace-bar {color}" style="margin-left:{left:.3f}%;width:{width:.3f}%"></div></div><div class="trace-dur">{duration:.1f} ms</div></div>')
+    st.markdown('<div class="trace-shell">'+"".join(rows)+"</div>", unsafe_allow_html=True)
+    st.caption("Select a span below for redacted input/output and correlation metadata.")
+    for span in visible:
+        with st.expander(f"{span.get('name','span')} · {span.get('duration_ms',0)} ms · {span.get('status','completed')}", expanded=False):
+            st.json({"kind":span.get("kind"),"transport":span.get("transport"),"metadata":span.get("metadata"),"tokens":span.get("tokens")})
+            if span.get("input") is not None: st.code(truncate(span.get("input")), language="json")
+            if span.get("output") is not None: st.code(truncate(span.get("output")), language="json")
+    with st.expander(f"Captured MCP protocol frames ({len(trace.get('protocol_events') or [])})", expanded=False):
+        for event in trace.get("protocol_events") or []:
+            st.caption(f"{event.get('offset_ms','—')} ms · {event.get('transport','—')} · {event.get('direction','—')}")
+            st.code(truncate(event.get("payload",{})), language="json")
 
 st.set_page_config(page_title="MCP Testing Platform", page_icon="🧪", layout="wide")
 if "page" not in st.session_state: st.session_state["page"]="New Run"

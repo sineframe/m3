@@ -265,6 +265,13 @@ time.sleep(20)
     assert time.monotonic()-started < 8 and result.status == "completed" and result.final_text == "ok"
     assert derive_mcp_assertion(result.events,"draw") == "passed"
 
+def test_partial_and_complete_tool_call_counts_once():
+    partial={"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"id-1","name":"mcp__draw__create","input":{}}}}
+    complete={"type":"assistant","message":{"content":[{"type":"tool_use","id":"id-1","name":"mcp__draw__create","input":{}}]}}
+    result={"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"id-1","content":"ok"}]}}
+    summary=derive_mcp_summary([partial,complete,result],"draw")
+    assert summary["selected_server_call_count"] == 1 and summary["success_count"] == 1
+
 def test_timeout_and_cancel_reap(tmp_path):
     script=fake(tmp_path/"slow.py", """
 import time
@@ -290,6 +297,31 @@ def test_api_active_cancel_is_cancelled(tmp_path):
         if state["status"] not in ("queued","running"): break
         time.sleep(.02)
     assert state["status"] == "cancelled"
+
+def test_completed_api_run_persists_claude_trace_and_transport(tmp_path):
+    script=fake(tmp_path/"trace.py", """
+import json
+print(json.dumps({'type':'stream_event','event':{'type':'message_start','message':{'id':'msg-1','model':'m','usage':{'input_tokens':4}}}}))
+print(json.dumps({'type':'stream_event','event':{'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}}}))
+print(json.dumps({'type':'stream_event','event':{'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':'done'}}}))
+print(json.dumps({'type':'stream_event','event':{'type':'message_delta','usage':{'output_tokens':2}}}))
+print(json.dumps({'type':'stream_event','event':{'type':'message_stop'}}))
+print(json.dumps({'type':'assistant','message':{'id':'msg-1','content':[{'type':'text','text':'done'}],'usage':{'input_tokens':4,'output_tokens':2}}}))
+print(json.dumps({'type':'result','result':'done','duration_ms':7,'duration_api_ms':6,'num_turns':1,'total_cost_usd':0.01}))
+""")
+    settings=Settings(database_path=str(tmp_path/"trace.sqlite"),anthropic_api_key="key",claude_executable=script,claude_model_ids=["m"])
+    client=TestClient(create_app(settings))
+    profile=client.post("/api/v1/profiles",json={"name":"trace","mcp_json":{"mcpServers":{"draw":{"command":"ignored"}}}}).json()
+    created=client.post("/api/v1/runs",json={"model":"m","prompt":"p","expected_output":"done","profile_revision_id":profile["current_revision_id"],"enabled_server":"draw"}).json()
+    for _ in range(100):
+        state=client.get(f"/api/v1/runs/{created['id']}").json()
+        if state["status"] not in {"queued","running"}: break
+        time.sleep(.02)
+    report=client.get(f"/api/v1/runs/{created['id']}/report").json()
+    assert report["trace"]["available"] is True
+    assert report["trace"]["summary"]["transport"] == "stdio"
+    assert report["trace"]["summary"]["total_tokens"] == 6
+    assert len([span for span in report["trace"]["spans"] if span["kind"] == "model_turn"]) == 1
 
 def test_readiness_and_active_delete_conflict(tmp_path):
     help_script=fake(tmp_path/"help.py", "import sys; print('--print --bare --output-format --verbose --strict-mcp-config --mcp-config --no-session-persistence')")
