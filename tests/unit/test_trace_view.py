@@ -42,6 +42,8 @@ def test_trace_labels_are_human_readable():
     builtin = {"kind": "tool_call", "name": "Read", "metadata": {"mcp_selected": False}}
     assert display_name(builtin) == "Tool · Read"
     assert actor(builtin) == "Claude tool"
+    assert actor({"kind":"model_turn","metadata":{"harness":"opencode"}}) == "OpenCode"
+    assert actor({"kind":"tool_call","metadata":{"harness":"opencode","mcp_selected":False}}) == "OpenCode tool"
     assert "OpenCode" in wire_unavailable_message("opencode")
     assert "correlated transport" in wire_unavailable_message("claude-code")
 

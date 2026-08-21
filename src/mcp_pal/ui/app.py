@@ -86,7 +86,8 @@ def render_trace(trace, key_suffix="active"):
                 st.code(truncate(event.get("payload",{})), language="json")
         return
     display=lambda key: summary[key] if summary.get(key) is not None else "—"
-    metrics=[("Transport", transport), ("Total time", format_duration(summary.get("duration_ms"))), ("Claude turns", display("turns")), ("MCP calls", call_count), ("Tokens", display("total_tokens")), ("Cost", f"${summary['cost_usd']:.4f}" if isinstance(summary.get("cost_usd"),(int,float)) else "—")]
+    turn_label="OpenCode steps" if harness == "opencode" else "Claude turns"
+    metrics=[("Transport", transport), ("Total time", format_duration(summary.get("duration_ms"))), (turn_label, display("turns")), ("MCP calls", call_count), ("Tokens", display("total_tokens")), ("Cost", f"${summary['cost_usd']:.4f}" if isinstance(summary.get("cost_usd"),(int,float)) else "—")]
     cols=st.columns(len(metrics))
     for col,(label,value) in zip(cols,metrics): col.metric(label,value)
     st.markdown("""
@@ -121,7 +122,8 @@ def render_trace(trace, key_suffix="active"):
     show_protocol=st.toggle("Show protocol events",value=False,key=f"trace-protocol-{key_suffix}",help="Adds initialize, tools/list, tools/call, notifications, and response frames.")
     visible=visible_spans(spans,include_protocol=show_protocol)
     total=max(number(summary.get("duration_ms")),max((number(x.get("end_ms")) for x in visible),default=1.0),1.0)
-    rows=['<div class="trace-legend"><span><i class="trace-dot trace-claude"></i>Claude</span><span><i class="trace-dot trace-thinking"></i>Thinking</span><span><i class="trace-dot trace-mcp"></i>MCP round trip</span><span><i class="trace-dot trace-server"></i>Server</span></div>', '<div class="trace-row trace-head"><div>Activity</div><div>Actor</div><div>Elapsed time</div><div>Duration</div></div>']
+    agent_label="OpenCode" if harness == "opencode" else "Claude"
+    rows=[f'<div class="trace-legend"><span><i class="trace-dot trace-claude"></i>{agent_label}</span><span><i class="trace-dot trace-thinking"></i>Thinking</span><span><i class="trace-dot trace-mcp"></i>MCP round trip</span><span><i class="trace-dot trace-server"></i>Server</span></div>', '<div class="trace-row trace-head"><div>Activity</div><div>Actor</div><div>Elapsed time</div><div>Duration</div></div>']
     for span in visible:
         start=max(0.0,number(span.get("start_ms"))); end=max(start,number(span.get("end_ms"),start)); duration=max(0.0,end-start)
         left=min(100.0,start/total*100); width=max(0.45,min(100.0-left,duration/total*100)); status=str(span.get("status","completed")); kind=str(span.get("kind",""))
@@ -132,7 +134,7 @@ def render_trace(trace, key_suffix="active"):
         sub=f"Server {format_duration(latency)} · other observed time {format_duration(max(0,duration-latency))}" if latency is not None else ""
         rows.append(f'<div class="trace-row"><div class="trace-name" style="padding-left:{indent}px">{name}<div class="trace-sub">{html.escape(sub)}</div></div><div class="trace-actor">{who}</div><div class="trace-bar-wrap"><div class="trace-bar {color}" style="left:{left:.3f}%;width:{width:.3f}%"></div></div><div class="trace-dur">{format_duration(duration)}</div></div>')
     st.markdown('<div class="trace-shell">'+"".join(rows)+"</div>", unsafe_allow_html=True)
-    st.caption("MCP call duration is Claude-observed round-trip time. Server duration is measured from captured JSON-RPC request and response frames; the remainder includes transport and harness overhead.")
+    st.caption(f"MCP call duration is {agent_label}-observed round-trip time. Server duration is measured from captured JSON-RPC request and response frames; the remainder includes transport and harness overhead.")
     if visible:
         selected_id=st.selectbox("Inspect activity",[span.get("id") for span in visible],key=f"trace-inspect-{key_suffix}",format_func=lambda ident: display_name(next(span for span in visible if span.get("id")==ident)))
         selected=next(span for span in visible if span.get("id")==selected_id)

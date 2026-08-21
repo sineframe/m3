@@ -254,13 +254,17 @@ def test_fake_opencode_api_persists_normalized_trace_and_report(tmp_path):
         assert trace["mcp_calls_schema"]=="mcp.v1" and trace["summary"]["transport"]=="stdio"
         call=trace["mcp_calls"][0]
         assert {call[k] for k in ("server","tool","status")}=={"draw","echo","completed"}
-        assert call["arguments"]=={"text":"hello"} and call["result"]=={"text":"hello"}
+        assert call["arguments"]=={"text":"hello","api_key":"[REDACTED]"} and call["result"]=={"text":"hello"}
         assert call["wire_request"]["method"] == "tools/call"
         assert call["wire_response"]["result"]["content"][0]["text"] == "hello"
         assert call["server_latency_ms"] == 5 and call["provenance"]["wire"] is True
         assert call["limitations"] == []
         assert call["wire_request"]["params"]["arguments"]["api_key"] == "[REDACTED]"
         assert not trace["limitations"]
+        assert any(span["kind"]=="model_turn" for span in trace["spans"])
+        tool_span=next(span for span in trace["spans"] if span["kind"]=="tool_call")
+        wire_span=next(span for span in trace["spans"] if span["kind"]=="mcp" and span["name"]=="tools/call")
+        assert wire_span["parent_id"]==tool_span["id"]
         assert "SUPER-SECRET" not in json.dumps(report)
 
 def test_opencode_provider_credentials_are_injected_without_exposing_values(tmp_path):

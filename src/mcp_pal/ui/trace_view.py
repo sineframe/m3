@@ -58,10 +58,12 @@ def display_name(span: dict[str, Any]) -> str:
 
 def actor(span: dict[str, Any]) -> str:
     kind = str(span.get("kind") or "")
+    harness = str((span.get("metadata") or {}).get("harness") or "claude-code")
+    agent = "OpenCode" if harness == "opencode" else "Claude"
     if kind in {"model_turn", "thinking", "text"}:
-        return "Claude"
+        return agent
     if kind == "tool_call":
-        return "MCP call" if (span.get("metadata") or {}).get("mcp_selected", True) else "Claude tool"
+        return "MCP call" if (span.get("metadata") or {}).get("mcp_selected", True) else f"{agent} tool"
     if kind in PROTOCOL_KINDS:
         return "MCP server"
     return "System"

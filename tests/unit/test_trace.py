@@ -110,6 +110,25 @@ def test_tool_call_span_covers_round_trip_duration():
     assert len(calls) == 1 and calls[0]["duration_ms"] == 10
     assert calls[0]["metadata"]["correlation"] == "exact"
 
+def test_streamed_empty_claude_input_uses_correlated_wire_arguments():
+    raws = [
+        {"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1"}}},
+        {"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"mcp__draw__create","input":{}}}},
+        {"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"x\":1}"}}},
+        {"type":"stream_event","event":{"type":"content_block_stop","index":0}},
+    ]
+    protocol = [
+        {"offset_ms":4,"direction":"client_to_server","payload":{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"create","arguments":{"x":1}}}},
+        {"offset_ms":5,"direction":"server_to_client","payload":{"jsonrpc":"2.0","id":7,"result":{"content":[]}}},
+    ]
+    trace = build_claude_trace(
+        events=[{"type":raw["type"],"offset_ms":index,"raw_event":raw} for index,raw in enumerate(raws)],
+        protocol_events=protocol,
+        selected_server="draw",
+    )
+
+    assert trace["mcp_calls"][0]["arguments"] == {"x":1}
+
 def test_builtin_named_like_mcp_tool_cannot_steal_wire_correlation():
     trace = build_claude_trace(
         events=[
