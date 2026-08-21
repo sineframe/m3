@@ -38,6 +38,8 @@ The profile form starts with the public Excalidraw HTTP MCP server:
 }
 ```
 
+Reports also expose a redacted, versioned harness-neutral `trace.mcp_calls` collection (`mcp.v1`) with selected-server tool, status, timing, arguments, result, harness, and transport. Claude additionally includes correlated wire request/response and server latency where captured. OpenCode persists an `opencode.v1` adapter trace from native emitted records and truthfully marks wire fields and server latency unavailable because transport interception is not implemented.
+
 If the UI says “Backend connected · runner setup required”, the API is reachable
 and profiles/history remain usable; run submission is disabled until the health
 checks pass for the selected harness. Add the relevant key to `.env` and restart

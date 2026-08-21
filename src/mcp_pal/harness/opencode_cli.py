@@ -1,5 +1,6 @@
 """OpenCode CLI harness adapter."""
 import asyncio, json, os, re, shutil, signal, tempfile, threading, time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +144,7 @@ class OpenCodeRunner(HarnessRunner):
 
     async def run(self, spec: RunSpec, on_event=None, cancel_event=None) -> HarnessResult:
         result = HarnessResult(status="running")
+        baseline = time.perf_counter_ns()
         with tempfile.TemporaryDirectory(prefix="mcp-pal-opencode-") as td:
             config_path = os.path.join(td, "opencode.json")
             Path(config_path).write_text(json.dumps(opencode_config(spec.mcp_config, spec.enabled_server, spec.tool_mode)), encoding="utf-8")
@@ -181,7 +183,9 @@ class OpenCodeRunner(HarnessRunner):
                         rawline=line.decode(errors="replace").rstrip("\n")
                         try: raw=json.loads(rawline)
                         except Exception: raw=rawline
-                        result.events.append(raw); normalized=normalize_events(raw,spec.enabled_server); result.normalized.extend(normalized)
+                        result.events.append(raw)
+                        result.event_records.append({"source":"opencode", "occurred_at":datetime.now(timezone.utc).isoformat(), "offset_ms":max(0.0,(time.perf_counter_ns()-baseline)/1_000_000), "raw_event":raw, "type":raw.get("type") if isinstance(raw,dict) else "malformed"})
+                        normalized=normalize_events(raw,spec.enabled_server); result.normalized.extend(normalized)
                         for event_type,payload in normalized:
                             if event_type == "assistant_text": result.final_text += str(payload.get("text") or "")
                             if event_type == "step_finish":
@@ -206,7 +210,7 @@ class OpenCodeRunner(HarnessRunner):
                                 for raw in exported:
                                     normalized=normalize_events(raw,spec.enabled_server); fresh=_fresh_recovery(normalized,known,result.normalized)
                                     if not fresh: continue
-                                    result.events.append(raw); result.normalized.extend(fresh)
+                                    result.events.append(raw); result.event_records.append({"source":"opencode-recovery", "offset_ms":max(0.0,(time.perf_counter_ns()-baseline)/1_000_000), "raw_event":raw, "type":raw.get("type") if isinstance(raw,dict) else "malformed"}); result.normalized.extend(fresh)
                                     for event_type,payload in fresh:
                                         known.add(_event_key(event_type,payload))
                                         if on_event:
@@ -238,7 +242,7 @@ class OpenCodeRunner(HarnessRunner):
                         for raw in exported:
                             normalized=normalize_events(raw,spec.enabled_server); fresh=_fresh_recovery(normalized,known,result.normalized)
                             if not fresh: continue
-                            result.events.append(raw); result.normalized.extend(fresh)
+                            result.events.append(raw); result.event_records.append({"source":"opencode-recovery", "offset_ms":max(0.0,(time.perf_counter_ns()-baseline)/1_000_000), "raw_event":raw, "type":raw.get("type") if isinstance(raw,dict) else "malformed"}); result.normalized.extend(fresh)
                             for event_type,payload in fresh:
                                 known.add(_event_key(event_type,payload))
                                 if event_type == "assistant_text": result.final_text += str(payload.get("text") or "")

@@ -110,6 +110,21 @@ def test_tool_call_span_covers_round_trip_duration():
     assert len(calls) == 1 and calls[0]["duration_ms"] == 10
     assert calls[0]["metadata"]["correlation"] == "exact"
 
+def test_builtin_named_like_mcp_tool_cannot_steal_wire_correlation():
+    trace = build_claude_trace(
+        events=[
+            {"type":"assistant", "offset_ms":1, "raw_event":{"type":"assistant", "message":{"content":[
+                {"type":"tool_use", "id":"r", "name":"Read", "input":{}},
+                {"type":"tool_use", "id":"m", "name":"mcp__draw__Read", "input":{}}
+            ]}}}
+        ],
+        protocol_events=[
+            {"offset_ms":2,"direction":"client_to_server","payload":{"id":1,"method":"tools/call","params":{"name":"Read","arguments":{}}}},
+            {"offset_ms":3,"direction":"server_to_client","payload":{"id":1,"result":{"ok":True}}},
+        ], selected_server="draw")
+    wire = next(s for s in trace["spans"] if s.get("kind") == "mcp")
+    assert wire["parent_id"] == "turn-1-tool_call-1"
+
 
 def test_sse_crlf_and_split_utf8_are_preserved(tmp_path):
     class Response:

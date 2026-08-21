@@ -7,6 +7,7 @@ from ..harness.opencode_cli import OpenCodeRunner
 from ..domain.events import derive_mcp_assertion
 from ..persistence.models import McpProfileRevision, Run, RunEvent, RunTrace, now
 from ..trace.claude import build_claude_trace, transport_for_server
+from ..trace.normalized import build_opencode_trace
 from ..trace.redaction import redact
 
 class RunManager:
@@ -35,22 +36,30 @@ class RunManager:
             safe_result, _ = redact(result.final_text)
             safe_stderr, _ = redact(result.stderr)
             run.status,run.claude_result,run.exit_code,run.error_message,run.stderr=result.status,safe_result,result.exit_code,result.error,safe_stderr; run.cost_usd,run.turns,run.session_id=result.cost_usd,result.turns,result.session_id; run.mcp_assertion=derive_mcp_assertion(result.events,run.enabled_server); run.finished_at=now()
-            # Claude has a harness-specific trace schema. Other harnesses keep
-            # their canonical events until their own nuanced parser is added.
             if run.harness == "claude-code":
                 transport = transport_for_server((rev.mcp_json.get("mcpServers", {}).get(run.enabled_server) or {}))
-                trace = build_claude_trace(events=result.event_records or result.events, protocol_events=result.protocol_events, transport=transport, status=result.status, cost_usd=result.cost_usd, session_id=result.session_id)
+                trace = build_claude_trace(events=result.event_records or result.events, protocol_events=result.protocol_events, transport=transport, status=result.status, cost_usd=result.cost_usd, session_id=result.session_id, selected_server=run.enabled_server)
                 safe_trace, _ = redact(trace)
                 db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "claude.v1")), capture_status=str(safe_trace.get("capture_status", "complete")), trace=safe_trace))
+            elif run.harness == "opencode":
+                transport = transport_for_server((rev.mcp_json.get("mcpServers", {}).get(run.enabled_server) or {}))
+                trace = build_opencode_trace(events=result.event_records or result.events, selected_server=run.enabled_server, transport=transport, status=result.status, session_id=result.session_id)
+                safe_trace, _ = redact(trace)
+                db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "opencode.v1")), capture_status=str(safe_trace.get("capture_status", "complete")), trace=safe_trace))
             db.commit()
         except Exception as e:
             run.status,run.error_message,run.finished_at="failed",str(e),now()
             # Preserve a useful failed trace even when process setup failed.
             if result is not None and run.harness == "claude-code":
                 transport = transport_for_server((rev.mcp_json.get("mcpServers", {}).get(run.enabled_server) or {}))
-                trace = build_claude_trace(events=result.event_records or result.events, protocol_events=result.protocol_events, transport=transport, status="failed", cost_usd=result.cost_usd, session_id=result.session_id)
+                trace = build_claude_trace(events=result.event_records or result.events, protocol_events=result.protocol_events, transport=transport, status="failed", cost_usd=result.cost_usd, session_id=result.session_id, selected_server=run.enabled_server)
                 safe_trace, _ = redact(trace)
                 db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "claude.v1")), capture_status="partial", trace=safe_trace))
+            elif result is not None and run.harness == "opencode":
+                transport = transport_for_server((rev.mcp_json.get("mcpServers", {}).get(run.enabled_server) or {}))
+                trace = build_opencode_trace(events=result.event_records or result.events, selected_server=run.enabled_server, transport=transport, status="failed", session_id=result.session_id)
+                safe_trace, _ = redact(trace)
+                db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version="opencode.v1", capture_status="partial", trace=safe_trace))
             db.commit()
         finally:
             with self.lock: self.runners.pop(run_id,None); event=self.done_events.pop(run_id,None); event and event.set()

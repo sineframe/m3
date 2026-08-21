@@ -16,6 +16,8 @@ def number(value: Any, default: float = 0.0) -> float:
 
 
 def format_duration(value: Any) -> str:
+    if value is None:
+        return "—"
     milliseconds = max(0.0, number(value))
     if milliseconds >= 1000:
         return f"{milliseconds / 1000:.2f} s"
@@ -47,7 +49,8 @@ def display_name(span: dict[str, Any]) -> str:
     if kind == "text":
         return "Response"
     if kind == "tool_call":
-        return f"MCP · {short_tool_name(span.get('name'))}"
+        prefix = "MCP" if (span.get("metadata") or {}).get("mcp_selected", True) else "Tool"
+        return f"{prefix} · {short_tool_name(span.get('name'))}"
     if kind in PROTOCOL_KINDS:
         return f"Server · {span.get('name') or 'protocol event'}"
     return str(span.get("name") or kind or "Span")
@@ -58,7 +61,7 @@ def actor(span: dict[str, Any]) -> str:
     if kind in {"model_turn", "thinking", "text"}:
         return "Claude"
     if kind == "tool_call":
-        return "MCP call"
+        return "MCP call" if (span.get("metadata") or {}).get("mcp_selected", True) else "Claude tool"
     if kind in PROTOCOL_KINDS:
         return "MCP server"
     return "System"
@@ -83,5 +86,10 @@ def server_latency_for(span: dict[str, Any], spans: list[dict[str, Any]]) -> flo
         return None
     return sum(number(item.get("duration_ms")) for item in children)
 
+def wire_unavailable_message(harness: Any) -> str:
+    if str(harness or "").lower() == "opencode":
+        return "Wire view unavailable: OpenCode emitted output is not transport-level verification."
+    return "Wire view unavailable: no correlated transport capture was available for this call."
 
-__all__ = ["actor", "display_name", "format_duration", "number", "server_latency_for", "visible_spans"]
+
+__all__ = ["actor", "display_name", "format_duration", "number", "server_latency_for", "visible_spans", "wire_unavailable_message"]

@@ -143,7 +143,7 @@ def _protocol_spans(protocol: list[dict[str, Any]], transport: str, base_id: str
 
 
 
-def build_claude_trace(*, events: Iterable[dict[str, Any] | str], protocol_events: Iterable[dict[str, Any]] = (), transport: str = "stdio", status: str = "completed", cost_usd: float | None = None, session_id: str | None = None) -> dict[str, Any]:
+def build_claude_trace(*, events: Iterable[dict[str, Any] | str], protocol_events: Iterable[dict[str, Any]] = (), transport: str = "stdio", status: str = "completed", cost_usd: float | None = None, session_id: str | None = None, selected_server: str | None = None) -> dict[str, Any]:
     """Lifecycle-aware builder that merges partial and complete messages."""
     if transport not in TRANSPORTS:
         transport = "stdio"
@@ -242,6 +242,8 @@ def build_claude_trace(*, events: Iterable[dict[str, Any] | str], protocol_event
         span = block_spans.get(key)
         if span is None:
             span = {"id": f"{turn['id']}-{kind}-{len(block_spans)}", "parent_id": turn["id"], "kind": kind, "name": name, "status": "streaming" if partial else "completed", "start_ms": start, "end_ms": start, "duration_ms": 0.0, "transport": transport, "input": block.get("input"), "output": output, "metadata": {"partial": partial, "block_index": block_index}}
+            if kind == "tool_call":
+                span["metadata"]["mcp_selected"] = bool(selected_server and str(block.get("name") or "").lower().startswith(f"mcp__{selected_server.lower()}__"))
             block_spans[key] = span
             spans.append(span)
             if kind == "thinking":
@@ -266,6 +268,8 @@ def build_claude_trace(*, events: Iterable[dict[str, Any] | str], protocol_event
                     span["output"] = output
                 if block.get("input") is not None:
                     span["input"] = block["input"]
+                if kind == "tool_call" and block.get("name"):
+                    span.setdefault("metadata", {})["mcp_selected"] = bool(selected_server and str(block.get("name") or "").lower().startswith(f"mcp__{selected_server.lower()}__"))
         if kind == "tool_call":
             ident = block.get("id") or block.get("tool_use_id")
             if ident:
@@ -364,20 +368,24 @@ def build_claude_trace(*, events: Iterable[dict[str, Any] | str], protocol_event
             usage_total[key] = usage_total.get(key, 0) + _int(value)
 
     mcp_spans = _protocol_spans(protocol_list, transport)
-    intents = [span for span in spans if span.get("kind") == "tool_call"]
+    intents = [span for span in spans if span.get("kind") == "tool_call" and (not selected_server or span.get("metadata", {}).get("mcp_selected") is True)]
+    intent_queues: dict[str, list[dict[str, Any]]] = {}
+    for intent in intents:
+        # The tool identity is the emitted tool name, never an arbitrary
+        # argument named ``name`` (which is valid MCP input).
+        identity = str(intent.get("name") or "").removeprefix("MCP tool · ")
+        if identity.startswith("mcp__"):
+            identity = identity.split("__", 2)[-1]
+        intent_queues.setdefault(identity, []).append(intent)
     for mcp in mcp_spans:
         if mcp.get("name") != "tools/call" or not isinstance(mcp.get("input"), dict):
             continue
         params = mcp["input"].get("params") if isinstance(mcp["input"].get("params"), dict) else {}
         tool_name = str(params.get("name") or "")
-        matches = []
-        for intent in intents:
-            candidate = str((intent.get("input") or {}).get("name") or intent.get("name") or "")
-            if candidate == tool_name or candidate.rsplit(" · ", 1)[-1].rsplit("__", 1)[-1] == tool_name:
-                matches.append(intent)
+        matches = intent_queues.get(tool_name, [])
         mcp.setdefault("metadata", {})["correlation"] = "heuristic" if matches else "unmatched"
         if matches:
-            intent = matches[0]
+            intent = matches.pop(0)
             mcp["parent_id"] = intent["id"]
             mcp["metadata"]["tool_use_id"] = (intent.get("metadata") or {}).get("tool_use_id")
     spans.extend(mcp_spans)
@@ -401,7 +409,11 @@ def build_claude_trace(*, events: Iterable[dict[str, Any] | str], protocol_event
     else:
         spans[1]["end_ms"], spans[1]["duration_ms"] = 0.0, 0.0
     summary = {"transport": transport, "duration_ms": result_metadata.get("duration_ms", end_ms), "duration_api_ms": result_metadata.get("duration_api_ms"), "time_to_first_output_ms": first_output, "turns": result_metadata.get("num_turns", len([turn for turn in turns if turn.get("id")])), "input_tokens": usage_total.get("input_tokens") or None, "output_tokens": usage_total.get("output_tokens") or None, "cache_read_input_tokens": usage_total.get("cache_read_input_tokens") or None, "cache_creation_input_tokens": usage_total.get("cache_creation_input_tokens") or None, "total_tokens": (usage_total.get("input_tokens", 0) + usage_total.get("output_tokens", 0)) or None, "cost_usd": result_metadata.get("total_cost_usd", cost_usd), "thinking": {"state": thinking_state, "count": thinking_count}, "mcp_protocol_events": len(protocol_list), "mcp_spans": len(mcp_spans)}
-    return {"schema": SCHEMA_VERSION, "harness": "claude-code", "capture_status": "complete" if ordered or protocol_list else "empty", "summary": summary, "spans": spans, "protocol_events": protocol_list, "limitations": ["Hidden Claude reasoning is not inferred; only emitted thinking blocks are shown."], "result_metadata": result_metadata}
+    from .normalized import from_claude_trace
+    capture_status = "empty" if not (ordered or protocol_list) else ("complete" if status == "completed" else "partial")
+    trace = {"schema": SCHEMA_VERSION, "harness": "claude-code", "capture_status": capture_status, "summary": summary, "mcp_calls_schema": "mcp.v1", "spans": spans, "protocol_events": protocol_list, "limitations": ["Hidden Claude reasoning is not inferred; only emitted thinking blocks are shown."], "result_metadata": result_metadata}
+    trace["mcp_calls"] = from_claude_trace(trace, selected_server, transport) if selected_server else []
+    return trace
 
 
 __all__ = ["SCHEMA_VERSION", "TRANSPORTS", "build_claude_trace", "transport_for_server"]

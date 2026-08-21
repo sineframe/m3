@@ -4,6 +4,7 @@ from mcp_pal.ui.trace_view import (
     format_duration,
     server_latency_for,
     visible_spans,
+    wire_unavailable_message,
 )
 
 
@@ -37,6 +38,12 @@ def test_trace_labels_are_human_readable():
     assert actor(protocol) == "MCP server"
     assert format_duration(10890.6) == "10.89 s"
     assert format_duration(3) == "3.00 ms"
+    assert format_duration(None) == "—"
+    builtin = {"kind": "tool_call", "name": "Read", "metadata": {"mcp_selected": False}}
+    assert display_name(builtin) == "Tool · Read"
+    assert actor(builtin) == "Claude tool"
+    assert "OpenCode" in wire_unavailable_message("opencode")
+    assert "correlated transport" in wire_unavailable_message("claude-code")
 
 
 def test_server_latency_is_read_from_correlated_protocol_child():

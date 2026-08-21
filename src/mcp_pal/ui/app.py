@@ -4,7 +4,7 @@ import requests
 import streamlit as st
 from mcp_pal.domain.builtin_profiles import EXCALIDRAW_MCP_CONFIG
 from mcp_pal.ui.health import health_state
-from mcp_pal.ui.trace_view import actor, display_name, format_duration, number, server_latency_for, visible_spans
+from mcp_pal.ui.trace_view import actor, display_name, format_duration, number, server_latency_for, visible_spans, wire_unavailable_message
 
 API = os.getenv("MCP_PAL_API_URL", "http://localhost:8000/api/v1")
 MAX_PREVIEW = 4000
@@ -30,7 +30,8 @@ def render_report(report):
     if report.get("high_risk"): st.error("HIGH RISK: full tool mode used unrestricted auto-approval.")
     st.warning(report.get("warning","Trace payloads are redacted before persistence."))
     left,right=st.columns(2); left.subheader(f"Final {run.get('harness','harness')} response"); left.code(truncate(run.get("claude_result") or ""), language="text"); right.subheader("Expected output"); right.code(truncate(run.get("expected_output", "")), language="text")
-    if run.get("harness") == "claude-code": render_trace(report.get("trace") or {}, key_suffix=str(run.get("id", "active")))
+    render_trace(report.get("trace") or {}, key_suffix=str(run.get("id", "active")))
+    render_mcp_calls((report.get("trace") or {}).get("mcp_calls") or [])
     with st.expander("MCP activity summary", expanded=False):
         st.json(report.get("mcp_summary",{}))
     events=report.get("events",[])
@@ -45,16 +46,41 @@ def render_report(report):
             if event.get("event_type") == "thinking": st.code(truncate(event.get("payload",{})))
     with st.expander("stderr", expanded=False): st.code(report.get("stderr") or "")
 
+def render_mcp_calls(calls):
+    """Render backend-normalized calls without interpreting harness payloads."""
+    st.subheader("MCP Calls")
+    if not calls:
+        st.caption("No selected-server MCP calls were captured.")
+        return
+    for call in calls:
+        label = f"{call.get('server','—')} · {call.get('tool','—')} · {call.get('status','unknown')} · {format_duration(call.get('duration_ms'))}"
+        with st.expander(label, expanded=False):
+            st.caption(f"Model view · {call.get('harness','—')} · {call.get('transport','—')}")
+            st.markdown("**Arguments**")
+            st.code(truncate(call.get("arguments")), language="json")
+            st.markdown("**Result**")
+            st.code(truncate(call.get("result")), language="json")
+            if call.get("error") is not None: st.error(truncate(call.get("error")))
+            if call.get("wire_request") is not None or call.get("wire_response") is not None:
+                st.caption(f"Wire view · server latency {format_duration(call.get('server_latency_ms'))}")
+                st.markdown("**Raw wire request**"); st.code(truncate(call.get("wire_request")), language="json")
+                st.markdown("**Raw wire response**"); st.code(truncate(call.get("wire_response")), language="json")
+            else:
+                st.caption(wire_unavailable_message(call.get("harness")))
+
 
 def render_trace(trace, key_suffix="active"):
     """Render a chronological agent flow with optional protocol detail."""
     if not trace.get("available"):
-        st.info("Trace unavailable for this legacy run. New runs record Claude stream and MCP transport frames.")
+        st.info("Trace unavailable for this legacy run.")
         return
-    summary=trace.get("summary") or {}; spans=trace.get("spans") or []
+    summary=trace.get("summary") or {}; spans=trace.get("spans") or []; harness=str(trace.get("harness") or "claude-code")
+    if harness == "opencode" and not spans:
+        st.info("OpenCode trace contains native emitted MCP calls; transport wire frames and server latency are unavailable.")
+        return
     transport=str(summary.get("transport") or "unknown").upper()
     display=lambda key: summary[key] if summary.get(key) is not None else "—"
-    call_count=sum(1 for span in spans if span.get("kind") == "tool_call")
+    call_count=len(trace.get("mcp_calls") or [])
     metrics=[("Transport", transport), ("Total time", format_duration(summary.get("duration_ms"))), ("Claude turns", display("turns")), ("MCP calls", call_count), ("Tokens", display("total_tokens")), ("Cost", f"${summary['cost_usd']:.4f}" if isinstance(summary.get("cost_usd"),(int,float)) else "—")]
     cols=st.columns(len(metrics))
     for col,(label,value) in zip(cols,metrics): col.metric(label,value)
@@ -76,7 +102,7 @@ def render_trace(trace, key_suffix="active"):
       .trace-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; }
     </style>
     """, unsafe_allow_html=True)
-    st.markdown(f'<div class="trace-shell"><div class="trace-kicker">Claude trace · {html.escape(str(trace.get("schema", "claude.v1")))}</div><div class="trace-transport">● MCP TRANSPORT: {html.escape(transport)}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="trace-shell"><div class="trace-kicker">{html.escape(harness)} trace · {html.escape(str(trace.get("schema", "claude.v1")))}</div><div class="trace-transport">● MCP TRANSPORT: {html.escape(transport)}</div></div>', unsafe_allow_html=True)
     st.caption(f"Input {display('input_tokens')} · Output {display('output_tokens')} · Cache read {display('cache_read_input_tokens')} · Cache write {display('cache_creation_input_tokens')} · First output {format_duration(summary.get('time_to_first_output_ms')) if summary.get('time_to_first_output_ms') is not None else '—'}")
     if not spans:
         st.caption("No spans were captured.")
@@ -88,7 +114,8 @@ def render_trace(trace, key_suffix="active"):
     for span in visible:
         start=max(0.0,number(span.get("start_ms"))); end=max(start,number(span.get("end_ms"),start)); duration=max(0.0,end-start)
         left=min(100.0,start/total*100); width=max(0.45,min(100.0-left,duration/total*100)); status=str(span.get("status","completed")); kind=str(span.get("kind",""))
-        color="trace-error" if status in {"error","failed"} else ("trace-thinking" if kind=="thinking" else "trace-claude" if kind in {"model_turn","text"} else "trace-mcp" if kind=="tool_call" else "trace-server")
+        selected_mcp=(span.get("metadata") or {}).get("mcp_selected", True)
+        color="trace-error" if status in {"error","failed"} else ("trace-thinking" if kind=="thinking" else "trace-claude" if kind in {"model_turn","text"} or (kind=="tool_call" and not selected_mcp) else "trace-mcp" if kind=="tool_call" else "trace-server")
         indent=18 if kind in {"thinking","text","mcp","mcp_event"} else 0
         name=html.escape(display_name(span)); who=html.escape(actor(span)); latency=server_latency_for(span,spans)
         sub=f"Server {format_duration(latency)} · other observed time {format_duration(max(0,duration-latency))}" if latency is not None else ""

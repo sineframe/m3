@@ -6,6 +6,7 @@ from mcp_pal.config import Settings
 from mcp_pal.domain.events import derive_mcp_assertion, derive_mcp_summary, normalize_events
 from mcp_pal.harness.claude_cli import ClaudeCodeRunner, RunSpec
 from mcp_pal.harness.opencode_cli import OpenCodeRunner, opencode_config
+from mcp_pal.harness.base import HarnessResult
 
 def fake(path, body):
     path.write_text("#!/usr/bin/env python3\n"+body); path.chmod(path.stat().st_mode | stat.S_IXUSR); return str(path)
@@ -137,6 +138,33 @@ print(json.dumps({{'type':'step_finish','sessionID':'delete-me','part':{{'type':
 """)
     result=asyncio.run(OpenCodeRunner(script).run(spec(script,timeout=2)))
     assert result.status == "completed" and marker.read_text() == "delete-me"
+
+def test_fake_opencode_api_persists_normalized_trace_and_report(tmp_path):
+    settings=Settings(database_path=str(tmp_path/"api.db"), opencode_model_ids=["open/model"], opencode_executable="missing")
+    app=create_app(settings)
+    class FakeRunner:
+        async def run(self, spec, on_event=None, cancel_event=None):
+            raw={"type":"tool_use","sessionID":"fake-session","part":{"type":"tool","callID":"c1","tool":"draw_echo","state":{"status":"completed","input":{"text":"hello"},"output":{"text":"hello"}}}}
+            if on_event:
+                for kind,payload in normalize_events(raw,spec.enabled_server): await on_event(raw,kind,payload)
+            return HarnessResult(status="completed", events=[raw], event_records=[{"raw_event":raw,"offset_ms":4,"type":"tool_use"}], final_text="done", session_id="fake-session")
+        def request_cancel(self): pass
+    app.state.manager.runner_for=lambda harness: FakeRunner()
+    with TestClient(app) as client:
+        profile=client.post("/api/v1/profiles",json={"name":"fake","mcp_json":{"mcpServers":{"draw":{"command":"echo"}}}}).json()
+        run=client.post("/api/v1/runs",json={"harness":"opencode","model":"open/model","prompt":"p","expected_output":"done","profile_revision_id":profile["current_revision_id"],"enabled_server":"draw"}).json()
+        for _ in range(40):
+            state=client.get(f"/api/v1/runs/{run['id']}").json()
+            if state["status"] not in {"queued","running"}: break
+            time.sleep(.01)
+        report=client.get(f"/api/v1/runs/{run['id']}/report").json(); trace=report["trace"]
+        assert state["status"]=="completed" and trace["available"] and trace["schema"]=="opencode.v1"
+        assert trace["mcp_calls_schema"]=="mcp.v1" and trace["summary"]["transport"]=="stdio"
+        call=trace["mcp_calls"][0]
+        assert {call[k] for k in ("server","tool","status")}=={"draw","echo","completed"}
+        assert call["arguments"]=={"text":"hello"} and call["result"]=={"text":"hello"}
+        assert call["wire_request"] is None and call["wire_response"] is None and call["server_latency_ms"] is None
+        assert trace["limitations"]
 
 def test_opencode_provider_credentials_are_injected_without_exposing_values(tmp_path):
     marker=tmp_path/"credential-presence.json"
