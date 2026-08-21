@@ -1,26 +1,11 @@
 import asyncio, json, os, signal, tempfile, threading, time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
-from .events import normalize_events
-from .validation import selected_server_config
+from .base import HarnessResult, HarnessRunner, RunSpec
+from ..domain.events import normalize_events
+from ..domain.validation import selected_server_config
 
 READ_ONLY_TOOLS = ["Agent", "Read", "Glob", "Grep", "LSP", "WebFetch", "WebSearch", "ToolSearch", "ListMcpResourcesTool", "ReadMcpResourceTool", "TaskGet", "TaskList", "TaskOutput"]
-
-@dataclass
-class RunSpec:
-    prompt: str; model: str; mcp_config: dict; enabled_server: str; tool_mode: str = "mcp_only"
-    timeout_seconds: int = 120; max_turns: int = 5; max_budget_usd: float = .5
-
-@dataclass
-class HarnessResult:
-    status: str; events: list[Any] = field(default_factory=list); normalized: list[tuple[str,dict]] = field(default_factory=list)
-    final_text: str = ""; stderr: str = ""; exit_code: int | None = None; error: str | None = None
-    cost_usd: float | None = None; turns: int | None = None; session_id: str | None = None
-    final_result_seen: bool = False
-
-class HarnessRunner:
-    async def run(self, spec: RunSpec, on_event: Callable[[Any, str, dict], Any] | None = None, cancel_event: asyncio.Event | None = None) -> HarnessResult: raise NotImplementedError
 
 class ClaudeCodeRunner(HarnessRunner):
     def __init__(self, executable: str = "claude"):

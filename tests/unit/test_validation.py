@@ -1,6 +1,6 @@
 import os
 import pytest
-from mcp_pal.validation import ProfileValidationError, referenced_environment_variables, selected_server_config, validate_mcp_config
+from mcp_pal.domain.validation import ProfileValidationError, referenced_environment_variables, selected_server_config, validate_mcp_config
 
 def test_profile_validation_and_environment_references(monkeypatch):
     cfg={"mcpServers":{"draw":{"command":"node","args":[],"env":{"TOKEN":"${DRAW_TOKEN}"}}}}

@@ -1,4 +1,4 @@
-from mcp_pal.events import derive_mcp_assertion, derive_mcp_summary, normalize_event
+from mcp_pal.domain.events import derive_mcp_assertion, derive_mcp_summary, normalize_event
 
 def call(ok=True):
     return {"type":"user","tool_name":"mcp__draw__create","tool_use_result":("ok" if ok else {"is_error":True,"error":"bad"})}

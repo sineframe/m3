@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
-from .validation import validate_mcp_config, ProfileValidationError
+from ..domain.validation import validate_mcp_config, ProfileValidationError
 
 class ProfileCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)

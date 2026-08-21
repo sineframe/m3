@@ -3,8 +3,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from mcp_pal.api import create_app
 from mcp_pal.config import Settings
-from mcp_pal.events import derive_mcp_assertion, derive_mcp_summary, normalize_events
-from mcp_pal.runner import ClaudeCodeRunner, RunSpec
+from mcp_pal.domain.events import derive_mcp_assertion, derive_mcp_summary, normalize_events
+from mcp_pal.harness.claude_cli import ClaudeCodeRunner, RunSpec
 
 def fake(path, body):
     path.write_text("#!/usr/bin/env python3\n"+body); path.chmod(path.stat().st_mode | stat.S_IXUSR); return str(path)

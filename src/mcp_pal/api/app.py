@@ -1,18 +1,16 @@
-import asyncio, json, os, shutil, threading, subprocess
+import os, shutil, subprocess
 from contextlib import asynccontextmanager
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
-from .config import Settings, get_settings
-from .db import Base, get_db, init_db, make_engine
-from .models import McpProfile, McpProfileRevision, Run, RunEvent, now, uid
-from .runner import ClaudeCodeRunner, RunSpec
+from ..config import Settings, get_settings
+from ..persistence.database import Base, get_db, init_db, make_engine
+from ..persistence.models import McpProfile, McpProfileRevision, Run, RunEvent, now, uid
 from .schemas import ProfileCreate, RevisionCreate, RunClone, RunCreate, RunOut
-from .validation import ProfileValidationError, referenced_environment_variables, selected_server_config, validate_mcp_config
-from .events import derive_mcp_assertion
+from ..domain.validation import ProfileValidationError, referenced_environment_variables, selected_server_config, validate_mcp_config
+from ..services.run_manager import RunManager
 
 def _iso(v): return v.isoformat() if v else None
 REQUIRED_CLI_FLAGS=("--print","--bare","--output-format","--verbose","--strict-mcp-config","--mcp-config","--no-session-persistence")
@@ -24,51 +22,6 @@ def profile_json(p: McpProfile, include_json=False):
         try: out["validation"] = validate_mcp_config(current.mcp_json)
         except ProfileValidationError as e: out["validation"] = {"valid": False, "errors": e.errors, "warnings": e.warnings}
     return out
-
-class RunManager:
-    def __init__(self, session_factory, settings):
-        self.session_factory, self.settings = session_factory, settings; self.executor = ThreadPoolExecutor(max_workers=1); self.runners={}; self.cancel_events={}; self.done_events={}; self.lock=threading.Lock()
-    def submit(self, run_id): self.executor.submit(self.execute, run_id)
-    def execute(self, run_id):
-        db = self.session_factory(); run = db.get(Run, run_id)
-        if not run: db.close(); return
-        if run.status != "queued": db.close(); return
-        run.status, run.started_at = "running", now(); db.commit()
-        rev = db.get(McpProfileRevision, run.profile_revision_id)
-        cancel = asyncio.Event(); runner = ClaudeCodeRunner(self.settings.claude_executable)
-        done_event=threading.Event()
-        with self.lock: self.runners[run_id], self.cancel_events[run_id], self.done_events[run_id] = runner, cancel, done_event
-        seq = db.query(RunEvent).filter_by(run_id=run_id).count()
-        async def callback(raw, event_type, payload):
-            nonlocal seq
-            seq += 1; db.add(RunEvent(run_id=run_id, sequence=seq, event_type=event_type, payload=payload, raw_event=raw)); db.commit()
-        try:
-            spec = RunSpec(run.prompt, run.model, rev.mcp_json, run.enabled_server, run.tool_mode, run.timeout_seconds, run.max_turns, run.max_budget_usd)
-            result = asyncio.run(runner.run(spec, callback, cancel))
-            run.status, run.claude_result, run.exit_code, run.error_message, run.stderr = result.status, result.final_text, result.exit_code, result.error, result.stderr
-            run.cost_usd, run.turns, run.session_id = result.cost_usd, result.turns, result.session_id
-            run.mcp_assertion = derive_mcp_assertion(result.events, run.enabled_server)
-            run.finished_at = now(); db.commit()
-        except Exception as e:
-            run.status, run.error_message, run.finished_at = "failed", str(e), now(); db.commit()
-        finally:
-            with self.lock:
-                self.runners.pop(run_id, None); self.cancel_events.pop(run_id, None)
-                event=self.done_events.pop(run_id, None)
-                if event: event.set()
-            db.close()
-    def cancel(self, run_id):
-        with self.lock:
-            r, done = self.runners.get(run_id), self.done_events.get(run_id)
-            if r: r.request_cancel()
-        if done: done.wait(timeout=3.0)
-        db=self.session_factory(); run=db.get(Run,run_id)
-        if run and run.status == "queued": run.status, run.finished_at = "cancelled", now(); db.commit()
-        db.close()
-    def shutdown(self):
-        with self.lock:
-            for runner in self.runners.values(): runner.request_cancel()
-        self.executor.shutdown(wait=True, cancel_futures=True)
 
 def create_app(settings: Settings | None = None, engine_override=None, session_factory=None) -> FastAPI:
     settings = settings or get_settings(); eng = engine_override or make_engine(settings.database_url)
@@ -222,7 +175,7 @@ def create_app(settings: Settings | None = None, engine_override=None, session_f
         r=d.get(Run,run_id)
         if not r: raise HTTPException(404,"Run not found")
         rev=d.get(McpProfileRevision,r.profile_revision_id); ev=d.query(RunEvent).filter_by(run_id=run_id).order_by(RunEvent.sequence).all()
-        from .events import derive_mcp_summary
+        from ..domain.events import derive_mcp_summary
         return {"run":run_json(r,d),"profile_revision":{"id":rev.id,"revision_number":rev.revision_number,"mcp_json":rev.mcp_json},"assertions":{"lifecycle":r.status,"mcp":{"status":r.mcp_assertion},"semantic":{"status":r.semantic_assertion,"reason":r.semantic_reason}},"events":[{"sequence":e.sequence,"timestamp":_iso(e.timestamp),"event_type":e.event_type,"payload":e.payload,"raw_event":e.raw_event} for e in ev],"stderr":r.stderr,"mcp_summary":derive_mcp_summary([e.raw_event for e in ev],r.enabled_server),"high_risk":r.tool_mode == "full","warning":"SQLite and reports contain unredacted trace data"}
     app.include_router(router)
     return app

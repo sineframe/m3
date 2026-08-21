@@ -7,11 +7,19 @@ Local Streamlit UI and FastAPI backend for testing one MCP server interaction at
 Requires Python 3.13+ and an installed `claude` executable. Copy `.env.example` to `.env`, set `ANTHROPIC_API_KEY`, and configure exact model IDs in `CLAUDE_MODEL_IDS`.
 
 ```bash
-uv sync --extra dev
-uv run uvicorn mcp_pal.api:app --reload
+just setup
+# equivalent raw command: uv sync --extra dev
+just api
+# equivalent raw command: uv run uvicorn mcp_pal.main:app --reload
 # in another terminal
-uv run streamlit run streamlit_app.py
+just ui
+# equivalent raw command: uv run streamlit run src/mcp_pal/ui/app.py
 ```
+
+Run `just --list` to list recipes. Use `just setup` to install dependencies,
+`just test` (or `uv run pytest -q`) for the full suite, and `just check` for
+compile/import checks. Focused suites are available as `just test-unit` and
+`just test-integration`.
 
 The API is documented at `http://localhost:8000/docs`. Set `MCP_PAL_API_URL` if the UI should use another backend URL.
 
@@ -22,5 +30,10 @@ On startup queued/running runs from a previous process are marked failed with an
 ## Tests
 
 ```bash
-uv run pytest
+just test
+# equivalent raw command: uv run pytest -q
+# focused equivalents:
+# just test-unit        -> uv run pytest -q tests/unit
+# just test-integration -> uv run pytest -q tests/integration
+# just check            -> uv run python -m compileall -q src
 ```
