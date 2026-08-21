@@ -7,6 +7,14 @@ from mcp_pal.ui.trace_view import actor, display_name, format_duration, number, 
 
 API = os.getenv("MCP_PAL_API_URL", "http://localhost:8000/api/v1")
 MAX_PREVIEW = 4000
+DEFAULT_MCP_CONFIG = {
+    "mcpServers": {
+        "excalidraw": {
+            "type": "http",
+            "url": "https://mcp.excalidraw.com/mcp",
+        }
+    }
+}
 
 def api(method, path, **kwargs):
     try:
@@ -136,8 +144,7 @@ if page == "MCP Profiles":
     st.title("MCP Profiles")
     with st.form("new_profile"):
         name=st.text_input("Name"); desc=st.text_input("Description")
-        default={"mcpServers":{"example":{"command":"npx","args":["-y","your-server"]}}}
-        raw=st.text_area("MCP JSON", json.dumps(default, indent=2), height=260)
+        raw=st.text_area("MCP JSON", json.dumps(DEFAULT_MCP_CONFIG, indent=2), height=260)
         if st.form_submit_button("Create profile"):
             try: api("POST","/profiles",json={"name":name,"description":desc,"mcp_json":json.loads(raw)}); st.rerun()
             except Exception as e: st.error(f"Invalid JSON: {e}")

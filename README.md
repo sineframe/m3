@@ -25,6 +25,19 @@ The API is documented at `http://localhost:8000/docs`. Set `MCP_PAL_API_URL` if 
 
 Profiles contain one harness-neutral `mcpServers` object and support stdio, HTTP, and SSE servers. The backend translates the selected server to each harness's native config. Secrets should be `${ENVIRONMENT_VARIABLE}` references. Claude/MCP trace payloads and downloaded reports redact detected credentials; profile revisions remain local configuration snapshots. Tool mode `full` is high risk and enables unrestricted automatic tool approval. Completed Claude reports show the configured transport (`stdio`, `http`, or `sse`) and a Braintrust-style waterfall.
 
+The profile form starts with the public Excalidraw HTTP MCP server:
+
+```json
+{
+  "mcpServers": {
+    "excalidraw": {
+      "type": "http",
+      "url": "https://mcp.excalidraw.com/mcp"
+    }
+  }
+}
+```
+
 If the UI says “Backend connected · runner setup required”, the API is reachable
 and profiles/history remain usable; run submission is disabled until the health
 checks pass for the selected harness. Add the relevant key to `.env` and restart
