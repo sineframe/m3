@@ -3,6 +3,7 @@ import html, json, os, re, time
 import requests
 import streamlit as st
 from mcp_pal.ui.health import health_state
+from mcp_pal.ui.trace_view import actor, display_name, format_duration, number, server_latency_for, visible_spans
 
 API = os.getenv("MCP_PAL_API_URL", "http://localhost:8000/api/v1")
 MAX_PREVIEW = 4000
@@ -29,7 +30,8 @@ def render_report(report):
     st.warning(report.get("warning","Trace payloads are redacted before persistence."))
     left,right=st.columns(2); left.subheader(f"Final {run.get('harness','harness')} response"); left.code(truncate(run.get("claude_result") or ""), language="text"); right.subheader("Expected output"); right.code(truncate(run.get("expected_output", "")), language="text")
     if run.get("harness") == "claude-code": render_trace(report.get("trace") or {}, key_suffix=str(run.get("id", "active")))
-    st.subheader("MCP activity summary"); st.json(report.get("mcp_summary",{}))
+    with st.expander("MCP activity summary", expanded=False):
+        st.json(report.get("mcp_summary",{}))
     events=report.get("events",[])
     with st.expander(f"Normalized timeline ({len(events)} events)", expanded=False):
         for event in events:
@@ -43,59 +45,63 @@ def render_report(report):
     with st.expander("stderr", expanded=False): st.code(report.get("stderr") or "")
 
 
-def _ms(value, default=0.0):
-    try: return float(value)
-    except (TypeError, ValueError): return default
-
-
 def render_trace(trace, key_suffix="active"):
-    """Render a safe, dense Braintrust-style post-run waterfall."""
+    """Render a chronological agent flow with optional protocol detail."""
     if not trace.get("available"):
         st.info("Trace unavailable for this legacy run. New runs record Claude stream and MCP transport frames.")
         return
     summary=trace.get("summary") or {}; spans=trace.get("spans") or []
     transport=str(summary.get("transport") or "unknown").upper()
-    display=lambda key, suffix="": f"{summary[key]}{suffix}" if summary.get(key) is not None else "—"
-    metrics=[("Transport", transport), ("Wall time", display("duration_ms", " ms")), ("API time", display("duration_api_ms", " ms")), ("Turns", display("turns")), ("Tokens", display("total_tokens")), ("Cost", f"${summary['cost_usd']}" if summary.get("cost_usd") is not None else "—")]
+    display=lambda key: summary[key] if summary.get(key) is not None else "—"
+    call_count=sum(1 for span in spans if span.get("kind") == "tool_call")
+    metrics=[("Transport", transport), ("Total time", format_duration(summary.get("duration_ms"))), ("Claude turns", display("turns")), ("MCP calls", call_count), ("Tokens", display("total_tokens")), ("Cost", f"${summary['cost_usd']:.4f}" if isinstance(summary.get("cost_usd"),(int,float)) else "—")]
     cols=st.columns(len(metrics))
     for col,(label,value) in zip(cols,metrics): col.metric(label,value)
     st.markdown("""
     <style>
-      .trace-shell { background:#11151a; border:1px solid #2b333d; border-radius:8px; padding:14px 16px 8px; color:#d8e0e8; }
-      .trace-kicker { color:#8795a5; font:600 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing:.14em; text-transform:uppercase; }
-      .trace-transport { color:#7ee787; font:700 12px ui-monospace, SFMono-Regular, Menlo, monospace; margin:4px 0 12px; }
-      .trace-row { display:grid; grid-template-columns:minmax(210px,1.35fr) 72px minmax(180px,2fr) 72px; align-items:center; gap:9px; min-height:27px; border-top:1px solid #202831; font:12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-      .trace-name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#c9d1d9; }
-      .trace-bar-wrap { height:12px; background:#1d252e; border-radius:2px; position:relative; }
-      .trace-bar { height:100%; border-radius:2px; min-width:3px; } .trace-ok { background:#3fb950; } .trace-error { background:#f85149; } .trace-blue { background:#58a6ff; }
-      .trace-head { color:#81909f; font-size:10px; letter-spacing:.08em; text-transform:uppercase; padding-bottom:5px; }
-      .trace-dur { color:#8b949e; text-align:right; } .trace-kind { color:#8b949e; }
+      .trace-shell { background:#10151b; border:1px solid #2a3540; border-radius:10px; padding:10px 16px 12px; color:#d8e0e8; box-shadow:inset 0 1px 0 rgba(255,255,255,.025); }
+      .trace-kicker { color:#8291a2; font:600 10px Menlo, Monaco, monospace; letter-spacing:.14em; text-transform:uppercase; }
+      .trace-transport { color:#64d8cb; font:700 12px Menlo, Monaco, monospace; margin-top:5px; }
+      .trace-row { display:grid; grid-template-columns:minmax(240px,1.2fr) 92px minmax(240px,2fr) 92px; align-items:center; column-gap:14px; min-height:43px; border-top:1px solid #202b35; font:12px Menlo, Monaco, monospace; }
+      .trace-name { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#e3e9ef; font-weight:600; }
+      .trace-sub { color:#728091; font-size:10px; font-weight:400; margin-top:2px; }
+      .trace-actor { white-space:nowrap; color:#8e9baa; font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+      .trace-bar-wrap { height:10px; background:#1b252f; border-radius:999px; position:relative; overflow:visible; }
+      .trace-bar { position:absolute; top:0; height:100%; border-radius:999px; min-width:3px; box-shadow:0 0 10px currentColor; }
+      .trace-claude { color:#57a6ff; background:#57a6ff; } .trace-thinking { color:#b792ff; background:#b792ff; } .trace-mcp { color:#f6a84b; background:#f6a84b; } .trace-server { color:#49c87a; background:#49c87a; } .trace-error { color:#ff6464; background:#ff6464; }
+      .trace-head { color:#778697; font-size:9px; letter-spacing:.11em; text-transform:uppercase; min-height:30px; }
+      .trace-dur { color:#aab5c0; text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+      .trace-legend { display:flex; gap:18px; color:#7f8c9a; font:10px Menlo, Monaco, monospace; margin:8px 0 3px; }
+      .trace-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; }
     </style>
     """, unsafe_allow_html=True)
     st.markdown(f'<div class="trace-shell"><div class="trace-kicker">Claude trace · {html.escape(str(trace.get("schema", "claude.v1")))}</div><div class="trace-transport">● MCP TRANSPORT: {html.escape(transport)}</div></div>', unsafe_allow_html=True)
-    st.caption(f"Input {display('input_tokens')} · Output {display('output_tokens')} · Cache read {display('cache_read_input_tokens')} · Cache write {display('cache_creation_input_tokens')} · First output {display('time_to_first_output_ms', ' ms')}")
+    st.caption(f"Input {display('input_tokens')} · Output {display('output_tokens')} · Cache read {display('cache_read_input_tokens')} · Cache write {display('cache_creation_input_tokens')} · First output {format_duration(summary.get('time_to_first_output_ms')) if summary.get('time_to_first_output_ms') is not None else '—'}")
     if not spans:
         st.caption("No spans were captured.")
         return
-    kinds=sorted({str(x.get("kind","unknown")) for x in spans})
-    selected=st.multiselect("Span types", kinds, default=kinds, key=f"trace-span-filter-{key_suffix}")
-    visible=[x for x in spans if str(x.get("kind","unknown")) in selected]
-    total=max((_ms(x.get("end_ms"), _ms(x.get("start_ms"))) for x in visible), default=_ms(summary.get("duration_ms"),1.0)) or 1.0
-    rows=['<div class="trace-row trace-head"><div>Span</div><div>Kind</div><div>Timeline</div><div>Time</div></div>']
+    show_protocol=st.toggle("Show protocol events",value=False,key=f"trace-protocol-{key_suffix}",help="Adds initialize, tools/list, tools/call, notifications, and response frames.")
+    visible=visible_spans(spans,include_protocol=show_protocol)
+    total=max(number(summary.get("duration_ms")),max((number(x.get("end_ms")) for x in visible),default=1.0),1.0)
+    rows=['<div class="trace-legend"><span><i class="trace-dot trace-claude"></i>Claude</span><span><i class="trace-dot trace-thinking"></i>Thinking</span><span><i class="trace-dot trace-mcp"></i>MCP round trip</span><span><i class="trace-dot trace-server"></i>Server</span></div>', '<div class="trace-row trace-head"><div>Activity</div><div>Actor</div><div>Elapsed time</div><div>Duration</div></div>']
     for span in visible:
-        start=max(0.0,_ms(span.get("start_ms"))); end=max(start,_ms(span.get("end_ms"),start)); duration=max(0.0,end-start)
-        left=min(100.0,start/total*100); width=max(0.7,min(100.0,duration/total*100)); status=str(span.get("status","completed"))
-        color="trace-error" if status in {"error","failed"} else ("trace-blue" if span.get("kind") in {"model_turn","text","thinking"} else "trace-ok")
-        indent=0 if span.get("parent_id") in (None,"run") else 16
-        name=html.escape(str(span.get("name","span"))); kind=html.escape(str(span.get("kind","unknown")))
-        rows.append(f'<div class="trace-row"><div class="trace-name" style="padding-left:{indent}px">{name}</div><div class="trace-kind">{kind}</div><div class="trace-bar-wrap"><div class="trace-bar {color}" style="margin-left:{left:.3f}%;width:{width:.3f}%"></div></div><div class="trace-dur">{duration:.1f} ms</div></div>')
+        start=max(0.0,number(span.get("start_ms"))); end=max(start,number(span.get("end_ms"),start)); duration=max(0.0,end-start)
+        left=min(100.0,start/total*100); width=max(0.45,min(100.0-left,duration/total*100)); status=str(span.get("status","completed")); kind=str(span.get("kind",""))
+        color="trace-error" if status in {"error","failed"} else ("trace-thinking" if kind=="thinking" else "trace-claude" if kind in {"model_turn","text"} else "trace-mcp" if kind=="tool_call" else "trace-server")
+        indent=18 if kind in {"thinking","text","mcp","mcp_event"} else 0
+        name=html.escape(display_name(span)); who=html.escape(actor(span)); latency=server_latency_for(span,spans)
+        sub=f"Server {format_duration(latency)} · other observed time {format_duration(max(0,duration-latency))}" if latency is not None else ""
+        rows.append(f'<div class="trace-row"><div class="trace-name" style="padding-left:{indent}px">{name}<div class="trace-sub">{html.escape(sub)}</div></div><div class="trace-actor">{who}</div><div class="trace-bar-wrap"><div class="trace-bar {color}" style="left:{left:.3f}%;width:{width:.3f}%"></div></div><div class="trace-dur">{format_duration(duration)}</div></div>')
     st.markdown('<div class="trace-shell">'+"".join(rows)+"</div>", unsafe_allow_html=True)
-    st.caption("Select a span below for redacted input/output and correlation metadata.")
-    for span in visible:
-        with st.expander(f"{span.get('name','span')} · {span.get('duration_ms',0)} ms · {span.get('status','completed')}", expanded=False):
-            st.json({"kind":span.get("kind"),"transport":span.get("transport"),"metadata":span.get("metadata"),"tokens":span.get("tokens")})
-            if span.get("input") is not None: st.code(truncate(span.get("input")), language="json")
-            if span.get("output") is not None: st.code(truncate(span.get("output")), language="json")
+    st.caption("MCP call duration is Claude-observed round-trip time. Server duration is measured from captured JSON-RPC request and response frames; the remainder includes transport and harness overhead.")
+    if visible:
+        selected_id=st.selectbox("Inspect activity",[span.get("id") for span in visible],key=f"trace-inspect-{key_suffix}",format_func=lambda ident: display_name(next(span for span in visible if span.get("id")==ident)))
+        selected=next(span for span in visible if span.get("id")==selected_id)
+        with st.container(border=True):
+            st.caption(f"{actor(selected)} · {format_duration(selected.get('duration_ms'))} · {selected.get('status','completed')}")
+            if selected.get("input") is not None: st.markdown("**Input**"); st.code(truncate(selected.get("input")),language="json")
+            if selected.get("output") is not None: st.markdown("**Output**"); st.code(truncate(selected.get("output")),language="json")
+            with st.expander("Metadata",expanded=False): st.json({"transport":selected.get("transport"),"tokens":selected.get("tokens"),"metadata":selected.get("metadata")})
     with st.expander(f"Captured MCP protocol frames ({len(trace.get('protocol_events') or [])})", expanded=False):
         for event in trace.get("protocol_events") or []:
             st.caption(f"{event.get('offset_ms','—')} ms · {event.get('transport','—')} · {event.get('direction','—')}")

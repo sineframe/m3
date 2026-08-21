@@ -29,6 +29,26 @@ def test_trace_has_transport_usage_and_protocol_correlation():
     assert trace["summary"]["total_tokens"] == 6
     assert any(span.get("metadata", {}).get("correlation") == "heuristic" for span in trace["spans"])
     assert trace["protocol_events"][0]["sequence"] == 1
+    session = next(span for span in trace["spans"] if span["kind"] == "mcp_session")
+    assert (session["start_ms"], session["end_ms"], session["duration_ms"]) == (3, 6, 3)
+
+
+def test_protocol_notification_uses_its_method_as_the_label():
+    trace = build_claude_trace(
+        events=[],
+        protocol_events=[
+            {
+                "offset_ms": 12,
+                "transport": "stdio",
+                "direction": "server_to_client",
+                "payload": {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"},
+            }
+        ],
+        transport="stdio",
+    )
+
+    event = next(span for span in trace["spans"] if span["kind"] == "mcp_event")
+    assert event["name"] == "notifications/tools/list_changed"
 
 
 def test_redaction_covers_nested_credentials_and_urls():
@@ -57,6 +77,27 @@ def test_partial_and_complete_message_are_one_turn_with_one_usage_total():
     assert [x["output"] for x in trace["spans"] if x["kind"] == "text"] == ["hello"]
     turn = next(x for x in trace["spans"] if x["kind"] == "model_turn")
     assert turn["start_ms"] == 0 and turn["end_ms"] == 4
+
+
+def test_content_block_timing_is_not_stretched_by_complete_message_replay():
+    raws = [
+        {"type": "stream_event", "event": {"type": "message_start", "message": {"id": "msg_1"}}},
+        {"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}},
+        {"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "hello"}}},
+        {"type": "stream_event", "event": {"type": "content_block_stop", "index": 0}},
+        {"type": "stream_event", "event": {"type": "message_stop"}},
+        {"type": "assistant", "message": {"id": "msg_1", "content": [{"type": "text", "text": "hello"}]}},
+    ]
+    offsets = [0, 10, 20, 30, 40, 50]
+
+    trace = build_claude_trace(
+        events=[{"type": raw["type"], "offset_ms": offset, "raw_event": raw} for raw, offset in zip(raws, offsets)],
+        transport="stdio",
+    )
+
+    text = next(span for span in trace["spans"] if span["kind"] == "text")
+    assert (text["start_ms"], text["end_ms"], text["duration_ms"]) == (10, 30, 20)
+    assert text["output"] == "hello"
 
 
 def test_tool_call_span_covers_round_trip_duration():

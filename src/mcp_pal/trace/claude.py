@@ -94,6 +94,15 @@ def _protocol_kind(record: dict[str, Any]) -> str:
     return "mcp.frame"
 
 
+def _protocol_name(record: dict[str, Any]) -> str:
+    payload = record.get("payload")
+    if isinstance(payload, dict) and payload.get("method"):
+        return str(payload["method"])
+    if record.get("kind") == "sse_data":
+        return "SSE event"
+    return _protocol_kind(record)
+
+
 def _protocol_spans(protocol: list[dict[str, Any]], transport: str, base_id: str = "mcp") -> list[dict[str, Any]]:
     spans: list[dict[str, Any]] = []
     pending: dict[str, dict[str, Any]] = {}
@@ -123,7 +132,7 @@ def _protocol_spans(protocol: list[dict[str, Any]], transport: str, base_id: str
             spans.append(span)
         else:
             spans.append({
-                "id": f"{base_id}-{seq}", "parent_id": "run-mcp", "kind": "mcp_event", "name": _protocol_kind(record),
+                "id": f"{base_id}-{seq}", "parent_id": "run-mcp", "kind": "mcp_event", "name": _protocol_name(record),
                 "status": "error" if isinstance(payload, dict) and payload.get("error") else "completed",
                 "start_ms": start, "end_ms": end, "duration_ms": 0.0, "transport": transport,
                 "input": payload if direction in {"client_to_server", "request"} else None,
@@ -238,8 +247,13 @@ def build_claude_trace(*, events: Iterable[dict[str, Any] | str], protocol_event
             if kind == "thinking":
                 thinking_count += 1
         else:
-            span["end_ms"] = max(_float(span.get("end_ms")), start)
-            span["duration_ms"] = _duration(_float(span.get("start_ms")), _float(span["end_ms"]))
+            # Claude emits a complete assistant message after the partial stream.
+            # Use it to complete payloads, but do not stretch an already-timed
+            # stream block to the end of the full message replay.
+            partial_replay = bool(span.get("metadata", {}).get("partial")) and not partial
+            if not partial_replay:
+                span["end_ms"] = max(_float(span.get("end_ms")), start)
+                span["duration_ms"] = _duration(_float(span.get("start_ms")), _float(span["end_ms"]))
             span["status"] = "streaming" if partial else "completed"
             if partial and output not in (None, ""):
                 existing = span.get("output")
@@ -296,6 +310,13 @@ def build_claude_trace(*, events: Iterable[dict[str, Any] | str], protocol_event
                     block = dict(delta)
                     block["type"] = {"thinking_delta": "thinking_delta", "text_delta": "text_delta", "input_json_delta": "input_json_delta", "signature_delta": "signature_delta"}.get(delta.get("type"), delta.get("type"))
                 add_block(turn, block, start, stream.get("index"), partial=True)
+            elif stream_type == "content_block_stop" and pending_turn:
+                block_index = str(stream.get("index") if stream.get("index") is not None else 0)
+                for (turn_id, index_key, _kind), span in block_spans.items():
+                    if turn_id == pending_turn["id"] and index_key == block_index:
+                        span["end_ms"] = max(_float(span.get("end_ms")), start)
+                        span["duration_ms"] = _duration(_float(span.get("start_ms")), _float(span["end_ms"]))
+                        span["status"] = "completed"
             elif stream_type == "message_delta" and pending_turn:
                 merge_usage(pending_turn, _usage(raw))
                 delta = stream.get("delta") if isinstance(stream.get("delta"), dict) else {}
@@ -372,7 +393,13 @@ def build_claude_trace(*, events: Iterable[dict[str, Any] | str], protocol_event
         turn_span["duration_ms"] = _duration(_float(turn_span["start_ms"]), _float(turn_span["end_ms"]))
         turn_span["status"] = "completed" if status == "completed" else status
     spans[0]["end_ms"], spans[0]["duration_ms"] = end_ms, _duration(0.0, end_ms)
-    spans[1]["end_ms"], spans[1]["duration_ms"] = (end_ms if protocol_list else 0.0), (_duration(0.0, end_ms) if protocol_list else 0.0)
+    if protocol_list:
+        protocol_start = min(_float(event.get("offset_ms")) for event in protocol_list)
+        protocol_end = max(_float(event.get("offset_ms")) for event in protocol_list)
+        spans[1]["start_ms"], spans[1]["end_ms"] = protocol_start, protocol_end
+        spans[1]["duration_ms"] = _duration(protocol_start, protocol_end)
+    else:
+        spans[1]["end_ms"], spans[1]["duration_ms"] = 0.0, 0.0
     summary = {"transport": transport, "duration_ms": result_metadata.get("duration_ms", end_ms), "duration_api_ms": result_metadata.get("duration_api_ms"), "time_to_first_output_ms": first_output, "turns": result_metadata.get("num_turns", len([turn for turn in turns if turn.get("id")])), "input_tokens": usage_total.get("input_tokens") or None, "output_tokens": usage_total.get("output_tokens") or None, "cache_read_input_tokens": usage_total.get("cache_read_input_tokens") or None, "cache_creation_input_tokens": usage_total.get("cache_creation_input_tokens") or None, "total_tokens": (usage_total.get("input_tokens", 0) + usage_total.get("output_tokens", 0)) or None, "cost_usd": result_metadata.get("total_cost_usd", cost_usd), "thinking": {"state": thinking_state, "count": thinking_count}, "mcp_protocol_events": len(protocol_list), "mcp_spans": len(mcp_spans)}
     return {"schema": SCHEMA_VERSION, "harness": "claude-code", "capture_status": "complete" if ordered or protocol_list else "empty", "summary": summary, "spans": spans, "protocol_events": protocol_list, "limitations": ["Hidden Claude reasoning is not inferred; only emitted thinking blocks are shown."], "result_metadata": result_metadata}
 
