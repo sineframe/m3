@@ -2,6 +2,21 @@ import tempfile, time
 from fastapi.testclient import TestClient
 from mcp_pal.api import create_app
 from mcp_pal.config import Settings
+from mcp_pal.domain.builtin_profiles import EXCALIDRAW_MCP_CONFIG, EXCALIDRAW_PROFILE_ID
+
+
+def test_excalidraw_profile_is_seeded_once_and_persists():
+    settings = Settings(database_path=tempfile.mktemp(suffix=".db"))
+
+    first = TestClient(create_app(settings))
+    seeded = first.get(f"/api/v1/profiles/{EXCALIDRAW_PROFILE_ID}")
+    assert seeded.status_code == 200
+    assert seeded.json()["name"] == "Excalidraw"
+    assert seeded.json()["revisions"][0]["mcp_json"] == EXCALIDRAW_MCP_CONFIG
+
+    second = TestClient(create_app(settings))
+    profiles = second.get("/api/v1/profiles").json()
+    assert [profile["id"] for profile in profiles].count(EXCALIDRAW_PROFILE_ID) == 1
 
 def test_profile_revision_and_run_api():
     settings=Settings(database_path=tempfile.mktemp(suffix=".db"), anthropic_api_key="key", claude_model_ids=["test-model"], claude_executable="/definitely/missing/claude")

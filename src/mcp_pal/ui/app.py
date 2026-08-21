@@ -2,19 +2,12 @@
 import html, json, os, re, time
 import requests
 import streamlit as st
+from mcp_pal.domain.builtin_profiles import EXCALIDRAW_MCP_CONFIG
 from mcp_pal.ui.health import health_state
 from mcp_pal.ui.trace_view import actor, display_name, format_duration, number, server_latency_for, visible_spans
 
 API = os.getenv("MCP_PAL_API_URL", "http://localhost:8000/api/v1")
 MAX_PREVIEW = 4000
-DEFAULT_MCP_CONFIG = {
-    "mcpServers": {
-        "excalidraw": {
-            "type": "http",
-            "url": "https://mcp.excalidraw.com/mcp",
-        }
-    }
-}
 
 def api(method, path, **kwargs):
     try:
@@ -144,7 +137,7 @@ if page == "MCP Profiles":
     st.title("MCP Profiles")
     with st.form("new_profile"):
         name=st.text_input("Name"); desc=st.text_input("Description")
-        raw=st.text_area("MCP JSON", json.dumps(DEFAULT_MCP_CONFIG, indent=2), height=260)
+        raw=st.text_area("MCP JSON", json.dumps(EXCALIDRAW_MCP_CONFIG, indent=2), height=260)
         if st.form_submit_button("Create profile"):
             try: api("POST","/profiles",json={"name":name,"description":desc,"mcp_json":json.loads(raw)}); st.rerun()
             except Exception as e: st.error(f"Invalid JSON: {e}")

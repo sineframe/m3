@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..config import Settings, get_settings
 from ..persistence.database import Base, get_db, init_db, make_engine
 from ..persistence.models import McpProfile, McpProfileRevision, Run, RunEvent, RunTrace, now, uid
+from ..persistence.seeds import ensure_builtin_profiles
 from .schemas import ProfileCreate, RevisionCreate, RunClone, RunCreate, RunOut
 from ..domain.validation import ProfileValidationError, referenced_environment_variables, selected_server_config, validate_mcp_config
 from ..services.run_manager import RunManager
@@ -63,7 +64,16 @@ def create_app(settings: Settings | None = None, engine_override=None, session_f
     factory = session_factory or __import__("sqlalchemy.orm", fromlist=["sessionmaker"]).sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
     Base.metadata.create_all(eng)
     # Any process that was alive before restart cannot be resumed.
-    db=factory(); db.query(Run).filter(Run.status.in_(["queued","running"])).update({Run.status:"failed", Run.error_message:"Interrupted by backend restart", Run.finished_at:now()}, synchronize_session=False); db.commit(); db.close()
+    db=factory()
+    try:
+        ensure_builtin_profiles(db)
+        db.query(Run).filter(Run.status.in_(["queued","running"])).update({Run.status:"failed", Run.error_message:"Interrupted by backend restart", Run.finished_at:now()}, synchronize_session=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
     manager=RunManager(factory, settings)
     @asynccontextmanager
     async def lifespan(application):
