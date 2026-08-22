@@ -12,9 +12,13 @@ dependencies = [
   "sqlalchemy>=2.0",
   "httpx>=0.27",
   "requests>=2.31",
+  "agent-client-protocol==0.12.1",
 ]
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+[project.scripts]
+mcp-pal-harness = "mcp_pal.harness.cli:main"
+mcp-pal-reference-bridge = "mcp_pal.bridge.reference:main"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"

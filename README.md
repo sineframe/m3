@@ -1,6 +1,6 @@
 # MCP Testing Platform v0.1
 
-Local Streamlit UI and FastAPI backend for testing one MCP server interaction at a time with Claude Code or OpenCode. SQLite stores immutable profile revisions, run snapshots, backend-normalized events, and raw harness events.
+Local Streamlit UI and FastAPI backend for testing one MCP server interaction at a time with Claude Code, OpenCode, or a custom ACP harness. SQLite stores immutable profile revisions, run snapshots, backend-normalized events, and raw harness events.
 
 ## Setup
 
@@ -23,6 +23,44 @@ compile/import checks. Focused suites are available as `just test-unit` and
 
 The API is documented at `http://localhost:8000/docs`. Set `MCP_PAL_API_URL` if the UI should use another backend URL.
 
+## Custom ACP harnesses
+
+Custom harnesses use an immutable `mcp-pal.harness.v1` manifest. Store only
+environment references (`"TOKEN": "${TEAM_TOKEN}"`), never credentials or
+resolved paths. The executable is intentionally unsandboxed and requires an
+explicit trust acknowledgment when creating a profile. The JSON Schema is at
+[`schemas/mcp-pal.harness.v1.schema.json`](schemas/mcp-pal.harness.v1.schema.json).
+
+```bash
+uv run mcp-pal-harness validate harness.json --check-local
+# equivalent raw command: uv run python -m mcp_pal.harness.cli validate harness.json --check-local
+# equivalent just recipe: just harness-validate harness.json
+uv run mcp-pal-harness probe harness.json --kind protocol
+# equivalent just recipe: just harness-probe harness.json
+# full probes are opt-in and consume one harness/model turn against local echo:
+uv run mcp-pal-harness probe harness.json --kind full --transport stdio --mode-id default --session-config '{}'
+# equivalent just recipe (use the mode/config values advertised by protocol probe):
+# just harness-full-probe harness.json stdio default '{}'
+```
+
+The reference bridge demonstrates wrapping a deterministic structured,
+non-ACP CLI without an API key or network access:
+
+```bash
+uv run mcp-pal-reference-bridge \
+  --target uv \
+  --target-args-json '["run", "python", "-m", "mcp_pal.fixtures.structured_cli"]'
+# equivalent raw command: uv run python -m mcp_pal.bridge.reference ...
+# equivalent just recipe: just reference-bridge
+```
+
+Its stdin/stdout is ACP NDJSON, and it launches the selected stdio MCP server
+passed by `session/new`; it is a reference fixture, not a generic vendor CLI
+adapter. For a real ACP agent, create a manifest pointing at the vendor's
+official local bridge and run probes explicitly before submitting runs. Real
+agent smoke tests are opt-in, local-only, and require the vendor executable
+and its own authentication; no API keys are needed by the repository tests.
+
 Profiles contain one harness-neutral `mcpServers` object and support stdio, HTTP, and SSE servers. The backend translates the selected server to each harness's native config. Secrets should be `${ENVIRONMENT_VARIABLE}` references. Claude/MCP trace payloads and downloaded reports redact detected credentials; profile revisions remain local configuration snapshots. Tool mode `full` is high risk and enables unrestricted automatic tool approval. Completed Claude reports show the configured transport (`stdio`, `http`, or `sse`) and a Braintrust-style waterfall.
 
 The profile form starts with the public Excalidraw HTTP MCP server:
@@ -38,7 +76,7 @@ The profile form starts with the public Excalidraw HTTP MCP server:
 }
 ```
 
-Reports also expose a redacted, versioned harness-neutral `trace.mcp_calls` collection (`mcp.v1`) with selected-server tool, status, timing, arguments, result, harness, and transport. Claude and OpenCode include correlated, redacted wire request/response and server latency when their stdio, HTTP, or SSE capture is available; unmatched calls truthfully retain unavailable wire fields.
+Reports also expose a redacted, versioned harness-neutral `trace.mcp_calls` collection (`mcp.v1`) with selected-server tool, status, timing, arguments, result, harness, and transport. Claude and OpenCode include correlated, redacted wire request/response and server latency when their stdio, HTTP, or SSE capture is available; custom ACP runs use backend-normalized `acp.v1` traces with separate ACP and MCP evidence. Unmatched calls truthfully retain unavailable wire fields.
 
 If the UI says “Backend connected · runner setup required”, the API is reachable
 and profiles/history remain usable; run submission is disabled until the health

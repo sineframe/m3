@@ -16,6 +16,100 @@ def api(method, path, **kwargs):
         return r.json() if r.content else None
     except Exception as e: st.error(f"Backend unavailable: {e}"); return None
 
+
+def capability_descriptors(payload):
+    """Return the unified capability descriptors, tolerating the old shape.
+
+    The API's selection id is deliberately the only value used to identify a
+    harness in the form.  This matters when two ACP profiles have the same
+    protocol and model sentinel but different revisions/manifests.
+    """
+    payload = payload or {}
+    descriptors = payload.get("harnesses") or []
+    if descriptors and isinstance(descriptors[0], str):
+        models_by_harness = payload.get("models_by_harness") or {}
+        descriptors = [{
+            "selection_id": value,
+            "kind": "builtin",
+            "harness": value,
+            "name": value,
+            "ready": True,
+            "models": models_by_harness.get(value, payload.get("models", [])),
+            "tool_modes": ["mcp_only", "mcp_read_only", "full"],
+        } for value in descriptors]
+    return [dict(item) for item in descriptors if isinstance(item, dict) and item.get("selection_id")]
+
+
+def _option_id(option):
+    return str(option.get("id") or option.get("name") or "option") if isinstance(option, dict) else str(option)
+
+
+def _option_label(option):
+    return str(option.get("name") or option.get("label") or option.get("id") or "option") if isinstance(option, dict) else str(option)
+
+
+def _select_values(option):
+    values = (option or {}).get("options", []) if isinstance(option, dict) else []
+    result = []
+    for value in values:
+        if isinstance(value, dict):
+            if "value" in value:
+                result.append(value["value"])
+            elif isinstance(value.get("options"), list):
+                result.extend(_select_values(value))
+            else:
+                result.append(value.get("id", value.get("name")))
+        else:
+            result.append(value)
+    return result
+
+
+def _config_default(option):
+    """Get an ACP option default without coercing typed values."""
+    if not isinstance(option, dict):
+        return None
+    # ACP SDK responses use ``currentValue`` (and Python-facing integrations
+    # commonly expose its snake_case spelling) for the displayed selection.
+    # Prefer it over a schema default, then use the default aliases before
+    # falling back to the first choice/boolean value.
+    for key in ("currentValue", "current_value", "default", "default_value"):
+        if key in option and option[key] is not None:
+            return option[key]
+    values = _select_values(option)
+    return values[0] if values else (False if str(option.get("type", "")).lower() in {"boolean", "bool"} else "")
+
+
+def _render_config_option(option, key_prefix, override=None):
+    """Render one ACP boolean/select option and return its exact typed value."""
+    oid = _option_id(option)
+    label = _option_label(option)
+    kind = str((option or {}).get("type", "select")).lower() if isinstance(option, dict) else "select"
+    default = _config_default(option) if override is None else override
+    key = f"{key_prefix}-{oid}"
+    if kind in {"boolean", "bool"} or isinstance(default, bool):
+        return oid, st.checkbox(label, value=bool(default), key=key)
+    values = _select_values(option)
+    if not values:
+        values = [default]
+    if default not in values:
+        values.insert(0, default)
+    index = values.index(default)
+    return oid, st.selectbox(label, values, index=index, key=key, format_func=lambda value: str(value))
+
+
+def _mode_id(mode):
+    return str(mode.get("id") or mode.get("modeId") or mode.get("name")) if isinstance(mode, dict) else str(mode)
+
+
+def _mode_label(mode):
+    return str(mode.get("name") or mode.get("label") or mode.get("id")) if isinstance(mode, dict) else str(mode)
+
+
+def _badge(label, ready, detail=None):
+    text = f"{'✓' if ready else '○'} {label}"
+    if detail: text += f" · {detail}"
+    (st.success if ready else st.warning)(text)
+
 def truncate(value, limit=MAX_PREVIEW):
     text=value if isinstance(value,str) else json.dumps(value, ensure_ascii=False, indent=2)
     return text if len(text) <= limit else text[:limit] + f"… ({len(text)-limit} more characters)"
@@ -29,12 +123,25 @@ def render_report(report):
     c1,c2,c3=st.columns(3); c1.metric("Lifecycle",assertions.get("lifecycle",run.get("status"))); c2.metric("MCP assertion",assertions.get("mcp",{}).get("status")); c3.metric("Semantic assertion",assertions.get("semantic",{}).get("status"))
     if report.get("high_risk"): st.error("HIGH RISK: full tool mode used unrestricted auto-approval.")
     st.warning(report.get("warning","Trace payloads are redacted before persistence."))
-    left,right=st.columns(2); left.subheader(f"Final {run.get('harness','harness')} response"); left.code(truncate(run.get("claude_result") or ""), language="text"); right.subheader("Expected output"); right.code(truncate(run.get("expected_output", "")), language="text")
-    render_trace(report.get("trace") or {}, key_suffix=str(run.get("id", "active")))
-    render_mcp_calls((report.get("trace") or {}).get("mcp_calls") or [])
+    harness = run.get("harness", "harness")
+    final_output = run.get("final_output") if harness == "acp" else run.get("claude_result")
+    left,right=st.columns(2); left.subheader(f"Final {harness} response"); left.code(truncate(final_output or ""), language="text"); right.subheader("Expected output"); right.code(truncate(run.get("expected_output", "")), language="text")
+    trace = report.get("trace") or {}
+    # ACP reports are rendered exclusively from the backend-normalized acp.v1
+    # trace.  Legacy event rows and vendor payloads must not become a second,
+    # conflicting source of MCP evidence.
+    if harness == "acp":
+        if trace.get("schema") != "acp.v1":
+            st.info("ACP normalized trace is unavailable for this run.")
+        else:
+            render_trace(trace, key_suffix=str(run.get("id", "active")))
+            render_mcp_calls(trace.get("mcp_calls") or [])
+    else:
+        render_trace(trace, key_suffix=str(run.get("id", "active")))
+        render_mcp_calls(trace.get("mcp_calls") or [])
     with st.expander("MCP activity summary", expanded=False):
         st.json(report.get("mcp_summary",{}))
-    events=report.get("events",[])
+    events=[] if harness == "acp" else report.get("events",[])
     with st.expander(f"Normalized timeline ({len(events)} events)", expanded=False):
         for event in events:
             st.caption(f"#{event.get('sequence')} · {event.get('timestamp')} · {event.get('event_type')}")
@@ -76,6 +183,8 @@ def render_trace(trace, key_suffix="active"):
         return
     summary=trace.get("summary") or {}; spans=trace.get("spans") or []; harness=str(trace.get("harness") or "claude-code")
     transport=str(summary.get("transport") or "unknown").upper()
+    configured_transport=summary.get("configured_transport") or trace.get("configured_transport")
+    instrumented_transport=summary.get("instrumented_transport") or trace.get("instrumented_transport")
     call_count=len(trace.get("mcp_calls") or [])
     if harness == "opencode" and not spans:
         cols=st.columns(2); cols[0].metric("Transport", transport); cols[1].metric("MCP calls", call_count)
@@ -86,7 +195,7 @@ def render_trace(trace, key_suffix="active"):
                 st.code(truncate(event.get("payload",{})), language="json")
         return
     display=lambda key: summary[key] if summary.get(key) is not None else "—"
-    turn_label="OpenCode steps" if harness == "opencode" else "Claude turns"
+    turn_label="OpenCode steps" if harness == "opencode" else ("ACP turn" if harness == "acp" else "Claude turns")
     metrics=[("Transport", transport), ("Total time", format_duration(summary.get("duration_ms"))), (turn_label, display("turns")), ("MCP calls", call_count), ("Tokens", display("total_tokens")), ("Cost", f"${summary['cost_usd']:.4f}" if isinstance(summary.get("cost_usd"),(int,float)) else "—")]
     cols=st.columns(len(metrics))
     for col,(label,value) in zip(cols,metrics): col.metric(label,value)
@@ -110,6 +219,8 @@ def render_trace(trace, key_suffix="active"):
     """, unsafe_allow_html=True)
     st.markdown(f'<div class="trace-shell"><div class="trace-kicker">{html.escape(harness)} trace · {html.escape(str(trace.get("schema", "claude.v1")))}</div><div class="trace-transport">● MCP TRANSPORT: {html.escape(transport)}</div></div>', unsafe_allow_html=True)
     st.caption(f"Input {display('input_tokens')} · Output {display('output_tokens')} · Cache read {display('cache_read_input_tokens')} · Cache write {display('cache_creation_input_tokens')} · First output {format_duration(summary.get('time_to_first_output_ms')) if summary.get('time_to_first_output_ms') is not None else '—'}")
+    if configured_transport or instrumented_transport:
+        st.caption(f"Configured transport: {configured_transport or '—'} · Instrumented transport: {instrumented_transport or '—'}")
     if not spans:
         st.caption("No agent waterfall spans were captured; backend MCP calls and protocol frames are shown below.")
         if trace.get("limitations"):
@@ -122,7 +233,7 @@ def render_trace(trace, key_suffix="active"):
     show_protocol=st.toggle("Show protocol events",value=False,key=f"trace-protocol-{key_suffix}",help="Adds initialize, tools/list, tools/call, notifications, and response frames.")
     visible=visible_spans(spans,include_protocol=show_protocol)
     total=max(number(summary.get("duration_ms")),max((number(x.get("end_ms")) for x in visible),default=1.0),1.0)
-    agent_label="OpenCode" if harness == "opencode" else "Claude"
+    agent_label="OpenCode" if harness == "opencode" else ("ACP" if harness == "acp" else "Claude")
     rows=[f'<div class="trace-legend"><span><i class="trace-dot trace-claude"></i>{agent_label}</span><span><i class="trace-dot trace-thinking"></i>Thinking</span><span><i class="trace-dot trace-mcp"></i>MCP round trip</span><span><i class="trace-dot trace-server"></i>Server</span></div>', '<div class="trace-row trace-head"><div>Activity</div><div>Actor</div><div>Elapsed time</div><div>Duration</div></div>']
     for span in visible:
         start=max(0.0,number(span.get("start_ms"))); end=max(start,number(span.get("end_ms"),start)); duration=max(0.0,end-start)
@@ -153,10 +264,12 @@ if "page" not in st.session_state: st.session_state["page"]="New Run"
 def _new_run_page(): pass
 def _profiles_page(): pass
 def _history_page(): pass
+def _harness_page(): pass
 navigation = st.navigation([
     st.Page(_new_run_page, title="New Run", icon="▶️"),
     st.Page(_profiles_page, title="MCP Profiles", icon="🧩"),
     st.Page(_history_page, title="Run History", icon="🕘"),
+    st.Page(_harness_page, title="Harness Profiles", icon="⚙️"),
 ])
 navigation.run()
 page=navigation.title
@@ -173,7 +286,107 @@ else:
     st.error("Backend unavailable")
 caps=api("GET","/capabilities") or {"models":[]}
 
-if page == "MCP Profiles":
+if page == "Harness Profiles":
+    st.title("Harness Profiles")
+    st.caption("Register ACP agents launched directly over stdio. Credentials are referenced by host environment name and are never stored here.")
+    with st.expander("Create a harness profile", expanded=True):
+        with st.form("new_harness"):
+            name=st.text_input("Name", placeholder="My local agent")
+            description=st.text_input("Description", placeholder="What this harness is used for")
+            command=st.text_input("Executable command", placeholder="my-agent or /absolute/path/my-agent")
+            args_raw=st.text_area("Arguments (JSON array)", "[]", help='Example: ["--acp", "--verbose"]')
+            env_raw=st.text_area("Environment references (JSON object)", "{}", help='Example: {"OPENAI_API_KEY": "${TEAM_OPENAI_KEY}"}')
+            trusted=st.checkbox("I acknowledge this executable is trusted and will run unsandboxed")
+            if st.form_submit_button("Create immutable revision"):
+                try:
+                    args=json.loads(args_raw); env=json.loads(env_raw)
+                    if not isinstance(args,list) or not all(isinstance(value,str) for value in args): raise ValueError("arguments must be a JSON array of strings")
+                    if not isinstance(env,dict) or any(not isinstance(value,str) or not (value.startswith("${") and value.endswith("}")) for value in env.values()): raise ValueError("environment values must be ${HOST_VARIABLE} references")
+                    if not trusted: raise ValueError("Trust acknowledgment is required")
+                    if not name.strip() or not command.strip(): raise ValueError("Name and executable command are required")
+                    created=api("POST","/harness-profiles",json={"name":name.strip(),"description":description,"manifest":{"command":command.strip(),"args":args,"env":env},"trusted_unsandboxed":True})
+                    if created: st.success("Harness profile created with revision 1."); st.rerun()
+                except (ValueError,TypeError,json.JSONDecodeError) as exc: st.error(f"Manifest is invalid: {exc}")
+
+    import_file=st.file_uploader("Import harness manifest", type=["json"], key="harness-import")
+    if import_file is not None and st.button("Import as unverified profile", key="import-harness"):
+        try:
+            imported=api("POST","/harness-profiles/import",json=json.loads(import_file.getvalue().decode("utf-8")))
+            if imported: st.success("Imported as a new unverified profile."); st.rerun()
+        except (ValueError,TypeError,json.JSONDecodeError,UnicodeDecodeError) as exc: st.error(f"Import failed: {exc}")
+
+    profiles=api("GET","/harness-profiles",params={"include_archived":True}) or []
+    descriptors=capability_descriptors(caps)
+    for profile in profiles:
+        pid=profile.get("id"); archived=bool(profile.get("archived")); revisions=profile.get("revisions") or []
+        with st.expander(f"{profile.get('name','Unnamed')} {'· archived' if archived else ''}", expanded=False):
+            st.write(profile.get("description") or "No description.")
+            with st.form(f"metadata-{pid}"):
+                metadata_name=st.text_input("Profile name", value=profile.get("name", ""), key=f"metadata-name-{pid}")
+                metadata_description=st.text_input("Profile description", value=profile.get("description", ""), key=f"metadata-description-{pid}")
+                if st.form_submit_button("Save profile metadata"):
+                    if not metadata_name.strip(): st.error("Profile name is required")
+                    else:
+                        updated=api("PATCH",f"/harness-profiles/{pid}",json={"name":metadata_name.strip(),"description":metadata_description})
+                        if updated: st.rerun()
+            current=next((rev for rev in revisions if rev.get("id")==profile.get("current_revision_id")), revisions[-1] if revisions else {})
+            st.caption(f"Current immutable revision {current.get('revision_number','—')} · {len(revisions)} revision(s)")
+            manifest=current.get("manifest") or {}
+            st.json(manifest)
+            trust=bool(current.get("trusted_unsandboxed"))
+            descriptor=next((item for item in descriptors if item.get("profile_id")==pid and item.get("revision_id")==current.get("id")), None)
+            # Capabilities perform executable/PATH preflight. Do not infer
+            # readiness from a non-empty command in an unavailable profile.
+            local_ready=bool(descriptor and descriptor.get("local_ready", descriptor.get("ready", False)))
+            _badge("Local ready", local_ready, "executable available" if local_ready else "executable unavailable")
+            _badge("Trusted revision", trust, "required before ACP runs")
+            with st.expander("Create a new immutable revision", expanded=False):
+                with st.form(f"revision-{pid}"):
+                    rev_command=st.text_input("Executable command", value=manifest.get("command", ""), key=f"cmd-{pid}")
+                    rev_args=st.text_area("Arguments (JSON array)", value=json.dumps(manifest.get("args",[])), key=f"args-{pid}")
+                    rev_env=st.text_area("Environment references (JSON object)", value=json.dumps(manifest.get("env",{})), key=f"env-{pid}")
+                    rev_trust=st.checkbox("I acknowledge this new revision is trusted and unsandboxed", value=trust, key=f"trust-{pid}")
+                    if st.form_submit_button("Save new revision"):
+                        try:
+                            args=json.loads(rev_args); env=json.loads(rev_env)
+                            if not isinstance(args,list) or not all(isinstance(v,str) for v in args): raise ValueError("arguments must be a JSON array of strings")
+                            if not isinstance(env,dict) or any(not isinstance(v,str) or not (v.startswith("${") and v.endswith("}")) for v in env.values()): raise ValueError("environment values must be ${HOST_VARIABLE} references")
+                            if not rev_trust: raise ValueError("Trust acknowledgment is required for every revision")
+                            result=api("POST",f"/harness-profiles/{pid}/revisions",json={"name":profile.get("name",""),"description":profile.get("description", ""),"manifest":{"command":rev_command,"args":args,"env":env},"trusted_unsandboxed":True})
+                            if result: st.rerun()
+                        except (ValueError,TypeError,json.JSONDecodeError) as exc: st.error(f"Manifest is invalid: {exc}")
+            probes=api("GET",f"/harness-profiles/{pid}/probes") or []
+            st.markdown("**Verification**")
+            protocol=next((probe for probe in probes if probe.get("kind")=="protocol"),None)
+            full=next((probe for probe in probes if probe.get("kind")=="full"),None)
+            protocol_verified=bool(descriptor and descriptor.get("protocol_verified", False))
+            full_verified=bool(descriptor and descriptor.get("full_verified", False))
+            _badge("Protocol verified", protocol_verified, "verified" if protocol_verified else "not verified")
+            _badge("Fully verified", full_verified, "verified" if full_verified else "not verified")
+            for warning in (descriptor or {}).get("warnings") or []: st.warning(str(warning))
+            with st.expander(f"Probe history ({len(probes)})", expanded=False):
+                for probe in probes:
+                    st.caption(f"{probe.get('created_at','—')} · {probe.get('kind')} · {probe.get('status')} · {probe.get('transport','stdio')} · mode={probe.get('mode_id') or 'default'}")
+                    st.json({"session_config":probe.get("session_config") or {},"agent_identity":probe.get("agent_identity"),"evidence":probe.get("evidence") or {}})
+            transport=st.selectbox("Probe transport", ["stdio","http","sse"], key=f"probe-transport-{pid}")
+            probe_mode=st.text_input("Full probe mode id (optional)", key=f"probe-mode-{pid}")
+            probe_config=st.text_area("Full probe session config (JSON object)", "{}", key=f"probe-config-{pid}")
+            probe_col,full_col=st.columns(2)
+            if probe_col.button("Start protocol probe",key=f"probe-{pid}"):
+                api("POST",f"/harness-profiles/{pid}/probe",params={"kind":"protocol","transport":transport}); st.rerun()
+            if full_col.button("Start full probe",key=f"full-{pid}"):
+                try:
+                    config=json.loads(probe_config)
+                    if not isinstance(config,dict): raise ValueError("session config must be a JSON object")
+                    api("POST",f"/harness-profiles/{pid}/probe",params={"kind":"full","transport":transport,"mode_id":probe_mode or None,"session_config":json.dumps(config,separators=(",",":"))}); st.rerun()
+                except (ValueError,TypeError,json.JSONDecodeError) as exc: st.error(f"Probe config is invalid: {exc}")
+            if archived:
+                if st.button("Restore profile",key=f"restore-h-{pid}"): api("POST",f"/harness-profiles/{pid}/restore"); st.rerun()
+            else:
+                if st.button("Archive profile",key=f"archive-h-{pid}"): api("POST",f"/harness-profiles/{pid}/archive"); st.rerun()
+            exported=api("GET",f"/harness-profiles/{pid}/export")
+            if exported is not None: st.download_button("Export manifest",json.dumps(exported,indent=2),f"{pid}.json","application/json",key=f"export-{pid}")
+elif page == "MCP Profiles":
     st.title("MCP Profiles")
     with st.form("new_profile"):
         name=st.text_input("Name"); desc=st.text_input("Description")
@@ -225,24 +438,62 @@ elif page == "New Run":
         # Harness and model must stay outside the form: Streamlit batches form
         # widget changes until submission, but the model options depend on the
         # selected harness and need to refresh immediately.
-        harnesses=caps.get("harnesses",["claude-code"]); preferred=prefill.get("harness") if prefill.get("harness") in harnesses else harnesses[0]
-        harness=st.selectbox("Harness",harnesses,index=harnesses.index(preferred)); models=caps.get("models_by_harness",{}).get(harness,caps.get("models",[])); model=prefill.get("model") if prefill.get("model") in models else (models[0] if models else "")
+        descriptors=capability_descriptors(caps)
+        ids=[x.get("selection_id") for x in descriptors]; preferred=prefill.get("selection_id") if prefill.get("selection_id") in ids else (ids[0] if ids else "")
+        if not ids:
+            st.error("No harness descriptors are available. Check the API capabilities response.")
+            selected={}; selection=""; harness=""; models=[]; model=""
+        else:
+            selection=st.selectbox("Harness",ids,index=ids.index(preferred) if preferred in ids else 0,format_func=lambda value: next((f"{x.get('name',value)} · {x.get('selection_id',value)}" for x in descriptors if x.get("selection_id")==value),value))
+            selected=next((x for x in descriptors if x.get("selection_id")==selection),{})
+            # The selected descriptor is authoritative.  Do not combine its
+            # readiness or options with global /health or another harness.
+            harness=selected.get("harness"); models=selected.get("models") or []; model=prefill.get("model") if prefill.get("model") in models else (models[0] if models else "")
+            _badge("Harness ready", bool(selected.get("ready", selected.get("local_ready", False))), "local executable" if selected.get("kind")=="acp" else "configured")
         model=st.selectbox("Model",models,index=models.index(model) if model in models else 0)
         with st.form("run"):
             server=st.selectbox("Enabled server",servers,index=servers.index(default_server) if default_server else 0)
-            modes=["mcp_only","mcp_read_only","full"]; mode=st.selectbox("Tool mode",modes,index=modes.index(prefill.get("tool_mode")) if prefill.get("tool_mode") in modes else 0)
+            modes=selected.get("tool_modes",["mcp_only","mcp_read_only","full"]); mode=st.selectbox("Tool mode",modes,index=modes.index(prefill.get("tool_mode")) if prefill.get("tool_mode") in modes else 0)
+            agent_mode_id=None; session_config={}
+            if harness=="acp":
+                # Unprobed descriptors intentionally expose no mode/config;
+                # this keeps unverified runs empty rather than inventing ACP
+                # settings.  Probed options retain their typed defaults.
+                agent_modes=selected.get("agent_modes") or []
+                mode_ids=[_mode_id(mode) for mode in agent_modes]
+                mode_labels={_mode_id(mode):_mode_label(mode) for mode in agent_modes}
+                if mode_ids:
+                    clone_mode=prefill.get("agent_mode_id")
+                    descriptor_mode=selected.get("current_agent_mode_id")
+                    default_mode=clone_mode if clone_mode in mode_ids else (descriptor_mode if descriptor_mode in mode_ids else mode_ids[0])
+                    agent_mode_id=st.selectbox("Agent mode",mode_ids,index=mode_ids.index(default_mode),format_func=lambda value: mode_labels.get(value,value))
+                else:
+                    agent_mode_id=None
+                for option in selected.get("session_config_options") or []:
+                    oid,value=_render_config_option(option, f"acp-config-{selection}", (prefill.get("session_config") or {}).get(_option_id(option)))
+                    session_config[oid]=value
+                warnings=list(selected.get("warnings") or [])
+                if not selected.get("full_verified", False) and "Harness is not fully verified" not in warnings:
+                    warnings.append("Harness is not fully verified")
+                if warnings:
+                    for warning in warnings: st.warning(str(warning))
+                    confirmed=st.checkbox("I understand this harness is unverified and will run unsandboxed", key=f"confirm-{selection}")
+                else:
+                    confirmed=True
             if mode == "full": st.error("HIGH RISK: full mode grants unrestricted auto-approval.")
             prompt=st.text_area("Prompt",value=prefill.get("prompt",""),height=180); expected=st.text_area("Expected output (required)",value=prefill.get("expected_output",""),height=100)
-            harness_health=(health_payload or {}).get("harnesses",{}).get(harness,{}); selected_ready=harness_health.get("ready",health["runner_ready"])
+            selected_ready=bool(selected.get("ready",selected.get("local_ready",False)))
             if not selected_ready:
                 with st.container(border=True):
                     st.subheader(f"{harness} setup required")
                     st.warning("Check this harness's executable, CLI version, and API key or saved authentication.")
-            submitted=st.form_submit_button("Run",disabled=not selected_ready)
+            submitted=st.form_submit_button("Run",disabled=not selected_ready or (harness=="acp" and not confirmed))
             if submitted:
                 if not prompt.strip() or not expected.strip(): st.error("Prompt and expected output are required")
                 else:
-                    result=api("POST","/runs",json={"harness":harness,"model":model,"prompt":prompt,"expected_output":expected,"profile_revision_id":r['id'],"enabled_server":server,"tool_mode":mode})
+                    payload={"harness":harness,"model":("agent-default" if harness=="acp" else model),"prompt":prompt,"expected_output":expected,"profile_revision_id":r['id'],"enabled_server":server,"tool_mode":("agent_default" if harness=="acp" else mode)}
+                    if harness=="acp": payload.update({"harness_revision_id":selected.get("revision_id"),"agent_mode_id":agent_mode_id,"session_config":session_config})
+                    result=api("POST","/runs",json=payload)
                     if result: st.session_state["active_run"]=result['id']; st.session_state["prefill"]={}; st.rerun()
         active=st.session_state.get("active_run")
         if active:
@@ -255,11 +506,15 @@ elif page == "New Run":
 
 else:
     st.title("Run History")
-    f1,f2,f3=st.columns(3); status_filter=f1.selectbox("Status",["all","queued","running","completed","failed","timed_out","cancelled"]); model_filter=f2.text_input("Model"); profile_filter=f3.text_input("Profile ID")
+    f1,f2,f3,f4=st.columns(4); status_filter=f1.selectbox("Status",["all","queued","running","completed","failed","timed_out","cancelled"]); model_filter=f2.text_input("Model"); harness_filter=f3.selectbox("Harness kind",["all","claude-code","opencode","acp"]); profile_filter=f4.text_input("Harness profile / MCP profile ID")
     params={};
     if status_filter != "all": params["status"]=status_filter
     if model_filter: params["model"]=model_filter
-    if profile_filter: params["profile_id"]=profile_filter
+    # Keep filtering server-side.  ACP profile IDs belong to harness history,
+    # while ``profile_id`` remains the MCP profile filter for native runs.
+    if harness_filter != "all": params["harness"]=harness_filter
+    if profile_filter and harness_filter != "acp": params["profile_id"]=profile_filter
+    elif profile_filter: params["harness_profile_id"]=profile_filter
     runs=api("GET","/runs",params=params) or []
     for run in runs:
         with st.expander(f"{run['created_at']} · {run['status']} · {run['model']}"):
@@ -267,7 +522,9 @@ else:
             if report: render_report(report); st.download_button("Download complete JSON report",json.dumps(report,indent=2),f"{run['id']}.json","application/json")
             c1,c2,c3=st.columns(3)
             if c1.button("Clone to New Run",key=f"clone-{run['id']}"):
-                st.session_state["prefill"]={"profile_revision_id":run["profile_revision_id"],"enabled_server":run["enabled_server"],"harness":run["harness"],"model":run["model"],"tool_mode":run["tool_mode"],"prompt":run["prompt"],"expected_output":run["expected_output"]}; st.session_state["page"]="New Run"; st.rerun()
+                snapshot=(report or {}).get("run",{}).get("harness_snapshot") or run.get("harness_snapshot") or {}
+                selection_id=f"profile:{run.get('harness_profile_id')}" if run.get("harness")=="acp" and run.get("harness_profile_id") else f"builtin:{run.get('harness')}"
+                st.session_state["prefill"]={"profile_revision_id":run["profile_revision_id"],"enabled_server":run["enabled_server"],"harness":run["harness"],"selection_id":selection_id,"harness_revision_id":snapshot.get("revision_id"),"model":run["model"],"tool_mode":run["tool_mode"],"agent_mode_id":snapshot.get("agent_mode_id"),"session_config":snapshot.get("session_config") or {},"prompt":run["prompt"],"expected_output":run["expected_output"]}; st.session_state["page"]="New Run"; st.rerun()
             if c2.button("Cancel",key=f"cancel-{run['id']}"): api("POST",f"/runs/{run['id']}/cancel"); st.rerun()
             if c3.button("Delete",key=f"delete-{run['id']}"):
                 if run["status"] in ("queued","running"): st.warning("Cancel and wait for completion before deleting")

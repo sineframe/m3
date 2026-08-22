@@ -76,3 +76,48 @@ class RunTrace(Base):
     capture_status: Mapped[str] = mapped_column(String(30), nullable=False)
     trace: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class HarnessProfile(Base):
+    __tablename__ = "harness_profiles"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    current_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+    revisions: Mapped[list["HarnessProfileRevision"]] = relationship(back_populates="profile", cascade="all, delete-orphan")
+
+class HarnessProfileRevision(Base):
+    __tablename__ = "harness_profile_revisions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    profile_id: Mapped[str] = mapped_column(ForeignKey("harness_profiles.id"), nullable=False, index=True)
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    manifest: Mapped[dict] = mapped_column(JSON, nullable=False)
+    trusted_unsandboxed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    profile: Mapped[HarnessProfile] = relationship(back_populates="revisions")
+    __table_args__ = (UniqueConstraint("profile_id", "revision_number"),)
+
+class HarnessProbe(Base):
+    __tablename__ = "harness_probes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    revision_id: Mapped[str] = mapped_column(ForeignKey("harness_profile_revisions.id"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    transport: Mapped[str] = mapped_column(String(20), default="stdio")
+    mode_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    session_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    agent_identity: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class RunHarnessSnapshot(Base):
+    __tablename__ = "run_harness_snapshots"
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True)
+    revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    manifest: Mapped[dict] = mapped_column(JSON, nullable=False)
+    session_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    agent_mode_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    tool_mode: Mapped[str] = mapped_column(String(40), default="agent_default")
+    verification: Mapped[dict] = mapped_column(JSON, default=dict)

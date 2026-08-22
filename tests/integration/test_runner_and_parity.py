@@ -310,7 +310,8 @@ def test_opencode_harness_limits_are_not_reported_as_enforced(tmp_path):
     settings=Settings(database_path=str(tmp_path/"limits.db"),opencode_api_key="key",opencode_executable="opencode",opencode_model_ids=["open/model"],claude_model_ids=["claude/model"])
     app=create_app(settings); app.state.manager.submit=lambda _: None; client=TestClient(app)
     caps=client.get("/api/v1/capabilities").json()
-    assert caps["limits_by_harness"]["opencode"] == {"timeout_seconds":120,"max_turns":None,"max_budget_usd":None}
+    opencode=next(x for x in caps["harnesses"] if x["harness"]=="opencode")
+    assert opencode["limits"] == {"timeout_seconds":120,"max_turns":None,"max_budget_usd":None}
     profile=client.post("/api/v1/profiles",json={"name":"x","mcp_json":{"mcpServers":{"draw":{"command":"x"}}}}).json()
     run=client.post("/api/v1/runs",json={"harness":"opencode","model":"open/model","prompt":"p","expected_output":"e","profile_revision_id":profile["current_revision_id"],"enabled_server":"draw"}).json()
     assert run["max_turns"] is None and run["max_budget_usd"] is None
@@ -365,8 +366,8 @@ print(json.dumps({'type':'step_finish','sessionID':'s','part':{'type':'step-fini
     settings=Settings(database_path=str(tmp_path/"open.db"),anthropic_api_key=None,claude_executable="/missing",claude_model_ids=["claude-model"],opencode_api_key="key",opencode_executable=script,opencode_model_ids=["open/model"],run_timeout_seconds=5)
     app=create_app(settings); client=TestClient(app)
     capabilities=client.get("/api/v1/capabilities").json()
-    assert capabilities["harnesses"] == ["claude-code","opencode"]
-    assert capabilities["models_by_harness"]["opencode"] == ["open/model"]
+    assert {x["harness"] for x in capabilities["harnesses"]} == {"claude-code","opencode"}
+    assert next(x for x in capabilities["harnesses"] if x["harness"]=="opencode")["models"] == ["open/model"]
     assert client.get("/api/v1/health").json()["harnesses"]["opencode"]["ready"]
     profile=client.post("/api/v1/profiles",json={"name":"x","mcp_json":{"mcpServers":{"draw":{"command":"x"}}}}).json()
     body={"harness":"opencode","model":"open/model","prompt":"p","expected_output":"e","profile_revision_id":profile["current_revision_id"],"enabled_server":"draw"}

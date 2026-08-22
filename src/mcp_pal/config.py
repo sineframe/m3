@@ -27,6 +27,7 @@ class Settings(BaseSettings):
         return list(self.opencode_model_ids)
 
     def models_for(self, harness: str) -> list[str]:
+        if harness == "acp": return ["agent-default"]
         return self.opencode_models() if harness == "opencode" else self.model_ids()
 
     def opencode_providers(self) -> list[str]:
