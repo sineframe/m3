@@ -250,7 +250,7 @@ def test_fake_opencode_api_persists_normalized_trace_and_report(tmp_path):
             if state["status"] not in {"queued","running"}: break
             time.sleep(.01)
         report=client.get(f"/api/v1/runs/{run['id']}/report").json(); trace=report["trace"]
-        assert state["status"]=="completed" and trace["available"] and trace["schema"]=="opencode.v1"
+        assert state["status"]=="completed" and trace["available"] and trace["schema"]=="opencode.v2"
         assert trace["mcp_calls_schema"]=="mcp.v1" and trace["summary"]["transport"]=="stdio"
         call=trace["mcp_calls"][0]
         assert {call[k] for k in ("server","tool","status")}=={"draw","echo","completed"}

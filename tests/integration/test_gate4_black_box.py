@@ -104,7 +104,7 @@ def test_gate4_real_uvicorn_protocol_full_run_and_cleanup(tmp_path):
         assert state["harness"] == "acp" and state["model"] == "agent-default"
         assert state["final_output"] == "nonce-123"
         assert report["assertions"]["mcp"]["status"] == "passed"
-        assert report["trace"]["schema"] == "acp.v1"
+        assert report["trace"]["schema"] == "acp.v2"
         methods = {frame.get("payload", {}).get("method") for frame in report["trace"]["acp_protocol_events"]}
         assert {"initialize", "session/new", "session/prompt", "session/update"} <= methods
         assert any(frame.get("payload", {}).get("result", {}).get("stopReason") == "end_turn" for frame in report["trace"]["acp_protocol_events"])
@@ -113,7 +113,9 @@ def test_gate4_real_uvicorn_protocol_full_run_and_cleanup(tmp_path):
         assert call["arguments"] == {"text": "nonce-123"}
         assert call["result"]["content"] == [{"type": "text", "text": "nonce-123"}]
         assert call["server_latency_ms"] >= 0
-        assert {"thought", "tool", "message"} <= {span.get("type") for span in report["trace"]["spans"]}
+        assert not {"thought", "message"} & {span.get("type") for span in report["trace"]["spans"]}
+        turn = next(span for span in report["trace"]["spans"] if span.get("kind") == "model_turn")
+        assert {"thinking", "tool_call", "text"} <= {step.get("kind") for step in turn["steps"]}
         persisted = json.dumps(report, sort_keys=True)
         assert "TEAM_OPENAI_KEY" not in persisted and "sk-test" not in persisted
         snapshot = report["run"]["harness_snapshot"]
@@ -202,7 +204,7 @@ def test_gate4_uvicorn_cancellation_kills_agent_and_mcp_child_then_worker_recove
         state = _wait(base, f"/runs/{run['id']}", lambda value: value["status"] not in {"queued", "running"}, timeout=10)
         assert state["status"] == "cancelled"
         report = _http(base, f"/runs/{run['id']}/report")
-        assert report["trace"]["schema"] == "acp.v1" and report["trace"]["capture_status"] == "partial"
+        assert report["trace"]["schema"] == "acp.v2" and report["trace"]["capture_status"] == "partial"
         assert any(event.get("payload", {}).get("method") == "session/cancel" for event in report["trace"]["protocol_events"])
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and not (dead(agent_pid) and dead(child_pid)):

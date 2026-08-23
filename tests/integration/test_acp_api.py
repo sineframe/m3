@@ -34,13 +34,16 @@ for line in sys.stdin:
             if state['status'] not in {'queued','running'}: break
             time.sleep(.01)
         report=client.get(f'/api/v1/runs/{rid}/report').json()
-    assert state['status']=='completed' and state['final_output']=='api-nonce' and report['trace']['schema']=='acp.v1'
+    assert state['status']=='completed' and state['final_output']=='api-nonce' and report['trace']['schema']=='acp.v2'
     assert report['run']['mcp_assertion']=='passed'
     observed=report['run']['harness_snapshot']['verification']['observed']; assert observed['session_id']=='s' and observed['configured_transport']=='stdio' and observed['instrumented_transport']=='stdio'
     assert report['trace']['mcp_calls'][0]['arguments']=={'text':'api-nonce'}
     assert report['trace']['mcp_calls'][0]['server_latency_ms'] >= 0
     kinds={span['kind'] for span in report['trace']['spans']}
-    assert {'model_turn','thinking','text','tool_call','mcp'} <= kinds
+    assert {'model_turn','tool_call','mcp'} <= kinds
+    assert not {'thinking','text'} & kinds
+    turn=next(span for span in report['trace']['spans'] if span['kind']=='model_turn')
+    assert {'thinking','text','tool_call'} <= {step['kind'] for step in turn['steps']}
     assert report['trace']['protocol_events'] and report['trace']['mcp_protocol_events']
 
 def test_old_sqlite_schema_starts_with_additive_tables(tmp_path):

@@ -74,8 +74,11 @@ def test_partial_and_complete_message_are_one_turn_with_one_usage_total():
     assert trace["summary"]["output_tokens"] == 3
     assert trace["summary"]["total_tokens"] == 8
     assert len([x for x in trace["spans"] if x["kind"] == "model_turn"]) == 1
-    assert [x["output"] for x in trace["spans"] if x["kind"] == "text"] == ["hello"]
     turn = next(x for x in trace["spans"] if x["kind"] == "model_turn")
+    assert trace["schema"] == "claude.v2"
+    assert [step["kind"] for step in turn["steps"]] == ["text"]
+    assert turn["steps"][0]["output"] == "hello"
+    assert not [x for x in trace["spans"] if x["kind"] in {"thinking", "text"}]
     assert turn["start_ms"] == 0 and turn["end_ms"] == 4
 
 
@@ -95,9 +98,11 @@ def test_content_block_timing_is_not_stretched_by_complete_message_replay():
         transport="stdio",
     )
 
-    text = next(span for span in trace["spans"] if span["kind"] == "text")
+    turn = next(span for span in trace["spans"] if span["kind"] == "model_turn")
+    text = next(step for step in turn["steps"] if step["kind"] == "text")
     assert (text["start_ms"], text["end_ms"], text["duration_ms"]) == (10, 30, 20)
     assert text["output"] == "hello"
+    assert not [span for span in trace["spans"] if span["kind"] == "text"]
 
 
 def test_tool_call_span_covers_round_trip_duration():
@@ -169,6 +174,37 @@ def test_thinking_signature_is_classified_but_not_rendered():
         {"type": "stream_event", "event": {"type": "message_stop"}},
     ]
     trace = build_claude_trace(events=[{"type": x["type"], "offset_ms": i, "raw_event": x} for i, x in enumerate(raws)])
-    thinking = [x for x in trace["spans"] if x["kind"] == "thinking"]
+    turn = next(x for x in trace["spans"] if x["kind"] == "model_turn")
+    thinking = [step for step in turn["steps"] if step["kind"] == "thinking"]
     assert len(thinking) == 1 and thinking[0]["output"] in (None, "")
+    assert not [x for x in trace["spans"] if x["kind"] == "thinking"]
     assert trace["summary"]["thinking"] == {"state": "encrypted", "count": 1}
+
+
+def test_adjacent_streamed_thinking_chunks_are_one_step_and_tool_order_is_preserved():
+    raws = [
+        {"type": "stream_event", "event": {"type": "message_start", "message": {"id": "msg_1"}}},
+        {"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}},
+        {"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "first "}}},
+        {"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "second"}}},
+        {"type": "stream_event", "event": {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}}},
+        {"type": "stream_event", "event": {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "answer"}}},
+        {"type": "stream_event", "event": {"type": "content_block_start", "index": 2, "content_block": {"type": "tool_use", "id": "tool_1", "name": "mcp__draw__create", "input": {}}}},
+        {"type": "stream_event", "event": {"type": "content_block_stop", "index": 2}},
+        {"type": "stream_event", "event": {"type": "message_stop"}},
+    ]
+    trace = build_claude_trace(
+        events=[{"type": raw["type"], "offset_ms": index, "raw_event": raw} for index, raw in enumerate(raws)],
+        selected_server="draw",
+    )
+
+    turn = next(span for span in trace["spans"] if span["kind"] == "model_turn")
+    assert trace["schema"] == "claude.v2"
+    assert [(step["kind"], step["output"]) for step in turn["steps"]] == [
+        ("thinking", "first second"),
+        ("text", "answer"),
+        ("tool_call", None),
+    ]
+    assert len(turn["steps"][0]["source_span_ids"]) == 1
+    assert [step["sequence"] for step in turn["steps"]] == [1, 2, 3]
+    assert not [span for span in trace["spans"] if span["kind"] in {"thinking", "text"}]

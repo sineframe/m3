@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-SCHEMA_VERSION = "claude.v1"
+SCHEMA_VERSION = "claude.v2"
 TRANSPORTS = {"stdio", "http", "sse"}
 
 
@@ -408,6 +408,8 @@ def build_claude_trace(*, events: Iterable[dict[str, Any] | str], protocol_event
         spans[1]["duration_ms"] = _duration(protocol_start, protocol_end)
     else:
         spans[1]["end_ms"], spans[1]["duration_ms"] = 0.0, 0.0
+    from .model_steps import attach_model_steps
+    thinking_count = attach_model_steps(spans)
     summary = {"transport": transport, "duration_ms": result_metadata.get("duration_ms", end_ms), "duration_api_ms": result_metadata.get("duration_api_ms"), "time_to_first_output_ms": first_output, "turns": result_metadata.get("num_turns", len([turn for turn in turns if turn.get("id")])), "input_tokens": usage_total.get("input_tokens") or None, "output_tokens": usage_total.get("output_tokens") or None, "cache_read_input_tokens": usage_total.get("cache_read_input_tokens") or None, "cache_creation_input_tokens": usage_total.get("cache_creation_input_tokens") or None, "total_tokens": (usage_total.get("input_tokens", 0) + usage_total.get("output_tokens", 0)) or None, "cost_usd": result_metadata.get("total_cost_usd", cost_usd), "thinking": {"state": thinking_state, "count": thinking_count}, "mcp_protocol_events": len(protocol_list), "mcp_spans": len(mcp_spans)}
     from .normalized import from_claude_trace
     capture_status = "empty" if not (ordered or protocol_list) else ("complete" if status == "completed" else "partial")

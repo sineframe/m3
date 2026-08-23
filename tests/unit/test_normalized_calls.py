@@ -64,11 +64,37 @@ def test_opencode_waterfall_preserves_steps_reasoning_text_and_summary():
         {"offset_ms":6,"direction":"server_to_client","payload":{"id":1,"result":"ok"}},
     ]
     trace=build_opencode_trace(events=events,protocol_events=protocol,selected_server="draw",transport="stdio",status="completed")
-    assert [span["kind"] for span in trace["spans"] if span["kind"] in {"model_turn","thinking","text"}] == ["model_turn","thinking","model_turn","text"]
+    assert trace["schema"] == "opencode.v2"
+    turns=[span for span in trace["spans"] if span["kind"] == "model_turn"]
+    assert len(turns) == 2
+    assert [[step["kind"] for step in turn["steps"]] for turn in turns] == [["thinking", "tool_call"], ["text"]]
+    assert turns[0]["steps"][0]["output"] == "thinking"
+    assert turns[1]["steps"][0]["output"] == "done"
+    assert not [span for span in trace["spans"] if span["kind"] in {"thinking", "text"}]
     assert trace["summary"] == {"transport":"stdio","duration_ms":10.0,"turns":2,"mcp_calls":1,"input_tokens":5,"output_tokens":5,"total_tokens":10,"cost_usd":0.03,"thinking":{"state":"visible","count":1}}
     tool=next(span for span in trace["spans"] if span["kind"]=="tool_call")
     wire=next(span for span in trace["spans"] if span["kind"]=="mcp" and span["name"]=="tools/call")
     assert tool["input"]=={"text":"actual"} and wire["parent_id"]==tool["id"] and wire["duration_ms"]==2.5
+
+
+def test_opencode_adjacent_reasoning_chunks_are_combined_under_model_turn():
+    events = [
+        {"offset_ms": 1, "raw_event": {"type": "step_start", "part": {"type": "step-start"}}},
+        {"offset_ms": 2, "raw_event": {"type": "reasoning", "part": {"type": "reasoning", "text": "first "}}},
+        {"offset_ms": 3, "raw_event": {"type": "reasoning", "part": {"type": "reasoning", "text": "second"}}},
+        {"offset_ms": 4, "raw_event": {"type": "text", "part": {"type": "text", "text": "answer"}}},
+        {"offset_ms": 5, "raw_event": {"type": "step_finish", "part": {"type": "step-finish"}}},
+    ]
+    trace = build_opencode_trace(events=events, selected_server="draw", transport="stdio", status="completed")
+    turn = next(span for span in trace["spans"] if span["kind"] == "model_turn")
+
+    assert trace["schema"] == "opencode.v2"
+    assert [(step["kind"], step["output"]) for step in turn["steps"]] == [
+        ("thinking", "first second"),
+        ("text", "answer"),
+    ]
+    assert len(turn["steps"][0]["source_span_ids"]) == 2
+    assert not [span for span in trace["spans"] if span["kind"] in {"thinking", "text"}]
 
 def test_opencode_unmatched_call_has_precise_limitation_only():
     call=from_opencode_events([{"type":"tool_use","part":{"tool":"draw_echo","callID":"u","state":{"status":"completed","input":{},"output":"ok"}}}],"draw")[0]

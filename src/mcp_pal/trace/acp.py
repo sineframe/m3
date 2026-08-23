@@ -489,7 +489,7 @@ def build_acp_trace(
     session_id: str | None = None,
     result_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a stable ``acp.v1`` trace from possibly malformed partial input."""
+    """Build a stable ``acp.v2`` trace from possibly malformed partial input."""
 
     acp_input, wire_input = list(acp_frames or ()), list(mcp_frames or ())
     configured = str(configured_transport or "unknown")
@@ -590,10 +590,13 @@ def build_acp_trace(
             "metadata": {"harness": "acp", "update_count": len(acp_spans)},
         }
         activity.append(model)
-    def span_order(span: dict[str, Any]) -> tuple[float, int, float, str]:
+    def span_order(span: dict[str, Any]) -> tuple[float, int]:
         kind = span.get("kind")
         priority = {"model_turn": 0, "thinking": 1, "text": 1, "tool_call": 1, "update": 1, "plan": 1, "state": 1, "mcp": 2, "mcp_event": 3}.get(kind, 1)
-        return (float(span.get("start_ms") or 0), priority, float(span.get("end_ms") or 0), str(span.get("id")))
+        # ``activity`` is assembled in capture order.  Keep that stable for
+        # equal timestamps; generated IDs are strings and would reorder
+        # ``...-10`` before ``...-2`` in a long stream.
+        return (float(span.get("start_ms") or 0), priority)
     activity.sort(key=span_order)
     run_span = {
         "id": "run",
@@ -622,6 +625,8 @@ def build_acp_trace(
     }
     all_spans = [run_span, mcp_session, *activity]
     all_spans = [all_spans[0], all_spans[1], *sorted(all_spans[2:], key=span_order)]
+    from .model_steps import attach_model_steps
+    thinking_count = attach_model_steps(all_spans)
     # Keep the compact ``kind`` vocabulary used by the waterfall and expose a
     # compatibility ``type`` alias for older report consumers.
     type_aliases = {"thinking": "thought", "text": "message", "tool_call": "tool"}
@@ -630,7 +635,7 @@ def build_acp_trace(
     limitations = [WIRE_LIMITATION] if any(not c.get("provenance", {}).get("wire") for c in merged_calls) else []
     capture_status = "complete" if status == "completed" and (acp_protocol or wire_protocol) else ("partial" if acp_protocol or wire_protocol else "empty")
     return {
-        "schema": "acp.v1",
+        "schema": "acp.v2",
         "harness": "acp",
         "capture_status": capture_status,
         "summary": {
@@ -640,6 +645,7 @@ def build_acp_trace(
             "duration_ms": end,
             "mcp_calls": len(merged_calls),
             "acp_updates": len(acp_spans),
+            "thinking": {"state": "visible" if thinking_count else "omitted", "count": thinking_count},
         },
         "mcp_calls_schema": "mcp.v1",
         "mcp_calls": merged_calls,

@@ -2,6 +2,7 @@ from mcp_pal.ui.trace_view import (
     actor,
     display_name,
     format_duration,
+    model_step_spans,
     server_latency_for,
     visible_spans,
     wire_unavailable_message,
@@ -19,13 +20,14 @@ def test_overview_is_chronological_and_hides_bookkeeping_by_default():
         {"id": "result", "kind": "result", "start_ms": 100, "end_ms": 100},
     ]
 
-    assert [span["id"] for span in visible_spans(spans)] == ["turn", "thinking", "tool"]
+    assert [span["id"] for span in visible_spans(spans)] == ["turn", "tool"]
     assert [span["id"] for span in visible_spans(spans, include_protocol=True)] == [
         "turn",
-        "thinking",
         "tool",
         "protocol",
     ]
+    adapted_turn = next(span for span in model_step_spans(spans) if span["id"] == "turn")
+    assert [step["kind"] for step in adapted_turn["steps"]] == ["thinking", "tool_call"]
 
 
 def test_trace_labels_are_human_readable():

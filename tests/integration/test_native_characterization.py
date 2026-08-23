@@ -43,7 +43,7 @@ print(json.dumps({{'type':'result','result':'native result','session_id':'native
         run = wait_terminal(client, created["id"])
         report = client.get(f"/api/v1/runs/{created['id']}/report").json()
     assert run["status"] == "completed" and run["claude_result"] == "native result"
-    assert report["trace"]["schema"] == "claude.v1"
+    assert report["trace"]["schema"] == "claude.v2"
     args = json.loads(marker.read_text())
     assert args[0] == "--print" and "--mcp-config" in args and "--model" in args
     assert "native result" in json.dumps(report)
@@ -64,7 +64,7 @@ print(json.dumps({{'type':'step_finish','sessionID':'native-session','part':{{'t
         run = wait_terminal(client, created["id"])
         report = client.get(f"/api/v1/runs/{created['id']}/report").json()
     assert run["status"] == "completed" and run["claude_result"] == "native result"
-    assert report["trace"]["schema"] == "opencode.v1"
+    assert report["trace"]["schema"] == "opencode.v2"
     args = json.loads(marker.read_text())
     assert args[:3] == ["--pure", "run", "--format"] and "--model" in args
 

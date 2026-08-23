@@ -110,16 +110,16 @@ class RunManager:
                 transport = transport_for_server((rev.mcp_json.get("mcpServers", {}).get(run.enabled_server) or {}))
                 trace = build_claude_trace(events=result.event_records or result.events, protocol_events=result.protocol_events, transport=transport, status=result.status, cost_usd=result.cost_usd, session_id=result.session_id, selected_server=run.enabled_server)
                 safe_trace, _ = redact(trace)
-                db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "claude.v1")), capture_status=str(safe_trace.get("capture_status", "complete")), trace=safe_trace))
+                db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "claude.v2")), capture_status=str(safe_trace.get("capture_status", "complete")), trace=safe_trace))
             elif run.harness == "opencode":
                 transport = transport_for_server((rev.mcp_json.get("mcpServers", {}).get(run.enabled_server) or {}))
                 trace = build_opencode_trace(events=result.event_records or result.events, protocol_events=result.protocol_events, selected_server=run.enabled_server, transport=transport, status=result.status, session_id=result.session_id)
                 safe_trace, _ = redact(trace)
-                db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "opencode.v1")), capture_status=str(safe_trace.get("capture_status", "complete")), trace=safe_trace))
+                db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "opencode.v2")), capture_status=str(safe_trace.get("capture_status", "complete")), trace=safe_trace))
             elif run.harness == "acp":
                 trace=build_acp_trace(acp_frames=result.event_records or (),mcp_frames=result.protocol_events or (),selected_server=run.enabled_server,configured_transport=getattr(result,"configured_transport",None) or result.transport,instrumented_transport=getattr(result,"instrumented_transport",None) or result.transport,status=result.status,session_id=result.session_id,result_metadata=(db.get(RunHarnessSnapshot,run.id).verification if db.get(RunHarnessSnapshot,run.id) else {}))
                 safe_trace,_=redact(trace)
-                db.merge(RunTrace(run_id=run.id,harness="acp",schema_version="acp.v1",capture_status=trace["capture_status"],trace=safe_trace))
+                db.merge(RunTrace(run_id=run.id,harness="acp",schema_version=trace["schema"],capture_status=trace["capture_status"],trace=safe_trace))
             db.commit()
         except Exception as e:
             exception_message=str(e)
@@ -138,15 +138,15 @@ class RunManager:
                 transport = transport_for_server((rev.mcp_json.get("mcpServers", {}).get(run.enabled_server) or {}))
                 trace = build_claude_trace(events=result.event_records or result.events, protocol_events=result.protocol_events, transport=transport, status="failed", cost_usd=result.cost_usd, session_id=result.session_id, selected_server=run.enabled_server)
                 safe_trace, _ = redact(trace)
-                db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "claude.v1")), capture_status="partial", trace=safe_trace))
+                db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "claude.v2")), capture_status="partial", trace=safe_trace))
             elif result is not None and run.harness == "opencode":
                 transport = transport_for_server((rev.mcp_json.get("mcpServers", {}).get(run.enabled_server) or {}))
                 trace = build_opencode_trace(events=result.event_records or result.events, protocol_events=result.protocol_events, selected_server=run.enabled_server, transport=transport, status="failed", session_id=result.session_id)
                 safe_trace, _ = redact(trace)
-                db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version="opencode.v1", capture_status="partial", trace=safe_trace))
+                db.merge(RunTrace(run_id=run.id, harness=run.harness, schema_version=str(safe_trace.get("schema", "opencode.v2")), capture_status="partial", trace=safe_trace))
             elif result is not None and run.harness == "acp":
                 trace=build_acp_trace(acp_frames=result.event_records or (),mcp_frames=result.protocol_events or (),selected_server=run.enabled_server,configured_transport=getattr(result,"configured_transport",None) or result.transport,instrumented_transport=getattr(result,"instrumented_transport",None) or result.transport,status="failed",session_id=result.session_id,result_metadata=(db.get(RunHarnessSnapshot,run.id).verification if db.get(RunHarnessSnapshot,run.id) else {}))
-                safe_trace,_=redact(trace); db.merge(RunTrace(run_id=run.id,harness="acp",schema_version="acp.v1",capture_status="partial",trace=safe_trace))
+                safe_trace,_=redact(trace); db.merge(RunTrace(run_id=run.id,harness="acp",schema_version=trace["schema"],capture_status="partial",trace=safe_trace))
             db.commit()
         finally:
             with self.lock: self.runners.pop(run_id,None); event=self.done_events.pop(run_id,None); event and event.set()

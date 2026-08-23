@@ -2,8 +2,10 @@ from mcp_pal.trace.acp import build_acp_trace
 
 def test_acp_trace_wire_authoritative_and_unknown_updates():
     trace=build_acp_trace(acp_frames=[{"offset_ms":1,"payload":{"method":"session/update","params":{"update":{"sessionUpdate":"agent_thought_chunk"}}}}],mcp_frames=[{"offset_ms":2,"direction":"client_to_server","payload":{"id":7,"method":"tools/call","params":{"name":"echo","arguments":{"text":"x"}}}},{"offset_ms":5,"direction":"server_to_client","payload":{"id":7,"result":{"content":[{"text":"x"}]}}}],selected_server="echo",configured_transport="http",instrumented_transport="http",status="completed")
-    assert trace['schema']=='acp.v1' and trace['mcp_calls'][0]['arguments']=={'text':'x'} and trace['mcp_calls'][0]['server_latency_ms']==3
-    assert any(s['kind']=='thinking' for s in trace['spans'])
+    assert trace['schema']=='acp.v2' and trace['mcp_calls'][0]['arguments']=={'text':'x'} and trace['mcp_calls'][0]['server_latency_ms']==3
+    turn = next(s for s in trace['spans'] if s['kind'] == 'model_turn')
+    assert [step['kind'] for step in turn['steps']] == ['thinking', 'tool_call']
+    assert not [s for s in trace['spans'] if s['kind'] == 'thinking']
 
 
 def _frame(offset, direction, payload):
@@ -23,7 +25,12 @@ def test_acp_tool_lifecycle_and_message_plan_state_updates_are_normalized():
     assert call["tool"] == "echo" and call["arguments"] == {"x": 1} and call["result"] == {"ok": 1}
     assert call["provenance"] == {"model": True, "wire": False, "correlation": "acp"}
     assert "correlated MCP transport" in call["limitations"][0]
-    assert {span["kind"] for span in trace["spans"]} >= {"model_turn", "tool_call", "update", "plan", "state", "text"}
+    assert {span["kind"] for span in trace["spans"]} >= {"model_turn", "tool_call", "update", "plan", "state"}
+    turn = next(span for span in trace["spans"] if span["kind"] == "model_turn")
+    assert [step["kind"] for step in turn["steps"]] == ["plan", "tool_call", "update", "state", "text"]
+    assert turn["steps"][-1]["output"] == "done"
+    assert not [span for span in trace["spans"] if span["kind"] in {"thinking", "text"}]
+    assert trace["schema"] == "acp.v2"
     assert trace["summary"]["configured_transport"] == "http"
     assert trace["summary"]["instrumented_transport"] == "proxy"
 
@@ -94,3 +101,23 @@ def test_malformed_and_unknown_frames_remain_separate_and_tolerated():
     assert trace["mcp_protocol_events"][0]["payload"] == "not-json"
     assert any(span["kind"] == "update" and span["metadata"].get("unknown") for span in trace["spans"])
     assert any(span["kind"] == "mcp_event" for span in trace["spans"])
+
+
+def test_acp_adjacent_thought_chunks_are_combined_before_message_and_tool_steps():
+    acp = [
+        _frame(1, "server_to_client", {"method": "session/update", "params": {"update": {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "first "}}}}),
+        _frame(2, "server_to_client", {"method": "session/update", "params": {"update": {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "second"}}}}),
+        _frame(3, "server_to_client", {"method": "session/update", "params": {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "answer"}}}}),
+        _frame(4, "server_to_client", {"method": "session/update", "params": {"update": {"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "echo", "rawInput": {"x": 1}, "status": "running"}}}),
+    ]
+    trace = build_acp_trace(acp_frames=acp, selected_server="s")
+    turn = next(span for span in trace["spans"] if span["kind"] == "model_turn")
+
+    assert trace["schema"] == "acp.v2"
+    assert [(step["kind"], step["output"]) for step in turn["steps"]] == [
+        ("thinking", "first second"),
+        ("text", "answer"),
+        ("tool_call", None),
+    ]
+    assert len(turn["steps"][0]["source_span_ids"]) == 2
+    assert not [span for span in trace["spans"] if span["kind"] in {"thinking", "text"}]

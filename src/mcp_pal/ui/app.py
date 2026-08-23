@@ -127,11 +127,11 @@ def render_report(report):
     final_output = run.get("final_output") if harness == "acp" else run.get("claude_result")
     left,right=st.columns(2); left.subheader(f"Final {harness} response"); left.code(truncate(final_output or ""), language="text"); right.subheader("Expected output"); right.code(truncate(run.get("expected_output", "")), language="text")
     trace = report.get("trace") or {}
-    # ACP reports are rendered exclusively from the backend-normalized acp.v1
+    # ACP reports are rendered exclusively from the backend-normalized trace
     # trace.  Legacy event rows and vendor payloads must not become a second,
     # conflicting source of MCP evidence.
     if harness == "acp":
-        if trace.get("schema") != "acp.v1":
+        if not str(trace.get("schema") or "").startswith("acp.v"):
             st.info("ACP normalized trace is unavailable for this run.")
         else:
             render_trace(trace, key_suffix=str(run.get("id", "active")))
@@ -148,9 +148,6 @@ def render_report(report):
             st.markdown(linkify(truncate(event.get("payload",{}))))
     with st.expander("Raw harness events", expanded=False):
         for event in events: st.code(truncate(event.get("raw_event",{})))
-    with st.expander("Thinking payloads", expanded=False):
-        for event in events:
-            if event.get("event_type") == "thinking": st.code(truncate(event.get("payload",{})))
     with st.expander("stderr", expanded=False): st.code(report.get("stderr") or "")
 
 def render_mcp_calls(calls):
@@ -251,6 +248,12 @@ def render_trace(trace, key_suffix="active"):
         selected=next(span for span in visible if span.get("id")==selected_id)
         with st.container(border=True):
             st.caption(f"{actor(selected)} · {format_duration(selected.get('duration_ms'))} · {selected.get('status','completed')}")
+            if selected.get("steps"):
+                st.markdown("**Model steps**")
+                for step in selected["steps"]:
+                    st.caption(f"#{step.get('sequence')} · {step.get('kind')} · {format_duration(step.get('duration_ms'))}")
+                    if step.get("input") is not None: st.code(truncate(step.get("input")), language="json")
+                    if step.get("output") is not None: st.code(truncate(step.get("output")), language="text" if isinstance(step.get("output"), str) else "json")
             if selected.get("input") is not None: st.markdown("**Input**"); st.code(truncate(selected.get("input")),language="json")
             if selected.get("output") is not None: st.markdown("**Output**"); st.code(truncate(selected.get("output")),language="json")
             with st.expander("Metadata",expanded=False): st.json({"transport":selected.get("transport"),"tokens":selected.get("tokens"),"metadata":selected.get("metadata")})

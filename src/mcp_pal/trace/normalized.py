@@ -202,7 +202,9 @@ def build_opencode_trace(*, events: Iterable[dict[str, Any]], protocol_events: I
         spans[1]["start_ms"]=min(float(record.get("offset_ms",0) or 0) for record in protocol); spans[1]["end_ms"]=max(float(record.get("offset_ms",0) or 0) for record in protocol); spans[1]["duration_ms"]=max(0.0,spans[1]["end_ms"]-spans[1]["start_ms"])
     capture = "empty" if not raw else ("complete" if status == "completed" else "partial")
     limitations = [] if calls and all(c["provenance"].get("wire") for c in calls) else ([UNMATCHED_LIMITATION] if calls else [])
+    from .model_steps import attach_model_steps
+    thinking_count = attach_model_steps(spans)
     summary={"transport":transport,"duration_ms":end_ms,"turns":len(turns),"mcp_calls":len(calls),"input_tokens":input_tokens or None,"output_tokens":output_tokens or None,"total_tokens":input_tokens+output_tokens or None,"cost_usd":total_cost if has_cost else None,"thinking":{"state":"visible" if thinking_count else "omitted","count":thinking_count}}
-    return {"schema": "opencode.v1", "harness": "opencode", "capture_status": capture, "summary": summary, "mcp_calls_schema": SCHEMA_VERSION, "mcp_calls": calls, "spans": spans, "protocol_events": protocol, "result_metadata": {"session_id": session_id, "status": status}, "limitations": limitations}
+    return {"schema": "opencode.v2", "harness": "opencode", "capture_status": capture, "summary": summary, "mcp_calls_schema": SCHEMA_VERSION, "mcp_calls": calls, "spans": spans, "protocol_events": protocol, "result_metadata": {"session_id": session_id, "status": status}, "limitations": limitations}
 
 __all__ = ["SCHEMA_VERSION", "from_claude_trace", "from_opencode_events", "build_opencode_trace"]

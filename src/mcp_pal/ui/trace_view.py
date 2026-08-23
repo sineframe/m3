@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
-OVERVIEW_KINDS = {"model_turn", "thinking", "text", "tool_call"}
+from mcp_pal.trace.model_steps import attach_model_steps
+
+# Content blocks are represented inside ``model_turn.steps`` in v2.  Keep the
+# old names out of the overview so a v1 trace cannot turn every stream chunk
+# into a separate top-level activity row after it is adapted below.
+OVERVIEW_KINDS = {"model_turn", "tool_call"}
 PROTOCOL_KINDS = {"mcp", "mcp_event"}
 
 
@@ -69,8 +75,35 @@ def actor(span: dict[str, Any]) -> str:
     return "System"
 
 
+def model_step_spans(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return spans in the v2 display shape, including legacy v1 traces.
+
+    Early persisted traces exposed ``thinking`` and ``text`` as individual
+    spans.  They remain valid data and must still render, but showing them as
+    rows recreates the streaming-chunk problem.  Adapt a copy only when those
+    legacy content spans are present; v2 turns already contain their steps and
+    must not be reprocessed (which would discard their coalesced content).
+    """
+    source = list(spans or [])
+    if not any(span.get("kind") in {"thinking", "text"} for span in source):
+        return source
+    # Some early partial captures contain content blocks but no model-turn
+    # envelope.  There is nowhere safe to attach those blocks, so preserve
+    # them for the legacy overview instead of dropping them.
+    if not any(span.get("kind") == "model_turn" for span in source):
+        return source
+    adapted = deepcopy(source)
+    attach_model_steps(adapted)
+    return adapted
+
+
 def visible_spans(spans: list[dict[str, Any]], *, include_protocol: bool = False) -> list[dict[str, Any]]:
+    source = list(spans or [])
+    has_turn = any(span.get("kind") == "model_turn" for span in source)
+    spans = model_step_spans(source)
     kinds = OVERVIEW_KINDS | (PROTOCOL_KINDS if include_protocol else set())
+    if not has_turn:
+        kinds |= {"thinking", "text"}
     visible = [span for span in spans if span.get("kind") in kinds]
     return sorted(
         visible,
@@ -94,4 +127,4 @@ def wire_unavailable_message(harness: Any) -> str:
     return "Wire view unavailable: no correlated transport capture was available for this call."
 
 
-__all__ = ["actor", "display_name", "format_duration", "number", "server_latency_for", "visible_spans", "wire_unavailable_message"]
+__all__ = ["actor", "display_name", "format_duration", "model_step_spans", "number", "server_latency_for", "visible_spans", "wire_unavailable_message"]
