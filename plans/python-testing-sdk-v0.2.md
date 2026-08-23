@@ -1177,3 +1177,863 @@ Explicitly deferred:
 - Execution priority scheduling.
 - Legacy database migration or detection.
 - Actual TestPyPI/PyPI publication.
+
+## 8. Implementation todo list
+
+Work through this list in order. Each checkbox should be completed as a small reviewable change with its own tests. Do not begin a later milestone while an earlier milestone's gate is failing. Keep compatibility only within the new v0.2 interfaces as they are introduced; do not add v1 compatibility code to make intermediate steps easier.
+
+### Phase 0 — Preserve the baseline
+
+- [ ] Read section 9 in full and treat it as the implementation contract for every phase.
+- [ ] Record the current test, lint, type-check, build, API, UI, and CLI commands.
+- [ ] Run the existing suite and record known warnings and platform-specific behavior.
+- [ ] Inventory all current public imports, entry points, database locations, environment variables, profile fields, API routes, and UI actions.
+- [ ] Map current execution, trace, harness, storage, API, and UI modules to their intended v0.2 owner.
+- [ ] Identify existing tests and behaviors that must be preserved versus intentionally replaced.
+- [ ] Add a temporary migration checklist linking each current behavior to its future SDK test.
+- [ ] Confirm the worktree contains no unrelated generated files before structural changes.
+- [ ] Establish the rule that every phase ends with a clean build and passing deterministic suite.
+
+### Phase 1 — Create the uv workspace and distributable SDK
+
+- [ ] Convert the root project to a uv workspace containing the `sdk` project.
+- [ ] Move the Python package beneath `sdk/src/mcp_pal` without changing runtime behavior yet.
+- [ ] Move and reorganize tests beneath `sdk/tests` while preserving baseline coverage.
+- [ ] Configure Hatchling to build only the intended SDK package and runtime data.
+- [ ] Set package metadata for `mcp-pal`, Python `>=3.10`, Apache-2.0, README, authors, classifiers, keywords, and project URLs.
+- [ ] Add the Apache-2.0 license file and PEP 639-compatible license metadata.
+- [ ] Define base, `pytest`, `storage`, `app`, `property`, `docs`, and `all` dependency extras.
+- [ ] Add `mcp>=2,<3` and validate the actual official SDK API used by the implementation.
+- [ ] Regenerate the uv lockfile for Python 3.10–3.13.
+- [ ] Add `py.typed` and configure its wheel inclusion.
+- [ ] Configure wheel contents to include runtime schemas and license only where appropriate.
+- [ ] Configure the sdist to include docs, examples, tests needed for source validation, and legal files without unrelated research/build artifacts.
+- [ ] Obtain the runtime version exclusively through `importlib.metadata`.
+- [ ] Verify that `import mcp_pal` has no database, subprocess, filesystem-write, network, or event-loop side effects.
+- [ ] Build wheel and sdist and run metadata/content validation.
+- [ ] Install the wheel into a clean environment and smoke-test imports and entry points.
+
+### Phase 2 — Define the public domain model
+
+- [ ] Establish `mcp_pal`, `sync_api`, `async_api`, `types`, `matchers`, `testing`, and `pytest_plugin` module boundaries.
+- [ ] Define the public export manifest and a test that rejects undocumented or accidental exports.
+- [ ] Implement frozen identifiers and metadata types for executions, sessions, turns, servers, connections, artifacts, and events.
+- [ ] Implement execution lifecycle and outcome enums with validated transitions.
+- [ ] Implement turn lifecycle and outcome models with validated transitions.
+- [ ] Implement typed content blocks and the `UserMessage` envelope.
+- [ ] Implement server definitions for in-process, stdio, Streamable HTTP, and legacy SSE.
+- [ ] Implement serializable server and harness profile references with immutable revision identity.
+- [ ] Implement typed harness values for Claude Code, OpenCode, and ACP.
+- [ ] Implement workspace, tool, permission, elicitation, sampling, filesystem, and terminal policy models.
+- [ ] Implement `DirectExecutionSpec` and `AgentExecutionSpec` as frozen Pydantic models.
+- [ ] Implement immutable execution, turn, trace, evaluation, artifact, readiness, and capability results.
+- [ ] Define stable public exception types and machine-readable error codes.
+- [ ] Define secret-reference types that cannot serialize resolved secret values.
+- [ ] Add JSON-schema generation and round-trip tests for every serializable model.
+- [ ] Add strict type-checking tests for the intended sync and async usage examples.
+
+### Phase 3 — Implement configuration and capability discovery
+
+- [ ] Define all supported `[tool.mcp-pal]` settings and environment-variable names.
+- [ ] Implement configuration precedence: explicit arguments, environment, project config, defaults.
+- [ ] Track the source of every effective configuration value for diagnostics.
+- [ ] Keep `.env` loading out of library code.
+- [ ] Add explicit `.env` loading options to application and CLI entry points only.
+- [ ] Implement typed binary, protocol, transport, storage, and harness readiness probes.
+- [ ] Record detected versions and individual capability results without version allowlists.
+- [ ] Ensure probing one harness does not initialize or fail unrelated harnesses.
+- [ ] Implement `kit.capabilities()` and namespaced probe services.
+- [ ] Implement strict `mcp-pal doctor` behavior for explicitly requested capabilities.
+- [ ] Add redaction tests for configuration errors, probe output, reprs, and serialized snapshots.
+
+### Phase 4 — Build canonical tracing and ephemeral execution storage
+
+- [ ] Define the canonical event taxonomy and versioned event schema.
+- [ ] Define raw-evidence references separately from normalized semantic events.
+- [ ] Implement a per-execution sequence allocator.
+- [ ] Add UTC timestamps and monotonic offsets to events and lifecycle records.
+- [ ] Implement request/response correlation using connection, typed request ID, sequence, direction, session, and turn.
+- [ ] Implement the in-memory `ExecutionStore`.
+- [ ] Implement the temporary/in-memory `ArtifactStore`.
+- [ ] Implement content-addressed compressed blobs with hash and length validation.
+- [ ] Implement redaction before persistence, export, logging, API serialization, and UI projection.
+- [ ] Preserve unredacted values only inside the active process for explicit assertions.
+- [ ] Implement immutable execution and turn snapshots derived from committed events.
+- [ ] Guarantee that events are committed before iterators or callbacks receive them.
+- [ ] Implement complete and partial trace finalization for every terminal outcome.
+- [ ] Represent explicit reasoning, unavailable reasoning, and encrypted/provider-hidden reasoning without inference.
+- [ ] Add contract tests for event ordering, correlation, redaction, large blobs, and every terminal outcome.
+
+### Phase 5 — Implement the asynchronous direct MCP client
+
+- [ ] Wrap the official MCP v2 client without duplicating its protocol engine.
+- [ ] Implement in-process MCP connection lifecycle.
+- [ ] Implement stdio connection and owned-process cleanup.
+- [ ] Implement Streamable HTTP connection lifecycle.
+- [ ] Implement legacy SSE connection lifecycle.
+- [ ] Capture initialization, negotiated revision, identity, instructions, capabilities, extensions, and transport evidence.
+- [ ] Expose the official response through `.raw` on typed result wrappers.
+- [ ] Implement tool listing, pagination, `list_all_tools`, and tool calls.
+- [ ] Implement resource listing, templates, reads, pagination, and subscriptions.
+- [ ] Implement prompt listing, pagination, and retrieval.
+- [ ] Implement supported completion, logging, progress, roots, sampling, elicitation, ping, notification, and cancellation paths from the official client.
+- [ ] Preserve tool `is_error` responses as results rather than infrastructure exceptions.
+- [ ] Map JSON-RPC errors to `ProtocolError` with partial trace evidence.
+- [ ] Attach partial evidence to transport and process failures.
+- [ ] Implement optional structural validation of advertised input/output schemas.
+- [ ] Implement `raise_server_exceptions=True` for in-process tests and sanitized protocol behavior when disabled.
+- [ ] Implement headers, bearer tokens, supplied official OAuth implementations, and deterministic auth fixtures.
+- [ ] Enforce endpoint trust classification for agent exposure.
+- [ ] Add page-level and convenience method tests for every supported capability.
+- [ ] Run the same direct-client contract against every supported transport.
+
+### Phase 6 — Add the synchronous API
+
+- [ ] Define one authoritative async implementation for direct protocol behavior.
+- [ ] Implement the lifecycle-safe synchronous portal/proxy.
+- [ ] Generate or mechanically maintain sync wrappers from the async surface.
+- [ ] Prevent async client objects from escaping onto the caller's thread.
+- [ ] Match result, exception, cancellation, timeout, and cleanup behavior between sync and async APIs.
+- [ ] Add a public-surface parity test that fails when only one twin exposes a supported method.
+- [ ] Test nested and repeated kit lifecycles without leaking threads or event loops.
+- [ ] Test sync use from ordinary pytest and async use from async pytest plugins.
+
+### Phase 7 — Implement assertions, evaluations, snapshots, and test utilities
+
+- [ ] Implement `expect(subject)` dispatch for direct results, turns, executions, sessions, traces, and handles.
+- [ ] Implement exact, contains, regex, ordered-block, and negative content assertions.
+- [ ] Implement tool-call assertions for server, tool, arguments, result, status, count, range, turn, and predicate.
+- [ ] Reject ambiguous serverless assertions when duplicate tool names exist.
+- [ ] Implement lifecycle, outcome, protocol, transport, capability, artifact, workspace, and trace assertions.
+- [ ] Implement event-driven eventual assertions without polling sleeps.
+- [ ] Implement grouped soft assertions through `check()`.
+- [ ] Add structural diffs, candidate summaries, scope, identifiers, redacted excerpts, and artifact paths to failures.
+- [ ] Implement canonical snapshot normalization and field opt-ins.
+- [ ] Verify canonical values work with established Python snapshot plugins.
+- [ ] Define `EvaluationContext`, evaluator protocol, registrations, and all evaluation statuses.
+- [ ] Implement persisted optional and required deterministic evaluations.
+- [ ] Ensure evaluation cannot mutate execution lifecycle, results, trace, or artifacts.
+- [ ] Implement decorator-based and stateful `MockMCPServer` APIs.
+- [ ] Implement strict, optional, repeated, subset, unordered, and fallback expectations.
+- [ ] Implement deterministic gates and clocks.
+- [ ] Implement all planned protocol, process, payload, and cancellation fault injectors.
+- [ ] Implement strict record/replay with explicit redaction bindings and relaxation provenance.
+- [ ] Add optional Hypothesis schema strategies behind `[property]`.
+
+### Phase 8 — Complete the `0.2.0a1` gate
+
+- [ ] Run all package, model, configuration, trace, direct-client, sync/async, assertion, evaluation, and testing-utility tests.
+- [ ] Run transport matrices and deterministic fault/replay scenarios.
+- [ ] Build and install the wheel on Python 3.10–3.13.
+- [ ] Confirm no application behavior has been partially redirected to unfinished SDK paths.
+- [ ] Confirm no v1 database compatibility or detection code has been introduced.
+- [ ] Record remaining public API gaps before starting agent runtime work.
+- [ ] Mark the package internally as `0.2.0a1` only when this gate passes.
+
+### Phase 9 — Build the shared multi-turn agent runtime
+
+- [ ] Implement `MCPTestKit`, `AsyncMCPTestKit`, context management, and explicit close methods.
+- [ ] Implement one-shot `kit.run(spec)` for direct and agent specifications.
+- [ ] Implement `kit.submit(spec)` and sync/async execution handles.
+- [ ] Implement live snapshots, event iterators, callbacks, cancellation, and terminal result retrieval.
+- [ ] Implement the common harness adapter protocol and capability contract.
+- [ ] Implement `AgentSession` and its lifecycle state machine.
+- [ ] Preserve one agent conversation and the same MCP processes/connections across turns.
+- [ ] Keep model, harness, servers, workspace, tool policy, and permission policy immutable after opening.
+- [ ] Allow message, timeout, and metadata to vary per turn.
+- [ ] Implement typed content conversion and reject unsupported attachments during preflight.
+- [ ] Implement `SessionStillOpen`, `SessionBusy`, sequential `send`, and explicit `enqueue_turn`.
+- [ ] Keep sessions usable after tool-level MCP errors.
+- [ ] Make timeout, cancellation, harness loss, and transport loss terminal.
+- [ ] Implement live snapshots and terminal-only results.
+- [ ] Implement new-execution replay/fork provenance without claiming live-session identity.
+- [ ] Implement multiple required and optional servers per session.
+- [ ] Implement SDK-hosted loopback access for in-process MCP servers.
+- [ ] Add duplicate-tool-name routing and assertion tests.
+- [ ] Implement MCP activity health independently of lifecycle and evaluations.
+
+### Phase 10 — Implement workspace and policy enforcement
+
+- [ ] Implement fresh temporary workspace creation and cleanup.
+- [ ] Implement filtered filesystem-copy workspaces.
+- [ ] Implement Git-worktree workspaces.
+- [ ] Implement read-only workspaces.
+- [ ] Implement acknowledged in-place workspaces.
+- [ ] Enforce default exclusions for repositories, environments, caches, secrets, and artifacts.
+- [ ] Require explicit acknowledgement for risky inclusion.
+- [ ] Capture structured added, modified, and deleted workspace entries.
+- [ ] Collect declared artifacts after execution and before workspace cleanup.
+- [ ] Implement portable typed tool-policy evaluation.
+- [ ] Fail preflight when a harness cannot enforce requested portable policy.
+- [ ] Implement the marked nonportable native-policy escape hatch.
+- [ ] Require acknowledgement for unrestricted tools.
+- [ ] Implement typed permission, elicitation, sampling, filesystem, and terminal handlers.
+- [ ] Default filesystem and terminal requests to denied.
+- [ ] Test policy and workspace isolation under concurrent sessions.
+
+### Phase 11 — Implement deterministic and real harness adapters
+
+- [ ] Build a deterministic local ACP agent that exercises the complete harness contract without model/network access.
+- [ ] Build fake Claude Code and OpenCode adapters for deterministic contract testing.
+- [ ] Implement the real ACP adapter with one process, connection, session ID, server configuration, and capture context across turns.
+- [ ] Implement the real Claude Code adapter using one continuous stream-JSON process.
+- [ ] Treat missing Claude streaming support as not ready; do not add a resume fallback.
+- [ ] Implement the real OpenCode adapter using one isolated serve instance and attached session.
+- [ ] Isolate HOME, config, data, plugin discovery, and project discovery for each harness.
+- [ ] Pass through only explicit credentials and environment values.
+- [ ] Apply deterministic locale and timezone settings where supported.
+- [ ] Record requested, enforced, observed, and unavailable usage data without estimation.
+- [ ] Implement structured process, transport, MCP, tool-call, and content capture for every adapter.
+- [ ] Implement cancellation and timeout escalation for each owned process tree.
+- [ ] Prove that terminal results are returned only after processes, proxies, and readers are reaped or cleanup failure is recorded.
+- [ ] Run the common harness contract against deterministic adapters on every change.
+- [ ] Define separate live characterization commands for real installed harnesses.
+
+### Phase 12 — Complete the `0.2.0a2` gate
+
+- [ ] Run deterministic one-turn and multi-turn harness contracts.
+- [ ] Prove state persists across at least three turns in the same agent and MCP session.
+- [ ] Prove sessions and workspaces remain isolated under concurrency.
+- [ ] Prove multiple servers and overlapping tool names are routed and traced correctly.
+- [ ] Prove all policy, permission, attachment, timeout, cancellation, and cleanup behaviors.
+- [ ] Run explicitly configured live characterization without making it a deterministic CI dependency.
+- [ ] Confirm no harness silently falls back to another harness or weaker multi-turn mechanism.
+- [ ] Mark the package internally as `0.2.0a2` only when this gate passes.
+
+### Phase 13 — Implement persistent storage, leases, and workers
+
+- [ ] Define the fresh v0.2 SQLite metadata schema without a legacy version detector.
+- [ ] Implement SQLite profile and immutable revision persistence.
+- [ ] Implement execution, turn, event, evaluation, artifact, and blob-reference persistence.
+- [ ] Implement SQLite foreign keys, transactions, WAL where supported, and busy timeout.
+- [ ] Implement filesystem blobs and reference-counted integrity-aware garbage collection.
+- [ ] Implement atomic execution claims and worker leases.
+- [ ] Implement heartbeats and stale-owner interruption.
+- [ ] Implement durable cancellation flags.
+- [ ] Implement persistent FIFO execution and interactive-turn command queues.
+- [ ] Ensure any persistent toolkit may enable an embedded worker.
+- [ ] Prevent two workers from owning one execution.
+- [ ] Preserve committed partial evidence after worker loss.
+- [ ] Mark abandoned work interrupted without attempting agent-session resume.
+- [ ] Implement archive, clone-original, explicit clone-latest, terminal deletion, and active-deletion rejection.
+- [ ] Keep automatic retention disabled.
+- [ ] Add store contract tests shared by memory and SQLite implementations.
+- [ ] Add cross-process submit, claim, stream, cancel, and recovery tests.
+- [ ] Add `just dev-db-reset CONFIRM=reset` with exact-path and sidecar safety checks.
+- [ ] Test that fresh startup recreates the schema after the guarded reset.
+- [ ] Confirm no database reset CLI, migration framework, table purge, backup, or v1/v2 detection exists.
+
+### Phase 14 — Replace the API with the v2 adapter
+
+- [ ] Implement `/api/v2` entirely as an adapter over shared SDK services and models.
+- [ ] Implement execution creation with `202` responses.
+- [ ] Implement cursor-paginated execution listing and filtering.
+- [ ] Implement execution snapshots and terminal reports.
+- [ ] Implement event snapshots and sequence-resumable SSE.
+- [ ] Implement cancellation and terminal deletion.
+- [ ] Implement interactive session open, enqueue, snapshot, close, and cancel routes.
+- [ ] Implement optional execution and turn idempotency keys and `409` conflicts.
+- [ ] Implement the stable typed error envelope.
+- [ ] Restrict API specifications to registered serializable references.
+- [ ] Reject arbitrary callables, factories, and pickled data.
+- [ ] Generate OpenAPI from the shared models.
+- [ ] Add JSON/model/OpenAPI round-trip contract tests.
+- [ ] Emit a warning for non-loopback binding.
+- [ ] Remove `/api/v1` routes and their compatibility code.
+
+### Phase 15 — Migrate Streamlit to direct SDK use
+
+- [ ] Construct and cache one persistent toolkit for the Streamlit process.
+- [ ] Enable an embedded worker using database leases.
+- [ ] Remove local FastAPI HTTP calls and request-client abstractions from the UI.
+- [ ] Preserve browser-session isolation for draft and selection state.
+- [ ] Map current server and harness profile forms to SDK profile services.
+- [ ] Map probes to SDK capability/readiness services.
+- [ ] Map one-turn submissions to `AgentExecutionSpec` with one selected server.
+- [ ] Rename the SDK field to optional `goal` while keeping the UI field required and correctly labelled.
+- [ ] Preserve clone, cancel, history, deletion, and report behavior.
+- [ ] Render lifecycle, MCP activity health, and evaluations as separate concepts.
+- [ ] Display persisted traces for completed, failed, timed-out, cancelled, interrupted, and startup-failed runs.
+- [ ] Load large evidence safely from redacted artifacts.
+- [ ] Replace request mocks with injected in-memory kits and deterministic fake harnesses.
+- [ ] Verify Streamlit and a separately running FastAPI process can share the store without duplicate execution.
+- [ ] Keep multi-turn and multi-server controls out of this UI milestone.
+
+### Phase 16 — Complete the `0.2.0a3` gate
+
+- [ ] Run all SQLite, lease, worker, API v2, and Streamlit tests.
+- [ ] Run cross-process UI/API ownership and cancellation tests.
+- [ ] Confirm `/api/v1` and local UI HTTP dependencies are absent.
+- [ ] Confirm every persistent UI outcome has a reopenable trace.
+- [ ] Confirm fresh database startup and guarded development reset work from documented commands.
+- [ ] Confirm no legacy data is inspected, imported, backed up, or migrated.
+- [ ] Mark the package internally as `0.2.0a3` only when this gate passes.
+
+### Phase 17 — Implement the pytest plugin and thin CLI wrapper
+
+- [ ] Implement function-scoped `mcp_test` and `async_mcp_test` fixtures.
+- [ ] Implement explicit reusable session factories without hidden session-scoped ownership.
+- [ ] Register all agreed pytest markers as classification only.
+- [ ] Implement per-test ephemeral stores, artifacts, workspaces, portals, and port isolation.
+- [ ] Implement xdist worker isolation.
+- [ ] Implement failure-only artifact export by default and `always`/`never` settings.
+- [ ] Add concise trace and artifact references to failure output.
+- [ ] Add safe identifiers and paths, but not trace bodies, to JUnit properties.
+- [ ] Implement `mcp-pal test` as a transparent pytest argument and exit-code wrapper.
+- [ ] Verify compatibility with selection, markers, parametrization, coverage, JUnit, and xdist.
+- [ ] Fail with an installation hint when the pytest extra is missing.
+- [ ] Ensure unused unavailable harnesses do not make the wrapper fail globally.
+- [ ] Ensure selected tests requesting missing prerequisites fail rather than auto-skip.
+- [ ] Prove `pytest` and `mcp-pal test` execute equivalent suites.
+- [ ] Confirm no JSON/YAML scenario discovery or custom runner behavior exists.
+
+### Phase 18 — Build the industry-standard documentation set
+
+- [ ] Configure MkDocs Material, mkdocstrings, strict links, strict snippets, and versioning.
+- [ ] Write the direct-testing tutorial.
+- [ ] Write the deterministic ACP agent tutorial.
+- [ ] Write the true multi-turn state tutorial.
+- [ ] Write the multiple-server routing tutorial.
+- [ ] Write transport, authentication, policy, workspace, artifact, replay, storage, API, UI, and CI how-to guides.
+- [ ] Generate complete public API and configuration references.
+- [ ] Document lifecycle, outcome, activity health, evaluation, tracing, persistence, redaction, and isolation semantics.
+- [ ] Write ADRs for all decisions enumerated in the documentation section.
+- [ ] Publish machine-readable schemas for serializable models.
+- [ ] Generate `llms.txt` and `llms-full.txt` from maintained documentation sources.
+- [ ] Write concise uv-first SDK README examples and pip alternatives.
+- [ ] Add cost, credential, privacy, and nondeterminism warnings to live examples.
+- [ ] Add the official conformance wrapper roadmap item and link only.
+- [ ] Confirm no conformance dependency, fixture, CLI command, or partial adapter has entered v0.2.
+- [ ] Run all documentation snippets as tests.
+
+### Phase 19 — Build the executable reference E2E corpus
+
+- [ ] Create the complete direct MCP pytest example set listed in section 6.C.
+- [ ] Create the complete mock/fault/replay pytest example set listed in section 6.D.
+- [ ] Create the complete multi-turn agent pytest example set listed in section 6.E.
+- [ ] Create the complete multiple-server pytest example set listed in section 6.F.
+- [ ] Create author-facing tool-policy, workspace, assertion, evaluation, trace, persistence, and plugin examples.
+- [ ] Make expected-failure examples pass by asserting the exact documented failure.
+- [ ] Separate deterministic examples from credentialed/cost-bearing live examples.
+- [ ] Build the SDK wheel before running reference E2E tests.
+- [ ] Install the wheel into a clean external environment.
+- [ ] Run examples without repository source paths on `PYTHONPATH`.
+- [ ] Reject any example importing private or repository-internal modules.
+- [ ] Validate that rendered documentation and executable example sources remain synchronized.
+- [ ] Assert cleanup and trace behavior in every black-box scenario, not only functional output.
+- [ ] Map every public capability to at least one success and relevant failure/edge scenario.
+- [ ] Add a coverage-manifest test that fails when a public capability lacks its required reference scenario.
+
+### Phase 20 — Add CI, portability, and release readiness
+
+- [ ] Add Linux CI for Python 3.10, 3.11, 3.12, and 3.13.
+- [ ] Add focused macOS and Windows process/path/transport jobs.
+- [ ] Add Ruff lint and format checks without modifying files in CI.
+- [ ] Add strict type checking.
+- [ ] Add deterministic unit, integration, contract, API, UI, and E2E jobs.
+- [ ] Add installed-wheel and per-extra clean-install jobs.
+- [ ] Add strict documentation and public-export coverage jobs.
+- [ ] Add wheel/sdist metadata and content checks.
+- [ ] Add dependency/vulnerability audit and repository-diff checks.
+- [ ] Track critical-path branch coverage without setting an arbitrary 100% target.
+- [ ] Report slow tests without imposing an arbitrary one-minute suite cutoff.
+- [ ] Detect leaked subprocesses, ports, workspaces, databases, threads, and event loops.
+- [ ] Keep live harness/model jobs explicit, credentialed, and separate from deterministic required CI.
+- [ ] Prepare the OIDC Trusted Publishing workflow behind a protected environment and validated release tags.
+- [ ] Do not configure external PyPI trust, create tags, or publish artifacts without separate authorization.
+
+### Phase 21 — Complete the release-candidate and stable gates
+
+- [ ] Run every deterministic test category in section 6.
+- [ ] Run the complete installed-wheel reference E2E corpus.
+- [ ] Run explicitly authorized live characterization for Claude Code, OpenCode, and ACP.
+- [ ] Verify sync/async public-surface parity.
+- [ ] Verify all public capabilities have success, failure/edge, trace, cleanup, and documentation coverage.
+- [ ] Verify Streamlit persists and displays traces for every outcome.
+- [ ] Verify API v2 and direct UI usage share the same models, stores, and workers.
+- [ ] Verify uv and pip installation on all supported Python versions.
+- [ ] Verify every optional extra independently.
+- [ ] Verify no scenario-file system, legacy database compatibility, conformance wrapper, hidden LLM judge, or deferred feature was added.
+- [ ] Review public names, docstrings, schemas, exceptions, and stability commitments.
+- [ ] Produce changelog, migration note, support matrix, and release notes.
+- [ ] Mark `0.2.0rc1` only after all release-candidate gates pass.
+- [ ] Resolve every release-blocking defect without weakening tests or guarantees.
+- [ ] Mark `0.2.0` only after the release candidate remains green across required platforms.
+- [ ] Leave actual TestPyPI/PyPI publishing and release-tag creation for a separately authorized release action.
+
+## 9. Implementation contract and assumption ledger
+
+This section makes implicit design context explicit. An implementation agent must follow it before filling in an unspecified detail from habit. If an upstream dependency makes one of these guarantees impossible, stop that slice, record the concrete capability mismatch, and resolve the plan rather than silently weakening the guarantee.
+
+### 9.1 Instruction hierarchy for implementation agents
+
+When two sources appear inconsistent, use this order:
+
+1. The v0.2 decisions and invariants in this plan.
+2. Public contract tests and schemas added for v0.2.
+3. Existing observable behavior that this plan explicitly says to preserve.
+4. Existing implementation code as a source of working process/capture techniques.
+5. Dependency examples and documentation for the actually pinned version.
+
+Existing v1 APIs, table layouts, names, and compatibility tests do not override this plan. Conversely, “clean break” does not mean discarding proven redaction, subprocess, capture, proxy, isolation, or cleanup behavior before equivalent v0.2 tests pass.
+
+Do not improvise a simpler fallback when a requirement is difficult. In particular, do not replace true multi-turn sessions with repeated one-shot invocations, replace wire capture with model-reported tool calls, replace persisted events with logs, or replace pytest tests with serialized scenarios.
+
+### 9.2 Non-negotiable product invariants
+
+- Python and pytest are the authoring format. There are no user-authored scenario JSON/YAML files.
+- The SDK owns all execution behavior. FastAPI and Streamlit contain no parallel execution engine.
+- Direct MCP tests and agent-driven tests are equally supported public surfaces.
+- Multi-turn means one continuing agent conversation and the same living MCP server processes/connections.
+- Multiple MCP servers are first-class in the SDK even though the initial migrated UI selects one.
+- Every execution produces a complete or partial canonical trace.
+- Persistent mode stores traces for every outcome, including successes.
+- Failed-only is solely the default pytest file-export policy; it is never the trace-generation or persistent-storage policy.
+- Canonical semantic evidence and raw provider/wire evidence are separate layers.
+- A harness-reported MCP call without correlated MCP wire evidence remains visible but cannot satisfy an assertion that requires an actual MCP call.
+- A wire MCP call without a matching harness event remains visible and assertable as wire evidence.
+- Hidden reasoning is never inferred, synthesized, or presented as captured reasoning.
+- The application database is disposable development state for this release. There is no runtime legacy detection or migration.
+- The official conformance suite is a separately planned future wrapper, not a partially implemented v0.2 feature.
+- No operation silently retries, switches harnesses, downgrades policy, drops content, resumes a broken session, or broadens permissions.
+
+### 9.3 Default-behavior ledger
+
+Unless the caller explicitly overrides it, use these defaults:
+
+| Concern | Default |
+|---|---|
+| SDK persistence | Ephemeral in-memory metadata plus temporary blobs |
+| App/UI persistence | SQLite metadata plus filesystem blobs |
+| Trace generation | Always |
+| Persistent trace retention | Every outcome until explicit deletion |
+| Pytest artifact-file export | Failed tests only |
+| Protocol revision | Automatic negotiation |
+| In-process exception behavior | Raise original server exceptions |
+| Server requirement | Required unless explicitly marked optional |
+| Direct in-process exposure to agents | SDK-created trusted loopback |
+| Workspace | Fresh temporary workspace |
+| Filesystem/terminal access | Denied |
+| Tool permissions | Restrictive portable policy |
+| Unrestricted tools | Rejected without explicit risk acknowledgement |
+| Harness/model/server fallback | None |
+| Queue scheduling | Strict FIFO |
+| Automatic retention or deletion | Disabled |
+| `.env` loading in library code | Disabled |
+| OpenTelemetry | Disabled unless configured |
+| Telemetry content | Metadata only; no prompts, arguments, results, reasoning, headers, or raw frames |
+| UI form | One goal, one selected server, one submitted turn |
+| UI trace timing in v0.2 | Render after terminal state; persistence may be incremental |
+| User-authored test format | Normal Python/pytest |
+
+Preserve the current application’s 120-second run timeout as the migrated UI default unless an explicit app setting overrides it. Do not treat this UI default as a protocol-wide constant: SDK specifications and direct operations expose explicit timeout configuration, and live harnesses report which limits were requested, enforced, observed, or unavailable.
+
+### 9.4 Package dependency direction
+
+Use dependency direction to prevent the SDK from collapsing back into an application library:
+
+```text
+types/config/errors
+        ↓
+events/results/assertions
+        ↓
+direct runtime       agent runtime
+        ↓                 ↓
+      execution orchestration
+        ↓
+storage protocols and optional implementations
+        ↓
+pytest integration / FastAPI adapter / Streamlit application / CLI
+```
+
+Rules:
+
+- Core types, errors, events, results, assertions, and configuration cannot import FastAPI, Streamlit, pytest, SQLAlchemy, or application settings.
+- Direct and agent runtimes depend on core contracts, not API/UI models.
+- In-memory storage remains usable without the `storage` extra.
+- SQLAlchemy code is imported lazily behind the storage extra.
+- The pytest plugin adapts public SDK objects; it cannot reach into private worker or harness internals.
+- FastAPI serializes public SDK models and calls public services.
+- Streamlit uses public services and result projections, never storage sessions or API route functions directly.
+- CLI subcommands invoke the same public services as Python callers.
+- Application-specific defaults are composed at the application boundary, not embedded in core SDK defaults.
+
+Recommended internal ownership is `core`, `direct`, `agent`, `trace`, `storage`, `testing`, `integrations/pytest`, and `app` packages. Exact filenames may evolve, but violating the dependency direction requires an explicit architectural review.
+
+### 9.5 Current-to-v0.2 concept mapping
+
+Use this mapping while replacing the existing implementation:
+
+| Current concept | v0.2 concept | Migration rule |
+|---|---|---|
+| `Run` | `Execution` plus optional `AgentSession` and `Turn` records | Replace; do not maintain a compatibility model |
+| `prompt` | First turn’s `UserMessage` | UI still accepts text initially |
+| `expected_output` | Optional SDK `goal` | UI keeps the field required and relabels it |
+| `enabled_server` | Ordered server bindings on the specification | Migrated UI supplies a one-item list |
+| `claude_result` / `final_output` | Ordered response content blocks plus `.text` | Remove provider-named result aliases from the new API |
+| One status field | Lifecycle plus terminal outcome | Never overload “completed” to mean assertion success |
+| `RunTrace` JSON | Canonical event stream plus derived immutable trace/report | Do not store one mutable provider-shaped trace as authority |
+| `claude.v1`, `opencode.v1`, `acp.v1` | Raw evidence adapters feeding one canonical v0.2 event schema | Vendor raw formats remain evidence, not public semantic authority |
+| `mcp.v1` normalized calls | Canonical MCP request/call/result events | Preserve correlation and provenance behavior |
+| `RunManager` FIFO worker | Execution service plus lease-owning worker | Reuse proven cleanup logic behind new contracts |
+| API-created runs | SDK-created execution specifications | API is serialization only |
+| Streamlit HTTP client | Cached persistent `MCPTestKit` | Delete the local HTTP dependency after parity tests pass |
+
+The old provider trace schemas do not need a reader or migration. New executions use one canonical schema identifier and schema version. Event-schema versioning is allowed and required for artifacts/API consumers; it is not database-version detection and must not be used to branch on a legacy database.
+
+### 9.6 Public API contract details
+
+The intended synchronous shape is:
+
+```python
+with MCPTestKit(config) as kit:
+    with kit.direct(server, protocol=None, timeout=None) as client:
+        direct_result = client.call_tool("tool", {"key": "value"})
+
+    execution = kit.run(agent_spec)
+
+    with kit.agent_session(agent_spec) as session:
+        turn = session.send("message", timeout=None, metadata=None)
+        snapshot = session.snapshot()
+    terminal = session.result
+
+    handle = kit.submit(agent_spec)
+    for event in handle.events(after_sequence=0):
+        ...
+    handle.cancel()
+    terminal = handle.result(timeout=None)
+```
+
+The async shape mirrors names and return models, changing only lifecycle and blocking operations to `await`/async iteration. Do not introduce different async-only domain models.
+
+Behavioral rules:
+
+- `kit.direct(...)` owns the connection it opens and closes it at context exit.
+- The kit owns every child controller created through it unless ownership is explicitly transferred by a documented API.
+- Closing a child removes it from the kit’s active-child registry only after cleanup completes.
+- Closing the kit is idempotent.
+- Closing the kit with active work initiates cancellation and bounded cleanup; it does not abandon subprocesses.
+- A direct protocol operation returns a typed result for protocol-level success or MCP tool `is_error` and raises a typed exception for client misuse, JSON-RPC failure, transport loss, timeout, or infrastructure failure.
+- Agent executions always retain a terminal `ExecutionResult`, including failed, timed-out, cancelled, and interrupted outcomes, so authors can assert failure behavior and inspect partial traces.
+- `ExecutionHandle.result()` returns that terminal result; timeout while waiting raises a wait-timeout without changing the execution unless the caller explicitly cancels.
+- `AgentSession.send()` returns a terminal `TurnResult` for that turn. Session-terminal infrastructure failure is represented in both the turn and session/execution result.
+- `session.result` is a property, not a blocking wait; it raises `SessionStillOpen` until terminal.
+- Snapshots and results are immutable values. Calling `.snapshot()` twice may return different values, but an earlier snapshot never mutates.
+- `expect()` never writes evaluation records. `kit.evaluate()` is the only built-in persisted evaluation path.
+- Required evaluation failure is surfaced by pytest/API integration while preserving the underlying execution outcome.
+
+Do not add implicit fixture-teardown failure merely because an author created and ignored a failed execution. Python exceptions, explicit expectations, and required evaluations determine pytest failure. This preserves the ability to write tests whose expected result is a failed or interrupted execution.
+
+### 9.7 Event and trace envelope
+
+Each canonical event must contain at least:
+
+- Schema identifier and schema version.
+- Execution ID and monotonically increasing execution sequence.
+- Event ID and event kind.
+- UTC timestamp and monotonic offset from execution start.
+- Session ID and turn ID when applicable.
+- Server binding and connection identity when applicable.
+- Typed JSON-RPC ID, direction, and per-connection request sequence when applicable.
+- Lifecycle phase.
+- Redacted semantic payload or artifact/blob reference.
+- Provenance describing normalized, wire-observed, harness-reported, or derived origin.
+- Raw-evidence reference when captured.
+
+Rules:
+
+- The canonical sequence is assigned once and never renumbered.
+- A transaction may append multiple events, but consumers see none of them before commit.
+- Canonical events are append-only. Corrections are new events or derived projections, not row updates that rewrite history.
+- Derived snapshots/reports use the highest committed sequence and declare that sequence.
+- Provider timestamps are payload evidence; local receipt time controls canonical ordering.
+- Unknown valid provider events are retained as raw evidence and may produce a generic canonical provider event.
+- Malformed provider events are captured as evidence and diagnostics without crashing the trace recorder.
+- Trace completeness is `complete` only after owned cleanup and final persistence succeed. Otherwise it is `partial` with limitations.
+- Raw stdout protocol channels and stderr diagnostics remain separate. Never parse diagnostic stderr as protocol data.
+
+### 9.8 Persistence schema contract
+
+The fresh database should model these logical records, regardless of exact SQLAlchemy class names:
+
+- Server profiles and immutable server-profile revisions.
+- Harness profiles and immutable harness-profile revisions.
+- Executions and their resolved server/harness bindings.
+- Interactive sessions and ordered turns.
+- Append-only canonical events with unique `(execution_id, sequence)`.
+- Raw-evidence metadata and blob references.
+- Evaluation results.
+- Collected artifacts and content-addressed blobs.
+- Execution leases and heartbeats.
+- Durable cancellation state.
+- FIFO execution and interactive-turn commands.
+
+Required constraints:
+
+- Profile names follow one documented uniqueness policy; revisions are immutable after creation.
+- An execution stores resolved revision IDs rather than a mutable “latest” pointer.
+- Turn order is unique within a session.
+- Event sequence is unique within an execution.
+- Artifact/blob relationships use referential integrity.
+- Only one active lease may own an execution.
+- Commands have stable IDs so a claimed command cannot be executed twice after a retry.
+- Terminal outcome and finish time are written atomically with final committed events where practical.
+- Active executions cannot be hard-deleted.
+- Deleting a terminal execution decrements blob references transactionally.
+
+SQLite owns searchable metadata, not large payloads. Blob writes use write-to-temporary, flush, hash/length verification, and atomic placement before metadata commit. An uncommitted orphan blob is safe for later garbage collection; committed metadata must never point at a partial file.
+
+The development reset recipe deletes the entire configured app-owned database and exact sidecars because the schema is fresh-only. It must not issue table-specific deletes, examine a schema version, or attempt recovery.
+
+### 9.9 Execution and worker data flow
+
+For submitted persistent execution:
+
+1. Validate the public specification without resolving secrets.
+2. Resolve `latest` profile references to immutable revisions.
+3. Create the execution snapshot and persist `created` events.
+4. Enqueue one durable FIFO execution command.
+5. A worker atomically claims the command and execution lease.
+6. Resolve secrets into process-local configuration.
+7. Run capability/readiness preflight for only the requested components.
+8. Create the isolated workspace, home/config/data roots, capture, proxies, and required MCP servers.
+9. Start the selected harness and open one continuing session.
+10. Process turns sequentially, persisting each semantic event before streaming it.
+11. Run registered deterministic evaluations at their declared boundary.
+12. Stop accepting turns and enter `closing`.
+13. Collect workspace diff and declared artifacts.
+14. Reap the harness, proxies, MCP servers, protocol readers, and other owned resources.
+15. Persist cleanup evidence, final lifecycle, outcome, trace completeness, and report.
+16. Release the lease only after terminal persistence.
+
+For direct in-process execution, use the same event/result pipeline without queue/worker overhead unless the caller explicitly submits it to a persistent worker.
+
+Do not resolve secrets during specification serialization, profile listing, cloning, API validation, or UI rendering. Do not persist the resolved child environment.
+
+### 9.10 Turn, cancellation, and cleanup semantics
+
+A turn command is accepted only while its session is nonterminal and not closing. `send()` additionally requires no in-flight turn. `enqueue_turn()` persists commands in order and returns a handle/identifier without pretending the turn has started.
+
+Cancellation rules:
+
+- Cancellation is idempotent.
+- Cancelling queued work marks it cancelled without launching servers or a harness.
+- Cancelling an active turn requests protocol/native graceful cancellation where supported.
+- Cancellation then closes the entire agent session; do not promise the same conversation remains safe after cancellation.
+- A request finishing before the cancellation boundary may complete normally; record the race outcome and both observed events.
+- A caller wait timeout does not automatically cancel background work.
+- Worker lease loss produces `interrupted`, not `cancelled` or `failed`.
+
+Owned cleanup order is conceptually:
+
+1. Stop accepting new turns and commands.
+2. Request graceful cancellation of the in-flight turn/session.
+3. Close harness protocol input and allow bounded graceful exit.
+4. Terminate, then force-kill, the owned process group if necessary.
+5. Stop capture proxies and close MCP client connections.
+6. Stop owned MCP servers and readers.
+7. Collect remaining diagnostics, workspace diff, and declared artifacts.
+8. Verify process/thread/task reaping.
+9. Persist cleanup limitations and terminal evidence.
+
+Use configurable bounded grace periods, never unbounded waits. Cleanup errors must not erase the original failure. Preserve a primary error plus structured cleanup limitations.
+
+### 9.11 Harness-specific preservation rules
+
+#### ACP
+
+- Reuse the existing stable ACP-v1 integration knowledge and deterministic subprocess fixtures.
+- Treat stdout as ACP NDJSON only and stderr as diagnostics.
+- Preserve raw ACP frames with direction, local receipt time, and monotonic offset.
+- Preserve ACP-reported activity separately from captured MCP wire traffic.
+- Tolerate unknown valid notifications and `_meta` fields while retaining them as raw evidence.
+- Configure MCP servers once when opening the ACP session and retain one ACP session ID across sends.
+- Do not call ACP authentication as a generic fallback. If the agent requires an unsupported interactive authentication flow, return a structured out-of-band-auth readiness failure.
+- Preserve protocol and full probes, manifest validation, advertised modes/options, agent identity, and verification provenance through the new capability/profile services.
+- A changed or missing optional identity becomes explicit readiness/provenance evidence; it does not silently select another agent.
+
+#### Claude Code
+
+- Replace the current one-shot runner with a single stream-JSON process capable of receiving multiple inputs.
+- Keep the current strengths: isolated environment, explicit executable/model, structured event capture, wire capture, redaction, partial traces, and process-group cleanup.
+- Verify required stream input/output and MCP configuration behavior against the installed binary during readiness.
+- Do not use provider session resume as the portable multi-turn implementation.
+- Report cost/usage only when emitted by Claude; do not estimate missing values.
+
+#### OpenCode
+
+- Replace one-shot `--pure run` execution with one isolated `opencode serve` instance and one attached session.
+- Preserve hostile-home isolation, provider-aware saved-auth copying, explicit credential injection, MCP configuration rewriting, remote proxy cleanup, structured event capture, and incomplete-trace detection.
+- Never copy arbitrary user OpenCode configuration or permission rules into the isolated environment.
+- Stop and reap export/session/helper processes as well as the main server.
+- Do not report max-turn or budget limits as enforced when OpenCode cannot enforce them.
+
+#### All harnesses
+
+- Use argument arrays with no shell invocation.
+- Use fresh process groups/sessions so descendants can be terminated safely.
+- Capture and redact stdout/stderr without blocking on full pipes.
+- Disable ambient plugins, project discovery, and unrequested credentials.
+- Record the exact executable, detected version, effective model, requested policy, observed policy, transport, and capability limitations.
+- Preserve a partial trace even when setup fails after execution creation.
+
+### 9.12 Tool-call evidence and assertion semantics
+
+Represent at least three evidence cases distinctly:
+
+1. Correlated wire request and response: authoritative observed MCP call with latency and result/error.
+2. Wire request without response: authoritative attempted call with incomplete outcome.
+3. Harness/provider claim without wire frame: reported activity, not authoritative MCP evidence.
+
+Default `to_have_tool_call(...)` matches authoritative wire evidence. Authors may explicitly request reported-only evidence through a separate matcher or evidence selector; never broaden the default matcher silently.
+
+Argument matching defaults to exact structural equality after model normalization. Partial, predicate, unordered-list, regex, or tolerant numeric matching must be explicitly selected.
+
+Result matching distinguishes:
+
+- Successful MCP response.
+- MCP tool result with `is_error=True`.
+- JSON-RPC error response.
+- Cancelled/incomplete request.
+- Transport failure without response.
+
+Negative assertions search the complete declared scope and must not pass while relevant live work can still append matching events unless used through an explicit snapshot boundary.
+
+### 9.13 Profile, revision, clone, and secret semantics
+
+- Profiles are friendly mutable identities; their revisions are immutable snapshots.
+- Editing a profile creates a new revision and advances its current pointer.
+- Archiving hides a profile from normal selection but does not break historical executions.
+- Execution creation resolves every profile reference and stores exact revision IDs.
+- Cloning uses the original resolved revisions by default.
+- Clone-with-latest is an explicit per-profile choice and is recorded in provenance.
+- In-process factories and Python callbacks are runtime registrations, not serialized profile content.
+- API/UI callers refer to registered names and revisions; Python callers may supply runtime-only values directly.
+- Secret references contain provider/key identity or environment-variable name, never values.
+- Profile validation may verify a secret reference exists only during explicit readiness/probe operations, not ordinary listing.
+
+### 9.14 API route contract
+
+Use resource-oriented `/api/v2` routes with shared model serialization. The minimum route families are:
+
+```text
+POST   /api/v2/executions
+GET    /api/v2/executions
+GET    /api/v2/executions/{execution_id}
+GET    /api/v2/executions/{execution_id}/events
+GET    /api/v2/executions/{execution_id}/events/stream
+GET    /api/v2/executions/{execution_id}/report
+POST   /api/v2/executions/{execution_id}/cancel
+DELETE /api/v2/executions/{execution_id}
+
+POST   /api/v2/sessions
+GET    /api/v2/sessions/{session_id}
+POST   /api/v2/sessions/{session_id}/turns
+POST   /api/v2/sessions/{session_id}/close
+POST   /api/v2/sessions/{session_id}/cancel
+
+GET/POST and revision operations for server profiles
+GET/POST and revision operations for harness profiles
+POST probe operations for registered profiles/capabilities
+```
+
+Exact profile route nesting should follow one consistent resource pattern generated from shared service operations. Do not preserve `/api/v1` route shapes merely to reduce UI changes.
+
+SSE rules:
+
+- Send canonical sequence numbers as SSE IDs.
+- Accept a cursor/last-event sequence and resume after it.
+- Send committed events only.
+- Avoid duplicate delivery across a normal reconnect.
+- End after the terminal event and all prior committed events are delivered.
+- Redact before serialization.
+
+Idempotency applies only when a key is supplied. Reuse with an identical normalized request returns the original resource; reuse with a different normalized request returns `409`.
+
+### 9.15 UI ownership and rendering rules
+
+- Streamlit session state owns only browser draft/selection state and references to persisted executions.
+- The cached toolkit owns worker/service infrastructure, not individual browser state.
+- SDK/store state is authoritative after submission.
+- UI reruns must not resubmit an execution or turn without a new user action/idempotency key.
+- Polling or event consumption reads committed snapshots/events only.
+- The UI never constructs provider-specific trace semantics; it renders backend-normalized models.
+- Terminal trace rendering works for all outcomes and does not condition visibility on success.
+- “Execution completed” means the lifecycle ended, not that tools succeeded or evaluations passed.
+- MCP activity health derives only from authoritative MCP call results.
+- Evaluations are separately labelled and never overwrite lifecycle or MCP health.
+- Keep the initial one-turn/one-server form intentionally narrow without narrowing the underlying specification.
+
+### 9.16 Pytest and artifact rules
+
+- The plugin registers fixtures, markers, reporting hooks, and artifact policy only.
+- Pytest owns collection, selection, parametrization, fixture scheduling, assertion rewriting, plugin loading, reporting, and exit codes.
+- `mcp-pal test` invokes pytest in-process or through its official entry point and returns the exact pytest exit code.
+- Wrapper arguments are not re-parsed except MCP Pal’s own non-conflicting wrapper options.
+- Markers never cause automatic skip or retry.
+- Deterministic repository CI explicitly excludes the separate live-test location/selection.
+- When a live test is explicitly selected, readiness failure fails that test with diagnostics.
+- Every pytest test gets isolated ephemeral state unless it explicitly requests a persistent/shared factory.
+- Failure artifact directories use stable test-node-derived names plus collision-safe IDs.
+- Artifact export happens after trace finalization and redaction.
+- Failed-only export includes setup, call, teardown, timeout, cancellation, and cleanup failures associated with the test.
+- JUnit contains only safe IDs, outcomes, and artifact paths; full trace payloads remain separate files.
+
+### 9.17 Security, isolation, and redaction rules
+
+- Never use `shell=True` or construct harness/server commands as shell strings.
+- Treat profile commands, endpoints, attachments, workspace paths, and artifacts as untrusted input.
+- Validate that collected artifact paths remain within the owned/allowed workspace after resolving symlinks.
+- Do not follow workspace-copy symlinks outside the allowed source root by default.
+- Bind SDK-hosted loopback servers to loopback only and use unpredictable per-execution authorization where feasible.
+- Prevent remote agent-access endpoints from reaching private/local networks unless explicitly trusted.
+- Pass a minimal child environment assembled from deterministic defaults and explicit allowlists.
+- Do not inherit `.env`, ambient provider keys, user plugins, or project permission configuration accidentally.
+- Redact recursively in mappings, lists, model objects, protocol frames, errors, reprs, logs, traces, artifacts, API responses, UI output, and telemetry.
+- Redaction must handle exact secret values, configured sensitive keys, authorization headers, URLs with credentials/query tokens, and known credential-file content.
+- Redaction failures fail persistence/export safely; they do not fall back to storing raw content.
+- Raw evidence is subject to the same persistence redaction guarantee as canonical events.
+
+### 9.18 Observability rules
+
+- Internal logs may describe lifecycle, IDs, timings, component names, and redacted failures.
+- Do not log full prompts, messages, tool arguments/results, protocol headers, raw frames, reasoning, or resolved child environments by default.
+- Optional OpenTelemetry emits only lifecycle, timing, transport, harness, model identifier, server/tool identifier, status, and correlation metadata by default.
+- Trace/artifact identifiers link operational telemetry to local evidence without copying sensitive payloads.
+- Telemetry initialization is opt-in and cannot make SDK import or execution fail when unavailable.
+
+### 9.19 Lower-capability-agent work protocol
+
+For each todo item:
+
+1. Read the relevant public contract, existing implementation, and existing tests before editing.
+2. State the one observable behavior being added or replaced.
+3. Add or update the smallest contract test that proves it.
+4. Implement through the intended ownership layer without importing a higher integration layer.
+5. Run the narrow test, its subsystem contract suite, and `git diff --check`.
+6. Inspect process/filesystem/database side effects after lifecycle-related tests.
+7. Record any upstream-version-specific behavior in capability evidence and documentation.
+8. Stop after the checkbox is green; do not opportunistically implement later phases.
+
+At every phase gate:
+
+- Run all prior phase tests, not only the newest tests.
+- Build and install the wheel when public imports or dependencies changed.
+- Search for forbidden legacy/API/UI dependencies and accidental private imports.
+- Check for leaked secrets, processes, threads, ports, workspaces, SQLite files, and generated files.
+- Review new public names and schemas before treating them as stable.
+- Update the capability-to-test/documentation manifest.
+- Leave a runnable checkpoint suitable for another agent to continue.
+
+Mandatory escalation conditions:
+
+- The installed official MCP SDK lacks a required public capability or exposes materially different semantics.
+- A selected harness cannot maintain one real conversation/process across turns.
+- Wire capture cannot distinguish authoritative MCP calls from provider claims.
+- Cross-process SQLite ownership cannot be made atomic under the chosen design.
+- Redaction cannot be guaranteed before persistence/export.
+- Cleanup cannot prove owned descendant processes are gone.
+- A dependency cannot support Python 3.10 within the agreed bounds.
+- A proposed shortcut would require a v1 compatibility layer, serialized scenario format, automatic skip/fallback, or deferred conformance functionality.
+
+Do not resolve these conditions by weakening tests. Produce a focused feasibility note and revise the affected design branch explicitly.
