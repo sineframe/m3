@@ -1,0 +1,136 @@
+"""Deterministic tests for the canonical ``mcp-pal doctor`` command."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+import mcp_pal.cli as cli_module
+from mcp_pal.cli import main
+
+
+def test_doctor_without_requirements_checks_config_and_memory(capsys) -> None:
+    assert main(["doctor", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["ready"] is True
+    assert report["requirements"] == ["config", "storage:memory"]
+    assert report["configuration"]["status"] == "ready"
+    assert report["results"][0]["capability"]["status"] == "ready"
+
+
+def test_doctor_only_probes_explicit_requirements(capsys) -> None:
+    assert main(["doctor", "--require", "storage:memory", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["configuration"] is None
+    assert [item["capability"]["name"] for item in report["results"]] == ["memory"]
+
+
+def test_doctor_binary_and_unavailable_exit_codes(capsys) -> None:
+    target = f"binary:{sys.executable}"
+    assert main(["doctor", "--require", target, "--json"]) == 0
+    ready = json.loads(capsys.readouterr().out)
+    assert ready["results"][0]["capability"]["status"] == "ready"
+    assert ready["requirements"] == ["binary"]
+    assert sys.executable not in json.dumps(ready)
+
+    assert main(["doctor", "--require", "binary:/definitely/missing-secret", "--json"]) == 1
+    unavailable = json.loads(capsys.readouterr().out)
+    assert unavailable["ready"] is False
+    assert unavailable["results"][0]["capability"]["status"] == "unavailable"
+    assert unavailable["requirements"] == ["binary"]
+    assert "/definitely/missing-secret" not in json.dumps(unavailable)
+
+
+def test_doctor_selected_env_file_and_ambient_precedence(tmp_path: Path, monkeypatch, capsys) -> None:
+    selected = tmp_path / "selected.env"
+    selected.write_text("MCP_PAL_ARTIFACT_POLICY=always\n", encoding="utf-8")
+    monkeypatch.setenv("MCP_PAL_ARTIFACT_POLICY", "never")
+
+    assert main(["doctor", "--require", "config", "--env-file", str(selected), "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    settings = report["configuration"]["settings"]
+    assert settings["artifact_policy"] == "never"
+    assert settings["sources"]["artifact_policy"]["source"] == "environment"
+
+
+def test_doctor_rejects_invalid_requirement_without_echoing_input(capsys) -> None:
+    secret = "secret-token-value"
+    assert main(["doctor", "--require", secret]) == 2
+    captured = capsys.readouterr()
+    assert "secret-token-value" not in captured.err
+
+
+def test_doctor_rejects_unknown_option_without_echoing_input(capsys) -> None:
+    secret = "--credential=secret-token-value"
+    assert main(["doctor", secret]) == 2
+    captured = capsys.readouterr()
+    assert "secret-token-value" not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "field", "origin", "reason"),
+    (
+        ("MCP_PAL_TELEMETRY_ENABLED", "secret-not-bool", "telemetry_enabled", "env:MCP_PAL_TELEMETRY_ENABLED", "must be true or false"),
+        ("MCP_PAL_ARTIFACT_POLICY", "secret-policy", "artifact_policy", "env:MCP_PAL_ARTIFACT_POLICY", "must be one of failed, always, or never"),
+        ("MCP_PAL_UNKNOWN_SETTING", "secret-unknown-value", "MCP_PAL_UNKNOWN_SETTING", "environment", "unknown setting"),
+    ),
+)
+def test_doctor_configuration_errors_are_actionable_and_value_free(
+    variable: str,
+    value: str,
+    field: str,
+    origin: str,
+    reason: str,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setenv(variable, value)
+    assert main(["doctor", "--require", "config", "--json"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert payload["error"] == {
+        "code": "unknown_setting" if variable == "MCP_PAL_UNKNOWN_SETTING" else "invalid_configuration",
+        "field": field,
+        "origin": origin,
+        "reason": reason,
+    }
+    assert value not in json.dumps(payload)
+
+
+def test_doctor_configuration_error_human_output_has_structured_diagnostic(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("MCP_PAL_TELEMETRY_ENABLED", "not-a-secret-bool")
+    assert main(["doctor", "--require", "config"]) == 2
+    captured = capsys.readouterr()
+    assert "code=invalid_configuration" in captured.err
+    assert "field=telemetry_enabled" in captured.err
+    assert "origin=env:MCP_PAL_TELEMETRY_ENABLED" in captured.err
+    assert "reason=must be true or false" in captured.err
+    assert "not-a-secret-bool" not in captured.err
+
+
+def test_doctor_env_file_without_config_fails_before_reading_file(tmp_path: Path, monkeypatch, capsys) -> None:
+    def fail_if_read(_path: Path):
+        pytest.fail("doctor read an env file without a config requirement")
+
+    monkeypatch.setattr(cli_module, "_read_selected_environment", fail_if_read)
+    assert main(["doctor", "--require", "storage:memory", "--env-file", str(tmp_path / "secret.env")]) == 2
+    captured = capsys.readouterr()
+    assert captured.err.strip() == "mcp-pal doctor: --env-file requires a config requirement"
+
+
+def test_doctor_transport_and_storage_namespaces(capsys) -> None:
+    assert main(
+        [
+            "doctor",
+            "--require",
+            "transport:stdio",
+            "--require",
+            "storage:memory",
+            "--json",
+        ]
+    ) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert [item["capability"]["status"] for item in report["results"]] == ["ready", "ready"]

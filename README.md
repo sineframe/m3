@@ -4,20 +4,28 @@ Local Streamlit UI and FastAPI backend for testing one MCP server interaction at
 
 ## Setup
 
-Requires Python 3.13+ and at least one installed harness. Copy `.env.example` to `.env`, then configure either Claude Code (`ANTHROPIC_API_KEY`, `CLAUDE_MODEL_IDS`) or OpenCode (`OPENCODE_API_KEY`, provider-specific credentials such as `OPENROUTER_API_KEY`, and `OPENCODE_MODEL_IDS`). OpenCode also accepts credentials saved by `opencode auth login`; `OPENCODE_API_KEY` is the simplest reproducible setup. Model IDs use OpenCode's `provider/model` form.
+The repository is a uv workspace whose published `mcp-pal` project lives under
+`sdk/`. The SDK supports Python 3.10+; the current application is exercised on
+Python 3.13+ and requires at least one
+installed harness. Copy `.env.example` to `.env`, then configure either Claude
+Code (`ANTHROPIC_API_KEY`, `CLAUDE_MODEL_IDS`) or OpenCode (`OPENCODE_API_KEY`,
+provider-specific credentials such as `OPENROUTER_API_KEY`, and
+`OPENCODE_MODEL_IDS`). OpenCode also accepts credentials saved by `opencode auth
+login`; `OPENCODE_API_KEY` is the simplest reproducible setup. Model IDs use
+OpenCode's `provider/model` form.
 
 ```bash
 just setup
-# equivalent raw command: uv sync --extra dev
+# equivalent raw command: uv sync --project sdk --all-extras
 just api
-# equivalent raw command: uv run uvicorn mcp_pal.main:app --reload
+# equivalent raw command: uv run --project sdk uvicorn mcp_pal.main:app --reload
 # in another terminal
 just ui
-# equivalent raw command: uv run streamlit run src/mcp_pal/ui/app.py
+# equivalent raw command: uv run --project sdk streamlit run sdk/src/mcp_pal/ui/app.py
 ```
 
 Run `just --list` to list recipes. Use `just setup` to install dependencies,
-`just test` (or `uv run pytest -q`) for the full suite, and `just check` for
+`just test` (or `PYTHONDONTWRITEBYTECODE=1 uv run --project sdk pytest -q`) for the full suite, and `just check` for
 compile/import checks. Focused suites are available as `just test-unit` and
 `just test-integration`.
 
@@ -29,16 +37,16 @@ Custom harnesses use an immutable `mcp-pal.harness.v1` manifest. Store only
 environment references (`"TOKEN": "${TEAM_TOKEN}"`), never credentials or
 resolved paths. The executable is intentionally unsandboxed and requires an
 explicit trust acknowledgment when creating a profile. The JSON Schema is at
-[`schemas/mcp-pal.harness.v1.schema.json`](schemas/mcp-pal.harness.v1.schema.json).
+[`sdk/src/mcp_pal/schemas/mcp-pal.harness.v1.schema.json`](sdk/src/mcp_pal/schemas/mcp-pal.harness.v1.schema.json).
 
 ```bash
-uv run mcp-pal-harness validate harness.json --check-local
-# equivalent raw command: uv run python -m mcp_pal.harness.cli validate harness.json --check-local
+uv run --project sdk mcp-pal-harness validate harness.json --check-local
+# equivalent raw command: uv run --project sdk python -m mcp_pal.harness.cli validate harness.json --check-local
 # equivalent just recipe: just harness-validate harness.json
-uv run mcp-pal-harness probe harness.json --kind protocol
+uv run --project sdk mcp-pal-harness probe harness.json --kind protocol
 # equivalent just recipe: just harness-probe harness.json
 # full probes are opt-in and consume one harness/model turn against local echo:
-uv run mcp-pal-harness probe harness.json --kind full --transport stdio --mode-id default --session-config '{}'
+uv run --project sdk mcp-pal-harness probe harness.json --kind full --transport stdio --mode-id default --session-config '{}'
 # equivalent just recipe (use the mode/config values advertised by protocol probe):
 # just harness-full-probe harness.json stdio default '{}'
 ```
@@ -47,10 +55,10 @@ The reference bridge demonstrates wrapping a deterministic structured,
 non-ACP CLI without an API key or network access:
 
 ```bash
-uv run mcp-pal-reference-bridge \
+uv run --project sdk mcp-pal-reference-bridge \
   --target uv \
   --target-args-json '["run", "python", "-m", "mcp_pal.fixtures.structured_cli"]'
-# equivalent raw command: uv run python -m mcp_pal.bridge.reference ...
+# equivalent raw command: uv run --project sdk python -m mcp_pal.bridge.reference ...
 # equivalent just recipe: just reference-bridge
 ```
 
@@ -89,9 +97,10 @@ On startup queued/running runs from a previous process are marked failed with an
 
 ```bash
 just test
-# equivalent raw command: uv run pytest -q
+# equivalent raw command: PYTHONDONTWRITEBYTECODE=1 uv run --project sdk pytest -q
 # focused equivalents:
-# just test-unit        -> uv run pytest -q tests/unit
-# just test-integration -> uv run pytest -q tests/integration
-# just check            -> uv run python -m compileall -q src
+# just test-unit        -> PYTHONDONTWRITEBYTECODE=1 uv run --project sdk pytest -q sdk/tests/unit
+# just test-integration -> PYTHONDONTWRITEBYTECODE=1 uv run --project sdk pytest -q sdk/tests/integration
+# just check            -> uv run --project sdk python -m compileall -q sdk/src
+# just package-check    -> uv run --project sdk --all-extras python scripts/check_packaging.py
 ```

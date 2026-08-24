@@ -1184,243 +1184,266 @@ Work through this list in order. Each checkbox should be completed as a small re
 
 ### Phase 0 — Preserve the baseline
 
-- [ ] Read section 9 in full and treat it as the implementation contract for every phase.
-- [ ] Record the current test, lint, type-check, build, API, UI, and CLI commands.
-- [ ] Run the existing suite and record known warnings and platform-specific behavior.
-- [ ] Inventory all current public imports, entry points, database locations, environment variables, profile fields, API routes, and UI actions.
-- [ ] Map current execution, trace, harness, storage, API, and UI modules to their intended v0.2 owner.
-- [ ] Identify existing tests and behaviors that must be preserved versus intentionally replaced.
-- [ ] Add a temporary migration checklist linking each current behavior to its future SDK test.
-- [ ] Confirm the worktree contains no unrelated generated files before structural changes.
-- [ ] Establish the rule that every phase ends with a clean build and passing deterministic suite.
+- [x] Read section 9 in full and treat it as the implementation contract for every phase.
+- [x] Record the current test, lint, type-check, build, API, UI, and CLI commands.
+- [x] Run the existing suite and record known warnings and platform-specific behavior.
+- [x] Inventory all current public imports, entry points, database locations, environment variables, profile fields, API routes, and UI actions.
+- [x] Map current execution, trace, harness, storage, API, and UI modules to their intended v0.2 owner.
+- [x] Identify existing tests and behaviors that must be preserved versus intentionally replaced.
+- [x] Add a temporary migration checklist linking each current behavior to its future SDK test.
+- [x] Confirm the worktree contains no unrelated generated files before structural changes.
+- [x] Establish the rule that every phase ends with a clean build and passing deterministic suite.
 
 ### Phase 1 — Create the uv workspace and distributable SDK
 
-- [ ] Convert the root project to a uv workspace containing the `sdk` project.
-- [ ] Move the Python package beneath `sdk/src/mcp_pal` without changing runtime behavior yet.
-- [ ] Move and reorganize tests beneath `sdk/tests` while preserving baseline coverage.
-- [ ] Configure Hatchling to build only the intended SDK package and runtime data.
-- [ ] Set package metadata for `mcp-pal`, Python `>=3.10`, Apache-2.0, README, authors, classifiers, keywords, and project URLs.
-- [ ] Add the Apache-2.0 license file and PEP 639-compatible license metadata.
-- [ ] Define base, `pytest`, `storage`, `app`, `property`, `docs`, and `all` dependency extras.
-- [ ] Add `mcp>=2,<3` and validate the actual official SDK API used by the implementation.
-- [ ] Regenerate the uv lockfile for Python 3.10–3.13.
-- [ ] Add `py.typed` and configure its wheel inclusion.
-- [ ] Configure wheel contents to include runtime schemas and license only where appropriate.
-- [ ] Configure the sdist to include docs, examples, tests needed for source validation, and legal files without unrelated research/build artifacts.
-- [ ] Obtain the runtime version exclusively through `importlib.metadata`.
-- [ ] Verify that `import mcp_pal` has no database, subprocess, filesystem-write, network, or event-loop side effects.
-- [ ] Build wheel and sdist and run metadata/content validation.
-- [ ] Install the wheel into a clean environment and smoke-test imports and entry points.
+- [x] Convert the root project to a uv workspace containing the `sdk` project.
+- [x] Move the Python package beneath `sdk/src/mcp_pal` without changing runtime behavior yet.
+- [x] Move and reorganize tests beneath `sdk/tests` while preserving baseline coverage.
+- [x] Configure Hatchling to build only the intended SDK package and runtime data.
+- [x] Set package metadata for `mcp-pal`, Python `>=3.10`, Apache-2.0, README, authors, classifiers, keywords, and project URLs.
+- [x] Add the Apache-2.0 license file and PEP 639-compatible license metadata.
+- [x] Define base, `pytest`, `storage`, `app`, `property`, `docs`, and `all` dependency extras.
+- [x] Add `mcp>=2,<3` and validate the actual official SDK API used by the implementation.
+- [x] Regenerate the uv lockfile for Python 3.10–3.13.
+- [x] Add `py.typed` and configure its wheel inclusion.
+- [x] Configure wheel contents to include runtime schemas and license only where appropriate.
+- [x] Configure the sdist to include docs, examples, tests needed for source validation, and legal files without unrelated research/build artifacts.
+- [x] Obtain the runtime version exclusively through `importlib.metadata`.
+- [x] Verify that `import mcp_pal` has no database, subprocess, filesystem-write, network, or event-loop side effects.
+- [x] Build wheel and sdist and run metadata/content validation.
+- [x] Install the wheel into a clean environment and smoke-test imports and entry points.
 
 ### Phase 2 — Define the public domain model
 
-- [ ] Establish `mcp_pal`, `sync_api`, `async_api`, `types`, `matchers`, `testing`, and `pytest_plugin` module boundaries.
-- [ ] Define the public export manifest and a test that rejects undocumented or accidental exports.
-- [ ] Implement frozen identifiers and metadata types for executions, sessions, turns, servers, connections, artifacts, and events.
-- [ ] Implement execution lifecycle and outcome enums with validated transitions.
-- [ ] Implement turn lifecycle and outcome models with validated transitions.
-- [ ] Implement typed content blocks and the `UserMessage` envelope.
-- [ ] Implement server definitions for in-process, stdio, Streamable HTTP, and legacy SSE.
-- [ ] Implement serializable server and harness profile references with immutable revision identity.
-- [ ] Implement typed harness values for Claude Code, OpenCode, and ACP.
-- [ ] Implement workspace, tool, permission, elicitation, sampling, filesystem, and terminal policy models.
-- [ ] Implement `DirectExecutionSpec` and `AgentExecutionSpec` as frozen Pydantic models.
-- [ ] Implement immutable execution, turn, trace, evaluation, artifact, readiness, and capability results.
-- [ ] Define stable public exception types and machine-readable error codes.
-- [ ] Define secret-reference types that cannot serialize resolved secret values.
-- [ ] Add JSON-schema generation and round-trip tests for every serializable model.
-- [ ] Add strict type-checking tests for the intended sync and async usage examples.
+- [x] Establish `mcp_pal`, `sync_api`, `async_api`, `types`, `matchers`, `testing`, and `pytest_plugin` module boundaries.
+- [x] Define the public export manifest and a test that rejects undocumented or accidental exports.
+- [x] Implement frozen identifiers and metadata types for executions, sessions, turns, servers, connections, artifacts, and events.
+- [x] Implement execution lifecycle and outcome enums with validated transitions.
+- [x] Implement turn lifecycle and outcome models with validated transitions.
+- [x] Implement typed content blocks and the `UserMessage` envelope.
+- [x] Implement server definitions for in-process, stdio, Streamable HTTP, and legacy SSE.
+- [x] Implement serializable server and harness profile references with immutable revision identity.
+- [x] Implement typed harness values for Claude Code, OpenCode, and ACP.
+- [x] Implement workspace, tool, permission, elicitation, sampling, filesystem, and terminal policy models.
+- [x] Implement `DirectExecutionSpec` and `AgentExecutionSpec` as frozen Pydantic models.
+- [x] Implement immutable execution, turn, trace, evaluation, artifact, readiness, and capability results.
+- [x] Define stable public exception types and machine-readable error codes.
+- [x] Define secret-reference types that cannot serialize resolved secret values.
+- [x] Add JSON-schema generation and round-trip tests for every serializable model.
+- [x] Add strict type-checking tests for the intended sync and async usage examples.
+
+Phase 2 boundary note: profile references represent either a submission-time `latest` selector or a pinned immutable revision. Execution creation must replace `latest` with a pinned reference before recording effective execution state; resolution, clone provenance, and persistence remain acceptance gates for the later execution/profile-service phases.
 
 ### Phase 3 — Implement configuration and capability discovery
 
-- [ ] Define all supported `[tool.mcp-pal]` settings and environment-variable names.
-- [ ] Implement configuration precedence: explicit arguments, environment, project config, defaults.
-- [ ] Track the source of every effective configuration value for diagnostics.
-- [ ] Keep `.env` loading out of library code.
-- [ ] Add explicit `.env` loading options to application and CLI entry points only.
-- [ ] Implement typed binary, protocol, transport, storage, and harness readiness probes.
-- [ ] Record detected versions and individual capability results without version allowlists.
-- [ ] Ensure probing one harness does not initialize or fail unrelated harnesses.
-- [ ] Implement `kit.capabilities()` and namespaced probe services.
-- [ ] Implement strict `mcp-pal doctor` behavior for explicitly requested capabilities.
-- [ ] Add redaction tests for configuration errors, probe output, reprs, and serialized snapshots.
+- [x] Define all supported `[tool.mcp-pal]` settings and environment-variable names.
+- [x] Implement configuration precedence: explicit arguments, environment, project config, defaults.
+- [x] Track the source of every effective configuration value for diagnostics.
+- [x] Keep `.env` loading out of library code.
+- [x] Add explicit `.env` loading options to application and CLI entry points only.
+- [x] Implement typed binary, protocol, transport, storage, and harness readiness probes.
+- [x] Record detected versions and individual capability results without version allowlists.
+- [x] Ensure probing one harness does not initialize or fail unrelated harnesses.
+- [x] Implement `kit.capabilities()` and namespaced probe services.
+- [x] Implement strict `mcp-pal doctor` behavior for explicitly requested capabilities.
+- [x] Add redaction tests for configuration errors, probe output, reprs, and serialized snapshots.
 
 ### Phase 4 — Build canonical tracing and ephemeral execution storage
 
-- [ ] Define the canonical event taxonomy and versioned event schema.
-- [ ] Define raw-evidence references separately from normalized semantic events.
-- [ ] Implement a per-execution sequence allocator.
-- [ ] Add UTC timestamps and monotonic offsets to events and lifecycle records.
-- [ ] Implement request/response correlation using connection, typed request ID, sequence, direction, session, and turn.
-- [ ] Implement the in-memory `ExecutionStore`.
-- [ ] Implement the temporary/in-memory `ArtifactStore`.
-- [ ] Implement content-addressed compressed blobs with hash and length validation.
-- [ ] Implement redaction before persistence, export, logging, API serialization, and UI projection.
-- [ ] Preserve unredacted values only inside the active process for explicit assertions.
-- [ ] Implement immutable execution and turn snapshots derived from committed events.
-- [ ] Guarantee that events are committed before iterators or callbacks receive them.
-- [ ] Implement complete and partial trace finalization for every terminal outcome.
-- [ ] Represent explicit reasoning, unavailable reasoning, and encrypted/provider-hidden reasoning without inference.
-- [ ] Add contract tests for event ordering, correlation, redaction, large blobs, and every terminal outcome.
+- [x] Define the canonical event taxonomy and versioned event schema.
+- [x] Define raw-evidence references separately from normalized semantic events.
+- [x] Implement a per-execution sequence allocator.
+- [x] Add UTC timestamps and monotonic offsets to events and lifecycle records.
+- [x] Implement request/response correlation using connection, typed request ID, sequence, direction, session, and turn.
+- [x] Implement the in-memory `ExecutionStore`.
+- [x] Implement the temporary/in-memory `ArtifactStore`.
+- [x] Implement content-addressed compressed blobs with hash and length validation.
+- [x] Implement redaction before persistence, export, logging, API serialization, and UI projection.
+- [x] Preserve unredacted values only inside the active process for explicit assertions.
+- [x] Implement immutable execution and turn snapshots derived from committed events.
+- [x] Guarantee that events are committed before iterators or callbacks receive them.
+- [x] Implement complete and partial trace finalization for every terminal outcome.
+- [x] Represent explicit reasoning, unavailable reasoning, and encrypted/provider-hidden reasoning without inference.
+- [x] Add contract tests for event ordering, correlation, redaction, large blobs, and every terminal outcome.
 
 ### Phase 5 — Implement the asynchronous direct MCP client
 
-- [ ] Wrap the official MCP v2 client without duplicating its protocol engine.
-- [ ] Implement in-process MCP connection lifecycle.
-- [ ] Implement stdio connection and owned-process cleanup.
-- [ ] Implement Streamable HTTP connection lifecycle.
-- [ ] Implement legacy SSE connection lifecycle.
-- [ ] Capture initialization, negotiated revision, identity, instructions, capabilities, extensions, and transport evidence.
-- [ ] Expose the official response through `.raw` on typed result wrappers.
-- [ ] Implement tool listing, pagination, `list_all_tools`, and tool calls.
-- [ ] Implement resource listing, templates, reads, pagination, and subscriptions.
-- [ ] Implement prompt listing, pagination, and retrieval.
-- [ ] Implement supported completion, logging, progress, roots, sampling, elicitation, ping, notification, and cancellation paths from the official client.
-- [ ] Preserve tool `is_error` responses as results rather than infrastructure exceptions.
-- [ ] Map JSON-RPC errors to `ProtocolError` with partial trace evidence.
-- [ ] Attach partial evidence to transport and process failures.
-- [ ] Implement optional structural validation of advertised input/output schemas.
-- [ ] Implement `raise_server_exceptions=True` for in-process tests and sanitized protocol behavior when disabled.
-- [ ] Implement headers, bearer tokens, supplied official OAuth implementations, and deterministic auth fixtures.
-- [ ] Enforce endpoint trust classification for agent exposure.
-- [ ] Add page-level and convenience method tests for every supported capability.
-- [ ] Run the same direct-client contract against every supported transport.
+- [x] Wrap the official MCP v2 client without duplicating its protocol engine.
+- [x] Implement in-process MCP connection lifecycle.
+- [x] Implement stdio connection and owned-process cleanup.
+- [x] Implement Streamable HTTP connection lifecycle.
+- [x] Implement legacy SSE connection lifecycle.
+- [x] Capture initialization, negotiated revision, identity, instructions, capabilities, extensions, and transport evidence.
+- [x] Expose the official response through `.raw` on typed result wrappers.
+- [x] Implement tool listing, pagination, `list_all_tools`, and tool calls.
+- [x] Implement resource listing, templates, reads, pagination, and subscriptions.
+- [x] Implement prompt listing, pagination, and retrieval.
+- [x] Implement supported completion, logging, progress, roots, sampling, elicitation, ping, notification, and cancellation paths from the official client.
+- [x] Preserve tool `is_error` responses as results rather than infrastructure exceptions.
+- [x] Map JSON-RPC errors to `ProtocolError` with partial trace evidence.
+- [x] Attach partial evidence to transport and process failures.
+- [x] Implement optional structural validation of advertised input/output schemas.
+- [x] Implement `raise_server_exceptions=True` for in-process tests and sanitized protocol behavior when disabled.
+- [x] Implement headers, bearer tokens, supplied official OAuth implementations, and deterministic auth fixtures.
+- [x] Enforce endpoint trust classification for agent exposure.
+- [x] Add page-level and convenience method tests for every supported capability.
+- [x] Run the same direct-client contract against every supported transport.
+
+**Mandatory escalation before Phase 5 claims protocol-matrix coverage:** the
+pinned official MCP v2 high-level `ClientSession` currently constructs its
+initialize request with the SDK's `LATEST_HANDSHAKE_VERSION` and validates the
+server response against the SDK's fixed handshake-version set. Its public
+constructor accepts transport read/write streams rather than an explicit
+protocol-revision selector. Validate the pinned API and its supported stdio,
+Streamable HTTP, and SSE transport factories before implementing revision
+constraints; if an explicit revision matrix cannot be expressed through public
+APIs, escalate the dependency/API gap instead of duplicating the protocol
+engine or silently claiming unsupported coverage.
+
+Phase 5 escalation resolution: the pinned `mcp==2.0.0` public API was
+validated directly. It does not expose an arbitrary handshake-revision
+selector, so MCP Pal accepts automatic/current negotiation and rejects other
+explicit revision constraints before startup. Revision-matrix coverage is not
+claimed. Remote transports validate all resolved addresses and disable
+redirects, but connection-level DNS pinning is unavailable through the pinned
+official transport API; the remaining DNS-rebinding TOCTOU risk is recorded as
+a dependency limitation. Direct traces therefore capture normalized decoded
+MCP messages and explicitly report raw-wire capture as incomplete.
 
 ### Phase 6 — Add the synchronous API
 
-- [ ] Define one authoritative async implementation for direct protocol behavior.
-- [ ] Implement the lifecycle-safe synchronous portal/proxy.
-- [ ] Generate or mechanically maintain sync wrappers from the async surface.
-- [ ] Prevent async client objects from escaping onto the caller's thread.
-- [ ] Match result, exception, cancellation, timeout, and cleanup behavior between sync and async APIs.
-- [ ] Add a public-surface parity test that fails when only one twin exposes a supported method.
-- [ ] Test nested and repeated kit lifecycles without leaking threads or event loops.
-- [ ] Test sync use from ordinary pytest and async use from async pytest plugins.
+- [x] Define one authoritative async implementation for direct protocol behavior.
+- [x] Implement the lifecycle-safe synchronous portal/proxy.
+- [x] Generate or mechanically maintain sync wrappers from the async surface.
+- [x] Prevent async client objects from escaping onto the caller's thread.
+- [x] Match result, exception, cancellation, timeout, and cleanup behavior between sync and async APIs.
+- [x] Add a public-surface parity test that fails when only one twin exposes a supported method.
+- [x] Test nested and repeated kit lifecycles without leaking threads or event loops.
+- [x] Test sync use from ordinary pytest and async use from async pytest plugins.
 
 ### Phase 7 — Implement assertions, evaluations, snapshots, and test utilities
 
-- [ ] Implement `expect(subject)` dispatch for direct results, turns, executions, sessions, traces, and handles.
-- [ ] Implement exact, contains, regex, ordered-block, and negative content assertions.
-- [ ] Implement tool-call assertions for server, tool, arguments, result, status, count, range, turn, and predicate.
-- [ ] Reject ambiguous serverless assertions when duplicate tool names exist.
-- [ ] Implement lifecycle, outcome, protocol, transport, capability, artifact, workspace, and trace assertions.
-- [ ] Implement event-driven eventual assertions without polling sleeps.
-- [ ] Implement grouped soft assertions through `check()`.
-- [ ] Add structural diffs, candidate summaries, scope, identifiers, redacted excerpts, and artifact paths to failures.
-- [ ] Implement canonical snapshot normalization and field opt-ins.
-- [ ] Verify canonical values work with established Python snapshot plugins.
-- [ ] Define `EvaluationContext`, evaluator protocol, registrations, and all evaluation statuses.
-- [ ] Implement persisted optional and required deterministic evaluations.
-- [ ] Ensure evaluation cannot mutate execution lifecycle, results, trace, or artifacts.
-- [ ] Implement decorator-based and stateful `MockMCPServer` APIs.
-- [ ] Implement strict, optional, repeated, subset, unordered, and fallback expectations.
-- [ ] Implement deterministic gates and clocks.
-- [ ] Implement all planned protocol, process, payload, and cancellation fault injectors.
-- [ ] Implement strict record/replay with explicit redaction bindings and relaxation provenance.
-- [ ] Add optional Hypothesis schema strategies behind `[property]`.
+- [x] Implement `expect(subject)` dispatch for direct results, turns, executions, sessions, traces, and handles.
+- [x] Implement exact, contains, regex, ordered-block, and negative content assertions.
+- [x] Implement tool-call assertions for server, tool, arguments, result, status, count, range, turn, and predicate.
+- [x] Reject ambiguous serverless assertions when duplicate tool names exist.
+- [x] Implement lifecycle, outcome, protocol, transport, capability, artifact, workspace, and trace assertions.
+- [x] Implement event-driven eventual assertions without polling sleeps.
+- [x] Implement grouped soft assertions through `check()`.
+- [x] Add structural diffs, candidate summaries, scope, identifiers, redacted excerpts, and artifact paths to failures.
+- [x] Implement canonical snapshot normalization and field opt-ins.
+- [x] Verify canonical values work with established Python snapshot plugins.
+- [x] Define `EvaluationContext`, evaluator protocol, registrations, and all evaluation statuses.
+- [x] Implement persisted optional and required deterministic evaluations.
+- [x] Ensure evaluation cannot mutate execution lifecycle, results, trace, or artifacts.
+- [x] Implement decorator-based and stateful `MockMCPServer` APIs.
+- [x] Implement strict, optional, repeated, subset, unordered, and fallback expectations.
+- [x] Implement deterministic gates and clocks.
+- [x] Implement all planned protocol, process, payload, and cancellation fault injectors.
+- [x] Implement strict record/replay with explicit redaction bindings and relaxation provenance.
+- [x] Add optional Hypothesis schema strategies behind `[property]`.
 
 ### Phase 8 — Complete the `0.2.0a1` gate
 
-- [ ] Run all package, model, configuration, trace, direct-client, sync/async, assertion, evaluation, and testing-utility tests.
-- [ ] Run transport matrices and deterministic fault/replay scenarios.
-- [ ] Build and install the wheel on Python 3.10–3.13.
-- [ ] Confirm no application behavior has been partially redirected to unfinished SDK paths.
-- [ ] Confirm no v1 database compatibility or detection code has been introduced.
-- [ ] Record remaining public API gaps before starting agent runtime work.
-- [ ] Mark the package internally as `0.2.0a1` only when this gate passes.
+- [x] Run all package, model, configuration, trace, direct-client, sync/async, assertion, evaluation, and testing-utility tests.
+- [x] Run transport matrices and deterministic fault/replay scenarios.
+- [x] Build and install the wheel on Python 3.10–3.13.
+- [x] Confirm no application behavior has been partially redirected to unfinished SDK paths.
+- [x] Confirm no v1 database compatibility or detection code has been introduced.
+- [x] Record remaining public API gaps before starting agent runtime work.
+- [x] Mark the package internally as `0.2.0a1` only when this gate passes.
 
 ### Phase 9 — Build the shared multi-turn agent runtime
 
-- [ ] Implement `MCPTestKit`, `AsyncMCPTestKit`, context management, and explicit close methods.
-- [ ] Implement one-shot `kit.run(spec)` for direct and agent specifications.
-- [ ] Implement `kit.submit(spec)` and sync/async execution handles.
-- [ ] Implement live snapshots, event iterators, callbacks, cancellation, and terminal result retrieval.
-- [ ] Implement the common harness adapter protocol and capability contract.
-- [ ] Implement `AgentSession` and its lifecycle state machine.
-- [ ] Preserve one agent conversation and the same MCP processes/connections across turns.
-- [ ] Keep model, harness, servers, workspace, tool policy, and permission policy immutable after opening.
-- [ ] Allow message, timeout, and metadata to vary per turn.
-- [ ] Implement typed content conversion and reject unsupported attachments during preflight.
-- [ ] Implement `SessionStillOpen`, `SessionBusy`, sequential `send`, and explicit `enqueue_turn`.
-- [ ] Keep sessions usable after tool-level MCP errors.
-- [ ] Make timeout, cancellation, harness loss, and transport loss terminal.
-- [ ] Implement live snapshots and terminal-only results.
-- [ ] Implement new-execution replay/fork provenance without claiming live-session identity.
-- [ ] Implement multiple required and optional servers per session.
-- [ ] Implement SDK-hosted loopback access for in-process MCP servers.
-- [ ] Add duplicate-tool-name routing and assertion tests.
-- [ ] Implement MCP activity health independently of lifecycle and evaluations.
+- [x] Implement `MCPTestKit`, `AsyncMCPTestKit`, context management, and explicit close methods.
+- [x] Implement one-shot `kit.run(spec)` for direct and agent specifications.
+- [x] Implement `kit.submit(spec)` and sync/async execution handles.
+- [x] Implement live snapshots, event iterators, callbacks, cancellation, and terminal result retrieval.
+- [x] Implement the common harness adapter protocol and capability contract.
+- [x] Implement `AgentSession` and its lifecycle state machine.
+- [x] Preserve one agent conversation and the same MCP processes/connections across turns.
+- [x] Keep model, harness, servers, workspace, tool policy, and permission policy immutable after opening.
+- [x] Allow message, timeout, and metadata to vary per turn.
+- [x] Implement typed content conversion and reject unsupported attachments during preflight.
+- [x] Implement `SessionStillOpen`, `SessionBusy`, sequential `send`, and explicit `enqueue_turn`.
+- [x] Keep sessions usable after tool-level MCP errors.
+- [x] Make timeout, cancellation, harness loss, and transport loss terminal.
+- [x] Implement live snapshots and terminal-only results.
+- [x] Implement new-execution replay/fork provenance without claiming live-session identity.
+- [x] Implement multiple required and optional servers per session.
+- [x] Implement SDK-hosted loopback access for in-process MCP servers.
+- [x] Add duplicate-tool-name routing and assertion tests.
+- [x] Implement MCP activity health independently of lifecycle and evaluations.
 
 ### Phase 10 — Implement workspace and policy enforcement
 
-- [ ] Implement fresh temporary workspace creation and cleanup.
-- [ ] Implement filtered filesystem-copy workspaces.
-- [ ] Implement Git-worktree workspaces.
-- [ ] Implement read-only workspaces.
-- [ ] Implement acknowledged in-place workspaces.
-- [ ] Enforce default exclusions for repositories, environments, caches, secrets, and artifacts.
-- [ ] Require explicit acknowledgement for risky inclusion.
-- [ ] Capture structured added, modified, and deleted workspace entries.
-- [ ] Collect declared artifacts after execution and before workspace cleanup.
-- [ ] Implement portable typed tool-policy evaluation.
-- [ ] Fail preflight when a harness cannot enforce requested portable policy.
-- [ ] Implement the marked nonportable native-policy escape hatch.
-- [ ] Require acknowledgement for unrestricted tools.
-- [ ] Implement typed permission, elicitation, sampling, filesystem, and terminal handlers.
-- [ ] Default filesystem and terminal requests to denied.
-- [ ] Test policy and workspace isolation under concurrent sessions.
+- [x] Implement fresh temporary workspace creation and cleanup.
+- [x] Implement filtered filesystem-copy workspaces.
+- [x] Implement Git-worktree workspaces.
+- [x] Implement read-only workspaces.
+- [x] Implement acknowledged in-place workspaces.
+- [x] Enforce default exclusions for repositories, environments, caches, secrets, and artifacts.
+- [x] Require explicit acknowledgement for risky inclusion.
+- [x] Capture structured added, modified, and deleted workspace entries.
+- [x] Collect declared artifacts after execution and before workspace cleanup.
+- [x] Implement portable typed tool-policy evaluation.
+- [x] Fail preflight when a harness cannot enforce requested portable policy.
+- [x] Implement the marked nonportable native-policy escape hatch.
+- [x] Require acknowledgement for unrestricted tools.
+- [x] Implement typed permission, elicitation, sampling, filesystem, and terminal handlers.
+- [x] Default filesystem and terminal requests to denied.
+- [x] Test policy and workspace isolation under concurrent sessions.
 
 ### Phase 11 — Implement deterministic and real harness adapters
 
-- [ ] Build a deterministic local ACP agent that exercises the complete harness contract without model/network access.
-- [ ] Build fake Claude Code and OpenCode adapters for deterministic contract testing.
-- [ ] Implement the real ACP adapter with one process, connection, session ID, server configuration, and capture context across turns.
-- [ ] Implement the real Claude Code adapter using one continuous stream-JSON process.
-- [ ] Treat missing Claude streaming support as not ready; do not add a resume fallback.
-- [ ] Implement the real OpenCode adapter using one isolated serve instance and attached session.
-- [ ] Isolate HOME, config, data, plugin discovery, and project discovery for each harness.
-- [ ] Pass through only explicit credentials and environment values.
-- [ ] Apply deterministic locale and timezone settings where supported.
-- [ ] Record requested, enforced, observed, and unavailable usage data without estimation.
-- [ ] Implement structured process, transport, MCP, tool-call, and content capture for every adapter.
-- [ ] Implement cancellation and timeout escalation for each owned process tree.
-- [ ] Prove that terminal results are returned only after processes, proxies, and readers are reaped or cleanup failure is recorded.
-- [ ] Run the common harness contract against deterministic adapters on every change.
-- [ ] Define separate live characterization commands for real installed harnesses.
+- [x] Build a deterministic local ACP agent that exercises the complete harness contract without model/network access.
+- [x] Build fake Claude Code and OpenCode adapters for deterministic contract testing.
+- [x] Implement the real ACP adapter with one process, connection, session ID, server configuration, and capture context across turns.
+- [x] Implement the real Claude Code adapter using one continuous stream-JSON process.
+- [x] Treat missing Claude streaming support as not ready; do not add a resume fallback.
+- [x] Implement the real OpenCode adapter using one isolated serve instance and attached session.
+- [x] Isolate HOME, config, data, plugin discovery, and project discovery for each harness.
+- [x] Pass through only explicit credentials and environment values.
+- [x] Apply deterministic locale and timezone settings where supported.
+- [x] Record requested, enforced, observed, and unavailable usage data without estimation.
+- [x] Implement structured process, transport, MCP, tool-call, and content capture for every adapter.
+- [x] Implement cancellation and timeout escalation for each owned process tree.
+- [x] Prove that terminal results are returned only after processes, proxies, and readers are reaped or cleanup failure is recorded.
+- [x] Run the common harness contract against deterministic adapters on every change.
+- [x] Define separate live characterization commands for real installed harnesses.
 
 ### Phase 12 — Complete the `0.2.0a2` gate
 
-- [ ] Run deterministic one-turn and multi-turn harness contracts.
-- [ ] Prove state persists across at least three turns in the same agent and MCP session.
-- [ ] Prove sessions and workspaces remain isolated under concurrency.
-- [ ] Prove multiple servers and overlapping tool names are routed and traced correctly.
-- [ ] Prove all policy, permission, attachment, timeout, cancellation, and cleanup behaviors.
-- [ ] Run explicitly configured live characterization without making it a deterministic CI dependency.
-- [ ] Confirm no harness silently falls back to another harness or weaker multi-turn mechanism.
-- [ ] Mark the package internally as `0.2.0a2` only when this gate passes.
+- [x] Run deterministic one-turn and multi-turn harness contracts.
+- [x] Prove state persists across at least three turns in the same agent and MCP session.
+- [x] Prove sessions and workspaces remain isolated under concurrency.
+- [x] Prove multiple servers and overlapping tool names are routed and traced correctly.
+- [x] Prove all policy, permission, attachment, timeout, cancellation, and cleanup behaviors.
+- [x] Run explicitly configured live characterization without making it a deterministic CI dependency.
+- [x] Confirm no harness silently falls back to another harness or weaker multi-turn mechanism.
+- [x] Mark the package internally as `0.2.0a2` only when this gate passes.
 
 ### Phase 13 — Implement persistent storage, leases, and workers
 
-- [ ] Define the fresh v0.2 SQLite metadata schema without a legacy version detector.
-- [ ] Implement SQLite profile and immutable revision persistence.
-- [ ] Implement execution, turn, event, evaluation, artifact, and blob-reference persistence.
-- [ ] Implement SQLite foreign keys, transactions, WAL where supported, and busy timeout.
-- [ ] Implement filesystem blobs and reference-counted integrity-aware garbage collection.
-- [ ] Implement atomic execution claims and worker leases.
-- [ ] Implement heartbeats and stale-owner interruption.
-- [ ] Implement durable cancellation flags.
-- [ ] Implement persistent FIFO execution and interactive-turn command queues.
-- [ ] Ensure any persistent toolkit may enable an embedded worker.
-- [ ] Prevent two workers from owning one execution.
-- [ ] Preserve committed partial evidence after worker loss.
-- [ ] Mark abandoned work interrupted without attempting agent-session resume.
-- [ ] Implement archive, clone-original, explicit clone-latest, terminal deletion, and active-deletion rejection.
-- [ ] Keep automatic retention disabled.
+- [x] Define the fresh v0.2 SQLite metadata schema without a legacy version detector.
+- [x] Implement SQLite profile and immutable revision persistence.
+- [x] Implement execution, turn, event, evaluation, artifact, and blob-reference persistence.
+- [x] Implement SQLite foreign keys, transactions, WAL where supported, and busy timeout.
+- [x] Implement filesystem blobs and reference-counted integrity-aware garbage collection.
+- [x] Implement atomic execution claims and worker leases.
+- [x] Implement heartbeats and stale-owner interruption.
+- [x] Implement durable cancellation flags.
+- [x] Implement persistent FIFO execution and interactive-turn command queues.
+- [x] Ensure any persistent toolkit may enable an embedded worker.
+- [x] Prevent two workers from owning one execution.
+- [x] Preserve committed partial evidence after worker loss.
+- [x] Mark abandoned work interrupted without attempting agent-session resume.
+- [x] Implement archive, clone-original, explicit clone-latest, terminal deletion, and active-deletion rejection.
+- [x] Keep automatic retention disabled.
 - [ ] Add store contract tests shared by memory and SQLite implementations.
 - [ ] Add cross-process submit, claim, stream, cancel, and recovery tests.
-- [ ] Add `just dev-db-reset CONFIRM=reset` with exact-path and sidecar safety checks.
-- [ ] Test that fresh startup recreates the schema after the guarded reset.
+- [x] Add `just dev-db-reset CONFIRM=reset` with exact-path and sidecar safety checks.
+- [x] Test that fresh startup recreates the schema after the guarded reset.
 - [ ] Confirm no database reset CLI, migration framework, table purge, backup, or v1/v2 detection exists.
 
 ### Phase 14 — Replace the API with the v2 adapter
