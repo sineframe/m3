@@ -1182,6 +1182,18 @@ Explicitly deferred:
 
 Work through this list in order. Each checkbox should be completed as a small reviewable change with its own tests. Do not begin a later milestone while an earlier milestone's gate is failing. Keep compatibility only within the new v0.2 interfaces as they are introduced; do not add v1 compatibility code to make intermediate steps easier.
 
+### Current status — 2026-08-25
+
+- Current package milestone: `0.2.0a2`.
+- Phases 0–12 are complete.
+- Phase 13 storage, lease, worker, cancellation, blob, clone, deletion, and guarded development-reset implementation is complete.
+- Latest full storage-enabled SDK suite: `746 passed` with 38 expected warnings from pinned MCP APIs deprecated in the 2026-07-28 protocol release.
+- Phase 13 remains open on three acceptance items:
+  1. Run one shared behavioral contract suite against the in-memory and SQLite stores.
+  2. Prove submit, claim, event streaming, cancellation, lease loss, stale-owner interruption, and recovery across separate OS processes.
+  3. Complete the persistence cleanup audit after Phase 14 removes `/api/v1` and its legacy table-purge path. The guarded `just dev-db-reset CONFIRM=reset` command is the only intended development-only reset surface.
+- Next execution order: finish the two Phase 13 test suites, complete the cleanup audit while replacing `/api/v1` in Phase 14, migrate Streamlit in Phase 15, and then run the `0.2.0a3` gate in Phase 16.
+
 ### Phase 0 — Preserve the baseline
 
 - [x] Read section 9 in full and treat it as the implementation contract for every phase.
@@ -1444,7 +1456,7 @@ MCP messages and explicitly report raw-wire capture as incomplete.
 - [ ] Add cross-process submit, claim, stream, cancel, and recovery tests.
 - [x] Add `just dev-db-reset CONFIRM=reset` with exact-path and sidecar safety checks.
 - [x] Test that fresh startup recreates the schema after the guarded reset.
-- [ ] Confirm no database reset CLI, migration framework, table purge, backup, or v1/v2 detection exists.
+- [ ] Confirm no production database reset CLI, migration framework, table purge, backup, or v1/v2 detection exists; the guarded development-only reset command is the explicit exception, and the legacy `/api/v1` purge path must be removed in Phase 14.
 
 ### Phase 14 — Replace the API with the v2 adapter
 
