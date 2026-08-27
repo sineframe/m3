@@ -37,6 +37,7 @@ from .native import (
     probe_help,
     read_bounded_line,
     write_config,
+    workspace_for_launch,
 )
 
 
@@ -107,6 +108,7 @@ class ClaudeCodeHarnessAdapter:
         try:
             environment = _isolated_environment(root, self.environment)
             config = write_config(root, launch)
+            workspace = workspace_for_launch(launch, root)
             harness = launch.spec.harness
             if harness is None:
                 raise HarnessStartupError("Claude Code harness is unavailable")
@@ -124,7 +126,7 @@ class ClaudeCodeHarnessAdapter:
                 "--model",
                 harness.model,
             ]
-            await owner.spawn(argv, environment)
+            await owner.spawn(argv, environment, cwd=workspace)
             output: asyncio.Queue[Mapping[str, Any] | None] = asyncio.Queue(maxsize=MAX_QUEUE_ITEMS)
             process = owner.process
             assert process is not None

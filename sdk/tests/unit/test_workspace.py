@@ -116,6 +116,36 @@ def test_diff_is_structured_deterministic_and_undeclared_files_are_not_artifacts
     manager.cleanup()
 
 
+@pytest.mark.parametrize(
+    ("artifact_policy", "outcome", "collects"),
+    [
+        (ArtifactPolicy.ALWAYS, ExecutionOutcome.COMPLETED, True),
+        (ArtifactPolicy.FAILED, ExecutionOutcome.COMPLETED, False),
+        (ArtifactPolicy.FAILED, ExecutionOutcome.FAILED, True),
+        (ArtifactPolicy.NEVER, ExecutionOutcome.FAILED, False),
+    ],
+)
+def test_artifact_policy_applies_to_success_and_failure(
+    tmp_path: Path,
+    artifact_policy: ArtifactPolicy,
+    outcome: ExecutionOutcome,
+    collects: bool,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    manager = _manager(
+        WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)),
+        tmp_path,
+        artifact_policy=artifact_policy,
+        declared_artifacts=("result.txt",),
+    )
+    root = manager.create()
+    (root / "result.txt").write_text("result")
+    capture = manager.capture(outcome)
+    assert bool(capture.artifacts) is collects
+    manager.cleanup()
+
+
 def test_artifact_symlink_escape_is_not_collected(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()

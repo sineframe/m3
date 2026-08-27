@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import codecs
 import ipaddress
+import json
 import os
 import re
 import socket
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -19,11 +20,15 @@ from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
 from mcp_pal.trace.capture import CaptureWriter, parse_json_payload
+from mcp_pal.trace.redaction import is_sensitive_key
+from mcp_pal.types import ToolPolicy
+from .tool_policy import ProxyToolPolicy
 
 HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
 }
+_ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 class UnsafeUpstreamError(ValueError):
@@ -35,6 +40,17 @@ def _expand_env(value: str) -> str:
     for key, env_value in os.environ.items():
         result = result.replace(f"${{{key}}}", env_value)
     return result
+
+
+def _expand_configured(value: str, secrets: set[str]) -> str:
+    """Expand configured references, failing closed when one is unavailable."""
+
+    for match in _ENV_REFERENCE.finditer(value):
+        resolved = os.environ.get(match.group(1))
+        if not resolved:
+            raise ValueError("MCP environment reference unavailable")
+        secrets.add(resolved)
+    return _expand_env(value)
 
 
 def validate_public_upstream(url: str) -> None:
@@ -61,14 +77,39 @@ class McpHttpProxy:
         capture_path: str,
         baseline_ns: int,
         allow_private: bool = False,
+        secrets: set[str] | None = None,
+        tool_policy: ToolPolicy | None = None,
+        server_alias: str = "server",
+        known_servers: tuple[str, ...] = (),
+        known_tools: tuple[str, ...] = (),
+        known_tools_by_server: dict[str, tuple[str, ...]] | None = None,
     ):
-        self.upstream_url = _expand_env(upstream_url)
-        self.configured_headers = {key: _expand_env(value) for key, value in (configured_headers or {}).items()}
         self.transport = transport
-        self.writer = CaptureWriter(capture_path, baseline_ns)
+        writer_secrets = set(secrets or ())
+        self.upstream_url = _expand_configured(upstream_url, writer_secrets)
+        self.configured_headers = {
+            key: _expand_configured(value, writer_secrets)
+            for key, value in (configured_headers or {}).items()
+        }
+        writer_secrets.update(
+            value
+            for key, value in self.configured_headers.items()
+            if is_sensitive_key(key) and value
+        )
+        writer_config = writer_secrets if secrets is not None or writer_secrets else None
+        self.writer = CaptureWriter(capture_path, baseline_ns, secrets=writer_config)
+        if secrets is not None:
+            secrets.update(writer_secrets)
         self.allow_private = allow_private
+        self._tool_policy = ProxyToolPolicy(
+            tool_policy,
+            server=server_alias,
+            known_servers=known_servers,
+            known_tools=known_tools,
+            known_tools_by_server=known_tools_by_server,
+        ) if tool_policy is not None else None
         self.server: uvicorn.Server | None = None
-        self.task: asyncio.Task | None = None
+        self.task: asyncio.Task[Any] | None = None
         self.socket: socket.socket | None = None
         self.client: httpx.AsyncClient | None = None
         upstream = urlsplit(self.upstream_url)
@@ -136,12 +177,87 @@ class McpHttpProxy:
         # Capture every MCP exchange, including GET-based SSE handshakes.
         # Header values are intentionally not persisted; CaptureWriter redacts
         # the URL query and credential-shaped metadata fields.
+        payload = parse_json_payload(body) if body else None
+        if self._tool_policy is not None:
+            if isinstance(payload, list):
+                for item in payload:
+                    self._tool_policy.observe_request(item)
+            else:
+                self._tool_policy.observe_request(payload)
+        request_payload = payload if isinstance(payload, dict) else {}
+        denied: tuple[bool, str] | None = None
+        denied_batch: list[dict[str, Any]] | None = None
+        if isinstance(payload, dict) and payload.get("method") == "tools/call":
+            params = payload.get("params")
+            name = params.get("name") if isinstance(params, dict) else None
+            if self._tool_policy is not None:
+                allowed, reason = self._tool_policy.decide(name)
+                if not allowed:
+                    denied = (allowed, reason)
+        elif isinstance(payload, list) and self._tool_policy is not None:
+            denied_batch = []
+            for item in payload:
+                if not isinstance(item, dict) or item.get("method") != "tools/call":
+                    continue
+                params = item.get("params")
+                name = params.get("name") if isinstance(params, dict) else None
+                allowed, reason = self._tool_policy.decide(name)
+                if not allowed:
+                    denied_batch.append({"id": item.get("id"), "reason": reason})
+            if not denied_batch:
+                denied_batch = None
+        capture_payload = payload
+        if denied_batch is not None and isinstance(payload, list):
+            capture_payload = [
+                {
+                    "jsonrpc": item.get("jsonrpc", "2.0"),
+                    "id": item.get("id"),
+                    "method": "tools/call",
+                    "params": {"name": item.get("params", {}).get("name") if isinstance(item.get("params"), dict) else None},
+                }
+                if isinstance(item, dict) and item.get("method") == "tools/call" else {"policy_batch_item": "redacted"}
+                for item in payload
+            ]
+        if denied is not None:
+            # Policy evidence must never retain caller arguments.  The
+            # JSON-RPC id is kept so the denial can be correlated safely.
+            capture_payload = {
+                "jsonrpc": request_payload.get("jsonrpc", "2.0"),
+                "id": request_payload.get("id"),
+                "method": "tools/call",
+                "params": {"name": request_payload.get("params", {}).get("name") if isinstance(request_payload.get("params"), dict) else None},
+            }
         self.writer.write(
             transport=self.transport,
             direction="client_to_server",
-            payload=parse_json_payload(body) if body else None,
-            metadata={"method": request.method, "url": target, "content_type": request.headers.get("content-type")},
+            payload=capture_payload,
+            kind="policy_denied" if denied is not None or denied_batch is not None else "jsonrpc",
+            metadata={"method": request.method, "url": target, "content_type": request.headers.get("content-type"), **({"policy_denied": True} if denied is not None or denied_batch is not None else {}), **({"policy_reason": denied[1]} if denied is not None else {})},
         )
+        if denied is not None:
+            if "id" not in request_payload:
+                return Response(b"", status_code=202)
+            response_payload = {
+                "jsonrpc": request_payload.get("jsonrpc", "2.0"),
+                "id": request_payload.get("id"),
+                "error": {"code": -32001, "message": "MCP tool call denied by policy"},
+            }
+            self.writer.write(
+                transport=self.transport,
+                direction="server_to_client",
+                payload=response_payload,
+                kind="policy_denied",
+            )
+            return Response(json.dumps(response_payload).encode("utf-8"), status_code=200, media_type="application/json")
+        if denied_batch is not None:
+            batch_response: Any = [
+                {"jsonrpc": "2.0", "id": item.get("id"), "error": {"code": -32001, "message": "MCP batch denied by policy"}}
+                for item in (payload if isinstance(payload, list) else ()) if isinstance(item, dict) and "id" in item
+            ]
+            if not batch_response:
+                return Response(b"", status_code=202)
+            self.writer.write(transport=self.transport, direction="server_to_client", payload=batch_response, kind="policy_denied")
+            return Response(json.dumps(batch_response).encode("utf-8"), status_code=200, media_type="application/json")
         outbound = self.client.build_request(request.method, target, headers=self._request_headers(request), content=body)
         try:
             response = await self.client.send(outbound, stream=True)
@@ -160,10 +276,13 @@ class McpHttpProxy:
         data = await response.aread()
         await response.aclose()
         if data:
+            response_payload = parse_json_payload(data)
+            if self._tool_policy is not None:
+                self._tool_policy.observe(response_payload)
             self.writer.write(
                 transport=self.transport,
                 direction="server_to_client",
-                payload=parse_json_payload(data),
+                payload=response_payload,
                 metadata={"status_code": response.status_code, "content_type": content_type},
             )
         return Response(data, status_code=response.status_code, headers=self._response_headers(response), media_type=None)
@@ -195,6 +314,8 @@ class McpHttpProxy:
                 output.append(line)
                 continue
             data = line[5:].lstrip()
+            if self._tool_policy is not None:
+                self._tool_policy.observe(parse_json_payload(data))
             self.writer.write(transport=self.transport, direction="server_to_client", payload=parse_json_payload(data), kind="sse_data")
             if self.socket and (data.startswith(self.origin) or data.startswith("/")):
                 port = self.socket.getsockname()[1]

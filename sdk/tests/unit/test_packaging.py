@@ -15,12 +15,6 @@ def test_runtime_version_comes_from_distribution_metadata() -> None:
     assert mcp_pal.__version__ == importlib.metadata.version("mcp-pal")
 
 
-def test_fastapi_metadata_uses_distribution_version() -> None:
-    from mcp_pal.api import create_app
-
-    assert create_app().openapi()["info"]["version"] == importlib.metadata.version("mcp-pal")
-
-
 def test_runtime_schema_is_packaged() -> None:
     schemas = Path(mcp_pal.__file__).parent / "schemas"
     assert (schemas / "mcp-pal.harness.v1.schema.json").is_file()
@@ -29,7 +23,7 @@ def test_runtime_schema_is_packaged() -> None:
 
 def test_import_has_no_filesystem_side_effects(tmp_path: Path) -> None:
     environment = os.environ.copy()
-    source_root = Path(__file__).parents[2] / "src"
+    source_root = Path(__file__).parents[3] / "sdk" / "src"
     environment["PYTHONPATH"] = str(source_root)
 
     result = subprocess.run(

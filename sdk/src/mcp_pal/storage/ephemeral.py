@@ -20,7 +20,8 @@ from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
-from typing import Protocol, TypeAlias
+from typing import Literal, Protocol, TypeAlias, cast
+from pydantic import TypeAdapter, ValidationError
 
 from ..trace.redaction import RedactionConfig, redact_artifact_bytes, redact_for_persistence, redact_model_json
 from ..types import (
@@ -28,10 +29,16 @@ from ..types import (
     ArtifactRef,
     CanonicalEvent,
     EventKind,
+    DirectOperationResult,
+    ErrorCode,
+    ErrorInfo,
     ExecutionId,
+    ExecutionEvidence,
     ExecutionOutcome,
+    ExecutionPage,
     ExecutionSnapshot,
     LifecycleState,
+    PersistedExecutionReport,
 )
 
 
@@ -88,6 +95,24 @@ class ExecutionStore(Protocol):
 
     def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionSnapshot | None: ...
 
+    def list_executions(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        lifecycle: LifecycleState | str | None = None,
+        outcome: ExecutionOutcome | str | None = None,
+    ) -> ExecutionPage: ...
+
+    def get_report(
+        self,
+        execution_id: ExecutionId | str,
+        *,
+        after_sequence: int = -1,
+        event_limit: int | None = None,
+        artifact_limit: int | None = None,
+    ) -> PersistedExecutionReport | None: ...
+
     def save_snapshot(self, snapshot: ExecutionSnapshot) -> None: ...
 
     def append_events(self, events: Sequence[CanonicalEvent]) -> None: ...
@@ -128,6 +153,47 @@ class ArtifactStore(Protocol):
 
 def _execution_key(value: ExecutionId | str) -> str:
     return str(value.root if isinstance(value, ExecutionId) else value)
+
+
+_DIRECT_RESULT_ADAPTER: TypeAdapter[DirectOperationResult] = TypeAdapter(DirectOperationResult)
+_ERROR_INFO_ADAPTER: TypeAdapter[ErrorInfo] = TypeAdapter(ErrorInfo)
+
+
+def _report_fields(events: Sequence[CanonicalEvent]) -> tuple[DirectOperationResult | None, ErrorInfo | None, ExecutionEvidence | None]:
+    """Reconstruct only typed values explicitly committed in terminal events."""
+    terminal = next((event for event in reversed(events) if event.kind is EventKind.EXECUTION_FINISHED), None)
+    if terminal is None:
+        return None, None, None
+    payload = terminal.payload
+    direct_result = None
+    raw_direct = payload.get("direct_result")
+    if isinstance(raw_direct, Mapping):
+        try:
+            direct_result = _DIRECT_RESULT_ADAPTER.validate_python(raw_direct)
+        except ValidationError:
+            direct_result = None
+    error = None
+    raw_error = payload.get("error")
+    if isinstance(raw_error, Mapping):
+        try:
+            error = _ERROR_INFO_ADAPTER.validate_python(raw_error)
+        except ValidationError:
+            error = None
+    elif payload.get("outcome") == ExecutionOutcome.CANCELLED.value:
+        error = ErrorInfo(code=ErrorCode.CANCELLED, message="execution cancelled")
+    limitations = payload.get("limitations")
+    completeness = payload.get("completeness")
+    evidence = None
+    if isinstance(completeness, str) and isinstance(limitations, (list, tuple)):
+        try:
+            evidence = ExecutionEvidence(
+                completeness=cast(Literal["complete", "partial"], completeness),
+                limitations=tuple(item for item in limitations if isinstance(item, str)),
+                reason=payload.get("reason") if isinstance(payload.get("reason"), str) else None,
+            )
+        except ValueError:
+            evidence = None
+    return direct_result, error, evidence
 
 
 def _artifact_key(value: ArtifactId | str) -> str:
@@ -206,6 +272,50 @@ class InMemoryExecutionStore:
         with self._lock:
             snapshot = self._snapshots.get(key)
             return snapshot.model_copy() if snapshot is not None else None
+
+    def list_executions(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        lifecycle: LifecycleState | str | None = None,
+        outcome: ExecutionOutcome | str | None = None,
+    ) -> ExecutionPage:
+        page = ExecutionPage(limit=limit, offset=offset)
+        lifecycle_value = LifecycleState(lifecycle) if lifecycle is not None else None
+        outcome_value = ExecutionOutcome(outcome) if outcome is not None else None
+        with self._lock:
+            snapshots = list(self._snapshots.values())
+        filtered = [
+            snapshot for snapshot in snapshots
+            if (lifecycle_value is None or snapshot.lifecycle is lifecycle_value)
+            and (outcome_value is None or snapshot.outcome is outcome_value)
+        ]
+        filtered.sort(key=lambda item: (item.created_at, str(item.execution_id.root)), reverse=True)
+        return page.model_copy(update={"items": tuple(item.model_copy() for item in filtered[offset : offset + limit]), "total": len(filtered)})
+
+    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> PersistedExecutionReport | None:
+        snapshot = self.get_snapshot(execution_id)
+        if snapshot is None:
+            return None
+        if after_sequence < -1 or (event_limit is not None and event_limit < 1) or (artifact_limit is not None and artifact_limit < 1):
+            raise ValueError("invalid report event cursor or limit")
+        all_events = self.events(execution_id)
+        events = tuple(event for event in all_events if event.sequence > after_sequence)
+        selected = events if event_limit is None else events[:event_limit]
+        direct_result, error, evidence = _report_fields(all_events)
+        return PersistedExecutionReport(
+            snapshot=snapshot,
+            events=selected,
+            direct_result=direct_result,
+            error=error,
+            evidence=evidence,
+            event_count=len(events),
+            events_truncated=event_limit is not None and len(events) > event_limit,
+            next_after_sequence=selected[-1].sequence if selected else after_sequence,
+            artifact_count=0,
+            artifacts_truncated=False,
+        )
 
     def save_snapshot(self, snapshot: ExecutionSnapshot) -> None:
         key = _execution_key(snapshot.execution_id)

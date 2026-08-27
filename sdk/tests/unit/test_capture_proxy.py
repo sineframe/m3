@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -100,7 +101,10 @@ async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(
     instrumented = (await manager.instrument((config,)))[0]
     env_file = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
     assert env_file.stat().st_mode & 0o777 == 0o600
-    assert env_file.read_text(encoding="utf-8") == '{"TOKEN":"capture-secret-value"}'
+    handoff = json.loads(env_file.read_text(encoding="utf-8"))
+    assert handoff["environment"]["TOKEN"] == "capture-secret-value"
+    assert handoff["environment"]["PATH"]
+    assert handoff["canaries"] == ["capture-secret-value"]
     writer = manager.writer_for("connection-secret")
     writer.write(transport="stdio", direction="server_to_client", payload={"result": "capture-secret-value"})
     assert "capture-secret-value" not in str(manager.snapshot("connection-secret").events)

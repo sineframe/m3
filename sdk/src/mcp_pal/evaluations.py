@@ -9,6 +9,7 @@ from threading import RLock as _RLock
 from typing import Any as _Any, Protocol as _Protocol, TypeAlias as _TypeAlias
 from uuid import uuid4 as _uuid4
 
+from .errors import ModelValidationError as _ModelValidationError
 from .errors import UnsupportedFeature as _UnsupportedFeature
 from .trace.redaction import RedactionConfig as _RedactionConfig, redact_for_api as _redact_for_api
 from .types import (
@@ -138,21 +139,50 @@ def _raise_for_required(result: _EvaluationResult) -> None:
         raise RequiredEvaluationError(result)
 
 
-def _infer_execution_id(subject: _Any, trace: _TraceResult | None, artifacts: _Sequence[_ArtifactRef]) -> _ExecutionId | None:
-    try:
-        if trace is not None:
-            return trace.execution_id
-        subject_id = getattr(subject, "execution_id", None)
-    except BaseException:
+def _consistent_execution_id(
+    subject: _Any,
+    trace: _TraceResult | None,
+    artifacts: _Sequence[_ArtifactRef],
+    explicit: _ExecutionId | str | None,
+) -> _ExecutionId | None:
+    """Resolve execution identity and reject conflicting evidence safely."""
+    def coerce(value: _Any) -> _ExecutionId | None:
+        if isinstance(value, _ExecutionId):
+            return value
+        if isinstance(value, str):
+            return _ExecutionId(value)
         return None
-    if isinstance(subject_id, _ExecutionId):
-        return subject_id
-    if artifacts:
-        try:
-            return artifacts[0].execution_id
-        except BaseException:
-            return None
-    return None
+
+    try:
+        candidates: list[_ExecutionId] = []
+        explicit_id = coerce(explicit)
+        if explicit_id is not None:
+            candidates.append(explicit_id)
+        if trace is not None:
+            candidates.append(trace.execution_id)
+        snapshot = getattr(subject, "snapshot", None)
+        snapshot_id = coerce(getattr(snapshot, "execution_id", None))
+        if snapshot_id is not None:
+            candidates.append(snapshot_id)
+        subject_id = coerce(getattr(subject, "execution_id", None))
+        if subject_id is not None:
+            candidates.append(subject_id)
+        for artifact in artifacts:
+            artifact_id = coerce(artifact.execution_id)
+            if artifact_id is not None:
+                candidates.append(artifact_id)
+    except BaseException:
+        raise _ModelValidationError(
+            "evaluation execution identity is invalid",
+            details={"operation": "evaluation"},
+        ) from None
+    unique = {item.root for item in candidates}
+    if len(unique) > 1:
+        raise _ModelValidationError(
+            "evaluation execution IDs do not match",
+            details={"operation": "evaluation"},
+        )
+    return candidates[0] if candidates else None
 
 
 def _subject_context(
@@ -165,13 +195,14 @@ def _subject_context(
     config: _RedactionConfig,
     execution_id: _ExecutionId | str | None,
 ) -> _EvaluationContext:
+    resolved_execution_id = _consistent_execution_id(subject, trace, artifacts, execution_id)
     # EvaluationContext is a frozen model and recursively freezes its mapping
     # inputs.  Redacting first also prevents evaluator inputs from retaining a
     # secret-bearing representation supplied by a hostile subject model.
     projected = _redact_for_api(
         {
             "subject": subject,
-            "execution_id": execution_id,
+            "execution_id": resolved_execution_id,
             "goal": goal,
             "trace": trace,
             "artifacts": tuple(artifacts),
@@ -232,7 +263,7 @@ class EvaluationRunner:
             artifacts=artifacts,
             metadata=metadata or {},
             config=self.redaction_config,
-            execution_id=execution_id or _infer_execution_id(subject, trace, artifacts),
+            execution_id=execution_id,
         )
         identifier = evaluation_id if isinstance(evaluation_id, _EvaluationId) else _EvaluationId(evaluation_id or f"evaluation-{_uuid4().hex}")
         message: str | None = None
@@ -298,7 +329,7 @@ class EvaluationRunner:
             artifacts=artifacts,
             metadata=metadata or {},
             config=self.redaction_config,
-            execution_id=execution_id or _infer_execution_id(subject, trace, artifacts),
+            execution_id=execution_id,
         )
         identifier = evaluation_id if isinstance(evaluation_id, _EvaluationId) else _EvaluationId(evaluation_id or f"evaluation-{_uuid4().hex}")
         message: str | None = None

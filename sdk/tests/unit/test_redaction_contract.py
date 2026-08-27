@@ -279,3 +279,25 @@ def test_redaction_error_path_is_sanitized_for_hostile_keys() -> None:
     hostile_reason = RedactionError("$.safe", "reason-secret")
     assert "reason-secret" not in str(hostile_reason)
     assert hostile_reason.reason == "value could not be safely redacted"
+
+
+def test_exact_canaries_are_redacted_but_transformed_values_are_outside_contract() -> None:
+    config = RedactionConfig(
+        secrets=frozenset({"literal-canary", "reference-canary"}),
+        include_environment=False,
+    )
+    projected, _ = redact(
+        {
+            "one_field": "literal-canary",
+            "other_field": "prefix-reference-canary-suffix",
+            "base64": "bGl0ZXJhbC1jYW5hcnk=",
+            "hash": "f2f4d4f2",
+        },
+        config=config,
+    )
+    assert projected["one_field"] == REDACTED
+    assert projected["other_field"] == f"prefix-{REDACTED}-suffix"
+    # The contract is exact substring matching; it does not claim reversal
+    # of base64, hashes, encryption, or other transformations.
+    assert projected["base64"] == "bGl0ZXJhbC1jYW5hcnk="
+    assert projected["hash"] == "f2f4d4f2"

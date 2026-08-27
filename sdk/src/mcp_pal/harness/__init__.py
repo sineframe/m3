@@ -1,8 +1,6 @@
 """Harness interfaces and supported CLI implementations."""
 from .base import AcpRunSpec, HarnessResult, HarnessRunner, RunSpec
-from .manifest import ManifestValidationError, export_manifest, load_manifest, validate_manifest
-from .claude_cli import ClaudeCodeRunner, READ_ONLY_TOOLS
-from .opencode_cli import OpenCodeRunner
+from .manifest import HarnessManifest, ManifestValidationError, export_manifest, load_manifest, validate_manifest
 from .claude import ClaudeCodeHarnessAdapter, ClaudeCodeSession
 from .opencode import OpenCodeHarnessAdapter, OpenCodeSession
 from .contracts import (
@@ -27,9 +25,9 @@ from .fakes import DeterministicACPAdapter, FakeClaudeCodeAdapter, FakeOpenCodeA
 from .acp import ACPAdapter, ACPAgentAdapter, AcpHarnessAdapter
 
 __all__ = [
-    "AcpRunSpec", "ClaudeCodeRunner", "OpenCodeRunner", "HarnessResult", "HarnessRunner",
+    "AcpRunSpec", "HarnessResult", "HarnessRunner",
     "ClaudeCodeHarnessAdapter", "ClaudeCodeSession", "OpenCodeHarnessAdapter", "OpenCodeSession",
-    "ManifestValidationError", "READ_ONLY_TOOLS", "RunSpec", "export_manifest", "load_manifest",
+    "HarnessManifest", "ManifestValidationError", "RunSpec", "export_manifest", "load_manifest",
     "validate_manifest", "DeterministicHarnessAdapter", "HarnessAdapter", "HarnessAdapterContract", "HarnessAdapterCapabilities",
     "HarnessAdapterError", "HarnessCleanupError", "HarnessLaunch", "HarnessSession",
     "HarnessAdapterFactory", "HarnessAdapterRegistry",

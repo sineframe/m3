@@ -6,7 +6,7 @@ import pytest
 
 from mcp_pal.agent_session import AdapterTurn, AsyncAgentSession
 from mcp_pal.errors import UnsupportedFeature
-from mcp_pal.policy import ToolPolicyEvidence
+from mcp_pal.policy import ToolDescriptor, ToolPolicyEvidence
 from mcp_pal.server_group import ServerGroupManager
 from mcp_pal.types import (
     ACPAgent,
@@ -101,6 +101,41 @@ async def test_allowed_reported_qualified_tool_preserves_turn_and_health() -> No
     assert result.error is None
     assert result.response is not None
     assert session.result.activity_health is ActivityHealth.ALL_SUCCEEDED
+
+
+def test_advisory_identity_requires_a_canonical_call_from_the_same_turn() -> None:
+    adapter = ReportingAdapter({"kind": "tool_call"})
+    session = AsyncAgentSession(
+        _spec(RestrictiveToolPolicy(allowed_tools=("fixture:allowed",))),
+        adapter,
+    )
+    session._tool_policy_evidence = adapter.last_policy_evidence
+    raw = AdapterTurn(
+        response=TurnResponse(content=(TextContent(text="done"),)),
+        tool_calls=({"kind": "tool_call"},),
+    )
+    canonical = (ToolDescriptor(server="fixture", name="allowed"),)
+    assert session._evaluate_reported_tool_calls(raw, canonical_tool_calls=canonical) == ()
+    violations = session._evaluate_reported_tool_calls(raw, canonical_tool_calls=())
+    assert violations[0]["reason"] == "tool_identity_unavailable"
+
+
+def test_two_anonymous_updates_correlate_to_two_same_turn_canonical_calls() -> None:
+    adapter = ReportingAdapter({"kind": "tool_call"})
+    session = AsyncAgentSession(
+        _spec(RestrictiveToolPolicy(allowed_tools=("fixture:first", "fixture:second"))),
+        adapter,
+    )
+    session._tool_policy_evidence = adapter.last_policy_evidence
+    raw = AdapterTurn(
+        response=TurnResponse(content=(TextContent(text="done"),)),
+        tool_calls=({"kind": "tool_call"}, {"kind": "tool_call"}),
+    )
+    canonical = (
+        ToolDescriptor(server="fixture", name="first"),
+        ToolDescriptor(server="fixture", name="second"),
+    )
+    assert session._evaluate_reported_tool_calls(raw, canonical_tool_calls=canonical) == ()
 
 
 @pytest.mark.asyncio

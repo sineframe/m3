@@ -45,6 +45,29 @@ def test_secret_references_resolve_only_into_headers_and_never_evidence(monkeypa
     assert "transport-secret" not in repr(reference)
 
 
+def test_header_secret_observer_classifies_api_keys_but_not_ordinary_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolved = "resolved-header-reference"
+    monkeypatch.setenv("MCP_HEADER_REFERENCE", resolved)
+    observed: list[str] = []
+    headers = resolve_headers(
+        {
+            "X-API-Key": "literal-x-api-key",
+            "ANTHROPIC_API_KEY": "literal-anthropic-api-key",
+            "PATH": "ordinary-path",
+            "X-Reference": SecretReference(source="environment", name="MCP_HEADER_REFERENCE"),
+        },
+        secret_observer=observed.append,
+    )
+    assert headers["PATH"] == "ordinary-path"
+    assert observed == [
+        "literal-x-api-key",
+        "literal-anthropic-api-key",
+        resolved,
+    ]
+
+
 def test_private_endpoint_requires_explicit_trust_and_agent_exposure_is_stricter() -> None:
     untrusted = StreamableHTTPServer(name="local", url="http://127.0.0.1:8765/mcp")
     with pytest.raises(EndpointTrustError):

@@ -8,10 +8,11 @@ owns the server group for the lifetime of the execution.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 import threading
 from typing import Any, Protocol
 from uuid import uuid4
+from pydantic import TypeAdapter, ValidationError
 
 from .direct_trace import DirectTraceBridge
 from .errors import (
@@ -26,14 +27,18 @@ from .errors import (
 from .events import EventFactory, PerExecutionSequenceAllocator
 from .execution_trace import ExecutionTraceRecorder
 from .harness.contracts import HarnessStartupError
-from .storage import ExecutionStore, InMemoryExecutionStore
+from .storage import ArtifactStore, ExecutionStore, InMemoryExecutionStore
 from .trace.redaction import RedactionConfig
+from .transport.local import LocalTransportError
 from .workspace import WorkspaceError, WorkspaceManager
 from .types import (
     ActivityHealth,
     AgentExecutionSpec,
+    CallToolOperation,
+    CallToolOperationResult,
     CanonicalEvent,
     DirectExecutionSpec,
+    DirectOperationResult,
     ErrorCode,
     ErrorInfo,
     EventOrigin,
@@ -49,10 +54,53 @@ from .types import (
     RawEvidenceRef,
     RequestCorrelation,
     SSEServer,
+    ServerBinding,
     StreamableHTTPServer,
     TraceResult,
     ExecutionSpec,
+    GetPromptOperation,
+    GetPromptOperationResult,
+    ListPromptsOperation,
+    ListPromptsOperationResult,
+    ListResourcesOperation,
+    ListResourcesOperationResult,
+    ListResourceTemplatesOperation,
+    ListResourceTemplatesOperationResult,
+    ListToolsOperation,
+    ListToolsOperationResult,
+    PingOperation,
+    PingOperationResult,
+    ReadResourceOperation,
+    ReadResourceOperationResult,
 )
+
+_DIRECT_RESULT_ADAPTER: TypeAdapter[DirectOperationResult] = TypeAdapter(DirectOperationResult)
+
+
+def _direct_result_payload(result: DirectOperationResult | None) -> Mapping[str, Any] | None:
+    if result is None:
+        return None
+    payload = result.model_dump(mode="json")
+    payload.pop("raw", None)
+    return payload
+
+
+def _direct_result_from_trace(trace: TraceResult | None) -> DirectOperationResult | None:
+    return _direct_result_from_events(trace.events if trace is not None else ())
+
+
+def _direct_result_from_events(events: Sequence[CanonicalEvent]) -> DirectOperationResult | None:
+    terminal = next(
+        (event for event in reversed(events) if event.kind is EventKind.EXECUTION_FINISHED),
+        None,
+    )
+    payload = terminal.payload.get("direct_result") if terminal is not None else None
+    if not isinstance(payload, Mapping):
+        return None
+    try:
+        return _DIRECT_RESULT_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return None
 
 
 class DirectExecutionKit(Protocol):
@@ -83,6 +131,8 @@ def _error_info(error: BaseException) -> ErrorInfo:
     if isinstance(error, ProtocolError):
         return ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="MCP protocol operation failed", retryable=False)
     if isinstance(error, TransportError):
+        return ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="MCP transport operation failed", retryable=True)
+    if isinstance(error, LocalTransportError):
         return ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="MCP transport operation failed", retryable=True)
     if isinstance(error, MCPError):
         return ErrorInfo(code=ErrorCode.INVALID_ARGUMENT, message="execution failed", retryable=False)
@@ -160,6 +210,25 @@ class AsyncExecutionHandle:
         self._spec = spec
         self._execution_id = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(str(execution_id)) if execution_id is not None else ExecutionId(f"execution-{uuid4().hex}")
         self._store: ExecutionStore = store or InMemoryExecutionStore()
+        # Persistent stores expose their artifact store alongside execution
+        # metadata.  Keep this handle on the submitted execution so every
+        # workspace owner publishes bytes into the same durable namespace.
+        # In-memory stores intentionally retain the existing ephemeral
+        # fallback because they do not own a durable artifact backend.
+        candidate_artifacts = getattr(self._store, "artifacts", None)
+        if candidate_artifacts is not None:
+            required_methods = ("put", "get", "get_ref", "iter_refs", "delete", "cleanup")
+            if not all(callable(getattr(candidate_artifacts, name, None)) for name in required_methods):
+                raise ModelValidationError(
+                    "execution store exposes an incomplete artifact store",
+                    details={"operation": "execution.artifacts"},
+                )
+        if persistent and candidate_artifacts is None:
+            raise ModelValidationError(
+                "persistent execution store must expose artifacts",
+                details={"operation": "execution.artifacts"},
+            )
+        self._artifact_store: ArtifactStore | None = candidate_artifacts
         self._persistent = persistent
         self._recorder = ExecutionTraceRecorder(
             self._store,
@@ -172,6 +241,9 @@ class AsyncExecutionHandle:
         self._workspace: WorkspaceManager | None = None
         self._workspace_artifacts: tuple[Any, ...] = ()
         self._workspace_limitations: tuple[str, ...] = ()
+        self._direct_result: DirectOperationResult | None = None
+        self._agent_outcome: ExecutionOutcome | None = None
+        self._agent_error: ErrorInfo | None = None
         self._result: ExecutionResult | None = None
         self._state_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
@@ -248,15 +320,30 @@ class AsyncExecutionHandle:
         snapshot = self._store.get_snapshot(self._execution_id)
         if snapshot is None or snapshot.lifecycle is not LifecycleState.FINISHED:
             return
+        events = tuple(self._store.iter_events(self._execution_id))
         outcome = snapshot.outcome or ExecutionOutcome.FAILED
         try:
             trace = self._recorder.finalize(outcome)
         except Exception:
             trace = None
+        self._direct_result = (
+            _direct_result_from_trace(trace)
+            if trace is not None
+            else _direct_result_from_events(events)
+        )
+        if self._artifact_store is not None:
+            # Artifact refs are part of the durable terminal result.  Do not
+            # replace a storage failure with an empty tuple: that would make
+            # a successful execution appear to have no artifacts and hide
+            # corruption/unavailability from the caller.
+            self._workspace_artifacts = tuple(
+                self._artifact_store.iter_refs(self._execution_id)
+            )
         self._result = ExecutionResult(
             snapshot=snapshot,
             trace=trace,
             artifacts=self._workspace_artifacts,
+            direct_result=self._direct_result,
             activity_health=_activity_health(trace),
             error=_error_info(OperationCancelled("execution cancelled")) if outcome is ExecutionOutcome.CANCELLED else None,
         )
@@ -334,6 +421,7 @@ class AsyncExecutionHandle:
                     self._execution_id,
                     artifact_policy=self._spec.artifact_policy,
                     declared_artifacts=self._spec.declared_artifacts,
+                    artifact_store=self._artifact_store,
                 )
                 await asyncio.to_thread(self._workspace.create)
             self._recorder.emit(
@@ -341,7 +429,7 @@ class AsyncExecutionHandle:
                 payload={"lifecycle": LifecycleState.STARTING.value},
             )
             if isinstance(self._spec, DirectExecutionSpec):
-                await self._run_direct(self._spec)
+                self._direct_result = await self._run_direct(self._spec)
             else:
                 await self._run_agent(self._spec)
         except asyncio.CancelledError:
@@ -349,7 +437,11 @@ class AsyncExecutionHandle:
         except BaseException as exc:
             failure = exc
         finally:
-            outcome = _outcome(failure)
+            outcome = (
+                ExecutionOutcome.CANCELLED
+                if isinstance(failure, (OperationCancelled, asyncio.CancelledError))
+                else self._agent_outcome or _outcome(failure)
+            )
             workspace_cleanup_failed = False
             if self._workspace is not None:
                 try:
@@ -384,7 +476,11 @@ class AsyncExecutionHandle:
                     trace = None
             snapshot = self._store.get_snapshot(self._execution_id)
             if snapshot is not None and snapshot.lifecycle is LifecycleState.FINISHED:
-                result_error = _error_info(failure) if failure is not None else None
+                result_error = (
+                    _error_info(failure)
+                    if isinstance(failure, (OperationCancelled, asyncio.CancelledError))
+                    else self._agent_error or (_error_info(failure) if failure is not None else None)
+                )
                 if workspace_cleanup_failed and result_error is None:
                     result_error = ErrorInfo(
                         code=ErrorCode.CLEANUP_FAILED,
@@ -395,16 +491,98 @@ class AsyncExecutionHandle:
                     snapshot=snapshot,
                     trace=trace,
                     artifacts=self._workspace_artifacts,
+                    direct_result=self._direct_result,
                     activity_health=_activity_health(trace),
                     error=result_error,
                 )
             self._terminal.set()
             self._controller._finished(self)
 
-    async def _run_direct(self, spec: DirectExecutionSpec) -> None:
-        binding = next((item for item in spec.servers if item.server is not None), None)
-        if binding is None or binding.server is None:
+    @staticmethod
+    def _direct_binding_selector(binding: ServerBinding) -> str | None:
+        if binding.alias is not None:
+            return binding.alias
+        if binding.server is not None:
+            return binding.server.name
+        if binding.profile is not None:
+            return binding.profile.profile_id.root
+        return None
+
+    @classmethod
+    def _select_direct_binding(cls, spec: DirectExecutionSpec) -> tuple[ServerBinding, str]:
+        selector = spec.operation.server
+        binding: ServerBinding | None = None
+        if selector is None:
+            # The model guarantees this is the only binding for a selector-less
+            # direct operation. Keep the fallback explicit for runtime callers
+            # that may construct a model through a custom validator path.
+            if len(spec.servers) != 1:
+                raise ModelValidationError(
+                    "direct operation server selector is required",
+                    details={"operation": "execution.direct"},
+                )
+            binding = spec.servers[0]
+        else:
+            candidate = next(
+                (
+                    item
+                    for item in spec.servers
+                    if cls._direct_binding_selector(item) == selector
+                ),
+                None,
+            )
+            if candidate is None:
+                raise ModelValidationError(
+                    "direct operation server selector does not match a configured server",
+                    details={"operation": "execution.direct"},
+                )
+            binding = candidate
+        if binding is None:
+            raise ModelValidationError(
+                "direct execution server binding is unavailable",
+                details={"operation": "execution.direct"},
+            )
+        if binding.server is None:
             raise UnsupportedFeature("execution server profile resolution is not available")
+        effective_selector = cls._direct_binding_selector(binding)
+        if effective_selector is None:
+            raise ModelValidationError(
+                "direct execution server binding has no selector",
+                details={"operation": "execution.direct"},
+            )
+        return binding, effective_selector
+
+    @staticmethod
+    async def _direct_pages(
+        client: Any,
+        method_name: str,
+        *,
+        cursor: str | None,
+        all_pages: bool,
+    ) -> tuple[tuple[Any, ...], Any]:
+        """Collect direct list pages while retaining official responses."""
+
+        pages: list[Any] = []
+        seen: set[str] = {cursor} if cursor is not None else set()
+        next_cursor = cursor
+        while True:
+            page = await getattr(client, method_name)(cursor=next_cursor)
+            pages.append(page)
+            if not all_pages or page.next_cursor is None:
+                break
+            if page.next_cursor in seen:
+                raise ProtocolError(
+                    "MCP pagination cursor repeated",
+                    details={"phase": "pagination", "retryable": False},
+                )
+            seen.add(page.next_cursor)
+            next_cursor = page.next_cursor
+        raw_values = tuple(page.raw for page in pages)
+        raw = raw_values[0] if len(raw_values) == 1 else raw_values
+        return tuple(pages), raw
+
+    async def _run_direct(self, spec: DirectExecutionSpec) -> DirectOperationResult:
+        binding, effective_selector = self._select_direct_binding(spec)
         if isinstance(binding.server, (StreamableHTTPServer, SSEServer)):
             self._workspace_limitations = ("remote_transport_workspace_not_applicable",)
         events = self._recorder.events()
@@ -418,12 +596,13 @@ class AsyncExecutionHandle:
             execution_id=self._execution_id,
             event_factory=factory,
             recorder=self._recorder,
-            server_binding=binding.alias or type(binding.server).__name__,
+            server_binding=effective_selector,
             redaction_config=self._controller.redaction_config,
         )
         options: dict[str, Any] = {
             "protocol": spec.protocol,
             "timeout": spec.timeout_seconds,
+            "validate_schemas": spec.validate_schemas,
             "trace_bridge": self._bridge,
             "trace_owner": False,
             "workspace_root": str(self._workspace.root) if self._workspace is not None else None,
@@ -431,11 +610,85 @@ class AsyncExecutionHandle:
         async with self._controller.kit.direct(binding.server, **options) as client:
             if self._cancel_requested:
                 raise OperationCancelled("execution cancelled")
-            # Entering the direct client performs initialization through the
-            # official MCP session. A DirectExecutionSpec has no turn/message,
-            # so setup-only completion is the honest one-shot behavior.
-            del client
-        return None
+            operation = spec.operation
+            if isinstance(operation, ListToolsOperation):
+                pages, raw = await self._direct_pages(
+                    client,
+                    "list_tools",
+                    cursor=operation.cursor,
+                    all_pages=operation.all_pages,
+                )
+                return ListToolsOperationResult(
+                    raw=raw,
+                    tools=tuple(tool for page in pages for tool in page.tools),
+                    next_cursor=pages[-1].next_cursor,
+                )
+            if isinstance(operation, ListResourcesOperation):
+                pages, raw = await self._direct_pages(
+                    client,
+                    "list_resources",
+                    cursor=operation.cursor,
+                    all_pages=operation.all_pages,
+                )
+                return ListResourcesOperationResult(
+                    raw=raw,
+                    resources=tuple(resource for page in pages for resource in page.resources),
+                    next_cursor=pages[-1].next_cursor,
+                )
+            if isinstance(operation, ListResourceTemplatesOperation):
+                pages, raw = await self._direct_pages(
+                    client,
+                    "list_resource_templates",
+                    cursor=operation.cursor,
+                    all_pages=operation.all_pages,
+                )
+                return ListResourceTemplatesOperationResult(
+                    raw=raw,
+                    resource_templates=tuple(
+                        template for page in pages for template in page.resource_templates
+                    ),
+                    next_cursor=pages[-1].next_cursor,
+                )
+            if isinstance(operation, ListPromptsOperation):
+                pages, raw = await self._direct_pages(
+                    client,
+                    "list_prompts",
+                    cursor=operation.cursor,
+                    all_pages=operation.all_pages,
+                )
+                return ListPromptsOperationResult(
+                    raw=raw,
+                    prompts=tuple(prompt for page in pages for prompt in page.prompts),
+                    next_cursor=pages[-1].next_cursor,
+                )
+            if isinstance(operation, CallToolOperation):
+                result = await client.call_tool(operation.name, operation.arguments)
+                return CallToolOperationResult(
+                    raw=getattr(result, "raw", None),
+                    content=getattr(result, "content", ()),
+                    structured_content=getattr(result, "structured_content", None),
+                    is_error=bool(getattr(result, "is_error", False)),
+                )
+            if isinstance(operation, ReadResourceOperation):
+                result = await client.read_resource(operation.uri)
+                return ReadResourceOperationResult(
+                    raw=getattr(result, "raw", None),
+                    contents=getattr(result, "contents", ()),
+                )
+            if isinstance(operation, GetPromptOperation):
+                result = await client.get_prompt(operation.name, operation.arguments)
+                return GetPromptOperationResult(
+                    raw=getattr(result, "raw", None),
+                    description=getattr(result, "description", None),
+                    messages=getattr(result, "messages", ()),
+                )
+            if isinstance(operation, PingOperation):
+                result = await client.ping()
+                return PingOperationResult(
+                    raw=getattr(result, "raw", None),
+                    result_type=getattr(result, "result_type", None),
+                )
+            raise UnsupportedFeature("direct operation is not implemented")
 
     async def _run_agent(self, spec: AgentExecutionSpec) -> None:
         """Run one session-backed agent execution and preserve its turns."""
@@ -444,25 +697,49 @@ class AsyncExecutionHandle:
         # adapter, starts the required/optional server group, and closes both
         # together after the conversation.  The execution recorder remains
         # the event/trace authority for the submitted handle.
-        session = self._controller.kit.agent_session(spec, _event_sink=self._record_agent_event)
+        session_options: dict[str, Any] = {
+            "_event_sink": self._record_agent_event,
+            "_trace_recorder": self._recorder,
+            "_trace_owner": False,
+            "_execution_id": self._execution_id,
+        }
+        # Keep injected test-kit factories that implement the earlier private
+        # hook compatible for ephemeral executions. Persistent submissions
+        # always carry the durable artifact store through this boundary.
+        if self._artifact_store is not None:
+            session_options["_artifact_store"] = self._artifact_store
+        session = self._controller.kit.agent_session(spec, **session_options)
+        failure: BaseException | None = None
         try:
             async with session:
                 if self._cancel_requested:
                     raise OperationCancelled("execution cancelled")
                 if spec.message is not None:
                     await session.send(spec.message, timeout=spec.timeout_seconds)
-                self._recorder.emit(
-                    EventKind.EXECUTION_STATE_CHANGED,
-                    payload={"lifecycle": LifecycleState.IDLE.value},
-                )
+        except BaseException as exc:
+            # Preserve the exception exposed by the session factory/lifecycle
+            # (notably typed unsupported startup) if the provisional session
+            # result carries a more generic internal startup error.
+            failure = exc
+            self._agent_error = _error_info(exc)
+            raise
         finally:
             # Session cleanup may raise after it has already committed its
             # terminal result (for example, an owned workspace cleanup
             # failure). Preserve any artifacts collected on that path.
             try:
-                self._workspace_artifacts = tuple(session.result.artifacts)
+                session_result = session.result
+                self._workspace_artifacts = tuple(session_result.artifacts)
+                self._agent_outcome = session_result.snapshot.outcome
+                if session_result.error is not None and not isinstance(failure, UnsupportedFeature):
+                    self._agent_error = session_result.error
             except BaseException:
                 pass
+        if self._agent_outcome is ExecutionOutcome.COMPLETED:
+            self._recorder.emit(
+                EventKind.EXECUTION_STATE_CHANGED,
+                payload={"lifecycle": LifecycleState.IDLE.value},
+            )
         return None
 
     def _record_agent_event(
@@ -518,9 +795,18 @@ class AsyncExecutionHandle:
         )
 
     def _finalize(self, outcome: ExecutionOutcome, *, cleanup_succeeded: bool = True) -> TraceResult:
+        direct_result = _direct_result_payload(self._direct_result)
         if self._bridge is not None:
-            return self._bridge.finalize(outcome, cleanup_succeeded=cleanup_succeeded)
-        return self._recorder.finalize(outcome, cleanup_succeeded=cleanup_succeeded)
+            return self._bridge.finalize(
+                outcome,
+                cleanup_succeeded=cleanup_succeeded,
+                direct_result=direct_result,
+            )
+        return self._recorder.finalize(
+            outcome,
+            cleanup_succeeded=cleanup_succeeded,
+            direct_result=direct_result,
+        )
 
 
 class AsyncExecutionController:

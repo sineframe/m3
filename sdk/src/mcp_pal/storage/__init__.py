@@ -14,6 +14,7 @@ from .ephemeral import (
     TemporaryArtifactStore,
 )
 from .blobs import BlobRecord, FilesystemBlobStore
+from .serialization import DurableSerializationError, serialize_durable
 from ..services.persistent import SQLiteStoreWorker
 
 __all__ = [
@@ -30,6 +31,8 @@ __all__ = [
     "TemporaryArtifactStore",
     "BlobRecord",
     "FilesystemBlobStore",
+    "DurableSerializationError",
+    "serialize_durable",
     "SQLiteStoreWorker",
     "SQLiteArtifactStore",
     "SQLiteExecutionStore",

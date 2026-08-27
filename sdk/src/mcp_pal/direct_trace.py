@@ -15,6 +15,7 @@ from types import TracebackType
 from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
 
+from anyio import EndOfStream
 from mcp.shared.message import SessionMessage
 from mcp_types import (
     JSONRPCError,
@@ -496,6 +497,7 @@ class DirectTraceBridge:
         cleanup_succeeded: bool = True,
         persistence_succeeded: bool = True,
         limitations: tuple[str, ...] = (),
+        direct_result: Mapping[str, Any] | None = None,
     ) -> TraceResult:
         with self._lock:
             if self._final is not None:
@@ -512,13 +514,16 @@ class DirectTraceBridge:
                 merged = tuple(dict.fromkeys((*merged, "cleanup_failed")))
             if not persistence_succeeded:
                 merged = tuple(dict.fromkeys((*merged, "persistence_failed")))
+            terminal_payload: dict[str, Any] = {
+                "outcome": outcome.value,
+                "completeness": "partial",
+                "limitations": list(merged),
+            }
+            if direct_result is not None:
+                terminal_payload["direct_result"] = dict(direct_result)
             terminal = self._recorder.emit(
                 EventKind.EXECUTION_FINISHED,
-                payload={
-                    "outcome": outcome.value,
-                    "completeness": "partial",
-                    "limitations": list(merged),
-                },
+                payload=terminal_payload,
             )
             self._final = TraceResult(
                 trace_id=self.trace_id,
@@ -550,7 +555,7 @@ class _ObservedReadStream:
     async def __anext__(self) -> Any:
         try:
             return await self.receive()
-        except (StopAsyncIteration, EOFError):
+        except (EndOfStream, StopAsyncIteration, EOFError):
             raise StopAsyncIteration
 
     async def __aenter__(self) -> "_ObservedReadStream":

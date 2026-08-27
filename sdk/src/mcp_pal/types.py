@@ -506,7 +506,7 @@ class ServerProfileRef(FrozenModel):
 class ServerBinding(FrozenModel):
     server: ServerValue | None = None
     profile: ServerProfileRef | None = None
-    alias: str | None = _Field(default=None, max_length=256)
+    alias: str | None = _Field(default=None, min_length=1, max_length=256)
     required: bool = True
 
     @_model_validator(mode="after")
@@ -538,6 +538,16 @@ class OpenCode(HarnessValue):
     kind: _Literal["opencode"] = "opencode"
     name: str = "opencode"
     provider: str | None = None
+    dialect: _Literal["auto", "legacy", "v2"] = "auto"
+    credential_references: _Mapping[str, SecretReference] = _Field(default_factory=dict)
+
+    @_field_validator("credential_references")
+    @classmethod
+    def _valid_credential_names(cls, values: _Mapping[str, SecretReference]) -> _Mapping[str, SecretReference]:
+        import re
+        if any(not isinstance(key, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None for key in values):
+            raise ValueError("OpenCode credential target is invalid")
+        return values
 
 
 class ACPAgent(HarnessValue):
@@ -620,6 +630,72 @@ class EvaluationRegistration(FrozenModel):
     required: bool = False
 
 
+class DirectOperationBase(FrozenModel):
+    """Serializable selector shared by one direct MCP operation."""
+
+    server: str | None = _Field(default=None, min_length=1, max_length=256)
+
+
+class ListToolsOperation(DirectOperationBase):
+    kind: _Literal["list_tools"] = "list_tools"
+    cursor: str | None = _Field(default=None, max_length=256)
+    all_pages: bool = True
+
+
+class ListResourcesOperation(DirectOperationBase):
+    kind: _Literal["list_resources"] = "list_resources"
+    cursor: str | None = _Field(default=None, max_length=256)
+    all_pages: bool = True
+
+
+class ListResourceTemplatesOperation(DirectOperationBase):
+    kind: _Literal["list_resource_templates"] = "list_resource_templates"
+    cursor: str | None = _Field(default=None, max_length=256)
+    all_pages: bool = True
+
+
+class ListPromptsOperation(DirectOperationBase):
+    kind: _Literal["list_prompts"] = "list_prompts"
+    cursor: str | None = _Field(default=None, max_length=256)
+    all_pages: bool = True
+
+
+class CallToolOperation(DirectOperationBase):
+    kind: _Literal["call_tool"] = "call_tool"
+    name: str = _Field(min_length=1, max_length=256)
+    arguments: _Mapping[str, _Any] = _Field(default_factory=dict)
+
+
+class ReadResourceOperation(DirectOperationBase):
+    kind: _Literal["read_resource"] = "read_resource"
+    uri: str = _Field(min_length=1, max_length=4096)
+
+
+class GetPromptOperation(DirectOperationBase):
+    kind: _Literal["get_prompt"] = "get_prompt"
+    name: str = _Field(min_length=1, max_length=256)
+    arguments: _Mapping[str, _Any] = _Field(default_factory=dict)
+
+
+class PingOperation(DirectOperationBase):
+    kind: _Literal["ping"] = "ping"
+
+
+DirectOperation = _Annotated[
+    _Union[
+        ListToolsOperation,
+        ListResourcesOperation,
+        ListResourceTemplatesOperation,
+        ListPromptsOperation,
+        CallToolOperation,
+        ReadResourceOperation,
+        GetPromptOperation,
+        PingOperation,
+    ],
+    _Field(discriminator="kind"),
+]
+
+
 class BaseExecutionSpec(FrozenModel):
     servers: tuple[ServerBinding, ...] = ()
     protocol: ProtocolConstraint = _Field(default_factory=ProtocolConstraint)
@@ -658,6 +734,30 @@ class BaseExecutionSpec(FrozenModel):
 
 class DirectExecutionSpec(BaseExecutionSpec):
     kind: _Literal["direct"] = "direct"
+    operation: DirectOperation
+    validate_schemas: bool = False
+
+    @_model_validator(mode="after")
+    def _validate_operation_server_selection(self) -> "DirectExecutionSpec":
+        # A direct server's name is its default selector; profile bindings do
+        # not have a resolved server name yet, so their profile id is the
+        # stable fallback unless the author supplies an alias.  Compare these
+        # effective selectors, rather than aliases alone, to catch collisions
+        # such as ``alias='echo'`` next to a server named ``echo``.
+        effective_selectors = tuple(
+            binding.alias
+            or (binding.server.name if binding.server is not None else binding.profile.profile_id.root if binding.profile is not None else None)
+            for binding in self.servers
+        )
+        known_selectors = tuple(selector for selector in effective_selectors if selector is not None)
+        if len(set(known_selectors)) != len(known_selectors):
+            raise ValueError("direct execution servers must have unique aliases")
+        selector = self.operation.server
+        if len(self.servers) > 1 and selector is None:
+            raise ValueError("direct operation server selector is required when multiple servers are bound")
+        if selector is not None and selector not in known_selectors:
+            raise ValueError("direct operation server selector does not match a configured server")
+        return self
 
 
 class AgentExecutionSpec(BaseExecutionSpec):
@@ -747,6 +847,15 @@ class ExecutionSnapshot(FrozenModel):
             finished_at=_utc_now() if lifecycle is LifecycleState.FINISHED else self.finished_at,
         )
         return type(self).model_validate(values)
+
+
+class ExecutionPage(FrozenModel):
+    """Bounded, stable page of persisted execution snapshots."""
+
+    items: tuple[ExecutionSnapshot, ...] = ()
+    limit: int = _Field(default=50, ge=1, le=100)
+    offset: int = _Field(default=0, ge=0)
+    total: int = _Field(default=0, ge=0)
 
 
 class TurnSnapshot(FrozenModel):
@@ -1101,10 +1210,118 @@ class TurnResult(FrozenModel):
         return self
 
 
+class DirectTool(FrozenModel):
+    # Process-local official MCP evidence; excluded from public serialization.
+    raw: _Any = _Field(default=None, exclude=True, repr=False)
+    name: str = _Field(min_length=1, max_length=256)
+    title: str | None = None
+    description: str | None = None
+    input_schema: _Mapping[str, _Any] | bool = _Field(default_factory=dict)
+    output_schema: _Mapping[str, _Any] | bool | None = None
+
+
+class DirectResource(FrozenModel):
+    raw: _Any = _Field(default=None, exclude=True, repr=False)
+    name: str = _Field(min_length=1, max_length=256)
+    title: str | None = None
+    uri: str = _Field(min_length=1, max_length=4096)
+    description: str | None = None
+    mime_type: str | None = None
+    size: int | None = _Field(default=None, ge=0)
+
+
+class DirectResourceTemplate(FrozenModel):
+    raw: _Any = _Field(default=None, exclude=True, repr=False)
+    name: str = _Field(min_length=1, max_length=256)
+    title: str | None = None
+    uri_template: str = _Field(min_length=1, max_length=4096)
+    description: str | None = None
+    mime_type: str | None = None
+
+
+class DirectPrompt(FrozenModel):
+    raw: _Any = _Field(default=None, exclude=True, repr=False)
+    name: str = _Field(min_length=1, max_length=256)
+    title: str | None = None
+    description: str | None = None
+    arguments: tuple[_Mapping[str, _Any], ...] = ()
+
+
+class DirectOperationResultBase(FrozenModel):
+    """Typed direct result base retaining process-local official MCP output."""
+
+    # The official response is available to in-process callers, but is never
+    # part of durable/public JSON evidence.
+    raw: _Any = _Field(default=None, exclude=True, repr=False)
+
+
+class ListToolsOperationResult(DirectOperationResultBase):
+    kind: _Literal["list_tools"] = "list_tools"
+    tools: tuple[DirectTool, ...] = ()
+    next_cursor: str | None = None
+
+
+class ListResourcesOperationResult(DirectOperationResultBase):
+    kind: _Literal["list_resources"] = "list_resources"
+    resources: tuple[DirectResource, ...] = ()
+    next_cursor: str | None = None
+
+
+class ListResourceTemplatesOperationResult(DirectOperationResultBase):
+    kind: _Literal["list_resource_templates"] = "list_resource_templates"
+    resource_templates: tuple[DirectResourceTemplate, ...] = ()
+    next_cursor: str | None = None
+
+
+class ListPromptsOperationResult(DirectOperationResultBase):
+    kind: _Literal["list_prompts"] = "list_prompts"
+    prompts: tuple[DirectPrompt, ...] = ()
+    next_cursor: str | None = None
+
+
+class CallToolOperationResult(DirectOperationResultBase):
+    kind: _Literal["call_tool"] = "call_tool"
+    content: tuple[_Mapping[str, _Any], ...] = ()
+    structured_content: _Any = None
+    is_error: bool = False
+
+
+class ReadResourceOperationResult(DirectOperationResultBase):
+    kind: _Literal["read_resource"] = "read_resource"
+    contents: tuple[_Mapping[str, _Any], ...] = ()
+
+
+class GetPromptOperationResult(DirectOperationResultBase):
+    kind: _Literal["get_prompt"] = "get_prompt"
+    description: str | None = None
+    messages: tuple[_Mapping[str, _Any], ...] = ()
+
+
+class PingOperationResult(DirectOperationResultBase):
+    kind: _Literal["ping"] = "ping"
+    result_type: str | None = None
+
+
+DirectOperationResult = _Annotated[
+    _Union[
+        ListToolsOperationResult,
+        ListResourcesOperationResult,
+        ListResourceTemplatesOperationResult,
+        ListPromptsOperationResult,
+        CallToolOperationResult,
+        ReadResourceOperationResult,
+        GetPromptOperationResult,
+        PingOperationResult,
+    ],
+    _Field(discriminator="kind"),
+]
+
+
 class ExecutionResult(FrozenModel):
     snapshot: ExecutionSnapshot
     turns: tuple[TurnResult, ...] = ()
     trace: TraceResult | None = None
+    direct_result: DirectOperationResult | None = None
     evaluations: tuple[EvaluationResult, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
     activity_health: ActivityHealth = ActivityHealth.NO_CALLS
@@ -1118,19 +1335,63 @@ class ExecutionResult(FrozenModel):
         return self
 
 
+class ExecutionEvidence(FrozenModel):
+    """Typed completeness markers persisted in canonical terminal events."""
+
+    completeness: _Literal["complete", "partial"]
+    limitations: tuple[str, ...] = ()
+    reason: str | None = None
+
+    @_model_validator(mode="after")
+    def _validate_completeness(self) -> "ExecutionEvidence":
+        if self.completeness == "complete" and self.limitations:
+            raise ValueError("complete evidence cannot declare limitations")
+        if self.completeness == "partial" and not self.limitations:
+            raise ValueError("partial evidence must declare limitations")
+        return self
+
+
+class PersistedExecutionReport(FrozenModel):
+    """Portable evidence that is actually persisted by an execution store."""
+
+    snapshot: ExecutionSnapshot
+    events: tuple[CanonicalEvent, ...] = ()
+    artifacts: tuple[ArtifactRef, ...] = ()
+    direct_result: DirectOperationResult | None = None
+    error: ErrorInfo | None = None
+    evidence: ExecutionEvidence | None = None
+    event_count: int = _Field(default=0, ge=0)
+    events_truncated: bool = False
+    next_after_sequence: int | None = _Field(default=None, ge=-1)
+    artifact_count: int = _Field(default=0, ge=0)
+    artifacts_truncated: bool = False
+
+    @_model_validator(mode="after")
+    def _validate_projection(self) -> "PersistedExecutionReport":
+        if any(event.execution_id != self.snapshot.execution_id for event in self.events):
+            raise ValueError("report events must belong to its execution")
+        if any(left.sequence >= right.sequence for left, right in zip(self.events, self.events[1:])):
+            raise ValueError("report events must be ordered")
+        if len(self.events) > self.event_count or (not self.events_truncated and len(self.events) != self.event_count):
+            raise ValueError("report event count is inconsistent with its projection")
+        if len(self.artifacts) > self.artifact_count or (not self.artifacts_truncated and len(self.artifacts) != self.artifact_count):
+            raise ValueError("report artifact count is inconsistent with its projection")
+        return self
+
+
 __all__ = [
     "EVENT_SCHEMA_ID", "EVENT_SCHEMA_VERSION", "ACPAgent", "ActivityHealth", "AgentExecutionSpec", "ArtifactId", "ArtifactPolicy", "ArtifactRef",
     "AudioContent", "BaseExecutionSpec", "CanonicalEvent", "CanonicalEventEnvelope", "Capability", "CapabilityStatus", "ClaudeCode",
-    "ConnectionId", "ContentBlock", "DirectExecutionSpec", "ElicitationPolicy", "ErrorCode", "ErrorInfo",
+    "ConnectionId", "ContentBlock", "DirectExecutionSpec", "DirectOperation", "DirectOperationBase", "DirectOperationResultBase", "DirectTool", "DirectResource", "DirectResourceTemplate", "DirectPrompt", "ElicitationPolicy", "ErrorCode", "ErrorInfo",
     "EventDirection", "EventKind", "EventOrigin", "EventPayloadRef", "EventProvenance",
     "EvaluationContext", "EvaluationId", "EvaluationRegistration", "EvaluationResult", "EvaluationStatus",
-    "EventId", "ExecutionId", "ExecutionOutcome", "ExecutionResult", "ExecutionSnapshot", "ExecutionSpec", "FileContent",
+    "EventId", "ExecutionId", "ExecutionEvidence", "ExecutionOutcome", "ExecutionPage", "ExecutionResult", "ExecutionSnapshot", "ExecutionSpec", "FileContent",
     "FilesystemPolicy", "FrozenModel", "FullToolPolicy", "HarnessId", "HarnessProfileId", "HarnessProfileRef",
     "HarnessSpec", "HarnessValue", "Identifier", "ImageContent", "InProcessServer", "LifecycleState",
     "JsonRpcId", "LifecyclePhase", "Metadata", "NativeToolPolicy", "OpaqueContent", "OpenCode", "PermissionPolicy", "ProtocolConstraint",
     "Readiness", "ResourceLinkContent", "RevisionId", "RevisionSelection", "RestrictiveToolPolicy", "SSEServer", "SamplingPolicy", "SecretReference",
-    "ServerBinding", "ServerDefinition", "ServerId", "ServerProfileId", "ServerProfileRef", "ServerValue", "SessionForkRequest", "SessionId", "SessionProvenance",
+    "ServerBinding", "ServerDefinition", "ServerId", "ServerProfileId", "ServerProfileRef", "ServerValue", "SessionForkRequest", "SessionId", "SessionProvenance", "PersistedExecutionReport",
     "RawEvidenceRef", "ReasoningState", "ReasoningVisibility", "RequestCorrelation", "StdioServer", "StreamableHTTPServer", "TerminalPolicy", "TextContent", "TraceId", "TraceResult",
     "ToolPolicy", "TransportKind", "TrustLevel", "TurnId", "TurnLifecycle", "TurnOutcome", "TurnResponse", "TurnResult", "TurnSnapshot",
-    "UserMessage", "WorkspaceKind", "WorkspacePolicy",
+    "UserMessage", "WorkspaceKind", "WorkspacePolicy", "ListToolsOperation", "ListResourcesOperation", "ListResourceTemplatesOperation", "ListPromptsOperation", "CallToolOperation", "ReadResourceOperation", "GetPromptOperation", "PingOperation", "DirectOperationResult", "ListToolsOperationResult", "ListResourcesOperationResult", "ListResourceTemplatesOperationResult", "ListPromptsOperationResult", "CallToolOperationResult", "ReadResourceOperationResult", "GetPromptOperationResult", "PingOperationResult",
 ]

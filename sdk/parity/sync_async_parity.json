@@ -70,6 +70,12 @@
       ],
       [
         "mcp_pal.sync_api",
+        "DirectTool",
+        "mcp_pal.async_api",
+        "DirectTool"
+      ],
+      [
+        "mcp_pal.sync_api",
         "EmptyResult",
         "mcp_pal.async_api",
         "EmptyResult"

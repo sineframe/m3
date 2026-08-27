@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -12,7 +13,8 @@ from mcp_pal.execution_trace import (
     TraceFinalizationConflict,
     TraceRecorderError,
 )
-from mcp_pal.storage import InMemoryExecutionStore, StorageConflict
+from mcp_pal.events import EventFactory
+from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore, StorageConflict
 from mcp_pal.trace.redaction import REDACTED, RedactionConfig, RedactionError
 from mcp_pal.types import (
     CanonicalEvent,
@@ -62,6 +64,28 @@ def test_execution_scoped_clock_has_utc_timestamps_and_nondecreasing_offsets() -
         left.monotonic_offset_ms <= right.monotonic_offset_ms
         for left, right in zip(emitted, emitted[1:])
     )
+
+
+def test_attached_recorder_continues_persistent_clock_offset(tmp_path: Path) -> None:
+    execution_id = ExecutionId("execution-attached-clock")
+    store = SQLiteExecutionStore(tmp_path / "attached-clock.sqlite")
+    ExecutionTraceRecorder(store, execution_id)
+    factory = EventFactory(execution_id)
+    prior = factory.create(
+        EventKind.DIAGNOSTIC,
+        monotonic_offset_ms=42.0,
+        payload={"source": "prior-process"},
+    ).model_copy(update={"sequence": 1})
+    store.append_events((prior,))
+
+    attached = ExecutionTraceRecorder(store, execution_id, trace_id=TraceId("trace-attached-clock"))
+    emitted = attached.emit(EventKind.DIAGNOSTIC, payload={"source": "attached-process"})
+    trace = attached.finalize(ExecutionOutcome.COMPLETED)
+    assert emitted.monotonic_offset_ms >= prior.monotonic_offset_ms
+    assert trace.events[-1].monotonic_offset_ms >= emitted.monotonic_offset_ms
+    assert trace.highest_sequence == trace.events[-1].sequence
+
+
 def test_turn_and_session_attribution_is_projected_from_committed_events() -> None:
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-turn")
@@ -153,10 +177,11 @@ def test_callbacks_see_the_whole_committed_batch_before_delivery() -> None:
 def test_finalization_is_idempotent_but_conflicting_outcomes_are_rejected() -> None:
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-idempotent")
-    first = recorder.finalize(ExecutionOutcome.CANCELLED)
-    second = recorder.finalize(ExecutionOutcome.CANCELLED)
+    first = recorder.finalize(ExecutionOutcome.CANCELLED, direct_result={"kind": "ping"})
+    second = recorder.finalize(ExecutionOutcome.CANCELLED, direct_result={"kind": "call_tool"})
     assert first == second
     assert len(recorder.events()) == 2
+    assert recorder.events()[-1].payload["direct_result"]["kind"] == "ping"
     with pytest.raises(TraceFinalizationConflict):
         recorder.finalize(ExecutionOutcome.FAILED)
 
@@ -172,6 +197,33 @@ def test_payloads_are_redacted_before_commit_and_fail_closed() -> None:
         recorder.emit(EventKind.DIAGNOSTIC, payload={"raw": object()})
     assert len(recorder.events()) == 2
     assert recorder.emit(EventKind.DIAGNOSTIC, payload={"raw": "safe"}).sequence == 2
+
+
+def test_sqlite_reopen_and_payload_blob_contain_no_canaries(tmp_path: Path) -> None:
+    literal = "classified-literal-canary"
+    reference = "resolved-reference-canary"
+    config = RedactionConfig(
+        secrets=frozenset({literal, reference}),
+        include_environment=False,
+    )
+    database = tmp_path / "trace.sqlite"
+    blobs = tmp_path / "blobs"
+    first = SQLiteExecutionStore(database, blob_root=blobs, config=config, payload_blob_threshold=16)
+    recorder = ExecutionTraceRecorder(first, "execution-cross-process", redaction_config=config)
+    recorder.emit(
+        EventKind.DIAGNOSTIC,
+        payload={"assistant": literal, "result": reference, "error": f"{literal}|{reference}"},
+    )
+    first.close()
+
+    raw_files = [database.read_bytes(), *(path.read_bytes() for path in blobs.rglob("*") if path.is_file())]
+    assert all(canary.encode() not in raw for raw in raw_files for canary in (literal, reference))
+
+    second = SQLiteExecutionStore(database, blob_root=blobs, config=config, payload_blob_threshold=16)
+    restored = second.events("execution-cross-process")
+    second.close()
+    assert any(event.payload.get("assistant") == REDACTED for event in restored)
+    assert all(canary not in repr(restored) for canary in (literal, reference))
 
 
 def test_redaction_covers_event_metadata_outside_payload_without_changing_identity() -> None:

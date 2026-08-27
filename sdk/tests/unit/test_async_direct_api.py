@@ -10,10 +10,18 @@ from typing import Any
 import pytest
 from mcp import types
 from mcp.server.lowlevel import Server
+from mcp.server.lowlevel.server import (
+    InitializationOptions,
+    NotificationOptions,
+    ReadStream,
+    SessionMessage,
+    WriteStream,
+)
 from mcp.types import ListToolsResult
 
 from mcp_pal.async_api import AsyncMCPTestKit, InputRequiredResult
 from mcp_pal.errors import KitClosed, ProtocolError, UnsupportedFeature
+from mcp_pal.transport.local import TransportProcessError, TransportStartupError
 from mcp_pal.types import (
     InProcessServer,
     ProtocolConstraint,
@@ -76,6 +84,43 @@ def _failing_server() -> Server:
         raise RuntimeError("PUBLIC_IN_PROCESS_CANARY")
 
     return Server("async-direct-failure-fixture", on_list_tools=list_tools)
+
+
+class _InitializationFailureServer(Server):
+    def create_initialization_options(
+        self,
+        notification_options: NotificationOptions | None = None,
+        experimental_capabilities: dict[str, dict[str, Any]] | None = None,
+        extensions: dict[str, dict[str, Any]] | None = None,
+    ) -> InitializationOptions:
+        raise RuntimeError("INIT_IN_PROCESS_CANARY")
+
+
+def _initialization_failure_server() -> Server:
+    return _InitializationFailureServer("async-direct-init-failure-fixture")
+
+
+def _call_failure_server() -> Server:
+    async def call_tool(_context: object, _params: object) -> types.CallToolResult:
+        raise RuntimeError("CALL_IN_PROCESS_CANARY")
+
+    return Server("async-direct-call-failure-fixture", on_call_tool=call_tool)
+
+
+class _ShutdownFailureServer(Server):
+    async def run(
+        self,
+        read_stream: ReadStream[SessionMessage | Exception],
+        write_stream: WriteStream[SessionMessage],
+        initialization_options: InitializationOptions,
+        raise_exceptions: bool = False,
+    ) -> None:
+        await super().run(read_stream, write_stream, initialization_options, raise_exceptions)
+        raise RuntimeError("SHUTDOWN_IN_PROCESS_CANARY")
+
+
+def _shutdown_failure_server() -> Server:
+    return _ShutdownFailureServer("async-direct-shutdown-failure-fixture")
 
 
 async def _http_fixture(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -289,7 +334,9 @@ async def test_kit_close_from_another_task_reaps_stdio_owner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancelled_public_enter_cancels_owner_startup_without_leaking() -> None:
+async def test_cancelled_public_enter_cancels_owner_startup_without_leaking(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -309,6 +356,10 @@ async def test_cancelled_public_enter_cancels_owner_startup_without_leaking() ->
     lifecycle = getattr(client, "_lifecycle")
     assert lifecycle is not None
     assert lifecycle._task.done()
+    # Drain the future callback locally so this regression does not rely on a
+    # later test's caplog assertion to reveal an abandoned exception.
+    await asyncio.sleep(0)
+    assert "Future exception was never retrieved" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -353,6 +404,35 @@ async def test_public_direct_surfaces_original_in_process_failure_when_enabled()
 
 
 @pytest.mark.asyncio
+async def test_public_direct_original_failure_survives_scheduler_load(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The transport settlement signal must not depend on checkpoint luck."""
+
+    async def scheduler_noise(stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            await asyncio.sleep(0)
+
+    stop = asyncio.Event()
+    noise = asyncio.create_task(scheduler_noise(stop))
+    try:
+        for _ in range(50):
+            kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+            client = kit.direct(
+                InProcessServer(name="failing", factory=_failing_server),
+                raise_server_exceptions=True,
+            )
+            async with client:
+                with pytest.raises(RuntimeError, match="PUBLIC_IN_PROCESS_CANARY"):
+                    await client.list_tools()
+            await kit.aclose()
+    finally:
+        stop.set()
+        await noise
+    assert "Future exception was never retrieved" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_public_direct_sanitizes_in_process_failure_when_disabled() -> None:
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
     client = kit.direct(
@@ -363,6 +443,160 @@ async def test_public_direct_sanitizes_in_process_failure_when_disabled() -> Non
         with pytest.raises(ProtocolError) as error:
             await client.list_tools()
         assert "PUBLIC_IN_PROCESS_CANARY" not in str(error.value)
+    await kit.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("factory", "operation"),
+    [
+        pytest.param(_initialization_failure_server, "initialize", id="initialization"),
+        pytest.param(_failing_server, "list_tools", id="list-tools"),
+        pytest.param(_call_failure_server, "call-tool", id="call-tool"),
+    ],
+)
+async def test_public_direct_in_process_failures_are_original_and_terminal(
+    factory: Any,
+    operation: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    client = kit.direct(InProcessServer(name="failure", factory=factory), raise_server_exceptions=True)
+    with pytest.raises(RuntimeError) as failure:
+        async with client:
+            if operation == "list_tools":
+                await client.list_tools()
+            elif operation == "call-tool":
+                await client.call_tool("explode", {})
+    assert failure.value.args[0].endswith("IN_PROCESS_CANARY")
+    assert client.final_trace is not None
+    assert client.final_trace.events[-1].kind.value == "execution.finished"
+    assert client.final_trace.completeness == "partial"
+    assert "IN_PROCESS_CANARY" not in caplog.text
+    await kit.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("factory", "operation", "error_type"),
+    [
+        pytest.param(_initialization_failure_server, "initialize", TransportStartupError, id="initialization"),
+        pytest.param(_failing_server, "list_tools", ProtocolError, id="list-tools"),
+        pytest.param(_call_failure_server, "call-tool", ProtocolError, id="call-tool"),
+    ],
+)
+async def test_public_direct_in_process_failures_are_sanitized_when_disabled(
+    factory: Any,
+    operation: str,
+    error_type: type[Exception],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    client = kit.direct(InProcessServer(name="failure", factory=factory), raise_server_exceptions=False)
+    with pytest.raises(error_type) as failure:
+        async with client:
+            if operation == "list_tools":
+                await client.list_tools()
+            elif operation == "call-tool":
+                await client.call_tool("explode", {})
+    assert "IN_PROCESS_CANARY" not in str(failure.value)
+    assert client.final_trace is not None
+    assert client.final_trace.events[-1].kind.value == "execution.finished"
+    assert client.final_trace.completeness == "partial"
+    assert "IN_PROCESS_CANARY" not in caplog.text
+    await kit.aclose()
+
+
+@pytest.mark.asyncio
+async def test_public_direct_shutdown_failure_is_original_and_terminal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    client = kit.direct(
+        InProcessServer(name="shutdown-failure", factory=_shutdown_failure_server),
+        raise_server_exceptions=True,
+    )
+    with pytest.raises(RuntimeError, match="SHUTDOWN_IN_PROCESS_CANARY"):
+        async with client:
+            pass
+    assert client.final_trace is not None
+    assert client.final_trace.events[-1].kind.value == "execution.finished"
+    assert client.final_trace.completeness == "partial"
+    assert "SHUTDOWN_IN_PROCESS_CANARY" not in caplog.text
+    await kit.aclose()
+
+
+@pytest.mark.asyncio
+async def test_public_direct_shutdown_failure_is_sanitized_when_disabled(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    client = kit.direct(
+        InProcessServer(name="shutdown-failure", factory=_shutdown_failure_server),
+        raise_server_exceptions=False,
+    )
+    with pytest.raises(TransportProcessError) as failure:
+        async with client:
+            pass
+    assert "SHUTDOWN_IN_PROCESS_CANARY" not in str(failure.value)
+    assert client.final_trace is not None
+    assert client.final_trace.events[-1].kind.value == "execution.finished"
+    assert client.final_trace.completeness == "partial"
+    assert "SHUTDOWN_IN_PROCESS_CANARY" not in caplog.text
+    await kit.aclose()
+
+
+@pytest.mark.asyncio
+async def test_primary_body_exception_survives_cleanup_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    primary_error = RuntimeError("PRIMARY_SERVER_CANARY")
+
+    def failure_server() -> Server:
+        async def list_tools(_context: object, _params: object) -> ListToolsResult:
+            raise primary_error
+
+        return Server("async-direct-primary-failure-fixture", on_list_tools=list_tools)
+
+    client = kit.direct(
+        InProcessServer(name="fixture", factory=failure_server),
+        raise_server_exceptions=True,
+    )
+    with pytest.raises(RuntimeError) as failure:
+        async with client:
+            async def cleanup_failure() -> None:
+                raise RuntimeError("CLEANUP_CANARY")
+
+            assert client._connection is not None
+            client._connection.close = cleanup_failure
+            await client.list_tools()
+    assert failure.value is primary_error
+    assert type(failure.value) is type(primary_error)
+    assert str(failure.value) == str(primary_error)
+    assert client.final_trace is not None
+    assert "cleanup_failed" in client.final_trace.limitations
+    assert client.final_trace.events[-1].kind.value == "execution.finished"
+    assert "CLEANUP_CANARY" not in caplog.text
+    await kit.aclose()
+
+
+@pytest.mark.asyncio
+async def test_standalone_close_failure_is_original_and_terminal() -> None:
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    client = kit.direct(InProcessServer(name="fixture", factory=_server))
+    await client.__aenter__()
+
+    async def cleanup_failure() -> None:
+        raise RuntimeError("STANDALONE_CLEANUP_CANARY")
+
+    assert client._connection is not None
+    client._connection.close = cleanup_failure
+    with pytest.raises(RuntimeError, match="STANDALONE_CLEANUP_CANARY"):
+        await client.aclose()
+    assert client.final_trace is not None
+    assert "cleanup_failed" in client.final_trace.limitations
+    assert client.final_trace.events[-1].kind.value == "execution.finished"
     await kit.aclose()
 
 

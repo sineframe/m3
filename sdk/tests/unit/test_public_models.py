@@ -27,6 +27,7 @@ from mcp_pal.types import (
     ConnectionId,
     ContentBlock,
     DirectExecutionSpec,
+    PingOperation,
     ElicitationPolicy,
     ErrorCode,
     ErrorInfo,
@@ -237,7 +238,7 @@ def test_all_serializable_model_representatives_round_trip() -> None:
         FilesystemPolicy(),
         TerminalPolicy(),
         EvaluationRegistration(name="quality"),
-        DirectExecutionSpec(servers=(ServerBinding(server=server),)),
+        DirectExecutionSpec(servers=(ServerBinding(server=server),), operation=PingOperation()),
         AgentExecutionSpec(
             servers=(ServerBinding(profile=ServerProfileRef(profile_id=ServerProfileId("server-profile-3"), revision=RevisionSelection(mode="latest"))),),
             harness_profile=HarnessProfileRef(profile_id=HarnessProfileId("harness-profile-3"), revision=RevisionSelection(mode="pinned", revision_id=RevisionId("revision-4"), revision_number=2)),
@@ -289,7 +290,7 @@ def test_discriminated_public_aliases_round_trip() -> None:
         (ServerValue, server),
         (HarnessSpec, ClaudeCode(model="claude-test")),
         (ToolPolicy, FullToolPolicy(acknowledge_risk=True)),
-        (ExecutionSpec, DirectExecutionSpec(servers=(ServerBinding(server=server),))),
+        (ExecutionSpec, DirectExecutionSpec(servers=(ServerBinding(server=server),), operation=PingOperation())),
     )
     for annotation, value in cases:
         adapter = TypeAdapter(annotation)
@@ -367,10 +368,12 @@ def test_revision_selection_and_profile_bindings_are_explicit_and_serializable()
 
     spec = DirectExecutionSpec(
         servers=(ServerBinding(profile=ServerProfileRef(profile_id="server-profile", revision=pinned)),),
+        operation=PingOperation(),
     )
     assert DirectExecutionSpec.model_validate(spec.model_dump(mode="json")) == spec
     effective = DirectExecutionSpec(
         servers=(ServerBinding(profile=ServerProfileRef(profile_id="server-profile", revision=pinned)),),
+        operation=PingOperation(),
     )
     assert effective.servers[0].profile is not None
     assert effective.servers[0].profile.revision.mode == "pinned"
@@ -382,8 +385,9 @@ def test_specs_reject_runtime_factories_and_missing_default_bindings() -> None:
     with pytest.raises(ValidationError):
         DirectExecutionSpec(
             servers=(ServerBinding(server=InProcessServer(name="local", factory=lambda: object())),),
+            operation=PingOperation(),
         )
-    optional = DirectExecutionSpec(servers=(ServerBinding(server=StdioServer(name="unused", command="echo"), required=False),))
+    optional = DirectExecutionSpec(servers=(ServerBinding(server=StdioServer(name="unused", command="echo"), required=False),), operation=PingOperation())
     assert optional.servers[0].required is False
 
 

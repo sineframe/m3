@@ -21,7 +21,22 @@ from referencing import Registry
 from .errors import ModelValidationError, OperationCancelled, OperationTimeout, ProtocolError, TransportError, UnsupportedFeature
 from .direct_trace import DirectTraceBridge
 from .trace.redaction import RedactionConfig, redact_for_api
-from .types import FrozenModel, TraceResult
+from .types import (
+    DirectPrompt as _PublicDirectPrompt,
+    DirectResource as _PublicDirectResource,
+    DirectResourceTemplate as _PublicDirectResourceTemplate,
+    DirectTool as _PublicDirectTool,
+    FrozenModel,
+    TraceResult,
+)
+
+# Backwards-compatible direct-client names share identity with the canonical
+# public models.  This lets converted values be used directly in durable
+# operation results while retaining their process-local ``raw`` evidence.
+Tool = _PublicDirectTool
+Resource = _PublicDirectResource
+ResourceTemplate = _PublicDirectResourceTemplate
+Prompt = _PublicDirectPrompt
 
 
 class _Session(Protocol):
@@ -153,39 +168,6 @@ class InitializationResult(_RawValue):
     server_info: Mapping[str, Any]
     instructions: str | None = None
     capabilities: Mapping[str, Any] = Field(default_factory=dict)
-
-
-class Tool(_RawValue):
-    name: str
-    title: str | None = None
-    description: str | None = None
-    # JSON Schema permits a boolean schema in addition to an object schema.
-    input_schema: Mapping[str, Any] | bool = Field(default_factory=dict)
-    output_schema: Mapping[str, Any] | bool | None = None
-
-
-class Resource(_RawValue):
-    name: str
-    title: str | None = None
-    uri: str
-    description: str | None = None
-    mime_type: str | None = None
-    size: int | None = None
-
-
-class ResourceTemplate(_RawValue):
-    name: str
-    title: str | None = None
-    uri_template: str
-    description: str | None = None
-    mime_type: str | None = None
-
-
-class Prompt(_RawValue):
-    name: str
-    title: str | None = None
-    description: str | None = None
-    arguments: tuple[Mapping[str, Any], ...] = ()
 
 
 class ToolsPage(_RawValue):
@@ -1054,10 +1036,15 @@ class AsyncDirectClient:
 
 # Explicit SDK names avoid confusing these wrappers with the official MCP
 # classes while keeping familiar result names available to callers.
-DirectTool = Tool
-DirectResource = Resource
-DirectResourceTemplate = ResourceTemplate
-DirectPrompt = Prompt
+# Public serializable values are canonicalized in ``mcp_pal.types`` so that
+# the type exported by the direct-client adapters is identical to the durable
+# model used by execution results.  The process-local ``Tool``/``Resource``/
+# ``Prompt`` aliases retain their excluded ``raw`` evidence at the direct
+# protocol boundary.
+DirectTool = _PublicDirectTool
+DirectResource = _PublicDirectResource
+DirectResourceTemplate = _PublicDirectResourceTemplate
+DirectPrompt = _PublicDirectPrompt
 ToolPage = ToolsPage
 ResourcePage = ResourcesPage
 ResourceTemplatePage = ResourceTemplatesPage

@@ -21,6 +21,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.shared.memory import create_client_server_memory_streams
 
 from ..types import InProcessServer, SecretReference, StdioServer
+from ..trace.redaction import is_sensitive_key
 
 
 class LocalTransportError(Exception):
@@ -61,6 +62,8 @@ class TransportConnection(Protocol):
     evidence: TransportEvidence
 
     async def close(self) -> None: ...
+
+    async def wait_for_failure_publication(self, timeout: float) -> bool: ...
 
     def raise_if_failed(self, *, expose_original: bool = False) -> None: ...
 
@@ -122,8 +125,14 @@ class _Connection:
         del expose_original
         return None
 
+    async def wait_for_failure_publication(self, timeout: float) -> bool:
+        del timeout
+        return False
+
 
 class _InProcessConnection(_Connection):
+    _FAILURE_SETTLE_TIMEOUT = 0.05
+
     def __init__(
         self,
         *,
@@ -138,6 +147,8 @@ class _InProcessConnection(_Connection):
         self._server_task = server_task
         self._raise_server_exceptions = raise_server_exceptions
         self._server_failure: BaseException | None = None
+        self._failure_observed = False
+        self._server_settled = asyncio.Event()
         self._close_task: asyncio.Task[None] | None = None
         server_task.add_done_callback(self._capture_server_failure)
 
@@ -158,11 +169,29 @@ class _InProcessConnection(_Connection):
                 partial=True,
                 error_kind="server_failure",
             )
+        self._server_settled.set()
+
+    async def wait_for_failure_publication(self, timeout: float) -> bool:
+        """Wait briefly for the owned server task to publish its outcome."""
+
+        if not self._server_settled.is_set():
+            try:
+                await asyncio.wait_for(self._server_settled.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                return False
+        return self._server_failure is not None
 
     def raise_if_failed(self, *, expose_original: bool = False) -> None:
+        if self._server_failure is not None:
+            self._failure_observed = True
         if self._server_failure is not None and self._raise_server_exceptions:
             if expose_original:
                 raise self._server_failure
+            raise TransportProcessError(
+                "in-process MCP server failed",
+                evidence=self.evidence,
+            )
+        if self._server_failure is not None and expose_original:
             raise TransportProcessError(
                 "in-process MCP server failed",
                 evidence=self.evidence,
@@ -191,6 +220,14 @@ class _InProcessConnection(_Connection):
             raise TransportProcessError(
                 "in-process MCP cleanup timed out", evidence=self.evidence
             ) from None
+        await self.wait_for_failure_publication(self._FAILURE_SETTLE_TIMEOUT)
+        if self._server_failure is not None and not self._failure_observed:
+            if self._raise_server_exceptions:
+                raise self._server_failure
+            raise TransportProcessError(
+                "in-process MCP server failed during cleanup",
+                evidence=self.evidence,
+            )
 
     async def _close_impl(self) -> None:
         for stream in (self.read_stream, self.write_stream):
@@ -281,6 +318,7 @@ class InProcessMCPTransport:
 
     async def open(self) -> _InProcessConnection:
         memory_context = create_client_server_memory_streams()
+        preserve_original_startup = False
         try:
             client_streams, server_streams = await memory_context.__aenter__()
             token = _CURRENT_WORKSPACE_ROOT.set(self._workspace_root)
@@ -297,6 +335,21 @@ class InProcessMCPTransport:
                     "in-process MCP server is not an official server",
                     evidence=TransportEvidence(transport="in_process", partial=True, error_kind="startup_failure"),
                 )
+            token = _CURRENT_WORKSPACE_ROOT.set(self._workspace_root)
+            try:
+                initialization_options = options_factory()
+            except asyncio.CancelledError:
+                raise
+            except BaseException as error:
+                preserve_original_startup = True
+                if self._raise_server_exceptions:
+                    raise error
+                raise TransportStartupError(
+                    "in-process MCP server startup failed",
+                    evidence=TransportEvidence(transport="in_process", partial=True, error_kind="startup_failure"),
+                ) from None
+            finally:
+                _CURRENT_WORKSPACE_ROOT.reset(token)
             async def serve() -> Any:
                 global _IN_PROCESS_SERVER_ACTIVE
                 _IN_PROCESS_SERVER_ACTIVE += 1
@@ -304,7 +357,7 @@ class InProcessMCPTransport:
                     return await run(
                         server_streams[0],
                         server_streams[1],
-                        options_factory(),
+                        initialization_options,
                         raise_exceptions=self._raise_server_exceptions,
                     )
                 finally:
@@ -328,8 +381,10 @@ class InProcessMCPTransport:
         except LocalTransportError:
             await memory_context.__aexit__(None, None, None)
             raise
-        except Exception:
+        except Exception as error:
             await memory_context.__aexit__(None, None, None)
+            if self._raise_server_exceptions and preserve_original_startup:
+                raise error
             raise TransportStartupError(
                 "in-process MCP server startup failed",
                 evidence=TransportEvidence(transport="in_process", partial=True, error_kind="startup_failure"),
@@ -395,12 +450,9 @@ class StdioMCPTransport:
                         transport="stdio", partial=True, error_kind="startup_failure"
                     ),
                 )
-            normalized = "".join(character for character in key.lower() if character.isalnum())
             if self._secret_observer is not None and (
                 isinstance(value, SecretReference)
-                or normalized in {"token", "apikey", "authorization", "secret", "password", "credential"}
-                or normalized.endswith("token")
-                or normalized.endswith("secret")
+                or is_sensitive_key(key)
             ):
                 try:
                     self._secret_observer(values[key])

@@ -104,6 +104,13 @@ class ExecutionTraceRecorder:
             store.create(ExecutionSnapshot(execution_id=self._execution_id))
             self.emit(EventKind.EXECUTION_CREATED, payload={"lifecycle": LifecycleState.CREATED.value})
         else:
+            # A persistent execution may be reopened by another process.  Its
+            # perf-counter origin is different, so continue from the committed
+            # trace offset rather than allowing the next event to move time
+            # backwards in the canonical sequence.
+            existing_events = self._committed_events()
+            if existing_events:
+                self._last_offset_ms = max(event.monotonic_offset_ms for event in existing_events)
             existing = self._project_trace()
             if existing.completeness in {"complete", "partial"} and self._is_terminal(existing):
                 self._final = existing
@@ -226,6 +233,7 @@ class ExecutionTraceRecorder:
         cleanup_succeeded: bool = True,
         persistence_succeeded: bool = True,
         limitations: Sequence[str] = (),
+        direct_result: Mapping[str, Any] | None = None,
     ) -> TraceResult:
         """Commit terminal evidence and return an idempotent terminal trace."""
         with self._record_lock:
@@ -240,13 +248,16 @@ class ExecutionTraceRecorder:
                 persistence_succeeded=persistence_succeeded,
                 limitations=limitations,
             )
+            terminal_payload: dict[str, Any] = {
+                "outcome": outcome.value,
+                "completeness": "complete" if cleanup_succeeded and persistence_succeeded else "partial",
+                "limitations": list(safe_limitations),
+            }
+            if direct_result is not None:
+                terminal_payload["direct_result"] = dict(direct_result)
             terminal_event = self.emit(
                 EventKind.EXECUTION_FINISHED,
-                payload={
-                    "outcome": outcome.value,
-                    "completeness": "complete" if cleanup_succeeded and persistence_succeeded else "partial",
-                    "limitations": list(safe_limitations),
-                },
+                payload=terminal_payload,
             )
             completeness: Literal["complete", "partial"] = "complete" if cleanup_succeeded and persistence_succeeded else "partial"
             trace = TraceResult(

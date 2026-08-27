@@ -27,6 +27,9 @@ from mcp_pal.types import (
     TurnResult,
     TurnResponse,
     UserMessage,
+    ArtifactPolicy,
+    WorkspaceKind,
+    WorkspacePolicy,
 )
 
 
@@ -171,6 +174,23 @@ class CloseBarrierHarness(FakeHarness):
         await self.release_close.wait()
 
 
+class DeletesWorkspaceOnClose(FakeHarness):
+    def __init__(self) -> None:
+        super().__init__()
+        self.session: AsyncAgentSession | None = None
+        self.deleted = False
+
+    async def send(self, message, *, timeout=None, metadata=None):
+        assert self.session is not None
+        (self.session._workspace.root / "result.txt").write_text("captured", encoding="utf-8")
+        return await super().send(message, timeout=timeout, metadata=metadata)
+
+    async def close(self) -> None:
+        assert self.session is not None
+        (self.session._workspace.root / "result.txt").unlink(missing_ok=True)
+        self.deleted = True
+
+
 @pytest.mark.asyncio
 async def test_session_preserves_adapter_and_returns_terminal_result_on_clean_close() -> None:
     adapter = FakeHarness()
@@ -190,6 +210,24 @@ async def test_session_preserves_adapter_and_returns_terminal_result_on_clean_cl
     assert adapter.started == 1
     assert adapter.closed == 1
     assert adapter.messages == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_is_captured_before_adapter_teardown() -> None:
+    adapter = DeletesWorkspaceOnClose()
+    spec = _spec().model_copy(
+        update={
+            "workspace": WorkspacePolicy(kind=WorkspaceKind.TEMPORARY),
+            "artifact_policy": ArtifactPolicy.ALWAYS,
+            "declared_artifacts": ("result.txt",),
+        }
+    )
+    session = AsyncAgentSession(spec, adapter)
+    adapter.session = session
+    async with session:
+        await session.send("write")
+    assert adapter.deleted
+    assert session.result.artifacts
 
 
 @pytest.mark.asyncio

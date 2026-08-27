@@ -9,33 +9,37 @@ default:
     @just --list
 
 setup install:
-    uv sync --project sdk --all-extras
+    uv sync --all-packages --all-extras --all-groups
 
 api:
-    uv run --project sdk uvicorn mcp_pal.main:app --reload
+    uv run --project app uvicorn mcp_pal_app.main:app --reload
 
 ui:
-    uv run --project sdk streamlit run sdk/src/mcp_pal/ui/app.py
+    uv run --project app streamlit run app/src/mcp_pal_app/ui/app.py
 
 test:
-    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --group typecheck pytest -q
+    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests
+    PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test --group typecheck pytest -q app/tests
 
 test-unit:
-    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --group typecheck pytest -q sdk/tests/unit
+    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests/unit
+    PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test --group typecheck pytest -q app/tests/unit
 
 test-integration:
-    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk pytest -q sdk/tests/integration
+    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest pytest -q sdk/tests/integration
+    PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test pytest -q app/tests/integration
 
 # Fresh v0.2 development schema reset. The exact confirmation is required;
-# the helper deletes only the configured app-owned SQLite file and sidecars.
+# Invoke as `just CONFIRM=reset dev-db-reset`; the helper deletes only the
+# configured app-owned SQLite file and sidecars.
 dev-db-reset:
-    uv run --project sdk python scripts/dev_db_reset.py
+    uv run --project app python app/scripts/dev_db_reset.py
 
 package-check:
     uv run --project sdk --all-extras python scripts/check_packaging.py
 
 typecheck:
-    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --group typecheck pytest -q sdk/tests/unit/test_typecheck_examples.py
+    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests/unit/test_typecheck_examples.py
 
 # Validate a local ACP manifest. Set MANIFEST to a JSON file (or - for stdin).
 harness-validate MANIFEST="harness.json":
@@ -60,7 +64,8 @@ bridge-demo:
 
 compile:
     uv run --project sdk python -m compileall -q sdk/src
-    uv run --project sdk python -c 'from mcp_pal.main import app; print(app.title)'
+    uv run --project app python -m compileall -q app/src
+    uv run --project app python -c 'from mcp_pal_app.main import app; print(app.title)'
 
 check: compile
 
@@ -68,7 +73,7 @@ diff-check:
     git diff --check
 
 clean:
-    find sdk/src sdk/tests scripts -type f -name '*.pyc' -delete
-    find sdk/src sdk/tests scripts -type d -name __pycache__ -empty -delete
+    find sdk/src sdk/tests app/src app/tests app/scripts scripts -type f -name '*.pyc' -delete
+    find sdk/src sdk/tests app/src app/tests app/scripts scripts -type d -name __pycache__ -empty -delete
     find . -maxdepth 2 -type d -name .pytest_cache -prune -exec rm -rf {} +
     rm -f .coverage

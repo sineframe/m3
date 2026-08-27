@@ -46,15 +46,6 @@ pytest = [
 storage = [
   "sqlalchemy>=2.0,<3",
 ]
-app = [
-  "fastapi>=0.115,<1",
-  "httpx>=0.27,<1",
-  "pydantic-settings>=2.4,<3",
-  "requests>=2.31,<3",
-  "sqlalchemy>=2.0,<3",
-  "streamlit>=1.40,<2",
-  "uvicorn[standard]>=0.30,<1",
-]
 property = [
   "hypothesis>=6.100,<7",
 ]
@@ -63,18 +54,13 @@ docs = [
   "mkdocstrings[python]>=0.25,<2",
 ]
 all = [
-  "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "hypothesis>=6.100,<7",
   "mkdocs-material>=9.5,<10",
   "mkdocstrings[python]>=0.25,<2",
-  "pydantic-settings>=2.4,<3",
   "pytest>=8,<10",
   "pytest-asyncio>=0.23,<2",
-  "requests>=2.31,<3",
   "sqlalchemy>=2.0,<3",
-  "streamlit>=1.40,<2",
-  "uvicorn[standard]>=0.30,<1",
 ]
 
 [project.scripts]
@@ -97,6 +83,10 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 addopts = "-p no:cacheprovider"
+markers = [
+  "e2e: black-box SDK workflows that cross real process or persistence boundaries",
+  "live: opt-in tests that call a live external provider and may incur cost",
+]
 
 [build-system]
 requires = ["hatchling>=1.27"]

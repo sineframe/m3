@@ -1,9 +1,8 @@
 """Validation and safe handling for ``mcp-pal.harness.v1`` manifests.
 
-The API uses the pydantic model in :mod:`mcp_pal.api.schemas`; this module is
-deliberately dependency-light so the bridge kit can be used from a terminal
-without constructing the web application.  Values in ``env`` are references,
-never resolved credentials.
+This module is deliberately dependency-light so the bridge kit can be used
+from a terminal without constructing the web application. Values in ``env``
+are references, never resolved credentials.
 """
 from __future__ import annotations
 
@@ -12,9 +11,31 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+
+class HarnessManifest(BaseModel):
+    """Validated descriptor for an external ACP harness executable."""
+
+    schema_version: Literal["mcp-pal.harness.v1"] = "mcp-pal.harness.v1"
+    protocol: Literal["acp"] = "acp"
+    protocol_version: Literal[1] = 1
+    command: str = Field(min_length=1, max_length=1000)
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    model_config = {"extra": "forbid"}
+
+    @field_validator("env")
+    @classmethod
+    def references_only(cls, value: dict[str, str]) -> dict[str, str]:
+        for name, ref in value.items():
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                raise ValueError(f"invalid environment variable name: {name}")
+            if not re.fullmatch(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", ref):
+                raise ValueError(f"environment value for {name} must be a reference")
+        return value
 
 
 class ManifestValidationError(ValueError):
@@ -22,10 +43,6 @@ class ManifestValidationError(ValueError):
 
 
 def _model(manifest: Any):
-    # Import lazily: importing the CLI must not import FastAPI or create an
-    # application object.
-    from ..api.schemas import HarnessManifest
-
     try:
         return HarnessManifest.model_validate(manifest)
     except ValidationError as exc:

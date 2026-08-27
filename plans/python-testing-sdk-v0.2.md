@@ -1184,15 +1184,16 @@ Work through this list in order. Each checkbox should be completed as a small re
 
 ### Current status — 2026-08-25
 
-- Current package milestone: `0.2.0a2`.
-- Phases 0–12 are complete.
-- Phase 13 storage, lease, worker, cancellation, blob, clone, deletion, and guarded development-reset implementation is complete.
-- Latest full storage-enabled SDK suite: `746 passed` with 38 expected warnings from pinned MCP APIs deprecated in the 2026-07-28 protocol release.
-- Phase 13 remains open on three acceptance items:
-  1. Run one shared behavioral contract suite against the in-memory and SQLite stores.
-  2. Prove submit, claim, event streaming, cancellation, lease loss, stale-owner interruption, and recovery across separate OS processes.
-  3. Complete the persistence cleanup audit after Phase 14 removes `/api/v1` and its legacy table-purge path. The guarded `just dev-db-reset CONFIRM=reset` command is the only intended development-only reset surface.
-- Next execution order: finish the two Phase 13 test suites, complete the cleanup audit while replacing `/api/v1` in Phase 14, migrate Streamlit in Phase 15, and then run the `0.2.0a3` gate in Phase 16.
+- Remediation is in progress; the authoritative issue list and implementation
+  sequence are tracked in [python-testing-sdk-v0.2-remediation.md](python-testing-sdk-v0.2-remediation.md).
+- The initial remediation baseline was 2 failed, 746 passed, 1 skipped, and 3
+  strict xfailed. After the independently reviewed round-1 direct-trace fix,
+  the full suite is 749 passed, 1 skipped, and 3 strict xfailed with no
+  unexpected failures. The remaining xfails are tracked remediation defects,
+  not a completed release gate.
+- The opt-in live OpenCode characterization failed before the model request.
+- No prior phase or release gate is claimed complete by this status until its
+  remediation acceptance evidence is rerun and recorded.
 
 ### Phase 0 — Preserve the baseline
 

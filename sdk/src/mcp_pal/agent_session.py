@@ -29,6 +29,8 @@ from .errors import (
     UnsupportedFeature,
 )
 from .interaction_handlers import InteractionController
+from .execution_trace import ExecutionTraceRecorder
+from .storage import ArtifactStore, InMemoryExecutionStore
 from .policy import ToolDescriptor, ToolPolicyDecision, ToolPolicyEvidence, ToolPolicyEvaluator
 from .workspace import WorkspaceCapture, WorkspaceError, WorkspaceManager
 from .trace.redaction import redact_for_api
@@ -155,6 +157,9 @@ class AsyncAgentSession:
         provenance: SessionProvenance | None = None,
         on_close: Callable[["AsyncAgentSession"], None] | None = None,
         event_sink: _EventSink | None = None,
+        trace_recorder: ExecutionTraceRecorder | None = None,
+        trace_owner: bool = True,
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         self.spec = spec
         self.adapter = adapter
@@ -173,12 +178,20 @@ class AsyncAgentSession:
         self._provenance = provenance
         self._on_close = on_close
         self._event_sink = event_sink
-        self._execution_id = ExecutionId(str(uuid4()))
+        self._trace_recorder = trace_recorder or ExecutionTraceRecorder(
+            InMemoryExecutionStore(),
+            ExecutionId(str(uuid4())),
+        )
+        self._trace_owner = trace_owner
+        self._execution_id = self._trace_recorder.execution_id
         self._session_id = SessionId(str(uuid4()))
+        self._session_created_emitted = False
         self._snapshot = ExecutionSnapshot(execution_id=self._execution_id, provenance=provenance)
         self._turns: list[TurnResult] = []
         self._tool_outcomes: list[bool] = []
         self._terminal_result: ExecutionResult | None = None
+        self._terminal_outcome: ExecutionOutcome | None = None
+        self._terminal_error: ErrorInfo | None = None
         self._entered = False
         self._closed = False
         self._closing = False
@@ -200,10 +213,16 @@ class AsyncAgentSession:
             self._execution_id,
             artifact_policy=spec.artifact_policy,
             declared_artifacts=spec.declared_artifacts,
+            artifact_store=artifact_store,
         )
         self._workspace_capture: WorkspaceCapture | None = None
         self._workspace_artifacts: tuple[Any, ...] = ()
         self._capture_seen: dict[str, int] = {}
+        # Cleanup ownership may remain retryable after a terminal outcome.
+        # Keep the first failed attempt in the eventual terminal trace even
+        # when a later close succeeds; otherwise a retry would falsely claim
+        # complete evidence.
+        self._cleanup_failed = False
 
     def _emit_event(
         self,
@@ -215,6 +234,59 @@ class AsyncAgentSession:
     ) -> None:
         if self._event_sink is not None:
             self._event_sink(kind, payload, self._session_id, turn_id, phase)
+            if kind is EventKind.SESSION_CREATED:
+                self._session_created_emitted = True
+            return
+        event_payload = dict(payload)
+        connection_id = event_payload.pop("_mcp_connection_id", None)
+        direction_value = event_payload.pop("_mcp_direction", None)
+        server_binding = event_payload.pop("_mcp_server_binding", None)
+        raw_ref = event_payload.pop("_mcp_raw_evidence_ref", None)
+        correlation = None
+        if isinstance(direction_value, str):
+            try:
+                direction = EventDirection(direction_value)
+                from .types import RequestCorrelation, RawEvidenceRef
+
+                correlation = RequestCorrelation(
+                    jsonrpc_id=event_payload.get("jsonrpc_id")
+                    if isinstance(event_payload.get("jsonrpc_id"), (int, str))
+                    and not isinstance(event_payload.get("jsonrpc_id"), bool)
+                    else None,
+                    direction=direction,
+                    request_sequence=event_payload.get("request_sequence")
+                    if isinstance(event_payload.get("request_sequence"), int)
+                    else None,
+                )
+            except ValueError:
+                correlation = None
+        raw_evidence = None
+        if isinstance(raw_ref, str) and raw_ref:
+            from .types import RawEvidenceRef
+
+            raw_evidence = RawEvidenceRef(evidence_id=raw_ref, media_type="application/json")
+        origin = EventOrigin.WIRE_OBSERVED if payload.get("evidence_mode") == "wire_observed" else (
+            EventOrigin.DERIVED if kind is EventKind.WORKSPACE_CHANGED else EventOrigin.HARNESS_REPORTED
+        )
+        self._trace_recorder.emit(
+            kind,
+            payload=event_payload,
+            session_id=self._session_id,
+            turn_id=turn_id,
+            lifecycle_phase=phase,
+            server_binding=server_binding if isinstance(server_binding, str) else None,
+            connection_id=connection_id if isinstance(connection_id, str) else None,
+            correlation=correlation,
+            raw_evidence_ref=raw_evidence,
+            provenance=EventProvenance(
+                origin=origin,
+                source="mcp_pal.capture" if origin is EventOrigin.WIRE_OBSERVED else (
+                    "mcp_pal.workspace" if kind is EventKind.WORKSPACE_CHANGED else "mcp_pal.agent.adapter"
+                ),
+            ),
+        )
+        if kind is EventKind.SESSION_CREATED:
+            self._session_created_emitted = True
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in {"spec", "adapter"} and name in self.__dict__:
@@ -264,7 +336,11 @@ class AsyncAgentSession:
             # A close may race startup.  Startup still owns the workspace and
             # server resources until this cleanup attempt finishes; do not
             # short-circuit here or the later close cannot retry them.
-            cleanup_failure = False
+            cleanup_failure = await self._collect_workspace(
+                self._close_requested_outcome
+                or (ExecutionOutcome.CANCELLED if isinstance(exc, asyncio.CancelledError) else ExecutionOutcome.FAILED),
+                cleanup=False,
+            )
             try:
                 await self._close_adapter()
             except BaseException:
@@ -272,7 +348,10 @@ class AsyncAgentSession:
             outcome = self._close_requested_outcome or (
                 ExecutionOutcome.CANCELLED if isinstance(exc, asyncio.CancelledError) else ExecutionOutcome.FAILED
             )
-            cleanup_failure = await self._collect_workspace(outcome) or cleanup_failure
+            try:
+                await asyncio.to_thread(self._workspace.cleanup)
+            except Exception:
+                cleanup_failure = True
             code = ErrorCode.CANCELLED if outcome is ExecutionOutcome.CANCELLED else ErrorCode.TRANSPORT_ERROR
             await self._finish(outcome, code, "session startup cancelled" if outcome is ExecutionOutcome.CANCELLED else "session startup failed")
             if cleanup_failure:
@@ -280,8 +359,10 @@ class AsyncAgentSession:
                 # for a later aclose()/kit close retry.  _record_cleanup_failure
                 # preserves the sanitized startup error and adds only generic
                 # cleanup evidence.
+                self._cleanup_failed = True
                 self._record_cleanup_failure()
             else:
+                self._finalize_result(cleanup_succeeded=True)
                 self._closed = True
                 if self._on_close:
                     self._on_close(self)
@@ -536,6 +617,7 @@ class AsyncAgentSession:
                     "jsonrpc_id": getattr(event, "jsonrpc_id", None),
                     "latency_ms": getattr(event, "latency_ms", None),
                     "wire_offset_ms": getattr(event, "offset_ms", None),
+                    "policy_denied": getattr(event, "provenance", None) == "policy_denied",
                     "dedup_key": f"{connection_id}:{getattr(event, 'request_sequence', None)}",
                     "_mcp_connection_id": connection_id,
                     "_mcp_direction": direction.value,
@@ -555,7 +637,7 @@ class AsyncAgentSession:
                 )
                 self._emit_event(kind, payload, turn_id=turn_id, phase=phase)
 
-    async def _collect_workspace(self, outcome: ExecutionOutcome) -> bool:
+    async def _collect_workspace(self, outcome: ExecutionOutcome, *, cleanup: bool = True) -> bool:
         """Collect workspace evidence before removing the owned root."""
 
         try:
@@ -579,10 +661,11 @@ class AsyncAgentSession:
             )
         except Exception:
             capture_failure = True
-        try:
-            await asyncio.to_thread(self._workspace.cleanup)
-        except Exception:
-            return True
+        if cleanup:
+            try:
+                await asyncio.to_thread(self._workspace.cleanup)
+            except Exception:
+                return True
         return capture_failure
 
     async def _cancel_adapter(self) -> None:
@@ -750,9 +833,13 @@ class AsyncAgentSession:
                 raise UnsupportedFeature("harness adapter does not implement turn sending")
             operation = sender(message, timeout=timeout, metadata=metadata)
             raw = await asyncio.wait_for(operation, timeout=timeout) if timeout is not None else await operation
+            canonical_tool_calls = self._pending_captured_tool_calls()
             self._emit_captured_wire_events(turn_id)
             self._record_tool_outcomes(raw)
-            policy_violations = self._evaluate_reported_tool_calls(raw)
+            policy_violations = self._evaluate_reported_tool_calls(
+                raw,
+                canonical_tool_calls=canonical_tool_calls,
+            )
             self._emit_adapter_events(raw, turn_id, policy_violations)
             if policy_violations:
                 self._emit_policy_violations(policy_violations, turn_id)
@@ -903,9 +990,19 @@ class AsyncAgentSession:
             "policy_portable": evidence.portable,
         }
 
-    def _evaluate_reported_tool_calls(self, raw: object) -> tuple[dict[str, object], ...]:
+    def _evaluate_reported_tool_calls(
+        self,
+        raw: object,
+        *,
+        canonical_tool_calls: tuple[ToolDescriptor, ...] = (),
+    ) -> tuple[dict[str, object], ...]:
         calls = getattr(raw, "tool_calls", ())
         if not isinstance(calls, (tuple, list)) or not calls:
+            return ()
+        # Proxy enforcement already handled the empty restrictive policy's
+        # deny-by-default behavior.  Do not reinterpret an advisory provider
+        # update as a second, post-hoc enforcement decision.
+        if not self._requires_policy_preflight():
             return ()
         evidence = self._tool_policy_evidence or ToolPolicyEvidence(
             requested="restrictive", enforced="default_deny", observed="runtime"
@@ -934,31 +1031,56 @@ class AsyncAgentSession:
                 if descriptor is not None and identity_error is None
             )
         violations: list[dict[str, object]] = []
-        for call in calls:
+        ordered_canonical = canonical_tool_calls if len(canonical_tool_calls) == len(calls) else ()
+        for call_index, call in enumerate(calls):
             if not isinstance(call, Mapping):
                 violations.append(self._policy_violation(None, "tool_call_invalid", evidence))
                 continue
             descriptor, identity_error = self._reported_tool_identity(call)
+            if descriptor is None:
+                if ordered_canonical and isinstance(call, Mapping) and not any(
+                    call.get(key) is not None for key in ("server", "server_name", "tool", "tool_name", "name", "qualified_name")
+                ):
+                    descriptor = ordered_canonical[call_index]
+                    identity_error = None
+            if descriptor is None:
+                try:
+                    reported_name = call.get("tool", call.get("tool_name", call.get("name")))
+                except Exception:
+                    reported_name = None
+                safe_name = self._safe_tool_label(reported_name)
+                canonical_candidates = tuple(
+                    item
+                    for item in canonical_tool_calls
+                    if safe_name is None or item.name == safe_name
+                )
+                if len(canonical_candidates) == 1:
+                    descriptor = canonical_candidates[0]
+                    identity_error = None
+                elif len(canonical_candidates) > 1:
+                    violations.append(self._policy_violation(None, "ambiguous_tool", evidence))
+                    continue
             if descriptor is None and identity_error is None and records:
                 try:
                     reported_name = call.get("tool", call.get("tool_name", call.get("name")))
                 except Exception:
                     reported_name = None
                 safe_name = self._safe_tool_label(reported_name)
-                candidates = tuple(
+                advertised_candidates = tuple(
                     record
                     for record in records
                     if getattr(record, "available", False) and safe_name in getattr(record, "tools", ())
                 ) if safe_name is not None else ()
-                if len(candidates) > 1:
+                if len(advertised_candidates) > 1:
                     violations.append(self._policy_violation(None, "ambiguous_tool", evidence))
                     continue
-                if len(candidates) == 1:
-                    descriptor = ToolDescriptor(server=candidates[0].key, name=safe_name or "")
+                if len(advertised_candidates) == 1:
+                    descriptor = ToolDescriptor(server=advertised_candidates[0].key, name=safe_name or "")
                 elif safe_name is not None:
                     violations.append(self._policy_violation(None, "tool_unavailable", evidence))
                     continue
             if descriptor is None and identity_error is None:
+                violations.append(self._policy_violation(None, "tool_identity_unavailable", evidence))
                 continue
             if descriptor is None:
                 violations.append(self._policy_violation(None, identity_error or "tool_identity_invalid", evidence))
@@ -968,7 +1090,7 @@ class AsyncAgentSession:
                 if not matching or not matching[0].available:
                     violations.append(self._policy_violation(descriptor, "server_unavailable", evidence))
                     continue
-                if descriptor.name not in matching[0].tools:
+                if matching[0].tools and descriptor.name not in matching[0].tools:
                     violations.append(self._policy_violation(descriptor, "tool_unavailable", evidence))
                     continue
             try:
@@ -993,8 +1115,40 @@ class AsyncAgentSession:
                 EventKind.TOOL_RESULT_RECEIVED,
                 {"policy_violation": True, "evidence_mode": "policy_evaluator", **violation},
                 turn_id=turn_id,
-                phase=LifecyclePhase.MCP_CALL,
-            )
+                    phase=LifecyclePhase.MCP_CALL,
+                )
+
+    def _pending_captured_tool_calls(self) -> tuple[ToolDescriptor, ...]:
+        """Return this turn's canonical forwarded calls before advancing capture."""
+
+        manager = self._server_manager
+        capture = getattr(manager, "capture", None) if manager is not None else None
+        snapshots = getattr(capture, "snapshots", None)
+        if not callable(snapshots):
+            return ()
+        try:
+            records = tuple(getattr(manager.snapshot(), "records", ()))
+            aliases = {
+                str(getattr(record, "connection_id", "")): str(getattr(record, "key", ""))
+                for record in records
+            }
+            output: list[ToolDescriptor] = []
+            for snapshot in snapshots():
+                connection_id = str(getattr(snapshot, "connection_id", ""))
+                start = self._capture_seen.get(connection_id, 0)
+                for event in tuple(getattr(snapshot, "events", ()))[start:]:
+                    if (
+                        getattr(event, "method", None) == "tools/call"
+                        and getattr(event, "direction", None) == "client_to_server"
+                        and getattr(event, "provenance", None) != "policy_denied"
+                    ):
+                        alias = aliases.get(connection_id)
+                        tool = self._safe_tool_label(getattr(event, "tool", None))
+                        if alias and tool:
+                            output.append(ToolDescriptor(server=alias, name=tool))
+            return tuple(output)
+        except Exception:
+            return ()
 
     def _emit_adapter_events(
         self,
@@ -1279,8 +1433,10 @@ class AsyncAgentSession:
 
     async def _finish(self, outcome: ExecutionOutcome, code: ErrorCode, message: str) -> None:
         async with self._state_lock:
-            if self._terminal_result is not None:
+            if self._terminal_outcome is not None:
                 return
+            if not self._session_created_emitted:
+                self._emit_event(EventKind.SESSION_CREATED, {"lifecycle": LifecycleState.CREATED.value})
             if outcome is not ExecutionOutcome.COMPLETED:
                 self._closing = True
             self._emit_event(
@@ -1295,20 +1451,48 @@ class AsyncAgentSession:
                     if self._snapshot.lifecycle is not LifecycleState.CLOSING:
                         self._snapshot = self._snapshot.transition(LifecycleState.CLOSING)
                     self._snapshot = self._snapshot.transition(LifecycleState.FINISHED, outcome)
-            error = None if outcome is ExecutionOutcome.COMPLETED else ErrorInfo(code=code, message=message)
-            self._terminal_result = ExecutionResult(
-                snapshot=self._snapshot,
-                turns=tuple(self._turns),
-                activity_health=self._activity_health(),
-                artifacts=self._workspace_artifacts,
-                error=error,
-                provenance=self._provenance,
-            )
+            self._terminal_outcome = outcome
+            self._terminal_error = None if outcome is ExecutionOutcome.COMPLETED else ErrorInfo(code=code, message=message)
             self._emit_event(
                 EventKind.SESSION_STATE_CHANGED,
                 {"lifecycle": LifecycleState.FINISHED.value, "outcome": outcome.value},
                 phase=LifecyclePhase.CLEANUP,
             )
+
+            # Preserve the established API: a terminal turn makes the result
+            # readable before context exit.  This is deliberately provisional
+            # and has no trace yet; close must first collect wire/workspace
+            # evidence and complete cleanup before publishing execution.finished.
+            self._terminal_result = ExecutionResult(
+                snapshot=self._snapshot,
+                turns=tuple(self._turns),
+                activity_health=self._activity_health(),
+                artifacts=self._workspace_artifacts,
+                error=self._terminal_error,
+                provenance=self._provenance,
+            )
+
+    def _finalize_result(self, *, cleanup_succeeded: bool) -> None:
+        """Commit the execution terminal event before exposing the result."""
+
+        outcome = self._terminal_outcome
+        if outcome is None:
+            return
+        trace = None
+        if self._trace_owner:
+            trace = self._trace_recorder.finalize(
+                outcome,
+                cleanup_succeeded=cleanup_succeeded,
+            )
+        self._terminal_result = ExecutionResult(
+            snapshot=self._snapshot,
+            turns=tuple(self._turns),
+            trace=trace,
+            activity_health=self._activity_health(),
+            artifacts=self._workspace_artifacts,
+            error=self._terminal_error,
+            provenance=self._provenance,
+        )
 
     def _record_cleanup_failure(self) -> None:
         """Attach safe cleanup evidence without replacing a primary failure."""
@@ -1327,10 +1511,16 @@ class AsyncAgentSession:
                 retryable=result.error.retryable,
                 details=details,
             )
+        self._terminal_error = error
         self._terminal_result = result.model_copy(update={"error": error})
 
     async def _complete_close(self, outcome: ExecutionOutcome) -> None:
         await self._wait_for_startup()
+        # Startup owns terminalization and cleanup when it loses a race with
+        # close.  Once it has finished those duties, the waiting closer must
+        # not collect evidence again after execution.finished.
+        if self._closed:
+            return
         async with self._state_lock:
             active = self._active
         if active:
@@ -1346,30 +1536,37 @@ class AsyncAgentSession:
                 await self._queue_task
             except asyncio.CancelledError:
                 pass
-        cleanup_failure = False
+        # Capture while the native harness still has its SDK workspace.  The
+        # adapter's close path may terminate a provider that removes files;
+        # cleanup of our workspace itself happens only after that close.
+        cleanup_failure = await self._collect_workspace(outcome, cleanup=False)
         try:
             await self._close_adapter()
         except Exception:
             cleanup_failure = True
         self._emit_captured_wire_events(None)
-        cleanup_failure = await self._collect_workspace(outcome) or cleanup_failure
+        try:
+            await asyncio.to_thread(self._workspace.cleanup)
+        except Exception:
+            cleanup_failure = True
         if self._terminal_result is not None and self._workspace_artifacts:
             self._terminal_result = self._terminal_result.model_copy(
                 update={"artifacts": self._workspace_artifacts}
             )
         if cleanup_failure:
-            if self._terminal_result is None:
+            self._cleanup_failed = True
+            if self._terminal_outcome is None:
                 await self._finish(ExecutionOutcome.FAILED, ErrorCode.CLEANUP_FAILED, "session cleanup failed")
-            else:
-                self._record_cleanup_failure()
-        elif self._terminal_result is None:
+        elif self._terminal_outcome is None:
             await self._finish(outcome, ErrorCode.CANCELLED, "session cancelled" if outcome is ExecutionOutcome.CANCELLED else "session closed")
         if cleanup_failure:
+            self._record_cleanup_failure()
             # Keep ownership until every child has actually closed.  The
             # terminal result remains readable, while ``_closing`` prevents
             # reopening or accepting new turns.  A later close retries only
             # the components whose completion flags are still false.
             raise CleanupError("session cleanup failed") from None
+        self._finalize_result(cleanup_succeeded=not self._cleanup_failed)
         self._closed = True
         if self._on_close:
             self._on_close(self)
@@ -1389,7 +1586,7 @@ class AsyncAgentSession:
         async with self._close_lock:
             if self._closed:
                 return
-            if not self._entered and self._startup_task is None and self._terminal_result is None:
+            if not self._entered and self._startup_task is None and self._terminal_outcome is None:
                 raise SessionStillOpen("agent session has not been opened")
             async with self._state_lock:
                 self._closing = True
@@ -1402,7 +1599,20 @@ class AsyncAgentSession:
     @property
     def result(self) -> ExecutionResult:
         if self._terminal_result is None:
-            raise SessionStillOpen("agent session is still open")
+            if self._terminal_outcome is None:
+                raise SessionStillOpen("agent session is still open")
+            # Preserve the historical in-context view after a terminal turn.
+            # This is deliberately provisional: cleanup and workspace/wire
+            # evidence still belong to the close lifecycle, after which this
+            # value is replaced with the recorder-finalized result.
+            return ExecutionResult(
+                snapshot=self._snapshot,
+                turns=tuple(self._turns),
+                activity_health=self._activity_health(),
+                artifacts=self._workspace_artifacts,
+                error=self._terminal_error,
+                provenance=self._provenance,
+            )
         return self._terminal_result
 
     @property

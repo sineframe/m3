@@ -132,6 +132,11 @@ class _WireServer:
         self.cancel_events.setdefault(key, asyncio.Event())
         if _method_fault(self.config, method, "cancel_before_methods"):
             raise SystemExit(0)
+        delays = self.config.get("delays", {})
+        if isinstance(delays, Mapping):
+            delay = delays.get(method)
+            if isinstance(delay, (int, float)) and delay > 0:
+                await asyncio.sleep(float(delay))
         race = _method_fault(self.config, method, "race_methods")
         if race:
             event = self.cancel_events[key]

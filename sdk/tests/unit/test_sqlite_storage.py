@@ -13,8 +13,9 @@ import sys
 import pytest
 
 from mcp_pal.events import EventFactory
-from mcp_pal.storage import ArtifactNotFound, SQLiteExecutionStore, StorageConflict
+from mcp_pal.storage import ArtifactNotFound, InMemoryArtifactStore, SQLiteExecutionStore, StorageConflict
 from mcp_pal.storage import StorageError
+from mcp_pal.trace.redaction import RedactionConfig
 from mcp_pal.types import (
     EventKind,
     ExecutionId,
@@ -247,6 +248,30 @@ def test_large_event_payload_is_blob_backed_without_semantic_truncation(tmp_path
     store.delete_execution(execution_id)
     with sqlite3.connect(tmp_path / "mcp-pal.sqlite") as connection:
         assert connection.execute("SELECT COUNT(*) FROM v2_event_blobs").fetchone()[0] == 0
+
+
+def test_ephemeral_and_sqlite_artifact_bytes_redact_and_reopen(tmp_path: Path) -> None:
+    literal = "classified-artifact-canary"
+    reference = "resolved-artifact-canary"
+    config = RedactionConfig(secrets=frozenset({literal, reference}), include_environment=False)
+    content = b"prefix:" + literal.encode() + b":" + reference.encode() + b":suffix"
+
+    ephemeral = InMemoryArtifactStore(config=config)
+    ephemeral_ref = ephemeral.put("execution-artifacts", "output.txt", content)
+    assert ephemeral.get(ephemeral_ref) == b"prefix:[REDACTED]:[REDACTED]:suffix"
+
+    database = tmp_path / "artifact.sqlite"
+    blobs = tmp_path / "artifact-blobs"
+    store = SQLiteExecutionStore(database, blob_root=blobs, config=config)
+    execution_id, _ = _created(store, "execution-artifacts")
+    artifact = store.artifacts.put(execution_id, "output.txt", content)
+    assert store.artifacts.get(artifact) == b"prefix:[REDACTED]:[REDACTED]:suffix"
+    store.close()
+    reopened = SQLiteExecutionStore(database, blob_root=blobs, config=config)
+    assert reopened.artifacts.get(artifact) == b"prefix:[REDACTED]:[REDACTED]:suffix"
+    reopened.close()
+    raw_files = [database.read_bytes(), *(path.read_bytes() for path in blobs.rglob("*") if path.is_file())]
+    assert all(canary.encode() not in raw for raw in raw_files for canary in (literal, reference))
 
 
 def test_event_and_artifact_references_share_refcount_and_gc_after_terminal_delete(tmp_path: Path) -> None:

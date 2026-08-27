@@ -40,6 +40,7 @@ from ..types import (
     EventPayloadRef,
     ExecutionId,
     ExecutionOutcome,
+    ExecutionPage,
     ExecutionSnapshot,
     LifecycleState,
     RevisionId,
@@ -58,20 +59,24 @@ from .ephemeral import (
     ExecutionTransaction,
     StorageConflict,
     StorageError,
+    PersistedExecutionReport,
+    _report_fields,
     _execution_key,
 )
 from .blobs import FilesystemBlobStore
+from .serialization import serialize_durable
 
 
 def _sqlalchemy() -> Any:
     """Load SQLAlchemy only when the optional SQLite backend is selected."""
     try:
         from sqlalchemy import create_engine
+        from sqlalchemy.pool import NullPool
     except ImportError as exc:  # pragma: no cover - exercised in a minimal env
         raise ModuleNotFoundError(
             "SQLite storage requires the optional dependency; install mcp-pal[storage]"
         ) from exc
-    return create_engine
+    return create_engine, NullPool
 
 
 def _is_database_error(exc: BaseException) -> bool:
@@ -345,7 +350,7 @@ class _SqliteBase:
         self.wal_requested = wal
         self.journal_mode = "delete"
         self._init_lock = threading.Lock()
-        create_engine = _sqlalchemy()
+        create_engine, null_pool = _sqlalchemy()
         # SQLAlchemy is the owner of the SQLite DBAPI connection. AUTOCOMMIT
         # keeps PRAGMA setup and our explicit BEGIN/COMMIT boundaries intact;
         # write transactions still use SQLite's native BEGIN IMMEDIATE below.
@@ -354,6 +359,11 @@ class _SqliteBase:
             connect_args={"timeout": max(self.busy_timeout_ms / 1000, 0.001), "check_same_thread": False},
             isolation_level="AUTOCOMMIT",
             pool_pre_ping=True,
+            # Store connections are short-lived and the application may
+            # construct several isolated stores during tests. Avoid retaining
+            # idle descriptors in per-store pools; SQLite still serializes
+            # writes through its normal locking semantics.
+            poolclass=null_pool,
         )
         self._initialize()
 
@@ -595,6 +605,14 @@ class _SqliteBatch(AbstractContextManager["_SqliteBatch"]):
 class SQLiteExecutionStore(_SqliteBase):
     """SQLite implementation of the public :class:`ExecutionStore` protocol."""
 
+    # These are the only limitations accepted by TraceResult and by the
+    # recorder's terminal payload contract.  Store-owned terminalization (for
+    # example queued cancellation or lease interruption) has no provider
+    # cleanup/capture phase to certify, so it must be explicitly partial.
+    _TERMINAL_LIMITATIONS = frozenset(
+        {"cleanup_failed", "persistence_failed", "capture_incomplete", "partial_trace"}
+    )
+
     def __init__(self, database: str | Path, *, blob_root: str | Path | None = None, config: RedactionConfig | None = None, payload_blob_threshold: int = 64 * 1024, **kwargs: Any) -> None:
         if payload_blob_threshold < 0:
             raise ValueError("payload_blob_threshold must be non-negative")
@@ -608,7 +626,11 @@ class SQLiteExecutionStore(_SqliteBase):
     def create(self, snapshot: ExecutionSnapshot, *, specification: Mapping[str, Any] | None = None, provenance: Mapping[str, Any] | None = None, server_bindings: Sequence[Mapping[str, Any]] = (), harness_binding: Mapping[str, Any] | None = None, parent_execution_id: ExecutionId | str | None = None) -> None:
         key = _execution_key(snapshot.execution_id)
         safe_snapshot = snapshot.model_dump(mode="json")
-        safe_spec = redact_for_persistence(specification, config=self._redaction_config, path="$.execution.specification") if specification is not None else None
+        # Specifications and bindings are later rehydrated and may be
+        # executed. Evidence redaction would turn a typed SecretReference
+        # under (for example) ``Authorization`` into a runnable
+        # ``[REDACTED]`` literal, so use the dedicated durable projection.
+        safe_spec = serialize_durable(specification, config=self._redaction_config, path="$.execution.specification") if specification is not None else None
         safe_provenance = redact_for_persistence(provenance, config=self._redaction_config, path="$.execution.provenance") if provenance is not None else None
         connection = self._connect()
         try:
@@ -617,15 +639,15 @@ class SQLiteExecutionStore(_SqliteBase):
             connection.execute("INSERT INTO v2_executions(id,snapshot_json,specification_json,provenance_json,parent_execution_id,created_at) VALUES(?,?,?,?,?,?)", (key, _json(safe_snapshot), _json(safe_spec) if safe_spec is not None else None, _json(safe_provenance) if safe_provenance is not None else None, parent_key, _iso(snapshot.created_at)))
             for ordinal, binding in enumerate(server_bindings):
                 value = dict(binding)
-                connection.execute("INSERT INTO v2_execution_server_bindings(execution_id,ordinal,profile_id,revision_id,binding_json) VALUES(?,?,?,?,?)", (key, ordinal, value.get("profile_id"), value.get("revision_id"), _json(redact_for_persistence(value, config=self._redaction_config, path="$.execution.server_binding"))))
+                connection.execute("INSERT INTO v2_execution_server_bindings(execution_id,ordinal,profile_id,revision_id,binding_json) VALUES(?,?,?,?,?)", (key, ordinal, value.get("profile_id"), value.get("revision_id"), _json(serialize_durable(value, config=self._redaction_config, path="$.execution.server_binding"))))
             if harness_binding is not None:
                 value = dict(harness_binding)
-                connection.execute("INSERT INTO v2_execution_harness_bindings(execution_id,profile_id,revision_id,binding_json) VALUES(?,?,?,?)", (key, value.get("profile_id"), value.get("revision_id"), _json(redact_for_persistence(value, config=self._redaction_config, path="$.execution.harness_binding"))))
+                connection.execute("INSERT INTO v2_execution_harness_bindings(execution_id,profile_id,revision_id,binding_json) VALUES(?,?,?,?)", (key, value.get("profile_id"), value.get("revision_id"), _json(serialize_durable(value, config=self._redaction_config, path="$.execution.harness_binding"))))
             self._commit(connection)
         except Exception as exc:
+            self._rollback(connection)
             if not _is_integrity_error(exc):
                 raise
-            self._rollback(connection)
             raise StorageConflict("execution already exists") from exc
         except BaseException:
             self._rollback(connection)
@@ -639,6 +661,71 @@ class SQLiteExecutionStore(_SqliteBase):
         with self._connect() as connection:
             row = connection.execute("SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL", (_execution_key(execution_id),)).fetchone()
         return ExecutionSnapshot.model_validate(_loads(row[0])) if row else None
+
+    def list_executions(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        lifecycle: LifecycleState | str | None = None,
+        outcome: ExecutionOutcome | str | None = None,
+    ) -> ExecutionPage:
+        page = ExecutionPage(limit=limit, offset=offset)
+        lifecycle_value = LifecycleState(lifecycle) if lifecycle is not None else None
+        outcome_value = ExecutionOutcome(outcome) if outcome is not None else None
+        clauses = ["deleted_at IS NULL"]
+        parameters: list[Any] = []
+        if lifecycle_value is not None:
+            clauses.append("json_extract(snapshot_json, '$.lifecycle')=?")
+            parameters.append(lifecycle_value.value)
+        if outcome_value is not None:
+            clauses.append("json_extract(snapshot_json, '$.outcome')=?")
+            parameters.append(outcome_value.value)
+        where = " AND ".join(clauses)
+        with self._connect() as connection:
+            total_row = connection.execute(f"SELECT COUNT(*) FROM v2_executions WHERE {where}", tuple(parameters)).fetchone()
+            rows = connection.execute(
+                f"SELECT snapshot_json FROM v2_executions WHERE {where} ORDER BY json_extract(snapshot_json, '$.created_at') DESC, id DESC LIMIT ? OFFSET ?",
+                tuple(parameters) + (limit, offset),
+            ).fetchall()
+        snapshots = [ExecutionSnapshot.model_validate(_loads(row[0])) for row in rows]
+        return page.model_copy(update={"items": tuple(snapshots), "total": int(total_row[0]) if total_row else 0})
+
+    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> PersistedExecutionReport | None:
+        snapshot = self.get_snapshot(execution_id)
+        if snapshot is None:
+            return None
+        if after_sequence < -1 or (event_limit is not None and event_limit < 1) or (artifact_limit is not None and artifact_limit < 1):
+            raise ValueError("invalid report event cursor or limit")
+        if event_limit is None:
+            all_events = self.events(execution_id)
+            events, event_count = all_events, len(all_events)
+        else:
+            page, event_count = self._events_page(_execution_key(execution_id), after_sequence=after_sequence, event_limit=event_limit)
+            events = page[:event_limit]
+        key = _execution_key(execution_id)
+        with self._connect() as connection:
+            terminal_row = connection.execute(
+                "SELECT event_json FROM v2_events WHERE execution_id=? AND json_extract(event_json, '$.kind')=? ORDER BY sequence DESC LIMIT 1",
+                (key, EventKind.EXECUTION_FINISHED.value),
+            ).fetchone()
+        terminal_events = (self._restore_event(_loads(terminal_row[0])),) if terminal_row else events
+        direct_result, error, evidence = _report_fields(terminal_events)
+        all_artifacts = tuple(self.artifacts.iter_refs(execution_id))
+        artifacts = all_artifacts if artifact_limit is None else all_artifacts[:artifact_limit]
+        return PersistedExecutionReport(
+            snapshot=snapshot,
+            events=events,
+            artifacts=artifacts,
+            direct_result=direct_result,
+            error=error,
+            evidence=evidence,
+            event_count=event_count,
+            events_truncated=event_limit is not None and event_count > event_limit,
+            next_after_sequence=events[-1].sequence if events else after_sequence,
+            artifact_count=len(all_artifacts),
+            artifacts_truncated=artifact_limit is not None and len(all_artifacts) > artifact_limit,
+        )
 
     def save_snapshot(self, snapshot: ExecutionSnapshot) -> None:
         key = _execution_key(snapshot.execution_id)
@@ -656,24 +743,36 @@ class SQLiteExecutionStore(_SqliteBase):
     def _events(self, execution_id: str) -> tuple[CanonicalEvent, ...]:
         with self._connect() as connection:
             rows = connection.execute("SELECT event_json FROM v2_events WHERE execution_id=? ORDER BY sequence", (execution_id,)).fetchall()
-        restored: list[CanonicalEvent] = []
-        for row in rows:
-            event = CanonicalEvent.model_validate(_loads(row[0]))
-            marker = event.payload.get("__mcp_pal_blob__")
-            if isinstance(marker, Mapping) and event.payload_ref is not None:
-                payload = self.artifacts.blob_store.read(
-                    event.payload_ref.sha256,
-                    size_bytes=event.payload_ref.size_bytes,
-                )
-                try:
-                    decoded = json.loads(payload)
-                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    raise BlobIntegrityError("event payload blob is not valid JSON") from exc
-                if not isinstance(decoded, Mapping):
-                    raise BlobIntegrityError("event payload blob is not a JSON object")
-                event = event.model_copy(update={"payload": decoded})
-            restored.append(event)
-        return tuple(restored)
+        return tuple(self._restore_event(_loads(row[0])) for row in rows)
+
+    def _restore_event(self, value: Mapping[str, Any]) -> CanonicalEvent:
+        event = CanonicalEvent.model_validate(value)
+        marker = event.payload.get("__mcp_pal_blob__")
+        if isinstance(marker, Mapping) and event.payload_ref is not None:
+            payload = self.artifacts.blob_store.read(
+                event.payload_ref.sha256,
+                size_bytes=event.payload_ref.size_bytes,
+            )
+            try:
+                decoded = json.loads(payload)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise BlobIntegrityError("event payload blob is not valid JSON") from exc
+            if not isinstance(decoded, Mapping):
+                raise BlobIntegrityError("event payload blob is not a JSON object")
+            event = event.model_copy(update={"payload": decoded})
+        return event
+
+    def _events_page(self, execution_id: str, *, after_sequence: int, event_limit: int) -> tuple[tuple[CanonicalEvent, ...], int]:
+        with self._connect() as connection:
+            count_row = connection.execute(
+                "SELECT COUNT(*) FROM v2_events WHERE execution_id=? AND sequence>?",
+                (execution_id, after_sequence),
+            ).fetchone()
+            rows = connection.execute(
+                "SELECT event_json FROM v2_events WHERE execution_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+                (execution_id, after_sequence, event_limit),
+            ).fetchall()
+        return tuple(self._restore_event(_loads(row[0])) for row in rows), int(count_row[0]) if count_row else 0
 
     def _derive_snapshot(self, execution_id: str, events: Sequence[CanonicalEvent] | None = None) -> ExecutionSnapshot:
         existing = self.get_snapshot(execution_id)
@@ -723,6 +822,51 @@ class SQLiteExecutionStore(_SqliteBase):
         if projected is not None and not isinstance(projected, str):
             raise StorageError("reason could not be redacted")
         return projected
+
+    def _terminal_payload(
+        self,
+        outcome: ExecutionOutcome,
+        *,
+        reason: str | None = None,
+        reason_path: str = "$.execution.terminal.reason",
+        limitations: Sequence[str] = ("capture_incomplete",),
+    ) -> dict[str, Any]:
+        """Build the canonical payload for a store-owned terminal event.
+
+        SQLite can close an execution without owning the provider adapter's
+        cleanup or evidence capture.  Such terminal events are therefore
+        partial, and only the bounded limitation vocabulary is persisted.
+        Reasons are included only when supplied and are passed through the
+        store's redaction policy before becoming durable evidence.
+        """
+        safe_limitations = tuple(
+            sorted({item for item in limitations if item in self._TERMINAL_LIMITATIONS})
+        )
+        if not safe_limitations:
+            # A store-owned terminal event cannot honestly claim complete
+            # provider evidence; retain an explicit bounded limitation.
+            safe_limitations = ("capture_incomplete",)
+        payload: dict[str, Any] = {
+            "outcome": outcome.value,
+            "completeness": "partial",
+            "limitations": list(safe_limitations),
+        }
+        safe_reason = self._safe_reason(reason, path=reason_path)
+        if safe_reason:
+            payload["reason"] = safe_reason
+        return payload
+
+    @staticmethod
+    def _next_event_position(connection: _CompatConnection, execution_id: str) -> tuple[int, float]:
+        """Return the next sequence and a nondecreasing trace offset."""
+        row = connection.execute(
+            "SELECT sequence,event_json FROM v2_events WHERE execution_id=? ORDER BY sequence DESC LIMIT 1",
+            (execution_id,),
+        ).fetchone()
+        if row is None:
+            return 0, 0.0
+        latest = CanonicalEvent.model_validate(_loads(row["event_json"]))
+        return int(row["sequence"]) + 1, latest.monotonic_offset_ms
 
     def _append(self, execution_id: str, events: Sequence[CanonicalEvent]) -> None:
         if not events:
@@ -1017,13 +1161,13 @@ class SQLiteExecutionStore(_SqliteBase):
         try:
             self._begin(connection, immediate=True)
             connection.execute(f"INSERT INTO {table}(id,name,description,archived,current_revision_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (pid, safe_name, safe_description, 0, None, now, now))
-            connection.execute(f"INSERT INTO {revision_table}(id,profile_id,revision_number,value_json,created_at) VALUES(?,?,?,?,?)", (rid, pid, 1, _json(redact_for_persistence(dict(value), config=self._redaction_config, path="$.profile")), now))
+            connection.execute(f"INSERT INTO {revision_table}(id,profile_id,revision_number,value_json,created_at) VALUES(?,?,?,?,?)", (rid, pid, 1, _json(serialize_durable(dict(value), config=self._redaction_config, path="$.profile")), now))
             connection.execute(f"UPDATE {table} SET current_revision_id=? WHERE id=?", (rid, pid))
             self._commit(connection)
         except Exception as exc:
+            self._rollback(connection)
             if not _is_integrity_error(exc):
                 raise
-            self._rollback(connection)
             raise StorageConflict("profile name or id already exists") from exc
         finally:
             connection.close()
@@ -1060,7 +1204,7 @@ class SQLiteExecutionStore(_SqliteBase):
             number = int(connection.execute(f"SELECT COALESCE(MAX(revision_number),0)+1 FROM {table} WHERE profile_id=?", (profile_id,)).fetchone()[0])
             rid = revision_id or _new_id(f"{kind}-revision")
             created = _iso(_utcnow())
-            safe = redact_for_persistence(dict(value), config=self._redaction_config, path="$.profile.revision")
+            safe = serialize_durable(dict(value), config=self._redaction_config, path="$.profile.revision")
             connection.execute(f"INSERT INTO {table}(id,profile_id,revision_number,value_json,created_at) VALUES(?,?,?,?,?)", (rid, profile_id, number, _json(safe), created))
             connection.execute(f"UPDATE v2_{kind}_profiles SET current_revision_id=?,updated_at=? WHERE id=?", (rid, created, profile_id))
             self._commit(connection)
@@ -1116,11 +1260,7 @@ class SQLiteExecutionStore(_SqliteBase):
         execution_key = _execution_key(execution_id)
         session_key = str(session_id.root if isinstance(session_id, SessionId) else session_id) if session_id else None
         turn_key = str(turn_id.root if isinstance(turn_id, TurnId) else turn_id) if turn_id else None
-        safe_payload = redact_for_persistence(
-            dict(payload or {}),
-            config=self._redaction_config,
-            path="$.command.payload",
-        )
+        safe_payload = serialize_durable(dict(payload or {}), config=self._redaction_config, path="$.command.payload")
         payload_json = _json(safe_payload)
         connection = self._connect()
         try:
@@ -1137,16 +1277,16 @@ class SQLiteExecutionStore(_SqliteBase):
                     and existing["session_id"] == session_key
                     and existing["turn_id"] == turn_key
                 )
-                self._rollback(connection)
                 if not same:
                     raise StorageConflict("command id was already used for a different request")
+                self._rollback(connection)
                 return self.get_command(command)  # type: ignore[return-value]
             connection.execute("INSERT INTO v2_commands(id,execution_id,kind,status,payload_json,session_id,turn_id,created_at) VALUES(?,?,?,?,?,?,?,?)", (command, execution_key, kind, "queued", payload_json, session_key, turn_key, _iso(_utcnow())))
             self._commit(connection)
         except Exception as exc:
+            self._rollback(connection)
             if not _is_integrity_error(exc):
                 raise
-            self._rollback(connection)
             raise StorageConflict("command already exists or execution does not exist") from exc
         finally:
             connection.close()
@@ -1187,12 +1327,15 @@ class SQLiteExecutionStore(_SqliteBase):
                 # while the compare-and-set transaction still owns the
                 # database lock, then discard its lease and claimed command.
                 execution = connection.execute("SELECT snapshot_json FROM v2_executions WHERE id=?", (execution_id,)).fetchone()
-                latest = connection.execute("SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?", (execution_id,)).fetchone()
-                sequence = int(latest[0]) + 1
+                sequence, monotonic_offset_ms = self._next_event_position(connection, execution_id)
                 event = CanonicalEvent(
                     event_id=EventId(_new_id("event")), execution_id=ExecutionId(execution_id),
-                    sequence=sequence, kind=EventKind.EXECUTION_FINISHED, monotonic_offset_ms=0,
-                    payload={"outcome": ExecutionOutcome.INTERRUPTED.value, "reason": "worker lease expired"},
+                    sequence=sequence, kind=EventKind.EXECUTION_FINISHED, monotonic_offset_ms=monotonic_offset_ms,
+                    payload=self._terminal_payload(
+                        ExecutionOutcome.INTERRUPTED,
+                        reason="worker lease expired",
+                        reason_path="$.lease.reason",
+                    ),
                 )
                 if execution is not None:
                     snapshot = ExecutionSnapshot.model_validate(_loads(execution["snapshot_json"]))
@@ -1269,18 +1412,18 @@ class SQLiteExecutionStore(_SqliteBase):
                 return False
             snapshot = ExecutionSnapshot.model_validate(_loads(execution["snapshot_json"]))
             if snapshot.lifecycle is not LifecycleState.FINISHED:
-                latest = connection.execute(
-                    "SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?",
-                    (execution_id,),
-                ).fetchone()
-                sequence = int(latest[0]) + 1
+                sequence, monotonic_offset_ms = self._next_event_position(connection, execution_id)
                 event = CanonicalEvent(
                     event_id=EventId(_new_id("event")),
                     execution_id=ExecutionId(execution_id),
                     sequence=sequence,
                     kind=EventKind.EXECUTION_FINISHED,
-                    monotonic_offset_ms=0,
-            payload={"outcome": ExecutionOutcome.INTERRUPTED.value, "reason": self._safe_reason(reason, path="$.lease.reason") or "worker lease lost"},
+                    monotonic_offset_ms=monotonic_offset_ms,
+                    payload=self._terminal_payload(
+                        ExecutionOutcome.INTERRUPTED,
+                        reason=reason,
+                        reason_path="$.lease.reason",
+                    ),
                 )
                 interrupted = snapshot.model_copy(
                     update={
@@ -1370,18 +1513,18 @@ class SQLiteExecutionStore(_SqliteBase):
             ).fetchone()
             snapshot = ExecutionSnapshot.model_validate(_loads(execution["snapshot_json"]))
             if active_lease is None and snapshot.lifecycle is not LifecycleState.FINISHED:
-                latest = connection.execute(
-                    "SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?",
-                    (key,),
-                ).fetchone()
-                sequence = int(latest[0]) + 1
+                sequence, monotonic_offset_ms = self._next_event_position(connection, key)
                 event = CanonicalEvent(
                     event_id=EventId(_new_id("event")),
                     execution_id=ExecutionId(key),
                     sequence=sequence,
                     kind=EventKind.EXECUTION_FINISHED,
-                    monotonic_offset_ms=0,
-                    payload={"outcome": ExecutionOutcome.CANCELLED.value, "reason": safe_reason or "cancelled"},
+                    monotonic_offset_ms=monotonic_offset_ms,
+                    payload=self._terminal_payload(
+                        ExecutionOutcome.CANCELLED,
+                        reason=safe_reason or "cancelled",
+                        reason_path="$.cancellation.reason",
+                    ),
                 )
                 cancelled = snapshot.model_copy(
                     update={
@@ -1431,18 +1574,18 @@ class SQLiteExecutionStore(_SqliteBase):
             if snapshot.lifecycle is LifecycleState.FINISHED:
                 self._rollback(connection)
                 return False
-            latest = connection.execute(
-                "SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?",
-                (key,),
-            ).fetchone()
-            sequence = int(latest[0]) + 1
+            sequence, monotonic_offset_ms = self._next_event_position(connection, key)
             event = CanonicalEvent(
                 event_id=EventId(_new_id("event")),
                 execution_id=ExecutionId(key),
                 sequence=sequence,
                 kind=EventKind.EXECUTION_FINISHED,
-                monotonic_offset_ms=0,
-                payload={"outcome": ExecutionOutcome.CANCELLED.value, "reason": safe_reason},
+                monotonic_offset_ms=monotonic_offset_ms,
+                payload=self._terminal_payload(
+                    ExecutionOutcome.CANCELLED,
+                    reason=safe_reason,
+                    reason_path="$.cancellation.reason",
+                ),
             )
             cancelled = snapshot.model_copy(
                 update={
@@ -1497,21 +1640,18 @@ class SQLiteExecutionStore(_SqliteBase):
                 if snapshot.lifecycle is LifecycleState.FINISHED:
                     connection.execute("DELETE FROM v2_leases WHERE execution_id=?", (key,))
                     continue
-                latest = connection.execute(
-                    "SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?",
-                    (key,),
-                ).fetchone()
-                sequence = int(latest[0]) + 1
+                sequence, monotonic_offset_ms = self._next_event_position(connection, key)
                 event = CanonicalEvent(
                     event_id=EventId(_new_id("event")),
                     execution_id=ExecutionId(key),
                     sequence=sequence,
                     kind=EventKind.EXECUTION_FINISHED,
-                    monotonic_offset_ms=0,
-                    payload={
-                        "outcome": ExecutionOutcome.INTERRUPTED.value,
-                        "reason": "worker lease expired",
-                    },
+                    monotonic_offset_ms=monotonic_offset_ms,
+                    payload=self._terminal_payload(
+                        ExecutionOutcome.INTERRUPTED,
+                        reason="worker lease expired",
+                        reason_path="$.lease.reason",
+                    ),
                 )
                 interrupted = snapshot.model_copy(
                     update={

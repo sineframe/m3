@@ -21,8 +21,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from mcp.client.stdio import get_default_environment
+
 from ..trace.capture import CaptureWriter, read_capture
+from ..trace.redaction import is_sensitive_key
 from ..types import SecretReference, TransportKind
+from ..types import NativeToolPolicy, ToolPolicy
 from .http_proxy import McpHttpProxy
 
 
@@ -70,6 +74,62 @@ def _resolve_runtime_value(value: Any, *, secrets: set[str]) -> str:
         output = output[:begin] + resolved + output[end + 1 :]
         start = begin + len(resolved)
     return output
+
+
+def _classify_runtime_value(
+    name: str,
+    value: str,
+    *,
+    secrets: set[str],
+    configured: frozenset[str] = frozenset(),
+) -> None:
+    """Register resolved values from credential-bearing configuration fields."""
+
+    if is_sensitive_key(name, configured) and value:
+        secrets.add(value)
+
+
+def write_stdio_handoff(
+    path: str | os.PathLike[str],
+    environment: Mapping[str, Any],
+    *,
+    configured_keys: frozenset[str] = frozenset(),
+) -> set[str]:
+    """Resolve selected stdio environment into a one-shot protected handoff."""
+
+    resolved_secrets: set[str] = set()
+    # Match the official stdio client baseline (PATH/HOME/etc.) while keeping
+    # ambient provider credentials out; explicit MCP values are layered on top.
+    resolved_environment: dict[str, str] = get_default_environment()
+    for name, value in environment.items():
+        if not isinstance(name, str) or not name or "=" in name or "\x00" in name:
+            raise ValueError("MCP environment name is invalid")
+        resolved = _resolve_runtime_value(value, secrets=resolved_secrets)
+        resolved_environment[name] = resolved
+        _classify_runtime_value(
+            name,
+            resolved,
+            secrets=resolved_secrets,
+            configured=configured_keys,
+        )
+    handoff = Path(path)
+    created = False
+    try:
+        descriptor = os.open(handoff, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
+            output_file.write(json.dumps(
+                {"environment": resolved_environment, "canaries": sorted(resolved_secrets)},
+                separators=(",", ":"),
+            ))
+    except BaseException:
+        if created:
+            try:
+                handoff.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+    return resolved_secrets
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +220,7 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
         params = _safe_payload(payload.get("params")) or {}
         tool = params.get("name") if isinstance(params.get("name"), str) else None
         raw_ref = f"{target.path.name}#{index}"
+        provenance = "policy_denied" if record.get("kind") == "policy_denied" else "wire_observed"
         request_sequence: int | None = None
         response_to: int | None = None
         latency: float | None = None
@@ -198,6 +259,7 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
                 error=error,
                 response_to_sequence=response_to,
                 latency_ms=latency,
+                provenance=provenance,
                 raw_evidence_ref=raw_ref,
             )
         )
@@ -213,14 +275,30 @@ class McpCaptureManager:
         *,
         baseline_ns: int | None = None,
         trusted_private_keys: Iterable[str] = (),
+        tool_policy: ToolPolicy | None = None,
+        server_aliases: Iterable[str] = (),
+        tools_by_server: Mapping[str, Iterable[str]] | None = None,
     ) -> None:
         self._owns_root = root is None
         self.root = Path(root) if root is not None else Path(tempfile.mkdtemp(prefix="mcp-pal-capture-"))
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.baseline_ns = baseline_ns if baseline_ns is not None else time.perf_counter_ns()
         self._trusted_private = frozenset(trusted_private_keys)
+        # Restrictive policy is deny-by-default, including an empty policy.
+        # Native policy remains provider-owned and is deliberately not handed
+        # to a portable proxy.
+        self._tool_policy = (
+            None if isinstance(tool_policy, NativeToolPolicy) else tool_policy
+        )
+        self._server_aliases = tuple(dict.fromkeys(str(value) for value in server_aliases))
+        self._tools_by_server = {
+            str(key): tuple(str(tool) for tool in values if isinstance(tool, str))
+            for key, values in (tools_by_server or {}).items()
+        }
         self._targets: dict[str, _CaptureTarget] = {}
         self._instrumented: dict[str, Any] = {}
+        self._policy_enforced: set[str] = set()
+        self._policy_paths: set[Path] = set()
         self._closed = False
         self._closed_snapshots: dict[str, McpCaptureSnapshot] = {}
         self._limitations: dict[str, tuple[str, ...]] = {}
@@ -248,6 +326,7 @@ class McpCaptureManager:
                 output.append(configuration)
                 continue
             key = str(configuration.connection_id)
+            alias = str(getattr(configuration, "key", key))
             transport = str(getattr(configuration.transport, "value", configuration.transport))
             target = self._target(key, transport)
             resolved_secrets: set[str] = set()
@@ -258,21 +337,42 @@ class McpCaptureManager:
                     continue
                 env_path = self.root / f"{key}.env.json"
                 environment = getattr(configuration, "environment", {})
-                safe_env = {
-                    str(name): _resolve_runtime_value(value, secrets=resolved_secrets)
-                    for name, value in dict(environment).items()
-                    if isinstance(name, str)
-                }
-                descriptor = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
-                    output_file.write(json.dumps(safe_env, separators=(",", ":")))
-                target.writer.add_secrets(resolved_secrets)
+                configured_keys = frozenset(getattr(configuration, "sensitive_keys", ()))
+                resolved_secrets.update(
+                    write_stdio_handoff(
+                        env_path,
+                        environment,
+                        configured_keys=configured_keys,
+                    )
+                )
+                if resolved_secrets:
+                    target.writer.add_secrets(resolved_secrets)
                 args: tuple[str, ...] = (
                     "-m", "mcp_pal.transport.stdio_proxy",
                     "--capture", str(target.path),
                     "--baseline", str(self.baseline_ns),
                     "--env-file", str(env_path),
                 )
+                if self._tool_policy is not None:
+                    policy_path = self.root / f"{key}.policy.json"
+                    policy_payload = json.dumps({
+                            "policy": self._tool_policy.model_dump(mode="json"),
+                            "server": alias,
+                            "known_servers": self._server_aliases,
+                            "known_tools": tuple(getattr(configuration, "tools", ())),
+                            "known_tools_by_server": self._tools_by_server,
+                        }, separators=(",", ":"))
+                    descriptor = os.open(policy_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    self._policy_paths.add(policy_path)
+                    try:
+                        with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
+                            descriptor = -1
+                            output_file.write(policy_payload)
+                    finally:
+                        if descriptor >= 0:
+                            os.close(descriptor)
+                    args += ("--policy-file", str(policy_path))
+                    self._policy_enforced.add(key)
                 cwd = getattr(configuration, "cwd", None)
                 if isinstance(cwd, str) and cwd:
                     args = (*args, "--cwd", cwd)
@@ -289,13 +389,21 @@ class McpCaptureManager:
                     output.append(configuration)
                     continue
                 headers = getattr(configuration, "headers", {})
-                safe_headers = {
-                    str(name): _resolve_runtime_value(value, secrets=resolved_secrets)
-                    for name, value in dict(headers).items()
-                    if isinstance(name, str)
-                }
+                configured_keys = frozenset(getattr(configuration, "sensitive_keys", ()))
+                safe_headers: dict[str, str] = {}
+                for name, value in dict(headers).items():
+                    if isinstance(name, str):
+                        resolved = _resolve_runtime_value(value, secrets=resolved_secrets)
+                        safe_headers[name] = resolved
+                        _classify_runtime_value(
+                            name,
+                            resolved,
+                            secrets=resolved_secrets,
+                            configured=configured_keys,
+                        )
                 resolved_endpoint = _resolve_runtime_value(endpoint, secrets=resolved_secrets)
-                target.writer.add_secrets(resolved_secrets)
+                if resolved_secrets:
+                    target.writer.add_secrets(resolved_secrets)
                 proxy = McpHttpProxy(
                     upstream_url=resolved_endpoint,
                     configured_headers=safe_headers,
@@ -303,8 +411,16 @@ class McpCaptureManager:
                     capture_path=str(target.path),
                     baseline_ns=self.baseline_ns,
                     allow_private=key in self._trusted_private,
+                    secrets=set(resolved_secrets) if resolved_secrets else None,
+                    tool_policy=self._tool_policy,
+                    server_alias=alias,
+                    known_servers=self._server_aliases,
+                    known_tools=tuple(getattr(configuration, "tools", ())),
+                    known_tools_by_server=self._tools_by_server,
                 )
                 target.proxy = proxy
+                if self._tool_policy is not None:
+                    self._policy_enforced.add(key)
                 target.original_endpoint = endpoint
                 try:
                     target.instrumented_endpoint = await proxy.start()
@@ -321,6 +437,14 @@ class McpCaptureManager:
         """Return the redacting writer for a configured connection."""
 
         return self._target(connection_id, transport).writer
+
+    def enforces_portable_policy(self, connection_ids: Iterable[str]) -> bool:
+        """Return whether every selected connection has a pre-forward gate."""
+
+        selected = tuple(str(value) for value in connection_ids)
+        return bool(self._tool_policy is not None and selected) and all(
+            value in self._policy_enforced for value in selected
+        )
 
     def attach_loopback(self, connection_id: str, endpoint: Any, transport: str = "in_process") -> None:
         """Attach an existing loopback ASGI endpoint to a capture writer."""
@@ -390,8 +514,13 @@ class McpCaptureManager:
                     path.unlink(missing_ok=True)
                 except OSError:
                     pass
+            for path in tuple(self._policy_paths):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
         if failures:
             raise RuntimeError("MCP capture proxy cleanup failed") from None
 
 
-__all__ = ["McpCaptureManager", "McpCaptureSnapshot", "McpWireEvent"]
+__all__ = ["McpCaptureManager", "McpCaptureSnapshot", "McpWireEvent", "write_stdio_handoff"]

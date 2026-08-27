@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from anyio import EndOfStream
 import pytest
 from mcp.shared.message import SessionMessage
 from mcp_types import ErrorData, JSONRPCError, JSONRPCRequest, JSONRPCResponse
@@ -298,3 +299,18 @@ async def test_malformed_stream_values_become_safe_diagnostics_without_breaking_
     assert diagnostics[0].payload == {
         "evidence_mode": "normalized_session_message",
     }
+
+
+@pytest.mark.asyncio
+async def test_observed_read_stream_maps_anyio_end_of_stream_to_iteration_end() -> None:
+    class EndedRead:
+        async def receive(self) -> Any:
+            raise EndOfStream
+
+        async def aclose(self) -> None:
+            return None
+
+    bridge = DirectTraceBridge(execution_id="execution-end", connection_id="connection-end")
+    observed_read, _ = bridge.wrap_streams(EndedRead(), _Write())
+    with pytest.raises(StopAsyncIteration):
+        await anext(observed_read)

@@ -16,20 +16,24 @@ OpenCode's `provider/model` form.
 
 ```bash
 just setup
-# equivalent raw command: uv sync --project sdk --all-extras
+# equivalent raw command: uv sync --all-packages --all-extras --all-groups
 just api
-# equivalent raw command: uv run --project sdk uvicorn mcp_pal.main:app --reload
+# equivalent raw command: uv run --project app uvicorn mcp_pal_app.main:app --reload
 # in another terminal
 just ui
-# equivalent raw command: uv run --project sdk streamlit run sdk/src/mcp_pal/ui/app.py
+# equivalent raw command: uv run --project app streamlit run app/src/mcp_pal_app/ui/app.py
 ```
 
-Run `just --list` to list recipes. Use `just setup` to install dependencies,
-`just test` (or `PYTHONDONTWRITEBYTECODE=1 uv run --project sdk pytest -q`) for the full suite, and `just check` for
+Run `just --list` to list recipes. Use `just setup` to install dependencies for
+both workspace projects, `just test` (or the two project-specific pytest
+commands) for the full suite, and `just check` for
 compile/import checks. Focused suites are available as `just test-unit` and
 `just test-integration`.
 
 The API is documented at `http://localhost:8000/docs`. Set `MCP_PAL_API_URL` if the UI should use another backend URL.
+
+To reset the disposable development database, use the exact confirmation
+ordering `just CONFIRM=reset dev-db-reset`.
 
 ## Custom ACP harnesses
 
@@ -97,10 +101,12 @@ On startup queued/running runs from a previous process are marked failed with an
 
 ```bash
 just test
-# equivalent raw command: PYTHONDONTWRITEBYTECODE=1 uv run --project sdk pytest -q
+# equivalent raw commands:
+# PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest pytest -q sdk/tests
+# PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test pytest -q app/tests
 # focused equivalents:
-# just test-unit        -> PYTHONDONTWRITEBYTECODE=1 uv run --project sdk pytest -q sdk/tests/unit
-# just test-integration -> PYTHONDONTWRITEBYTECODE=1 uv run --project sdk pytest -q sdk/tests/integration
-# just check            -> uv run --project sdk python -m compileall -q sdk/src
+# just test-unit        -> runs both sdk/tests/unit and app/tests/unit
+# just test-integration -> runs both sdk/tests/integration and app/tests/integration
+# just check            -> compiles sdk/src and app/src, then imports mcp_pal_app
 # just package-check    -> uv run --project sdk --all-extras python scripts/check_packaging.py
 ```

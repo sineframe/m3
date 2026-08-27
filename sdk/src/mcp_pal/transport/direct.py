@@ -32,6 +32,7 @@ from mcp.shared._httpx_utils import (
 
 from ..types import SSEServer, SecretReference, StreamableHTTPServer, TrustLevel
 from ..direct_trace import DirectTraceBridge
+from ..trace.redaction import is_sensitive_key
 
 
 TransportName: TypeAlias = Literal["streamable_http", "sse"]
@@ -286,14 +287,6 @@ def _observe_secret(observer: SecretObserver | None, value: str) -> None:
         raise TransportConnectionError("streamable_http", "authentication") from None
 
 
-def _secret_header_name(name: str) -> bool:
-    normalized = "".join(character for character in name.lower() if character.isalnum())
-    return normalized in {
-        "authorization", "proxyauthorization", "cookie", "setcookie", "token",
-        "accesstoken", "apikey", "apiKey".lower(), "secret", "password", "credential",
-    } or normalized.endswith("token") or normalized.endswith("secret")
-
-
 def resolve_headers(
     headers: Mapping[str, SecretReference | str],
     *,
@@ -317,7 +310,7 @@ def resolve_headers(
         if unsafe:
             raise TransportConnectionError("streamable_http", "authentication")
         resolved_value = _header_value(value, secret_resolver)
-        if isinstance(value, SecretReference) or _secret_header_name(name):
+        if isinstance(value, SecretReference) or is_sensitive_key(name):
             _observe_secret(secret_observer, resolved_value)
         resolved[name] = resolved_value
     if bearer_token is not None:

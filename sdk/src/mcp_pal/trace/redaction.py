@@ -34,7 +34,7 @@ _DEFAULT_SENSITIVE_KEYS: Final[frozenset[str]] = frozenset(
     {
         "authorization", "proxy_authorization", "cookie", "set_cookie",
         "x_api_key", "api_key", "apikey", "access_token", "refresh_token",
-        "id_token", "auth_token", "bearer_token", "token", "secret",
+        "id_token", "auth_token", "bearer_token", "auth", "bearer", "token", "secret",
         "password", "passwd", "credential", "credentials", "private_key",
         "client_secret", "session_key",
     }
@@ -42,7 +42,7 @@ _DEFAULT_SENSITIVE_KEYS: Final[frozenset[str]] = frozenset(
 _SENSITIVE_KEY_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(^|[_-])(authorization|proxy[_-]?authorization|cookie|set[_-]?cookie|"
     r"x[_-]?api[_-]?key|api[_-]?key|access[_-]?token|refresh[_-]?token|"
-    r"id[_-]?token|auth[_-]?token|bearer[_-]?token|token|secret|password|"
+    r"id[_-]?token|auth[_-]?token|bearer[_-]?token|auth|bearer|token|secret|password|"
     r"passwd|credential|private[_-]?key|client[_-]?secret)([_-]|$)",
     re.IGNORECASE,
 )
@@ -270,6 +270,25 @@ def assertion_view(value: Any) -> InProcessAssertionView:
 def _is_sensitive_key(key: str, configured: frozenset[str]) -> bool:
     normalized = _normalize_key(key)
     return normalized in _DEFAULT_SENSITIVE_KEYS or normalized in configured or bool(_SENSITIVE_KEY_PATTERN.search(key))
+
+
+def is_sensitive_key(key: str, configured: frozenset[str] = frozenset()) -> bool:
+    """Return whether a field name conventionally carries credentials.
+
+    This small public predicate is shared by durable specification validation
+    and evidence redaction.  It classifies names only; it never reads or
+    resolves values.
+    """
+
+    return isinstance(key, str) and _is_sensitive_key(key, configured)
+
+
+def is_sensitive_query_key(key: str, configured: frozenset[str] = frozenset()) -> bool:
+    """Return whether a URL query name conventionally carries credentials."""
+
+    return isinstance(key, str) and (
+        bool(_SENSITIVE_QUERY_PATTERN.search(key)) or _is_sensitive_key(key, configured)
+    )
 
 
 def _is_header_pair_name(key: str, configured: frozenset[str]) -> bool:
@@ -634,6 +653,6 @@ __all__ = [
     "known_secret_values", "redact", "redact_artifact_bytes", "redact_for_api",
     "redact_for_export", "redact_for_log",
     "redact_for_persistence", "redact_for_ui", "redact_raw_evidence",
-    "redact_model_json", "redact_repr", "redact_result", "redacted_json", "serialize_redacted",
+    "is_sensitive_key", "is_sensitive_query_key", "redact_model_json", "redact_repr", "redact_result", "redacted_json", "serialize_redacted",
     "project_redacted",
 ]

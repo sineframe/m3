@@ -104,6 +104,36 @@ async def test_stdio_connection_uses_argv_only_and_owned_cleanup() -> None:
     await connection.close()
 
 
+def test_stdio_environment_secret_observer_classifies_api_keys_and_references(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolved = "resolved-stdio-reference"
+    monkeypatch.setenv("MCP_STDIO_REFERENCE", resolved)
+    observed: list[str] = []
+    server = StdioServer(
+        name="echo",
+        command=sys.executable,
+        environment={
+            "X-API-Key": "literal-x-api-key",
+            "ANTHROPIC_API_KEY": "literal-anthropic-api-key",
+            "PATH": "ordinary-path",
+            "REFERENCE": SecretReference(source="environment", name="MCP_STDIO_REFERENCE"),
+        },
+    )
+    transport = StdioMCPTransport(server, secret_observer=observed.append)
+    assert transport._environment() == {
+        "X-API-Key": "literal-x-api-key",
+        "ANTHROPIC_API_KEY": "literal-anthropic-api-key",
+        "PATH": "ordinary-path",
+        "REFERENCE": resolved,
+    }
+    assert observed == [
+        "literal-x-api-key",
+        "literal-anthropic-api-key",
+        resolved,
+    ]
+
+
 @pytest.mark.asyncio
 async def test_stdio_connection_accepts_an_existing_absolute_cwd(tmp_path: Path) -> None:
     server = StdioServer(

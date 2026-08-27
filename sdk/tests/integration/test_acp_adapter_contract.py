@@ -34,6 +34,7 @@ from mcp_pal.types import (
     ElicitationPolicy,
     FilesystemPolicy,
     PermissionPolicy,
+    NativeToolPolicy,
     SamplingPolicy,
     SecretReference,
     ServerBinding,
@@ -75,7 +76,22 @@ def _launch(command: str) -> HarnessLaunch:
         harness=ACPAgent(model="fixture", manifest={"command": command, "protocol": "acp", "protocol_version": 1}),
         servers=(ServerBinding(server=StdioServer(name="unused", command="unused")),),
     )
-    return HarnessLaunch(spec, ServerGroupSnapshot(), (), spec.tool_policy)
+    configuration = HarnessServerConfiguration(
+        key="unused",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="contract-policy-proxy",
+        command="unused",
+    )
+    capture = SimpleNamespace(enforces_portable_policy=lambda values: tuple(values) == ("contract-policy-proxy",))
+    return HarnessLaunch(
+        spec,
+        ServerGroupSnapshot(),
+        (configuration,),
+        spec.tool_policy,
+        capture=capture,
+    )
 
 
 @pytest.mark.asyncio
@@ -106,6 +122,39 @@ async def test_acp_adapter_missing_binary_is_typed_not_fallback() -> None:
     readiness = await adapter.preflight(launch)
     assert not readiness.ready
     assert readiness.reason == "acp_executable_missing"
+
+
+@pytest.mark.asyncio
+async def test_acp_policy_capability_requires_proxy_proof_and_rejects_native_policy() -> None:
+    base = _launch(sys.executable)
+    adapter = AcpHarnessAdapter()
+    unproved = HarnessLaunch(
+        base.spec,
+        base.servers,
+        base.configurations,
+        base.tool_policy,
+    )
+    readiness = await adapter.preflight(unproved)
+    assert readiness.ready is False
+    assert readiness.reason == "tool_policy_unsupported"
+    assert adapter.capabilities.supports_tool_policy is False
+
+    native_policy = NativeToolPolicy(
+        harness="acp",
+        policy={"allow": "all"},
+        nonportable_reason="provider-owned policy",
+    )
+    native = HarnessLaunch(
+        base.spec.model_copy(update={"tool_policy": native_policy}),
+        base.servers,
+        base.configurations,
+        native_policy,
+        capture=base.capture,
+    )
+    native_readiness = await adapter.preflight(native)
+    assert native_readiness.ready is False
+    assert native_readiness.reason == "tool_policy_unsupported"
+    assert adapter.capabilities.supports_tool_policy is False
 
 
 @pytest.mark.asyncio

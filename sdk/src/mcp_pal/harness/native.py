@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import signal
 import subprocess
 import tempfile
 from collections.abc import Mapping
@@ -201,17 +200,33 @@ async def read_bounded_line(stream: asyncio.StreamReader, *, maximum: int = MAX_
     return line or None
 
 
-async def discard_bounded(stream: asyncio.StreamReader, *, maximum: int = MAX_STDERR_BYTES) -> None:
-    """Drain diagnostics without retaining unbounded provider output."""
+async def drain_bounded(stream: Any, *, maximum: int = MAX_STDERR_BYTES) -> bytes:
+    """Drain a diagnostic stream to EOF while retaining a bounded prefix.
 
-    consumed = 0
+    Reading must continue after the retained diagnostic limit is reached.  A
+    child (or one of its descendants) can otherwise block forever on a full
+    inherited pipe, making a successful startup look like a hung harness and
+    preventing process cleanup from completing.  The retained bytes are only
+    diagnostic evidence; callers redact them before exposing them publicly.
+    """
+
+    if stream is None:
+        return b""
+    if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum <= 0:
+        raise ValueError("diagnostic limit must be a positive integer")
+    retained = bytearray()
     while True:
         chunk = await stream.read(8192)
         if not chunk:
-            return
-        consumed += len(chunk)
-        if consumed >= maximum:
-            return
+            return bytes(retained)
+        if len(retained) < maximum:
+            retained.extend(chunk[: maximum - len(retained)])
+
+
+async def discard_bounded(stream: asyncio.StreamReader, *, maximum: int = MAX_STDERR_BYTES) -> None:
+    """Drain diagnostics to EOF without retaining them."""
+
+    await drain_bounded(stream, maximum=maximum)
 
 
 def probe_help(executable: str, args: tuple[str, ...]) -> str | None:
@@ -247,17 +262,28 @@ class ProcessOwner:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.process: asyncio.subprocess.Process | None = None
-        self.stderr_task: asyncio.Task[None] | None = None
+        self.stderr_task: asyncio.Task[bytes] | None = None
+        self.pgid: int | None = None
         self._closed = False
 
-    async def spawn(self, argv: list[str], environment: Mapping[str, str]) -> None:
+    async def spawn(
+        self,
+        argv: list[str],
+        environment: Mapping[str, str],
+        *,
+        cwd: Path | str | None = None,
+    ) -> None:
         try:
             self.process = await asyncio.create_subprocess_exec(
                 *argv,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.root),
+                # ``root`` is the adapter-control directory.  Native harnesses
+                # must execute in the SDK workspace when one was selected;
+                # keeping this separate prevents provider config/cache files
+                # from becoming workspace artifacts.
+                cwd=str(cwd if cwd is not None else self.root),
                 env=dict(environment),
                 start_new_session=True,
                 limit=MAX_FRAME_BYTES + 1,
@@ -265,34 +291,72 @@ class ProcessOwner:
         except (OSError, ValueError):
             raise HarnessStartupError("harness process could not start") from None
         assert self.process.stderr is not None
-        self.stderr_task = asyncio.create_task(discard_bounded(self.process.stderr))
+        self.stderr_task = asyncio.create_task(drain_bounded(self.process.stderr))
+        if os.name == "posix" and self.process.pid is not None:
+            # ``start_new_session=True`` makes the child its own group leader.
+            # Keep this identity even if a very short-lived child is already
+            # gone by the time ``getpgid`` runs; the termination helper still
+            # verifies a live PID before issuing a group signal.
+            self.pgid = self.process.pid
+            try:
+                candidate = os.getpgid(self.process.pid)
+                if candidate == self.process.pid:
+                    self.pgid = candidate
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
 
     async def terminate(self) -> None:
         process = self.process
-        if process is None or process.returncode is not None:
+        if process is None:
             return
-        try:
-            pgid = os.getpgid(process.pid)
-        except OSError:
-            pgid = None
-        if pgid is not None and pgid != os.getpgrp():
+        if os.name == "posix":
+            # Do not skip this merely because the direct child was already
+            # reaped: descendants may still own stderr/stdout pipes.
+            from .process_group import terminate_process_group
+
+            await asyncio.to_thread(
+                terminate_process_group,
+                pid=process.pid,
+                pgid=self.pgid,
+                grace_seconds=0.25,
+            )
+        elif process.returncode is None:
             try:
-                os.killpg(pgid, signal.SIGTERM)
+                process.terminate()
             except (OSError, ProcessLookupError):
                 pass
-        else:
-            process.terminate()
         try:
             await asyncio.wait_for(process.wait(), timeout=1.0)
         except asyncio.TimeoutError:
-            if pgid is not None and pgid != os.getpgrp():
+            if os.name == "posix":
+                from .process_group import terminate_process_group
+
+                await asyncio.to_thread(
+                    terminate_process_group,
+                    pid=process.pid,
+                    pgid=self.pgid,
+                    grace_seconds=0.1,
+                )
+            elif process.returncode is None:
                 try:
-                    os.killpg(pgid, signal.SIGKILL)
+                    process.kill()
                 except (OSError, ProcessLookupError):
                     pass
-            else:
-                process.kill()
-            await process.wait()
+            # Group verification can fail closed (for example after a PID
+            # race).  The Process object still identifies the exact owned
+            # child, so finish with a direct kill rather than waiting forever.
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except (OSError, ProcessLookupError):
+                    pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                # Do not turn fail-closed ownership verification into an
+                # unbounded cleanup wait. The exact child has received KILL;
+                # a later event-loop child watcher can still reap it.
+                return
 
     async def close(self) -> None:
         if self._closed:
@@ -301,7 +365,13 @@ class ProcessOwner:
         try:
             await self.terminate()
             if self.stderr_task is not None:
-                await asyncio.gather(self.stderr_task, return_exceptions=True)
+                try:
+                    await asyncio.wait_for(asyncio.shield(self.stderr_task), timeout=1.0)
+                except asyncio.TimeoutError:
+                    # An unowned descendant can retain an inherited pipe even
+                    # after safe group cleanup refuses to signal it.
+                    self.stderr_task.cancel()
+                    await asyncio.gather(self.stderr_task, return_exceptions=True)
             shutil.rmtree(self.root, ignore_errors=False)
         except (OSError, asyncio.CancelledError):
             failure = True
@@ -397,6 +467,19 @@ def write_config(root: Path, launch: HarnessLaunch) -> Path:
     return config
 
 
+def workspace_for_launch(launch: HarnessLaunch, control_root: Path) -> Path:
+    """Resolve the harness cwd without conflating it with control storage."""
+
+    candidate = control_root if launch.workspace_root is None else Path(launch.workspace_root)
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError:
+        raise HarnessStartupError("SDK workspace is unavailable") from None
+    if not resolved.is_dir():
+        raise HarnessStartupError("SDK workspace is unavailable")
+    return resolved
+
+
 def result_from_output(sequence: int, output: Mapping[str, Any], response_text: str = "") -> HarnessTurnResult:
     is_error = bool(output.get("is_error", output.get("isError", False)))
     return HarnessTurnResult(
@@ -421,9 +504,11 @@ __all__ = [
     "MAX_FRAME_BYTES",
     "MAX_QUEUE_ITEMS",
     "MAX_STDERR_BYTES",
+    "drain_bounded",
     "discard_bounded",
     "read_bounded_line",
     "probe_help",
     "result_from_output",
     "write_config",
+    "workspace_for_launch",
 ]

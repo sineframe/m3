@@ -1,6 +1,7 @@
 """ACP v1 subprocess runner backed by the official ``agent-client-protocol`` SDK."""
 from __future__ import annotations
 import asyncio, os, shutil, tempfile, time, sys, json
+from dataclasses import replace
 from contextlib import asynccontextmanager
 from collections.abc import Mapping
 from urllib.parse import parse_qsl, urlsplit
@@ -35,7 +36,10 @@ from acp.schema import (
 )
 from ..trace.claude import transport_for_server
 from ..transport.http_proxy import McpHttpProxy
+from ..transport.capture_proxy import write_stdio_handoff
 from ..trace.capture import read_capture
+from ..trace.redaction import known_secret_values
+from .native import workspace_for_launch
 from .base import AcpRunSpec, HarnessResult
 from .process_group import terminate_process_group
 from ..interaction_handlers import (
@@ -46,7 +50,8 @@ from ..interaction_handlers import (
     SamplingRequest,
     TerminalRequest,
 )
-from ..types import SecretReference
+from ..types import FullToolPolicy, NativeToolPolicy, RestrictiveToolPolicy, SecretReference
+from ..policy import ToolDescriptor, ToolPolicyEvaluator
 
 
 _STDERR_LIMIT = 64 * 1024
@@ -148,23 +153,16 @@ class _AcpTransport:
 
 
 async def _drain_stderr(reader: Any, limit: int = _STDERR_LIMIT) -> bytes:
-    if reader is None:
-        return b""
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = await reader.read(8192)
-        if not chunk:
-            break
-        if total < limit:
-            chunks.append(chunk[: max(0, limit - total)])
-            total += len(chunks[-1])
-    return b"".join(chunks)
+    # Keep the historical private helper for callers/tests while sharing the
+    # drain-to-EOF implementation with the native process owner.
+    from .native import drain_bounded
+
+    return await drain_bounded(reader, maximum=limit)
 
 
 def _manifest_env(manifest: dict[str, Any]) -> tuple[dict[str, str], set[str]]:
     env = os.environ.copy()
-    secrets: set[str] = set()
+    secrets: set[str] = set(known_secret_values())
     for child, ref in (manifest.get("env") or {}).items():
         if not isinstance(ref, str) or not (ref.startswith("${") and ref.endswith("}")):
             raise ValueError("acp_manifest_invalid: env values must be references")
@@ -259,7 +257,7 @@ class _Client:
         interactions: InteractionController | None = None,
     ) -> None:
         self.frames, self.output, self.callback, self.interaction_fault = frames, output, callback, interaction_fault
-        self.secrets = secrets or set()
+        self.secrets = secrets if secrets is not None else set()
         self.interactions: InteractionController | None = interactions
         self._terminals: dict[str, Any] = {}
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
@@ -482,6 +480,7 @@ class _AcpContractSession:
         self._transport: _AcpTransport | None = None
         self._stderr_task: asyncio.Task[bytes] | None = None
         self._workdir: str | None = None
+        self._workspace_root: str | None = None
         self._capture_path: str | None = None
         self._pgid: int | None = None
         self._frames: list[dict[str, Any]] = []
@@ -577,14 +576,15 @@ class _AcpContractSession:
     async def open(self) -> None:
         if self._process is not None:
             return
-        self._workdir = tempfile.mkdtemp(prefix="mcp-pal-acp-session-")
+        self._workdir = tempfile.mkdtemp(prefix="mcp-pal-acp-control-")
         self._capture_path = os.path.join(self._workdir, "acp-capture.jsonl")
         try:
+            self._workspace_root = str(workspace_for_launch(self._launch, Path(self._workdir)))
             env = _isolated_acp_env(self._manifest, self._executable, self._secrets, root=self._workdir)
             self._process = await asyncio.create_subprocess_exec(
                 self._executable,
                 *(str(item) for item in (self._manifest.get("args") or [])),
-                cwd=self._workdir,
+                cwd=self._workspace_root,
                 env=env,
                 start_new_session=(os.name != "nt"),
                 stdin=asyncio.subprocess.PIPE,
@@ -593,10 +593,14 @@ class _AcpContractSession:
             )
             self._stderr_task = asyncio.create_task(_drain_stderr(self._process.stderr))
             if os.name != "nt":
+                # Native ACP launches use ``start_new_session``; retain the
+                # group identity even when an immediately exiting process is
+                # already unreapable by ``getpgid``.
+                self._pgid = self._process.pid
                 try:
                     self._pgid = os.getpgid(self._process.pid)
                 except (ProcessLookupError, OSError):
-                    self._pgid = None
+                    pass
             client = _Client(
                 self._frames,
                 self._updates,
@@ -610,7 +614,7 @@ class _AcpContractSession:
             init = await self._connection.initialize(1, ClientCapabilities(), Implementation(name="mcp-pal", version="0.2"))
             if getattr(init, "protocol_version", None) != 1:
                 raise ValueError("acp_protocol_version_mismatch")
-            response = await self._connection.new_session(self._workdir, mcp_servers=self._servers())
+            response = await self._connection.new_session(self._workspace_root, mcp_servers=self._servers())
             self._session_id = str(response.session_id)
         except (asyncio.CancelledError, SystemExit, KeyboardInterrupt):
             await self.close()
@@ -709,13 +713,21 @@ class _AcpContractSession:
             except Exception:
                 self._cleanup_failure = True
         process = self._process
-        if process is not None and process.returncode is None:
+        if process is not None:
             if self._pgid is not None:
-                await asyncio.to_thread(terminate_process_group, pgid=self._pgid, grace_seconds=0.25)
-            else:
+                # Pass both identities.  A pgid without its owned child is
+                # not enough evidence because process-group ids can be
+                # reused after a leader exits.
+                await asyncio.to_thread(
+                    terminate_process_group,
+                    pid=process.pid,
+                    pgid=self._pgid,
+                    grace_seconds=0.25,
+                )
+            elif process.returncode is None:
                 try:
                     process.terminate()
-                except ProcessLookupError:
+                except (ProcessLookupError, PermissionError, OSError):
                     pass
         if process is not None:
             try:
@@ -724,17 +736,22 @@ class _AcpContractSession:
                 self._cleanup_failure = True
                 try:
                     process.kill()
-                    await process.wait()
+                    await asyncio.wait_for(process.wait(), timeout=1.0)
                 except Exception:
                     pass
         if self._stderr_task is not None:
             try:
                 await asyncio.wait_for(self._stderr_task, timeout=0.75)
+            except asyncio.TimeoutError:
+                self._cleanup_failure = True
+                self._stderr_task.cancel()
+                await asyncio.gather(self._stderr_task, return_exceptions=True)
             except Exception:
                 self._cleanup_failure = True
         self._process = None
         if self._workdir is not None:
             shutil.rmtree(self._workdir, ignore_errors=True)
+        self._workspace_root = None
         # Raw ACP model updates may contain values that were only safe to
         # retain while the redaction set was alive.  Keep only the already
         # redacted frame projection after terminal cleanup.
@@ -833,6 +850,7 @@ class AcpHarnessAdapter:
         self._secret_resolver = secret_resolver
         self._active: _AcpContractSession | None = None
         self._capabilities: Any = None
+        self.last_policy_evidence: Any = None
 
     @property
     def name(self) -> str:
@@ -870,6 +888,8 @@ class AcpHarnessAdapter:
         if manifest.get("protocol", "acp") != "acp" or manifest.get("protocol_version", 1) != 1:
             return self.capabilities.readiness(ready=False, reason="acp_manifest_invalid")
         probe_home: str | None = None
+        self.last_policy_evidence = None
+        self._capabilities = replace(self.capabilities, supports_tool_policy=False)
         try:
             probe_env = _isolated_acp_env(manifest, executable, set())
             probe_home = probe_env["HOME"]
@@ -885,9 +905,37 @@ class AcpHarnessAdapter:
             for block in getattr(launch.spec.message, "content", ()):
                 if getattr(block, "kind", "text") not in self.supported_content_kinds:
                     return self.capabilities.readiness(ready=False, reason="attachment_unsupported")
+            if isinstance(launch.tool_policy, NativeToolPolicy):
+                return self.capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+            if not isinstance(launch.tool_policy, (RestrictiveToolPolicy, FullToolPolicy)):
+                return self.capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+            available_connections = tuple(
+                str(config.connection_id)
+                for config in launch.configurations
+                if getattr(config, "available", False)
+            )
+            capture = getattr(launch, "capture", None)
+            enforcement = getattr(capture, "enforces_portable_policy", None)
+            if not callable(enforcement) or not enforcement(available_connections):
+                return self.capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+            self._capabilities = replace(self.capabilities, supports_tool_policy=True)
+            descriptors = tuple(
+                ToolDescriptor(server=record.key, name=tool)
+                for record in getattr(launch.servers, "records", ())
+                if getattr(record, "available", False)
+                for tool in getattr(record, "tools", ())
+            )
+            self.last_policy_evidence = ToolPolicyEvaluator(descriptors).preflight(
+                launch.tool_policy,
+                harness_name=self.name,
+                supports_enforcement=self.capabilities.supports_tool_policy,
+            )
         except ValueError as exc:
             del exc
             return self.capabilities.readiness(ready=False, reason="acp_environment_unavailable")
+        except Exception:
+            self.last_policy_evidence = None
+            return self.capabilities.readiness(ready=False, reason="tool_policy_unsupported")
         finally:
             if probe_home is not None:
                 shutil.rmtree(probe_home, ignore_errors=True)
@@ -1051,6 +1099,9 @@ class AcpHarnessRunner:
             deadline = time.monotonic() + max(0.5, float(spec.timeout_seconds))
             process_started = time.monotonic()
             if os.name != "nt":
+                # ``start_new_session`` means the process PID is also the
+                # owned process-group ID. Keep it for the early-exit case.
+                agent_pgid = process.pid
                 for _ in range(100):
                     try:
                         candidate = os.getpgid(process.pid)
@@ -1068,14 +1119,37 @@ class AcpHarnessRunner:
             # origin so trace correlation remains valid across startup.
             baseline = capture_baseline_ns
             if selected_transport in {"http", "sse"}:
-                proxy = McpHttpProxy(upstream_url=selected["url"], configured_headers=selected.get("headers"), transport=selected_transport, capture_path=capture_path, baseline_ns=baseline, allow_private=spec.allow_private_upstream)
+                proxy = McpHttpProxy(upstream_url=selected["url"], configured_headers=selected.get("headers"), transport=selected_transport, capture_path=capture_path, baseline_ns=baseline, allow_private=spec.allow_private_upstream, secrets=secrets)
                 local_url = await guarded(proxy.start(), "session/new")
                 if selected_transport == "http":
                     server: Any = HttpMcpServer(name=spec.enabled_server, url=local_url, headers=[], type="http")
                 else:
                     server = SseMcpServer(name=spec.enabled_server, url=local_url, headers=[], type="sse")
             else:
-                server = McpServerStdio(name=spec.enabled_server, command=sys.executable, args=["-m", "mcp_pal.transport.stdio_proxy", "--capture", capture_path, "--baseline", str(baseline), "--", selected.get("command", ""), *(selected.get("args") or [])], env=[EnvVariable(name=x["name"], value=x["value"]) for x in selected_env])
+                # The ACP agent launches this legacy relay. Keep credentials out
+                # of the ACP payload and pass them through a strict one-shot
+                # handoff that the relay removes before starting the MCP child.
+                handoff = os.path.join(workdir, "mcp-env.json")
+                handoff_secrets = write_stdio_handoff(
+                    handoff,
+                    selected.get("env") or {},
+                )
+                secrets.update(handoff_secrets)
+                relay_args = [
+                    "-m", "mcp_pal.transport.stdio_proxy",
+                    "--capture", capture_path,
+                    "--baseline", str(baseline),
+                    "--env-file", handoff,
+                ]
+                if isinstance(selected.get("cwd"), str) and selected["cwd"]:
+                    relay_args.extend(["--cwd", selected["cwd"]])
+                relay_args.extend(["--", selected.get("command", ""), *(selected.get("args") or [])])
+                server = McpServerStdio(
+                    name=spec.enabled_server,
+                    command=sys.executable,
+                    args=relay_args,
+                    env=[],
+                )
             session = await guarded(connection.new_session(workdir, mcp_servers=[server]), "session/new"); result.session_id = session.session_id
             session_result: dict[str, Any] = next((
                 frame.get("payload", {}).get("result", {}) for frame in reversed(frames)
@@ -1154,7 +1228,9 @@ class AcpHarnessRunner:
             if process is not None:
                 try: await asyncio.wait_for(process.wait(), timeout=1.0)
                 except asyncio.TimeoutError:
-                    try: process.kill(); await process.wait()
+                    try:
+                        process.kill()
+                        await asyncio.wait_for(process.wait(), timeout=1.0)
                     except Exception: pass
                 result.exit_code = process.returncode
             if stderr_task:
@@ -1204,6 +1280,7 @@ async def protocol_probe(manifest: dict[str, Any]) -> dict[str, Any]:
         process = await asyncio.create_subprocess_exec(launch_command, *launch_args, cwd=workdir, env=env, start_new_session=(os.name != "nt"), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         stderr_task = asyncio.create_task(_drain_stderr(process.stderr))
         if os.name != "nt":
+            pgid = process.pid
             for _ in range(100):
                 try:
                     candidate = os.getpgid(process.pid)
@@ -1237,8 +1314,16 @@ async def protocol_probe(manifest: dict[str, Any]) -> dict[str, Any]:
                 try: process.terminate()
                 except ProcessLookupError: pass
         if process is not None:
-            try: await asyncio.wait_for(process.wait(), timeout=1.0)
-            except Exception: pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                try:
+                    process.kill()
+                    await asyncio.wait_for(process.wait(), timeout=1.0)
+                except Exception:
+                    pass
+            except Exception:
+                pass
             outcome["exit_code"] = process.returncode
         if stderr_task:
             try:

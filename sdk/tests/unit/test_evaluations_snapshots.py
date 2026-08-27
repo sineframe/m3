@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
 
 from mcp_pal import MCPTestKit, canonical_snapshot, normalize_snapshot
 from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import UnsupportedFeature
+from mcp_pal.errors import ModelValidationError, UnsupportedFeature
 from mcp_pal.evaluations import EvaluationRunner, InMemoryEvaluationStore, RequiredEvaluationError
 from mcp_pal.snapshots import SnapshotOptions
 from mcp_pal.trace.redaction import RedactionConfig, REDACTED
-from mcp_pal.types import EvaluationStatus
+from mcp_pal.types import ArtifactId, ArtifactRef, EvaluationStatus, ExecutionId, ExecutionOutcome, ExecutionResult, ExecutionSnapshot, LifecycleState, TraceId, TraceResult
 
 
 class _SnapshotModel(BaseModel):
@@ -101,6 +103,131 @@ def test_evaluation_runner_persists_statuses_and_sanitizes_failures() -> None:
     assert failed.status is EvaluationStatus.ERROR
     assert failed.message == "evaluator failed"
     assert "EVALUATOR_SECRET" not in repr(failed)
+
+
+def test_evaluation_infers_execution_id_from_execution_result_snapshot() -> None:
+    execution_id = ExecutionId("execution-evaluation-link")
+    trace = TraceResult(trace_id=TraceId("trace-evaluation-link"), execution_id=execution_id)
+    result = ExecutionResult(
+        snapshot=ExecutionSnapshot(
+            execution_id=execution_id,
+            created_at=datetime.now(timezone.utc),
+            finished_at=datetime.now(timezone.utc),
+            lifecycle=LifecycleState.FINISHED,
+            outcome=ExecutionOutcome.COMPLETED,
+        ),
+        trace=trace,
+    )
+    artifact = ArtifactRef(
+        artifact_id=ArtifactId("artifact-evaluation-link"),
+        execution_id=execution_id,
+        name="result.json",
+        size_bytes=0,
+        sha256="0" * 64,
+    )
+    runner = EvaluationRunner()
+    runner.register("same-execution", lambda context: context.execution_id == execution_id)
+    evaluation = runner.evaluate(
+        result,
+        "same-execution",
+        trace=trace,
+        artifacts=(artifact,),
+        evaluation_id="evaluation-distinct-id",
+    )
+    assert evaluation.evaluation_id.root == "evaluation-distinct-id"
+    assert evaluation.context is not None
+    assert evaluation.context.execution_id == execution_id
+    assert evaluation.context.trace == trace
+    assert evaluation.status is EvaluationStatus.PASSED
+
+
+def test_evaluation_rejects_conflicting_execution_result_and_artifact_ids() -> None:
+    result = ExecutionResult(
+        snapshot=ExecutionSnapshot(
+            execution_id=ExecutionId("execution-result"),
+            created_at=datetime.now(timezone.utc),
+            finished_at=datetime.now(timezone.utc),
+            lifecycle=LifecycleState.FINISHED,
+            outcome=ExecutionOutcome.COMPLETED,
+        ),
+    )
+    artifact = ArtifactRef(
+        artifact_id=ArtifactId("artifact-conflicting-id"),
+        execution_id=ExecutionId("execution-artifact"),
+        name="result.json",
+        size_bytes=0,
+        sha256="0" * 64,
+    )
+    runner = EvaluationRunner()
+    runner.register("always", lambda _context: True)
+    with pytest.raises(ModelValidationError) as error:
+        runner.evaluate(result, "always", artifacts=(artifact,))
+    assert str(error.value) == "evaluation execution IDs do not match"
+    assert "execution-result" not in str(error.value)
+    assert "execution-artifact" not in str(error.value)
+
+
+def test_evaluation_rejects_conflicting_explicit_and_trace_ids() -> None:
+    execution_id = ExecutionId("execution-trace")
+    runner = EvaluationRunner()
+    runner.register("always", lambda _context: True)
+    with pytest.raises(ModelValidationError) as error:
+        runner.evaluate(
+            {},
+            "always",
+            trace=TraceResult(trace_id=TraceId("trace-conflict"), execution_id=execution_id),
+            execution_id="execution-explicit",
+        )
+    assert str(error.value) == "evaluation execution IDs do not match"
+    assert "execution-trace" not in str(error.value)
+    assert "execution-explicit" not in str(error.value)
+
+
+def test_evaluation_rejects_conflicting_subject_and_artifact_ids() -> None:
+    runner = EvaluationRunner()
+    runner.register("always", lambda _context: True)
+    subject = SimpleNamespace(execution_id="execution-subject")
+    artifact = ArtifactRef(
+        artifact_id=ArtifactId("artifact-subject-conflict"),
+        execution_id=ExecutionId("execution-artifact"),
+        name="result.json",
+        size_bytes=0,
+        sha256="0" * 64,
+    )
+    with pytest.raises(ModelValidationError) as error:
+        runner.evaluate(subject, "always", artifacts=(artifact,))
+    assert str(error.value) == "evaluation execution IDs do not match"
+    assert "execution-subject" not in str(error.value)
+    assert "execution-artifact" not in str(error.value)
+
+
+def test_async_evaluation_rejects_conflicting_result_and_artifact_ids() -> None:
+    async def run() -> None:
+        result = ExecutionResult(
+            snapshot=ExecutionSnapshot(
+                execution_id=ExecutionId("execution-subject"),
+                created_at=datetime.now(timezone.utc),
+                finished_at=datetime.now(timezone.utc),
+                lifecycle=LifecycleState.FINISHED,
+                outcome=ExecutionOutcome.COMPLETED,
+            ),
+        )
+        artifact = ArtifactRef(
+            artifact_id=ArtifactId("artifact-async-conflict"),
+            execution_id=ExecutionId("execution-other"),
+            name="result.json",
+            size_bytes=0,
+            sha256="0" * 64,
+        )
+        runner = EvaluationRunner()
+        runner.register("always", lambda _context: True)
+        with pytest.raises(ModelValidationError) as error:
+            await runner.evaluate_async(result, "always", artifacts=(artifact,))
+        assert str(error.value) == "evaluation execution IDs do not match"
+        assert "execution-subject" not in str(error.value)
+        assert "execution-other" not in str(error.value)
+
+    asyncio.run(run())
 
 
 def test_evaluator_receives_immutable_redacted_context_and_unregistered_callable_is_rejected() -> None:

@@ -2,7 +2,7 @@
 
 This module contains only the small, process-independent configuration
 contract used by SDK callers.  Application settings (credentials, database,
-and UI/runtime limits) intentionally remain in :mod:`mcp_pal.config`.
+and UI/runtime limits) intentionally remain in :mod:`mcp_pal_app.settings`.
 """
 
 from __future__ import annotations

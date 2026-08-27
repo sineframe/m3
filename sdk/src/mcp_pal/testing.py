@@ -865,6 +865,7 @@ class FaultInjector:
         """
 
         configuration = {
+            "delays": self.delays,
             "malformed_methods": sorted(self.malformed_methods),
             "partial_methods": sorted(self.partial_methods),
             "invalid_result_methods": sorted(self.invalid_result_methods),

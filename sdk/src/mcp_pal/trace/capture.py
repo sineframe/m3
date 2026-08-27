@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .redaction import redact
+from .redaction import known_secret_values, redact
 
 
 class CaptureWriter:
@@ -17,14 +17,17 @@ class CaptureWriter:
         self.path = Path(path)
         self.baseline_ns = baseline_ns
         self.lock = threading.Lock()
-        self._secrets: set[str] | None = None if secrets is None else set(secrets)
+        self._secrets: set[str] | None = None
+        if secrets is not None:
+            self._secrets = set(known_secret_values())
+            self._secrets.update(value for value in secrets if value)
 
     def add_secrets(self, secrets: set[str]) -> None:
         """Register process-local values for redaction of later wire events."""
 
         with self.lock:
             if self._secrets is None:
-                self._secrets = set()
+                self._secrets = set(known_secret_values())
             self._secrets.update(value for value in secrets if value)
 
     def write(

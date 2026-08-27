@@ -1,8 +1,12 @@
 [tool.uv.workspace]
-members = ["sdk"]
+members = ["sdk", "app"]
 
 [tool.pytest.ini_options]
-testpaths = ["sdk/tests"]
-pythonpath = ["sdk/src"]
+testpaths = ["sdk/tests", "app/tests"]
+pythonpath = ["sdk/src", "app/src"]
 asyncio_mode = "auto"
 addopts = "-p no:cacheprovider"
+markers = [
+  "e2e: black-box SDK workflows that cross real process or persistence boundaries",
+  "live: opt-in tests that call a live external provider and may incur cost",
+]

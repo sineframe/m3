@@ -40,10 +40,21 @@ def inspect_artifacts(wheel: Path, sdist: Path) -> None:
         assert metadata["Version"] == EXPECTED_VERSION
         assert metadata["Requires-Python"] == ">=3.10"
         assert metadata["License-Expression"] == "Apache-2.0"
+        requires = "\n".join(metadata.get_all("Requires-Dist") or []).lower()
+        for forbidden in ("fastapi", "streamlit", "requests", "pydantic-settings"):
+            assert forbidden not in requires
         assert set(metadata.get_all("Provides-Extra") or []) >= {
-            "pytest", "storage", "app", "property", "docs", "all"
+            "pytest", "storage", "property", "docs", "all"
         }
+        assert "app" not in (metadata.get_all("Provides-Extra") or [])
         assert "mcp_pal/py.typed" in names
+        forbidden_modules = (
+            "mcp_pal/api/", "mcp_pal/ui/", "mcp_pal/persistence/",
+            "mcp_pal/main.py", "mcp_pal/config.py", "mcp_pal/services/run_manager.py",
+            "mcp_pal/harness/claude_cli.py", "mcp_pal/harness/opencode_cli.py",
+            "mcp_pal/domain/events.py",
+        )
+        assert not any(name.startswith(prefix) for name in names for prefix in forbidden_modules)
         assert "mcp_pal/schemas/mcp-pal.harness.v1.schema.json" in names
         assert "mcp_pal/schemas/mcp-pal.event.v0.2.schema.json" in names
         assert any(name.endswith(".dist-info/licenses/LICENSE") for name in names)
@@ -152,8 +163,11 @@ def installed_import_smoke(python: Path, smoke_dir: Path, expected_version: str)
         sqlite3.connect = denied
 
         import mcp_pal
+        import importlib.util
         assert mcp_pal.__version__ == metadata.version("mcp-pal") == {expected_version!r}
         assert os.environ.get("MCP_PAL_IMPORT_SMOKE_SENTINEL") is None
+        for removed in ("mcp_pal.api", "mcp_pal.ui", "mcp_pal.main", "mcp_pal.config", "mcp_pal.persistence", "mcp_pal.services.run_manager", "mcp_pal.harness.claude_cli", "mcp_pal.harness.opencode_cli", "mcp_pal.domain.events"):
+            assert importlib.util.find_spec(removed) is None, removed
         """
     )
     run([str(python), "-c", code], cwd=smoke_dir)

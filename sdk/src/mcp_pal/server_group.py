@@ -31,6 +31,7 @@ from .types import (
     StreamableHTTPServer,
     TransportKind,
     TrustLevel,
+    ToolPolicy,
 )
 from .transport.capture_proxy import McpCaptureManager
 
@@ -82,6 +83,7 @@ class HarnessServerConfiguration:
     headers: Mapping[str, Any] = field(default_factory=dict)
     reason: str | None = None
     cwd: str | None = None
+    tools: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "environment", dict(self.environment))
@@ -345,12 +347,14 @@ class ServerGroupManager:
         *,
         unavailable: Mapping[str, str] | None = None,
         expose_in_process: bool = True,
+        tool_policy: ToolPolicy | None = None,
     ) -> None:
         self._bindings = tuple(bindings)
         if not self._bindings:
             raise ValueError("server group requires at least one binding")
         self._unavailable = dict(unavailable or {})
         self._expose_in_process = expose_in_process
+        self._tool_policy = tool_policy
         self._records: dict[str, ServerRecord] = {}
         self._endpoints: dict[str, _LoopbackEndpoint] = {}
         self._started = False
@@ -438,7 +442,12 @@ class ServerGroupManager:
                 in {TrustLevel.TRUSTED_PRIVATE, TrustLevel.SDK_LOOPBACK}
                 and record.transport in {TransportKind.STREAMABLE_HTTP, TransportKind.SSE}
             }
-            self._capture = McpCaptureManager(trusted_private_keys=trusted_private)
+            self._capture = McpCaptureManager(
+                trusted_private_keys=trusted_private,
+                tool_policy=self._tool_policy,
+                server_aliases=tuple(record.key for record in records),
+                tools_by_server={record.key: record.tools for record in records},
+            )
             raw_configurations = self._raw_configurations()
             instrumented = await self._capture.instrument(raw_configurations)
             for config in instrumented:
@@ -488,6 +497,7 @@ class ServerGroupManager:
                         available=False,
                         connection_id=record.connection_id,
                         reason=record.reason or "server_profile_unresolved",
+                        tools=record.tools,
                     )
                 )
                 continue
@@ -504,6 +514,7 @@ class ServerGroupManager:
                         cwd=server.cwd,
                         environment=server.environment,
                         reason=record.reason,
+                        tools=record.tools,
                     )
                 )
             elif isinstance(server, (StreamableHTTPServer, SSEServer)):
@@ -517,6 +528,7 @@ class ServerGroupManager:
                         endpoint=record.endpoint or server.url,
                         headers=server.headers,
                         reason=record.reason,
+                        tools=record.tools,
                     )
                 )
             else:
@@ -529,6 +541,7 @@ class ServerGroupManager:
                         connection_id=record.connection_id,
                         endpoint=record.endpoint,
                         reason=record.reason,
+                        tools=record.tools,
                     )
                 )
         return tuple(configurations)

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable as _Awaitable, Callable as _Callable
 import inspect as _inspect
 from pathlib import Path as _Path
+from uuid import uuid4 as _uuid4
 from typing import Any as _Any, Iterable as _Iterable, Literal as _Literal, Mapping as _Mapping, NoReturn as _NoReturn, Protocol as _Protocol, cast as _cast
 
 import httpx2
@@ -39,6 +40,7 @@ from .interaction_handlers import (
     WorkspaceFilesystemHandler,
 )
 from .server_group import ServerGroupManager as _ServerGroupManager
+from .storage import ArtifactStore as _ArtifactStore
 from .configuration import (
     ConfigOrigin,
     ConfigSource,
@@ -85,13 +87,17 @@ from .direct_client import (
 from .evaluations import AsyncEvaluator as _AsyncEvaluator, EvaluationRunner as _EvaluationRunner, EvaluatorCallable as _EvaluatorCallable
 from .errors import (
     KitClosed as _KitClosed,
+    ModelValidationError as _ModelValidationError,
     OperationCancelled as _OperationCancelled,
     OperationTimeout as _OperationTimeout,
+    ProtocolError as _ProtocolError,
     UnsupportedFeature as _UnsupportedFeature,
 )
 from .direct_trace import DirectTraceBridge as _DirectTraceBridge
 from .execution_runtime import AsyncExecutionController as _AsyncExecutionController, AsyncExecutionHandle
+from .execution_trace import ExecutionTraceRecorder as _ExecutionTraceRecorder
 from .storage import ExecutionStore as _ExecutionStore
+from .storage import InMemoryExecutionStore as _InMemoryExecutionStore
 from .trace.redaction import RedactionConfig as _RedactionConfig
 from .types import ExecutionOutcome as _ExecutionOutcome
 from .services.probes import (
@@ -135,6 +141,7 @@ from .transport.local import InProcessMCPTransport as _InProcessMCPTransport, St
 
 
 _CURRENT_MCP_PROTOCOL = "2025-11-25"
+_SERVER_FAILURE_SETTLE_TIMEOUT = 0.05
 
 
 def _adapt_callback(callback: _Any) -> _Any:
@@ -263,7 +270,7 @@ class _OwnedLifecycle:
                 resources = await self._open_resources()
             except BaseException as error:
                 if not future.done():
-                    future.set_exception(error)
+                    self._set_future_exception(future, error)
                 if self._close_future is not None and not self._close_future.done():
                     self._close_future.set_result(None)
                 return
@@ -275,17 +282,32 @@ class _OwnedLifecycle:
                     await resources[3]()
                 except BaseException as error:
                     if not future.done():
-                        future.set_exception(error)
+                        self._set_future_exception(future, error)
                 else:
                     if not future.done():
                         future.set_result(None)
-        except asyncio.CancelledError as error:
+        except asyncio.CancelledError:
             if self._start_future is not None and not self._start_future.done():
-                self._start_future.set_exception(error)
+                # A cancelled start waiter is shielded from cancelling this
+                # future. Cancel the owner-owned future explicitly instead of
+                # publishing an unobserved CancelledError.
+                self._start_future.cancel()
             raise
         finally:
             if self._close_future is not None and not self._close_future.done():
                 self._close_future.set_result(None)
+
+    @staticmethod
+    def _set_future_exception(future: asyncio.Future[_Any], error: BaseException) -> None:
+        """Publish an error while marking abandoned futures as retrieved."""
+
+        future.set_exception(error)
+
+        def consume_exception(done: asyncio.Future[_Any]) -> None:
+            if not done.cancelled():
+                done.exception()
+
+        future.add_done_callback(consume_exception)
 
 
 class _EnteredSessionProxy:
@@ -369,10 +391,15 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
                 result = await value(*args, **kwargs)
             except BaseException as exc:
                 self._mark_trace_failure(exc)
-                # The official session may report a protocol error just
-                # before its owned in-process server task completes. Yield
-                # once so the transport's failure callback can publish the
-                # stronger original exception for opted-in test callers.
+                if isinstance(exc, _ProtocolError):
+                    # An in-process server can publish its original handler
+                    # failure immediately after the official JSON-RPC error.
+                    # Wait for the transport's explicit settlement signal;
+                    # otherwise retain the typed protocol error.
+                    await self._raise_connection_failure(wait_for_failure=True)
+                    raise
+                if isinstance(exc, _ModelValidationError):
+                    raise
                 await self._raise_connection_failure()
                 raise
             await self._raise_connection_failure()
@@ -380,20 +407,17 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
 
         return guarded
 
-    async def _raise_connection_failure(self) -> None:
+    async def _raise_connection_failure(self, *, wait_for_failure: bool = False) -> None:
         connection = self._connection
         if connection is None:
             return
+        if wait_for_failure:
+            wait_for_publication = getattr(connection, "wait_for_failure_publication", None)
+            if callable(wait_for_publication):
+                await wait_for_publication(_SERVER_FAILURE_SETTLE_TIMEOUT)
         raise_if_failed = getattr(connection, "raise_if_failed", None)
         if not callable(raise_if_failed):
             return
-        # Official Server.run propagates a raised handler through its AnyIO
-        # task group after the JSON-RPC error response is written. Give that
-        # owned task a few checkpoints to publish the original failure before
-        # falling back to the sanitized protocol result.
-        for _ in range(4):
-            raise_if_failed(expose_original=True)
-            await asyncio.sleep(0)
         raise_if_failed(expose_original=True)
 
     @property
@@ -569,11 +593,16 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
             return self
         except BaseException as exc:
             self._mark_trace_failure(exc)
+            failure = exc
+            try:
+                await self._raise_connection_failure(wait_for_failure=True)
+            except BaseException as server_failure:
+                failure = server_failure
             try:
                 await self.aclose()
             except BaseException:
                 pass
-            raise
+            raise failure
 
     def _mark_trace_failure(self, error: BaseException) -> None:
         if isinstance(error, (asyncio.CancelledError, _OperationCancelled)):
@@ -633,7 +662,13 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
             raise failure
 
     async def __aexit__(self, exc_type: _Any, exc_value: _Any, traceback: _Any) -> None:
-        await self.aclose()
+        if exc_value is not None:
+            self._mark_trace_failure(exc_value)
+        try:
+            await self.aclose()
+        except BaseException:
+            if exc_value is None:
+                raise
 
 
 AsyncAgentSession = _CoreAsyncAgentSession
@@ -911,13 +946,17 @@ class AsyncMCPTestKit:
         runtime_servers: _Iterable[_Any] = (),
         _event_sink: _Any = None,
         interaction_handlers: InteractionHandlers | None = None,
+        _trace_recorder: _ExecutionTraceRecorder | None = None,
+        _trace_owner: bool = True,
+        _execution_id: _Any = None,
+        _artifact_store: _ArtifactStore | None = None,
     ) -> AsyncAgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentExecutionSpec):
             self._unsupported("agent_session")
         resolved = adapter or self._adapter_registry.resolve(spec)
         bindings = spec.servers + _runtime_server_bindings(runtime_servers)
-        manager = _ServerGroupManager(bindings)
+        manager = _ServerGroupManager(bindings, tool_policy=spec.tool_policy)
         interactions = InteractionController(
             permission_policy=spec.permission_policy,
             elicitation_policy=spec.elicitation_policy,
@@ -926,14 +965,25 @@ class AsyncMCPTestKit:
             terminal_policy=spec.terminal_policy,
             handlers=interaction_handlers,
         )
+        recorder = _trace_recorder
+        if recorder is None:
+            from .types import ExecutionId as _ExecutionId
+
+            recorder = _ExecutionTraceRecorder(
+                _InMemoryExecutionStore(),
+                _execution_id if _execution_id is not None else _ExecutionId(str(_uuid4())),
+            )
         session = AsyncAgentSession(
             spec,
             resolved,
             server_manager=manager,
-            server_manager_factory=lambda: _ServerGroupManager(bindings),
+            server_manager_factory=lambda: _ServerGroupManager(bindings, tool_policy=spec.tool_policy),
             on_close=self._session_closed,
             event_sink=_event_sink,
             interaction_controller=interactions,
+            trace_recorder=recorder,
+            trace_owner=_trace_owner,
+            artifact_store=_artifact_store,
         )
         self._active_sessions.add(session)
         return session

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -24,6 +25,7 @@ from mcp_pal.types import (
     EventKind,
     ExecutionOutcome,
     ExecutionResult,
+    PingOperation,
     ServerBinding,
     StdioServer,
     ErrorInfo,
@@ -39,6 +41,7 @@ from mcp_pal.workspace import WorkspaceError, WorkspaceManager
 def _spec() -> DirectExecutionSpec:
     return DirectExecutionSpec(
         servers=(ServerBinding(server=FaultInjector().stdio_server()),),
+        operation=PingOperation(),
     )
 
 
@@ -54,6 +57,9 @@ class _SlowClient:
 
     async def __aexit__(self, *_args: object) -> None:
         return None
+
+    async def ping(self) -> object:
+        return SimpleNamespace(raw=None, result_type=None)
 
 
 class _SlowKit:
