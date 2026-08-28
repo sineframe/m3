@@ -27,7 +27,7 @@ from mcp_pal.interaction_handlers import (
     TerminalRequest,
     TerminalResult,
 )
-from mcp_pal.server_group import HarnessServerConfiguration, ServerGroupSnapshot
+from mcp_pal.server_group import HarnessServerConfiguration, ServerGroupSnapshot, ServerRecord
 from mcp_pal.types import (
     ACPAgent,
     AgentExecutionSpec,
@@ -63,6 +63,33 @@ for line in sys.stdin:
     elif method == 'session/prompt':
         count += 1
         send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'persistent-session','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'turn-' + str(count)}}}})
+        send({'jsonrpc':'2.0','id':ident,'result':{'stopReason':'end_turn'}})
+""",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return str(path)
+
+
+def _configured_agent(path: Path) -> str:
+    path.write_text(
+        """#!/usr/bin/env python3
+import json, sys
+def send(value):
+    print(json.dumps(value, separators=(',', ':')), flush=True)
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request.get('method')
+    ident = request.get('id')
+    if method == 'initialize':
+        send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':1}})
+    elif method == 'session/new':
+        send({'jsonrpc':'2.0','id':ident,'result':{'sessionId':'configured-session','modes':{'currentModeId':'default','availableModes':[{'id':'fast','name':'Fast'}]},'configOptions':[{'type':'select','id':'quality','name':'Quality','currentValue':'normal','options':[{'value':'high','name':'High'}]}]}})
+    elif method == 'session/set_mode':
+        send({'jsonrpc':'2.0','id':ident,'result':{'modeId':'fast'}})
+    elif method == 'session/set_config_option':
+        send({'jsonrpc':'2.0','id':ident,'result':{'configOptions':[]}})
+    elif method == 'session/prompt':
         send({'jsonrpc':'2.0','id':ident,'result':{'stopReason':'end_turn'}})
 """,
         encoding="utf-8",
@@ -113,6 +140,69 @@ async def test_acp_adapter_keeps_one_session_across_turns(tmp_path: Path) -> Non
     assert session.snapshot().turns == 2
     await session.close()
     assert session.snapshot().closed
+
+
+@pytest.mark.asyncio
+async def test_acp_applies_typed_mode_and_config_before_first_prompt(tmp_path: Path) -> None:
+    command = _configured_agent(tmp_path / "configured-agent.py")
+    launch = _launch(command)
+    spec = launch.spec.model_copy(update={
+        "harness": ACPAgent(
+            model="fixture",
+            manifest={"command": command, "protocol": "acp", "protocol_version": 1},
+            agent_mode_id="fast",
+            session_config={"quality": "high"},
+        )
+    })
+    launch = HarnessLaunch(spec, launch.servers, launch.configurations, spec.tool_policy, capture=launch.capture)
+    adapter = AcpHarnessAdapter()
+    session = await adapter.open(launch)
+    result = await session.send(HarnessTurnRequest.from_message("first"))
+    assert result.status == "completed"
+    frames = cast(Any, session)._frames
+    methods = [frame["payload"].get("method") for frame in frames if isinstance(frame.get("payload"), dict)]
+    assert methods.index("session/set_mode") < methods.index("session/set_config_option") < methods.index("session/prompt")
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_acp_rejects_stale_typed_session_option(tmp_path: Path) -> None:
+    command = _agent(tmp_path / "stale-agent.py")
+    base = _launch(command)
+    spec = base.spec.model_copy(update={
+        "harness": ACPAgent(
+            model="fixture",
+            manifest={"command": command, "protocol": "acp", "protocol_version": 1},
+            session_config={"missing": "value"},
+        )
+    })
+    launch = HarnessLaunch(spec, base.servers, base.configurations, spec.tool_policy, capture=base.capture)
+    with pytest.raises(HarnessStartupError, match="ACP harness could not start"):
+        await AcpHarnessAdapter().open(launch)
+
+
+@pytest.mark.asyncio
+async def test_acp_native_agent_default_policy_is_explicitly_nonportable(tmp_path: Path) -> None:
+    del tmp_path
+    server = StdioServer(name="selected", command="python")
+    policy = NativeToolPolicy(harness="acp", policy={"mode": "agent_default", "server": "selected"}, nonportable_reason="ACP owns MCP tool selection")
+    spec = AgentExecutionSpec(
+        harness=ACPAgent(model="fixture", manifest={"command": sys.executable}),
+        servers=(ServerBinding(server=server, alias="selected"),),
+        tool_policy=policy,
+    )
+    launch = HarnessLaunch(
+        spec,
+        ServerGroupSnapshot((ServerRecord("selected", server, True, True, "selected", TransportKind.STDIO),)),
+        (HarnessServerConfiguration(key="selected", transport=TransportKind.STDIO, required=True, available=True, connection_id="selected", command="python"),),
+        policy,
+    )
+    adapter = AcpHarnessAdapter()
+    readiness = await adapter.preflight(launch)
+    assert readiness.ready
+    assert adapter.last_policy_evidence is not None
+    assert adapter.last_policy_evidence.enforced == "native"
+    assert adapter.last_policy_evidence.portable is False
 
 
 @pytest.mark.asyncio

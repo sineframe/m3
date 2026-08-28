@@ -13,7 +13,7 @@ import sys
 import pytest
 
 from mcp_pal.events import EventFactory
-from mcp_pal.storage import ArtifactNotFound, InMemoryArtifactStore, SQLiteExecutionStore, StorageConflict
+from mcp_pal.storage import ArtifactNotFound, InMemoryArtifactStore, InMemoryExecutionStore, SQLiteExecutionStore, StorageConflict
 from mcp_pal.storage import StorageError
 from mcp_pal.trace.redaction import RedactionConfig
 from mcp_pal.types import (
@@ -23,9 +23,14 @@ from mcp_pal.types import (
     ExecutionSnapshot,
     LifecycleState,
     RevisionSelection,
+    SecretReference,
     SessionId,
     TurnId,
     TurnSnapshot,
+    DirectExecutionSpec,
+    PingOperation,
+    ServerBinding,
+    StdioServer,
 )
 
 
@@ -39,6 +44,26 @@ def _created(store: SQLiteExecutionStore, name: str = "execution-1") -> tuple[Ex
     factory = EventFactory(execution_id)
     store.append_events([factory.create(EventKind.EXECUTION_CREATED, payload={})])
     return execution_id, factory
+
+
+def test_memory_and_sqlite_retain_defensive_typed_execution_specs(tmp_path: Path) -> None:
+    spec = DirectExecutionSpec(
+        servers=(ServerBinding(server=StdioServer(name="server", command="echo")),),
+        operation=PingOperation(server="server"),
+    )
+    execution_id = ExecutionId("spec-parity")
+    memory = InMemoryExecutionStore()
+    memory.create(ExecutionSnapshot(execution_id=execution_id), specification=spec.model_dump(mode="json"))
+    memory_spec = memory.get_execution_spec(execution_id)
+    assert memory_spec == spec
+    assert memory_spec is not None
+    memory_spec = memory_spec.model_copy(update={"metadata": {"mutated": True}})
+    assert "mutated" not in memory.get_execution_spec(execution_id).metadata  # type: ignore[union-attr]
+
+    sqlite = _store(tmp_path)
+    sqlite.create(ExecutionSnapshot(execution_id=execution_id), specification=spec.model_dump(mode="json"))
+    assert sqlite.get_execution_spec(execution_id) == spec
+    sqlite.close()
 
 
 def test_storage_import_is_lazy_without_sqlalchemy(tmp_path: Path) -> None:
@@ -103,6 +128,38 @@ def test_profile_revisions_archive_and_explicit_latest_clone(tmp_path: Path) -> 
         connection.execute("PRAGMA foreign_keys=ON")
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute("UPDATE v2_server_profiles SET current_revision_id=? WHERE id=?", ("missing-revision", profile.id))
+
+
+def test_profile_listing_is_kind_scoped_archived_filtered_and_revision_ordered(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    server = store.create_profile("server", "zulu", {"mcpServers": {"z": {"command": "echo"}}})
+    harness = store.create_profile("harness", "alpha", {"manifest": {"command": "agent"}, "trusted_unsandboxed": False})
+    store.add_revision(server.id, {"mcpServers": {"z": {"command": "echo", "args": ["2"]}}}, revision_id="server-revision-2")
+    store.archive_profile(server.id)
+
+    assert [item.id for item in store.list_profiles("server")] == []
+    assert [item.id for item in store.list_profiles("server", include_archived=True)] == [server.id]
+    assert [item.id for item in store.list_profiles("harness")] == [harness.id]
+    assert [item.revision_number for item in store.list_profile_revisions(server.id)] == [1, 2]
+    with pytest.raises(ValueError, match="profile kind"):
+        store.list_profiles("not-a-kind")
+    with pytest.raises(StorageConflict, match="does not exist"):
+        store.list_profile_revisions("missing-profile")
+
+
+def test_profile_metadata_update_conflict_and_durable_redaction(tmp_path: Path) -> None:
+    store = SQLiteExecutionStore(
+        tmp_path / "mcp-pal.sqlite",
+        blob_root=tmp_path / "blobs",
+        config=RedactionConfig(secrets=frozenset({"super-secret"}), include_environment=False),
+    )
+    first = store.create_server_profile("first", {"token": SecretReference(source="environment", name="MCP_TOKEN")})
+    second = store.create_server_profile("second", {"token": SecretReference(source="environment", name="MCP_TOKEN")})
+    updated = store.update_profile(first.id, name="renamed", description="safe")
+    assert updated.name == "renamed"
+    assert store.resolve_revision(first.id).value["token"] == {"source": "environment", "name": "MCP_TOKEN"}
+    with pytest.raises(StorageConflict, match="name"):
+        store.update_profile(second.id, name="renamed")
 
 
 def test_content_addressed_blobs_are_shared_and_collected(tmp_path: Path) -> None:

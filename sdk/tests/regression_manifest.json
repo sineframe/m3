@@ -10,7 +10,7 @@
       "regression": "sdk/tests/e2e/test_sdk_workflows.py::test_multiturn_acp_session_calls_one_real_mcp_and_keeps_a_trace",
       "gate": {
         "command": "uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_sdk_workflows.py",
-        "expected": "deterministic E2E passes with exactly the one remaining documented strict xfail"
+        "expected": "deterministic E2E passes with no strict xfails for the repaired ACP and cancellation regressions"
       }
     },
     {
@@ -67,11 +67,11 @@
       "id": "r8-durable-cancel-owner",
       "finding": "Durable cancel does not interrupt owner",
       "owner_milestones": ["R8"],
-      "status": "strict_xfail",
+      "status": "passing",
       "regression": "sdk/tests/e2e/test_sdk_workflows.py::test_separate_worker_cancel_interrupts_owned_stdio_process",
       "gate": {
         "command": "uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_sdk_workflows.py",
-        "expected": "durable-cancel regression remains an explicitly documented strict xfail until owner interruption works"
+        "expected": "ten direct and two ACP separate-worker cancellations interrupt owned children, persist one partial cancelled trace each, complete commands, and release ownership"
       }
     },
     {
@@ -327,7 +327,7 @@
       "regression": "sdk/tests/unit/test_regression_manifest.py::test_manifest_matches_section_7_findings",
       "gate": {
         "command": "uv run --project sdk pytest -q sdk/tests/unit/test_regression_manifest.py",
-        "expected": "manifest parses section 7 one-to-one, validates gates and current nodes, and confirms exactly one strict xfail plus one live un-xfailed entry"
+        "expected": "manifest parses section 7 one-to-one, validates gates and current nodes, and confirms no strict xfails plus one live un-xfailed entry"
       }
     }
   ]

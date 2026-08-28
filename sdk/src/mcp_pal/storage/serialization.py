@@ -35,7 +35,7 @@ _NAMED_VALUE_CONTAINERS = frozenset(
     {"mcpservers", "servers", "serverbindings", "configurations"}
 )
 _REFERENCE_VALUE_CONTAINERS = frozenset(
-    {"credentials", "credential", "secret_refs", "secret_references", "auth_credentials"}
+    {"credentials", "credential", "credential_references", "secret_refs", "secret_references", "auth_credentials"}
 )
 _MAX_DEPTH = 64
 

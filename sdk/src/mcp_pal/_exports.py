@@ -2,7 +2,7 @@
 
 PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
     "mcp_pal": (
-        "__version__", "MCPTestKit", "AgentSession", "ExecutionHandle", "HarnessAdapter", "CapabilityProbeService", "ConfigOrigin", "ConfigSource", "Configuration", "ConfigurationError", "MCPConfig", "ProbeEvidence", "ProbeKind", "ProbeReport", "ProbeRequest", "ProbeResult", "ProbeService", "ReadinessProbeService", "SDKConfig", "load_config", "resolve_config",
+        "__version__", "MCPTestKit", "AgentSession", "ExecutionHandle", "HarnessAdapter", "CapabilityProbeService", "ConfigOrigin", "ConfigSource", "Configuration", "ConfigurationError", "MCPConfig", "ProbeEvidence", "ProbeKind", "ProbeReport", "ProbeRequest", "ProbeResult", "ProbeService", "ReadinessProbeService", "ACPAgentIdentity", "ACPAgentMode", "ACPProbeDimension", "ACPProbeHistory", "ACPProbeKind", "ACPProbeRequest", "ACPProbeResult", "ACPProbeStatus", "ACPProbeStore", "redacted_probe", "run_acp_probe", "SDKConfig", "load_config", "resolve_config",
         "EVENT_SCHEMA_ID", "EVENT_SCHEMA_VERSION", "CanonicalEventEnvelope", "EventDirection", "EventKind", "EventOrigin", "EventPayloadRef", "EventProvenance", "JsonRpcId", "LifecyclePhase", "RawEvidenceRef", "ReasoningState", "ReasoningVisibility", "RequestCorrelation",
         "ACPAgent", "ActivityHealth", "AgentExecutionSpec", "ArtifactId", "ArtifactPolicy",
         "ArtifactRef", "AudioContent", "BaseExecutionSpec", "CanonicalEvent", "Capability", "CapabilityStatus", "ClaudeCode",

@@ -89,6 +89,23 @@ Required moves and dependency changes:
 
 ## 4. Remediation milestones
 
+### Current functional priority order
+
+Remediation work is ordered by user-visible runtime impact:
+
+1. ACP real-MCP lifecycle and recovery.
+2. Secret pre-spawn registration and redaction safety.
+3. Durable cross-process cancellation and API v2 execution behavior.
+4. Terminal-result finalization and reopenability.
+5. Requested/enforced/observed/denied/unavailable policy evidence.
+6. Native workspace and exclusion verification.
+7. Application settings, reset behavior, and OpenAPI correctness.
+8. Direct-SDK UI migration and API v1 removal.
+9. Thin CLI and documentation polish.
+
+This order is intentionally functional: CLI and documentation work must not
+displace adapter, persistence, policy, or application runtime correctness.
+
 Each milestone ends with its listed gate. Later milestones must not begin while
 an earlier required gate is red, except for documentation work that cannot
 affect runtime behavior.
@@ -98,8 +115,10 @@ affect runtime behavior.
 - [x] Change the primary plan's status from “phases 0–12 complete” to a factual
   remediation status and link to this document.
 - [x] Record the exact failing full-suite result and live OpenCode result.
-- [x] Keep the new deterministic E2E regressions as strict xfails:
-  ACP tool identity/policy, persistent artifacts, and durable cancellation.
+- [x] Keep the new deterministic E2E regressions as strict xfails during the
+  initial baseline, then remove each marker only after its acceptance gate
+  passes. ACP tool identity/policy, persistent artifacts, and durable
+  cancellation are now un-xfailed; the manifest records their current status.
 - [x] Keep the live OpenCode test opt-in and un-xfailed so live breakage is loud.
 - [x] Register `e2e` and `live` markers in both repository-root and SDK-local
   pytest configurations.
@@ -112,8 +131,8 @@ affect runtime behavior.
   unique entry for each exact section-7 finding, with milestone, factual
   status, regression path, and gate expectation. The manifest integrity test
   enforces one-to-one finding/milestone coverage, existing nodes for current
-  entries, exactly the two remaining documented strict xfails, and one live
-  OpenCode entry that remains un-xfailed. The manifest test passed;
+  entries, no remaining strict xfails, and one live OpenCode entry that remains
+  un-xfailed. The manifest test passed;
   deterministic E2E and live E2E modules collected successfully without
   executing the live call.
 
@@ -451,6 +470,18 @@ The independent complete SDK gate after round 3D passed 843 tests, with 1
 expected skip, exactly the 3 documented strict xfails, and 38 pinned-MCP
 deprecation warnings.
 
+Evidence note (round 3E): the ACP contract session now resolves and registers
+server reference values and conventionally sensitive literal values before
+creating the ACP subprocess. Credential-bearing environment/header fields are
+omitted from the ACP ``session/new`` descriptor so registration does not leak
+values into ACP configuration. Deterministic startup-race and unresolved-
+reference regressions pass, and a public persistent SDK execution proves a
+real ACP subprocess reaches a credential-requiring MCP subprocess through the
+SDK stdio handoff. A second ``SQLiteExecutionStore`` reopen and raw SQLite
+database/WAL/SHM, blob, and capture scans remain canary-free; strict mypy for
+the touched ACP source/test modules and ``git diff --check`` pass. This is an
+ACP ordering fix only; the broader capture-time canary checklist remains open.
+
 ### R4 — Fix workspace ownership and persistent artifacts
 
 - [x] Inject `store.artifacts` into every `WorkspaceManager`; never silently
@@ -590,12 +621,42 @@ The remaining terminal policy-evidence todo remains open.
 
 #### ACP
 
-- [ ] Use the real workspace in process cwd and ACP session creation.
-- [ ] Preserve one ACP process, connection, session ID, and MCP process set
+- [x] Use the real workspace in process cwd and ACP session creation.
+- [x] Preserve one ACP process, connection, session ID, and MCP process set
   across at least three turns.
 - [x] Normalize ACP tool-call updates without trusting them as enforcement.
-- [ ] Test tool error recovery, attachments rejection, cancellation, timeout,
-  connection loss, duplicate tool names, and complete traces.
+- [x] Test tool error recovery and attachments rejection on a continuing real
+  ACP/MCP session.
+- [x] Test ACP connection loss as a typed failed turn with a partial terminal
+  trace and owned-child cleanup.
+- [ ] Test cancellation, timeout, duplicate tool names, and complete traces.
+
+Evidence (R5D ACP lifecycle slice): the real-MCP ACP E2E sends three distinct
+turns and proves one ACP process, one `initialize`, one `session/new`, three
+`session/prompt` requests, one MCP initialization lifecycle, and three
+`tools/call` request/response exchanges. It also proves a stable session ID,
+distinct outputs, a completed/full trace, and a terminal `execution.finished`
+event. The stale workspace-cwd/session-creation item is covered by the
+existing real-workspace ACP contract evidence. Root review of the broader
+reference-bridge/E2E/ACP contract set passed 28 tests with one expected xfail;
+strict mypy passed for the two touched typed test files. Round 2 ACP recovery
+evidence adds `sdk/tests/e2e/test_sdk_workflows.py` coverage using a real ACP
+subprocess and real stdio MCP subprocess: an `isError: true` tool result is
+followed by a successful call on the same process/connection/session,
+unsupported opaque content raises the typed public `UnsupportedFeature`
+exception without poisoning the session, and ACP process loss returns a typed
+failed turn, finalizes a `partial_trace`, and reaps the MCP child process
+group. The wire trace retains the failed and successful MCP results while the
+execution terminal outcome remains completed for recoverable tool errors.
+The adapter now carries an explicit immutable `trace_limitations` signal from
+the ACP receive-loop process-loss observation; terminal adapter failures with
+complete evidence remain complete. The adapter close path tolerates only the
+known official connection receive-loop process-loss error after the ACP child
+is already reaped; unrelated live-child close errors still remain cleanup
+failures. Trace finalization treats an explicit safe limitation such as
+`partial_trace` as partial even when cleanup itself succeeds. Recovery
+coverage for cancellation, timeout, duplicate tool names, and related cases
+remains open and is not marked complete.
 
 #### OpenCode
 
@@ -697,6 +758,101 @@ results are 40 focused SDK tests, 5 focused app-v2 tests, 762 full SDK tests
 passed with 1 skipped, 1 expected xfail, and 38 warnings, plus 178 full app
 tests passed; strict mypy, compile, and diff checks are clean.
 
+#### R6 progress evidence — typed profile and spec boundary
+
+The direct-client migration now has an application-owned, transport-neutral
+foundation in `mcp_pal_app.services.profile_service` and
+`mcp_pal_app.services.spec_builder`. `ProfileService` manages
+server and harness profile lifecycle through the SDK's fresh `v2_*` profile
+tables, including deterministic listing, immutable revisions, archive/restore,
+metadata updates, harness import/export, manifest validation, and explicit
+trusted-unsandboxed acknowledgements. `ExecutionSpecBuilder` resolves an
+immutable application selection into concrete public SDK server values for
+stdio, Streamable HTTP, and SSE, and concrete Claude Code, OpenCode, or ACP
+harness values. Environment placeholders remain `SecretReference` values;
+runtime profile references are not passed to execution. Its typed one-turn
+draft preserves prompt, goal, timeout, selected server, tool mode, metadata,
+and first-class typed ACP mode/configuration selections for the later UI
+migration. The ACP contract applies and validates those selections after
+`session/new` and before the first prompt; they are not metadata-only
+provenance.
+
+Evidence: focused profile/spec tests cover the three transports, secret
+references, all three harness kinds, policy mapping, lifecycle/import/export,
+archive rejection, invalid selections, and ACP trust/options; focused SDK
+SQLite tests cover kind validation, archived filtering, deterministic revision
+ordering, metadata conflicts, and durable descriptor safety. These tests do
+not claim that Streamlit consumes the service yet; the Streamlit and `/api/v1`
+checkboxes remain open until UI parity and route-removal gates pass.
+
+#### R6 progress evidence — app-owned runtime seam
+
+`AppRuntimeService` now composes one explicit `Settings`, SQLite v2 execution
+store, `MCPTestKit`, `AppExecutionService`, `ProfileService`, and
+`ExecutionSpecBuilder`, with injection-friendly ownership and idempotent close.
+It exposes typed one-turn submit/history/report/cancel/delete/terminal-history
+operations, profile operations, bounded `ExecutionView` projections, pinned
+clone-draft reconstruction, and idempotent fresh-v2 Excalidraw seeding. SQLite
+and in-memory stores both retain validated defensive execution-spec copies.
+Sync toolkit adapter registries preserve deliberately empty injected registries.
+Claude/OpenCode/ACP adapters prefer explicit Settings credential values and
+register resolved secrets before child output; persisted specs/events/settings
+representations retain only references or redacted values.
+
+Accepted evidence for this seam: the focused native/runtime SDK gate passes 154
+tests and the focused app runtime/credential gate passes 12 tests; the complete
+SDK gate passes 796 tests with 1 skipped and 38 warnings, and the complete app
+gate passes 202 tests. Strict mypy on the touched SDK and app modules is clean,
+and `git diff --check` is clean. The evidence includes clear-history active-run
+preflight (mixed active/terminal history is not partially deleted), typed
+defensive spec parity for in-memory and SQLite stores, successful and failed
+terminal trace reopen, and sync/async parity for the configured store property.
+Streamlit, `/api/v1`, and remaining application configuration/reset work remain
+open; this evidence does not mark those milestones complete.
+
+#### R6 progress evidence — typed readiness boundary
+
+`ReadinessService` now provides an application-owned, transport-neutral typed
+snapshot over SDK profile storage and shared bounded adapter probe behavior. It reports
+storage health, Claude/OpenCode executable capabilities and provider/saved-auth
+readiness, and each current ACP profile's local executable, environment, trust,
+archive, and profile/revision identity. Settings credentials are overlaid only
+for the selected local check; values never appear in descriptors, reprs, probe
+environments, or safe errors. Native readiness uses bounded no-shell probes and
+current adapter capabilities (`stream-json`, OpenCode `serve`, and supported
+1.x/2.x dialect versions), while ACP verification reads only the typed fresh-v2
+probe history and does not read legacy probe tables. A ready trusted
+local ACP profile remains selectable when both native built-ins are unavailable;
+archived profiles are excluded from normal capability listings and are only
+inspectable through an explicit profile lookup.
+
+`AppRuntimeService` exposes this facade through a lifecycle-guarded property and
+supports an injected typed readiness provider for deterministic clients/tests.
+Focused readiness/runtime tests pass (18 tests), strict mypy on touched
+production and test modules passes, and `git diff --check` passes. This earlier
+readiness slice did not itself claim probe-history migration; the subsequent
+durable ACP probe slice below completes fresh-v2 probe history. Streamlit SDK
+consumption, `/api/v1` removal, and development reset completion remain open.
+
+#### R6 progress evidence — durable ACP probe service
+
+The typed ACP probe contract now persists protocol and full observations through
+the SDK's in-memory and SQLite stores. Dimensions include profile/current
+revision, probe kind, transport, mode, and canonical session configuration;
+protocol mode/config values normalize to a neutral dimension. The application
+service validates the live harness profile/revision, requires a verified
+protocol probe before full probes, invokes the SDK's real `protocol_probe` and
+`full_probe` functions against the current manifest, and owns bounded timeout,
+cancellation, identity, capability/config, safe diagnostics, and lifecycle
+state. Runner output is explicitly projected into evidence before redaction;
+SQLite survives reopen and readiness consumes only the current revision's exact
+probe history. A direct `AppRuntimeService` black-box E2E launches a real
+executable ACP fixture and the packaged MCP echo server, verifies protocol/full
+evidence and readiness, and confirms SQLite close/reopen durability. Focused
+ACP persistence/service/readiness tests pass (9 SDK ACP, 31 app ACP/readiness),
+with strict mypy and `git diff --check` clean. This evidence does not claim
+Streamlit SDK consumption, `/api/v1` removal, or unrelated R6 work.
+
 #### Streamlit
 
 - [ ] Remove `requests`, `MCP_PAL_API_URL`, and every local HTTP call.
@@ -770,7 +926,7 @@ boundaries against which cross-process ownership is hardened.
 
 - [ ] Introduce a cancellation token shared through execution runtime, agent
   session, direct transport, harness adapter, workspace capture, and cleanup.
-- [ ] Have the persistent owner watch the SQLite cancellation flag while work is
+- [x] Have the persistent owner watch the SQLite cancellation flag while work is
   active, not only before and after the runner.
 - [ ] On cancellation, stop accepting turns, cancel pending MCP/model requests,
   terminate owned process groups, retain partial evidence, finalize as
@@ -804,6 +960,23 @@ boundaries against which cross-process ownership is hardened.
   stale-owner interruption, clone/delete, artifact references, and recovery.
 - [ ] Run the contract across threads and real OS processes where ownership is
   relevant.
+
+Evidence (round 8A durable-owner slice): a persistent execution owner now runs
+a bounded SQLite cancellation watcher beside its execution task. A cancellation
+requested from a separate producer process cancels the owner task, allowing the
+normal direct-transport cleanup path to terminate the owned stdio process and
+publish a partial `cancelled` trace. The worker then completes the claimed
+command and releases its lease; repeated cancellation is idempotent, and a late
+request cannot overwrite a natural terminal result. Focused runtime lifecycle
+regressions cover watcher interruption, watcher cleanup, and completion-race
+behavior. The separate-process direct-stdio E2E repeats the cancellation ten
+times and, through a second SQLite store, verifies one terminal event, partial
+trace reopening, command completion, and no reclaimable ownership. A bounded
+separate-worker ACP/MCP E2E additionally proves cancellation of a real ACP
+owner and its real MCP child across two iterations, with the same terminal
+trace and command assertions. Broader cancellation-token propagation across
+every adapter phase, escalation after a grace period, and the remaining
+blob/store contract gates remain open.
 
 Gate: remove the strict cancellation xfail; pass forced blob interleavings and
 the complete cross-process store contract without leaked workers or children.

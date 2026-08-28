@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from pathlib import Path
 from types import SimpleNamespace
+import threading
+import time
 from typing import Any, cast
 
 import pytest
@@ -17,11 +20,13 @@ from mcp_pal.errors import OperationTimeout
 from mcp_pal.agent_session import AdapterTurn
 from mcp_pal.harness import HarnessAdapterRegistry
 from mcp_pal.sync_api import ExecutionHandle, MCPTestKit
+from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.testing import FaultInjector
 from mcp_pal.types import (
     AgentExecutionSpec,
     ClaudeCode,
     DirectExecutionSpec,
+    ExecutionId,
     EventKind,
     ExecutionOutcome,
     ExecutionResult,
@@ -43,6 +48,13 @@ def _spec() -> DirectExecutionSpec:
         servers=(ServerBinding(server=FaultInjector().stdio_server()),),
         operation=PingOperation(),
     )
+
+
+async def test_normal_async_submit_retains_typed_spec_in_memory() -> None:
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    handle = kit.submit(_spec())
+    assert handle._store.get_execution_spec(handle.execution_id) == _spec()
+    await kit.aclose()
 
 
 class _SlowClient:
@@ -136,6 +148,112 @@ async def test_async_cancel_is_terminal_and_idempotent() -> None:
     assert result.error.code.value == "cancelled"
     events = [event async for event in handle.events()]
     assert events[-1].kind is EventKind.EXECUTION_FINISHED
+
+
+@pytest.mark.asyncio
+async def test_persistent_cancel_watcher_interrupts_claimed_owner_and_cleans_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancellation written by another store instance reaches the owner task."""
+
+    store = SQLiteExecutionStore(tmp_path / "watcher.sqlite")
+    started = asyncio.Event()
+    controller = AsyncExecutionController(_SlowKit(_SlowClient(started)), store=store, worker=False)
+    handle = controller.submit(_spec())
+    claimed = store.claim_next("unit-owner")
+    assert claimed is not None
+    command, lease = claimed
+    original_cancellation_requested = store.cancellation_requested
+    first_poll_started = threading.Event()
+    poll_count = 0
+
+    def flaky_cancellation_requested(execution_id: ExecutionId | str) -> bool:
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count == 1:
+            first_poll_started.set()
+            time.sleep(0.15)
+            raise OSError("transient sqlite read failure")
+        return bool(original_cancellation_requested(execution_id))
+
+    monkeypatch.setattr(store, "cancellation_requested", flaky_cancellation_requested)
+    owner = asyncio.create_task(handle._start_from_worker())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert handle._cancel_watcher is not None
+        await asyncio.wait_for(asyncio.to_thread(first_poll_started.wait), timeout=2)
+        heartbeat = asyncio.Event()
+
+        async def mark_heartbeat() -> None:
+            await asyncio.sleep(0.03)
+            heartbeat.set()
+
+        heartbeat_task = asyncio.create_task(mark_heartbeat())
+        await asyncio.wait_for(heartbeat.wait(), timeout=0.1)
+        await heartbeat_task
+        assert await asyncio.to_thread(store.request_cancel, handle.execution_id, "cross-process")
+        await asyncio.wait_for(owner, timeout=3)
+        result = await handle.result(timeout=2)
+
+        assert result.snapshot.outcome is ExecutionOutcome.CANCELLED
+        assert result.trace is not None
+        assert result.trace.completeness == "partial"
+        assert handle._cancel_watcher is None
+        assert store.complete_command(
+            command.id,
+            owner_id=lease.owner_id,
+            lease_token=lease.lease_token,
+            status="cancelled",
+        )
+        assert store.release_lease(lease)
+        # A second cancellation must not append another terminal event.
+        await handle.cancel()
+        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in store.events(handle.execution_id)) == 1
+    finally:
+        if not owner.done():
+            owner.cancel()
+            await asyncio.gather(owner, return_exceptions=True)
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_persistent_cancel_watcher_does_not_overwrite_natural_terminal_result(
+    tmp_path: Path,
+) -> None:
+    """A late durable request cannot turn an already-finished owner cancelled."""
+
+    store = SQLiteExecutionStore(tmp_path / "watcher-natural.sqlite")
+    started = asyncio.Event()
+    client = _SlowClient(started)
+    controller = AsyncExecutionController(_SlowKit(client), store=store, worker=False)
+    handle = controller.submit(_spec())
+    claimed = store.claim_next("unit-owner")
+    assert claimed is not None
+    command, lease = claimed
+    owner = asyncio.create_task(handle._start_from_worker())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        client.release.set()
+        await asyncio.wait_for(owner, timeout=3)
+        result = await handle.result(timeout=2)
+        assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
+
+        assert await asyncio.to_thread(store.request_cancel, handle.execution_id, "too-late")
+        assert store.get_snapshot(handle.execution_id).outcome is ExecutionOutcome.COMPLETED
+        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in store.events(handle.execution_id)) == 1
+        assert store.complete_command(
+            command.id,
+            owner_id=lease.owner_id,
+            lease_token=lease.lease_token,
+            status="cancelled",
+        )
+        assert store.release_lease(lease)
+    finally:
+        if not owner.done():
+            owner.cancel()
+            await asyncio.gather(owner, return_exceptions=True)
+        store.close()
 
 
 @pytest.mark.asyncio

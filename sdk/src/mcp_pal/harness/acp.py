@@ -38,7 +38,7 @@ from ..trace.claude import transport_for_server
 from ..transport.http_proxy import McpHttpProxy
 from ..transport.capture_proxy import write_stdio_handoff
 from ..trace.capture import read_capture
-from ..trace.redaction import known_secret_values
+from ..trace.redaction import is_sensitive_key, known_secret_values
 from .native import workspace_for_launch
 from .base import AcpRunSpec, HarnessResult
 from .process_group import terminate_process_group
@@ -51,7 +51,7 @@ from ..interaction_handlers import (
     TerminalRequest,
 )
 from ..types import FullToolPolicy, NativeToolPolicy, RestrictiveToolPolicy, SecretReference
-from ..policy import ToolDescriptor, ToolPolicyEvaluator
+from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 
 
 _STDERR_LIMIT = 64 * 1024
@@ -455,13 +455,14 @@ def _credential_query(url: str) -> bool:
 class _AcpContractSession:
     """One ACP process, connection, and session for the generic harness API."""
 
-    def __init__(self, launch: Any, manifest: Mapping[str, Any], executable: str, secret_resolver: Callable[[Any], str] | None = None) -> None:
+    def __init__(self, launch: Any, manifest: Mapping[str, Any], executable: str, secret_resolver: Callable[[Any], str] | None = None, environment: Mapping[str, str] | None = None) -> None:
         from .contracts import HarnessAdapterCapabilities
 
         self._launch = launch
         self._manifest = dict(manifest)
         self._executable = executable
         self._secret_resolver = secret_resolver
+        self._environment = None if environment is None else dict(environment)
         self._capabilities = HarnessAdapterCapabilities(
             name="acp",
             supports_multiturn=True,
@@ -492,6 +493,12 @@ class _AcpContractSession:
         self._prompt_task: asyncio.Task[Any] | None = None
         self._send_lock = asyncio.Lock()
         self._cleanup_failure = False
+        self._transport_fault: BaseException | None = None
+        self._prepared_servers: list[Any] | None = None
+        # Register ambient credential-shaped values before the child can emit
+        # even its first byte.  Explicit server values are added by
+        # ``_prepare_servers`` below, still in this process.
+        self._secrets.update(known_secret_values())
         self._baseline = time.monotonic()
 
     @property
@@ -522,7 +529,42 @@ class _AcpContractSession:
             }
         )
 
-    def _servers(self) -> list[Any]:
+    def _server_value(self, name: str, value: Any) -> tuple[str, bool]:
+        """Resolve one server value and report whether ACP must omit it.
+
+        MCP credentials belong to the owned proxy/stdio handoff.  ACP only
+        needs the non-sensitive portion of the server descriptor; sending a
+        resolved header or environment value in ``session/new`` would expose
+        it to the harness process itself.
+        """
+
+        if isinstance(value, SecretReference):
+            resolved = self._config_value(value)
+            self._secrets.update((resolved, value.name))
+            return resolved, True
+        if not isinstance(value, str):
+            raise ValueError("secret_reference_unresolved")
+        if value.startswith("${") and value.endswith("}"):
+            reference = value[2:-1]
+            environment_value = (
+                self._environment.get(reference)
+                if self._environment is not None
+                else os.environ.get(reference)
+            )
+            if environment_value is None:
+                environment_value = os.environ.get(reference)
+            if not environment_value:
+                raise ValueError("secret_reference_unresolved")
+            resolved = environment_value
+            self._secrets.update((value, resolved))
+            return resolved, True
+        resolved = value
+        classified = is_sensitive_key(name) or resolved in known_secret_values()
+        if classified and resolved:
+            self._secrets.add(resolved)
+        return resolved, classified
+
+    def _prepare_servers(self) -> list[Any]:
         servers: list[Any] = []
         for config in self._launch.configurations:
             if not config.available:
@@ -533,22 +575,22 @@ class _AcpContractSession:
             if config.transport.value == "stdio":
                 if not config.command:
                     raise ValueError("stdio_mcp_command_missing")
-                env = [
-                    EnvVariable(name=str(key), value=self._config_value(value))
-                    for key, value in config.environment.items()
-                ]
-                self._secrets.update(self._config_value(value) for value in config.environment.values() if value)
+                env: list[EnvVariable] = []
+                for key, value in config.environment.items():
+                    resolved, classified = self._server_value(str(key), value)
+                    if not classified:
+                        env.append(EnvVariable(name=str(key), value=resolved))
                 servers.append(
                     McpServerStdio(name=name, command=config.command, args=list(config.args), env=env)
                 )
             elif config.transport.value in {"streamable_http", "sse"}:
                 if not config.endpoint:
                     raise ValueError("http_mcp_endpoint_missing")
-                headers = [
-                    HttpHeader(name=str(key), value=self._config_value(value))
-                    for key, value in config.headers.items()
-                ]
-                self._secrets.update(self._config_value(value) for value in config.headers.values() if value)
+                headers: list[HttpHeader] = []
+                for key, value in config.headers.items():
+                    resolved, classified = self._server_value(str(key), value)
+                    if not classified:
+                        headers.append(HttpHeader(name=str(key), value=resolved))
                 if config.transport.value == "streamable_http":
                     servers.append(HttpMcpServer(name=name, url=config.endpoint, headers=headers, type="http"))
                 else:
@@ -561,11 +603,20 @@ class _AcpContractSession:
                 raise ValueError("mcp_transport_unsupported")
         return servers
 
+    def _servers(self) -> list[Any]:
+        # ``open`` prepares this before subprocess creation.  Keep the lazy
+        # fallback for narrow adapter/unit callers, but never resolve values
+        # while the ACP process is already emitting protocol evidence.
+        if self._prepared_servers is None:
+            self._prepared_servers = self._prepare_servers()
+        return self._prepared_servers
+
     def _config_value(self, value: Any) -> str:
         if isinstance(value, str):
             return value
         try:
-            resolved = (self._secret_resolver or _resolve_environment_secret)(value)
+            resolver = self._secret_resolver or (lambda ref: _resolve_environment_secret(ref, self._environment))
+            resolved = resolver(value)
         except Exception as exc:
             del exc
             raise ValueError("secret_reference_unresolved") from None
@@ -573,14 +624,27 @@ class _AcpContractSession:
             raise ValueError("secret_reference_unresolved")
         return resolved
 
+    def _record_transport_fault(self, error: BaseException) -> None:
+        self._transport_fault = error
+
     async def open(self) -> None:
         if self._process is not None:
             return
+        # Resolve and register every selected server credential before the
+        # ACP process exists.  In particular, do not defer this until the
+        # session/new request: a fixture may emit startup output immediately.
+        self._prepared_servers = self._prepare_servers()
         self._workdir = tempfile.mkdtemp(prefix="mcp-pal-acp-control-")
         self._capture_path = os.path.join(self._workdir, "acp-capture.jsonl")
         try:
             self._workspace_root = str(workspace_for_launch(self._launch, Path(self._workdir)))
-            env = _isolated_acp_env(self._manifest, self._executable, self._secrets, root=self._workdir)
+            env = _isolated_acp_env(
+                self._manifest,
+                self._executable,
+                self._secrets,
+                root=self._workdir,
+                environment=self._environment,
+            )
             self._process = await asyncio.create_subprocess_exec(
                 self._executable,
                 *(str(item) for item in (self._manifest.get("args") or [])),
@@ -609,13 +673,41 @@ class _AcpContractSession:
                 # not an implicit provider-side allow or an unhandled method.
                 interactions=self._launch.interactions or InteractionController(),
             )
-            self._transport = _AcpTransport(self._process, lambda _: None)
+            self._transport = _AcpTransport(
+                self._process,
+                lambda _: None,
+                on_fault=self._record_transport_fault,
+            )
             self._connection = ClientSideConnection(client, self._transport, observers=[self._observe])
             init = await self._connection.initialize(1, ClientCapabilities(), Implementation(name="mcp-pal", version="0.2"))
             if getattr(init, "protocol_version", None) != 1:
                 raise ValueError("acp_protocol_version_mismatch")
             response = await self._connection.new_session(self._workspace_root, mcp_servers=self._servers())
             self._session_id = str(response.session_id)
+            # ACP exposes session modes and configuration options only after
+            # session/new. Apply the immutable public request before the
+            # first prompt, and fail closed when a saved option is stale.
+            harness = getattr(self._launch.spec, "harness", None)
+            mode_id = getattr(harness, "agent_mode_id", None)
+            if mode_id:
+                modes = getattr(getattr(response, "modes", None), "available_modes", None) or ()
+                available = {str(getattr(item, "id", "")) for item in modes if getattr(item, "id", None)}
+                if not available:
+                    raise ValueError("acp_stale_option: mode")
+                if mode_id not in available:
+                    raise ValueError("acp_stale_option: mode")
+                await self._connection.set_session_mode(self._session_id, mode_id)
+            session_config = getattr(harness, "session_config", {}) or {}
+            options = getattr(response, "config_options", None) or ()
+            option_ids = {
+                str(getattr(item, "id", None) or getattr(item, "config_id", None))
+                for item in options
+                if getattr(item, "id", None) is not None or getattr(item, "config_id", None) is not None
+            }
+            for key, value in dict(session_config).items():
+                if str(key) not in option_ids:
+                    raise ValueError("acp_stale_option: config")
+                await self._connection.set_config_option(str(key), self._session_id, value)
         except (asyncio.CancelledError, SystemExit, KeyboardInterrupt):
             await self.close()
             raise
@@ -670,7 +762,15 @@ class _AcpContractSession:
             except Exception as exc:
                 code, message = _acp_error(exc, phase="prompt")
                 error_code = ErrorCode.TRANSPORT_ERROR if code == "acp_prompt_failed" else ErrorCode.PROTOCOL_ERROR
-                return HarnessTurnResult(sequence, "failed", error=ErrorInfo(code=error_code, message=message), evidence={"transport": "acp", "error_code": code})
+                return HarnessTurnResult(
+                    sequence,
+                    "failed",
+                    error=ErrorInfo(code=error_code, message=message),
+                    evidence={"transport": "acp", "error_code": code},
+                    trace_limitations=("partial_trace",)
+                    if isinstance(exc, _AcpEarlyExit) or isinstance(self._transport_fault, _AcpEarlyExit)
+                    else (),
+                )
             finally:
                 self._prompt_task = None
 
@@ -711,7 +811,14 @@ class _AcpContractSession:
             try:
                 await asyncio.wait_for(self._connection.close(), timeout=0.75)
             except Exception:
-                self._cleanup_failure = True
+                # A receive-loop fault is already terminal when the ACP
+                # child has exited.  The official connection's close may
+                # re-raise that fault; it is not an ownership leak and must
+                # not turn an otherwise successful process-group reap into a
+                # cleanup failure.  Keep treating a live-child close error
+                # as a real cleanup failure.
+                if not isinstance(self._transport_fault, _AcpEarlyExit):
+                    self._cleanup_failure = True
         process = self._process
         if process is not None:
             if self._pgid is not None:
@@ -786,12 +893,12 @@ def _updates_tool_calls(updates: list[Any]) -> list[Mapping[str, Any]]:
     return calls
 
 
-def _resolve_environment_secret(value: Any) -> str:
+def _resolve_environment_secret(value: Any, environment: Mapping[str, str] | None = None) -> str:
     """Resolve only environment-backed references for the ACP child."""
 
     if not isinstance(value, SecretReference) or value.source != "environment":
         raise ValueError("secret_reference_unresolved")
-    resolved = os.environ.get(value.name)
+    resolved = environment[value.name] if environment is not None and value.name in environment else os.environ.get(value.name)
     if not resolved:
         raise ValueError("secret_reference_unresolved")
     return resolved
@@ -803,8 +910,9 @@ def _isolated_acp_env(
     secrets: set[str],
     *,
     root: str | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Build an allowlisted ACP environment; ambient credentials never pass through."""
+    """Build an allowlisted ACP environment from named manifest references."""
 
     home = os.path.join(root, "home") if root is not None else tempfile.mkdtemp(prefix="mcp-pal-acp-home-")
     os.makedirs(home, exist_ok=True)
@@ -829,7 +937,7 @@ def _isolated_acp_env(
             raise ValueError("acp_manifest_invalid")
         if isinstance(raw, str) and raw.startswith("${") and raw.endswith("}"):
             ref = raw[2:-1]
-            value = os.environ.get(ref)
+            value = environment[ref] if environment is not None and ref in environment else os.environ.get(ref)
             if value is None:
                 raise ValueError("acp_environment_missing")
             secrets.update((value, raw))
@@ -845,9 +953,10 @@ def _isolated_acp_env(
 class AcpHarnessAdapter:
     """Real ACP-v1 adapter with one process and session per opened launch."""
 
-    def __init__(self, manifest: Mapping[str, Any] | None = None, *, secret_resolver: Callable[[Any], str] | None = None) -> None:
+    def __init__(self, manifest: Mapping[str, Any] | None = None, *, secret_resolver: Callable[[Any], str] | None = None, environment: Mapping[str, str] | None = None) -> None:
         self._manifest = dict(manifest or {})
         self._secret_resolver = secret_resolver
+        self._environment = None if environment is None else dict(environment)
         self._active: _AcpContractSession | None = None
         self._capabilities: Any = None
         self.last_policy_evidence: Any = None
@@ -891,7 +1000,7 @@ class AcpHarnessAdapter:
         self.last_policy_evidence = None
         self._capabilities = replace(self.capabilities, supports_tool_policy=False)
         try:
-            probe_env = _isolated_acp_env(manifest, executable, set())
+            probe_env = _isolated_acp_env(manifest, executable, set(), environment=self._environment)
             probe_home = probe_env["HOME"]
             for config in launch.configurations:
                 if config.endpoint and _credential_query(config.endpoint):
@@ -899,14 +1008,28 @@ class AcpHarnessAdapter:
                 for value in tuple(config.environment.values()) + tuple(config.headers.values()):
                     if not isinstance(value, str):
                         try:
-                            (self._secret_resolver or _resolve_environment_secret)(value)
+                            (self._secret_resolver or (lambda ref: _resolve_environment_secret(ref, self._environment)))(value)
                         except Exception:
                             return self.capabilities.readiness(ready=False, reason="credential_unavailable")
             for block in getattr(launch.spec.message, "content", ()):
                 if getattr(block, "kind", "text") not in self.supported_content_kinds:
                     return self.capabilities.readiness(ready=False, reason="attachment_unsupported")
             if isinstance(launch.tool_policy, NativeToolPolicy):
-                return self.capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+                native = launch.tool_policy
+                if native.harness != self.name or native.policy.get("mode") != "agent_default":
+                    return self.capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+                server = native.policy.get("server")
+                if not isinstance(server, str) or server not in {record.key for record in launch.servers.records}:
+                    return self.capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+                # ACP owns its tool/permission negotiation. This evidence is
+                # explicitly non-portable; interaction callbacks remain the
+                # default-deny boundary for terminal/filesystem/permission
+                # requests.
+                self.last_policy_evidence = ToolPolicyEvidence(
+                    requested="native", enforced="native", observed="preflight", portable=False,
+                    nonportable_reason="ACP agent_default MCP selection",
+                )
+                return self.capabilities.readiness()
             if not isinstance(launch.tool_policy, (RestrictiveToolPolicy, FullToolPolicy)):
                 return self.capabilities.readiness(ready=False, reason="tool_policy_unsupported")
             available_connections = tuple(
@@ -956,7 +1079,7 @@ class AcpHarnessAdapter:
             raise HarnessStartupError("ACP harness executable is unavailable")
         if self._active is not None:
             await self.close()
-        session = _AcpContractSession(launch, manifest, executable, self._secret_resolver)
+        session = _AcpContractSession(launch, manifest, executable, self._secret_resolver, self._environment)
         try:
             await session.open()
         except Exception as exc:
@@ -996,6 +1119,7 @@ class AcpHarnessAdapter:
             outcome=outcome,
             tool_calls=result.tool_calls,
             evidence=result.evidence,
+            trace_limitations=result.trace_limitations,
         )
 
     async def cancel(self) -> None:

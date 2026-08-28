@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -93,7 +93,7 @@ def test_manifest_matches_section_7_findings() -> None:
             _node_exists(regression)
 
     strict_xfails = [entry for entry in entries if entry["status"] == "strict_xfail"]
-    assert len(strict_xfails) == 1
+    assert not strict_xfails
     for entry in strict_xfails:
         decorators = _function_decorators(entry["regression"])
         xfail = tuple(item for item in decorators if item.startswith("pytest.mark.xfail"))

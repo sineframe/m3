@@ -1,5 +1,7 @@
 """Ephemeral storage contracts and implementations."""
 
+from typing import TYPE_CHECKING as _TYPE_CHECKING
+
 from .ephemeral import (
     ArtifactNotFound,
     ArtifactStore,
@@ -16,6 +18,10 @@ from .ephemeral import (
 from .blobs import BlobRecord, FilesystemBlobStore
 from .serialization import DurableSerializationError, serialize_durable
 from ..services.persistent import SQLiteStoreWorker
+from ..services.acp_probes import ACPProbeDimension, ACPProbeResult, ACPProbeStore
+
+if _TYPE_CHECKING:
+    from .sqlite import ProfileRecord, ProfileRevisionRecord
 
 __all__ = [
     "ArtifactNotFound",
@@ -42,6 +48,7 @@ __all__ = [
     "ProfileRevisionRecord",
     "SQLiteStore",
     "PersistentExecutionStore",
+    "ACPProbeDimension", "ACPProbeResult", "ACPProbeStore",
 ]
 
 

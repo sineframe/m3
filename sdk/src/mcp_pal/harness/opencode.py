@@ -24,7 +24,7 @@ import httpx
 
 from ..agent_session import AdapterTurn
 from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
-from ..policy import ToolDescriptor, ToolPolicyEvaluator
+from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..types import Capability, CapabilityStatus, ErrorCode, ErrorInfo, FullToolPolicy, NativeToolPolicy, OpenCode, Readiness, RestrictiveToolPolicy, SecretReference, TextContent, TurnResponse, UserMessage
 from .contracts import (
     HarnessAdapterCapabilities,
@@ -87,10 +87,27 @@ def opencode_configuration(launch: HarnessLaunch, *, dialect: str = "legacy") ->
                 "headers": {key: _opencode_config_value(key, raw) for key, raw in headers.items()},
             }
         servers[name] = item
+    policy = launch.tool_policy
+    if isinstance(policy, NativeToolPolicy):
+        mode = policy.policy.get("mode")
+        server = policy.policy.get("server")
+        if mode not in {"mcp_only", "mcp_read_only", "full"} or not isinstance(server, str) or server not in servers:
+            raise HarnessStartupError("OpenCode native tool policy is invalid")
+        if mode == "full":
+            tools: dict[str, Any] = {"*": True}
+            permissions: dict[str, Any] = {"*": "allow"}
+        else:
+            pattern = f"{server}_*"
+            read_only = tuple(str(item) for item in (policy.policy.get("read_only_tools") or ()))
+            tools = {"*": False, pattern: True, **({item: True for item in read_only} if mode == "mcp_read_only" else {})}
+            permissions = {"*": "deny", pattern: "allow", **({item: "allow" for item in read_only} if mode == "mcp_read_only" else {})}
+    else:
+        tools = {}
+        permissions = {}
     if dialect == "v2":
-        return {"$schema": "https://opencode.ai/config.json", "mcp": {"servers": servers}}
+        return {"$schema": "https://opencode.ai/config.json", "mcp": {"servers": servers}, **({"tools": tools, "permission": permissions} if tools else {})}
     if dialect == "legacy":
-        return {"$schema": "https://opencode.ai/config.json", "mcp": {name: {**value, "enabled": True} for name, value in servers.items()}}
+        return {"$schema": "https://opencode.ai/config.json", "mcp": {name: {**value, "enabled": True} for name, value in servers.items()}, **({"tools": tools, "permission": permissions} if tools else {})}
     raise HarnessStartupError("unsupported OpenCode configuration dialect")
 
 
@@ -109,7 +126,13 @@ def _opencode_config_value(key: str, value: Any) -> str:
     return "[REDACTED]" if is_sensitive_key(key) else value
 
 
-def _resolve_opencode_environment_value(value: Any, environment: dict[str, str], secrets: set[str]) -> None:
+def _resolve_opencode_environment_value(
+    value: Any,
+    environment: dict[str, str],
+    secrets: set[str],
+    *,
+    resolver_environment: Mapping[str, str] | None = None,
+) -> None:
     """Make an explicit env reference available to OpenCode's child MCP."""
 
     if isinstance(value, SecretReference):
@@ -123,7 +146,14 @@ def _resolve_opencode_environment_value(value: Any, environment: dict[str, str],
         name = match.group(1)
     else:
         return
-    resolved = os.environ.get(name)
+    # The explicit map takes precedence, but a reference names its own
+    # credential.  Falling back to the ambient value for that named reference
+    # preserves the SDK contract without copying unrelated ambient keys.
+    resolved = (
+        (resolver_environment.get(name) if resolver_environment is not None else None)
+        or environment.get(name)
+        or os.environ.get(name)
+    )
     if not resolved:
         raise HarnessStartupError("OpenCode credential is unavailable")
     environment[name] = resolved
@@ -163,6 +193,7 @@ class OpenCodeHarnessAdapter:
     def __init__(self, *, executable: str = "opencode", environment: Mapping[str, str] | None = None) -> None:
         self.executable = _executable(executable, "opencode")
         self.environment = dict(environment or {})
+        self._resolver_environment = environment
         self._capabilities = HarnessAdapterCapabilities(
             name="opencode",
             supports_multiturn=True,
@@ -219,6 +250,18 @@ class OpenCodeHarnessAdapter:
         self.last_policy_evidence = None
         self._capabilities = replace(self._capabilities, supports_tool_policy=False)
         policy = launch.tool_policy
+        if isinstance(policy, NativeToolPolicy):
+            if policy.harness != self.name or policy.policy.get("mode") not in {"mcp_only", "mcp_read_only", "full"}:
+                return self._capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+            server = policy.policy.get("server")
+            if not isinstance(server, str) or server not in {record.key for record in launch.servers.records}:
+                return self._capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+            self.last_policy_evidence = ToolPolicyEvidence(
+                requested="native", enforced="native", observed="preflight", portable=False,
+                nonportable_reason="OpenCode configuration permissions",
+            )
+            self._capabilities = replace(self._capabilities, supports_tool_policy=True)
+            return self._capabilities.readiness()
         policy_requested = isinstance(policy, (FullToolPolicy, NativeToolPolicy)) or (
             isinstance(policy, RestrictiveToolPolicy) and bool(policy.allowed_tools or policy.denied_tools)
         )
@@ -296,17 +339,34 @@ class OpenCodeHarnessAdapter:
                         raise HarnessStartupError("OpenCode credential reference is invalid")
                     if not isinstance(reference, SecretReference) or reference.source != "environment":
                         raise HarnessStartupError("OpenCode credential reference is unavailable")
-                    value = os.environ.get(reference.name)
+                    value = environment.get(reference.name)
+                    if value is None:
+                        value = os.environ.get(reference.name)
                     if not value:
                         raise HarnessStartupError("OpenCode credential is unavailable")
                     environment[variable] = value
                     runtime_secrets.add(value)
             for server in launch.configurations:
                 for value in server.environment.values():
-                    _resolve_opencode_environment_value(value, environment, runtime_secrets)
+                    _resolve_opencode_environment_value(
+                        value,
+                        environment,
+                        runtime_secrets,
+                        resolver_environment=self._resolver_environment,
+                    )
                 for value in server.headers.values():
-                    _resolve_opencode_environment_value(value, environment, runtime_secrets)
-                _resolve_opencode_environment_value(server.endpoint, environment, runtime_secrets)
+                    _resolve_opencode_environment_value(
+                        value,
+                        environment,
+                        runtime_secrets,
+                        resolver_environment=self._resolver_environment,
+                    )
+                _resolve_opencode_environment_value(
+                    server.endpoint,
+                    environment,
+                    runtime_secrets,
+                    resolver_environment=self._resolver_environment,
+                )
             self._runtime_secrets = runtime_secrets
             capture = launch.capture
             add_secrets = getattr(capture, "add_secrets", None)

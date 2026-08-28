@@ -19,8 +19,8 @@ from mcp_pal.harness.contracts import HarnessLaunch, HarnessStartupError, Harnes
 from mcp_pal.harness.opencode import OpenCodeHarnessAdapter, opencode_configuration
 from mcp_pal.harness.native import _server_configuration, write_config
 from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.server_group import HarnessServerConfiguration, ServerGroupSnapshot
-from mcp_pal.types import ACPAgent, AgentExecutionSpec, ClaudeCode, ErrorCode, OpenCode, RestrictiveToolPolicy, SecretReference, ServerBinding, StdioServer, TextContent, TransportKind
+from mcp_pal.server_group import HarnessServerConfiguration, ServerGroupSnapshot, ServerRecord
+from mcp_pal.types import ACPAgent, AgentExecutionSpec, ClaudeCode, ErrorCode, NativeToolPolicy, OpenCode, RestrictiveToolPolicy, SecretReference, ServerBinding, StdioServer, TextContent, TransportKind
 from mcp_pal.errors import UnsupportedFeature
 
 
@@ -385,6 +385,22 @@ for line in sys.stdin:
         "cwd": os.getcwd(), "home": os.environ["HOME"],
         "config": config, "config_exists": os.path.exists(config),
     })}), flush=True)
+    ''')
+
+
+def _claude_policy_fixture(path: Path) -> str:
+    return _executable(path, '''\
+import json, os, sys
+if "--help" in sys.argv:
+    print("--input-format stream-json --output-format stream-json")
+    raise SystemExit(0)
+marker = os.environ.get("MCP_PAL_MARKER")
+if marker:
+    with open(marker, "w") as output:
+        json.dump(sys.argv, output)
+for line in sys.stdin:
+    json.loads(line)
+    print(json.dumps({"type":"result", "result":"ok"}), flush=True)
 ''')
 
 
@@ -441,6 +457,28 @@ for line in sys.stdin:
 ''')
 
 
+def _acp_startup_secret_fixture(path: Path, marker: Path) -> str:
+    canary = "acp-server-secret-canary"
+    return _executable(path, f'''\
+import json, sys
+CANARY = {canary!r}
+def send(value): print(json.dumps(value), flush=True)
+# Deliberately race startup redaction: this is emitted before initialize.
+send({{"jsonrpc":"2.0", "method":"startup/notice", "params":{{"canary":CANARY}}}})
+for line in sys.stdin:
+    request = json.loads(line); method = request.get("method"); ident = request.get("id")
+    if method == "initialize":
+        send({{"jsonrpc":"2.0", "id":ident, "result":{{"protocolVersion":1}}}})
+    elif method == "session/new":
+        with open({str(marker)!r}, "w", encoding="utf-8") as output:
+            json.dump(request["params"], output)
+        send({{"jsonrpc":"2.0", "id":ident, "result":{{"sessionId":"secret-session"}}}})
+    elif method == "session/prompt":
+        send({{"jsonrpc":"2.0", "method":"session/update", "params":{{"sessionId":"secret-session", "update":{{"sessionUpdate":"agent_message_chunk", "content":{{"type":"text", "text":CANARY}}}}}}}})
+        send({{"jsonrpc":"2.0", "id":ident, "result":{{"stopReason":"end_turn"}}}})
+''')
+
+
 @pytest.mark.asyncio
 async def test_claude_uses_one_stream_process_across_turns() -> None:
     executable = str(Path(__file__).parents[1] / "fixtures" / "claude_stream_fixture.py")
@@ -452,6 +490,94 @@ async def test_claude_uses_one_stream_process_across_turns() -> None:
     assert second.response is not None and _response_text(second) == "two"
     assert session.snapshot().turns == 2
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_claude_credential_descriptor_enters_spec_literal_reaches_child_only_at_launch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    canary = "claude-credential-canary"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", canary)
+    executable = _executable(tmp_path / "claude-credential.py", '''\
+import json, os, sys
+if "--help" in sys.argv:
+    print("--input-format stream-json --output-format stream-json")
+    raise SystemExit(0)
+for line in sys.stdin:
+    json.loads(line)
+    print(json.dumps({"type":"result", "result": os.environ.get("ANTHROPIC_API_KEY", "")}), flush=True)
+''')
+    base = _launch()
+    spec = base.spec.model_copy(update={"harness": ClaudeCode(model="fixture", executable=executable, credential_references={"ANTHROPIC_API_KEY": SecretReference(source="environment", name="ANTHROPIC_API_KEY")})})
+    adapter = ClaudeCodeHarnessAdapter(executable=executable)
+    session = await adapter.open(HarnessLaunch(spec, base.servers, base.configurations, base.tool_policy))
+    result = await session.send(HarnessTurnRequest.from_message("credential"))
+    assert _response_text(result) == canary
+    assert isinstance(spec.harness, ClaudeCode)
+    assert spec.harness.credential_references["ANTHROPIC_API_KEY"].name == "ANTHROPIC_API_KEY"
+    assert canary not in json.dumps(spec.model_dump(mode="json"))
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_claude_native_policy_is_preflighted_and_applied_to_argv(tmp_path: Path) -> None:
+    executable = _claude_policy_fixture(tmp_path / "claude-policy.py")
+    for mode in ("mcp_only", "mcp_read_only", "full"):
+        marker = tmp_path / f"{mode}.json"
+        base = _launch()
+        policy = NativeToolPolicy(
+            harness="claude-code",
+            policy={"mode": mode, "server": "stdio", "read_only_tools": ("Read", "Glob")},
+            nonportable_reason="Claude Code CLI tool allowlist",
+        )
+        spec = base.spec.model_copy(update={"harness": ClaudeCode(model="fixture", executable=executable), "tool_policy": policy})
+        adapter = ClaudeCodeHarnessAdapter(executable=executable, environment={"MCP_PAL_MARKER": str(marker)})
+        configuration = HarnessServerConfiguration(key="stdio", transport=TransportKind.STDIO, required=True, available=True, connection_id="stdio", command="python")
+        servers = ServerGroupSnapshot((ServerRecord("stdio", spec.servers[0].server, True, True, "stdio", TransportKind.STDIO),))
+        launch = HarnessLaunch(spec, servers, (configuration,), policy)
+        readiness = await adapter.preflight(launch)
+        assert readiness.ready and adapter.last_policy_evidence is not None
+        assert adapter.last_policy_evidence.enforced == "native"
+        session = await adapter.open(launch)
+        await session.send(HarnessTurnRequest.from_message("policy"))
+        await adapter.close()
+        argv = json.loads(marker.read_text(encoding="utf-8"))
+        if mode == "mcp_only":
+            assert argv[argv.index("--tools") + 1] == ""
+            assert argv[argv.index("--allowedTools") + 1] == "mcp__stdio__*"
+        elif mode == "mcp_read_only":
+            assert argv[argv.index("--tools") + 1] == "Read,Glob"
+            assert argv[argv.index("--allowedTools") + 1] == "Read,Glob,mcp__stdio__*"
+        else:
+            assert "--dangerously-skip-permissions" in argv
+
+
+@pytest.mark.asyncio
+async def test_opencode_native_policy_is_preflighted_and_rendered_for_each_mode(tmp_path: Path) -> None:
+    executable = str(Path(__file__).parents[1] / "fixtures" / "opencode_serve_fixture.py")
+    configuration = HarnessServerConfiguration(key="stdio", transport=TransportKind.STDIO, required=True, available=True, connection_id="stdio", command="python")
+    server = StdioServer(name="stdio", command="python")
+    servers = ServerGroupSnapshot((ServerRecord("stdio", server, True, True, "stdio", TransportKind.STDIO),))
+    for mode in ("mcp_only", "mcp_read_only", "full"):
+        policy = NativeToolPolicy(harness="opencode", policy={"mode": mode, "server": "stdio", "read_only_tools": ("read", "glob")}, nonportable_reason="OpenCode permissions")
+        spec = AgentExecutionSpec(harness=OpenCode(model="fixture"), servers=(ServerBinding(server=server, alias="stdio"),), tool_policy=policy)
+        launch = HarnessLaunch(spec, servers, (configuration,), policy)
+        adapter = OpenCodeHarnessAdapter(executable=executable, environment={"MCP_PAL_OPENCODE_MODE": "legacy"})
+        readiness = await adapter.preflight(launch)
+        assert readiness.ready and adapter.last_policy_evidence is not None
+        assert adapter.last_policy_evidence.enforced == "native"
+        rendered = opencode_configuration(launch, dialect="legacy")
+        rendered_v2 = opencode_configuration(launch, dialect="v2")
+        assert rendered_v2["mcp"]["servers"]["stdio"]["type"] == "local"
+        assert rendered_v2["tools"] == rendered["tools"]
+        assert rendered_v2["permission"] == rendered["permission"]
+        if mode == "full":
+            assert rendered["tools"] == {"*": True}
+            assert rendered["permission"] == {"*": "allow"}
+        elif mode == "mcp_only":
+            assert rendered["tools"] == {"*": False, "stdio_*": True}
+            assert rendered["permission"] == {"*": "deny", "stdio_*": "allow"}
+        else:
+            assert rendered["tools"] == {"*": False, "stdio_*": True, "read": True, "glob": True}
+            assert rendered["permission"] == {"*": "deny", "stdio_*": "allow", "read": "allow", "glob": "allow"}
 
 
 @pytest.mark.asyncio
@@ -1027,3 +1153,91 @@ async def test_acp_uses_workspace_cwd_session_and_explicit_mcp_cwd(tmp_path: Pat
     assert "--cwd" not in servers["default"]["args"]
     assert servers["explicit"]["args"].count("mcp_pal.transport.stdio_proxy") == 1
     assert servers["explicit"]["args"][servers["explicit"]["args"].index("--cwd") + 1] == str(explicit)
+
+
+@pytest.mark.asyncio
+async def test_acp_registers_server_canary_before_startup_and_omits_it_from_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A startup frame cannot race registration, and ACP never gets the credential."""
+
+    canary = "acp-server-secret-canary"
+    monkeypatch.setenv("MCP_PAL_ACP_SERVER_SECRET", canary)
+    marker = tmp_path / "acp-secret-config.json"
+    executable = _acp_startup_secret_fixture(tmp_path / "acp-secret.py", marker)
+    base = _launch()
+    spec = base.spec.model_copy(update={
+        "harness": ACPAgent(model="fixture", manifest={"command": executable, "protocol": "acp", "protocol_version": 1}),
+    })
+    configuration = HarnessServerConfiguration(
+        key="secret",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="secret",
+        command="fixture",
+        environment={"API_KEY": SecretReference(source="environment", name="MCP_PAL_ACP_SERVER_SECRET")},
+    )
+
+    class PolicyCapture:
+        def enforces_portable_policy(self, values: Iterable[str]) -> bool:
+            return tuple(values) == ("secret",)
+
+    launch = HarnessLaunch(
+        spec,
+        base.servers,
+        (configuration,),
+        base.tool_policy,
+        workspace_root=str(tmp_path),
+        capture=PolicyCapture(),
+    )
+    adapter = AcpHarnessAdapter()
+    session = await adapter.open(launch)
+    result = await session.send(HarnessTurnRequest.from_message("hello"))
+    try:
+        assert result.status == "completed"
+        assert result.response is not None
+        assert canary not in repr(result)
+        assert all(canary not in repr(frame) for frame in session._frames)
+        assert marker.exists()
+        config = json.loads(marker.read_text(encoding="utf-8"))
+        encoded = json.dumps(config, sort_keys=True)
+        assert canary not in encoded
+        assert config["mcpServers"][0]["env"] == []
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_acp_unresolved_server_reference_fails_before_harness_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = tmp_path / "spawned"
+    executable = _executable(tmp_path / "should-not-start.py", f'''\
+from pathlib import Path
+Path({str(marker)!r}).write_text("spawned", encoding="utf-8")
+''')
+    monkeypatch.delenv("MCP_PAL_ACP_MISSING", raising=False)
+    base = _launch()
+    spec = base.spec.model_copy(update={
+        "harness": ACPAgent(model="fixture", manifest={"command": executable, "protocol": "acp", "protocol_version": 1}),
+    })
+    configuration = HarnessServerConfiguration(
+        key="missing",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="missing",
+        command="fixture",
+        environment={"TOKEN": SecretReference(source="environment", name="MCP_PAL_ACP_MISSING")},
+    )
+
+    class PolicyCapture:
+        def enforces_portable_policy(self, values: Iterable[str]) -> bool:
+            return tuple(values) == ("missing",)
+
+    launch = HarnessLaunch(spec, base.servers, (configuration,), base.tool_policy, capture=PolicyCapture())
+    adapter = AcpHarnessAdapter()
+    with pytest.raises(HarnessStartupError, match="not ready"):
+        await adapter.open(launch)
+    assert not marker.exists()

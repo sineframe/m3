@@ -98,9 +98,11 @@ class AdapterTurn:
     outcome: TurnOutcome = TurnOutcome.COMPLETED
     tool_calls: tuple[Mapping[str, Any], ...] = ()
     evidence: Mapping[str, str | int | float | bool | None] = field(default_factory=dict)
+    trace_limitations: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
+        object.__setattr__(self, "trace_limitations", tuple(str(item) for item in self.trace_limitations))
 
 
 class HarnessTurnError(MCPError):
@@ -189,6 +191,10 @@ class AsyncAgentSession:
         self._snapshot = ExecutionSnapshot(execution_id=self._execution_id, provenance=provenance)
         self._turns: list[TurnResult] = []
         self._tool_outcomes: list[bool] = []
+        # Keep wire-derived tool outcomes after the server manager releases
+        # its capture object during close; adapter reports cannot represent
+        # MCP's application-level ``isError`` result faithfully.
+        self._captured_tool_outcomes: list[bool] = []
         self._terminal_result: ExecutionResult | None = None
         self._terminal_outcome: ExecutionOutcome | None = None
         self._terminal_error: ErrorInfo | None = None
@@ -223,6 +229,11 @@ class AsyncAgentSession:
         # when a later close succeeds; otherwise a retry would falsely claim
         # complete evidence.
         self._cleanup_failed = False
+        # A terminal adapter failure can leave the provider's final protocol
+        # exchange unknowable even when our own cleanup succeeds.  Preserve
+        # that distinction in the finalized trace instead of calling it
+        # complete merely because child processes were reaped.
+        self._trace_limitations: tuple[str, ...] = ()
 
     def _emit_event(
         self,
@@ -632,6 +643,12 @@ class AsyncAgentSession:
                     payload["result"] = result
                 if error is not None:
                     payload["error"] = error
+                if method == "tools/call" and event_kind in {"error", "response"}:
+                    failed = error is not None or (
+                        isinstance(result, Mapping)
+                        and bool(result.get("is_error", result.get("isError", False)))
+                    )
+                    self._captured_tool_outcomes.append(not failed)
                 phase = LifecyclePhase.MCP_CALL if method == "tools/call" else (
                     LifecyclePhase.INITIALIZATION if method == "initialize" else LifecyclePhase.IDLE
                 )
@@ -1297,6 +1314,13 @@ class AsyncAgentSession:
             response, error, outcome = raw.response, raw.error, raw.snapshot.outcome or TurnOutcome.FAILED
         else:
             raise UnsupportedFeature("harness returned an unsupported turn result")
+        limitations = getattr(raw, "trace_limitations", ())
+        if isinstance(limitations, (tuple, list)):
+            merged = list(self._trace_limitations)
+            for limitation in limitations:
+                if isinstance(limitation, str) and limitation not in merged:
+                    merged.append(limitation)
+            self._trace_limitations = tuple(merged)
         snapshot = self._turn_snapshot(turn_id, outcome)
         if error is not None:
             error = ErrorInfo(code=error.code, message="tool error" if not self._terminal_requested(raw) else "turn failed", retryable=error.retryable)
@@ -1348,7 +1372,7 @@ class AsyncAgentSession:
         capture = getattr(manager, "capture", None) if manager is not None else None
         snapshots = getattr(capture, "snapshots", None)
         if not callable(snapshots):
-            return []
+            return list(self._captured_tool_outcomes)
         outcomes: list[bool] = []
         try:
             for snapshot in snapshots():
@@ -1372,7 +1396,7 @@ class AsyncAgentSession:
                         pending.pop(sequence, None)
                 outcomes.extend(pending.values())
         except Exception:
-            return []
+            return list(self._captured_tool_outcomes)
         return outcomes
 
     def _turn_snapshot(self, turn_id: TurnId, outcome: TurnOutcome) -> Any:
@@ -1483,6 +1507,7 @@ class AsyncAgentSession:
             trace = self._trace_recorder.finalize(
                 outcome,
                 cleanup_succeeded=cleanup_succeeded,
+                limitations=self._trace_limitations,
             )
         self._terminal_result = ExecutionResult(
             snapshot=self._snapshot,
@@ -1540,6 +1565,10 @@ class AsyncAgentSession:
         # adapter's close path may terminate a provider that removes files;
         # cleanup of our workspace itself happens only after that close.
         cleanup_failure = await self._collect_workspace(outcome, cleanup=False)
+        # Project completed MCP exchanges before releasing the server group's
+        # capture object.  The manager intentionally drops that object after
+        # close, while activity health still needs its wire-level outcomes.
+        self._emit_captured_wire_events(None)
         try:
             await self._close_adapter()
         except Exception:

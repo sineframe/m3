@@ -31,6 +31,18 @@ from mcp_pal.types import (
 )
 
 
+def test_recorder_does_not_swallow_store_create_type_errors() -> None:
+    class BrokenStore:
+        def get_snapshot(self, _execution_id: object) -> None:
+            return None
+
+        def create(self, _snapshot: object, **_kwargs: object) -> None:
+            raise TypeError("internal create failure")
+
+    with pytest.raises(TypeError, match="internal create failure"):
+        ExecutionTraceRecorder(BrokenStore(), "execution-type-error")  # type: ignore[arg-type]
+
+
 def test_snapshot_is_derived_from_committed_events_and_previous_value_stays_immutable() -> None:
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-snapshot")
@@ -158,6 +170,14 @@ def test_cleanup_or_final_persistence_failure_makes_trace_partial_with_safe_limi
     persistence_trace = persistence.finalize(ExecutionOutcome.FAILED, persistence_succeeded=False)
     assert persistence_trace.completeness == "partial"
     assert persistence_trace.limitations == ("persistence_failed",)
+
+    explicit = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-explicit-limitation")
+    explicit_trace = explicit.finalize(
+        ExecutionOutcome.COMPLETED,
+        limitations=("partial_trace", "unsafe-provider-detail"),
+    )
+    assert explicit_trace.completeness == "partial"
+    assert explicit_trace.limitations == ("partial_trace",)
 
 
 def test_callbacks_see_the_whole_committed_batch_before_delivery() -> None:

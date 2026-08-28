@@ -84,6 +84,7 @@ class ExecutionTraceRecorder:
         *,
         trace_id: TraceId | str | None = None,
         redaction_config: RedactionConfig | None = None,
+        specification: Mapping[str, Any] | None = None,
     ) -> None:
         self._store = store
         self._execution_id = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(str(execution_id))
@@ -101,7 +102,10 @@ class ExecutionTraceRecorder:
         self._last_offset_ms = 0.0
         self._final: TraceResult | None = None
         if store.get_snapshot(self._execution_id) is None:
-            store.create(ExecutionSnapshot(execution_id=self._execution_id))
+            store.create(
+                ExecutionSnapshot(execution_id=self._execution_id),
+                specification=specification,
+            )
             self.emit(EventKind.EXECUTION_CREATED, payload={"lifecycle": LifecycleState.CREATED.value})
         else:
             # A persistent execution may be reopened by another process.  Its
@@ -250,7 +254,7 @@ class ExecutionTraceRecorder:
             )
             terminal_payload: dict[str, Any] = {
                 "outcome": outcome.value,
-                "completeness": "complete" if cleanup_succeeded and persistence_succeeded else "partial",
+                "completeness": "complete" if cleanup_succeeded and persistence_succeeded and not safe_limitations else "partial",
                 "limitations": list(safe_limitations),
             }
             if direct_result is not None:
@@ -259,7 +263,7 @@ class ExecutionTraceRecorder:
                 EventKind.EXECUTION_FINISHED,
                 payload=terminal_payload,
             )
-            completeness: Literal["complete", "partial"] = "complete" if cleanup_succeeded and persistence_succeeded else "partial"
+            completeness: Literal["complete", "partial"] = "complete" if cleanup_succeeded and persistence_succeeded and not safe_limitations else "partial"
             trace = TraceResult(
                 trace_id=self._trace_id,
                 execution_id=self._execution_id,

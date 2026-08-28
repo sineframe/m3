@@ -25,6 +25,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, cast
 
+from pydantic import TypeAdapter, ValidationError
+
 from ..trace.redaction import (
     RedactionConfig,
     redact_artifact_bytes,
@@ -42,6 +44,8 @@ from ..types import (
     ExecutionOutcome,
     ExecutionPage,
     ExecutionSnapshot,
+    PersistedExecutionReport,
+    ExecutionSpec,
     LifecycleState,
     RevisionId,
     RevisionSelection,
@@ -50,6 +54,7 @@ from ..types import (
     TurnResult,
     TurnSnapshot,
 )
+from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
 from .ephemeral import (
     ArtifactNotFound,
     ArtifactStore,
@@ -59,7 +64,6 @@ from .ephemeral import (
     ExecutionTransaction,
     StorageConflict,
     StorageError,
-    PersistedExecutionReport,
     _report_fields,
     _execution_key,
 )
@@ -251,6 +255,20 @@ CREATE TABLE IF NOT EXISTS v2_harness_profile_revisions (
   revision_number INTEGER NOT NULL CHECK (revision_number > 0), value_json TEXT NOT NULL,
   created_at TEXT NOT NULL, UNIQUE(profile_id, revision_number), UNIQUE(profile_id, id)
 );
+CREATE TABLE IF NOT EXISTS v2_acp_probes (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL REFERENCES v2_harness_profiles(id) ON DELETE CASCADE,
+  revision_id TEXT NOT NULL REFERENCES v2_harness_profile_revisions(id) ON DELETE CASCADE,
+  probe_type TEXT NOT NULL CHECK(probe_type IN ('protocol','full')),
+  transport TEXT NOT NULL, agent_mode_id TEXT, session_config_json TEXT NOT NULL,
+  dimension_key TEXT NOT NULL, status TEXT NOT NULL,
+  agent_identity_json TEXT, agent_capabilities_json TEXT NOT NULL,
+  agent_modes_json TEXT NOT NULL, current_agent_mode_id TEXT,
+  config_options_json TEXT NOT NULL, evidence_json TEXT NOT NULL,
+  diagnostics TEXT, error TEXT, created_at TEXT NOT NULL, started_at TEXT,
+  finished_at TEXT, duration_ms REAL
+);
+CREATE INDEX IF NOT EXISTS v2_acp_probes_dimension ON v2_acp_probes(dimension_key, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS v2_executions (
   id TEXT PRIMARY KEY, snapshot_json TEXT NOT NULL, specification_json TEXT,
   provenance_json TEXT, parent_execution_id TEXT REFERENCES v2_executions(id),
@@ -661,6 +679,23 @@ class SQLiteExecutionStore(_SqliteBase):
         with self._connect() as connection:
             row = connection.execute("SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL", (_execution_key(execution_id),)).fetchone()
         return ExecutionSnapshot.model_validate(_loads(row[0])) if row else None
+
+    def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None:
+        """Return the immutable typed submission spec, if one was saved."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT specification_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
+                (_execution_key(execution_id),),
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        value = _loads(row[0])
+        try:
+            return TypeAdapter(ExecutionSpec).validate_python(value)
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise StorageError("persisted execution specification is invalid") from exc
+
+    get_spec = get_execution_spec
 
     def list_executions(
         self,
@@ -1148,6 +1183,91 @@ class SQLiteExecutionStore(_SqliteBase):
         return unsubscribe
 
     # -- Profiles ---------------------------------------------------------
+    # -- ACP probes -------------------------------------------------------
+    def save_acp_probe(self, result: ACPProbeResult) -> ACPProbeResult:
+        """Persist one redacted ACP probe result and return its safe copy."""
+        from ..services.acp_probes import redacted_probe
+
+        safe = redacted_probe(result, self._redaction_config)
+        # Probe history is tied to a real harness profile revision.  Keeping
+        # this check at the durable boundary prevents forged/stale dimensions
+        # from becoming selectable readiness evidence.
+        profile = self.get_profile(safe.profile_id)
+        revision = self.get_revision(safe.revision_id)
+        if profile is None or profile.kind != "harness" or revision is None or revision.profile_id != safe.profile_id:
+            raise StorageConflict("ACP probe profile revision does not exist")
+        value = safe.model_dump(mode="json")
+        connection = self._connect()
+        try:
+            self._begin(connection, immediate=True)
+            existing = connection.execute(
+                "SELECT dimension_key,created_at FROM v2_acp_probes WHERE id=?", (safe.id,)
+            ).fetchone()
+            if existing is not None and (
+                str(existing["dimension_key"]) != safe.canonical_key
+                or str(existing["created_at"]) != str(value["created_at"])
+            ):
+                raise StorageConflict("ACP probe id was already used for another dimension")
+            connection.execute(
+                "INSERT INTO v2_acp_probes(id,profile_id,revision_id,probe_type,transport,agent_mode_id,session_config_json,dimension_key,status,agent_identity_json,agent_capabilities_json,agent_modes_json,current_agent_mode_id,config_options_json,evidence_json,diagnostics,error,created_at,started_at,finished_at,duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET status=excluded.status,agent_identity_json=excluded.agent_identity_json,agent_capabilities_json=excluded.agent_capabilities_json,agent_modes_json=excluded.agent_modes_json,current_agent_mode_id=excluded.current_agent_mode_id,config_options_json=excluded.config_options_json,evidence_json=excluded.evidence_json,diagnostics=excluded.diagnostics,error=excluded.error,started_at=excluded.started_at,finished_at=excluded.finished_at,duration_ms=excluded.duration_ms",
+                (
+                    safe.id, safe.profile_id, safe.revision_id, safe.probe_type.value,
+                    safe.transport, safe.agent_mode_id, _json(value["session_config"]),
+                    safe.canonical_key, safe.status.value,
+                    _json(value["agent_identity"]) if safe.agent_identity is not None else None,
+                    _json(value["agent_capabilities"]), _json(value["agent_modes"]), safe.current_agent_mode_id,
+                    _json(value["config_options"]),
+                    _json(value["evidence"]), safe.diagnostics, safe.error,
+                    value["created_at"], value.get("started_at"), value.get("finished_at"), safe.duration_ms,
+                ),
+            )
+            self._commit(connection)
+        except BaseException:
+            self._rollback(connection)
+            raise
+        finally:
+            connection.close()
+        return safe
+
+    @staticmethod
+    def _acp_probe_row(row: Any) -> ACPProbeResult:
+        return ACPProbeResult.model_validate({
+            "id": row["id"], "profile_id": row["profile_id"], "revision_id": row["revision_id"],
+            "probe_type": row["probe_type"], "transport": row["transport"],
+            "agent_mode_id": row["agent_mode_id"], "session_config": _loads(row["session_config_json"], {}),
+            "status": row["status"], "agent_identity": _loads(row["agent_identity_json"], None),
+            "agent_capabilities": _loads(row["agent_capabilities_json"], {}),
+            "agent_modes": tuple(_loads(row["agent_modes_json"], [])),
+            "current_agent_mode_id": row["current_agent_mode_id"],
+            "config_options": tuple(_loads(row["config_options_json"], [])),
+            "evidence": _loads(row["evidence_json"], {}), "diagnostics": row["diagnostics"], "error": row["error"],
+            "created_at": row["created_at"], "started_at": row["started_at"], "finished_at": row["finished_at"],
+            "duration_ms": row["duration_ms"],
+        })
+
+    def get_acp_probe(self, probe_id: str) -> ACPProbeResult | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM v2_acp_probes WHERE id=?", (str(probe_id),)).fetchone()
+        return None if row is None else self._acp_probe_row(row)
+
+    def list_acp_probes(self, dimension: ACPProbeDimension | None = None, *, include_inflight: bool = True) -> tuple[ACPProbeResult, ...]:
+        parameters: list[Any] = []
+        clauses: list[str] = []
+        if dimension is not None:
+            clauses.append("dimension_key=?")
+            parameters.append(dimension.canonical_key)
+        if not include_inflight:
+            clauses.append("status NOT IN ('queued','running')")
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._connect() as connection:
+            rows = connection.execute(f"SELECT * FROM v2_acp_probes{where} ORDER BY created_at DESC,id DESC", tuple(parameters)).fetchall()
+        return tuple(self._acp_probe_row(row) for row in rows)
+
+    def latest_acp_probe(self, dimension: ACPProbeDimension) -> ACPProbeResult | None:
+        values = self.list_acp_probes(dimension, include_inflight=False)
+        return values[0] if values else None
+
     def create_profile(self, kind: str, name: str, value: Mapping[str, Any], *, description: str = "", profile_id: str | None = None, revision_id: str | None = None) -> ProfileRecord:
         if kind not in {"server", "harness"}:
             raise ValueError("profile kind must be server or harness")
@@ -1187,6 +1307,82 @@ class SQLiteExecutionStore(_SqliteBase):
                     return ProfileRecord(str(row["id"]), kind, str(row["name"]), str(row["description"]), bool(row["archived"]), RevisionId(str(row["current_revision_id"])) if row["current_revision_id"] else None, _parse_dt(row["created_at"]), _parse_dt(row["updated_at"]))
         return None
 
+    def list_profiles(self, kind: str, *, include_archived: bool = False) -> tuple[ProfileRecord, ...]:
+        """List one profile family in stable name/id order.
+
+        Profile families are explicit so callers cannot accidentally combine
+        server and harness descriptors.  Archived records are opt-in because
+        normal selection should not offer them.
+        """
+        if kind not in {"server", "harness"}:
+            raise ValueError("profile kind must be server or harness")
+        where = "" if include_archived else " WHERE archived=0"
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM v2_{kind}_profiles{where} ORDER BY name COLLATE NOCASE, id"
+            ).fetchall()
+        return tuple(
+            ProfileRecord(
+                str(row["id"]), kind, str(row["name"]), str(row["description"]),
+                bool(row["archived"]),
+                RevisionId(str(row["current_revision_id"])) if row["current_revision_id"] else None,
+                _parse_dt(row["created_at"]), _parse_dt(row["updated_at"]),
+            )
+            for row in rows
+        )
+
+    def list_profile_revisions(self, profile_id: str) -> tuple[ProfileRevisionRecord, ...]:
+        """Return every revision ordered by revision number then id."""
+        profile = self.get_profile(profile_id)
+        if profile is None:
+            raise StorageConflict("profile does not exist")
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM v2_{profile.kind}_profile_revisions "
+                "WHERE profile_id=? ORDER BY revision_number, id",
+                (profile_id,),
+            ).fetchall()
+        return tuple(
+            ProfileRevisionRecord(
+                RevisionId(str(row["id"])), profile_id, int(row["revision_number"]),
+                _loads(row["value_json"], {}), _parse_dt(row["created_at"]),
+            )
+            for row in rows
+        )
+
+    def update_profile(
+        self, profile_id: str, *, name: str | None = None, description: str | None = None
+    ) -> ProfileRecord:
+        """Update mutable metadata without changing the immutable revision."""
+        if name is None and description is None:
+            profile = self.get_profile(profile_id)
+            if profile is None:
+                raise StorageConflict("profile does not exist")
+            return profile
+        profile = self.get_profile(profile_id)
+        if profile is None:
+            raise StorageConflict("profile does not exist")
+        safe_name = redact_for_persistence(name, config=self._redaction_config, path="$.profile.name") if name is not None else profile.name
+        safe_description = redact_for_persistence(description, config=self._redaction_config, path="$.profile.description") if description is not None else profile.description
+        if not isinstance(safe_name, str) or not isinstance(safe_description, str):
+            raise StorageError("profile metadata could not be redacted")
+        connection = self._connect()
+        try:
+            self._begin(connection, immediate=True)
+            connection.execute(
+                f"UPDATE v2_{profile.kind}_profiles SET name=?,description=?,updated_at=? WHERE id=?",
+                (safe_name, safe_description, _iso(_utcnow()), profile_id),
+            )
+            self._commit(connection)
+        except Exception as exc:
+            self._rollback(connection)
+            if _is_integrity_error(exc):
+                raise StorageConflict("profile name already exists") from exc
+            raise
+        finally:
+            connection.close()
+        return self.get_profile(profile_id)  # type: ignore[return-value]
+
     def add_revision(self, profile_id: str, value: Mapping[str, Any], *, revision_id: str | None = None) -> ProfileRevisionRecord:
         connection = self._connect()
         try:
@@ -1200,6 +1396,8 @@ class SQLiteExecutionStore(_SqliteBase):
             if found is None:
                 raise StorageConflict("profile does not exist")
             kind = found[0]
+            if bool(found[1]["archived"]):
+                raise StorageConflict("profile is archived")
             table = f"v2_{kind}_profile_revisions"
             number = int(connection.execute(f"SELECT COALESCE(MAX(revision_number),0)+1 FROM {table} WHERE profile_id=?", (profile_id,)).fetchone()[0])
             rid = revision_id or _new_id(f"{kind}-revision")

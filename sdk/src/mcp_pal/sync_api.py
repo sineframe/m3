@@ -114,6 +114,7 @@ from .types import (
 )
 from .execution_runtime import AsyncExecutionHandle as _AsyncExecutionHandle
 from .storage import ExecutionStore as _ExecutionStore
+from .harness.contracts import HarnessAdapterRegistry as _HarnessAdapterRegistry
 
 
 _CURRENT_MCP_PROTOCOL = "2025-11-25"
@@ -177,7 +178,7 @@ def _runtime_server_bindings(runtime_servers: _Iterable[_Any]) -> tuple[_ServerB
 class _PortalRuntime:
     """Async state owned exclusively by the AnyIO portal thread."""
 
-    def __init__(self, config: SDKConfig, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True) -> None:
+    def __init__(self, config: SDKConfig, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None) -> None:
         from .async_api import AsyncMCPTestKit
 
         self.kit = AsyncMCPTestKit(
@@ -186,6 +187,7 @@ class _PortalRuntime:
             probe_output_limit=probe_output_limit,
             store=store,
             embedded_worker=embedded_worker,
+            adapter_registry=adapter_registry,
         )
         self.clients: dict[int, _AsyncDirectClient] = {}
         self.sessions: dict[int, _AsyncAgentSession] = {}
@@ -394,7 +396,7 @@ class _PortalRuntime:
 
 
 class _SyncPortal:
-    def __init__(self, config: SDKConfig, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True) -> None:
+    def __init__(self, config: SDKConfig, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None) -> None:
         self._lock = _RLock()
         self._context = _start_blocking_portal()
         try:
@@ -406,6 +408,7 @@ class _SyncPortal:
                 probe_output_limit,
                 store,
                 embedded_worker,
+                adapter_registry,
             )
         except BaseException:
             self._context.__exit__(None, None, None)
@@ -883,6 +886,7 @@ class MCPTestKit:
         probe_output_limit: int = 64 * 1024,
         store: _ExecutionStore | None = None,
         embedded_worker: bool = True,
+        adapter_registry: _HarnessAdapterRegistry | None = None,
     ) -> None:
         self._state_lock = _RLock()
         self._closed = False
@@ -898,6 +902,7 @@ class MCPTestKit:
         self._probe_output_limit = probe_output_limit
         self._store = store
         self._embedded_worker = embedded_worker
+        self._adapter_registry = adapter_registry
         self.config = config if isinstance(config, SDKConfig) else resolve_config(config, env=env, cwd=cwd)
         self._probes = CapabilityProbeService(
             timeout_seconds=probe_timeout_seconds,
@@ -916,6 +921,18 @@ class MCPTestKit:
 
         self._ensure_open()
         return self._probes
+
+    @property
+    def store(self) -> _ExecutionStore | None:
+        """The optional execution store configured on this kit.
+
+        Application composition layers may use identity matching when they
+        inject a kit and store into separate typed services.  Returning the
+        object without a wrapper keeps that check explicit and does not expose
+        storage implementation details.
+        """
+
+        return self._store
 
     def __enter__(self) -> "MCPTestKit":
         with self._state_lock:
@@ -1051,7 +1068,7 @@ class MCPTestKit:
             portal = self._portal
             new_portal = portal is None
             if portal is None:
-                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker)
+                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry)
                 self._portal = portal
             try:
                 identifier = _cast(int, portal.call(portal._runtime.create_execution, spec))
@@ -1131,7 +1148,7 @@ class MCPTestKit:
             portal = self._portal
             new_portal = portal is None
             if portal is None:
-                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker)
+                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry)
                 self._portal = portal
             try:
                 client = DirectClient(portal, _cast(_ServerValue, selected), options)
@@ -1186,7 +1203,7 @@ class MCPTestKit:
                 raise _KitClosed("MCPTestKit is closed")
             portal = self._portal
             if portal is None:
-                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker)
+                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry)
                 self._portal = portal
             try:
                 session = AgentSession(portal, spec, adapter, runtime_servers, interaction_handlers)

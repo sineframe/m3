@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -17,7 +18,8 @@ from typing import Any
 from uuid import uuid4
 
 from ..agent_session import AdapterTurn
-from ..types import Capability, CapabilityStatus, ErrorCode, ErrorInfo, Readiness, TextContent, TurnResponse, UserMessage
+from ..types import Capability, CapabilityStatus, ErrorCode, ErrorInfo, NativeToolPolicy, Readiness, RestrictiveToolPolicy, SecretReference, TextContent, TurnResponse, UserMessage
+from ..policy import ToolPolicyEvidence
 from .contracts import (
     HarnessAdapterCapabilities,
     HarnessAdapterError,
@@ -52,6 +54,7 @@ class ClaudeCodeHarnessAdapter:
     def __init__(self, *, executable: str = "claude", environment: Mapping[str, str] | None = None) -> None:
         self.executable = _executable(executable, "claude")
         self.environment = dict(environment or {})
+        self._resolver_environment = environment
         self._capabilities = HarnessAdapterCapabilities(
             name="claude-code",
             supports_multiturn=True,
@@ -63,6 +66,7 @@ class ClaudeCodeHarnessAdapter:
             supports_tool_policy=False,
             supports_streaming=True,
         )
+        self.last_policy_evidence: ToolPolicyEvidence | None = None
         self._root: Path | None = None
         self._config: Path | None = None
         self._owner: ProcessOwner | None = None
@@ -84,7 +88,6 @@ class ClaudeCodeHarnessAdapter:
         return self._capabilities.supported_content_kinds
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        del launch
         if shutil.which(self.executable) is None and not Path(self.executable).is_file():
             return Readiness(
                 ready=False,
@@ -95,6 +98,24 @@ class ClaudeCodeHarnessAdapter:
         if help_text is None or "stream-json" not in help_text:
             capability = Capability(name="harness:claude-code", status=CapabilityStatus.UNAVAILABLE, reason="stream-json unavailable")
             return Readiness(ready=False, capabilities=(capability,), reason="stream-json unavailable")
+        policy = launch.tool_policy
+        if policy is None or isinstance(policy, RestrictiveToolPolicy) and not policy.allowed_tools and not policy.denied_tools:
+            self.last_policy_evidence = None
+            return self._capabilities.readiness()
+        if not isinstance(policy, NativeToolPolicy) or policy.harness != self.name:
+            return Readiness(ready=False, reason="Claude Code requires a native tool policy")
+        mode = policy.policy.get("mode")
+        server = policy.policy.get("server")
+        if mode not in {"mcp_only", "mcp_read_only", "full"} or not isinstance(server, str) or not server:
+            return Readiness(ready=False, reason="Claude Code native tool policy is invalid")
+        if server not in {configuration.key for configuration in launch.configurations}:
+            return Readiness(ready=False, reason="Claude Code native tool policy is invalid")
+        if any(not isinstance(reference, SecretReference) or reference.source != "environment" for reference in getattr(launch.spec.harness, "credential_references", {}).values()):
+            return Readiness(ready=False, reason="Claude Code credential reference is invalid")
+        self.last_policy_evidence = ToolPolicyEvidence(
+            requested="native", enforced="native", observed="preflight", portable=False,
+            nonportable_reason="Claude Code CLI tool allowlist",
+        )
         return self._capabilities.readiness()
 
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
@@ -107,11 +128,36 @@ class ClaudeCodeHarnessAdapter:
         owner = ProcessOwner(root)
         try:
             environment = _isolated_environment(root, self.environment)
-            config = write_config(root, launch)
-            workspace = workspace_for_launch(launch, root)
             harness = launch.spec.harness
             if harness is None:
                 raise HarnessStartupError("Claude Code harness is unavailable")
+            runtime_secrets: set[str] = set()
+            for target, reference in getattr(harness, "credential_references", {}).items():
+                if not isinstance(reference, SecretReference) or reference.source != "environment":
+                    raise HarnessStartupError("Claude Code credential reference is unavailable")
+                value = self.environment.get(reference.name)
+                if value is None:
+                    value = os.environ.get(reference.name)
+                if not value:
+                    raise HarnessStartupError("Claude Code credential is unavailable")
+                environment[target] = value
+                runtime_secrets.add(value)
+            # The isolated child environment is deliberately smaller than the
+            # resolver source.  A selected map takes precedence for each
+            # named reference, while missing named references retain the
+            # legacy ambient fallback.
+            config = write_config(
+                root,
+                launch,
+                environment=self._resolver_environment,
+                secrets=runtime_secrets,
+            )
+            # ``write_config`` resolves selected server references and adds
+            # their literals to the runtime-only set before the child exists.
+            add_secrets = getattr(launch.capture, "add_secrets", None)
+            if callable(add_secrets) and runtime_secrets:
+                add_secrets(runtime_secrets)
+            workspace = workspace_for_launch(launch, root)
             argv = [
                 self.executable,
                 "--print",
@@ -126,6 +172,17 @@ class ClaudeCodeHarnessAdapter:
                 "--model",
                 harness.model,
             ]
+            policy = launch.tool_policy
+            if isinstance(policy, NativeToolPolicy):
+                mode = policy.policy.get("mode")
+                server = str(policy.policy.get("server"))
+                read_only = tuple(str(item) for item in (policy.policy.get("read_only_tools") or ()))
+                if mode == "mcp_only":
+                    argv.extend(["--tools", "", "--allowedTools", f"mcp__{server}__*"])
+                elif mode == "mcp_read_only":
+                    argv.extend(["--tools", ",".join(read_only), "--allowedTools", ",".join((*read_only, f"mcp__{server}__*"))])
+                elif mode == "full":
+                    argv.extend(["--tools", "default", "--dangerously-skip-permissions"])
             await owner.spawn(argv, environment, cwd=workspace)
             output: asyncio.Queue[Mapping[str, Any] | None] = asyncio.Queue(maxsize=MAX_QUEUE_ITEMS)
             process = owner.process

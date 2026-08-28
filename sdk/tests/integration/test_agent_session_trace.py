@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.agent_session import AsyncAgentSession, HarnessAdapter, HarnessTurnError
+from mcp_pal.agent_session import AdapterTurn, AsyncAgentSession, HarnessAdapter, HarnessTurnError
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.errors import CleanupError, TransportError
 from mcp_pal.harness import HarnessAdapterRegistry
@@ -20,6 +20,7 @@ from mcp_pal.types import (
     AgentExecutionSpec,
     CanonicalEvent,
     ErrorCode,
+    ErrorInfo,
     EventKind,
     ExecutionOutcome,
     ExecutionResult,
@@ -27,6 +28,7 @@ from mcp_pal.types import (
     StdioServer,
     TextContent,
     TurnResponse,
+    TurnOutcome,
     UserMessage,
 )
 
@@ -49,7 +51,7 @@ class _TraceHarness(HarnessAdapter):
         *,
         timeout: float | None = None,
         metadata: Mapping[str, object] | None = None,
-    ) -> TurnResponse:
+    ) -> TurnResponse | AdapterTurn:
         del timeout, metadata
         content = message.content[0]
         assert isinstance(content, TextContent)
@@ -89,6 +91,23 @@ class _TerminalFailureHarness(_TraceHarness):
     ) -> TurnResponse:
         del message, timeout, metadata
         raise HarnessTurnError("provider-turn-secret", terminal=True)
+
+
+class _TerminalCompleteEvidenceHarness(_TraceHarness):
+    async def send(
+        self,
+        message: UserMessage,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> AdapterTurn:
+        del message, timeout, metadata
+        return AdapterTurn(
+            terminal=True,
+            outcome=TurnOutcome.FAILED,
+            error=ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="terminal adapter failure"),
+            evidence={"wire_complete": True},
+        )
 
 
 class _TimeoutHarness(_TraceHarness):
@@ -256,6 +275,22 @@ async def test_direct_terminal_turn_failure_has_provisional_then_final_trace() -
     trace = result.trace
     assert trace is not None
     assert any(event.kind is EventKind.TURN_STATE_CHANGED for event in trace.events)
+
+
+@pytest.mark.asyncio
+async def test_terminal_adapter_failure_with_complete_evidence_keeps_complete_trace() -> None:
+    session = AsyncAgentSession(_spec(), _TerminalCompleteEvidenceHarness())
+    await session.__aenter__()
+    turn = await session.send("fail-with-complete-evidence")
+    assert turn.snapshot.outcome is TurnOutcome.FAILED
+    await session.aclose()
+
+    result = session.result
+    _assert_trace_identity(result)
+    assert result.snapshot.outcome is ExecutionOutcome.FAILED
+    assert result.trace is not None
+    assert result.trace.completeness == "complete"
+    assert result.trace.limitations == ()
 
 
 @pytest.mark.asyncio

@@ -697,7 +697,11 @@ class AsyncMCPTestKit:
         self._close_lock = asyncio.Lock()
         self._active_direct: set[AsyncDirectClient] = set()
         self._active_sessions: set[AsyncAgentSession] = set()
-        self._adapter_registry = adapter_registry or _default_harness_adapter_registry()
+        self._adapter_registry = (
+            adapter_registry
+            if adapter_registry is not None
+            else _default_harness_adapter_registry()
+        )
         self._execution_controller = _AsyncExecutionController(
             self,
             store=store,
@@ -732,6 +736,18 @@ class AsyncMCPTestKit:
 
         self._ensure_open()
         return self._probes
+
+    @property
+    def store(self) -> _ExecutionStore | None:
+        """The optional execution store configured on this kit.
+
+        Application composition layers may use identity matching when they
+        inject a kit and store into separate typed services.  Returning the
+        object without a wrapper keeps that check explicit and does not expose
+        storage implementation details.
+        """
+
+        return self._execution_controller._persistent_store
 
     async def __aenter__(self) -> "AsyncMCPTestKit":
         self._ensure_open()

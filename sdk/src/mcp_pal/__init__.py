@@ -88,6 +88,11 @@ from .sync_api import (
     resolve_config,
 )
 from .types import *
+from .services.acp_probes import (
+    ACPAgentIdentity, ACPAgentMode, ACPProbeDimension, ACPProbeHistory, ACPProbeKind,
+    ACPProbeRequest, ACPProbeResult, ACPProbeStatus, ACPProbeStore,
+    redacted_probe, run_acp_probe,
+)
 
 __version__ = _distribution_version("mcp-pal")
 

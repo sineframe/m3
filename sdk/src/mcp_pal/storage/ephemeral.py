@@ -20,18 +20,23 @@ from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
-from typing import Literal, Protocol, TypeAlias, cast
+from typing import Any, Literal, Protocol, TypeAlias, cast
+
 from pydantic import TypeAdapter, ValidationError
 
-from ..trace.redaction import RedactionConfig, redact_artifact_bytes, redact_for_persistence, redact_model_json
+from ..trace.redaction import (
+    RedactionConfig,
+    redact_artifact_bytes,
+    redact_for_persistence,
+    redact_model_json,
+)
 from ..types import (
     ArtifactId,
     ArtifactRef,
-    CanonicalEvent,
-    EventKind,
     DirectOperationResult,
     ErrorCode,
     ErrorInfo,
+    CanonicalEvent,
     ExecutionId,
     ExecutionEvidence,
     ExecutionOutcome,
@@ -39,7 +44,10 @@ from ..types import (
     ExecutionSnapshot,
     LifecycleState,
     PersistedExecutionReport,
+    ExecutionSpec,
+    EventKind,
 )
+from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
 
 
 class StorageError(Exception):
@@ -91,9 +99,20 @@ class ExecutionTransaction(Protocol):
 class ExecutionStore(Protocol):
     """Store contract for immutable execution snapshots and event streams."""
 
-    def create(self, snapshot: ExecutionSnapshot) -> None: ...
+    def create(
+        self,
+        snapshot: ExecutionSnapshot,
+        *,
+        specification: Mapping[str, object] | None = None,
+        provenance: Mapping[str, object] | None = None,
+        server_bindings: Sequence[Mapping[str, object]] = (),
+        harness_binding: Mapping[str, object] | None = None,
+        parent_execution_id: ExecutionId | str | None = None,
+    ) -> None: ...
 
     def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionSnapshot | None: ...
+
+    def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None: ...
 
     def list_executions(
         self,
@@ -157,6 +176,21 @@ def _execution_key(value: ExecutionId | str) -> str:
 
 _DIRECT_RESULT_ADAPTER: TypeAdapter[DirectOperationResult] = TypeAdapter(DirectOperationResult)
 _ERROR_INFO_ADAPTER: TypeAdapter[ErrorInfo] = TypeAdapter(ErrorInfo)
+_EXECUTION_SPEC_ADAPTER: TypeAdapter[ExecutionSpec] = TypeAdapter(ExecutionSpec)
+
+
+def _copy_execution_spec(specification: ExecutionSpec) -> ExecutionSpec:
+    """Re-validate JSON data to obtain a defensive copy.
+
+    ``FrozenModel`` uses a lightweight immutable mapping implementation that
+    Python's ``deepcopy`` cannot reconstruct.  Round-tripping the serialized
+    representation is both defensive and the same representation used by the
+    durable store.
+    """
+
+    return _EXECUTION_SPEC_ADAPTER.validate_python(
+        specification.model_dump(mode="json")
+    )
 
 
 def _report_fields(events: Sequence[CanonicalEvent]) -> tuple[DirectOperationResult | None, ErrorInfo | None, ExecutionEvidence | None]:
@@ -249,19 +283,77 @@ class InMemoryExecutionStore:
     def __init__(self, *, config: RedactionConfig | None = None) -> None:
         self._lock = threading.RLock()
         self._snapshots: dict[str, ExecutionSnapshot] = {}
+        self._specifications: dict[str, ExecutionSpec] = {}
         self._events: dict[str, tuple[CanonicalEvent, ...]] = {}
         self._callbacks: dict[str, list[EventCallback]] = {}
         self._reserved_sequences: dict[str, set[int]] = {}
         self._redaction_config = config if config is not None else RedactionConfig.from_environment()
+        self._acp_probes: dict[str, ACPProbeResult] = {}
 
-    def create(self, snapshot: ExecutionSnapshot) -> None:
+    # ACP probe persistence intentionally lives beside execution persistence,
+    # but is kept as a small independent collection so tests and applications
+    # can use the exact same service contract without SQLAlchemy/legacy rows.
+    def save_acp_probe(self, result: ACPProbeResult) -> ACPProbeResult:
+        from ..services.acp_probes import redacted_probe
+
+        safe = redacted_probe(result, self._redaction_config)
+        with self._lock:
+            existing = self._acp_probes.get(safe.id)
+            if existing is not None and (
+                existing.canonical_key != safe.canonical_key
+                or existing.created_at != safe.created_at
+            ):
+                raise StorageConflict("ACP probe id was already used for another dimension")
+            self._acp_probes[safe.id] = ACPProbeResult.model_validate(safe.model_dump(mode="json"))
+        return ACPProbeResult.model_validate(safe.model_dump(mode="json"))
+
+    def get_acp_probe(self, probe_id: str) -> ACPProbeResult | None:
+        with self._lock:
+            value = self._acp_probes.get(str(probe_id))
+            return ACPProbeResult.model_validate(value.model_dump(mode="json")) if value is not None else None
+
+    def list_acp_probes(self, dimension: ACPProbeDimension | None = None, *, include_inflight: bool = True) -> tuple[ACPProbeResult, ...]:
+        with self._lock:
+            values = list(self._acp_probes.values())
+        key = getattr(dimension, "canonical_key", None)
+        if key is not None:
+            values = [item for item in values if item.canonical_key == key]
+        if not include_inflight:
+            values = [item for item in values if item.status.value not in {"queued", "running"}]
+        values.sort(key=lambda item: (item.created_at, item.id), reverse=True)
+        return tuple(ACPProbeResult.model_validate(item.model_dump(mode="json")) for item in values)
+
+    def latest_acp_probe(self, dimension: ACPProbeDimension) -> ACPProbeResult | None:
+        values = self.list_acp_probes(dimension, include_inflight=False)
+        return values[0] if values else None
+
+
+    def create(
+        self,
+        snapshot: ExecutionSnapshot,
+        *,
+        specification: Mapping[str, object] | None = None,
+        provenance: Mapping[str, object] | None = None,
+        server_bindings: Sequence[Mapping[str, object]] = (),
+        harness_binding: Mapping[str, object] | None = None,
+        parent_execution_id: ExecutionId | str | None = None,
+    ) -> None:
+        del provenance, server_bindings, harness_binding, parent_execution_id
         key = _execution_key(snapshot.execution_id)
+        validated: ExecutionSpec | None = None
+        if specification is not None:
+            try:
+                validated = _EXECUTION_SPEC_ADAPTER.validate_python(specification)
+            except ValidationError as exc:
+                raise StorageError("execution specification is invalid") from exc
         with self._lock:
             if key in self._snapshots:
                 raise StorageConflict("execution already exists")
             self._snapshots[key] = snapshot.model_copy()
             self._events[key] = ()
             self._reserved_sequences[key] = set()
+            if validated is not None:
+                self._specifications[key] = _copy_execution_spec(validated)
 
     # Friendly aliases are intentionally kept on the concrete store while the
     # protocol stays small and framework-neutral.
@@ -272,6 +364,12 @@ class InMemoryExecutionStore:
         with self._lock:
             snapshot = self._snapshots.get(key)
             return snapshot.model_copy() if snapshot is not None else None
+
+    def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None:
+        key = _execution_key(execution_id)
+        with self._lock:
+            specification = self._specifications.get(key)
+            return _copy_execution_spec(specification) if specification is not None else None
 
     def list_executions(
         self,

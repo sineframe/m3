@@ -602,6 +602,10 @@
           "probes"
         ],
         [
+          "store",
+          "store"
+        ],
+        [
           "capabilities",
           "capabilities"
         ],

@@ -118,6 +118,7 @@ class HarnessTurnResult:
     error: ErrorInfo | None = None
     tool_calls: tuple[Mapping[str, Any], ...] = ()
     evidence: Mapping[str, str | int | float | bool | None] = field(default_factory=dict)
+    trace_limitations: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
@@ -126,6 +127,7 @@ class HarnessTurnResult:
             "tool_calls",
             tuple(MappingProxyType(dict(call)) for call in self.tool_calls),
         )
+        object.__setattr__(self, "trace_limitations", tuple(str(item) for item in self.trace_limitations))
 
 
 @dataclass(frozen=True, slots=True)

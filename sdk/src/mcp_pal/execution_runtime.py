@@ -234,6 +234,10 @@ class AsyncExecutionHandle:
             self._store,
             self._execution_id,
             redaction_config=controller.redaction_config,
+            # Every execution store implements the typed specification slot;
+            # retain the immutable submission even for ordinary in-memory
+            # executions so history/clone clients see one consistent shape.
+            specification=spec.model_dump(mode="json"),
         )
         self._terminal = asyncio.Event()
         self._cancel_requested = False
@@ -247,6 +251,13 @@ class AsyncExecutionHandle:
         self._result: ExecutionResult | None = None
         self._state_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
+        # A persistent handle may be submitted by one process while another
+        # process owns the worker task.  The submitting process can only set
+        # the durable cancellation flag; this watcher runs beside the owner
+        # task and turns that flag into the same task cancellation used by
+        # local callers.  Keeping this at the execution boundary makes it
+        # apply equally to direct MCP waits and agent/native adapter turns.
+        self._cancel_watcher: asyncio.Task[None] | None = None
         if not persistent:
             self._task = asyncio.create_task(self._run())
 
@@ -354,7 +365,46 @@ class AsyncExecutionHandle:
         """Start exactly once after the durable worker claims this command."""
         if self._task is None:
             self._task = asyncio.create_task(self._run())
+        if self._persistent and self._cancel_watcher is None:
+            self._cancel_watcher = asyncio.create_task(self._watch_durable_cancellation())
         await self._task
+
+    async def _watch_durable_cancellation(self) -> None:
+        """Interrupt an owned task when another process requests cancel.
+
+        SQLite is deliberately the only cross-process signal. Polling is
+        short enough to make cancellation responsive while avoiding a second
+        persistence or IPC mechanism, and the synchronous store read runs in
+        a worker thread so SQLite I/O or lock waits cannot stall the owner
+        event loop. A request is acted on once; the execution's normal
+        ``finally`` path then owns adapter/process cleanup and durable
+        terminalization.
+        """
+
+        task = self._task
+        if task is None:
+            return
+        cancellation_requested = getattr(self._store, "cancellation_requested", None)
+        while not task.done():
+            try:
+                requested = (
+                    bool(
+                        await asyncio.to_thread(
+                            cancellation_requested,
+                            self._execution_id,
+                        )
+                    )
+                    if callable(cancellation_requested)
+                    else False
+                )
+            except Exception:
+                requested = False
+            if requested:
+                self._cancel_requested = True
+                if not task.done():
+                    task.cancel()
+                return
+            await asyncio.sleep(0.02)
 
     def on_event(self, callback: Callable[[CanonicalEvent], Any]) -> Callable[[], None]:
         """Subscribe after commit; callback failures cannot affect execution."""
@@ -464,14 +514,23 @@ class AsyncExecutionHandle:
                     await asyncio.to_thread(self._workspace.cleanup)
                 except (WorkspaceError, OSError):
                     workspace_cleanup_failed = True
+            trace_limitations = ("capture_incomplete",) if outcome is ExecutionOutcome.CANCELLED else ()
             try:
-                trace = self._finalize(outcome, cleanup_succeeded=not workspace_cleanup_failed)
+                trace = self._finalize(
+                    outcome,
+                    cleanup_succeeded=not workspace_cleanup_failed,
+                    limitations=trace_limitations,
+                )
             except BaseException:
                 # Preserve a terminal result if secondary finalization fails.
                 trace = None
             if trace is None:
                 try:
-                    trace = self._recorder.finalize(outcome, cleanup_succeeded=False)
+                    trace = self._recorder.finalize(
+                        outcome,
+                        cleanup_succeeded=False,
+                        limitations=trace_limitations,
+                    )
                 except BaseException:
                     trace = None
             snapshot = self._store.get_snapshot(self._execution_id)
@@ -497,6 +556,11 @@ class AsyncExecutionHandle:
                 )
             self._terminal.set()
             self._controller._finished(self)
+            watcher = self._cancel_watcher
+            self._cancel_watcher = None
+            if watcher is not None and watcher is not asyncio.current_task() and not watcher.done():
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
 
     @staticmethod
     def _direct_binding_selector(binding: ServerBinding) -> str | None:
@@ -794,17 +858,25 @@ class AsyncExecutionHandle:
             ),
         )
 
-    def _finalize(self, outcome: ExecutionOutcome, *, cleanup_succeeded: bool = True) -> TraceResult:
+    def _finalize(
+        self,
+        outcome: ExecutionOutcome,
+        *,
+        cleanup_succeeded: bool = True,
+        limitations: Sequence[str] = (),
+    ) -> TraceResult:
         direct_result = _direct_result_payload(self._direct_result)
         if self._bridge is not None:
             return self._bridge.finalize(
                 outcome,
                 cleanup_succeeded=cleanup_succeeded,
+                limitations=tuple(limitations),
                 direct_result=direct_result,
             )
         return self._recorder.finalize(
             outcome,
             cleanup_succeeded=cleanup_succeeded,
+            limitations=tuple(limitations),
             direct_result=direct_result,
         )
 

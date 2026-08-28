@@ -12,6 +12,18 @@ from .probes import (
     ReadinessProbeService,
 )
 from .persistent import SQLiteStoreWorker
+from .acp_probes import (
+    ACPAgentIdentity, ACPAgentMode,
+    ACPProbeDimension,
+    ACPProbeHistory,
+    ACPProbeKind,
+    ACPProbeRequest,
+    ACPProbeResult,
+    ACPProbeStatus,
+    ACPProbeStore,
+    redacted_probe,
+    run_acp_probe,
+)
 
 __all__ = [
     "AsyncCapabilityProbeService",
@@ -24,4 +36,7 @@ __all__ = [
     "ProbeService",
     "ReadinessProbeService",
     "SQLiteStoreWorker",
+    "ACPAgentIdentity", "ACPAgentMode", "ACPProbeDimension", "ACPProbeHistory", "ACPProbeKind",
+    "ACPProbeRequest", "ACPProbeResult", "ACPProbeStatus", "ACPProbeStore",
+    "redacted_probe", "run_acp_probe",
 ]

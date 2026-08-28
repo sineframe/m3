@@ -532,6 +532,15 @@ class HarnessValue(FrozenModel):
 class ClaudeCode(HarnessValue):
     kind: _Literal["claude_code"] = "claude_code"
     name: str = "claude-code"
+    credential_references: _Mapping[str, SecretReference] = _Field(default_factory=dict)
+
+    @_field_validator("credential_references")
+    @classmethod
+    def _valid_credential_names(cls, values: _Mapping[str, SecretReference]) -> _Mapping[str, SecretReference]:
+        import re
+        if any(not isinstance(key, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None for key in values):
+            raise ValueError("Claude Code credential target is invalid")
+        return values
 
 
 class OpenCode(HarnessValue):
@@ -554,6 +563,17 @@ class ACPAgent(HarnessValue):
     kind: _Literal["acp"] = "acp"
     name: str = "acp"
     manifest: _Mapping[str, _Any] = _Field(default_factory=dict)
+    agent_mode_id: str | None = _Field(default=None, min_length=1, max_length=256)
+    session_config: _Mapping[str, _Any] = _Field(default_factory=dict)
+
+    @_field_validator("session_config")
+    @classmethod
+    def _valid_session_config(cls, values: _Mapping[str, _Any]) -> _Mapping[str, _Any]:
+        if any(not isinstance(key, str) or not key for key in values):
+            raise ValueError("ACP session configuration keys must be non-empty text")
+        if any(not isinstance(value, (str, bool)) for value in values.values()):
+            raise ValueError("ACP session configuration values must be text or boolean")
+        return values
 
 
 HarnessSpec = _Annotated[_Union[ClaudeCode, OpenCode, ACPAgent], _Field(discriminator="kind")]

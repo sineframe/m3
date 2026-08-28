@@ -10,9 +10,20 @@ from mcp.server.lowlevel import Server
 from mcp.types import CallToolResult as MCPCallToolResult, ListToolsResult
 
 from mcp_pal.errors import OperationCancelled, UnsupportedFeature
+from mcp_pal.harness import HarnessAdapterRegistry, HarnessStartupError
+from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.sync_api import DirectClient, MCPTestKit
 from mcp_pal.sync_api import _adapt_callback
-from mcp_pal.types import InProcessServer
+from mcp_pal.storage import InMemoryExecutionStore
+from mcp_pal.types import (
+    AgentExecutionSpec,
+    ClaudeCode,
+    InProcessServer,
+    ServerBinding,
+    StdioServer,
+    TextContent,
+    UserMessage,
+)
 
 
 def _server() -> Server:
@@ -20,6 +31,16 @@ def _server() -> Server:
         return ListToolsResult(tools=[])
 
     return Server("sync-direct-fixture", on_list_tools=list_tools)
+
+
+async def test_sync_and_async_kits_expose_the_configured_store() -> None:
+    store = InMemoryExecutionStore()
+    sync = MCPTestKit(store=store)
+    asynchronous = AsyncMCPTestKit(store=store)
+    assert sync.store is store
+    assert asynchronous.store is store
+    sync.close()
+    await asynchronous.aclose()
 
 
 def test_sync_direct_uses_typed_results_and_final_trace() -> None:
@@ -186,4 +207,16 @@ def test_close_during_inflight_sync_operation_maps_teardown_to_cancelled() -> No
     assert not worker.is_alive()
     assert len(outcome) == 1
     assert isinstance(outcome[0], OperationCancelled)
+    kit.close()
+
+
+def test_sync_kit_forwards_injected_empty_adapter_registry() -> None:
+    spec = AgentExecutionSpec(
+        servers=(ServerBinding(server=StdioServer(name="server", command="echo")),),
+        harness=ClaudeCode(model="model"),
+        message=UserMessage(content=(TextContent(text="hello"),)),
+    )
+    kit = MCPTestKit(adapter_registry=HarnessAdapterRegistry())
+    with pytest.raises(HarnessStartupError, match="requested harness is unavailable"):
+        kit.agent_session(spec)
     kit.close()

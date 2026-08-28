@@ -60,7 +60,12 @@ def _isolated_environment(root: Path, explicit: Mapping[str, str] | None) -> dic
     return environment
 
 
-def _resolve_runtime_value(value: Any, *, secrets: set[str] | None = None) -> str:
+def _resolve_runtime_value(
+    value: Any,
+    *,
+    secrets: set[str] | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> str:
     """Resolve one explicit credential reference at child-launch time.
 
     Harness launch values are immutable and may contain :class:`SecretReference`
@@ -73,7 +78,12 @@ def _resolve_runtime_value(value: Any, *, secrets: set[str] | None = None) -> st
     if isinstance(value, SecretReference):
         if value.source != "environment":
             raise HarnessStartupError("MCP credential resolution is unavailable")
-        resolved = os.environ.get(value.name)
+        # An explicit value wins for this named reference; a missing value may
+        # use the legacy ambient resolver.  Only referenced names are copied
+        # into the child configuration/environment.
+        resolved = (
+            environment.get(value.name) if environment is not None else None
+        ) or os.environ.get(value.name)
         if not resolved:
             raise HarnessStartupError("MCP credential is unavailable")
         if secrets is not None:
@@ -95,7 +105,9 @@ def _resolve_runtime_value(value: Any, *, secrets: set[str] | None = None) -> st
         name = output[begin + 2 : end]
         if not name or any(character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_" for character in name):
             raise HarnessStartupError("MCP configuration reference is invalid")
-        resolved = os.environ.get(name)
+        resolved = (
+            environment.get(name) if environment is not None else None
+        ) or os.environ.get(name)
         if not resolved:
             raise HarnessStartupError("MCP credential is unavailable")
         if secrets is not None:
@@ -105,8 +117,8 @@ def _resolve_runtime_value(value: Any, *, secrets: set[str] | None = None) -> st
     return output
 
 
-def _resolved_config_values(values: Mapping[str, Any], *, secrets: set[str] | None = None) -> dict[str, str]:
-    return {str(key): _resolve_runtime_value(value, secrets=secrets) for key, value in values.items()}
+def _resolved_config_values(values: Mapping[str, Any], *, secrets: set[str] | None = None, environment: Mapping[str, str] | None = None) -> dict[str, str]:
+    return {str(key): _resolve_runtime_value(value, secrets=secrets, environment=environment) for key, value in values.items()}
 
 
 def _server_configuration(
@@ -114,12 +126,14 @@ def _server_configuration(
     *,
     resolve_credentials: bool = False,
     secrets: set[str] | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Create the MCP config consumed by native clients.
 
     The file is temporary and removed immediately after the process has
-    started.  Values are supplied by the explicit launch, never ambient
-    process configuration.
+    started. Values are supplied by the launch's selected references; each
+    named reference may use the legacy ambient resolver when no override was
+    supplied, but unrelated ambient values are never copied.
     """
 
     servers: dict[str, dict[str, Any]] = {}
@@ -135,7 +149,7 @@ def _server_configuration(
                 "command": config.command,
                 "args": list(config.args),
                 "env": (
-                    _resolved_config_values(config.environment, secrets=secrets)
+                    _resolved_config_values(config.environment, secrets=secrets, environment=environment)
                     if resolve_credentials
                     else _redact_config_values(config.environment)
                 ),
@@ -148,12 +162,12 @@ def _server_configuration(
             servers[config.key] = {
                 "type": "sse" if config.transport.value == "sse" else "http",
                 "url": (
-                    _resolve_runtime_value(config.endpoint, secrets=secrets)
+                    _resolve_runtime_value(config.endpoint, secrets=secrets, environment=environment)
                     if resolve_credentials
                     else config.endpoint
                 ),
                 "headers": (
-                    _resolved_config_values(config.headers, secrets=secrets)
+                    _resolved_config_values(config.headers, secrets=secrets, environment=environment)
                     if resolve_credentials
                     else _redact_config_values(config.headers)
                 ),
@@ -448,13 +462,27 @@ class NativeSessionBase:
         self._closed = True
 
 
-def write_config(root: Path, launch: HarnessLaunch) -> Path:
+def write_config(
+    root: Path,
+    launch: HarnessLaunch,
+    *,
+    environment: Mapping[str, str] | None = None,
+    secrets: set[str] | None = None,
+) -> Path:
     config = root / "mcp-config.json"
     try:
         # Resolve only while writing the 0600 child config; callers never get
         # the resolved object back and the file is removed by each adapter as
         # soon as startup has consumed it.
-        payload = json.dumps(_server_configuration(launch, resolve_credentials=True), separators=(",", ":"))
+        payload = json.dumps(
+            _server_configuration(
+                launch,
+                resolve_credentials=True,
+                environment=environment,
+                secrets=secrets,
+            ),
+            separators=(",", ":"),
+        )
         descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             output.write(payload)
