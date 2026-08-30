@@ -836,11 +836,23 @@ class AsyncExecutionHandle:
         raw_evidence = None
         if is_wire and isinstance(raw_ref, str) and raw_ref:
             raw_evidence = RawEvidenceRef(evidence_id=raw_ref, media_type="application/json")
-        origin = EventOrigin.WIRE_OBSERVED if is_wire else (
-            EventOrigin.DERIVED if kind is EventKind.WORKSPACE_CHANGED else EventOrigin.HARNESS_REPORTED
+        origin = (
+            EventOrigin.NORMALIZED
+            if kind in {EventKind.TRANSPORT_CONNECTED, EventKind.TRANSPORT_DISCONNECTED}
+            else EventOrigin.WIRE_OBSERVED
+            if is_wire
+            else EventOrigin.DERIVED
+            if kind is EventKind.WORKSPACE_CHANGED
+            else EventOrigin.HARNESS_REPORTED
         )
-        source = "mcp_pal.capture" if is_wire else (
-            "mcp_pal.workspace" if kind is EventKind.WORKSPACE_CHANGED else "mcp_pal.agent.adapter"
+        source = (
+            "mcp_pal.server_group"
+            if kind in {EventKind.TRANSPORT_CONNECTED, EventKind.TRANSPORT_DISCONNECTED}
+            else "mcp_pal.capture"
+            if is_wire
+            else "mcp_pal.workspace"
+            if kind is EventKind.WORKSPACE_CHANGED
+            else "mcp_pal.agent.adapter"
         )
         self._recorder.emit(
             kind,

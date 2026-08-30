@@ -31,7 +31,7 @@ from mcp_pal.sync_api import InitializationResult, PromptResult, ResourceReadRes
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.testing import FaultInjector
 from mcp_pal.errors import UnsupportedFeature
-from mcp_pal.observability import ObservationState
+from mcp_pal.observability import ObservationState, TransportEntry
 from mcp_pal.types import (
     ACPAgent,
     AgentExecutionSpec,
@@ -66,6 +66,7 @@ from mcp_pal.types import (
     RestrictiveToolPolicy,
     StdioServer,
     TextContent,
+    TransportKind,
     TurnOutcome,
     UserMessage,
     WorkspaceKind,
@@ -325,6 +326,12 @@ def test_sync_run_dispatches_call_tool_to_real_stdio_and_returns_typed_result() 
     assert result.direct_result.raw is not None
     assert result.trace is not None
     assert result.trace.events[-1].kind.value == "execution.finished"
+    transports = result.trace_view.transports
+    assert len(transports) == 1
+    assert transports[0].server_binding == "e2e-mcp"
+    assert transports[0].connection_id is not None and transports[0].connection_id.root
+    assert transports[0].configured.value is TransportKind.STDIO
+    assert transports[0].instrumented.value is TransportKind.STDIO
 
     error_spec = spec.model_copy(
         update={
@@ -453,6 +460,7 @@ async def test_async_run_real_stdio_startup_failure_is_failed_and_traced() -> No
     assert result.error.code in {ErrorCode.TRANSPORT_ERROR, ErrorCode.PROTOCOL_ERROR}
     assert result.direct_result is None
     assert result.trace is not None
+    assert result.trace_view.transports == ()
 
 
 @pytest.mark.asyncio
@@ -595,6 +603,54 @@ def test_multiturn_acp_session_calls_one_real_mcp_and_keeps_a_trace(tmp_path: Pa
     assert sum(event.kind.value == "mcp.initialized" for event in trace.events) == 1
     assert sum(event.kind.value == "execution.finished" for event in trace.events) == 1
     assert trace.events[-1].kind.value == "execution.finished"
+
+
+def test_agent_transport_entry_is_observed_and_survives_sqlite_reopen(tmp_path: Path) -> None:
+    """The public agent path records configured/instrumented stdio transport."""
+
+    acp_marker = tmp_path / "acp-transport.jsonl"
+    mcp_marker = tmp_path / "mcp-transport.jsonl"
+    database = tmp_path / "transport.sqlite"
+    store = SQLiteExecutionStore(database)
+    try:
+        with MCPTestKit(store=store, env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
+            result = kit.run(
+                _acp_spec(acp_marker=acp_marker, mcp_marker=mcp_marker).model_copy(
+                    update={
+                        "message": UserMessage(
+                            content=(TextContent(text="transport-e2e"),)
+                        )
+                    }
+                )
+            )
+            assert result.trace is not None
+            assert result.trace_view.tool_calls
+            assert result.trace_view.tool_calls[0].tool.value == "echo"
+        assert result.trace is not None
+        view = result.trace_view
+        entries = [
+            entry
+            for entry in view.transports
+            if isinstance(entry, TransportEntry) and entry.server_binding == "e2e-mcp"
+        ]
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry.phase == "connected"
+        assert entry.connection_id is not None and entry.connection_id.root
+        assert entry.configured.state is ObservationState.OBSERVED
+        assert entry.instrumented.state is ObservationState.OBSERVED
+        assert entry.configured.value is TransportKind.STDIO
+        assert entry.instrumented.value is TransportKind.STDIO
+    finally:
+        store.close()
+
+    reopened = SQLiteExecutionStore(database)
+    try:
+        restored = reopened.get_trace_view(result.snapshot.execution_id)
+        assert restored == view
+        assert restored.transports == view.transports
+    finally:
+        reopened.close()
 
 
 def test_acp_tool_error_recovers_on_same_real_session_and_trace(tmp_path: Path) -> None:

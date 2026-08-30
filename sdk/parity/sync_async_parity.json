@@ -538,6 +538,12 @@
       ],
       [
         "mcp_pal.sync_api",
+        "TransportEntry",
+        "mcp_pal.async_api",
+        "TransportEntry"
+      ],
+      [
+        "mcp_pal.sync_api",
         "TraceCaptureConfig",
         "mcp_pal.async_api",
         "TraceCaptureConfig"

@@ -428,6 +428,15 @@ class ProtocolEntry(TraceEntryBase):
     http: Observation[HttpExchangeMetadata] = _Field(default_factory=_not_emitted)
 
 
+class TransportEntry(TraceEntryBase):
+    """A canonical MCP transport lifecycle observation."""
+
+    kind: _Literal["transport"] = "transport"
+    phase: _Literal["connected", "disconnected"]
+    configured: Observation[_TransportKind] = _Field(default_factory=_not_emitted)
+    instrumented: Observation[_TransportKind] = _Field(default_factory=_not_emitted)
+
+
 class ProcessEntry(TraceEntryBase):
     kind: _Literal["process"] = "process"
     executable: Observation[str] = _Field(default_factory=_not_emitted)
@@ -683,6 +692,7 @@ TraceEntry: _TypeAlias = _Annotated[
     | ReasoningEntry
     | ToolCallEntry
     | ProtocolEntry
+    | TransportEntry
     | InitializationEntry
     | UsageEntry
     | InteractionEntry
@@ -713,7 +723,7 @@ class TraceSummary(_FrozenModel):
 
 class TraceView(_FrozenModel):
     schema_id: _Literal["mcp_pal.trace_view"] = "mcp_pal.trace_view"
-    schema_version: _Literal["1.0"] = "1.0"
+    schema_version: _Literal["1.1"] = "1.1"
     trace_id: _TraceId
     execution_id: _ExecutionId
     outcome: _ExecutionOutcome = _ExecutionOutcome.COMPLETED
@@ -751,6 +761,10 @@ class TraceView(_FrozenModel):
     @property
     def protocol(self) -> tuple[ProtocolEntry, ...]:
         return tuple(item for item in self.timeline if isinstance(item, ProtocolEntry))
+
+    @property
+    def transports(self) -> tuple[TransportEntry, ...]:
+        return tuple(item for item in self.timeline if isinstance(item, TransportEntry))
 
     @property
     def raw_messages(self) -> tuple[RawMessageEntry, ...]:
@@ -850,6 +864,7 @@ for _model in (
     ToolCallEntry,
     ProtocolErrorDetails,
     ProtocolEntry,
+    TransportEntry,
     RawEvidence,
     RawEvidenceCapture,
     RawMessageEntry,
@@ -900,6 +915,7 @@ __all__ = [
     "ProtocolErrorDetails",
     "ProtocolKind",
     "ProviderEntry",
+    "TransportEntry",
     "RawEvidence",
     "RawEvidenceCapture",
     "RawEvidenceSource",

@@ -22,6 +22,7 @@ from mcp_pal.observability import (
     RuntimeTraceInfo,
     ToolCallEntry,
     ToolCallStatus,
+    TransportEntry,
     TraceEntry,
     TraceSummary,
     TraceTiming,
@@ -34,6 +35,7 @@ from mcp_pal.types import (
     TurnOutcome,
     TurnResult,
     TurnSnapshot,
+    TransportKind,
 )
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -200,6 +202,26 @@ def test_trace_entry_is_discriminated_and_trace_round_trips() -> None:
     assert restored == view
     assert restored.messages == (entry,)
     assert restored.for_turn("missing").timeline == ()
+
+
+def test_transport_entries_round_trip_and_are_indexed() -> None:
+    for phase in ("connected", "disconnected"):
+        entry = TransportEntry(
+            entry_id=f"transport-{phase}",
+            execution_id="execution-1",
+            sequence_start=1,
+            sequence_end=1,
+            phase=phase,
+            configured=Observation(state="observed", value=TransportKind.STDIO),
+            instrumented=Observation(state="observed", value=TransportKind.STDIO),
+        )
+        restored = TypeAdapter(TraceEntry).validate_python(
+            entry.model_dump(mode="json")
+        )
+        assert restored == entry
+        view = TraceView(trace_id="trace-1", execution_id="execution-1", timeline=(entry,))
+        assert view.schema_version == "1.1"
+        assert view.transports == (entry,)
 
 
 def test_timing_normalizes_timezone_and_rejects_invalid_values() -> None:

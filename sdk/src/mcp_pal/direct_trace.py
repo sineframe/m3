@@ -41,6 +41,7 @@ from .types import (
     RequestCorrelation,
     TraceId,
     TraceResult,
+    TransportKind,
 )
 
 
@@ -206,6 +207,7 @@ class DirectTraceBridge:
         self._factory_guard = _factory_lock(self._factory)
         self._final: TraceResult | None = None
         self._normalized_only = True
+        self._transport_connected = False
 
     def bind_secret_values(self, values: Iterable[str]) -> None:
         """Bind resolved transport canaries before observing server messages."""
@@ -289,6 +291,34 @@ class DirectTraceBridge:
         """Return transparent observers preserving the official stream API."""
 
         return _ObservedReadStream(read_stream, self), _ObservedWriteStream(write_stream, self)
+
+    def record_transport_connected(self, transport: TransportKind) -> None:
+        """Record successful transport setup once, before MCP initialization."""
+
+        with self._lock:
+            if self._final is not None or self._transport_connected:
+                return
+            with self._factory_guard:
+                event = self._factory.create(
+                    EventKind.TRANSPORT_CONNECTED,
+                    connection_id=self._connection_id,
+                    server_binding=self._server_binding,
+                    lifecycle_phase=LifecyclePhase.STARTUP,
+                    payload={
+                        "configured_transport": transport.value,
+                        "instrumented_transport": transport.value,
+                    },
+                    provenance=EventProvenance(
+                        origin=EventOrigin.NORMALIZED,
+                        source="mcp_pal.direct.transport",
+                    ),
+                )
+                try:
+                    self._recorder.record(event)
+                except Exception:
+                    self._rollback_reservation(event)
+                    raise
+            self._transport_connected = True
 
     def observe(self, value: Any, direction: Direction) -> None:
         """Observe one decoded stream item without changing stream semantics."""

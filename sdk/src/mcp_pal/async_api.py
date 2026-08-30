@@ -573,6 +573,21 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
         owner, connection, session, _cleanup = await self._lifecycle.start()
         self._owner = owner
         self._connection = connection
+        server = self._server
+        if isinstance(server, _InProcessServer):
+            transport = _TransportKind.IN_PROCESS
+        elif isinstance(server, _StdioServer):
+            transport = _TransportKind.STDIO
+        elif isinstance(server, _StreamableHTTPServer):
+            transport = _TransportKind.STREAMABLE_HTTP
+        elif isinstance(server, _SSEServer):
+            transport = _TransportKind.SSE
+        else:
+            raise _UnsupportedFeature("unsupported direct server transport")
+        # The lifecycle has opened the underlying connection and entered the
+        # stream session. Record success before the official initialize call;
+        # failures in either setup stage therefore never claim connectivity.
+        self._trace_observer.record_transport_connected(transport)
         session = _EnteredSessionProxy(session)
         _CoreAsyncDirectClient.__init__(
             self,

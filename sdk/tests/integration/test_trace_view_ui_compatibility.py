@@ -39,6 +39,7 @@ from mcp_pal.observability import (
     ToolCallEntry,
     ToolCallStatus,
     ToolResult,
+    TransportEntry,
     TraceEntry,
     TraceSummary,
     TraceTiming,
@@ -291,7 +292,13 @@ def _timeline() -> tuple[TraceEntry, ...]:
         preview=_observed({"type": "result"}),
         size_bytes=8,
     )
-    finished = LifecycleEntry(**_entry("lifecycle-finished", 22), phase="exited")
+    transport = TransportEntry(
+        **_entry("transport", 22),
+        phase="connected",
+        configured=_observed(TransportKind.STDIO),
+        instrumented=_observed(TransportKind.STDIO),
+    )
+    finished = LifecycleEntry(**_entry("lifecycle-finished", 23), phase="exited")
     return (
         started,
         message,
@@ -315,6 +322,7 @@ def _timeline() -> tuple[TraceEntry, ...]:
         malformed,
         raw_mcp,
         raw_provider,
+        transport,
         finished,
     )
 
@@ -410,6 +418,10 @@ def test_public_trace_view_is_a_stable_ui_compatibility_surface(
     restored = TraceView.model_validate(view.model_dump(mode="json"))
     assert restored == view
     assert restored.runtime.kind == runtime_kind
+    assert restored.schema_version == "1.1"
+    assert len(restored.transports) == 1
+    assert restored.transports[0].configured.value is TransportKind.STDIO
+    assert restored.transports[0].instrumented.value is TransportKind.STDIO
     assert restored.trace_id.root == "ui-trace"
     assert restored.execution_id.root == "ui-execution"
     assert restored.outcome is outcome

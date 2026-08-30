@@ -44,6 +44,7 @@ from ..observability import (
     ToolCallEntry,
     ToolCallStatus,
     ToolResult,
+    TransportEntry,
     TraceEntry,
     TraceStatus,
     TraceSummary,
@@ -156,6 +157,27 @@ def _string_observation(
         if isinstance(value, str) and (allow_empty or value)
         else _unavailable(ObservationReason.MALFORMED_SOURCE)
     )
+
+
+def _transport_observation(
+    payload: Mapping[str, Any], key: str
+) -> Observation[TransportKind]:
+    """Project a transport kind without accepting malformed source values."""
+
+    if key in payload:
+        raw = payload[key]
+    elif "transport" in payload:
+        # Older/direct lifecycle events carried one transport value.  It is
+        # authoritative for both configured and instrumented views.
+        raw = payload["transport"]
+    else:
+        return _not_emitted()
+    if isinstance(raw, str):
+        try:
+            return _observed(TransportKind(raw))
+        except ValueError:
+            pass
+    return _unavailable(ObservationReason.MALFORMED_SOURCE)
 
 
 def _identifier_observation(value: Any, *, present: bool = True) -> Observation[str]:
@@ -770,6 +792,18 @@ def _protocol_entry(events: Sequence[CanonicalEvent]) -> ProtocolEntry:
     )
 
 
+def _transport_entry(event: CanonicalEvent) -> TransportEntry:
+    phase: Literal["connected", "disconnected"] = (
+        "connected" if event.kind is EventKind.TRANSPORT_CONNECTED else "disconnected"
+    )
+    return TransportEntry(
+        **_base_kwargs((event,)),
+        phase=phase,
+        configured=_transport_observation(event.payload, "configured_transport"),
+        instrumented=_transport_observation(event.payload, "instrumented_transport"),
+    )
+
+
 def _interaction_entry(events: Sequence[CanonicalEvent]) -> InteractionEntry:
     first, last = events[0], events[-1]
     request_present = "request" in first.payload or "params" in first.payload
@@ -1132,10 +1166,10 @@ def _entry_for_event(
         EventKind.MCP_PROGRESS,
         EventKind.MCP_CANCELLATION_REQUESTED,
         EventKind.MCP_CANCELLATION_COMPLETED,
-        EventKind.TRANSPORT_CONNECTED,
-        EventKind.TRANSPORT_DISCONNECTED,
     }:
         return _protocol_entry((event,))
+    if kind in {EventKind.TRANSPORT_CONNECTED, EventKind.TRANSPORT_DISCONNECTED}:
+        return _transport_entry(event)
     if kind in {EventKind.AGENT_MESSAGE, EventKind.ASSISTANT_CONTENT}:
         role = payload.get(
             "role", "user" if kind is EventKind.AGENT_MESSAGE else "assistant"
@@ -2164,11 +2198,21 @@ class TraceProjector:
         )
         transport: Observation[Any]
         transport_present = (
-            transport_event is not None and "transport" in transport_event.payload
+            transport_event is not None
+            and (
+                "transport" in transport_event.payload
+                or "configured_transport" in transport_event.payload
+            )
         )
         raw_transport = (
-            transport_event.payload["transport"]
-            if transport_event is not None and "transport" in transport_event.payload
+            transport_event.payload.get(
+                "transport", transport_event.payload.get("configured_transport")
+            )
+            if transport_event is not None
+            and (
+                "transport" in transport_event.payload
+                or "configured_transport" in transport_event.payload
+            )
             else None
         )
         if transport_present and isinstance(raw_transport, str):

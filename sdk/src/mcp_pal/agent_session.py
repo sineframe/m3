@@ -234,6 +234,9 @@ class AsyncAgentSession:
         self._workspace_capture: WorkspaceCapture | None = None
         self._workspace_artifacts: tuple[Any, ...] = ()
         self._capture_seen: dict[str, int] = {}
+        # A manager may be started more than once by lifecycle retries. Keep
+        # transport lifecycle evidence one-per-connection in the trace.
+        self._transport_connected: set[tuple[str, str]] = set()
         # Cleanup ownership may remain retryable after a terminal outcome.
         # Keep the first failed attempt in the eventual terminal trace even
         # when a later close succeeds; otherwise a retry would falsely claim
@@ -286,8 +289,14 @@ class AsyncAgentSession:
             from .types import RawEvidenceRef
 
             raw_evidence = RawEvidenceRef(evidence_id=raw_ref, media_type="application/json")
-        origin = EventOrigin.WIRE_OBSERVED if payload.get("evidence_mode") == "wire_observed" else (
-            EventOrigin.DERIVED if kind is EventKind.WORKSPACE_CHANGED else EventOrigin.HARNESS_REPORTED
+        origin = (
+            EventOrigin.NORMALIZED
+            if kind in {EventKind.TRANSPORT_CONNECTED, EventKind.TRANSPORT_DISCONNECTED}
+            else EventOrigin.WIRE_OBSERVED
+            if payload.get("evidence_mode") == "wire_observed"
+            else EventOrigin.DERIVED
+            if kind is EventKind.WORKSPACE_CHANGED
+            else EventOrigin.HARNESS_REPORTED
         )
         self._trace_recorder.emit(
             kind,
@@ -301,8 +310,14 @@ class AsyncAgentSession:
             raw_evidence_ref=raw_evidence,
             provenance=EventProvenance(
                 origin=origin,
-                source="mcp_pal.capture" if origin is EventOrigin.WIRE_OBSERVED else (
-                    "mcp_pal.workspace" if kind is EventKind.WORKSPACE_CHANGED else "mcp_pal.agent.adapter"
+                source=(
+                    "mcp_pal.server_group"
+                    if kind in {EventKind.TRANSPORT_CONNECTED, EventKind.TRANSPORT_DISCONNECTED}
+                    else "mcp_pal.capture"
+                    if origin is EventOrigin.WIRE_OBSERVED
+                    else "mcp_pal.workspace"
+                    if kind is EventKind.WORKSPACE_CHANGED
+                    else "mcp_pal.agent.adapter"
                 ),
             ),
         )
@@ -452,7 +467,69 @@ class AsyncAgentSession:
         if self._server_manager is not None:
             # Import lazily: the contract module aliases this core adapter
             # protocol, so importing it at module load would create a cycle.
-            await self._server_manager.start()
+            started_snapshot = await self._server_manager.start()
+            # Transport evidence is emitted only after the server group has
+            # successfully started and before the harness is opened. The
+            # snapshot is the configured source; manager configurations are
+            # the instrumented source after capture wrapping.
+            snapshot = started_snapshot
+            if not hasattr(snapshot, "records"):
+                snapshotter = getattr(self._server_manager, "snapshot", None)
+                snapshot = snapshotter() if callable(snapshotter) else None
+            configuration_reader = getattr(self._server_manager, "configurations", None)
+            configurations = (
+                tuple(configuration_reader())
+                if callable(configuration_reader)
+                else ()
+            )
+            by_connection = {
+                connection: config
+                for config in configurations
+                if isinstance(
+                    connection := getattr(config, "connection_id", None), str
+                )
+                and connection
+            }
+            for record in tuple(getattr(snapshot, "records", ())):
+                configured_transport = getattr(record, "transport", None)
+                if not getattr(record, "available", False) or configured_transport is None:
+                    continue
+                binding = getattr(record, "key", None)
+                connection_id = getattr(record, "connection_id", None)
+                if (
+                    not isinstance(binding, str)
+                    or not binding.strip()
+                    or not isinstance(connection_id, str)
+                    or not connection_id.strip()
+                ):
+                    continue
+                key = (
+                    binding,
+                    connection_id,
+                )
+                if key in self._transport_connected:
+                    continue
+                instrumented = by_connection.get(connection_id)
+                instrumented_transport = getattr(instrumented, "transport", None)
+                configured_value = getattr(configured_transport, "value", configured_transport)
+                instrumented_value = (
+                    getattr(instrumented_transport, "value", instrumented_transport)
+                    if instrumented_transport is not None
+                    else None
+                )
+                payload = {
+                    "configured_transport": configured_value,
+                    "_mcp_server_binding": binding,
+                    "_mcp_connection_id": connection_id,
+                }
+                if instrumented_transport is not None:
+                    payload["instrumented_transport"] = instrumented_value
+                self._emit_event(
+                    EventKind.TRANSPORT_CONNECTED,
+                    payload,
+                    phase=LifecyclePhase.STARTUP,
+                )
+                self._transport_connected.add(key)
             async with self._state_lock:
                 if self._closing or self._closed:
                     raise asyncio.CancelledError()

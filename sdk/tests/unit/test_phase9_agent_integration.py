@@ -12,12 +12,17 @@ from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.types import (
     ACPAgent,
     AgentExecutionSpec,
+    ClaudeCode,
+    EventKind,
+    EventOrigin,
     ExecutionOutcome,
     InProcessServer,
+    OpenCode,
     TextContent,
     UserMessage,
     ServerBinding,
     StdioServer,
+    TransportKind,
 )
 
 
@@ -66,6 +71,72 @@ async def test_registered_deterministic_adapter_preserves_multiturn_and_closes_c
             assert getattr(session.adapter, "name", None) == "test-acp"
         assert session.result.snapshot.outcome is ExecutionOutcome.COMPLETED
         assert len(session.result.turns) == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_transport_evidence_is_distinct_deduplicated_and_normalized() -> None:
+    adapter = DeterministicHarnessAdapter()
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        async with kit.agent_session(_spec(), adapter=adapter) as session:
+            # A second startup attempt must not duplicate lifecycle evidence.
+            await session._start_adapter()
+            transports = [
+                event
+                for event in session._trace_recorder.events()
+                if event.kind is EventKind.TRANSPORT_CONNECTED
+            ]
+            assert len(transports) == 2
+            assert {event.server_binding for event in transports} == {"first", "optional"}
+            assert len({event.connection_id for event in transports}) == 2
+            assert all(
+                event.provenance.origin is EventOrigin.NORMALIZED
+                and event.provenance.source == "mcp_pal.server_group"
+                for event in transports
+            )
+            assert all(
+                event.payload["configured_transport"] == TransportKind.STDIO.value
+                and event.payload["instrumented_transport"] == TransportKind.STDIO.value
+                for event in transports
+            )
+
+
+@pytest.mark.asyncio
+async def test_agent_transport_evidence_excludes_unavailable_optional_server() -> None:
+    invalid = _spec().servers[1].model_copy(
+        update={"server": StdioServer(name="optional", command="mcp-optional", cwd="/not/a/real/directory")}
+    )
+    spec = _spec().model_copy(update={"servers": (_spec().servers[0], invalid)})
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        async with kit.agent_session(spec, adapter=DeterministicHarnessAdapter()) as session:
+            pass
+    transports = [
+        event
+        for event in session.result.trace.events
+        if event.kind is EventKind.TRANSPORT_CONNECTED
+    ]
+    assert len(transports) == 1
+    assert transports[0].server_binding == "first"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "harness",
+    [
+        OpenCode(model="fixture"),
+        ClaudeCode(model="fixture"),
+        ACPAgent(model="fixture"),
+    ],
+    ids=("opencode", "claude-code", "acp"),
+)
+async def test_agent_transport_is_present_across_harness_contracts(harness: object) -> None:
+    spec = _spec().model_copy(update={"harness": harness})
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        async with kit.agent_session(spec, adapter=DeterministicHarnessAdapter()) as session:
+            await session.send("cross-harness")
+    entries = session.result.trace_view.transports
+    assert entries
+    assert all(entry.configured.value is TransportKind.STDIO for entry in entries)
+    assert all(entry.instrumented.value is TransportKind.STDIO for entry in entries)
 
 
 @pytest.mark.asyncio

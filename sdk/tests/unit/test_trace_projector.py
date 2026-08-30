@@ -27,7 +27,9 @@ from mcp_pal.observability import (
     ProviderEntry,
     RawMessageEntry,
     ReasoningEntry,
+    TransportEntry,
     ToolCallEntry,
+    ObservationReason,
     TraceStatus,
 )
 from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
@@ -907,6 +909,57 @@ def test_malformed_present_transport_and_valid_empty_strings_are_distinguished()
     assert process_entry.stderr.state is ObservationState.OBSERVED
 
 
+@pytest.mark.parametrize(
+    ("kind", "payload", "phase"),
+    [
+        (EventKind.TRANSPORT_CONNECTED, {"transport": "stdio"}, "connected"),
+        (
+            EventKind.TRANSPORT_CONNECTED,
+            {"configured_transport": "stdio", "instrumented_transport": "sse"},
+            "connected",
+        ),
+        (EventKind.TRANSPORT_DISCONNECTED, {"transport": "stdio"}, "disconnected"),
+    ],
+)
+def test_transport_events_project_to_typed_entries(
+    kind: EventKind, payload: dict[str, object], phase: str
+) -> None:
+    trace = _trace()
+    event = trace.events[1].model_copy(update={"kind": kind, "payload": payload})
+    view = trace.model_copy(update={"events": (trace.events[0], event) + trace.events[2:]}).view()
+    entry = next(item for item in view.transports if item.sequence_start == event.sequence)
+    assert entry.phase == phase
+    assert entry.configured.state is ObservationState.OBSERVED
+    assert entry.instrumented.state is ObservationState.OBSERVED
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"configured_transport": None},
+        {"instrumented_transport": 7},
+        {"configured_transport": "vendor_private"},
+    ],
+)
+def test_transport_missing_or_malformed_values_are_explicit(payload: dict[str, object]) -> None:
+    trace = _trace()
+    event = trace.events[1].model_copy(
+        update={"kind": EventKind.TRANSPORT_DISCONNECTED, "payload": payload}
+    )
+    view = trace.model_copy(update={"events": (trace.events[0], event) + trace.events[2:]}).view()
+    entry = next(item for item in view.transports if item.sequence_start == event.sequence)
+    if not payload:
+        assert entry.configured.state is ObservationState.NOT_EMITTED
+        assert entry.instrumented.state is ObservationState.NOT_EMITTED
+    else:
+        observation = (
+            entry.configured if "configured_transport" in payload else entry.instrumented
+        )
+        assert observation.state is ObservationState.UNAVAILABLE
+        assert observation.reason is ObservationReason.MALFORMED_SOURCE
+
+
 def test_standalone_interaction_explicit_nulls_are_observed() -> None:
     trace = _trace()
     event = trace.events[1].model_copy(
@@ -1082,7 +1135,7 @@ def test_typed_jsonrpc_ids_and_fallback_call_ids_remain_distinct() -> None:
     [
         (EventKind.PROCESS_STARTED, {"executable": "fixture", "pid": 7}, ProcessEntry),
         (EventKind.PROCESS_EXITED, {"exit_code": 0, "signal": None}, ProcessEntry),
-        (EventKind.TRANSPORT_DISCONNECTED, {}, ProtocolEntry),
+        (EventKind.TRANSPORT_DISCONNECTED, {}, TransportEntry),
         (
             EventKind.PERMISSION_REQUEST,
             {"request": {"permission": "read"}},
@@ -1132,6 +1185,8 @@ def test_every_event_kind_has_an_explicit_projection_contract() -> None:
         EventKind.MCP_PROGRESS,
         EventKind.MCP_CANCELLATION_REQUESTED,
         EventKind.MCP_CANCELLATION_COMPLETED,
+    }
+    transport = {
         EventKind.TRANSPORT_CONNECTED,
         EventKind.TRANSPORT_DISCONNECTED,
     }
@@ -1161,6 +1216,7 @@ def test_every_event_kind_has_an_explicit_projection_contract() -> None:
     expected = {
         **{kind: "lifecycle" for kind in lifecycle},
         **{kind: "protocol" for kind in protocol},
+        **{kind: "transport" for kind in transport},
         **{kind: "message" for kind in messages},
         EventKind.PROCESS_STARTED: "process",
         EventKind.PROCESS_EXITED: "process",
