@@ -25,7 +25,7 @@ from mcp_types import (
 )
 
 from .events import EventFactory, PerExecutionSequenceAllocator
-from .execution_trace import ExecutionTraceRecorder
+from .execution_trace import ExecutionTraceRecorder, TraceRecorderError
 from .storage import ExecutionStore, InMemoryExecutionStore
 from .trace.redaction import RedactionConfig
 from .types import (
@@ -503,17 +503,19 @@ class DirectTraceBridge:
             if self._final is not None:
                 return self._final.model_copy()
             allowed = {"cleanup_failed", "persistence_failed", "capture_incomplete", "partial_trace"}
-            merged = tuple(
-                dict.fromkeys(
-                    item
-                    for item in (*limitations, "capture_incomplete")
-                    if item in allowed
-                )
-            )
-            if not cleanup_succeeded:
-                merged = tuple(dict.fromkeys((*merged, "cleanup_failed")))
-            if not persistence_succeeded:
-                merged = tuple(dict.fromkeys((*merged, "persistence_failed")))
+            merged_values: list[str] = []
+            for item in limitations:
+                if not isinstance(item, str) or not item.strip() or item not in allowed:
+                    raise TraceRecorderError("execution limitation is invalid")
+                if item not in merged_values:
+                    merged_values.append(item)
+            if "capture_incomplete" not in merged_values:
+                merged_values.append("capture_incomplete")
+            merged = tuple(merged_values)
+            if not cleanup_succeeded and "cleanup_failed" not in merged:
+                merged = (*merged, "cleanup_failed")
+            if not persistence_succeeded and "persistence_failed" not in merged:
+                merged = (*merged, "persistence_failed")
             terminal_payload: dict[str, Any] = {
                 "outcome": outcome.value,
                 "completeness": "partial",

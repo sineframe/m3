@@ -81,7 +81,7 @@ def test_execution_scoped_clock_has_utc_timestamps_and_nondecreasing_offsets() -
 def test_attached_recorder_continues_persistent_clock_offset(tmp_path: Path) -> None:
     execution_id = ExecutionId("execution-attached-clock")
     store = SQLiteExecutionStore(tmp_path / "attached-clock.sqlite")
-    ExecutionTraceRecorder(store, execution_id)
+    initial = ExecutionTraceRecorder(store, execution_id)
     factory = EventFactory(execution_id)
     prior = factory.create(
         EventKind.DIAGNOSTIC,
@@ -90,7 +90,7 @@ def test_attached_recorder_continues_persistent_clock_offset(tmp_path: Path) -> 
     ).model_copy(update={"sequence": 1})
     store.append_events((prior,))
 
-    attached = ExecutionTraceRecorder(store, execution_id, trace_id=TraceId("trace-attached-clock"))
+    attached = ExecutionTraceRecorder(store, execution_id, trace_id=initial.trace_id)
     emitted = attached.emit(EventKind.DIAGNOSTIC, payload={"source": "attached-process"})
     trace = attached.finalize(ExecutionOutcome.COMPLETED)
     assert emitted.monotonic_offset_ms >= prior.monotonic_offset_ms
@@ -157,11 +157,18 @@ def test_every_terminal_outcome_has_a_terminal_trace_and_snapshot(outcome: Execu
 def test_cleanup_or_final_persistence_failure_makes_trace_partial_with_safe_limitations() -> None:
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-partial")
+    with pytest.raises(TraceRecorderError):
+        recorder.finalize(
+            ExecutionOutcome.TIMED_OUT,
+            cleanup_succeeded=False,
+            persistence_succeeded=True,
+            limitations=("caller-secret-must-not-be-stored", "capture_incomplete"),
+        )
     trace = recorder.finalize(
         ExecutionOutcome.TIMED_OUT,
         cleanup_succeeded=False,
         persistence_succeeded=True,
-        limitations=("caller-secret-must-not-be-stored", "capture_incomplete"),
+        limitations=("capture_incomplete",),
     )
     assert trace.completeness == "partial"
     assert trace.limitations == ("capture_incomplete", "cleanup_failed")
@@ -172,9 +179,14 @@ def test_cleanup_or_final_persistence_failure_makes_trace_partial_with_safe_limi
     assert persistence_trace.limitations == ("persistence_failed",)
 
     explicit = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-explicit-limitation")
+    with pytest.raises(TraceRecorderError):
+        explicit.finalize(
+            ExecutionOutcome.COMPLETED,
+            limitations=("partial_trace", "unsafe-provider-detail"),
+        )
     explicit_trace = explicit.finalize(
         ExecutionOutcome.COMPLETED,
-        limitations=("partial_trace", "unsafe-provider-detail"),
+        limitations=("partial_trace",),
     )
     assert explicit_trace.completeness == "partial"
     assert explicit_trace.limitations == ("partial_trace",)

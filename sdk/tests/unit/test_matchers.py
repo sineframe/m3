@@ -5,7 +5,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
 from mcp_pal.direct_client import ToolCallResult
 from mcp_pal.matchers import check, expect
 
@@ -52,7 +51,9 @@ def test_eventual_uses_subject_waiter_without_polling() -> None:
             assert callable(predicate)
             assert predicate("ready") is True
 
-    expect(Handle()).to_eventually(lambda value: expect(value).to_have_text("ready"), timeout=2.0)
+    expect(Handle()).to_eventually(
+        lambda value: expect(value).to_have_text("ready"), timeout=2.0
+    )
 
 
 def test_tool_call_negative_and_ambiguous_api_are_available() -> None:

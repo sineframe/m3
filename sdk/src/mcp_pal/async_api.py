@@ -86,12 +86,14 @@ from .direct_client import (
 )
 from .evaluations import AsyncEvaluator as _AsyncEvaluator, EvaluationRunner as _EvaluationRunner, EvaluatorCallable as _EvaluatorCallable
 from .errors import (
+    ExecutionNotFound as _ExecutionNotFound,
     KitClosed as _KitClosed,
     ModelValidationError as _ModelValidationError,
     OperationCancelled as _OperationCancelled,
     OperationTimeout as _OperationTimeout,
     ProtocolError as _ProtocolError,
     UnsupportedFeature as _UnsupportedFeature,
+    TraceUnavailable as _TraceUnavailable,
 )
 from .direct_trace import DirectTraceBridge as _DirectTraceBridge
 from .execution_runtime import AsyncExecutionController as _AsyncExecutionController, AsyncExecutionHandle
@@ -129,7 +131,12 @@ from .types import (
     TransportKind as _TransportKind,
     TurnResult as _TurnResult,
     UserMessage as _UserMessage,
+    TraceResult as _TraceResult,
+    RawEvidenceRef as _RawEvidenceRef,
+    ExecutionId as _ExecutionId,
 )
+from .observability import *
+from .observability import __all__ as _OBSERVABILITY_EXPORTS
 from .transport.direct import (
     HostResolver as _HostResolver,
     SecretResolver as _SecretResolver,
@@ -749,6 +756,51 @@ class AsyncMCPTestKit:
 
         return self._execution_controller._persistent_store
 
+    async def get_trace(self, execution_id: _ExecutionId | str) -> _TraceResult:
+        """Return the finalized canonical trace for an execution.
+
+        The configured store API is synchronous by contract; this async
+        facade preserves that existing storage behavior and does not pretend
+        SQLite reads are executor-offloaded.
+        """
+
+        self._ensure_open()
+        store = self._execution_controller._persistent_store
+        if store is None:
+            raise _TraceUnavailable("AsyncMCPTestKit has no execution store")
+        trace = store.get_trace(execution_id)
+        if trace is None:
+            raise _ExecutionNotFound(f"execution {execution_id!s} was not found")
+        return trace
+
+    async def get_trace_view(self, execution_id: _ExecutionId | str) -> TraceView:
+        """Return the finalized typed trace view for an execution."""
+
+        self._ensure_open()
+        store = self._execution_controller._persistent_store
+        if store is None:
+            raise _TraceUnavailable("AsyncMCPTestKit has no execution store")
+        view = store.get_trace_view(execution_id)
+        if view is None:
+            raise _ExecutionNotFound(f"execution {execution_id!s} was not found")
+        return view
+
+    async def read_raw_evidence(
+        self, reference: _RawEvidenceRef, *, max_bytes: int = 1_048_576
+    ) -> RawEvidence:
+        """Read bounded, redacted raw evidence by its durable reference.
+
+        As with other store lookups, this delegates to the synchronous store
+        API directly; applications needing executor isolation should provide
+        that boundary around the kit call.
+        """
+
+        self._ensure_open()
+        store = self._execution_controller._persistent_store
+        if store is None:
+            raise _TraceUnavailable("AsyncMCPTestKit has no execution store")
+        return store.read_raw_evidence(reference, max_bytes=max_bytes)
+
     async def __aenter__(self) -> "AsyncMCPTestKit":
         self._ensure_open()
         # Construction is allowed outside an event loop. Bind a persistent
@@ -1076,3 +1128,5 @@ __all__ = [
     "TerminalResult",
     "WorkspaceFilesystemHandler",
 ]
+
+__all__ = [*__all__, *_OBSERVABILITY_EXPORTS]

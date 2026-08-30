@@ -9,12 +9,12 @@ of one session.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
 import inspect
 import math
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 from .errors import (
@@ -28,31 +28,34 @@ from .errors import (
     TransportError,
     UnsupportedFeature,
 )
-from .interaction_handlers import InteractionController
 from .execution_trace import ExecutionTraceRecorder
+from .interaction_handlers import InteractionController
+from .policy import (
+    ToolDescriptor,
+    ToolPolicyDecision,
+    ToolPolicyEvaluator,
+    ToolPolicyEvidence,
+)
 from .storage import ArtifactStore, InMemoryExecutionStore
-from .policy import ToolDescriptor, ToolPolicyDecision, ToolPolicyEvidence, ToolPolicyEvaluator
-from .workspace import WorkspaceCapture, WorkspaceError, WorkspaceManager
 from .trace.redaction import redact_for_api
 from .types import (
+    ActivityHealth,
     AgentExecutionSpec,
     ErrorCode,
     ErrorInfo,
-    ConnectionId,
     EventDirection,
+    EventKind,
     EventOrigin,
     EventProvenance,
     ExecutionId,
     ExecutionOutcome,
     ExecutionResult,
     ExecutionSnapshot,
-    ActivityHealth,
-    EventKind,
+    FullToolPolicy,
     LifecyclePhase,
     LifecycleState,
-    OpaqueContent,
-    FullToolPolicy,
     NativeToolPolicy,
+    OpaqueContent,
     RestrictiveToolPolicy,
     SessionForkRequest,
     SessionId,
@@ -64,6 +67,10 @@ from .types import (
     TurnResult,
     UserMessage,
 )
+from .workspace import WorkspaceCapture, WorkspaceError, WorkspaceManager
+
+if TYPE_CHECKING:
+    from .harness.observations import TurnEvidence
 
 
 class HarnessAdapter(Protocol):
@@ -99,6 +106,9 @@ class AdapterTurn:
     tool_calls: tuple[Mapping[str, Any], ...] = ()
     evidence: Mapping[str, str | int | float | bool | None] = field(default_factory=dict)
     trace_limitations: tuple[str, ...] = ()
+    # Provider adapters may carry the closed R5 typed observation envelope
+    # without making this core state machine import provider modules.
+    turn_evidence: TurnEvidence | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
@@ -257,7 +267,7 @@ class AsyncAgentSession:
         if isinstance(direction_value, str):
             try:
                 direction = EventDirection(direction_value)
-                from .types import RequestCorrelation, RawEvidenceRef
+                from .types import RawEvidenceRef, RequestCorrelation
 
                 correlation = RequestCorrelation(
                     jsonrpc_id=event_payload.get("jsonrpc_id")
@@ -1048,18 +1058,29 @@ class AsyncAgentSession:
                 if descriptor is not None and identity_error is None
             )
         violations: list[dict[str, object]] = []
+        # Preserve the pre-R6 positional association for adapters that emit
+        # entirely anonymous updates, but never use it to repair malformed or
+        # ambiguous identities. Exact cardinality is required and the adapter
+        # must omit every identity field.
         ordered_canonical = canonical_tool_calls if len(canonical_tool_calls) == len(calls) else ()
         for call_index, call in enumerate(calls):
             if not isinstance(call, Mapping):
                 violations.append(self._policy_violation(None, "tool_call_invalid", evidence))
                 continue
             descriptor, identity_error = self._reported_tool_identity(call)
-            if descriptor is None:
-                if ordered_canonical and isinstance(call, Mapping) and not any(
-                    call.get(key) is not None for key in ("server", "server_name", "tool", "tool_name", "name", "qualified_name")
-                ):
-                    descriptor = ordered_canonical[call_index]
-                    identity_error = None
+            if ordered_canonical and not any(
+                call.get(key) is not None
+                for key in (
+                    "server",
+                    "server_name",
+                    "tool",
+                    "tool_name",
+                    "name",
+                    "qualified_name",
+                )
+            ):
+                descriptor = ordered_canonical[call_index]
+                identity_error = None
             if descriptor is None:
                 try:
                     reported_name = call.get("tool", call.get("tool_name", call.get("name")))
@@ -1173,6 +1194,11 @@ class AsyncAgentSession:
         turn_id: TurnId,
         policy_violations: tuple[dict[str, object], ...] = (),
     ) -> None:
+        if getattr(raw, "turn_evidence", None) is not None:
+            # Typed R5 observations have already been persisted by
+            # ``_turn_result``; emitting the legacy adapter envelope too would
+            # duplicate reported tool calls in the finalized projector.
+            return
         calls = getattr(raw, "tool_calls", ())
         if not isinstance(calls, (tuple, list)):
             return
@@ -1306,6 +1332,25 @@ class AsyncAgentSession:
             return {"evidence_state": "unavailable"}
 
     def _turn_result(self, turn_id: TurnId, raw: object) -> TurnResult:
+        typed_evidence = getattr(raw, "turn_evidence", None)
+        if typed_evidence is not None:
+            # Provider adapters use the R5 typed boundary. Persist those
+            # observations through the same failure-safe sink as direct
+            # capture, so finalized TraceView contains provider output
+            # without making the session state machine understand schemas.
+            from .harness.observation_sink import HarnessObservationSink
+            from .harness.observations import TurnEvidence
+
+            if isinstance(typed_evidence, TurnEvidence):
+                sink = HarnessObservationSink(self._trace_recorder, turn_id=turn_id)
+                for observation in typed_evidence.observations:
+                    sink.emit(observation)
+                for limitation in (*typed_evidence.limitations, *sink.limitations):
+                    if limitation not in self._trace_limitations:
+                        self._trace_limitations = (
+                            *self._trace_limitations,
+                            limitation,
+                        )
         if isinstance(raw, AdapterTurn):
             response, error, outcome = raw.response, raw.error, raw.outcome
         elif isinstance(raw, TurnResponse):

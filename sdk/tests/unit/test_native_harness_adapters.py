@@ -1,27 +1,69 @@
 from __future__ import annotations
 
-import json
 import asyncio
+import json
 import os
 import sys
 import time
-from collections.abc import AsyncIterator, Iterable
-from typing import Any, Literal, cast
+from collections.abc import AsyncIterator, Iterable, Mapping
 from pathlib import Path
+from typing import Any, Literal, cast
 
+import httpx
 import pytest
-
 from mcp_pal.agent_session import AsyncAgentSession
-from mcp_pal.harness import default_harness_adapter_registry
-from mcp_pal.harness.claude import ClaudeCodeHarnessAdapter
-from mcp_pal.harness.acp import AcpHarnessAdapter
-from mcp_pal.harness.contracts import HarnessLaunch, HarnessStartupError, HarnessTurnRequest, HarnessTurnResult
-from mcp_pal.harness.opencode import OpenCodeHarnessAdapter, opencode_configuration
-from mcp_pal.harness.native import _server_configuration, write_config
 from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.server_group import HarnessServerConfiguration, ServerGroupSnapshot, ServerRecord
-from mcp_pal.types import ACPAgent, AgentExecutionSpec, ClaudeCode, ErrorCode, NativeToolPolicy, OpenCode, RestrictiveToolPolicy, SecretReference, ServerBinding, StdioServer, TextContent, TransportKind
 from mcp_pal.errors import UnsupportedFeature
+from mcp_pal.execution_trace import ExecutionTraceRecorder
+from mcp_pal.harness.acp import AcpHarnessAdapter
+from mcp_pal.harness.claude import ClaudeCodeHarnessAdapter
+from mcp_pal.harness.contracts import (
+    HarnessLaunch,
+    HarnessStartupError,
+    HarnessTurnRequest,
+    HarnessTurnResult,
+)
+from mcp_pal.harness.native import MAX_FRAME_BYTES, _server_configuration, write_config
+from mcp_pal.harness.observation_sink import HarnessObservationSink
+from mcp_pal.harness.observations import (
+    MessageChunkObservation,
+    MetadataObservedObservation,
+    RawFrameObservation,
+    ReasoningChunkObservation,
+    ToolCallObservedObservation,
+    ToolResultObservedObservation,
+    UsageObservedObservation,
+)
+from mcp_pal.harness.opencode import OpenCodeHarnessAdapter, opencode_configuration
+from mcp_pal.server_group import (
+    HarnessServerConfiguration,
+    ServerGroupSnapshot,
+    ServerRecord,
+)
+from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from mcp_pal.types import (
+    ACPAgent,
+    AgentExecutionSpec,
+    ClaudeCode,
+    ErrorCode,
+    EventDirection,
+    EventKind,
+    EventOrigin,
+    EventProvenance,
+    ExecutionOutcome,
+    NativeToolPolicy,
+    OpenCode,
+    RequestCorrelation,
+    RestrictiveToolPolicy,
+    SecretReference,
+    ServerBinding,
+    StdioServer,
+    TextContent,
+    TransportKind,
+    TurnId,
+)
+
+from mcp_pal.harness import default_harness_adapter_registry
 
 
 def _spec() -> AgentExecutionSpec:
@@ -159,6 +201,50 @@ class _TurnFixture:
     def stream(self, *_args: object, **_kwargs: object) -> _TurnStream: return _TurnStream(self.response, self.status, self.close)
 
 
+class _HistoryFixture(_TurnFixture):
+    def __init__(self, response: object, before: object, after: object) -> None:
+        super().__init__(response)
+        self.get_requests: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        self._history = [
+            before if isinstance(before, _HTTPResponse) else _HTTPResponse(before),
+            after if isinstance(after, _HTTPResponse) else _HTTPResponse(after),
+        ]
+
+    async def get(self, *_args: object, **_kwargs: object) -> _HTTPResponse:
+        self.get_requests.append((_args, _kwargs))
+        return self._history.pop(0)
+
+
+class _MultiTurnHistoryFixture(_TurnFixture):
+    def __init__(self, responses: list[object], histories: list[object]) -> None:
+        super().__init__(responses[0])
+        self._responses = list(responses)
+        self.get_requests: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        self._history = [_HTTPResponse(history) for history in histories]
+
+    def stream(self, *_args: object, **_kwargs: object) -> _TurnStream:
+        return _TurnStream(self._responses.pop(0))
+
+    async def get(self, *_args: object, **_kwargs: object) -> _HTTPResponse:
+        self.get_requests.append((_args, _kwargs))
+        return self._history.pop(0)
+
+
+class _NoGetFixture(_TurnFixture):
+    def __init__(self, response: object) -> None:
+        super().__init__(response)
+        self.get_calls = 0
+
+    async def get(self, *_args: object, **_kwargs: object) -> _HTTPResponse:
+        self.get_calls += 1
+        raise AssertionError("history should not be fetched for this POST")
+
+
+class _TimeoutHistoryFixture(_TurnFixture):
+    async def get(self, *_args: object, **_kwargs: object) -> _HTTPResponse:
+        raise httpx.ReadTimeout("history request timed out")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("mode", "dialect"), (("normal", "legacy"), ("v2", "v2")))
 async def test_opencode_startup_sends_selected_model_without_catalog_preflight(tmp_path: Path, mode: str, dialect: Literal["legacy", "v2"]) -> None:
@@ -177,7 +263,8 @@ async def test_opencode_startup_sends_selected_model_without_catalog_preflight(t
         result = await session.send(HarnessTurnRequest.from_message("hello"))
         assert result.status == "completed"
         observed = await _wait_for_marker(marker, lambda value: len(value.get("message_urls", [])) == 1)
-        assert observed["api_hits"] == ["POST /session", "POST /session/message"]
+        assert observed["api_hits"][0] == "POST /session"
+        assert any(hit.endswith("/message") and hit.startswith("POST ") for hit in observed["api_hits"])
         assert observed["message_bodies"] == [{
             "model": {"providerID": "provider", "modelID": "model"},
             "parts": [{"type": "text", "text": "hello"}],
@@ -186,6 +273,92 @@ async def test_opencode_startup_sends_selected_model_without_catalog_preflight(t
         await adapter.close()
     await _assert_pid_dead(observed["serve_pid"])
     await _assert_pid_dead(observed["child_pid"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"info": {"finish": "stop"}, "parts": [{"type": "text", "text": "hello"}]},
+        {"info": {"parentID": "user-1", "finish": "stop"}, "parts": [{"type": "tool", "tool": "echo", "callID": "call-1", "state": {"status": "completed", "output": {"ok": True}}}]},
+    ),
+    ids=("text-only", "post-tool"),
+)
+async def test_opencode_does_not_fetch_history_for_text_or_post_tool(payload: object) -> None:
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    client = _NoGetFixture(payload)
+    adapter._client = cast(Any, client)
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert result.status == "completed"
+    assert client.get_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history_body", (b"{", b"x" * (MAX_FRAME_BYTES + 1)))
+async def test_opencode_invalid_history_is_captured_as_incomplete(history_body: bytes) -> None:
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    post = {"info": {"parentID": "user-1", "finish": "stop"}, "parts": [{"type": "text", "text": "done"}]}
+    adapter._client = cast(Any, _HistoryFixture(post, history_body, []))
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert result.status == "completed"
+    assert result.turn_evidence is not None
+    assert "capture_incomplete" in result.turn_evidence.limitations
+    assert not any(isinstance(item, ToolCallObservedObservation) for item in result.turn_evidence.observations)
+
+
+@pytest.mark.asyncio
+async def test_opencode_history_http_error_retains_status_and_raw_body() -> None:
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    post = {"info": {"parentID": "user-1", "finish": "stop"}, "parts": [{"type": "text", "text": "done"}]}
+    error_response = _HTTPResponse(b'{"error":"history unavailable"}', status_code=500)
+    adapter._client = cast(Any, _HistoryFixture(post, error_response, []))
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert result.status == "completed"
+    assert result.turn_evidence is not None
+    metadata = [item for item in result.turn_evidence.observations if isinstance(item, MetadataObservedObservation)]
+    assert any(item.name == "http_history_after.status_code" and item.value == 500 for item in metadata)
+    assert any(isinstance(item, RawFrameObservation) and item.observation_id == "opencode-history-after-1" for item in result.turn_evidence.observations)
+
+
+@pytest.mark.asyncio
+async def test_opencode_history_timeout_does_not_fabricate_reported_calls() -> None:
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    post = {"info": {"parentID": "user-1", "finish": "stop"}, "parts": [{"type": "text", "text": "done"}]}
+    client = _TimeoutHistoryFixture(post)
+    adapter._client = cast(Any, client)
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert result.status == "completed"
+    assert result.turn_evidence is not None
+    assert "capture_incomplete" in result.turn_evidence.limitations
+    assert not any(isinstance(item, ToolCallObservedObservation) for item in result.turn_evidence.observations)
 
 
 @pytest.mark.asyncio
@@ -288,6 +461,551 @@ async def test_opencode_official_response_matrix(case: str) -> None:
         assert "tokens_input" not in result.evidence and "cost_observed" not in result.evidence
     if case == "hostile-identifiers":
         assert "provider_observed" not in result.evidence and "model_observed" not in result.evidence
+
+
+@pytest.mark.asyncio
+async def test_opencode_response_maps_to_r5_typed_turn_evidence() -> None:
+    payload = {
+        "info": {
+            "id": "assistant-1",
+            "sessionID": "session",
+            "role": "assistant",
+            "providerID": "provider",
+            "modelID": "model",
+            "finish": "stop",
+            "tokens": {
+                "input": 2,
+                "output": 3,
+                "reasoning": 1,
+                "cache": {"read": 4, "write": 5},
+            },
+            "cost": 0.25,
+        },
+        "parts": [
+            {"type": "text", "text": "answer", "id": "message-1"},
+            {"type": "reasoning", "text": "because", "id": "reasoning-1"},
+            {
+                "type": "tool",
+                "tool": "echo",
+                "callID": "call-1",
+                "input": {"value": "hello"},
+                "state": {
+                    "status": "completed",
+                    "output": {"content": [{"type": "text", "text": "hello"}]},
+                },
+            },
+        ],
+    }
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    base = _launch()
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(
+            update={"harness": OpenCode(model="fixture", provider="opencode")}
+        ),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    adapter._client = cast(Any, _TurnFixture(payload))
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert result.turn_evidence is not None
+    observations = result.turn_evidence.observations
+    assert isinstance(observations[0], RawFrameObservation)
+    assert any(isinstance(item, MessageChunkObservation) for item in observations)
+    assert any(isinstance(item, ReasoningChunkObservation) for item in observations)
+    assert any(isinstance(item, ToolCallObservedObservation) for item in observations)
+    assert any(isinstance(item, ToolResultObservedObservation) for item in observations)
+    usage = next(item for item in observations if isinstance(item, UsageObservedObservation))
+    assert usage.input_tokens == 2
+    assert usage.cache_read_tokens == 4
+    assert usage.cache_write_tokens == 5
+    assert usage.cost == 0.25
+    metadata = [item for item in observations if isinstance(item, MetadataObservedObservation)]
+    assert {item.name for item in metadata} >= {
+        "provider",
+        "model",
+        "finish",
+        "message_id",
+        "session_id",
+    }
+    assert not any(item.kind == "process_observed" for item in observations)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expected_status", "has_result", "has_error"),
+    (
+        ({"status": "pending"}, "incomplete", False, False),
+        ({"status": "running", "input": {"value": "x"}}, "incomplete", False, False),
+        ({"status": "completed", "output": None}, "success", True, False),
+        ({"status": "error", "error": "denied"}, "tool_error", False, True),
+    ),
+)
+async def test_opencode_official_tool_states_preserve_missing_vs_null(
+    state: Mapping[str, object],
+    expected_status: str,
+    has_result: bool,
+    has_error: bool,
+) -> None:
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    base = _launch()
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    adapter._client = cast(
+        Any,
+        _TurnFixture(
+            {
+                "info": {"id": "msg-1", "sessionID": "session", "finish": "stop"},
+                "parts": [
+                    {
+                        "type": "tool",
+                        "tool": "echo",
+                        "callID": "call-1",
+                        "state": state,
+                    }
+                ],
+            }
+        ),
+    )
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert result.turn_evidence is not None
+    tool_result = next(
+        item
+        for item in result.turn_evidence.observations
+        if isinstance(item, ToolResultObservedObservation)
+    )
+    assert tool_result.status == expected_status
+    assert ("result" in tool_result.model_fields_set) is has_result
+    assert ("error_message" in tool_result.model_fields_set) is has_error
+    if has_result:
+        assert tool_result.result is None
+    if has_error:
+        assert tool_result.is_error is True
+
+
+@pytest.mark.asyncio
+async def test_opencode_completed_without_output_is_incomplete_not_success() -> None:
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    base = _launch()
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    adapter._client = cast(
+        Any,
+        _TurnFixture(
+            {
+                "info": {"finish": "stop"},
+                "parts": [{"type": "tool", "tool": "echo", "callID": "call-1", "state": {"status": "completed"}}],
+            }
+        ),
+    )
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert result.turn_evidence is not None
+    call = next(item for item in result.turn_evidence.observations if isinstance(item, ToolCallObservedObservation))
+    tool_result = next(item for item in result.turn_evidence.observations if isinstance(item, ToolResultObservedObservation))
+    assert call.status == "incomplete"
+    assert tool_result.status == "incomplete"
+    assert "result" not in tool_result.model_fields_set
+
+
+@pytest.mark.asyncio
+async def test_opencode_history_cursor_attributes_new_parts_and_preserves_raw_evidence() -> None:
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    post = {
+        "info": {
+            "id": "assistant-final",
+            "sessionID": "session",
+            "parentID": "user-2",
+            "finish": "stop",
+        },
+        "parts": [{"type": "text", "id": "final-text", "text": "done"}],
+    }
+    old = {
+        "info": {"id": "assistant-old", "sessionID": "session", "role": "assistant"},
+        "parts": [{"type": "tool", "id": "old-part", "tool": "echo", "callID": "old-call", "state": {"status": "completed", "output": {"nonce": "old"}}}],
+    }
+    new_tool = {
+        "info": {"id": "assistant-tool", "sessionID": "session", "role": "assistant", "parentID": "user-2"},
+        "parts": [{"type": "tool", "id": "new-part", "tool": "echo", "callID": "new-call", "state": {"status": "completed", "input": {"nonce": "new"}, "output": {"nonce": "new"}}}],
+    }
+    final = {"info": post["info"], "parts": post["parts"]}
+    client = _HistoryFixture(post, [old, new_tool, final], [])
+    adapter._client = cast(Any, client)
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert result.turn_evidence is not None
+    calls = [item for item in result.turn_evidence.observations if isinstance(item, ToolCallObservedObservation)]
+    assert [item.call_id for item in calls] == ["new-call"]
+    raw_frames = [item for item in result.turn_evidence.observations if isinstance(item, RawFrameObservation)]
+    assert {item.observation_id for item in raw_frames} == {
+        "opencode-http-1",
+        "opencode-history-after-1",
+    }
+    metadata = [item for item in result.turn_evidence.observations if isinstance(item, MetadataObservedObservation)]
+    names = {item.name for item in metadata}
+    assert "http.status_code" in names
+    assert sum(item.name == "http.status_code" for item in metadata) == 1
+    assert "http_history_after.status_code" in names
+    assert len(client.get_requests) == 1
+    assert client.get_requests[0][1]["params"] == {"limit": 256}
+
+
+@pytest.mark.asyncio
+async def test_opencode_history_matching_candidate_with_cursor_is_incomplete() -> None:
+    """A matching bounded page cannot prove older same-parent parts absent."""
+
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    post = {
+        "info": {
+            "id": "assistant-final",
+            "sessionID": "session",
+            "parentID": "user-2",
+            "finish": "stop",
+        },
+        "parts": [{"type": "text", "id": "final-text", "text": "done"}],
+    }
+    matching = {
+        "info": {
+            "id": "assistant-tool",
+            "sessionID": "session",
+            "role": "assistant",
+            "parentID": "user-2",
+        },
+        "parts": [{
+            "type": "tool",
+            "id": "new-part",
+            "tool": "echo",
+            "callID": "new-call",
+            "state": {"status": "completed", "output": {"ok": True}},
+        }],
+    }
+    history_response = _HTTPResponse([matching])
+    history_response.headers["x-next-cursor"] = "older-page"
+    client = _HistoryFixture(post, history_response, [])
+    adapter._client = cast(Any, client)
+
+    result = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+
+    assert "capture_incomplete" in result.trace_limitations
+    assert result.turn_evidence is not None
+    assert "capture_incomplete" in result.turn_evidence.limitations
+
+
+@pytest.mark.asyncio
+async def test_opencode_history_get_records_request_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    ticks = iter((10.0, 10.25))
+    class Clock:
+        @staticmethod
+        def monotonic() -> float:
+            return next(ticks)
+
+    import mcp_pal.harness.opencode as opencode_module
+
+    monkeypatch.setattr(opencode_module, "time", Clock)
+    history = _HTTPResponse([])
+    client = _HistoryFixture({}, history, [])
+
+    snapshot = await OpenCodeHarnessAdapter._history_snapshot(
+        client, "session", turn_started=9.0
+    )
+
+    assert snapshot is not None
+    assert snapshot.start_offset_ms == 1000.0
+    assert snapshot.end_offset_ms == 1250.0
+
+
+@pytest.mark.asyncio
+async def test_opencode_history_cursor_never_attaches_prior_turn_and_deduplicates_new_parts() -> None:
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    old = {
+        "info": {"id": "assistant-old", "sessionID": "session", "role": "assistant", "parentID": "user-old"},
+        "parts": [{"type": "tool", "id": "old-part", "tool": "echo", "callID": "old-call", "state": {"status": "completed", "output": {"nonce": "old"}}}],
+    }
+    turn_one_tool = {
+        "info": {"id": "assistant-tool-1", "sessionID": "session", "role": "assistant", "parentID": "user-1"},
+        "parts": [{"type": "tool", "id": "part-1", "tool": "echo", "callID": "call-1", "state": {"status": "completed", "input": {"nonce": "one"}, "output": {"nonce": "one"}}}],
+    }
+    turn_two_tool = {
+        "info": {"id": "assistant-tool-2", "sessionID": "session", "role": "assistant", "parentID": "user-2"},
+        "parts": [{"type": "tool", "id": "part-2", "tool": "echo", "callID": "call-2", "state": {"status": "completed", "input": {"nonce": "two"}, "output": {"nonce": "two"}}}],
+    }
+    post_one = {"info": {"id": "assistant-final-1", "sessionID": "session", "parentID": "user-1", "finish": "stop"}, "parts": [{"type": "text", "id": "text-1", "text": "one"}]}
+    post_two = {"info": {"id": "assistant-final-2", "sessionID": "session", "parentID": "user-2", "finish": "stop"}, "parts": [{"type": "text", "id": "text-2", "text": "two"}]}
+    final_one = {"info": post_one["info"], "parts": post_one["parts"]}
+    final_two = {"info": post_two["info"], "parts": post_two["parts"]}
+    client = _MultiTurnHistoryFixture(
+            [post_one, post_two],
+            [
+                [old, turn_one_tool, final_one],
+                [old, turn_one_tool, final_one, turn_two_tool, final_two],
+            ],
+    )
+    adapter._client = cast(Any, client)
+
+    first = await adapter._send(HarnessTurnRequest.from_message("one"), 1, "session")
+    second = await adapter._send(HarnessTurnRequest.from_message("two"), 2, "session")
+    assert first.turn_evidence is not None and second.turn_evidence is not None
+    first_calls = [item for item in first.turn_evidence.observations if isinstance(item, ToolCallObservedObservation)]
+    second_calls = [item for item in second.turn_evidence.observations if isinstance(item, ToolCallObservedObservation)]
+    assert [item.call_id for item in first_calls] == ["call-1"]
+    assert [item.call_id for item in second_calls] == ["call-2"]
+    assert all(item.call_id != "old-call" for item in (*first_calls, *second_calls))
+    assert len(second_calls) == 1
+    assert len(client.get_requests) == 2
+    assert all(request[1]["params"] == {"limit": 256} for request in client.get_requests)
+
+
+@pytest.mark.asyncio
+async def test_opencode_server_tool_projects_as_one_correlated_public_call() -> None:
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    configuration = HarnessServerConfiguration(
+        key="fixture",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="connection",
+        command="fixture",
+    )
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (configuration,),
+        base.tool_policy,
+    )
+    response = {
+        "info": {"sessionID": "session", "finish": "stop"},
+        "parts": [
+            {
+                "type": "tool",
+                "tool": "fixture_echo",
+                "callID": "provider-call",
+                "state": {
+                    "status": "completed",
+                    "input": {"nonce": "deterministic"},
+                    "output": {"nonce": "deterministic"},
+                },
+            }
+        ],
+    }
+    adapter._client = cast(Any, _TurnFixture(response))
+    turn = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert turn.turn_evidence is not None
+
+    store = InMemoryExecutionStore()
+    recorder = ExecutionTraceRecorder(store, "opencode-public")
+    sink = HarnessObservationSink(recorder, turn_id=TurnId("actual-turn"))
+    for observation in turn.turn_evidence.observations:
+        sink.emit(observation)
+    provenance = EventProvenance(origin=EventOrigin.WIRE_OBSERVED, source="direct")
+    recorder.emit(
+        EventKind.MCP_REQUEST,
+        turn_id=TurnId("actual-turn"),
+        server_binding="fixture",
+        connection_id="connection",
+        correlation=RequestCorrelation(
+            jsonrpc_id=1,
+            direction=EventDirection.CLIENT_TO_SERVER,
+            request_sequence=1,
+        ),
+        payload={
+            "method": "tools/call",
+            "params": {"name": "echo", "arguments": {"nonce": "deterministic"}},
+        },
+        provenance=provenance,
+    )
+    recorder.emit(
+        EventKind.MCP_RESPONSE,
+        turn_id=TurnId("actual-turn"),
+        server_binding="fixture",
+        connection_id="connection",
+        correlation=RequestCorrelation(
+            jsonrpc_id=1,
+            direction=EventDirection.SERVER_TO_CLIENT,
+            request_sequence=1,
+        ),
+        payload={"result": {"content": [{"type": "text", "text": "deterministic"}]}},
+        provenance=provenance,
+    )
+    trace = recorder.finalize(ExecutionOutcome.COMPLETED)
+    calls = trace.view().tool_calls
+    assert len(calls) == 1
+    call = calls[0]
+    assert call.turn_id == TurnId("actual-turn")
+    assert call.correlation.value == "correlated"
+    assert call.wire.state.value == "observed"
+    assert call.reported.state.value == "observed"
+    assert call.tool.value == "echo"
+    assert call.result.value.content[0].text == "deterministic"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_opencode_sqlite_reopen_preserves_public_trace_view(tmp_path: Path) -> None:
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    post = {
+        "info": {
+            "id": "final",
+            "sessionID": "session",
+            "parentID": "user-1",
+            "providerID": "provider",
+            "modelID": "model",
+            "finish": "stop",
+            "tokens": {"input": 1, "output": 2},
+            "cost": 0.5,
+        },
+        "parts": [{"type": "text", "id": "text", "text": "done"}],
+    }
+    history = {
+        "info": {
+            "id": "tool-message",
+            "sessionID": "session",
+            "role": "assistant",
+            "parentID": "user-1",
+        },
+        "parts": [
+            {
+                "type": "tool",
+                "id": "tool-part",
+                "tool": "fixture_echo",
+                "callID": "provider-call",
+                "state": {
+                    "status": "completed",
+                    "input": {"nonce": "sqlite"},
+                    "output": {"nonce": "sqlite"},
+                },
+            }
+        ],
+    }
+    client = _HistoryFixture(post, [history], [])
+    adapter._client = cast(Any, client)
+    turn = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert turn.turn_evidence is not None
+
+    database = tmp_path / "opencode.sqlite"
+    blobs = tmp_path / "blobs"
+    store = SQLiteExecutionStore(database, blob_root=blobs)
+    recorder = ExecutionTraceRecorder(store, "opencode-sqlite")
+    sink = HarnessObservationSink(recorder, turn_id=TurnId("actual-turn"))
+    for observation in turn.turn_evidence.observations:
+        sink.emit(observation)
+    provenance = EventProvenance(origin=EventOrigin.WIRE_OBSERVED, source="direct")
+    for kind, direction, payload in (
+        (
+            EventKind.MCP_REQUEST,
+            EventDirection.CLIENT_TO_SERVER,
+            {"method": "tools/call", "params": {"name": "echo", "arguments": {"nonce": "sqlite"}}},
+        ),
+        (
+            EventKind.MCP_RESPONSE,
+            EventDirection.SERVER_TO_CLIENT,
+            {"result": {"content": [{"type": "text", "text": "sqlite"}]}},
+        ),
+    ):
+        recorder.emit(
+            kind,
+            turn_id=TurnId("actual-turn"),
+            server_binding="fixture",
+            connection_id="connection",
+            correlation=RequestCorrelation(
+                jsonrpc_id=1,
+                direction=direction,
+                request_sequence=1,
+            ),
+            payload=payload,
+            provenance=provenance,
+        )
+    trace = recorder.finalize(ExecutionOutcome.COMPLETED)
+    first_view = trace.view()
+    store.close()
+    reopened = SQLiteExecutionStore(database, blob_root=blobs)
+    reopened_trace = ExecutionTraceRecorder(reopened, trace.execution_id).finalize(
+        ExecutionOutcome.COMPLETED
+    )
+    second_view = reopened_trace.view()
+    assert second_view.runtime == first_view.runtime
+    assert second_view.raw_messages == first_view.raw_messages
+    assert second_view.tool_calls == first_view.tool_calls
+    assert second_view.runtime.provider_id.value == "provider"
+    assert second_view.runtime.model_id.value == "model"
+    assert second_view.runtime.finish_reason.value == "stop"
+    assert second_view.runtime.usage.state.value == "observed"
+    assert second_view.runtime.http_lifecycle.value["status_code"] == 200
+    assert second_view.tool_calls[0].turn_id == TurnId("actual-turn")
+    reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_opencode_malformed_metadata_projects_unavailable_not_omitted() -> None:
+    base = _launch()
+    adapter = OpenCodeHarnessAdapter(executable="fixture")
+    adapter._launch = HarnessLaunch(
+        base.spec.model_copy(update={"harness": OpenCode(model="fixture")}),
+        base.servers,
+        (),
+        base.tool_policy,
+    )
+    payload = {
+        "info": {
+            "id": ["bad"],
+            "sessionID": "session",
+            "providerID": ["bad"],
+            "modelID": ["bad"],
+            "finish": 3,
+            "tokens": {"input": "bad"},
+            "cost": "bad",
+        },
+        "parts": [{"type": "text", "id": "bad\npart", "text": "done"}],
+    }
+    adapter._client = cast(Any, _TurnFixture(payload))
+    turn = await adapter._send(HarnessTurnRequest.from_message("hello"), 1, "session")
+    assert turn.turn_evidence is not None
+    store = InMemoryExecutionStore()
+    recorder = ExecutionTraceRecorder(store, "malformed-metadata")
+    sink = HarnessObservationSink(recorder, turn_id=TurnId("turn-1"))
+    for observation in turn.turn_evidence.observations:
+        sink.emit(observation)
+    view = recorder.finalize(ExecutionOutcome.COMPLETED).view()
+    assert view.runtime.provider_id.state.value == "unavailable"
+    assert view.runtime.model_id.state.value == "unavailable"
+    assert view.runtime.finish_reason.state.value == "unavailable"
+    assert view.runtime.usage.state.value == "unavailable"
+    assert len(view.messages) == 1
+    assert view.messages[0].message_id.state.value == "unavailable"
+    assert view.messages[0].message_id.reason.value == "malformed_source"
 
 
 @pytest.mark.parametrize(
@@ -489,6 +1207,124 @@ async def test_claude_uses_one_stream_process_across_turns() -> None:
     assert first.response is not None and _response_text(first) == "one"
     assert second.response is not None and _response_text(second) == "two"
     assert session.snapshot().turns == 2
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_claude_rich_stream_maps_to_typed_observations_and_runtime() -> None:
+    executable = str(
+        Path(__file__).parents[1] / "fixtures" / "claude_observability_fixture.py"
+    )
+    base = _launch()
+    spec = base.spec.model_copy(
+        update={"harness": ClaudeCode(model="fixture", executable=executable)}
+    )
+    adapter = ClaudeCodeHarnessAdapter(executable=executable)
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        session = kit.agent_session(spec, adapter=adapter)
+        async with session:
+            result = await session.send("nonce")
+        assert result.error is None
+        assert session.result.trace is not None
+        view = session.result.trace.view()
+        assert view.runtime.kind == "claude_code"
+        assert view.runtime.session_id.value == "claude-session"
+        assert view.runtime.model_id.value == "fixture-model"
+        assert view.runtime.stop_reason.value == "end_turn"
+        assert view.runtime.service_tier.value == "standard"
+        assert view.runtime.api_duration_ms.value == 12.5
+        assert view.runtime.encrypted_reasoning.value is True
+        assert view.runtime.usage.value.cache_read_tokens.value == 4
+        assert view.runtime.usage.value.cost.value == 0.25
+        assert len(view.tool_calls) == 1
+        assert view.tool_calls[0].provider_call_id.value == "toolu-1"
+        assert len(view.reasoning) == 2
+        assert view.reasoning[0].content.state.value == "observed"
+        assert view.reasoning[1].content.state.value == "encrypted"
+        assert view.raw_messages
+
+
+@pytest.mark.asyncio
+async def test_claude_partial_stream_replays_without_suffix_deduplication() -> None:
+    executable = str(
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "claude_partial_observability_fixture.py"
+    )
+    adapter = ClaudeCodeHarnessAdapter(executable=executable)
+    session = await adapter.open(_launch())
+    result = await session.send(HarnessTurnRequest.from_message("nonce"))
+    assert result.error is None
+    messages = [
+        item
+        for item in result.turn_evidence.observations
+        if item.kind == "message_chunk"
+    ]
+    assert [item.text for item in messages] == ["same", "same", "samesame"]
+    assert [item.complete for item in messages] == [False, False, True]
+    calls = [
+        item
+        for item in result.turn_evidence.observations
+        if item.kind == "tool_call_observed"
+    ]
+    assert len(calls) == 1
+    assert calls[0].arguments == {"text": "ok"}
+    assert not any(
+        item.phase == "exited"
+        for item in result.turn_evidence.observations
+        if item.kind == "process_observed"
+    )
+    raw = " ".join(
+        item.raw_evidence.content
+        for item in result.turn_evidence.observations
+        if item.kind == "raw_frame" and item.raw_evidence is not None
+    )
+    assert "secret-signature-canary" not in raw
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_claude_partial_only_tool_reconstructs_input_json() -> None:
+    executable = str(
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "claude_partial_observability_fixture.py"
+    )
+    adapter = ClaudeCodeHarnessAdapter(executable=executable)
+    session = await adapter.open(_launch())
+    result = await session.send(HarnessTurnRequest.from_message("partial-only"))
+    assert result.error is None
+    calls = [
+        item
+        for item in result.turn_evidence.observations
+        if item.kind == "tool_call_observed"
+    ]
+    assert len(calls) == 1
+    assert calls[0].arguments == {"text": "ok"}
+    assert calls[0].status == "incomplete"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_claude_builtin_underscore_tool_is_not_mcp_traffic() -> None:
+    executable = str(
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "claude_partial_observability_fixture.py"
+    )
+    adapter = ClaudeCodeHarnessAdapter(executable=executable)
+    session = await adapter.open(_launch())
+    result = await session.send(HarnessTurnRequest.from_message("builtin"))
+    assert result.error is None
+    calls = [
+        item
+        for item in result.turn_evidence.observations
+        if item.kind == "tool_call_observed"
+    ]
+    assert len(calls) == 1
+    assert calls[0].tool == "Read_File"
+    assert calls[0].server is None
+    assert result.evidence["mcp_traffic_observed"] is False
     await adapter.close()
 
 
@@ -701,6 +1537,8 @@ async def test_opencode_timeout_reaps(tmp_path: Path) -> None:
             observed = await _wait_for_marker(marker, lambda value: value.get("message_entered") is True)
             result = await asyncio.wait_for(task, timeout=3.0)
             assert result.status == "timed_out"
+            assert result.turn_evidence is not None
+            assert not any(item.kind == "process_observed" for item in result.turn_evidence.observations)
             serve_pid, child_pid = observed["serve_pid"], observed["child_pid"]
         finally:
             await asyncio.wait_for(adapter.close(), timeout=4.0)
@@ -1008,12 +1846,38 @@ async def test_public_kit_exposes_opencode_usage_evidence() -> None:
     async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
         session = kit.agent_session(spec)
         async with session:
-            result = await session.send("one")
-            assert result.error is None
-            assert result.evidence["usage_requested"] is True
-            assert result.evidence["usage_enforced"] is False
-            assert result.evidence["usage_observed"] is True
-            assert result.evidence["usage_unavailable"] is False
+            results = [await session.send(text) for text in ("one", "two")]
+            for result in results:
+                assert result.error is None
+                assert result.evidence["usage_requested"] is True
+                assert result.evidence["usage_enforced"] is False
+                assert result.evidence["usage_observed"] is True
+                assert result.evidence["usage_unavailable"] is False
+        assert session.result.trace is not None
+        runtime = session.result.trace.view().runtime
+        assert runtime.kind == "opencode"
+        assert runtime.provider_id.value == "opencode"
+        assert runtime.model_id.value == "fixture"
+        assert runtime.finish_reason.value == "stop"
+        assert runtime.session_id.state.value == "observed"
+        assert runtime.usage.state.value == "observed"
+        assert runtime.http_lifecycle.state.value == "observed"
+        assert runtime.http_lifecycle.value["method"] == "POST"
+        assert runtime.http_lifecycle.value["route"] == "/session/{session_id}/message"
+        assert runtime.http_lifecycle.value["status_code"] == 200
+        assert runtime.http_lifecycle.value["duration_ms"] >= 0
+        view = session.result.trace.view()
+        assert view.messages
+        assert view.raw_messages
+        assert view.summary.usage.state.value == "observed"
+        assert view.summary.turn_count == 2
+        for result in results:
+            observed_turn_ids = {
+                entry.turn_id
+                for entry in view.timeline
+                if entry.turn_id == result.snapshot.turn_id
+            }
+            assert observed_turn_ids == {result.snapshot.turn_id}
 
 
 @pytest.mark.asyncio

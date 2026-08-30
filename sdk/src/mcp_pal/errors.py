@@ -62,17 +62,52 @@ class CleanupError(MCPError):
     code = "cleanup_failed"
 
 
+class ExecutionNotFound(MCPError):
+    """The requested execution does not exist in the trace store."""
+
+    code = "execution_not_found"
+
+
+class TraceUnavailable(MCPError):
+    """An execution exists but has no usable trace evidence."""
+
+    code = "trace_unavailable"
+
+
+class TraceNotFinalized(MCPError):
+    """A typed view was requested before terminal execution evidence arrived."""
+
+    code = "trace_not_finalized"
+
+
+class RawEvidenceUnavailable(MCPError):
+    """Referenced redacted raw evidence cannot be read."""
+
+    code = "raw_evidence_unavailable"
+
+
+class RawEvidenceIntegrityError(MCPError):
+    """Referenced raw evidence failed its digest or size integrity check."""
+
+    code = "raw_evidence_integrity_error"
+
+
 __all__ = [
     "CleanupError",
+    "ExecutionNotFound",
     "InvalidTransitionError",
     "KitClosed",
     "MCPError",
     "ModelValidationError",
     "OperationCancelled",
     "OperationTimeout",
+    "RawEvidenceIntegrityError",
+    "RawEvidenceUnavailable",
     "ProtocolError",
     "SessionBusy",
     "SessionStillOpen",
     "TransportError",
+    "TraceNotFinalized",
+    "TraceUnavailable",
     "UnsupportedFeature",
 ]

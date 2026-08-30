@@ -36,7 +36,11 @@ def _assert_reopenable_terminal(
         event.model_dump(mode="json") for event in events
     ]
     assert reopened.get_snapshot(execution_id).outcome is outcome
-    trace = ExecutionTraceRecorder(reopened, execution_id, trace_id=f"trace-{execution_id.root}").finalize(outcome)
+    trace = ExecutionTraceRecorder(
+        reopened,
+        execution_id,
+        trace_id=str(events[0].payload["trace_id"]),
+    ).finalize(outcome)
     assert trace.execution_id == execution_id
     assert trace.completeness == terminal.payload["completeness"]
     assert trace.limitations == tuple(terminal.payload["limitations"])
@@ -58,7 +62,10 @@ def test_store_terminalization_continues_positive_trace_offset(
     store = _store(tmp_path)
     store.create(ExecutionSnapshot(execution_id=execution_id))
     factory = EventFactory(execution_id)
-    store.append_events((factory.create(EventKind.EXECUTION_CREATED, payload={"lifecycle": "created"}),))
+    store.append_events((factory.create(
+        EventKind.EXECUTION_CREATED,
+        payload={"lifecycle": "created", "trace_id": f"trace-{execution_id.root}"},
+    ),))
     prior = factory.create(EventKind.DIAGNOSTIC, monotonic_offset_ms=42.0, payload={"source": "prior-process"})
     store.append_events((prior,))
     command = store.enqueue_command(execution_id)

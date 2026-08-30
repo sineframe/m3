@@ -18,7 +18,7 @@ uv run --project sdk --extra pytest pytest -q sdk/examples/tests
 [`test_live_opencode.py`](../examples/tests/test_live_opencode.py) is the
 opt-in end-to-end example for an actual agent. It launches OpenCode, connects
 it to the real example MCP subprocess, asks it to use `shipping_quote`, and
-inspects the captured canonical wire call directly.
+inspects the finalized typed `TraceView` and its wire evidence.
 
 ```bash
 set -a; source .env; set +a
@@ -27,17 +27,12 @@ MCP_PAL_RUN_LIVE_OPENCODE=1 uv run --project sdk --all-extras \
 ```
 
 ```python
-requests = [
-    event for event in trace.events
-    if event.kind.value == "tool.call_requested"
-    and event.server_binding == "example-mcp"
-    and event.turn_id == turn.snapshot.turn_id
-    and event.payload.get("tool") == "shipping_quote"
-]
-assert len(requests) == 1
-arguments = requests[0].payload["arguments"]
-assert arguments["zone"] == "local"
-assert arguments["weight_kg"] == 2
+view = session.result.trace_view
+assert view is not None
+calls = [call for call in view.tool_calls if call.tool.value == "shipping_quote"]
+assert len(calls) == 1
+assert calls[0].arguments.value == {"zone": "local", "weight_kg": 2}
+assert calls[0].wire.state.value == "observed"
 ```
 
 This test is skipped unless `MCP_PAL_RUN_LIVE_OPENCODE=1`, OpenCode, and
@@ -92,6 +87,48 @@ async with AsyncMCPTestKit(env={}) as kit:
 assert result.structured_content["currency"] == "USD"
 ```
 
+### Inspect, filter, persist, and match a finalized typed trace
+
+[`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py) is the
+copyable observability example. It covers typed runtime/initialization and
+tool-call evidence, `for_turn`/`for_server`/`between` filters and category
+indexes, public raw-evidence reads, optional SQLite close/reopen equality, and
+sync/async parity.
+
+```python
+trace = client.final_trace
+assert trace is not None
+view = trace.view()
+expect(view).to_have_tool_call(
+    "shipping_quote", arguments={"weight_kg": 2, "zone": "local"}, evidence="wire"
+)
+assert view.for_server("example-mcp").tool_calls
+assert view.messages == tuple(item for item in view.timeline if item.kind == "message")
+```
+
+The raw preview and every observation retain their public availability state;
+the raw-evidence example explicitly uses the default bounded capture path,
+asserts a typed entry with an evidence reference, and reads it with the public
+store API. Use `read_raw_evidence(reference)` only when a typed raw entry
+exposes a reference. This keeps raw capture bounded and optional and does not
+make canonical payload parsing part of the example API.
+
+### Availability states as a data contract
+
+[`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py) also
+contains `test_observation_availability_states_are_explicit_data_contract_examples`.
+It uses frozen public values—not a live provider—to demonstrate observed,
+not-emitted, unsupported, encrypted, redacted, truncated, and malformed-source
+unavailable states, including their required reasons.
+
+```python
+absent = Observation(
+    state=ObservationState.NOT_EMITTED,
+    reason=ObservationReason.PROVIDER_DID_NOT_EMIT,
+)
+assert absent.value is None
+```
+
 ## Check readiness and capabilities
 
 [`test_capabilities_and_probes.py`](../examples/tests/test_capabilities_and_probes.py)
@@ -136,18 +173,15 @@ with kit.direct(example_server, validate_schemas=True) as client:
 ## Assert tool usage
 
 [`test_tool_usage_assertions.py`](../examples/tests/test_tool_usage_assertions.py)
-is a synthetic matcher-contract reference. It covers exact and partial
+is a finalized typed-view matcher reference. It covers exact and partial
 arguments, regular expressions, numeric tolerance, unordered arrays, argument
 and call predicates, exact results, status, counts, latency bounds, server
-identity, and positive/negative assertions. It is not evidence that the
-matcher currently accepts a captured direct or agent-session trace.
-
-For real direct-client tool usage, inspect the untouched canonical events as
-shown in [`test_assertions_snapshots_evaluations.py`](../examples/tests/test_assertions_snapshots_evaluations.py).
+identity, and positive/negative assertions. The synthetic trace is finalized
+with the same public projection used by real executions.
 
 ```python
-synthetic_trace = _matcher_trace()
-expect(synthetic_trace).to_have_tool_call(
+view = _matcher_trace().view()
+expect(view).to_have_tool_call(
     "shipping_quote",
     arguments={"zone": r"reg.*"},
     arguments_partial=True,
@@ -155,22 +189,19 @@ expect(synthetic_trace).to_have_tool_call(
     min_count=1,
     max_count=1,
 )
-expect(synthetic_trace).to_have_tool_call("shipping_quote", count=2)
-expect(synthetic_trace).to_not_have_tool_call("create_order")
+expect(view).to_have_tool_call("shipping_quote", count=2)
+expect(view).to_not_have_tool_call("create_order")
 ```
 
 `to_have_reported_tool_call`, `evidence="wire"`, `evidence="reported"`, and
-`evidence="any"` are also covered by the synthetic fixture in the same file.
-The rich `to_have_tool_call` API exists, but its current evidence-shape
-compatibility is narrower than its signature suggests (see the table below).
+`evidence="any"` are also covered by the finalized fixture in the same file.
 
 | Surface | Status | Reference |
 | --- | --- | --- |
 | Live harness prompting and multi-turn capture | Supported | [`test_live_opencode.py`](../examples/tests/test_live_opencode.py) |
-| Raw canonical direct/agent trace inspection | Supported | [`test_assertions_snapshots_evaluations.py`](../examples/tests/test_assertions_snapshots_evaluations.py), [`test_live_opencode.py`](../examples/tests/test_live_opencode.py) |
-| Rich `to_have_tool_call` API contract | Supported on synthetic wire-shaped fixtures | [`test_tool_usage_assertions.py`](../examples/tests/test_tool_usage_assertions.py) |
-| `to_have_tool_call` directly on normalized direct traces | Current gap: `NORMALIZED` provenance is filtered out | Use raw event assertions until SDK normalization is fixed |
-| `to_have_tool_call` directly on agent-session wire traces | Current gap: agent payloads use root fields instead of `params` | Use raw event assertions until SDK normalization is fixed |
+| Finalized typed `TraceView` inspection | Supported | [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py) |
+| Rich `to_have_tool_call` on finalized views | Supported for wire, reported, and resolved evidence | [`test_tool_usage_assertions.py`](../examples/tests/test_tool_usage_assertions.py) |
+| Opt-in live harness trace | Supported; skipped without explicit credentials | [`test_live_opencode.py`](../examples/tests/test_live_opencode.py) |
 
 ## Resources and prompts
 
@@ -202,8 +233,8 @@ completion = client.complete(
 [`test_tracing_and_lifecycle.py`](../examples/tests/test_tracing_and_lifecycle.py)
 contains three operational scenarios:
 
-- `test_inspect_a_finalized_trace` asserts canonical request, response, tool,
-  terminal, and sequence evidence after client closure.
+- `test_inspect_a_finalized_trace` asserts typed protocol, tool, terminal, and
+  sequence entries after client closure.
 - `test_closing_a_client_stops_its_server_process` verifies closed-client
   behavior and confirms the owned stdio subprocess exits.
 - `test_each_connection_has_isolated_server_state` proves state is shared by
@@ -250,18 +281,10 @@ server.verify()
 ## Supported surface and deliberate boundaries
 
 The examples cover every supported synchronous and asynchronous direct MCP
-operation exposed by `DirectClient`/`AsyncDirectClient`, and every public
-matcher method on result and trace projections. The rich tool-call matcher is
-covered as a synthetic contract fixture because direct/agent trace compatibility
-is currently incomplete. `MCPTestKit`/`AsyncMCPTestKit` configuration,
-capabilities, evaluators, direct execution, and lifecycle are also covered.
-
-One current integration gap is visible in the live example: agent-session wire
-events store tool name and arguments at the event-payload root, while the
-generic tool-call matcher reads the direct-client `params` projection. The
-example therefore inspects untouched canonical events directly. This should be
-fixed in the SDK before treating agent-session matcher examples as zero-adapter
-API.
+operation exposed by `DirectClient`/`AsyncDirectClient`, finalized typed trace
+inspection and filtering, and the public matcher methods on result and trace
+projections. `MCPTestKit`/`AsyncMCPTestKit` configuration, capabilities,
+evaluators, direct execution, SQLite reopen, and lifecycle are also covered.
 
 The following are intentionally not presented as working examples because the
 current SDK does not support them as ordinary direct-test operations:

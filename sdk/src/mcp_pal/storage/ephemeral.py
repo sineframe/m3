@@ -20,10 +20,18 @@ from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal, Protocol, TypeAlias, cast
+from typing import Literal, Protocol, TypeAlias, cast
 
 from pydantic import TypeAdapter, ValidationError
 
+from ..errors import RawEvidenceUnavailable, TraceNotFinalized, TraceUnavailable
+from ..observability import (
+    RawEvidence,
+    RawEvidenceCapture,
+    TraceCaptureConfig,
+    TraceView,
+)
+from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
 from ..trace.redaction import (
     RedactionConfig,
     redact_artifact_bytes,
@@ -33,21 +41,45 @@ from ..trace.redaction import (
 from ..types import (
     ArtifactId,
     ArtifactRef,
+    CanonicalEvent,
     DirectOperationResult,
     ErrorCode,
     ErrorInfo,
-    CanonicalEvent,
-    ExecutionId,
+    EventId,
+    EventKind,
     ExecutionEvidence,
+    ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
     ExecutionSnapshot,
+    ExecutionSpec,
     LifecycleState,
     PersistedExecutionReport,
-    ExecutionSpec,
-    EventKind,
+    RawEvidenceRef,
+    TraceId,
+    TraceResult,
 )
-from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
+from .evidence import (
+    evidence_id_for as _evidence_id_for,
+)
+from .evidence import (
+    make_capture as _make_evidence_capture,
+)
+from .evidence import (
+    make_ref as _make_evidence_ref,
+)
+from .evidence import (
+    make_result as _make_evidence_result,
+)
+from .evidence import (
+    prepare_evidence as _prepare_evidence,
+)
+from .evidence import (
+    validate_evidence_id as _validate_evidence_id,
+)
+from .evidence import (
+    verify_reference as _verify_evidence_reference,
+)
 
 
 class StorageError(Exception):
@@ -132,9 +164,17 @@ class ExecutionStore(Protocol):
         artifact_limit: int | None = None,
     ) -> PersistedExecutionReport | None: ...
 
+    def get_trace(self, execution_id: ExecutionId | str) -> TraceResult | None: ...
+
+    def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None: ...
+
     def save_snapshot(self, snapshot: ExecutionSnapshot) -> None: ...
 
     def append_events(self, events: Sequence[CanonicalEvent]) -> None: ...
+
+    def append_event_with_raw_evidence(
+        self, event: CanonicalEvent, content: bytes, *, media_type: str
+    ) -> CanonicalEvent: ...
 
     def iter_events(
         self, execution_id: ExecutionId | str, *, after_sequence: int = -1
@@ -145,6 +185,16 @@ class ExecutionStore(Protocol):
     def release(self, execution_id: ExecutionId | str, sequences: Sequence[int]) -> None: ...
 
     def subscribe(self, execution_id: ExecutionId | str, callback: EventCallback) -> Callable[[], None]: ...
+
+    def put_raw_evidence(
+        self, event_id: EventId | str, content: bytes, *, media_type: str
+    ) -> RawEvidenceCapture: ...
+
+    def read_raw_evidence(
+        self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576
+    ) -> RawEvidence: ...
+
+    def delete_execution(self, execution_id: ExecutionId | str) -> None: ...
 
 
 class ArtifactStore(Protocol):
@@ -280,14 +330,28 @@ class _ExecutionBatch(AbstractContextManager["_ExecutionBatch"]):
 class InMemoryExecutionStore:
     """Thread-safe execution metadata store with commit-gated visibility."""
 
-    def __init__(self, *, config: RedactionConfig | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        config: RedactionConfig | None = None,
+        capture_config: TraceCaptureConfig | None = None,
+    ) -> None:
         self._lock = threading.RLock()
         self._snapshots: dict[str, ExecutionSnapshot] = {}
         self._specifications: dict[str, ExecutionSpec] = {}
         self._events: dict[str, tuple[CanonicalEvent, ...]] = {}
         self._callbacks: dict[str, list[EventCallback]] = {}
         self._reserved_sequences: dict[str, set[int]] = {}
-        self._redaction_config = config if config is not None else RedactionConfig.from_environment()
+        self._redaction_config = (
+            config if config is not None else RedactionConfig.from_environment()
+        )
+        self._capture_config = (
+            capture_config if capture_config is not None else TraceCaptureConfig()
+        )
+        self._raw_refs: dict[str, RawEvidenceRef] = {}
+        self._raw_event_ids: dict[str, str] = {}
+        self._raw_blobs: dict[str, bytes] = {}
+        self._raw_refcounts: dict[str, int] = {}
         self._acp_probes: dict[str, ACPProbeResult] = {}
 
     # ACP probe persistence intentionally lives beside execution persistence,
@@ -415,6 +479,70 @@ class InMemoryExecutionStore:
             artifacts_truncated=False,
         )
 
+    def get_trace(self, execution_id: ExecutionId | str) -> TraceResult | None:
+        snapshot = self.get_snapshot(execution_id)
+        if snapshot is None:
+            return None
+        events = self.events(execution_id)
+        created_events = [event for event in events if event.kind is EventKind.EXECUTION_CREATED]
+        if (
+            not events
+            or events[0].sequence != 0
+            or events[0].kind is not EventKind.EXECUTION_CREATED
+            or len(created_events) != 1
+        ):
+            raise TraceUnavailable("persisted execution.created evidence is malformed")
+        trace_id = events[0].payload.get("trace_id")
+        if not isinstance(trace_id, str) or not trace_id:
+            raise TraceUnavailable("trace identity evidence is unavailable")
+        try:
+            typed_trace_id = TraceId(trace_id)
+        except ValueError:
+            raise TraceUnavailable("trace identity evidence is invalid") from None
+        if typed_trace_id.root != trace_id:
+            raise TraceUnavailable("trace identity evidence is not canonical")
+        terminal = [
+            event for event in events if event.kind is EventKind.EXECUTION_FINISHED
+        ]
+        if not terminal:
+            raise TraceNotFinalized("execution has not been finalized")
+        if len(terminal) != 1 or terminal[0] is not events[-1]:
+            raise TraceUnavailable("persisted trace terminal evidence is malformed")
+        final = terminal[-1]
+        outcome = final.payload.get("outcome")
+        completeness = final.payload.get("completeness")
+        raw_limitations = final.payload.get("limitations")
+        if (
+            not isinstance(outcome, str)
+            or outcome not in {item.value for item in ExecutionOutcome}
+            or completeness not in {"complete", "partial"}
+            or not isinstance(raw_limitations, (list, tuple))
+            or any(not isinstance(item, str) or not item.strip() for item in raw_limitations)
+        ):
+            raise TraceUnavailable("persisted execution.finished evidence is malformed")
+        limitations = tuple(raw_limitations)
+        try:
+            typed_outcome = ExecutionOutcome(outcome)
+        except ValueError:
+            raise TraceUnavailable("persisted execution outcome is invalid") from None
+        if snapshot.lifecycle is not LifecycleState.FINISHED or snapshot.outcome != typed_outcome:
+            raise TraceUnavailable("persisted snapshot outcome conflicts with terminal evidence")
+        try:
+            return TraceResult(
+                trace_id=typed_trace_id,
+                execution_id=snapshot.execution_id,
+                completeness=cast(Literal["complete", "partial"], completeness),
+                highest_sequence=events[-1].sequence if events else 0,
+                events=events,
+                limitations=limitations,
+            )
+        except (TypeError, ValueError):
+            raise TraceUnavailable("persisted trace evidence is malformed") from None
+
+    def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None:
+        trace = self.get_trace(execution_id)
+        return trace.view() if trace is not None else None
+
     def save_snapshot(self, snapshot: ExecutionSnapshot) -> None:
         key = _execution_key(snapshot.execution_id)
         with self._lock:
@@ -435,6 +563,94 @@ class InMemoryExecutionStore:
         self._commit(execution_id, batch)
 
     append = append_events
+
+    def append_event_with_raw_evidence(
+        self, event: CanonicalEvent, content: bytes, *, media_type: str
+    ) -> CanonicalEvent:
+        """Commit an event and its raw blob as one in-memory operation."""
+        execution_id = _execution_key(event.execution_id)
+        with self._lock:
+            if event.raw_evidence_ref is not None:
+                raise StorageConflict("raw evidence reference must be store-owned")
+            if execution_id not in self._events:
+                raise StorageConflict("execution does not exist")
+            safe_media_type = redact_for_persistence(
+                media_type,
+                config=self._redaction_config,
+                path="$.raw_evidence.media_type",
+            )
+            if (
+                not isinstance(safe_media_type, str)
+                or not safe_media_type
+                or len(safe_media_type) > 256
+            ):
+                raise ValueError("raw evidence media_type must be 1-256 characters")
+            event_id = str(event.event_id.root)
+            if any(item.event_id == event.event_id for item in self._events[execution_id]):
+                raise StorageConflict("event id is already committed")
+            evidence_id = _evidence_id_for(event.event_id)
+            if evidence_id in self._raw_refs:
+                raise StorageConflict("raw evidence id is already committed")
+            event_ids = {str(item.event_id.root) for item in self._events[execution_id]}
+            used = sum(
+                ref.size_bytes or 0
+                for evidence_id, ref in self._raw_refs.items()
+                if self._raw_event_ids[evidence_id] in event_ids
+            )
+            prepared = _prepare_evidence(
+                content,
+                config=self._capture_config,
+                redaction_config=self._redaction_config,
+                remaining_bytes=max(self._capture_config.raw_execution_bytes - used, 0),
+            )
+            ref = _make_evidence_ref(
+                event.event_id, prepared.content, media_type=safe_media_type
+            ).model_copy(
+                update={
+                    "storage_key": "memory:"
+                    + hashlib.sha256(prepared.content).hexdigest()
+                }
+            )
+            evidence_id = ref.evidence_id
+            digest = ref.sha256
+            if digest is None:
+                raise StorageError("raw evidence reference is incomplete")
+            capture = _make_evidence_capture(ref, prepared)
+            event_payload = {
+                **dict(event.payload),
+                "raw_capture": capture.model_dump(mode="json"),
+            }
+            previous_blob = self._raw_blobs.get(digest)
+            previous_count = self._raw_refcounts.get(digest, 0)
+            previous_ref = self._raw_refs.get(evidence_id)
+            previous_event_id = self._raw_event_ids.get(evidence_id)
+            self._raw_blobs.setdefault(digest, prepared.content)
+            self._raw_refcounts[digest] = previous_count + 1
+            self._raw_refs[evidence_id] = ref
+            self._raw_event_ids[evidence_id] = event_id
+            try:
+                committed_event = event.model_copy(
+                    update={"raw_evidence_ref": ref, "payload": event_payload}
+                )
+                self._commit_checked(execution_id, (committed_event,))
+                return self._events[execution_id][-1].model_copy()
+            except BaseException:
+                self._reserved_sequences[execution_id].discard(event.sequence)
+                if previous_ref is None:
+                    self._raw_refs.pop(evidence_id, None)
+                else:
+                    self._raw_refs[evidence_id] = previous_ref
+                if previous_event_id is None:
+                    self._raw_event_ids.pop(evidence_id, None)
+                else:
+                    self._raw_event_ids[evidence_id] = previous_event_id
+                if previous_count:
+                    self._raw_refcounts[digest] = previous_count
+                else:
+                    self._raw_refcounts.pop(digest, None)
+                    if previous_blob is None:
+                        self._raw_blobs.pop(digest, None)
+                raise
 
     def _commit(self, execution_id: str, events: tuple[CanonicalEvent, ...]) -> None:
         try:
@@ -648,6 +864,116 @@ class InMemoryExecutionStore:
     def close(self) -> None:
         with self._lock:
             self._callbacks.clear()
+
+    def put_raw_evidence(
+        self, event_id: EventId | str, content: bytes, *, media_type: str
+    ) -> RawEvidenceCapture:
+        event_key = str(event_id.root if isinstance(event_id, EventId) else event_id)
+        with self._lock:
+            event = next(
+                (
+                    item
+                    for events in self._events.values()
+                    for item in events
+                    if str(item.event_id.root) == event_key
+                ),
+                None,
+            )
+            if event is None:
+                raise RawEvidenceUnavailable("raw evidence event does not exist")
+            evidence_id = _evidence_id_for(event_key)
+            if evidence_id in self._raw_refs:
+                raise StorageConflict("raw evidence already exists for event")
+            event_ids = {
+                str(item.event_id.root)
+                for item in self._events[_execution_key(event.execution_id)]
+            }
+            used = sum(
+                ref.size_bytes or 0
+                for evidence_id, ref in self._raw_refs.items()
+                if self._raw_event_ids[evidence_id] in event_ids
+            )
+            remaining = self._capture_config.raw_execution_bytes - used
+            safe_media_type = redact_for_persistence(
+                media_type,
+                config=self._redaction_config,
+                path="$.raw_evidence.media_type",
+            )
+            if (
+                not isinstance(safe_media_type, str)
+                or not safe_media_type
+                or len(safe_media_type) > 256
+            ):
+                raise ValueError("raw evidence media_type must be 1-256 characters")
+            prepared = _prepare_evidence(
+                content,
+                config=self._capture_config,
+                redaction_config=self._redaction_config,
+                remaining_bytes=max(remaining, 0),
+            )
+            ref = _make_evidence_ref(
+                event_key, prepared.content, media_type=safe_media_type
+            ).model_copy(
+                update={
+                    "storage_key": (
+                        "memory:" + hashlib.sha256(prepared.content).hexdigest()
+                    )
+                }
+            )
+            digest = ref.sha256
+            assert digest is not None
+            self._raw_blobs.setdefault(digest, prepared.content)
+            self._raw_refcounts[digest] = self._raw_refcounts.get(digest, 0) + 1
+            self._raw_refs[evidence_id] = ref
+            self._raw_event_ids[evidence_id] = event_key
+            return _make_evidence_capture(ref.model_copy(), prepared)
+
+    def read_raw_evidence(
+        self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576
+    ) -> RawEvidence:
+        if not isinstance(reference, RawEvidenceRef):
+            raise RawEvidenceUnavailable("raw evidence reference is invalid")
+        _validate_evidence_id(reference.evidence_id)
+        with self._lock:
+            expected = self._raw_refs.get(reference.evidence_id)
+            if expected is None:
+                raise RawEvidenceUnavailable("raw evidence is unavailable")
+            _verify_evidence_reference(reference, expected)
+            digest = expected.sha256
+            if digest is None or digest not in self._raw_blobs:
+                raise RawEvidenceUnavailable("raw evidence is unavailable")
+            return _make_evidence_result(
+                expected, self._raw_blobs[digest], max_bytes=max_bytes
+            )
+
+    def delete_execution(self, execution_id: ExecutionId | str) -> None:
+        key = _execution_key(execution_id)
+        with self._lock:
+            snapshot = self._snapshots.get(key)
+            if snapshot is None:
+                raise StorageConflict("execution does not exist")
+            if snapshot.lifecycle is not LifecycleState.FINISHED:
+                raise StorageConflict("active execution cannot be deleted")
+            event_ids = {str(item.event_id.root) for item in self._events[key]}
+            for evidence_id, reference in tuple(self._raw_refs.items()):
+                if self._raw_event_ids[evidence_id] not in event_ids:
+                    continue
+                del self._raw_refs[evidence_id]
+                del self._raw_event_ids[evidence_id]
+                if reference.sha256 is not None:
+                    count = self._raw_refcounts[reference.sha256] - 1
+                    if count <= 0:
+                        self._raw_refcounts.pop(reference.sha256, None)
+                        self._raw_blobs.pop(reference.sha256, None)
+                    else:
+                        self._raw_refcounts[reference.sha256] = count
+            self._snapshots.pop(key)
+            self._events.pop(key)
+            self._specifications.pop(key, None)
+            self._reserved_sequences.pop(key, None)
+            self._callbacks.pop(key, None)
+
+    delete = delete_execution
 
 
 class InMemoryArtifactStore:

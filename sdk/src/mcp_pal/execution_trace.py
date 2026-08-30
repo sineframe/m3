@@ -7,9 +7,9 @@ never retained by the recorder.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
-import threading
 from time import perf_counter_ns
 from typing import Any, Literal, cast
 from uuid import uuid4
@@ -26,8 +26,8 @@ from .types import (
     ExecutionId,
     ExecutionOutcome,
     ExecutionSnapshot,
-    LifecycleState,
     LifecyclePhase,
+    LifecycleState,
     RawEvidenceRef,
     RequestCorrelation,
     SessionId,
@@ -74,7 +74,13 @@ class ExecutionTraceRecorder:
     """
 
     _ALLOWED_LIMITATIONS = frozenset(
-        {"cleanup_failed", "persistence_failed", "capture_incomplete", "partial_trace"}
+        {
+            "cleanup_failed",
+            "persistence_failed",
+            "capture_incomplete",
+            "capture_disabled",
+            "partial_trace",
+        }
     )
 
     def __init__(
@@ -88,8 +94,12 @@ class ExecutionTraceRecorder:
     ) -> None:
         self._store = store
         self._execution_id = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(str(execution_id))
-        self._trace_id = trace_id if isinstance(trace_id, TraceId) else TraceId(
-            str(trace_id) if trace_id is not None else f"trace-{uuid4().hex}"
+        requested_trace_id = (
+            trace_id
+            if isinstance(trace_id, TraceId)
+            else TraceId(str(trace_id))
+            if trace_id is not None
+            else None
         )
         self._redaction_config = redaction_config if redaction_config is not None else RedactionConfig.from_environment()
         # One recorder lock covers reservation, validation, commit, and
@@ -101,22 +111,72 @@ class ExecutionTraceRecorder:
         self._started_monotonic_ns = perf_counter_ns()
         self._last_offset_ms = 0.0
         self._final: TraceResult | None = None
+        self._runtime_limitations: list[str] = []
         if store.get_snapshot(self._execution_id) is None:
+            self._trace_id = requested_trace_id or TraceId(f"trace-{uuid4().hex}")
             store.create(
                 ExecutionSnapshot(execution_id=self._execution_id),
                 specification=specification,
             )
-            self.emit(EventKind.EXECUTION_CREATED, payload={"lifecycle": LifecycleState.CREATED.value})
+            self.emit(
+                EventKind.EXECUTION_CREATED,
+                payload={
+                    "lifecycle": LifecycleState.CREATED.value,
+                    "trace_id": self._trace_id.root,
+                },
+            )
         else:
             # A persistent execution may be reopened by another process.  Its
             # perf-counter origin is different, so continue from the committed
             # trace offset rather than allowing the next event to move time
             # backwards in the canonical sequence.
             existing_events = self._committed_events()
+            if not existing_events:
+                self._trace_id = requested_trace_id or TraceId(f"trace-{uuid4().hex}")
+                self.emit(
+                    EventKind.EXECUTION_CREATED,
+                    payload={
+                        "lifecycle": LifecycleState.CREATED.value,
+                        "trace_id": self._trace_id.root,
+                    },
+                )
+                existing_events = self._committed_events()
+            else:
+                created_events = [
+                    event for event in existing_events if event.kind is EventKind.EXECUTION_CREATED
+                ]
+                if (
+                    existing_events[0].sequence != 0
+                    or existing_events[0].kind is not EventKind.EXECUTION_CREATED
+                    or len(created_events) != 1
+                ):
+                    raise TraceRecorderError("persisted execution.created evidence is malformed")
+                persisted_trace_id = existing_events[0].payload.get("trace_id")
+                if not isinstance(persisted_trace_id, str) or not persisted_trace_id:
+                    raise TraceRecorderError("persisted trace ID is unavailable")
+                try:
+                    self._trace_id = TraceId(persisted_trace_id)
+                except ValueError:
+                    raise TraceRecorderError("persisted trace ID is invalid") from None
+                if self._trace_id.root != persisted_trace_id:
+                    raise TraceRecorderError("persisted trace ID is not canonical")
+                if (
+                    requested_trace_id is not None
+                    and requested_trace_id != self._trace_id
+                ):
+                    raise TraceRecorderError(
+                        "trace ID conflicts with persisted execution"
+                    )
+                self._runtime_limitations.extend(
+                    limitation
+                    for limitation in self._limitations_from_events(existing_events)
+                    if limitation not in self._runtime_limitations
+                )
             if existing_events:
                 self._last_offset_ms = max(event.monotonic_offset_ms for event in existing_events)
-            existing = self._project_trace()
-            if existing.completeness in {"complete", "partial"} and self._is_terminal(existing):
+            if self._has_committed_terminal():
+                existing = self._project_trace()
+                existing.view()
                 self._final = existing
 
     @property
@@ -126,6 +186,36 @@ class ExecutionTraceRecorder:
     @property
     def trace_id(self) -> TraceId:
         return self._trace_id
+
+    def add_limitation(self, limitation: str) -> None:
+        """Register capture metadata to be merged into terminal evidence."""
+        if limitation not in self._ALLOWED_LIMITATIONS:
+            raise TraceRecorderError("execution limitation is invalid")
+        with self._record_lock:
+            if self._final is not None or self._has_committed_terminal():
+                raise TraceFinalizationConflict("execution is already terminal")
+            if limitation not in self._runtime_limitations:
+                self._runtime_limitations.append(limitation)
+                # Runtime capture metadata must survive a recorder reopen
+                # before finalization.  A bounded diagnostic is canonical
+                # evidence, not an in-memory side channel.
+                try:
+                    self.emit(
+                        EventKind.DIAGNOSTIC,
+                        payload={
+                            "code": "capture_limitation",
+                            "limitation": limitation,
+                            "message": "capture limitation recorded",
+                        },
+                        provenance=EventProvenance(
+                            origin=EventOrigin.DERIVED, source="mcp_pal.recorder"
+                        ),
+                    )
+                except Exception:
+                    # The caller-facing sink remains failure-safe. The
+                    # in-memory marker is retained so this limitation still
+                    # reaches a same-process terminal trace when possible.
+                    pass
 
     def bind_redaction_config(
         self,
@@ -173,6 +263,9 @@ class ExecutionTraceRecorder:
         lifecycle_phase: LifecyclePhase = LifecyclePhase.UNKNOWN,
         provenance: EventProvenance | None = None,
         raw_evidence_ref: RawEvidenceRef | None = None,
+        reasoning: Any | None = None,
+        raw_evidence_content: bytes | None = None,
+        raw_evidence_media_type: str | None = None,
     ) -> CanonicalEvent:
         """Allocate, build, and commit a canonical event."""
         with self._record_lock:
@@ -185,8 +278,9 @@ class ExecutionTraceRecorder:
             )
             sequence = self._allocate_sequence()
             try:
+                event_id = EventId(f"event-{uuid4().hex}")
                 event = CanonicalEvent(
-                    event_id=EventId(f"event-{uuid4().hex}"),
+                    event_id=event_id,
                     execution_id=self._execution_id,
                     sequence=sequence,
                     kind=kind,
@@ -204,10 +298,31 @@ class ExecutionTraceRecorder:
                     lifecycle_phase=lifecycle_phase,
                     monotonic_offset_ms=0.0,
                     payload=safe_payload,
+                    reasoning=reasoning,
                     raw_evidence_ref=raw_evidence_ref,
                     provenance=provenance
                     or EventProvenance(origin=EventOrigin.NORMALIZED, source="mcp_pal"),
                 )
+                if raw_evidence_content is not None:
+                    if raw_evidence_media_type is None:
+                        raise TraceRecorderError("raw evidence media type is required")
+                    self._validate_event(event)
+                    timestamp, offset = self._clock()
+                    event = event.model_copy(
+                        update={"timestamp": timestamp, "monotonic_offset_ms": offset}
+                    )
+                    append_atomic = getattr(
+                        self._store, "append_event_with_raw_evidence", None
+                    )
+                    if not callable(append_atomic):
+                        raise TraceRecorderError(
+                            "execution store does not support atomic raw evidence"
+                        )
+                    return append_atomic(
+                        event,
+                        raw_evidence_content,
+                        media_type=raw_evidence_media_type,
+                    )
                 return self.record(event)
             except Exception:
                 try:
@@ -250,7 +365,7 @@ class ExecutionTraceRecorder:
             safe_limitations = self._safe_limitations(
                 cleanup_succeeded=cleanup_succeeded,
                 persistence_succeeded=persistence_succeeded,
-                limitations=limitations,
+                limitations=tuple(limitations) + tuple(self._runtime_limitations),
             )
             terminal_payload: dict[str, Any] = {
                 "outcome": outcome.value,
@@ -464,17 +579,36 @@ class ExecutionTraceRecorder:
 
     def _project_trace(self) -> TraceResult:
         events = self._committed_events()
-        outcome = self._project_snapshot().outcome
-        terminal = next((event for event in reversed(events) if event.kind is EventKind.EXECUTION_FINISHED), None)
-        completeness: Literal["complete", "partial"] = "partial"
-        limitations: tuple[str, ...] = ("capture_incomplete",) if outcome is None else ("partial_trace",)
-        if terminal is not None:
-            completeness_value = _string(terminal.payload.get("completeness"))
-            if completeness_value in {"complete", "partial"}:
-                completeness = cast(Literal["complete", "partial"], completeness_value)
-            raw_limitations = terminal.payload.get("limitations")
-            if isinstance(raw_limitations, (list, tuple)):
-                limitations = tuple(item for item in raw_limitations if isinstance(item, str))
+        if not events:
+            raise TraceRecorderError("execution has no committed trace evidence")
+        created = [event for event in events if event.kind is EventKind.EXECUTION_CREATED]
+        if (
+            events[0].sequence != 0
+            or events[0].kind is not EventKind.EXECUTION_CREATED
+            or len(created) != 1
+            or events[0].payload.get("trace_id") != self._trace_id.root
+        ):
+            raise TraceRecorderError("execution creation evidence is malformed")
+        terminals = [event for event in events if event.kind is EventKind.EXECUTION_FINISHED]
+        if len(terminals) != 1 or terminals[0] is not events[-1]:
+            raise TraceRecorderError("execution terminal evidence is malformed")
+        terminal = terminals[0]
+        outcome_value = _string(terminal.payload.get("outcome"))
+        outcome = _enum_or_none(ExecutionOutcome, outcome_value) if outcome_value is not None else None
+        completeness_value = _string(terminal.payload.get("completeness"))
+        raw_limitations = terminal.payload.get("limitations")
+        if (
+            outcome is None
+            or completeness_value not in {"complete", "partial"}
+            or not isinstance(raw_limitations, (list, tuple))
+            or any(not isinstance(item, str) or not item.strip() for item in raw_limitations)
+        ):
+            raise TraceRecorderError("execution terminal evidence is malformed")
+        snapshot = self._project_snapshot()
+        if snapshot.outcome is not outcome:
+            raise TraceRecorderError("execution terminal outcome conflicts with snapshot")
+        completeness = cast(Literal["complete", "partial"], completeness_value)
+        limitations = tuple(raw_limitations)
         return TraceResult(
             trace_id=self._trace_id,
             execution_id=self._execution_id,
@@ -488,12 +622,32 @@ class ExecutionTraceRecorder:
     def _safe_limitations(
         *, cleanup_succeeded: bool, persistence_succeeded: bool, limitations: Sequence[str]
     ) -> tuple[str, ...]:
-        values = set(item for item in limitations if item in ExecutionTraceRecorder._ALLOWED_LIMITATIONS)
-        if not cleanup_succeeded:
-            values.add("cleanup_failed")
-        if not persistence_succeeded:
-            values.add("persistence_failed")
-        return tuple(sorted(values))
+        values: list[str] = []
+        for item in limitations:
+            if not isinstance(item, str) or not item.strip() or item not in ExecutionTraceRecorder._ALLOWED_LIMITATIONS:
+                raise TraceRecorderError("execution limitation is invalid")
+            if item not in values:
+                values.append(item)
+        if not cleanup_succeeded and "cleanup_failed" not in values:
+            values.append("cleanup_failed")
+        if not persistence_succeeded and "persistence_failed" not in values:
+            values.append("persistence_failed")
+        return tuple(values)
+
+    @classmethod
+    def _limitations_from_events(
+        cls, events: Sequence[CanonicalEvent]
+    ) -> tuple[str, ...]:
+        values: list[str] = []
+        for event in events:
+            if event.kind is not EventKind.DIAGNOSTIC:
+                continue
+            if event.payload.get("code") != "capture_limitation":
+                continue
+            limitation = event.payload.get("limitation")
+            if limitation in cls._ALLOWED_LIMITATIONS and limitation not in values:
+                values.append(cast(str, limitation))
+        return tuple(values)
 
     @staticmethod
     def _terminal_outcome(trace: TraceResult) -> str | None:

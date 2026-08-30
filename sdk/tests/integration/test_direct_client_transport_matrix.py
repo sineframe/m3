@@ -288,3 +288,10 @@ async def _assert_matrix_contract(client: AsyncDirectClient) -> None:
 async def test_direct_client_contract_is_transport_parity(kind: TransportKind) -> None:
     async with _client_for(kind) as client:
         await _assert_matrix_contract(client)
+    assert client.final_trace is not None
+    view = client.final_trace.view()
+    assert view.runtime.kind == "direct"
+    assert view.runtime.initialization.state.value == "observed"
+    assert view.runtime.initialization.value.server_name.value.startswith("matrix-")
+    assert view.tool_calls
+    assert view.summary.tool_call_count == 2

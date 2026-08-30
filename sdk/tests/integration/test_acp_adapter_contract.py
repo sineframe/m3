@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import stat
 import sys
+from collections.abc import Mapping
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from pathlib import Path
 
 import pytest
 
@@ -43,6 +44,7 @@ from mcp_pal.types import (
     TerminalPolicy,
     TransportKind,
 )
+from mcp_pal.observability import ACPTraceInfo, ObservationReason, ObservationState
 
 
 def _agent(path: Path) -> str:
@@ -90,6 +92,54 @@ for line in sys.stdin:
     elif method == 'session/set_config_option':
         send({'jsonrpc':'2.0','id':ident,'result':{'configOptions':[]}})
     elif method == 'session/prompt':
+        send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'configured-session','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'configured'}}}})
+        send({'jsonrpc':'2.0','id':ident,'result':{'stopReason':'end_turn'}})
+""",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return str(path)
+
+
+def _tool_agent(path: Path) -> str:
+    path.write_text(
+        """#!/usr/bin/env python3
+import json, sys
+def send(value):
+    print(json.dumps(value, separators=(',', ':')), flush=True)
+for line in sys.stdin:
+    request = json.loads(line); method = request.get('method'); ident = request.get('id')
+    if method == 'initialize': send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':1}})
+    elif method == 'session/new': send({'jsonrpc':'2.0','id':ident,'result':{'sessionId':'tool-session'}})
+    elif method == 'session/prompt':
+        send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'tool-session','update':{'sessionUpdate':'tool_call','toolCallId':'call-1','title':'Read_File'}}})
+        send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'tool-session','update':{'sessionUpdate':'tool_call_update','toolCallId':'call-1','rawInput':{'path':'x'},'rawOutput':{'ok':True},'status':'completed'}}})
+        send({'jsonrpc':'2.0','id':ident,'result':{'stopReason':'end_turn'}})
+""",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return str(path)
+
+
+def _rich_agent(path: Path) -> str:
+    path.write_text(
+        """#!/usr/bin/env python3
+import json, sys
+def send(value):
+    print(json.dumps(value, separators=(',', ':')), flush=True)
+for line in sys.stdin:
+    request = json.loads(line); method = request.get('method'); ident = request.get('id')
+    if method == 'initialize': send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':1}})
+    elif method == 'session/new': send({'jsonrpc':'2.0','id':ident,'result':{'sessionId':'rich-session'}})
+    elif method == 'session/prompt':
+        for update in (
+            {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'answer'}},
+            {'sessionUpdate':'agent_thought_chunk','content':{'type':'text','text':'thinking'}},
+            {'sessionUpdate':'plan','entries':[{'content':'step','status':'pending'}],'status':'updated'},
+            {'sessionUpdate':'current_mode_update','currentModeId':'working'},
+        ):
+            send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'rich-session','update':update}})
         send({'jsonrpc':'2.0','id':ident,'result':{'stopReason':'end_turn'}})
 """,
         encoding="utf-8",
@@ -143,6 +193,70 @@ async def test_acp_adapter_keeps_one_session_across_turns(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_acp_typed_observations_and_public_runtime_are_finalized(tmp_path: Path) -> None:
+    """ACP frames and session metadata survive the public finalized view."""
+    command = _agent(tmp_path / "typed-agent.py")
+    spec = AgentExecutionSpec(
+        harness=ACPAgent(
+            model="fixture",
+            manifest={"command": sys.executable, "args": [command], "protocol": "acp", "protocol_version": 1},
+        ),
+        servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
+    )
+    async with AsyncMCPTestKit(env={}, cwd=tmp_path) as kit:
+        session = kit.agent_session(spec)
+        async with session:
+            result = await session.send("typed")
+            assert result.response is not None
+            assert result.response.text == "turn-1"
+            active = session.adapter._active
+            assert active is not None
+            evidence = result.evidence
+            assert evidence is not None
+        view = session.result.trace_view
+    assert isinstance(view.runtime, ACPTraceInfo)
+    assert view.runtime.protocol_version.state is ObservationState.OBSERVED
+    assert view.runtime.session_id.state is ObservationState.OBSERVED
+    assert view.runtime.usage.state is ObservationState.UNSUPPORTED
+    assert view.processes
+    assert view.processes[0].exit_code.state is ObservationState.NOT_EMITTED
+    assert any(entry.kind == "raw_message" for entry in view.timeline)
+    assert view.messages
+    assert view.messages[0].message_id.state is ObservationState.NOT_EMITTED
+    assert view.messages[0].message_id.reason is ObservationReason.PROVIDER_DID_NOT_EMIT
+    raw_methods = set()
+    raw_timing: list[tuple[str, float]] = []
+    for entry in view.timeline:
+        if entry.kind != "provider" or getattr(entry, "category", "") != "raw_frame":
+            continue
+        if entry.data.state is ObservationState.OBSERVED and isinstance(entry.data.value, Mapping):
+            method = entry.data.value.get("method")
+            if isinstance(method, str):
+                raw_methods.add(method)
+                raw_timing.append((method, entry.timing.start_offset_ms))
+    assert {"initialize", "session/new", "session/prompt", "session/update"} <= raw_methods
+    assert raw_timing
+    assert min(offset for method, offset in raw_timing if method == "initialize") <= min(
+        offset for method, offset in raw_timing if method == "session/prompt"
+    )
+
+
+@pytest.mark.asyncio
+async def test_acp_tool_observation_preserves_builtin_identity_and_result(tmp_path: Path) -> None:
+    command = _tool_agent(tmp_path / "tool-agent.py")
+    session = await AcpHarnessAdapter().open(_launch(command))
+    result = await session.send(HarnessTurnRequest.from_message("tool"))
+    assert result.turn_evidence is not None
+    calls = [item for item in result.turn_evidence.observations if item.kind == "tool_call_observed"]
+    results = [item for item in result.turn_evidence.observations if item.kind == "tool_result_observed"]
+    assert len(calls) == len(results) == 1
+    assert calls[0].server is None and calls[0].tool == "Read_File"
+    assert calls[0].arguments == {"path": "x"}
+    assert results[0].result == {"ok": True} and results[0].status == "success"
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_acp_applies_typed_mode_and_config_before_first_prompt(tmp_path: Path) -> None:
     command = _configured_agent(tmp_path / "configured-agent.py")
     launch = _launch(command)
@@ -163,6 +277,64 @@ async def test_acp_applies_typed_mode_and_config_before_first_prompt(tmp_path: P
     methods = [frame["payload"].get("method") for frame in frames if isinstance(frame.get("payload"), dict)]
     assert methods.index("session/set_mode") < methods.index("session/set_config_option") < methods.index("session/prompt")
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_acp_public_runtime_projects_modes_and_selected_config(tmp_path: Path) -> None:
+    command = _configured_agent(tmp_path / "runtime-agent.py")
+    base = _launch(command)
+    spec = base.spec.model_copy(update={
+        "harness": ACPAgent(
+            model="fixture",
+            manifest={"command": sys.executable, "args": [command], "protocol": "acp", "protocol_version": 1},
+            agent_mode_id="fast",
+            session_config={"quality": "high"},
+        )
+    })
+    async with AsyncMCPTestKit(env={}, cwd=tmp_path) as kit:
+        session = kit.agent_session(spec)
+        async with session:
+            result = await session.send("runtime")
+            assert result.response is not None and result.response.text == "configured"
+        view = session.result.trace_view
+    assert isinstance(view.runtime, ACPTraceInfo)
+    assert view.runtime.available_modes.state is ObservationState.OBSERVED
+    assert view.runtime.available_modes.value is not None
+    assert [
+        {key: dict(item).get(key) for key in ("id", "name")}
+        for item in view.runtime.available_modes.value
+    ] == [{"id": "fast", "name": "Fast"}]
+    assert view.runtime.current_mode.state is ObservationState.OBSERVED
+    assert view.runtime.current_mode.value == "fast"
+    assert view.runtime.selected_config.state is ObservationState.OBSERVED
+    assert view.runtime.selected_config.value == {"quality": "high"}
+    assert view.runtime.plan_state_available.state is ObservationState.NOT_EMITTED
+
+
+@pytest.mark.asyncio
+async def test_acp_public_source_shape_preserves_message_reasoning_plan_and_state(tmp_path: Path) -> None:
+    command = _rich_agent(tmp_path / "rich-agent.py")
+    spec = AgentExecutionSpec(
+        harness=ACPAgent(
+            model="fixture",
+            manifest={"command": sys.executable, "args": [command], "protocol": "acp", "protocol_version": 1},
+        ),
+        servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
+    )
+    async with AsyncMCPTestKit(env={}, cwd=tmp_path) as kit:
+        session = kit.agent_session(spec)
+        async with session:
+            result = await session.send("rich")
+            assert result.response is not None
+        view = session.result.trace_view
+    assert view.messages
+    assert view.messages[0].content
+    assert view.reasoning
+    assert view.reasoning[0].content.state is ObservationState.OBSERVED
+    providers = [entry for entry in view.timeline if entry.kind == "provider"]
+    assert any(getattr(entry, "category", None) == "plan" for entry in providers)
+    assert any(getattr(entry, "category", None) == "state" for entry in providers)
+    assert view.runtime.plan_state_available.state is ObservationState.OBSERVED
 
 
 @pytest.mark.asyncio
@@ -382,5 +554,16 @@ async def test_acp_callbacks_use_interaction_controller_and_keep_receipts_safe()
     assert written is not None
     assert output.output == canary
     assert all(canary not in repr(item) for item in controller.receipts())
+    assert {
+        kind
+        for kind, _request, _response in client.interaction_events
+    } >= {
+        "filesystem.read",
+        "filesystem.write",
+        "terminal.create",
+        "terminal.output",
+        "terminal.wait",
+        "terminal.release",
+    }
     with pytest.raises(RuntimeError, match="acp_auth_required"):
         await client.authenticate("unused")

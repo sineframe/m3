@@ -43,6 +43,32 @@ Follow [`test_discover_and_call_a_tool`](../examples/tests/test_quick_start.py):
 4. Call the selected tool with `call_tool(name, arguments)`.
 5. Assert `is_error` and `structured_content` on the typed result.
 
+For assertions about the whole execution, close the client first and project
+its finalized trace. `TraceView` is the stable typed surface for tools,
+messages, timing, runtime metadata, and terminal outcome:
+
+```python
+from mcp_pal.types import ExecutionOutcome
+
+with MCPTestKit(env={}) as kit, kit.direct(example_server) as client:
+    result = client.call_tool("shipping_quote", {"weight_kg": 2, "zone": "local"})
+    # result is the typed operation result while the client is open.
+
+trace = client.final_trace
+assert trace is not None
+view = trace.view()
+assert view.outcome is ExecutionOutcome.COMPLETED
+call = view.tool_calls[0]
+assert call.tool.value == "shipping_quote"
+assert call.arguments.value == {"weight_kg": 2, "zone": "local"}
+assert call.wire.state.value == "observed"
+```
+
+The executable version is
+[`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py).
+Trace projection is finalized-only; use the operation result for assertions
+that must happen before client shutdown.
+
 Both objects are context managers. Exiting the direct client closes its MCP
 connection and subprocess; exiting the kit provides the outer cleanup boundary.
 

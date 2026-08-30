@@ -19,7 +19,7 @@ import signal
 import subprocess
 import sys
 import time
-from typing import IO, Iterator, cast
+from typing import IO, Iterator
 
 import pytest
 from pydantic import TypeAdapter
@@ -31,6 +31,7 @@ from mcp_pal.sync_api import InitializationResult, PromptResult, ResourceReadRes
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.testing import FaultInjector
 from mcp_pal.errors import UnsupportedFeature
+from mcp_pal.observability import ObservationState
 from mcp_pal.types import (
     ACPAgent,
     AgentExecutionSpec,
@@ -563,6 +564,30 @@ def test_multiturn_acp_session_calls_one_real_mcp_and_keeps_a_trace(tmp_path: Pa
     assert len(wire_calls) == len(wire_results) == 3
     assert [event.payload["arguments"]["text"] for event in wire_calls] == list(nonces)
     assert [event.payload["result"]["content"][0]["text"] for event in wire_results] == list(nonces)
+    reported_calls = [
+        event for event in trace.events
+        if event.kind.value == "tool.call_requested"
+        and event.provenance.origin.value == "harness_reported"
+        and event.provenance.source == "acp"
+    ]
+    reported_results = [
+        event for event in trace.events
+        if event.kind.value == "tool.result_received"
+        and event.provenance.origin.value == "harness_reported"
+        and event.provenance.source == "acp"
+    ]
+    assert len(reported_calls) == len(reported_results) == 3
+    assert [event.turn_id for event in reported_calls] == [event.turn_id for event in reported_results]
+    assert len({event.turn_id for event in reported_calls}) == 3
+    assert {event.server_binding for event in reported_calls} == {"e2e-mcp"}, repr([
+        dict(event.payload) for event in reported_calls
+    ])
+    assert {event.payload.get("tool") for event in reported_calls} == {"echo"}, [
+        dict(event.payload) for event in reported_calls
+    ]
+    assert [event.payload["call_id"] for event in reported_calls] == [
+        event.payload["call_id"] for event in reported_results
+    ]
     assert [event.payload["response_to_sequence"] for event in wire_results] == [
         event.payload["request_sequence"] for event in wire_calls
     ]
@@ -692,6 +717,10 @@ def test_acp_process_loss_is_failed_partial_trace_and_cleans_mcp(tmp_path: Path)
         assert trace.completeness == "partial"
         assert trace.limitations == ("partial_trace",)
         assert trace.events[-1].kind.value == "execution.finished"
+        view = session.result.trace_view
+        assert view.processes
+        assert view.processes[-1].exit_code.state is ObservationState.OBSERVED
+        assert view.processes[-1].exit_code.value == 17
 
     _wait_for_file(mcp_marker)
     observations = [json.loads(line) for line in mcp_marker.read_text(encoding="utf-8").splitlines()]

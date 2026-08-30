@@ -36,16 +36,10 @@ harness. Resource and prompt coverage lives in
 
 For an agent-driven workflow, see the opt-in live OpenCode example
 [`test_live_opencode.py`](../examples/tests/test_live_opencode.py). It uses a
-restrictive policy, sends one instruction, and verifies the actual captured
-wire tool call rather than trusting the model's prose. Live tests need an
+restrictive policy, sends one instruction, and verifies the typed finalized
+`TraceView` tool call rather than trusting model prose. Live tests need an
 explicit environment opt-in and credentials, so they are separate from the
 deterministic suite and should have generous operation timeouts.
-
-The example also documents a current matcher integration gap: agent-session
-wire events expose tool fields at the event-payload root, whereas the generic
-tool matcher reads the direct-client `params` projection. The example therefore
-inspects untouched canonical events directly; that workaround should disappear
-once the SDK normalizes both trace sources.
 
 ## Tool errors and exceptions
 
@@ -88,12 +82,46 @@ the test explicitly controls every call and transition.
 
 ## Live and finalized traces
 
-The direct client records canonical evidence around MCP requests, responses,
-and tool calls. While the client is open, `client.trace` is a live immutable
-snapshot. After the client closes, `client.final_trace` includes terminal
-cleanup and `execution.finished` evidence. Inspect the finalized form when
-asserting completeness or terminal outcome, as demonstrated by
-[`test_inspect_a_finalized_trace`](../examples/tests/test_tracing_and_lifecycle.py).
+The SDK records a canonical `TraceResult` and derives the public immutable
+`TraceView` from it. `TraceResult.events` is useful for storage and auditing;
+application and test assertions should use `trace.view()` (or
+`result.trace_view`). Projection is finalized-only: attempting to project an
+open trace raises `TraceNotFinalized`. The finalized view has one ordered
+`timeline` plus indexes such as `messages`, `reasoning`, `tool_calls`,
+`protocol`, `interactions`, `processes`, and `raw_messages`. Use `for_turn`,
+`for_session`, `for_server`, and `between` to make filtered views.
+
+Every observed value is an `Observation`: `OBSERVED` has a value,
+`NOT_EMITTED` means the source did not provide the field, `UNAVAILABLE` means
+capture or correlation failed, and `UNSUPPORTED` means the harness cannot
+expose it. `PROVIDER_HIDDEN` and `ENCRYPTED` preserve provider-hidden and
+encrypted reasoning without inventing plaintext; reasons such as
+`MALFORMED_SOURCE` and states such as `TRUNCATED` or `REDACTED` preserve other
+limitations. A finalized-only projection can raise `TraceNotFinalized` while
+an unavailable persisted trace can raise `TraceUnavailable`; an open trace is
+not assumed to have a usable view.
+Inspect both `state` and (when present) `reason`; never treat `value=None` as
+the only availability signal.
+
+Tool entries retain `wire` and `reported` evidence separately. A resolved
+entry uses wire authority when the two correlate, while `conflicts` records
+disagreements instead of hiding them. Messages and reasoning are typed
+entries; encrypted or provider-hidden reasoning is represented by its state,
+not guessed plaintext. Runtime metadata is discriminated by `runtime.kind`:
+`direct`, `opencode`, `claude_code`, or `acp`, and each variant exposes only
+fields that source can truthfully provide.
+
+Raw provider/MCP/process evidence is bounded and redacted before persistence.
+When a `raw_messages` entry has an `evidence_ref`, read it through the kit or
+store `read_raw_evidence` API; preview state distinguishes observed, redacted,
+and truncated content. In-memory storage is the default. Pass a
+`SQLiteExecutionStore` when durable reopen is part of the test, then close and
+reopen the store and call `get_trace_view(execution_id)`. Sync and async kits
+project the same typed shape. Harness-specific fields may legitimately be
+`NOT_EMITTED` or `UNSUPPORTED` (for example ACP usage), and failed, timed-out,
+or cancelled traces retain partial evidence and limitations without invented
+provider, usage, reasoning, HTTP, or process facts. See
+[`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py).
 
 ## Determinism and isolation
 

@@ -17,6 +17,7 @@ from typing import (
     Mapping as _Mapping,
     Iterator as _Iterator,
     Sequence as _Sequence,
+    TYPE_CHECKING as _TYPE_CHECKING,
     Union as _Union,
 )
 
@@ -32,6 +33,9 @@ from pydantic import (
     field_validator as _field_validator,
     model_validator as _model_validator,
 )
+
+if _TYPE_CHECKING:
+    from .observability import TraceView as _TraceView
 
 from .errors import InvalidTransitionError as _InvalidTransitionError, ModelValidationError as _ModelValidationError
 
@@ -954,6 +958,20 @@ class EventKind(str, _Enum):
     SAMPLING_RESPONSE = "sampling.response"
     ELICITATION_REQUEST = "elicitation.request"
     ELICITATION_RESPONSE = "elicitation.response"
+    FILESYSTEM_READ_REQUEST = "filesystem.read.request"
+    FILESYSTEM_READ_RESPONSE = "filesystem.read.response"
+    FILESYSTEM_WRITE_REQUEST = "filesystem.write.request"
+    FILESYSTEM_WRITE_RESPONSE = "filesystem.write.response"
+    TERMINAL_CREATE_REQUEST = "terminal.create.request"
+    TERMINAL_CREATE_RESPONSE = "terminal.create.response"
+    TERMINAL_OUTPUT_REQUEST = "terminal.output.request"
+    TERMINAL_OUTPUT_RESPONSE = "terminal.output.response"
+    TERMINAL_WAIT_REQUEST = "terminal.wait.request"
+    TERMINAL_WAIT_RESPONSE = "terminal.wait.response"
+    TERMINAL_RELEASE_REQUEST = "terminal.release.request"
+    TERMINAL_RELEASE_RESPONSE = "terminal.release.response"
+    TERMINAL_KILL_REQUEST = "terminal.kill.request"
+    TERMINAL_KILL_RESPONSE = "terminal.kill.response"
     REASONING = "reasoning"
     EVALUATION_RECORDED = "evaluation.recorded"
     ARTIFACT_RECORDED = "artifact.recorded"
@@ -1126,6 +1144,13 @@ class TraceResult(FrozenModel):
     highest_sequence: int = _Field(default=0, ge=0)
     events: tuple[CanonicalEvent, ...] = ()
     limitations: tuple[str, ...] = ()
+
+    def view(self) -> "_TraceView":
+        """Project this finalized canonical trace into the typed view."""
+
+        from .trace.projector import TraceProjector
+
+        return TraceProjector.project(self)
 
     @_model_validator(mode="after")
     def _validate_trace_invariants(self) -> "TraceResult":
@@ -1347,6 +1372,16 @@ class ExecutionResult(FrozenModel):
     activity_health: ActivityHealth = ActivityHealth.NO_CALLS
     error: ErrorInfo | None = None
     provenance: SessionProvenance | None = None
+
+    @property
+    def trace_view(self) -> "_TraceView":
+        """Return the finalized typed view for this execution trace."""
+
+        if self.trace is None:
+            from .errors import TraceUnavailable
+
+            raise TraceUnavailable("execution has no trace evidence")
+        return self.trace.view()
 
     @_model_validator(mode="after")
     def _requires_terminal_snapshot(self) -> "ExecutionResult":

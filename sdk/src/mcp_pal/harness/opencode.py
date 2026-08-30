@@ -8,24 +8,41 @@ the lifetime of the adapter.  The adapter never falls back to one-shot
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
-from dataclasses import replace
-from pathlib import Path
+import os
 import re
 import shutil
-import os
 import subprocess
 import tempfile
+import time
 from collections.abc import Mapping
-from typing import Any
-from uuid import uuid4
+from dataclasses import replace
+from datetime import datetime, timezone
+from math import isfinite
+from pathlib import Path
+from typing import Any, Literal, NamedTuple, cast
 
 import httpx
 
 from ..agent_session import AdapterTurn
-from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
-from ..types import Capability, CapabilityStatus, ErrorCode, ErrorInfo, FullToolPolicy, NativeToolPolicy, OpenCode, Readiness, RestrictiveToolPolicy, SecretReference, TextContent, TurnResponse, UserMessage
+from ..trace.redaction import RedactionConfig, is_sensitive_key, redact_for_api
+from ..types import (
+    Capability,
+    CapabilityStatus,
+    ErrorCode,
+    ErrorInfo,
+    FullToolPolicy,
+    NativeToolPolicy,
+    OpenCode,
+    Readiness,
+    RestrictiveToolPolicy,
+    SecretReference,
+    TextContent,
+    TurnResponse,
+    UserMessage,
+)
 from .contracts import (
     HarnessAdapterCapabilities,
     HarnessAdapterError,
@@ -41,17 +58,55 @@ from .native import (
     ProcessOwner,
     _executable,
     _isolated_environment,
+    _server_configuration,
     _text,
     probe_help,
     read_bounded_line,
-    _server_configuration,
     workspace_for_launch,
 )
-
+from .observations import (
+    HarnessObservation,
+    MessageChunkObservation,
+    MetadataObservedObservation,
+    RawEvidenceInput,
+    RawFrameObservation,
+    ReasoningChunkObservation,
+    ToolCallObservedObservation,
+    ToolResultObservedObservation,
+    TurnEvidence,
+    UsageObservedObservation,
+)
 
 _URL = re.compile(r"https?://(?:127\.0\.0\.1|localhost|\[::1\]):\d+")
 _DIALECT_PROBE_CONTROL_KEYS = frozenset({"MCP_PAL_OPENCODE_MODE", "MCP_PAL_PROBE_MARKER", "MCP_PAL_VERSION_MARKER"})
-_TOKEN_COUNTERS = frozenset({"input", "output", "reasoning", "cache_read", "cache_write"})
+_TOKEN_COUNTERS = frozenset({"input", "output", "reasoning", "cache_creation", "cache_read", "cache_write", "total"})
+_ToolStatus = Literal[
+    "success",
+    "tool_error",
+    "protocol_error",
+    "transport_error",
+    "cancelled",
+    "timed_out",
+    "incomplete",
+]
+_TurnStatus = Literal["completed", "failed", "timed_out", "cancelled", "interrupted"]
+_MALFORMED_MARKER: dict[str, str] = {
+    "capture": "unavailable",
+    "reason": "malformed_source",
+}
+_INVALID_METADATA = object()
+_MISSING_IDENTIFIER = object()
+
+
+def _valid_identifier(value: object) -> bool:
+    """Accept only bounded, printable provider identifiers."""
+
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and len(value) <= 256
+        and all(ord(char) >= 0x20 and ord(char) != 0x7F for char in value)
+    )
 
 
 def opencode_configuration(launch: HarnessLaunch, *, dialect: str = "legacy") -> dict[str, Any]:
@@ -185,6 +240,17 @@ def _write_opencode_config(root: Path, launch: HarnessLaunch, dialect: str) -> P
 
 class _ResponseTooLarge(ValueError):
     """The provider response exceeded the bounded native frame size."""
+
+
+class _HistorySnapshot(NamedTuple):
+    items: tuple[Mapping[str, Any], ...]
+    body: bytes | None
+    status_code: int | None
+    content_type: object
+    truncated: bool
+    valid: bool
+    start_offset_ms: float = 0.0
+    end_offset_ms: float = 0.0
 
 
 class OpenCodeHarnessAdapter:
@@ -447,6 +513,8 @@ class OpenCodeHarnessAdapter:
             terminal=result.status != "completed",
             tool_calls=result.tool_calls,
             evidence=result.evidence,
+            trace_limitations=result.trace_limitations,
+            turn_evidence=result.turn_evidence,
         )
 
     async def close(self) -> None:
@@ -507,6 +575,8 @@ class OpenCodeHarnessAdapter:
         client = self._client
         if client is None:
             raise HarnessAdapterError("OpenCode session is not open")
+        turn_started = time.monotonic()
+        turn_wall_time = datetime.now(timezone.utc)
         payload = {
             "model": self._model_reference(),
             "parts": [{"type": "text", "text": _text(request.message.model_dump(mode="python"))}],
@@ -518,62 +588,465 @@ class OpenCodeHarnessAdapter:
                 json=payload,
                 timeout=request.timeout_seconds,
             ) as response:
+                try:
+                    response_body = await self._read_bounded_response(response)
+                except _ResponseTooLarge:
+                    return self._failure_result(
+                        sequence,
+                        "failed",
+                        ErrorCode.PROTOCOL_ERROR,
+                        "OpenCode response exceeded safe frame size",
+                        status_code=response.status_code,
+                        content_type=response.headers.get("content-type"),
+                        turn_started=turn_started,
+                        turn_wall_time=turn_wall_time,
+                    )
                 if response.status_code >= 400:
-                    return HarnessTurnResult(
-                        sequence=sequence,
-                        status="failed",
-                        error=ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="OpenCode turn failed"),
-                        evidence={"process_observed": True, "transport_observed": "http", "usage_state": "unavailable"},
+                    return self._failure_result(
+                        sequence,
+                        "failed",
+                        ErrorCode.TRANSPORT_ERROR,
+                        "OpenCode turn failed",
+                        raw_body=response_body,
+                        status_code=response.status_code,
+                        content_type=response.headers.get("content-type"),
+                        turn_started=turn_started,
+                        turn_wall_time=turn_wall_time,
                     )
                 try:
-                    body = json.loads(await self._read_bounded_response(response))
+                    body = json.loads(response_body)
                 except json.JSONDecodeError:
-                    return HarnessTurnResult(
-                        sequence=sequence,
-                        status="failed",
-                        error=ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="OpenCode response was invalid"),
-                        evidence={"process_observed": True, "transport_observed": "http", "usage_state": "unavailable"},
+                    return self._failure_result(
+                        sequence,
+                        "failed",
+                        ErrorCode.PROTOCOL_ERROR,
+                        "OpenCode response was invalid",
+                        raw_body=response_body,
+                        status_code=response.status_code,
+                        content_type=response.headers.get("content-type"),
+                        turn_started=turn_started,
+                        turn_wall_time=turn_wall_time,
                     )
         except _ResponseTooLarge:
-            return HarnessTurnResult(
-                sequence=sequence,
-                status="failed",
-                error=ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="OpenCode response exceeded safe frame size"),
-                evidence={"process_observed": True, "transport_observed": "http", "usage_state": "unavailable"},
+            return self._failure_result(
+                sequence,
+                "failed",
+                ErrorCode.PROTOCOL_ERROR,
+                "OpenCode response exceeded safe frame size",
+                turn_started=turn_started,
+                turn_wall_time=turn_wall_time,
             )
         except (asyncio.TimeoutError, httpx.TimeoutException):
-            return HarnessTurnResult(sequence=sequence, status="timed_out", error=ErrorInfo(code=ErrorCode.TIMEOUT, message="OpenCode turn timed out"), evidence={"process_observed": True, "transport_observed": "http", "usage_state": "unavailable"})
+            return self._failure_result(
+                sequence,
+                "timed_out",
+                ErrorCode.TIMEOUT,
+                "OpenCode turn timed out",
+                turn_started=turn_started,
+                turn_wall_time=turn_wall_time,
+            )
         except (httpx.HTTPError, OSError, ValueError, TypeError):
-            return HarnessTurnResult(sequence=sequence, status="failed", error=ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="OpenCode response was invalid"), evidence={"process_observed": True, "transport_observed": "http", "usage_state": "unavailable"})
+            return self._failure_result(
+                sequence,
+                "failed",
+                ErrorCode.TRANSPORT_ERROR,
+                "OpenCode response was invalid",
+                turn_started=turn_started,
+                turn_wall_time=turn_wall_time,
+            )
         if not isinstance(body, Mapping):
-            return HarnessTurnResult(sequence=sequence, status="failed", error=ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="OpenCode response was invalid"), evidence={"process_observed": True, "transport_observed": "http", "usage_state": "unavailable"})
+            return self._failure_result(
+                sequence,
+                "failed",
+                ErrorCode.PROTOCOL_ERROR,
+                "OpenCode response was invalid",
+                raw_body=response_body,
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type"),
+                turn_started=turn_started,
+                turn_wall_time=turn_wall_time,
+            )
         info = body.get("info")
         parts = body.get("parts")
         if not isinstance(parts, list) or len(parts) > 256:
-            return HarnessTurnResult(sequence=sequence, status="failed", error=ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="OpenCode response was invalid"), evidence={"process_observed": True, "transport_observed": "http"})
+            return self._failure_result(
+                sequence,
+                "failed",
+                ErrorCode.PROTOCOL_ERROR,
+                "OpenCode response was invalid",
+                raw_body=response_body,
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type"),
+                turn_started=turn_started,
+                turn_wall_time=turn_wall_time,
+            )
         if not isinstance(info, Mapping):
-            return HarnessTurnResult(sequence=sequence, status="failed", error=ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="OpenCode response was invalid"), evidence={"process_observed": True, "transport_observed": "http"})
+            return self._failure_result(
+                sequence,
+                "failed",
+                ErrorCode.PROTOCOL_ERROR,
+                "OpenCode response was invalid",
+                raw_body=response_body,
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type"),
+                turn_started=turn_started,
+                turn_wall_time=turn_wall_time,
+            )
+        # Some 1.18 servers return the completed assistant message without
+        # intermediate tool parts on POST.  Only then do we read one bounded
+        # history page.  The final assistant parent is the authoritative
+        # lineage; there is deliberately no pre-request full-history cursor.
+        post_has_tool_parts = any(
+            isinstance(part, Mapping)
+            and part.get("type") in {"tool", "tool-call"}
+            for part in parts
+        )
+        history_after: _HistorySnapshot | None = None
+        supplemental_parts: list[Mapping[str, Any]] = []
+        history_ambiguous = False
+        if not post_has_tool_parts:
+            final_parent = info.get("parentID", info.get("parentId"))
+            if not isinstance(final_parent, str) or not final_parent:
+                history_ambiguous = True
+            else:
+                get_messages = getattr(client, "get", None)
+                remaining = None
+                if request.timeout_seconds is not None:
+                    remaining = request.timeout_seconds - (time.monotonic() - turn_started)
+                    if remaining <= 0:
+                        get_messages = None
+                if callable(get_messages):
+                    history_after = await self._history_snapshot(
+                        client, session_id, timeout=remaining, turn_started=turn_started
+                    )
+                if history_after is None or not history_after.valid:
+                    history_ambiguous = True
+                if history_after is not None and history_after.valid:
+                    candidates: list[Mapping[str, Any]] = []
+                    for item in history_after.items:
+                        item_info = item.get("info")
+                        if not isinstance(item_info, Mapping):
+                            continue
+                        if (
+                            item_info.get("sessionID") != session_id
+                            or item_info.get("role") != "assistant"
+                            or item_info.get("parentID", item_info.get("parentId"))
+                            != final_parent
+                        ):
+                            continue
+                        if isinstance(item.get("parts"), list):
+                            candidates.append(item)
+                        else:
+                            history_ambiguous = True
+                    seen_part_ids: set[str] = set()
+                    for item in parts:
+                        if isinstance(item, Mapping) and isinstance(item.get("id"), str):
+                            seen_part_ids.add(item["id"])
+                    for candidate in candidates:
+                        candidate_parts = candidate.get("parts")
+                        if not isinstance(candidate_parts, list):
+                            continue
+                        for candidate_part in candidate_parts:
+                            if not isinstance(candidate_part, Mapping):
+                                continue
+                            part_id = candidate_part.get("id")
+                            if isinstance(part_id, str):
+                                if part_id in seen_part_ids:
+                                    continue
+                                seen_part_ids.add(part_id)
+                            if candidate_part.get("type") in {
+                                "tool",
+                                "tool-call",
+                                "reasoning",
+                                "text",
+                            }:
+                                supplemental_parts.append(candidate_part)
+                    # A bounded page is incomplete even when it contains a
+                    # matching candidate: older same-parent parts may remain
+                    # behind the provider cursor.
+                    history_ambiguous = history_after.truncated
+            parts = [*parts, *supplemental_parts]
+        # The v2 response identifies the assistant message and repeats the
+        # session identity.  A present malformed/mismatching identity is a
+        # protocol failure; it must not be guessed into a successful turn.
+        if "sessionID" in info and (
+            not isinstance(info["sessionID"], str)
+            or not info["sessionID"]
+            or info["sessionID"] != session_id
+        ):
+            return self._failure_result(
+                sequence,
+                "failed",
+                ErrorCode.PROTOCOL_ERROR,
+                "OpenCode response was invalid",
+                raw_body=response_body,
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type"),
+                turn_started=turn_started,
+                turn_wall_time=turn_wall_time,
+            )
         text_parts: list[str] = []
         tool_calls_list: list[Mapping[str, Any]] = []
-        for part in parts:
+        observations: list[HarnessObservation] = []
+        limitations: list[str] = []
+        info_wall_time, malformed_info_time = self._source_wall_time(
+            info.get("time"), turn_wall_time
+        )
+        if "time" in info and malformed_info_time:
+            limitations.append("capture_incomplete")
+        observations.append(
+            self._raw_frame_observation(
+                sequence,
+                response_body,
+                response.headers.get("content-type"),
+                turn_wall_time,
+                turn_started,
+            )
+        )
+        if history_after is not None:
+            if history_after.body is not None:
+                observations.append(
+                    self._raw_frame_observation(
+                        sequence,
+                        history_after.body,
+                        history_after.content_type,
+                        turn_wall_time,
+                        turn_started,
+                        observation_id=f"opencode-history-after-{sequence}",
+                    )
+                )
+            observations.extend(
+                self._http_metadata_observations(
+                    sequence,
+                    history_after.status_code,
+                    history_after.content_type,
+                    turn_wall_time,
+                    turn_started,
+                    prefix="http_history_after",
+                    start_offset_ms=history_after.start_offset_ms,
+                    end_offset_ms=history_after.end_offset_ms,
+                )
+            )
+        observations.extend(
+            self._metadata_observations(sequence, info, info_wall_time, turn_started)
+        )
+        observations.append(
+            MetadataObservedObservation(
+                observation_id=f"opencode-{sequence}-session",
+                harness_kind="opencode",
+                turn_sequence=sequence,
+                wall_time=turn_wall_time,
+                monotonic_offset_ms=self._offset_ms(turn_started),
+                name="session_id",
+                value=session_id,
+            )
+        )
+        observations.extend(
+            self._http_metadata_observations(
+                sequence,
+                response.status_code,
+                response.headers.get("content-type"),
+                turn_wall_time,
+                turn_started,
+            )
+        )
+        for part_index, part in enumerate(parts):
             if not isinstance(part, Mapping):
-                return HarnessTurnResult(sequence=sequence, status="failed", error=ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="OpenCode response was invalid"), evidence={"process_observed": True, "transport_observed": "http"})
+                return self._failure_result(
+                    sequence,
+                    "failed",
+                    ErrorCode.PROTOCOL_ERROR,
+                    "OpenCode response was invalid",
+                    raw_body=response_body,
+                    status_code=response.status_code,
+                    content_type=response.headers.get("content-type"),
+                    turn_started=turn_started,
+                    turn_wall_time=turn_wall_time,
+                )
+            part_wall_time, malformed_part_time = self._source_wall_time(
+                part.get("time"), turn_wall_time
+            )
+            if "time" in part and malformed_part_time:
+                limitations.append("capture_incomplete")
             if part.get("type") == "text":
                 value = part.get("text")
                 if value is None:
-                    continue
+                    return self._failure_result(
+                        sequence,
+                        "failed",
+                        ErrorCode.PROTOCOL_ERROR,
+                        "OpenCode response was invalid",
+                        raw_body=response_body,
+                        status_code=response.status_code,
+                        content_type=response.headers.get("content-type"),
+                        turn_started=turn_started,
+                        turn_wall_time=turn_wall_time,
+                    )
                 if not isinstance(value, str):
-                    return HarnessTurnResult(sequence=sequence, status="failed", error=ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="OpenCode response was invalid"), evidence={"process_observed": True, "transport_observed": "http"})
+                    return self._failure_result(
+                        sequence,
+                        "failed",
+                        ErrorCode.PROTOCOL_ERROR,
+                        "OpenCode response was invalid",
+                        raw_body=response_body,
+                        status_code=response.status_code,
+                        content_type=response.headers.get("content-type"),
+                        turn_started=turn_started,
+                        turn_wall_time=turn_wall_time,
+                    )
                 if value:
                     text_parts.append(value)
+                    observations.append(
+                        self._message_observation(
+                            sequence,
+                            value,
+                            part,
+                            part_index,
+                            part_wall_time,
+                            turn_started,
+                            info.get("id", _MISSING_IDENTIFIER),
+                        )
+                    )
+                continue
+            if part.get("type") in ("reasoning", "thinking"):
+                reasoning = self._reasoning_observation(
+                    sequence, part, part_index, part_wall_time, turn_started
+                )
+                if reasoning is None:
+                    limitations.append("capture_incomplete")
+                else:
+                    observations.append(reasoning)
                 continue
             if part.get("type") not in ("tool", "tool-call"):
                 continue
-            name = part.get("tool") or part.get("name")
-            call_id = part.get("callID") or part.get("callId") or part.get("id")
+            name = part.get("tool")
+            if name is None:
+                name = part.get("name")
+            call_id = part.get("callID")
+            if call_id is None:
+                call_id = part.get("callId")
+            if call_id is None:
+                call_id = part.get("id")
             if not isinstance(name, str) or not name or not isinstance(call_id, str) or not call_id:
-                return HarnessTurnResult(sequence=sequence, status="failed", error=ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="OpenCode response was invalid"), evidence={"process_observed": True, "transport_observed": "http"})
-            tool_calls_list.append({"tool": name, "call_id": call_id})
+                limitations.append("capture_incomplete")
+                continue
+            server_name, tool_name = self._normalize_tool_name(name)
+            state = part.get("state")
+            state_mapping = state if isinstance(state, Mapping) else {}
+            arguments_present = (
+                "arguments" in part
+                or "input" in part
+                or "input" in state_mapping
+            )
+            arguments = part.get("arguments", part.get("input", state_mapping.get("input")))
+            status = self._tool_status(state_mapping, part)
+            result_present = "output" in state_mapping or "result" in state_mapping
+            result_value = state_mapping.get("output", state_mapping.get("result"))
+            error_present = "error" in state_mapping or "error" in part
+            error_value = state_mapping.get("error", part.get("error"))
+            if status == "success" and not result_present and not error_present:
+                # A completed state without output is malformed, not a
+                # successful tool invocation with an invented null result.
+                status = "incomplete"
+            try:
+                call_kwargs: dict[str, Any] = {}
+                if arguments_present:
+                    call_kwargs["arguments"] = arguments
+                if status is not None:
+                    call_kwargs["status"] = status
+                observations.append(
+                    ToolCallObservedObservation(
+                        observation_id=f"opencode-{session_id}-{sequence}-call-{len(tool_calls_list)}",
+                        harness_kind="opencode",
+                        turn_sequence=sequence,
+                        wall_time=part_wall_time,
+                        monotonic_offset_ms=self._offset_ms(turn_started),
+                        call_id=call_id,
+                        server=server_name,
+                        tool=tool_name,
+                        **call_kwargs,
+                    )
+                )
+            except (TypeError, ValueError):
+                return self._failure_result(
+                    sequence,
+                    "failed",
+                    ErrorCode.PROTOCOL_ERROR,
+                    "OpenCode response was invalid",
+                    raw_body=response_body,
+                    status_code=response.status_code,
+                    content_type=response.headers.get("content-type"),
+                    turn_started=turn_started,
+                    turn_wall_time=turn_wall_time,
+                )
+            if result_present or error_present or status is not None:
+                try:
+                    result_kwargs: dict[str, Any] = {}
+                    if result_present:
+                        result_kwargs["result"] = result_value
+                    if status in {"tool_error", "protocol_error"}:
+                        result_kwargs["is_error"] = True
+                    if status is not None:
+                        result_kwargs["status"] = status
+                    if isinstance(error_value, str):
+                        result_kwargs["error_message"] = error_value
+                    observations.append(
+                        ToolResultObservedObservation(
+                            observation_id=f"opencode-{session_id}-{sequence}-result-{len(tool_calls_list)}",
+                            harness_kind="opencode",
+                            turn_sequence=sequence,
+                            wall_time=part_wall_time,
+                            monotonic_offset_ms=self._offset_ms(turn_started),
+                            call_id=call_id,
+                            **result_kwargs,
+                        )
+                    )
+                except (TypeError, ValueError):
+                    return self._failure_result(
+                        sequence,
+                        "failed",
+                        ErrorCode.PROTOCOL_ERROR,
+                        "OpenCode response was invalid",
+                        raw_body=response_body,
+                        status_code=response.status_code,
+                        content_type=response.headers.get("content-type"),
+                        turn_started=turn_started,
+                        turn_wall_time=turn_wall_time,
+                    )
+            call_record: dict[str, Any] = {"tool": tool_name, "call_id": call_id}
+            if server_name is not None:
+                call_record["server"] = server_name
+            tool_calls_list.append(call_record)
+        if history_ambiguous:
+            limitations.append("capture_incomplete")
+        if limitations and not history_ambiguous:
+            return self._failure_result(
+                sequence,
+                "failed",
+                ErrorCode.PROTOCOL_ERROR,
+                "OpenCode response was invalid",
+                raw_body=response_body,
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type"),
+                turn_started=turn_started,
+                turn_wall_time=turn_wall_time,
+            )
+        raw_error_flag = body.get("is_error", body.get("isError"))
+        malformed_error_flag = raw_error_flag is not None and not isinstance(
+            raw_error_flag, bool
+        )
+        if malformed_error_flag:
+            return self._failure_result(
+                sequence,
+                "failed",
+                ErrorCode.PROTOCOL_ERROR,
+                "OpenCode response was invalid",
+                raw_body=response_body,
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type"),
+                turn_started=turn_started,
+                turn_wall_time=turn_wall_time,
+            )
         text = "".join(text_parts)
         redaction = RedactionConfig.from_environment(secrets=self._runtime_secrets)
         if text:
@@ -583,8 +1056,23 @@ class OpenCodeHarnessAdapter:
             except Exception:
                 text = "[REDACTED]"
         tool_calls = tuple(tool_calls_list)
-        failed = bool(body.get("is_error", body.get("isError", False))) or bool(info and (info.get("error") or info.get("finish") in ("error", "failed")))
-        evidence: dict[str, Any] = {"process_observed": True, "transport_observed": "http", "content_observed": bool(text), "tool_calls_observed": bool(tool_calls), "mcp_traffic_observed": bool(tool_calls), "usage_requested": True, "usage_enforced": False}
+        failed = (
+            isinstance(body.get("is_error", body.get("isError", False)), bool)
+            and bool(body.get("is_error", body.get("isError", False)))
+        ) or bool(info.get("error") or info.get("finish") in ("error", "failed"))
+        if failed:
+            observations.append(
+                MetadataObservedObservation(
+                    observation_id=f"opencode-{session_id}-{sequence}-error",
+                    harness_kind="opencode",
+                    turn_sequence=sequence,
+                    wall_time=turn_wall_time,
+                    monotonic_offset_ms=self._offset_ms(turn_started),
+                    name="error",
+                    value=True,
+                )
+            )
+        evidence: dict[str, Any] = {"process_observed": False, "transport_observed": "http", "content_observed": bool(text), "tool_calls_observed": bool(tool_calls), "mcp_traffic_observed": bool(tool_calls), "usage_requested": True, "usage_enforced": False}
         if isinstance(info, Mapping):
             tokens = info.get("tokens")
             if isinstance(tokens, Mapping):
@@ -612,18 +1100,515 @@ class OpenCodeHarnessAdapter:
             if model_id is not None: evidence["model_observed"] = model_id
         usage_present = "usage" in body or (isinstance(info, Mapping) and "tokens" in info)
         evidence.update({"usage_observed": usage_present, "usage_state": "observed" if usage_present else "unavailable", "usage_unavailable": not usage_present})
+        turn_status: _TurnStatus = "failed" if failed else "completed"
         return HarnessTurnResult(
             sequence=sequence,
-            status="failed" if failed else "completed",
+            status=turn_status,
             response=None if failed or not text else TurnResponse(content=(TextContent(text=text),)),
             error=None if not failed else ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="OpenCode turn failed"),
             tool_calls=tool_calls,
             evidence=evidence,
+            trace_limitations=tuple(dict.fromkeys(limitations)),
+            turn_evidence=TurnEvidence(
+                sequence=sequence,
+                status=turn_status,
+                observations=tuple(observations),
+                limitations=tuple(dict.fromkeys(limitations)),
+            ),
+        )
+
+    def _normalize_tool_name(self, value: str) -> tuple[str | None, str]:
+        """Translate OpenCode's ``server_tool`` display name to MCP identity.
+
+        The launch configuration is the only authority used here. An
+        unrecognized provider name is retained verbatim rather than guessed.
+        """
+
+        launch = self._launch
+        configurations = launch.configurations if launch is not None else ()
+        keys = sorted(
+            {
+                configuration.key
+                for configuration in configurations
+                if isinstance(configuration.key, str) and configuration.key
+            },
+            key=len,
+            reverse=True,
+        )
+        for server in keys:
+            prefix = f"{server}_"
+            if value.startswith(prefix) and len(value) > len(prefix):
+                return server, value[len(prefix) :]
+        return None, value
+
+    @staticmethod
+    def _offset_ms(started: float) -> float:
+        return max(0.0, (time.monotonic() - started) * 1000.0)
+
+    @staticmethod
+    def _source_wall_time(value: object, fallback: datetime) -> tuple[datetime, bool]:
+        """Use official OpenCode time fields when valid; otherwise receipt time."""
+
+        if value is None:
+            return fallback, False
+        candidate: object = value
+        if isinstance(value, Mapping):
+            candidate = next(
+                (value[key] for key in ("created", "start", "started", "updated") if key in value),
+                None,
+            )
+        if isinstance(candidate, datetime):
+            if candidate.tzinfo is not None and candidate.utcoffset() is not None:
+                return candidate.astimezone(timezone.utc), False
+            return fallback, True
+        if isinstance(candidate, str):
+            try:
+                parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+            except ValueError:
+                return fallback, True
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                return fallback, True
+            return parsed.astimezone(timezone.utc), False
+        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool) and isfinite(candidate) and candidate >= 0:
+            seconds = candidate / 1000.0 if candidate > 100_000_000_000 else float(candidate)
+            try:
+                return datetime.fromtimestamp(seconds, tz=timezone.utc), False
+            except (OverflowError, OSError, ValueError):
+                pass
+        return fallback, True
+
+    @staticmethod
+    async def _history_snapshot(
+        client: Any,
+        session_id: str,
+        *,
+        timeout: float | None = None,
+        turn_started: float | None = None,
+    ) -> _HistorySnapshot | None:
+        """Read one bounded history page without trusting its data."""
+
+        get_messages = getattr(client, "get", None)
+        if not callable(get_messages):
+            return None
+        request_started = time.monotonic()
+
+        def snapshot(
+            items: tuple[Mapping[str, Any], ...],
+            body: bytes | None,
+            status_code: int | None,
+            content_type: object,
+            truncated: bool,
+            valid: bool,
+        ) -> _HistorySnapshot:
+            request_ended = time.monotonic()
+            base = turn_started if turn_started is not None else request_started
+            return _HistorySnapshot(
+                items,
+                body,
+                status_code,
+                content_type,
+                truncated,
+                valid,
+                max(0.0, (request_started - base) * 1000.0),
+                max(0.0, (request_ended - base) * 1000.0),
+            )
+
+        try:
+            response = await get_messages(
+                f"/session/{session_id}/message",
+                params={"limit": 256},
+                timeout=timeout,
+            )
+            status_code = response.status_code
+            content_type = response.headers.get("content-type")
+            try:
+                raw = await OpenCodeHarnessAdapter._read_bounded_response(response)
+            except _ResponseTooLarge:
+                return snapshot((), None, status_code, content_type, True, False)
+            if status_code < 200 or status_code >= 300:
+                return snapshot((), raw, status_code, content_type, False, False)
+            try:
+                decoded = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return snapshot((), raw, status_code, content_type, False, False)
+            if not isinstance(decoded, list) or any(
+                not isinstance(item, Mapping) for item in decoded
+            ):
+                return snapshot((), raw, status_code, content_type, False, False)
+            next_cursor = bool(
+                response.headers.get("x-next-cursor")
+                or response.headers.get("link")
+            )
+            return snapshot(
+                tuple(decoded), raw, status_code, content_type, next_cursor, True
+            )
+        except (httpx.HTTPError, OSError, ValueError, TypeError):
+            return None
+
+    def _raw_frame_observation(
+        self,
+        sequence: int,
+        body: bytes,
+        content_type: object,
+        wall_time: datetime,
+        started: float,
+        observation_id: str | None = None,
+    ) -> RawFrameObservation:
+        media_type = (
+            content_type
+            if isinstance(content_type, str)
+            and content_type
+            and len(content_type) <= 256
+            and all(ord(char) >= 0x20 for char in content_type)
+            else "application/json"
+        )
+        try:
+            text = body.decode("utf-8")
+            safe = redact_for_api(text, config=RedactionConfig.from_environment(secrets=self._runtime_secrets))
+            if not isinstance(safe, str):
+                raise ValueError
+            return RawFrameObservation(
+                observation_id=observation_id or f"opencode-http-{sequence}",
+                harness_kind="opencode",
+                turn_sequence=sequence,
+                wall_time=wall_time,
+                monotonic_offset_ms=self._offset_ms(started),
+                direction="inbound",
+                media_type=media_type,
+                text=safe,
+                raw_evidence=RawEvidenceInput(content=safe, media_type=media_type),
+            )
+        except (UnicodeDecodeError, TypeError, ValueError):
+            encoded = base64.b64encode(body).decode("ascii")
+            return RawFrameObservation(
+                observation_id=observation_id or f"opencode-http-{sequence}",
+                harness_kind="opencode",
+                turn_sequence=sequence,
+                wall_time=wall_time,
+                monotonic_offset_ms=self._offset_ms(started),
+                direction="inbound",
+                media_type=media_type,
+                raw_evidence=RawEvidenceInput(
+                    content=encoded, media_type=media_type, encoding="base64"
+                ),
+            )
+
+    def _metadata_observations(
+        self,
+        sequence: int,
+        info: Mapping[str, Any],
+        wall_time: datetime,
+        started: float,
+    ) -> tuple[HarnessObservation, ...]:
+        values: list[HarnessObservation] = []
+        for name, key in (
+            ("provider", "providerID"),
+            ("model", "modelID"),
+            ("finish", "finish"),
+            ("message_id", "id"),
+            ("session_id", "sessionID"),
+            ("role", "role"),
+        ):
+            if key not in info:
+                continue
+            value = info[key]
+            emitted: str | dict[str, str] = (
+                value if _valid_identifier(value) else dict(_MALFORMED_MARKER)
+            )
+            values.append(
+                MetadataObservedObservation(
+                    observation_id=f"opencode-{sequence}-{name}",
+                    harness_kind="opencode",
+                    turn_sequence=sequence,
+                    wall_time=wall_time,
+                    monotonic_offset_ms=self._offset_ms(started),
+                    name=name,
+                    value=cast(Any, emitted),
+                )
+            )
+        for name in ("time", "error"):
+            if name in info:
+                safe_value = self._safe_metadata_value(info[name])
+                if safe_value is _INVALID_METADATA:
+                    safe_value = dict(_MALFORMED_MARKER)
+                if safe_value is not _INVALID_METADATA:
+                    values.append(
+                        MetadataObservedObservation(
+                            observation_id=f"opencode-{sequence}-{name}",
+                            harness_kind="opencode",
+                            turn_sequence=sequence,
+                            wall_time=wall_time,
+                            monotonic_offset_ms=self._offset_ms(started),
+                            name=f"info_{name}",
+                            value=safe_value,
+                        )
+                    )
+        tokens = info.get("tokens")
+        raw_cost = info.get("cost")
+        if "tokens" in info or "cost" in info or "currency" in info:
+            kwargs: dict[str, Any] = {}
+            token_values = tokens if isinstance(tokens, Mapping) else {}
+            if "tokens" in info and not isinstance(tokens, Mapping):
+                values.append(self._metadata_marker(sequence, "tokens", wall_time, started))
+            for source, target in (
+                ("input", "input_tokens"),
+                ("output", "output_tokens"),
+                ("reasoning", "reasoning_tokens"),
+                ("cache_creation", "cache_creation_tokens"),
+                ("total", "total_tokens"),
+            ):
+                value = token_values.get(source)
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    kwargs[target] = value
+                elif isinstance(tokens, Mapping) and source in tokens:
+                    values.append(
+                        self._metadata_marker(
+                            sequence, target, wall_time, started
+                        )
+                    )
+            cache = token_values.get("cache")
+            if isinstance(cache, Mapping):
+                for source, target in (("read", "cache_read_tokens"), ("write", "cache_write_tokens")):
+                    value = cache.get(source)
+                    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                        kwargs[target] = value
+                    elif source in cache:
+                        values.append(
+                            self._metadata_marker(
+                                sequence, target, wall_time, started
+                            )
+                        )
+            cost = raw_cost
+            if (
+                isinstance(cost, (int, float))
+                and not isinstance(cost, bool)
+                and cost >= 0
+                and isfinite(cost)
+            ):
+                kwargs["cost"] = cost
+            elif "cost" in info:
+                values.append(self._metadata_marker(sequence, "cost", wall_time, started))
+            currency = info.get("currency")
+            if isinstance(currency, str) and currency:
+                kwargs["currency"] = currency[:16]
+            elif "currency" in info:
+                values.append(self._metadata_marker(sequence, "currency", wall_time, started))
+            if kwargs:
+                values.append(
+                    UsageObservedObservation(
+                        observation_id=f"opencode-{sequence}-usage",
+                        harness_kind="opencode",
+                        turn_sequence=sequence,
+                        wall_time=wall_time,
+                        monotonic_offset_ms=self._offset_ms(started),
+                        **kwargs,
+                    )
+                )
+        return tuple(values)
+
+    @staticmethod
+    def _metadata_marker(
+        sequence: int, name: str, wall_time: datetime, started: float
+    ) -> MetadataObservedObservation:
+        return MetadataObservedObservation(
+            observation_id=f"opencode-{sequence}-invalid-{name}",
+            harness_kind="opencode",
+            turn_sequence=sequence,
+            wall_time=wall_time,
+            monotonic_offset_ms=max(0.0, (time.monotonic() - started) * 1000.0),
+            name=f"usage_{name}_state",
+            value=dict(_MALFORMED_MARKER),
+        )
+
+    def _http_metadata_observations(
+        self,
+        sequence: int,
+        status_code: int | None,
+        content_type: object,
+        wall_time: datetime,
+        started: float,
+        prefix: str = "http",
+        start_offset_ms: float | None = None,
+        end_offset_ms: float | None = None,
+    ) -> tuple[HarnessObservation, ...]:
+        """Expose only safe, stable HTTP lifecycle facts (never headers/URLs)."""
+
+        values: list[HarnessObservation] = []
+        fields: list[tuple[str, Any]] = [
+            (f"{prefix}.method", "GET" if prefix.startswith("http_history") else "POST"),
+            (f"{prefix}.route", "/session/{session_id}/message"),
+        ]
+        if status_code is not None and not isinstance(status_code, bool):
+            fields.append((f"{prefix}.status_code", status_code))
+        if isinstance(content_type, str) and 0 < len(content_type) <= 128 and all(
+            ord(char) >= 0x20 and ord(char) != 0x7F for char in content_type
+        ):
+            fields.append((f"{prefix}.content_type", content_type.split(";", 1)[0].strip()))
+        elapsed = self._offset_ms(started)
+        start = 0.0 if start_offset_ms is None else max(0.0, start_offset_ms)
+        end = elapsed if end_offset_ms is None else max(start, end_offset_ms)
+        fields.extend(
+            ((f"{prefix}.start_offset_ms", start), (f"{prefix}.end_offset_ms", end), (f"{prefix}.duration_ms", end - start))
+        )
+        for index, (name, value) in enumerate(fields):
+            values.append(
+                MetadataObservedObservation(
+                    observation_id=f"opencode-{sequence}-{prefix}-{index}",
+                    harness_kind="opencode",
+                    turn_sequence=sequence,
+                    wall_time=wall_time,
+                    monotonic_offset_ms=elapsed,
+                    name=name,
+                    value=value,
+                )
+            )
+        return tuple(values)
+
+    def _safe_metadata_value(self, value: object) -> Any:
+        """Redact and JSON-validate provider metadata before it crosses R5."""
+
+        try:
+            safe = redact_for_api(value, config=RedactionConfig.from_environment(secrets=self._runtime_secrets))
+            json.dumps(safe, ensure_ascii=False, allow_nan=False)
+            return safe
+        except (TypeError, ValueError, OverflowError):
+            return _INVALID_METADATA
+
+    @staticmethod
+    def _message_observation(
+        sequence: int,
+        text: str,
+        part: Mapping[str, Any],
+        index: int,
+        wall_time: datetime,
+        started: float,
+        fallback_message_id: object = None,
+    ) -> MessageChunkObservation:
+        message_id = part.get("id", fallback_message_id)
+        message_kwargs: dict[str, Any] = {}
+        if "id" in part or fallback_message_id is not _MISSING_IDENTIFIER:
+            # None is intentional here: the sink preserves the field's
+            # presence so TraceView can report malformed-present as unavailable.
+            message_kwargs["message_id"] = message_id if _valid_identifier(message_id) else None
+        return MessageChunkObservation(
+            observation_id=f"opencode-{sequence}-message-{index}",
+            harness_kind="opencode",
+            turn_sequence=sequence,
+            wall_time=wall_time,
+            monotonic_offset_ms=max(0.0, (time.monotonic() - started) * 1000.0),
+            role="assistant",
+            text=text,
+            complete=True,
+            **message_kwargs,
+        )
+
+    @staticmethod
+    def _reasoning_observation(
+        sequence: int,
+        part: Mapping[str, Any],
+        index: int,
+        wall_time: datetime,
+        started: float,
+    ) -> ReasoningChunkObservation | None:
+        visibility = "visible"
+        if part.get("encrypted") is True or part.get("signature") is not None:
+            visibility = "encrypted"
+            text = None
+        elif part.get("hidden") is True:
+            visibility = "provider_hidden"
+            text = None
+        else:
+            text = part.get("text")
+            if text is not None and not isinstance(text, str):
+                return None
+        return ReasoningChunkObservation(
+            observation_id=f"opencode-{sequence}-reasoning-{index}",
+            harness_kind="opencode",
+            turn_sequence=sequence,
+            wall_time=wall_time,
+            monotonic_offset_ms=max(0.0, (time.monotonic() - started) * 1000.0),
+            text=text,
+            visibility=visibility,  # type: ignore[arg-type]
+            complete=True,
+        )
+
+    @staticmethod
+    def _tool_status(
+        state: Mapping[str, Any], part: Mapping[str, Any]
+    ) -> _ToolStatus | None:
+        raw = state.get("status", part.get("status"))
+        if not isinstance(raw, str):
+            return None
+        lowered = raw.lower()
+        if lowered in {"completed", "complete", "success", "succeeded", "done"}:
+            return "success"
+        if lowered in {"error", "failed", "failure"}:
+            return "tool_error"
+        if lowered in {"cancelled", "canceled"}:
+            return "cancelled"
+        if lowered in {"timed_out", "timeout"}:
+            return "timed_out"
+        if lowered in {"running", "pending", "started"}:
+            return "incomplete"
+        return "incomplete"
+
+    def _failure_result(
+        self,
+        sequence: int,
+        status: _TurnStatus,
+        code: ErrorCode,
+        message: str,
+        *,
+        raw_body: bytes | None = None,
+        status_code: int | None = None,
+        content_type: object = None,
+        turn_started: float,
+        turn_wall_time: datetime,
+    ) -> HarnessTurnResult:
+        observations: list[HarnessObservation] = []
+        if raw_body is not None:
+            observations.append(
+                self._raw_frame_observation(
+                    sequence,
+                    raw_body,
+                    content_type,
+                    turn_wall_time,
+                    turn_started,
+                )
+            )
+        observations.extend(
+            self._http_metadata_observations(
+                sequence,
+                status_code,
+                content_type,
+                turn_wall_time,
+                turn_started,
+            )
+        )
+        limitation = "capture_incomplete" if raw_body is None else ""
+        limitations = (limitation,) if limitation else ()
+        return HarnessTurnResult(
+            sequence=sequence,
+            status=status,
+            error=ErrorInfo(code=code, message=message),
+            evidence={
+                "process_observed": False,
+                "transport_observed": "http",
+                "usage_state": "unavailable",
+                **({"http_status_code": status_code} if status_code is not None else {}),
+            },
+            trace_limitations=limitations,
+            turn_evidence=TurnEvidence(
+                sequence=sequence,
+                status=status,
+                observations=tuple(observations),
+                limitations=limitations,
+            ),
         )
 
     @staticmethod
     def _safe_evidence_identifier(value: object, config: RedactionConfig) -> str | None:
-        if not isinstance(value, str) or not value or len(value) > 256:
+        if not _valid_identifier(value):
             return None
         if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
             return None

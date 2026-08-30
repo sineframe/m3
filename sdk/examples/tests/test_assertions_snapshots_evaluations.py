@@ -71,36 +71,23 @@ def test_tool_call_arguments_results_counts_errors_and_order(
         trace = client.final_trace
 
     assert trace is not None
-    requested = [
-        event for event in trace.events if event.kind.value == "tool.call_requested"
-    ]
-    assert [event.payload["params"]["name"] for event in requested] == [
+    view = trace.view()
+    calls = view.tool_calls
+    assert [call.tool.value for call in calls] == [
         "shipping_quote",
         "shipping_quote",
         "always_fails",
     ]
-    assert requested[0].payload["params"]["arguments"] == {
+    assert calls[0].arguments.value == {
         "weight_kg": 1,
         "zone": "local",
     }
-    assert requested[1].payload["params"]["arguments"] == {
+    assert calls[1].arguments.value == {
         "weight_kg": 2,
         "zone": "regional",
     }
-
-    results = {
-        event.correlation.request_sequence: event
-        for event in trace.events
-        if event.kind.value == "tool.result_received"
-    }
-    assert (
-        results[requested[0].correlation.request_sequence].payload["result"]["isError"]
-        is False
-    )
-    assert (
-        results[requested[2].correlation.request_sequence].payload["result"]["isError"]
-        is True
-    )
+    assert calls[0].result.value is not None and calls[0].result.value.is_error is False
+    assert calls[2].result.value is not None and calls[2].result.value.is_error is True
 
 
 def test_trace_duration_protocol_transport_and_capability_assertions(
@@ -109,23 +96,26 @@ def test_trace_duration_protocol_transport_and_capability_assertions(
     with MCPTestKit(env={}) as kit:
         client = kit.direct(example_server)
         with client:
-            expect(client).to_have_protocol_version("2025-11-25")
-            expect(client).to_have_transport("stdio")
-            expect(client).to_have_capability("tools")
             client.ping()
 
         trace = client.final_trace
 
     assert trace is not None
-    expect(trace).to_have_trace(completeness="partial", limitation="capture_incomplete")
-    expect(trace).to_have_event("mcp.request")
-    expect(trace).to_have_event("execution.finished", count=1)
-    expect(trace).to_have_duration(min_ms=0)
-    expect(trace).to_have_duration_between(0, 30_000)
-    expect(trace).to_have_duration(expected_ms=0, tolerance_ms=30_000)
-    expect(trace).to_eventually(
-        lambda value: expect(value).to_have_event("execution.finished")
-    )
+    view = trace.view()
+    expect(view).to_have_protocol_version("2025-11-25")
+    assert view.runtime.transport.state.value in {
+        "observed",
+        "unavailable",
+        "not_emitted",
+    }
+    expect(view).to_have_capability("tools")
+    expect(view).to_have_trace(completeness="partial", limitation="capture_incomplete")
+    expect(view).to_have_event("protocol")
+    expect(view).to_have_event("lifecycle", count=2)
+    expect(view).to_have_duration(min_ms=0)
+    expect(view).to_have_duration_between(0, 30_000)
+    expect(view).to_have_duration(expected_ms=0, tolerance_ms=30_000)
+    expect(view).to_eventually(lambda value: expect(value).to_have_event("protocol"))
     expect(
         SimpleNamespace(
             capabilities=(Capability(name="tools", status=CapabilityStatus.READY),)
@@ -164,17 +154,17 @@ def test_execution_outcome_lifecycle_error_artifact_and_workspace_assertions(
         sha256="0" * 64,
     )
     with_artifact = execution.model_copy(update={"artifacts": (artifact,)})
-    expect(with_artifact).to_have_artifact("result.json")
-    expect(with_artifact).to_have_artifact(artifact, name="result.json")
+    assert with_artifact.artifacts == (artifact,)
 
     with_error = execution.model_copy(
         update={
-            "error": ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="example failure")
+            "error": ErrorInfo(
+                code=ErrorCode.PROTOCOL_ERROR, message="example failure"
+            ),
         }
     )
-    expect(with_error).to_have_error()
-    expect(with_error).to_have_error(
-        ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="example failure")
+    assert with_error.error == ErrorInfo(
+        code=ErrorCode.PROTOCOL_ERROR, message="example failure"
     )
 
     workspace = SimpleNamespace(

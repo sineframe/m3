@@ -27,6 +27,19 @@ from typing import Any, Literal, cast
 
 from pydantic import TypeAdapter, ValidationError
 
+from ..errors import (
+    RawEvidenceIntegrityError,
+    RawEvidenceUnavailable,
+    TraceNotFinalized,
+    TraceUnavailable,
+)
+from ..observability import (
+    RawEvidence,
+    RawEvidenceCapture,
+    TraceCaptureConfig,
+    TraceView,
+)
+from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
 from ..trace.redaction import (
     RedactionConfig,
     redact_artifact_bytes,
@@ -44,30 +57,51 @@ from ..types import (
     ExecutionOutcome,
     ExecutionPage,
     ExecutionSnapshot,
-    PersistedExecutionReport,
     ExecutionSpec,
     LifecycleState,
+    PersistedExecutionReport,
+    RawEvidenceRef,
     RevisionId,
     RevisionSelection,
     SessionId,
+    TraceId,
+    TraceResult,
     TurnId,
     TurnResult,
     TurnSnapshot,
 )
-from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
+from .blobs import FilesystemBlobStore
 from .ephemeral import (
     ArtifactNotFound,
-    ArtifactStore,
     BlobIntegrityError,
     EventCallback,
-    ExecutionStore,
     ExecutionTransaction,
     StorageConflict,
     StorageError,
-    _report_fields,
     _execution_key,
+    _report_fields,
 )
-from .blobs import FilesystemBlobStore
+from .evidence import (
+    evidence_id_for as _evidence_id_for,
+)
+from .evidence import (
+    make_capture as _make_evidence_capture,
+)
+from .evidence import (
+    make_ref as _make_evidence_ref,
+)
+from .evidence import (
+    make_result as _make_evidence_result,
+)
+from .evidence import (
+    prepare_evidence as _prepare_evidence,
+)
+from .evidence import (
+    validate_evidence_id as _validate_evidence_id,
+)
+from .evidence import (
+    verify_reference as _verify_evidence_reference,
+)
 from .serialization import serialize_durable
 
 
@@ -309,9 +343,15 @@ CREATE TABLE IF NOT EXISTS v2_blobs (
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS v2_event_blobs (
-  event_id TEXT PRIMARY KEY REFERENCES v2_events(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES v2_events(id) ON DELETE CASCADE,
   sha256 TEXT NOT NULL REFERENCES v2_blobs(sha256),
-  role TEXT NOT NULL CHECK (role = 'payload')
+  role TEXT NOT NULL CHECK (role IN ('payload','raw_evidence')),
+  media_type TEXT,
+  evidence_id TEXT UNIQUE,
+  CHECK ((role = 'payload' AND evidence_id IS NULL AND media_type IS NULL) OR
+    (role = 'raw_evidence' AND evidence_id IS NOT NULL AND
+     media_type IS NOT NULL AND length(media_type) > 0)),
+  PRIMARY KEY(event_id, role)
 );
 CREATE TABLE IF NOT EXISTS v2_artifacts (
   id TEXT PRIMARY KEY, execution_id TEXT NOT NULL REFERENCES v2_executions(id) ON DELETE CASCADE,
@@ -631,11 +671,23 @@ class SQLiteExecutionStore(_SqliteBase):
         {"cleanup_failed", "persistence_failed", "capture_incomplete", "partial_trace"}
     )
 
-    def __init__(self, database: str | Path, *, blob_root: str | Path | None = None, config: RedactionConfig | None = None, payload_blob_threshold: int = 64 * 1024, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        database: str | Path,
+        *,
+        blob_root: str | Path | None = None,
+        config: RedactionConfig | None = None,
+        capture_config: TraceCaptureConfig | None = None,
+        payload_blob_threshold: int = 64 * 1024,
+        **kwargs: Any,
+    ) -> None:
         if payload_blob_threshold < 0:
             raise ValueError("payload_blob_threshold must be non-negative")
         super().__init__(database, **kwargs)
         self._redaction_config = config or RedactionConfig.from_environment()
+        self._capture_config = (
+            capture_config if capture_config is not None else TraceCaptureConfig()
+        )
         self.artifacts = SQLiteArtifactStore(database, blob_root, config=self._redaction_config, busy_timeout_ms=self.busy_timeout_ms, wal=False)
         self.payload_blob_threshold = payload_blob_threshold
         self._callbacks: dict[str, list[EventCallback]] = {}
@@ -761,6 +813,70 @@ class SQLiteExecutionStore(_SqliteBase):
             artifact_count=len(all_artifacts),
             artifacts_truncated=artifact_limit is not None and len(all_artifacts) > artifact_limit,
         )
+
+    def get_trace(self, execution_id: ExecutionId | str) -> TraceResult | None:
+        snapshot = self.get_snapshot(execution_id)
+        if snapshot is None:
+            return None
+        events = self._events(_execution_key(execution_id))
+        created_events = [event for event in events if event.kind is EventKind.EXECUTION_CREATED]
+        if (
+            not events
+            or events[0].sequence != 0
+            or events[0].kind is not EventKind.EXECUTION_CREATED
+            or len(created_events) != 1
+        ):
+            raise TraceUnavailable("persisted execution.created evidence is malformed")
+        trace_id = events[0].payload.get("trace_id")
+        if not isinstance(trace_id, str) or not trace_id:
+            raise TraceUnavailable("trace identity evidence is unavailable")
+        try:
+            typed_trace_id = TraceId(trace_id)
+        except ValueError:
+            raise TraceUnavailable("trace identity evidence is invalid") from None
+        if typed_trace_id.root != trace_id:
+            raise TraceUnavailable("trace identity evidence is not canonical")
+        terminal = [
+            event for event in events if event.kind is EventKind.EXECUTION_FINISHED
+        ]
+        if not terminal:
+            raise TraceNotFinalized("execution has not been finalized")
+        if len(terminal) != 1 or terminal[0] is not events[-1]:
+            raise TraceUnavailable("persisted trace terminal evidence is malformed")
+        final = terminal[-1]
+        outcome = final.payload.get("outcome")
+        completeness = final.payload.get("completeness")
+        raw_limitations = final.payload.get("limitations")
+        if (
+            not isinstance(outcome, str)
+            or outcome not in {item.value for item in ExecutionOutcome}
+            or completeness not in {"complete", "partial"}
+            or not isinstance(raw_limitations, (list, tuple))
+            or any(not isinstance(item, str) or not item.strip() for item in raw_limitations)
+        ):
+            raise TraceUnavailable("persisted execution.finished evidence is malformed")
+        limitations = tuple(raw_limitations)
+        try:
+            typed_outcome = ExecutionOutcome(outcome)
+        except ValueError:
+            raise TraceUnavailable("persisted execution outcome is invalid") from None
+        if snapshot.lifecycle is not LifecycleState.FINISHED or snapshot.outcome != typed_outcome:
+            raise TraceUnavailable("persisted snapshot outcome conflicts with terminal evidence")
+        try:
+            return TraceResult(
+                trace_id=typed_trace_id,
+                execution_id=snapshot.execution_id,
+                completeness=cast(Literal["complete", "partial"], completeness),
+                highest_sequence=events[-1].sequence if events else 0,
+                events=events,
+                limitations=limitations,
+            )
+        except (TypeError, ValueError):
+            raise TraceUnavailable("persisted trace evidence is malformed") from None
+
+    def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None:
+        trace = self.get_trace(execution_id)
+        return trace.view() if trace is not None else None
 
     def save_snapshot(self, snapshot: ExecutionSnapshot) -> None:
         key = _execution_key(snapshot.execution_id)
@@ -903,7 +1019,67 @@ class SQLiteExecutionStore(_SqliteBase):
         latest = CanonicalEvent.model_validate(_loads(row["event_json"]))
         return int(row["sequence"]) + 1, latest.monotonic_offset_ms
 
-    def _append(self, execution_id: str, events: Sequence[CanonicalEvent]) -> None:
+    def _ensure_created_event(self, connection: _CompatConnection, execution_id: str) -> None:
+        """Ensure store-owned terminalization has canonical trace identity.
+
+        Worker-owned cancellation/lease paths can run before a provider has
+        opened a recorder.  They still need to produce the same immutable
+        trace boundary as a normal recorder.  Existing events are never
+        repaired here: malformed or conflicting identity is rejected so a
+        terminal snapshot cannot make an invalid trace appear readable.
+        """
+        rows = connection.execute(
+            "SELECT event_json FROM v2_events WHERE execution_id=? ORDER BY sequence",
+            (execution_id,),
+        ).fetchall()
+        if rows:
+            events = tuple(CanonicalEvent.model_validate(_loads(row[0])) for row in rows)
+            created = tuple(event for event in events if event.kind is EventKind.EXECUTION_CREATED)
+            if (
+                events[0].sequence != 0
+                or events[0].kind is not EventKind.EXECUTION_CREATED
+                or len(created) != 1
+            ):
+                raise StorageConflict("persisted execution.created evidence is malformed")
+            trace_id = events[0].payload.get("trace_id")
+            if not isinstance(trace_id, str) or not trace_id:
+                raise StorageConflict("persisted trace ID is unavailable")
+            try:
+                typed_trace_id = TraceId(trace_id)
+            except ValueError:
+                raise StorageConflict("persisted trace ID is invalid") from None
+            if typed_trace_id.root != trace_id:
+                raise StorageConflict("persisted trace ID is not canonical")
+            return
+        event = CanonicalEvent(
+            event_id=EventId(_new_id("event")),
+            execution_id=ExecutionId(execution_id),
+            sequence=0,
+            kind=EventKind.EXECUTION_CREATED,
+            monotonic_offset_ms=0.0,
+            payload={
+                "lifecycle": LifecycleState.CREATED.value,
+                "trace_id": f"trace-{uuid.uuid4().hex}",
+            },
+        )
+        connection.execute(
+            "INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)",
+            (
+                str(event.event_id.root),
+                execution_id,
+                event.sequence,
+                _json(event.model_dump(mode="json", by_alias=True)),
+                _iso(event.timestamp),
+            ),
+        )
+
+    def _append(
+        self,
+        execution_id: str,
+        events: Sequence[CanonicalEvent],
+        *,
+        raw_evidence: tuple[RawEvidenceRef, Any] | None = None,
+    ) -> None:
         if not events:
             return
         safe_events = tuple(self._safe_event(event) for event in events)
@@ -954,8 +1130,62 @@ class SQLiteExecutionStore(_SqliteBase):
                     sessions.add(str(event.session_id.root))
                 elif event.kind is EventKind.SESSION_STATE_CHANGED and (event.session_id is None or str(event.session_id.root) not in sessions):
                     raise StorageConflict("session does not exist")
-                persisted = next(item for item in persisted_events if item.event_id == event.event_id)
-                connection.execute("INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)", (str(event.event_id.root), execution_id, event.sequence, _json(persisted.model_dump(mode="json", by_alias=True)), _iso(event.timestamp)))
+                persisted = next(
+                    item for item in persisted_events if item.event_id == event.event_id
+                )
+                connection.execute(
+                    "INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)",
+                    (
+                        str(event.event_id.root),
+                        execution_id,
+                        event.sequence,
+                        _json(persisted.model_dump(mode="json", by_alias=True)),
+                        _iso(event.timestamp),
+                    ),
+                )
+                if (
+                    raw_evidence is not None
+                    and event.event_id == safe_events[0].event_id
+                ):
+                    raw_reference, blob = raw_evidence
+                    existing_blob = connection.execute(
+                        "SELECT size_bytes,storage_key,compressed_size "
+                        "FROM v2_blobs WHERE sha256=?",
+                        (str(blob.sha256),),
+                    ).fetchone()
+                    if existing_blob is not None and (
+                        int(existing_blob["size_bytes"]) != blob.size_bytes
+                        or str(existing_blob["storage_key"])
+                        != str(raw_reference.storage_key)
+                        or int(existing_blob["compressed_size"])
+                        != blob.compressed_size_bytes
+                    ):
+                        raise RawEvidenceIntegrityError(
+                            "raw evidence blob metadata is inconsistent"
+                        )
+                    connection.execute(
+                        "INSERT INTO v2_blobs(sha256,size_bytes,compressed_size,media_type,storage_key,ref_count,created_at) "
+                        "VALUES(?,?,?,?,?,?,?) ON CONFLICT(sha256) DO UPDATE SET ref_count=ref_count+1",
+                        (
+                            str(blob.sha256),
+                            int(blob.size_bytes),
+                            int(blob.compressed_size_bytes),
+                            raw_reference.media_type,
+                            str(raw_reference.storage_key),
+                            1,
+                            _iso(_utcnow()),
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO v2_event_blobs(event_id,sha256,role,media_type,evidence_id) VALUES(?,?,?,?,?)",
+                        (
+                            str(event.event_id.root),
+                            str(blob.sha256),
+                            "raw_evidence",
+                            raw_reference.media_type,
+                            raw_reference.evidence_id,
+                        ),
+                    )
                 for blob_event, blob in payload_blobs:
                     if blob_event.event_id == event.event_id:
                         connection.execute(
@@ -1010,7 +1240,75 @@ class SQLiteExecutionStore(_SqliteBase):
 
     append = append_events
 
-    def iter_events(self, execution_id: ExecutionId | str, *, after_sequence: int = -1) -> Iterator[CanonicalEvent]:
+    def append_event_with_raw_evidence(
+        self, event: CanonicalEvent, content: bytes, *, media_type: str
+    ) -> CanonicalEvent:
+        """Commit an event and its raw blob in one SQLite transaction."""
+        if event.raw_evidence_ref is not None:
+            raise StorageConflict("raw evidence reference must be store-owned")
+        execution_id = _execution_key(event.execution_id)
+        safe_media_type = redact_for_persistence(
+            media_type, config=self._redaction_config, path="$.raw_evidence.media_type"
+        )
+        if (
+            not isinstance(safe_media_type, str)
+            or not safe_media_type
+            or len(safe_media_type) > 256
+        ):
+            raise ValueError("raw evidence media_type must be 1-256 characters")
+        with self._connect() as connection:
+            used_row = connection.execute(
+                "SELECT COALESCE(SUM(b.size_bytes),0) FROM v2_event_blobs eb "
+                "JOIN v2_events e ON e.id=eb.event_id JOIN v2_blobs b ON b.sha256=eb.sha256 "
+                "WHERE e.execution_id=? AND eb.role='raw_evidence'",
+                (execution_id,),
+            ).fetchone()
+        used = int(used_row[0]) if used_row is not None else 0
+        prepared = _prepare_evidence(
+            content,
+            config=self._capture_config,
+            redaction_config=self._redaction_config,
+            remaining_bytes=max(self._capture_config.raw_execution_bytes - used, 0),
+        )
+        try:
+            # Blob materialization and metadata publication have one failure
+            # boundary.  A blob writer may fail after creating a temporary
+            # file, so cleanup also runs when ``put`` itself raises.
+            blob = self.artifacts.blob_store.put(prepared.content)
+            storage_key = str(blob.path.relative_to(self.artifacts.blob_root))
+            ref = _make_evidence_ref(
+                event.event_id, prepared.content, media_type=safe_media_type
+            ).model_copy(
+                update={"storage_key": storage_key}
+            )
+            capture = _make_evidence_capture(ref, prepared)
+            event_payload = {
+                **dict(event.payload),
+                "raw_capture": capture.model_dump(mode="json"),
+            }
+            self._append(
+                execution_id,
+                (
+                    event.model_copy(
+                        update={"raw_evidence_ref": ref, "payload": event_payload}
+                    ),
+                ),
+                raw_evidence=(ref, blob),
+            )
+        except BaseException:
+            # The DB transaction did not publish a reference.  The explicit
+            # store GC removes this unreferenced, verified content-addressed
+            # blob; existing shared blobs are retained.
+            try:
+                self.artifacts.cleanup()
+            except Exception:
+                pass
+            raise
+        return self._events(execution_id)[-1]
+
+    def iter_events(
+        self, execution_id: ExecutionId | str, *, after_sequence: int = -1
+    ) -> Iterator[CanonicalEvent]:
         if after_sequence < -1:
             raise ValueError("after_sequence must be >= -1")
         events = self._events(_execution_key(execution_id))
@@ -1525,6 +1823,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 # while the compare-and-set transaction still owns the
                 # database lock, then discard its lease and claimed command.
                 execution = connection.execute("SELECT snapshot_json FROM v2_executions WHERE id=?", (execution_id,)).fetchone()
+                self._ensure_created_event(connection, execution_id)
                 sequence, monotonic_offset_ms = self._next_event_position(connection, execution_id)
                 event = CanonicalEvent(
                     event_id=EventId(_new_id("event")), execution_id=ExecutionId(execution_id),
@@ -1610,6 +1909,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 return False
             snapshot = ExecutionSnapshot.model_validate(_loads(execution["snapshot_json"]))
             if snapshot.lifecycle is not LifecycleState.FINISHED:
+                self._ensure_created_event(connection, execution_id)
                 sequence, monotonic_offset_ms = self._next_event_position(connection, execution_id)
                 event = CanonicalEvent(
                     event_id=EventId(_new_id("event")),
@@ -1711,6 +2011,7 @@ class SQLiteExecutionStore(_SqliteBase):
             ).fetchone()
             snapshot = ExecutionSnapshot.model_validate(_loads(execution["snapshot_json"]))
             if active_lease is None and snapshot.lifecycle is not LifecycleState.FINISHED:
+                self._ensure_created_event(connection, key)
                 sequence, monotonic_offset_ms = self._next_event_position(connection, key)
                 event = CanonicalEvent(
                     event_id=EventId(_new_id("event")),
@@ -1772,6 +2073,7 @@ class SQLiteExecutionStore(_SqliteBase):
             if snapshot.lifecycle is LifecycleState.FINISHED:
                 self._rollback(connection)
                 return False
+            self._ensure_created_event(connection, key)
             sequence, monotonic_offset_ms = self._next_event_position(connection, key)
             event = CanonicalEvent(
                 event_id=EventId(_new_id("event")),
@@ -1838,6 +2140,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 if snapshot.lifecycle is LifecycleState.FINISHED:
                     connection.execute("DELETE FROM v2_leases WHERE execution_id=?", (key,))
                     continue
+                self._ensure_created_event(connection, key)
                 sequence, monotonic_offset_ms = self._next_event_position(connection, key)
                 event = CanonicalEvent(
                     event_id=EventId(_new_id("event")),
@@ -1917,6 +2220,172 @@ class SQLiteExecutionStore(_SqliteBase):
         self.artifacts.cleanup()
 
     delete = delete_execution
+
+    def put_raw_evidence(
+        self, event_id: EventId | str, content: bytes, *, media_type: str
+    ) -> RawEvidenceCapture:
+        """Redact, bound, and durably associate evidence with one event."""
+
+        event_key = str(event_id.root if isinstance(event_id, EventId) else event_id)
+        safe_media_type = redact_for_persistence(
+            media_type, config=self._redaction_config, path="$.raw_evidence.media_type"
+        )
+        if (
+            not isinstance(safe_media_type, str)
+            or not safe_media_type
+            or len(safe_media_type) > 256
+        ):
+            raise ValueError("raw evidence media_type must be 1-256 characters")
+        connection = self._connect()
+        try:
+            self._begin(connection, immediate=True)
+            event = connection.execute(
+                "SELECT execution_id FROM v2_events WHERE id=?", (event_key,)
+            ).fetchone()
+            if event is None:
+                raise RawEvidenceUnavailable("raw evidence event does not exist")
+            execution_key = str(event[0])
+            used_row = connection.execute(
+                "SELECT COALESCE(SUM(b.size_bytes),0) "
+                "FROM v2_event_blobs eb JOIN v2_events e ON e.id=eb.event_id "
+                "JOIN v2_blobs b ON b.sha256=eb.sha256 "
+                "WHERE e.execution_id=? AND eb.role='raw_evidence'",
+                (execution_key,),
+            ).fetchone()
+            used = int(used_row[0]) if used_row is not None else 0
+            prepared = _prepare_evidence(
+                content,
+                config=self._capture_config,
+                redaction_config=self._redaction_config,
+                remaining_bytes=max(self._capture_config.raw_execution_bytes - used, 0),
+            )
+            blob = self.artifacts.blob_store.put(prepared.content)
+            existing_blob = connection.execute(
+                "SELECT size_bytes,storage_key,compressed_size "
+                "FROM v2_blobs WHERE sha256=?",
+                (blob.sha256,),
+            ).fetchone()
+            storage_key = str(blob.path.relative_to(self.artifacts.blob_root))
+            if existing_blob is not None and (
+                int(existing_blob["size_bytes"]) != blob.size_bytes
+                or str(existing_blob["storage_key"]) != storage_key
+                or int(existing_blob["compressed_size"]) != blob.compressed_size_bytes
+            ):
+                raise RawEvidenceIntegrityError(
+                    "raw evidence blob metadata is inconsistent"
+                )
+            ref = _make_evidence_ref(
+                event_key, prepared.content, media_type=safe_media_type
+            ).model_copy(
+                update={"storage_key": storage_key}
+            )
+            connection.execute(
+                "INSERT INTO v2_blobs(sha256,size_bytes,compressed_size,media_type,"
+                "storage_key,ref_count,created_at) "
+                "VALUES(?,?,?,?,?,?,?) ON CONFLICT(sha256) "
+                "DO UPDATE SET ref_count=ref_count+1",
+                (
+                    blob.sha256,
+                    blob.size_bytes,
+                    blob.compressed_size_bytes,
+                    safe_media_type,
+                    ref.storage_key,
+                    1,
+                    _iso(_utcnow()),
+                ),
+            )
+            connection.execute(
+                "INSERT INTO v2_event_blobs(event_id,sha256,role,media_type,"
+                "evidence_id) VALUES(?,?,?,?,?)",
+                (
+                    event_key,
+                    blob.sha256,
+                    "raw_evidence",
+                    safe_media_type,
+                    ref.evidence_id,
+                ),
+            )
+            self._commit(connection)
+            return _make_evidence_capture(ref, prepared)
+        except (BlobIntegrityError, ValueError):
+            self._rollback(connection)
+            raise RawEvidenceIntegrityError(
+                "raw evidence blob could not be published"
+            ) from None
+        except Exception as exc:
+            self._rollback(connection)
+            if _is_integrity_error(exc):
+                raise StorageConflict("raw evidence already exists for event") from None
+            raise
+        except BaseException:
+            self._rollback(connection)
+            raise
+        finally:
+            connection.close()
+
+    def read_raw_evidence(
+        self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576
+    ) -> RawEvidence:
+        if not isinstance(reference, RawEvidenceRef):
+            raise RawEvidenceUnavailable("raw evidence reference is invalid")
+        _validate_evidence_id(reference.evidence_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT eb.event_id,eb.evidence_id,eb.media_type,"
+                "b.sha256,b.size_bytes,b.storage_key "
+                "FROM v2_event_blobs eb JOIN v2_blobs b ON b.sha256=eb.sha256 "
+                "WHERE eb.evidence_id=? AND eb.role='raw_evidence'",
+                (reference.evidence_id,),
+            ).fetchone()
+        if row is None:
+            raise RawEvidenceUnavailable("raw evidence is unavailable")
+        try:
+            recomputed_evidence_id = _evidence_id_for(str(row["event_id"]))
+        except (RawEvidenceUnavailable, TypeError, ValueError):
+            raise RawEvidenceIntegrityError(
+                "raw evidence evidence_id binding is invalid"
+            ) from None
+        if str(row["evidence_id"]) != recomputed_evidence_id:
+            raise RawEvidenceIntegrityError(
+                "raw evidence evidence_id binding is invalid"
+            )
+        expected = RawEvidenceRef(
+            evidence_id=recomputed_evidence_id,
+            sha256=str(row["sha256"]),
+            size_bytes=int(row["size_bytes"]),
+            media_type=(
+                str(row["media_type"]) if row["media_type"] is not None else None
+            ),
+            storage_key=str(row["storage_key"]),
+        )
+        _verify_evidence_reference(reference, expected)
+        if expected.sha256 is None or expected.storage_key is None:
+            raise RawEvidenceIntegrityError("raw evidence metadata is incomplete")
+        try:
+            expected_path = str(
+                self.artifacts.blob_store.path_for(expected.sha256).relative_to(
+                    self.artifacts.blob_root
+                )
+            )
+        except (StorageError, ValueError):
+            raise RawEvidenceIntegrityError(
+                "raw evidence storage metadata is invalid"
+            ) from None
+        if expected.storage_key != expected_path:
+            raise RawEvidenceIntegrityError("raw evidence storage metadata is invalid")
+        try:
+            content = self.artifacts.blob_store.read(
+                expected.sha256, size_bytes=expected.size_bytes
+            )
+        except ArtifactNotFound:
+            raise RawEvidenceUnavailable("raw evidence is unavailable") from None
+        except (BlobIntegrityError, StorageError, ValueError):
+            raise RawEvidenceIntegrityError(
+                "raw evidence integrity verification failed"
+            ) from None
+        except OSError:
+            raise RawEvidenceUnavailable("raw evidence is unavailable") from None
+        return _make_evidence_result(expected, content, max_bytes=max_bytes)
 
     def clone_execution(self, execution_id: ExecutionId | str, *, use_latest: bool = False) -> ExecutionId:
         source = _execution_key(execution_id)

@@ -12,15 +12,15 @@ import asyncio
 import inspect
 import math
 import uuid
-from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, Protocol, TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 
 from ..agent_session import HarnessAdapter as HarnessAdapter
 from ..errors import MCPError
 from ..interaction_handlers import InteractionController
-from ..policy import ToolDescriptor, ToolPolicyEvidence, ToolPolicyEvaluator
+from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..types import (
     AgentExecutionSpec,
     Capability,
@@ -37,6 +37,7 @@ from ..types import (
 
 if TYPE_CHECKING:
     from ..server_group import HarnessServerConfiguration, ServerGroupSnapshot
+    from .observations import HarnessSessionEvidence, TurnEvidence
 
 
 class HarnessAdapterError(MCPError):
@@ -119,8 +120,20 @@ class HarnessTurnResult:
     tool_calls: tuple[Mapping[str, Any], ...] = ()
     evidence: Mapping[str, str | int | float | bool | None] = field(default_factory=dict)
     trace_limitations: tuple[str, ...] = ()
+    # Typed evidence is the preferred shared boundary.  ``evidence`` remains
+    # as a compatibility receipt for existing adapters until R6-R8 migrate.
+    turn_evidence: TurnEvidence | None = None
 
     def __post_init__(self) -> None:
+        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence < 0:
+            raise TypeError("harness turn sequence must be a non-negative integer")
+        if self.status not in {"completed", "failed", "timed_out", "cancelled", "interrupted"}:
+            raise ValueError("harness turn status is invalid")
+        if self.turn_evidence is not None and (
+            self.turn_evidence.sequence != self.sequence
+            or self.turn_evidence.status != self.status
+        ):
+            raise ValueError("turn evidence does not match the harness turn result")
         object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
         object.__setattr__(
             self,
@@ -138,9 +151,22 @@ class HarnessSessionSnapshot:
     turns: int
     server_configuration_count: int
     closed: bool
-    evidence: Mapping[str, str | int | float | bool | None] = field(default_factory=dict)
+    evidence: Mapping[str, str | int | float | bool | None] = field(
+        default_factory=dict
+    )
+    session_evidence: HarnessSessionEvidence | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.session_id, str) or not self.session_id:
+            raise ValueError("harness session ID must be non-empty")
+        if isinstance(self.turns, bool) or not isinstance(self.turns, int) or self.turns < 0:
+            raise TypeError("harness session turn count must be a non-negative integer")
+        if self.session_evidence is not None and (
+            self.session_evidence.session_id != self.session_id
+            or len(self.session_evidence.turns) != self.turns
+            or self.session_evidence.closed != self.closed
+        ):
+            raise ValueError("session evidence does not match the harness snapshot")
         object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
 
 
@@ -245,9 +271,9 @@ def default_harness_adapter_registry() -> HarnessAdapterRegistry:
     another when a selected executable is unavailable.
     """
 
+    from .acp import AcpHarnessAdapter
     from .claude import ClaudeCodeHarnessAdapter
     from .opencode import OpenCodeHarnessAdapter
-    from .acp import AcpHarnessAdapter
 
     registry = HarnessAdapterRegistry()
 
@@ -487,6 +513,7 @@ class _DeterministicHarnessSession:
                         error=value.error,
                         tool_calls=value.tool_calls,
                         evidence=evidence,
+                        turn_evidence=value.turn_evidence,
                     )
                 return HarnessTurnResult(
                     sequence=value.sequence,
@@ -495,6 +522,7 @@ class _DeterministicHarnessSession:
                     error=value.error,
                     tool_calls=value.tool_calls,
                     evidence=evidence,
+                    turn_evidence=value.turn_evidence,
                 )
             response = (
                 value

@@ -10,16 +10,21 @@ from typing import TYPE_CHECKING as _TYPE_CHECKING
 
 from .errors import (
     CleanupError,
+    ExecutionNotFound,
     InvalidTransitionError,
     KitClosed,
     MCPError,
     ModelValidationError,
     OperationCancelled,
     OperationTimeout,
+    RawEvidenceIntegrityError,
+    RawEvidenceUnavailable,
     ProtocolError,
     SessionBusy,
     SessionStillOpen,
     TransportError,
+    TraceNotFinalized,
+    TraceUnavailable,
     UnsupportedFeature,
 )
 from .matchers import check, expect
@@ -88,6 +93,7 @@ from .sync_api import (
     resolve_config,
 )
 from .types import *
+from .observability import *
 from .services.acp_probes import (
     ACPAgentIdentity, ACPAgentMode, ACPProbeDimension, ACPProbeHistory, ACPProbeKind,
     ACPProbeRequest, ACPProbeResult, ACPProbeStatus, ACPProbeStore,

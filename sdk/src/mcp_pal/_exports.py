@@ -16,9 +16,9 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "ServerProfileId", "ServerProfileRef", "SessionForkRequest", "SessionId", "SessionProvenance", "PersistedExecutionReport", "StdioServer", "StreamableHTTPServer",
         "TerminalPolicy", "TextContent", "TraceId", "TraceResult", "TransportKind", "TurnId",
         "TurnLifecycle", "TurnOutcome", "TurnResponse", "TurnResult", "TurnSnapshot", "UserMessage",
-        "WorkspaceKind", "WorkspacePolicy", "ListToolsOperation", "ListResourcesOperation", "ListResourceTemplatesOperation", "ListPromptsOperation", "CallToolOperation", "ReadResourceOperation", "GetPromptOperation", "PingOperation", "DirectOperationResult", "ListToolsOperationResult", "ListResourcesOperationResult", "ListResourceTemplatesOperationResult", "ListPromptsOperationResult", "CallToolOperationResult", "ReadResourceOperationResult", "GetPromptOperationResult", "PingOperationResult", "CleanupError", "InvalidTransitionError", "KitClosed", "MCPError",
+        "WorkspaceKind", "WorkspacePolicy", "ListToolsOperation", "ListResourcesOperation", "ListResourceTemplatesOperation", "ListPromptsOperation", "CallToolOperation", "ReadResourceOperation", "GetPromptOperation", "PingOperation", "DirectOperationResult", "ListToolsOperationResult", "ListResourcesOperationResult", "ListResourceTemplatesOperationResult", "ListPromptsOperationResult", "CallToolOperationResult", "ReadResourceOperationResult", "GetPromptOperationResult", "PingOperationResult", "CleanupError", "ExecutionNotFound", "InvalidTransitionError", "KitClosed", "MCPError",
         "ModelValidationError", "OperationCancelled", "OperationTimeout", "ProtocolError", "SessionBusy",
-        "SessionStillOpen", "ServerValue", "ToolPolicy", "TransportError", "TrustLevel", "UnsupportedFeature", "expect", "check",
+        "SessionStillOpen", "ServerValue", "ToolPolicy", "TransportError", "TraceNotFinalized", "TraceUnavailable", "RawEvidenceUnavailable", "RawEvidenceIntegrityError", "TrustLevel", "UnsupportedFeature", "expect", "check",
         "ToolDescriptor", "ToolPolicyDecision", "ToolPolicyEvidence", "ToolPolicyEvaluator", "evaluate_tool_policy",
         "AsyncEvaluator", "EvaluationRunner", "EvaluationStore", "EvaluationVerdict", "Evaluator", "EvaluatorCallable", "EvaluatorRegistry", "EvaluatorRegistration", "InMemoryEvaluationStore", "RequiredEvaluationError", "SnapshotOptions", "canonical_snapshot", "normalize_snapshot",
         "AllowlistedTerminalHandler", "ElicitationRequest", "ElicitationResult", "ElicitationHandler", "FilesystemHandler", "FilesystemRequest", "FilesystemResult", "InteractionController", "InteractionHandlers", "InteractionReceipt", "PermissionRequest", "PermissionResult", "PermissionHandler", "SamplingRequest", "SamplingResult", "SamplingHandler", "TerminalHandler", "TerminalRequest", "TerminalResult", "WorkspaceFilesystemHandler",
@@ -39,8 +39,8 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "UserMessage", "WorkspaceKind", "WorkspacePolicy", "ListToolsOperation", "ListResourcesOperation", "ListResourceTemplatesOperation", "ListPromptsOperation", "CallToolOperation", "ReadResourceOperation", "GetPromptOperation", "PingOperation", "DirectOperationResult", "ListToolsOperationResult", "ListResourcesOperationResult", "ListResourceTemplatesOperationResult", "ListPromptsOperationResult", "CallToolOperationResult", "ReadResourceOperationResult", "GetPromptOperationResult", "PingOperationResult",
     ),
     "mcp_pal.errors": (
-        "CleanupError", "InvalidTransitionError", "KitClosed", "MCPError", "ModelValidationError", "OperationCancelled",
-        "OperationTimeout", "ProtocolError", "SessionBusy", "SessionStillOpen", "TransportError", "UnsupportedFeature",
+        "CleanupError", "ExecutionNotFound", "InvalidTransitionError", "KitClosed", "MCPError", "ModelValidationError", "OperationCancelled",
+        "OperationTimeout", "RawEvidenceIntegrityError", "RawEvidenceUnavailable", "ProtocolError", "SessionBusy", "SessionStillOpen", "TransportError", "TraceNotFinalized", "TraceUnavailable", "UnsupportedFeature",
     ),
     "mcp_pal.sync_api": ("AgentSession", "HarnessAdapter", "CapabilityProbeService", "CallToolResult", "CompletionResult", "ConfigOrigin", "ConfigSource", "Configuration", "ConfigurationError", "DirectClient", "ExecutionHandle", "DirectPrompt", "DirectResource", "DirectResourceTemplate", "DirectTool", "EmptyResult", "GetPromptResult", "InitializationResult", "InputRequiredResult", "ListPromptsResult", "ListResourcesResult", "ListResourceTemplatesResult", "ListToolsResult", "MCPConfig", "MCPTestKit", "ProbeEvidence", "ProbeKind", "ProbeReport", "ProbeRequest", "ProbeResult", "ProbeService", "ReadinessProbeService", "SDKConfig", "PromptResult", "ResourceReadResult", "ToolCallResult", "Tool", "Resource", "ResourceTemplate", "load_config", "resolve_config", "AllowlistedTerminalHandler", "ElicitationRequest", "ElicitationResult", "ElicitationHandler", "FilesystemHandler", "FilesystemRequest", "FilesystemResult", "InteractionController", "InteractionHandlers", "InteractionReceipt", "PermissionRequest", "PermissionResult", "PermissionHandler", "SamplingRequest", "SamplingResult", "SamplingHandler", "TerminalHandler", "TerminalRequest", "TerminalResult", "WorkspaceFilesystemHandler"),
     "mcp_pal.async_api": ("AsyncAgentSession", "HarnessAdapter", "AsyncCapabilityProbeService", "AsyncDirectClient", "AsyncExecutionHandle", "AsyncMCPTestKit", "CallToolResult", "CompletionResult", "ConfigOrigin", "ConfigSource", "Configuration", "ConfigurationError", "DirectPrompt", "DirectResource", "DirectResourceTemplate", "DirectTool", "EmptyResult", "GetPromptResult", "InitializeResult", "InitializationResult", "InputRequiredResult", "ListPromptsResult", "ListResourcesResult", "ListResourceTemplatesResult", "ListToolsResult", "MCPConfig", "ProbeEvidence", "ProbeKind", "ProbeReport", "ProbeRequest", "ProbeResult", "Prompt", "PromptPage", "PromptResult", "ReadResourceResult", "Resource", "ResourcePage", "ResourceReadResult", "ResourceTemplate", "ResourceTemplatePage", "ResourceTemplatesPage", "ResourcesPage", "SDKConfig", "Tool", "ToolCallResult", "ToolPage", "ToolsPage", "load_config", "resolve_config", "AllowlistedTerminalHandler", "ElicitationRequest", "ElicitationResult", "ElicitationHandler", "FilesystemHandler", "FilesystemRequest", "FilesystemResult", "InteractionController", "InteractionHandlers", "InteractionReceipt", "PermissionRequest", "PermissionResult", "PermissionHandler", "SamplingRequest", "SamplingResult", "SamplingHandler", "TerminalHandler", "TerminalRequest", "TerminalResult", "WorkspaceFilesystemHandler"),
@@ -64,3 +64,13 @@ _INTERNAL_MODULES: tuple[str, ...] = (
 )
 
 __all__ = ["PUBLIC_EXPORTS"]
+
+# R1 typed observability models are a separate value-model module but are
+# promoted through each supported SDK boundary.  Keep this list derived from
+# that module's explicit ``__all__`` so the manifest cannot drift.
+from .observability import __all__ as _OBSERVABILITY_EXPORTS
+
+PUBLIC_EXPORTS["mcp_pal.observability"] = tuple(_OBSERVABILITY_EXPORTS)
+for _boundary in ("mcp_pal", "mcp_pal.sync_api", "mcp_pal.async_api"):
+    PUBLIC_EXPORTS[_boundary] = PUBLIC_EXPORTS[_boundary] + tuple(_OBSERVABILITY_EXPORTS)
+del _boundary

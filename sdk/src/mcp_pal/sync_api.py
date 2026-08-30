@@ -50,9 +50,11 @@ from .configuration import (
     resolve_config,
 )
 from .errors import (
+    ExecutionNotFound as _ExecutionNotFound,
     KitClosed as _KitClosed,
     OperationCancelled as _OperationCancelled,
     UnsupportedFeature as _UnsupportedFeature,
+    TraceUnavailable as _TraceUnavailable,
 )
 from .direct_client import (
     AsyncDirectClient as _AsyncDirectClient,
@@ -111,7 +113,12 @@ from .types import (
     CanonicalEvent as _CanonicalEvent,
     SessionForkRequest as _SessionForkRequest,
     SessionProvenance as _SessionProvenance,
+    TraceResult as _TraceResult,
+    RawEvidenceRef as _RawEvidenceRef,
+    ExecutionId as _ExecutionId,
 )
+from .observability import *
+from .observability import __all__ as _OBSERVABILITY_EXPORTS
 from .execution_runtime import AsyncExecutionHandle as _AsyncExecutionHandle
 from .storage import ExecutionStore as _ExecutionStore
 from .harness.contracts import HarnessAdapterRegistry as _HarnessAdapterRegistry
@@ -934,6 +941,38 @@ class MCPTestKit:
 
         return self._store
 
+    def get_trace(self, execution_id: _ExecutionId | str) -> _TraceResult:
+        """Return the finalized canonical trace for an execution."""
+
+        self._ensure_open()
+        if self._store is None:
+            raise _TraceUnavailable("MCPTestKit has no execution store")
+        trace = self._store.get_trace(execution_id)
+        if trace is None:
+            raise _ExecutionNotFound(f"execution {execution_id!s} was not found")
+        return trace
+
+    def get_trace_view(self, execution_id: _ExecutionId | str) -> TraceView:
+        """Return the finalized typed trace view for an execution."""
+
+        self._ensure_open()
+        if self._store is None:
+            raise _TraceUnavailable("MCPTestKit has no execution store")
+        view = self._store.get_trace_view(execution_id)
+        if view is None:
+            raise _ExecutionNotFound(f"execution {execution_id!s} was not found")
+        return view
+
+    def read_raw_evidence(
+        self, reference: _RawEvidenceRef, *, max_bytes: int = 1_048_576
+    ) -> RawEvidence:
+        """Read bounded, redacted raw evidence by its durable reference."""
+
+        self._ensure_open()
+        if self._store is None:
+            raise _TraceUnavailable("MCPTestKit has no execution store")
+        return self._store.read_raw_evidence(reference, max_bytes=max_bytes)
+
     def __enter__(self) -> "MCPTestKit":
         with self._state_lock:
             if self._closed:
@@ -1279,3 +1318,5 @@ __all__ = [
     "TerminalResult",
     "WorkspaceFilesystemHandler",
 ]
+
+__all__ = [*__all__, *_OBSERVABILITY_EXPORTS]
