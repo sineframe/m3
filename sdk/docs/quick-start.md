@@ -44,7 +44,7 @@ Follow [`test_discover_and_call_a_tool`](../examples/tests/test_quick_start.py):
 5. Assert `is_error` and `structured_content` on the typed result.
 
 For assertions about the whole execution, close the client first and project
-its finalized trace. `TraceView` is the stable typed surface for tools,
+its finalized trace. `TraceView` is the stable typed API for tools,
 messages, timing, runtime metadata, and terminal outcome:
 
 ```python
@@ -72,11 +72,21 @@ that must happen before client shutdown.
 Both objects are context managers. Exiting the direct client closes its MCP
 connection and subprocess; exiting the kit provides the outer cleanup boundary.
 
-## Test an agent harness
+## Use Claude Code or OpenCode
 
-Use `agent_session` when an ACP, Claude Code, or OpenCode process should drive
-the server. `session.send` returns a completed `TurnResult`; after the session
-closes, finalized trace assertions go through `session.result`:
+MCP Pal supports the built-in `ClaudeCode` and `OpenCode` harness choices.
+They use the same `agent_session` flow with their normal tool access. Tool
+restrictions can be added later when a test needs tighter control. The complete
+server and harness definitions are in the
+[`built-in harness example`](examples.md#2-use-claude-code-or-opencode).
+OpenCode needs its provider credential; the repository's live example shows
+the explicit opt-in.
+
+## Bring your own harness with ACP
+
+Use this route for an ACP-compatible agent you provide. `session.send` returns
+a completed `TurnResult`; after the session closes, finalized trace assertions
+go through `session.result`:
 
 ```python
 import sys

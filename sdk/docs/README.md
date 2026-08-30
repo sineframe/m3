@@ -7,8 +7,8 @@ guide.
 - [Quick start](quick-start.md) — install the SDK and run the first real MCP test.
 - [Concepts](concepts.md) — understand server bindings, lifecycle, results,
   schemas, chained workflows, traces, and isolation.
-- [Examples](examples.md) — choose a direct-server, deterministic-harness, or
-  opt-in live-provider workflow.
+- [Examples](examples.md) — choose direct-server testing, a built-in Claude
+  Code/OpenCode harness, a bring-your-own ACP agent, or an opt-in live provider.
 
 The copyable typed observability starting point is
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py); it is

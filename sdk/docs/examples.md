@@ -1,10 +1,11 @@
 # Examples
 
-The examples are ordinary pytest tests and use public MCP Pal APIs. The
-example server is a local, stateful stdio MCP fixture exposing deterministic
-tools, resources, and prompts across a real subprocess and protocol boundary.
-The complete server is
-[`example_mcp_server.py`](../examples/servers/example_mcp_server.py).
+These are ordinary pytest tests using public MCP Pal APIs. The example server
+is a small stateful stdio MCP program with deterministic tools, resources, and
+prompts. It runs as a real subprocess, so these tests exercise the protocol
+boundary too: [`example_mcp_server.py`](../examples/servers/example_mcp_server.py).
+
+Run the local examples with:
 
 ```bash
 uv run --project sdk --extra pytest pytest -q sdk/examples/tests
@@ -12,10 +13,10 @@ uv run --project sdk --extra pytest pytest -q sdk/examples/tests
 
 ## 1. Discover a direct server tool before calling it
 
-Use `kit.direct` when testing an MCP server without an agent. The executable
-[`test_quick_start.py`](../examples/tests/test_quick_start.py) uses the shared
-[`example_server` fixture](../examples/tests/conftest.py), lists every page,
-and checks the selected tool's description and input contract before calling:
+Use `kit.direct` when you want to test an MCP server without an agent. The
+shared [`example_server` fixture](../examples/tests/conftest.py) points to the
+server above. [`test_quick_start.py`](../examples/tests/test_quick_start.py)
+lists all pages, checks the tool description and input shape, and then calls it:
 
 ```python
 with MCPTestKit(env={}) as kit, kit.direct(example_server) as client:
@@ -30,32 +31,87 @@ with MCPTestKit(env={}) as kit, kit.direct(example_server) as client:
 assert result.structured_content == {"amount": 9.0, "currency": "USD"}
 ```
 
-For pagination and the broader direct protocol surface, see
+For pagination and the other direct operations, see
 [`test_direct_client_surface.py`](../examples/tests/test_direct_client_surface.py).
 
-## 2. Prompt a harness and assert its MCP tool
+## 2. Use Claude Code or OpenCode
 
-Use this for agent workflows where a harness chooses and calls the server.
-[`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py)
-uses a deterministic local ACP process (not an LLM) and the real
-[`example_mcp_server.py`](../examples/servers/example_mcp_server.py).
+Choose a built-in harness when the test should send a prompt to an installed
+Claude Code or OpenCode process. Both use the same `agent_session` API and may
+call tools available to the harness. Start with the shared server definition and
+choose one harness:
 
-Define the harness, server binding, alias, and restrictive policy before
-opening the session. This example uses the deterministic local ACP process
+```python
+import os
+from mcp_pal import MCPTestKit, expect
+from mcp_pal.types import (
+    AgentExecutionSpec, ClaudeCode, OpenCode, SecretReference, ServerBinding, StdioServer,
+)
+
+def env_secret(name: str) -> SecretReference:
+    return SecretReference(source="environment", name=name)
+
+def test_agent_uses_shipping_quote(example_server: StdioServer) -> None:
+    # Pick the installed built-in harness for this test:
+    harness = ClaudeCode(
+        model=os.environ["MCP_PAL_CLAUDE_MODEL"],
+        credential_references={"ANTHROPIC_API_KEY": env_secret("ANTHROPIC_API_KEY")},
+    )
+    # Or swap in OpenCode (and set MCP_PAL_OPENCODE_MODEL):
+    # harness = OpenCode(
+    #     model=os.environ["MCP_PAL_OPENCODE_MODEL"],
+    #     credential_references={"OPENCODE_API_KEY": env_secret("OPENCODE_API_KEY")},
+    # )
+    spec = AgentExecutionSpec(
+        harness=harness,
+        servers=(ServerBinding(server=example_server, alias="example-mcp"),),
+    )
+    with MCPTestKit(env={}) as kit:
+        with kit.agent_session(spec) as session:
+            turn = session.send("Use shipping_quote for a local quote")
+
+    expect(session.result).to_have_tool_call(
+        "shipping_quote", turn=turn, server="example-mcp", status="success"
+    )
+```
+
+`ClaudeCode(...)` and `OpenCode(...)` are the built-in choices. The test sends
+one prompt to the selected installed process; that process may choose and call
+an available MCP tool. The genuine provider example is
+[`test_live_opencode.py`](../examples/tests/test_live_opencode.py); it needs
+OpenCode and `OPENCODE_API_KEY` and may incur provider charges. Claude Code
+uses the same session flow when its CLI is installed and configured.
+Tool restrictions are optional; add a policy later when a test needs tighter
+control over available tools. Credentials are resolved at launch from the
+referenced environment variables and are not stored by the SDK; child process
+login state is not inherited from the parent environment.
+
+## 3. Bring your own harness with ACP
+
+Use ACP when you have an ACP-compatible agent of your own. The local fixture
+below is just a credential-free example process, not a required way to build an
+agent. It calls the real example server and reports the result through ACP.
+The complete fixture is
 [`deterministic_acp_agent.py`](../examples/servers/deterministic_acp_agent.py),
-which invokes the real example server and needs no credentials or network:
+and the complete test is
+[`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py).
 
 ```python
 import sys
 from pathlib import Path
 from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import ACPAgent, AgentExecutionSpec, RestrictiveToolPolicy, ServerBinding, StdioServer
+from mcp_pal.types import (
+    ACPAgent, AgentExecutionSpec, RestrictiveToolPolicy, ServerBinding, StdioServer,
+)
 
 examples = Path("sdk/examples")
 server = StdioServer(
     name="example-mcp", command=sys.executable,
     args=(str(examples / "servers" / "example_mcp_server.py"),),
     cwd=str(examples),
+)
+policy = RestrictiveToolPolicy(
+    allowed_tools=("example-mcp:shipping_quote",)
 )
 spec = AgentExecutionSpec(
     harness=ACPAgent(
@@ -67,46 +123,32 @@ spec = AgentExecutionSpec(
         },
     ),
     servers=(ServerBinding(server=server, alias="example-mcp"),),
-    tool_policy=RestrictiveToolPolicy(
-        allowed_tools=("example-mcp:shipping_quote",)
-    ),
+    tool_policy=policy,
 )
 
 with MCPTestKit(env={}) as kit:
     with kit.agent_session(spec) as session:
-        turn = session.send("Get a local shipping quote")
+        turn = session.send("Use shipping_quote for a local quote")
 
 expect(session.result).to_have_tool_call(
-    "shipping_quote", turn=turn, server="example-mcp",
-    arguments={"weight_kg": 2}, arguments_partial=True,
-    result={"structured_content": {"currency": "USD"}},
-    result_partial=True, status="success",
+    "shipping_quote", turn=turn, server="example-mcp", status="success"
 )
 ```
 
-`ACPAgent` selects the local harness executable, `ServerBinding` gives the MCP
-server its stable alias, and `RestrictiveToolPolicy` limits the tools the
-harness may use. `session.send(prompt)` sends one user turn to that configured
-harness, waits for its terminal `TurnResult`, and lets the harness select and
-call allowed MCP tools. For a genuine provider, the opt-in
-[`test_live_opencode.py`](../examples/tests/test_live_opencode.py) runs
-OpenCode against the same server. It needs OpenCode and `OPENCODE_API_KEY`
-and can incur provider charges.
+## 4. Match arguments, results, status, counts, and choices
 
-## 3. Match arguments, results, status, counts, and choices
-
-Use exact or partial arguments, result projections, status, `count`,
-`min_count`, `max_count`, argument/call predicates, latency bounds, and
-negative assertions:
+Use exact or partial arguments, result projections, status, count bounds,
+predicates, latency limits, and negative checks:
 
 ```python
 with kit.agent_session(spec) as session:
     turn = session.send("local")
 
-# The session context has closed, so this is a finalized result.
+# The session has closed, so its result is ready for final assertions.
 expect(session.result).to_have_tool_call(
-    "shipping_quote", arguments={"zone": "local"},
-    arguments_partial=True, argument_predicate=lambda args: args["weight_kg"] > 0,
+    "shipping_quote", turn=turn, arguments={"zone": "local"},
+    arguments_partial=True,
+    argument_predicate=lambda args: args["weight_kg"] > 0,
     predicate=lambda call: call["status"] == "success",
     min_count=1, max_count=1, max_latency_ms=30_000,
 )
@@ -115,22 +157,20 @@ expect(session.result).to_not_have_tool_call("always_fails", turn=turn)
 
 The complete harness assertions are in
 [`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py).
-Text, content, structured-result, and broader matcher examples are in
-[`test_assertions_snapshots_evaluations.py`](../examples/tests/test_assertions_snapshots_evaluations.py).
-When comparing evidence sources explicitly, use `evidence="reported"` or
-`evidence="any"`; the default matcher source is wire evidence.
+For an evidence-source comparison, use `evidence="reported"` or
+`evidence="any"`; wire evidence is the default.
 
-## 4. Test multiple turns with `TurnResult` scoping
+## 5. Test multiple turns by `TurnResult`
 
-`session.send` returns a completed `TurnResult`. After the session closes,
-pass that object directly to matchers or `TraceView.for_turn`:
+Each `session.send(prompt)` returns one completed turn. After closing the
+session, pass either `TurnResult`, `TurnSnapshot`, `TurnId`, or a string ID to
+the matcher and `TraceView.for_turn`:
 
 ```python
 with kit.agent_session(spec) as session:
     first = session.send("local")
     second = session.send("regional")
 
-# The session context has closed before accessing its finalized result.
 expect(session.result).to_have_tool_call("shipping_quote", turn=first)
 expect(session.result).to_have_tool_call("shipping_quote", turn=second)
 assert session.result.trace_view.for_turn(first).tool_calls
@@ -139,9 +179,9 @@ assert session.result.trace_view.for_turn(first).tool_calls
 See the two-turn implementation in
 [`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py).
 
-## 5. Chain tool outputs
+## 6. Chain tool outputs
 
-Keep one direct connection open when a later call consumes an earlier result:
+Keep one direct client open when one tool feeds the next:
 
 ```python
 normalized = client.call_tool("normalize_customer", {"name": "Ada Lovelace"})
@@ -153,17 +193,18 @@ assert order.structured_content["customer_id"] == customer_id
 
 Complete test: [`test_chained_workflow.py`](../examples/tests/test_chained_workflow.py).
 
-## 6. Test resources, prompts, errors, and contracts
+## 7. Test resources, prompts, errors, and schemas
 
-Resources and prompts use the direct client:
+The direct client also handles resources and prompts:
 
 ```python
 guide = client.read_resource("memory://testing-guide")
 prompt = client.get_prompt("review_order", {"order_id": "order-042"})
 ```
 
-See [`test_resources_and_prompts.py`](../examples/tests/test_resources_and_prompts.py)
-for complete calls. For tool errors and schema contracts:
+See [`test_resources_and_prompts.py`](../examples/tests/test_resources_and_prompts.py).
+For schema validation and expected tool errors, see
+[`test_errors_and_contracts.py`](../examples/tests/test_errors_and_contracts.py):
 
 ```python
 with kit.direct(example_server, validate_schemas=True) as client:
@@ -171,12 +212,9 @@ with kit.direct(example_server, validate_schemas=True) as client:
         client.call_tool("shipping_quote", {"weight_kg": -1, "zone": "local"})
 ```
 
-The error, validation, and parametrized contract cases are in
-[`test_errors_and_contracts.py`](../examples/tests/test_errors_and_contracts.py).
+## 8. Use async APIs
 
-## 7. Use async APIs
-
-The async kit has the same typed result and direct-client shape:
+The async kit follows the same shape:
 
 ```python
 async with AsyncMCPTestKit(env={}) as kit:
@@ -185,19 +223,18 @@ async with AsyncMCPTestKit(env={}) as kit:
 assert result.structured_content["currency"] == "USD"
 ```
 
-Complete async direct and evaluation examples are in
-[`test_async_usage.py`](../examples/tests/test_async_usage.py) and
+See [`test_async_usage.py`](../examples/tests/test_async_usage.py) and the
+async evaluation in
 [`test_assertions_snapshots_evaluations.py`](../examples/tests/test_assertions_snapshots_evaluations.py).
 
-## 8. Inspect and debug typed traces
+## 9. Inspect and debug traces
 
-After the direct client or agent session closes, inspect the finalized view:
+After a client or session closes, inspect its typed view:
 
 ```python
 with kit.agent_session(spec) as session:
     turn = session.send("local")
 
-# Finalized only: this is after the session context above.
 view = session.result.trace_view
 assert view.messages or view.tool_calls
 assert view.for_server("example-mcp").tool_calls
@@ -206,15 +243,14 @@ assert view.summary.timing.duration_ms >= 0
 ```
 
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py) covers
-messages, reasoning, runtime metadata, filters, indexes, timing, availability
-states, and bounded raw-evidence reads. Raw capture is optional but must be
-configured and remains bounded. Lifecycle, protocol, process cleanup, and
-cross-connection isolation are in
-[`test_tracing_and_lifecycle.py`](../examples/tests/test_tracing_and_lifecycle.py).
+messages, reasoning, runtime information, filters, indexes, timing, explicit
+availability states, and bounded raw-evidence reads. Raw capture is optional,
+must be configured, and is bounded. Process cleanup and connection isolation
+are in [`test_tracing_and_lifecycle.py`](../examples/tests/test_tracing_and_lifecycle.py).
 
-## 9. Capabilities and probes
+## 10. Check capabilities and probes
 
-Ask the kit what is ready before using environment-dependent features:
+Check readiness before using an environment-dependent feature:
 
 ```python
 with MCPTestKit(env={}) as kit:
@@ -222,13 +258,11 @@ with MCPTestKit(env={}) as kit:
     assert report.readiness.ready
 ```
 
-Transport and dependency probes are shown in
-[`test_capabilities_and_probes.py`](../examples/tests/test_capabilities_and_probes.py).
+See [`test_capabilities_and_probes.py`](../examples/tests/test_capabilities_and_probes.py).
 
-## 10. Snapshots, evaluations, and grouped assertions
+## 11. Use snapshots, evaluations, and grouped assertions
 
-Assertions can be grouped and evaluations can be registered against a typed
-result:
+Group related checks and register an evaluator against a typed result:
 
 ```python
 with check() as checks:
@@ -238,12 +272,12 @@ kit.register_evaluator("is-usd", lambda context: context.subject["structured_con
 ```
 
 See [`test_assertions_snapshots_evaluations.py`](../examples/tests/test_assertions_snapshots_evaluations.py)
-for snapshots, lifecycle/error matchers, artifacts, workspace assertions,
-sync/async evaluators, and grouped checks.
+for snapshots, lifecycle/error checks, artifacts, workspace checks, and
+sync/async evaluations.
 
-## 11. Use a mock server
+## 12. Use a mock server
 
-When the test owns the server contract, use the SDK test double:
+When the test owns the server behavior, use the in-process helper:
 
 ```python
 server = MockMCPServer(name="contract-example")
@@ -253,16 +287,13 @@ def shipping_quote(arguments: dict[str, object]) -> dict[str, str]:
     return {"currency": "USD"}
 ```
 
-The complete setup, expectations, verification, and recording examples are in
+Complete setup, expectations, verification, and recording are in
 [`test_mock_server_expectations.py`](../examples/tests/test_mock_server_expectations.py).
 
-## 12. Persist and reopen optionally
+## 13. Persist and reopen when needed
 
-In-memory storage is the default. Configure SQLite when durable history is the
-behavior under test; close and reopen it, then retrieve the typed view and use
-the public raw-evidence API for entries that expose an evidence reference.
-The executable close/reopen example is
-[`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py).
+Memory storage is the default. Use SQLite when you want history to survive
+process boundaries:
 
 ```python
 store = SQLiteExecutionStore("traces.sqlite")
@@ -274,3 +305,6 @@ reopened = SQLiteExecutionStore("traces.sqlite")
 view = reopened.get_trace_view(execution_id)
 reopened.close()
 ```
+
+The close/reopen and public raw-evidence examples are in
+[`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py).
