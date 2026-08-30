@@ -80,7 +80,6 @@ def test_matchers_and_indexes_target_the_finalized_view(
         arguments={"weight_kg": 2, "zone": "local"},
         status="success",
         count=1,
-        evidence="wire",
     )
     expect(view).to_have_no_tool_call("missing_tool")
     assert view.tool_calls == view.for_server("example-mcp").tool_calls

@@ -1248,6 +1248,11 @@ class TurnResult(FrozenModel):
     # before constructing this public immutable model.
     evidence: _Mapping[str, _Any] = _Field(default_factory=dict)
 
+    @property
+    def turn_id(self) -> TurnId:
+        """Stable identifier usable to scope finalized session assertions."""
+        return self.snapshot.turn_id
+
     @_model_validator(mode="after")
     def _requires_terminal_snapshot(self) -> "TurnResult":
         if self.snapshot.lifecycle is not TurnLifecycle.FINISHED:

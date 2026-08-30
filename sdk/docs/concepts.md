@@ -34,10 +34,12 @@ deterministic protocol-level assertions without involving an LLM or agent
 harness. Resource and prompt coverage lives in
 [`test_resources_and_prompts.py`](../examples/tests/test_resources_and_prompts.py).
 
-For an agent-driven workflow, see the opt-in live OpenCode example
+For an agent-driven workflow, see the deterministic local ACP harness example
+[`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py) or
+the opt-in live OpenCode example
 [`test_live_opencode.py`](../examples/tests/test_live_opencode.py). It uses a
-restrictive policy, sends one instruction, and verifies the typed finalized
-`TraceView` tool call rather than trusting model prose. Live tests need an
+restrictive policy, sends instructions, and verifies the typed finalized
+`TraceView` tool calls rather than trusting model prose. Live tests need an
 explicit environment opt-in and credentials, so they are separate from the
 deterministic suite and should have generous operation timeouts.
 
@@ -122,6 +124,14 @@ project the same typed shape. Harness-specific fields may legitimately be
 or cancelled traces retain partial evidence and limitations without invented
 provider, usage, reasoning, HTTP, or process facts. See
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py).
+
+An agent `session.send(...)` returns a terminal `TurnResult` for that turn.
+After the session closes, use `session.result` for finalized assertions and
+`session.result.trace_view` for the immutable view. `TurnResult` (and its
+`turn_id`), `TurnSnapshot`, `TurnId`, and string IDs are accepted by
+`TraceView.for_turn(...)` and matcher `turn=` selectors; a turn result does not
+have its own `trace_view`. Assertions against an open execution remain subject
+to finalized-only errors.
 
 ## Determinism and isolation
 

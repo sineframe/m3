@@ -34,6 +34,11 @@ from mcp_pal.types import (
     RequestCorrelation,
     TraceId,
     TraceResult,
+    TurnId,
+    TurnLifecycle,
+    TurnOutcome,
+    TurnResult,
+    TurnSnapshot,
 )
 
 _REDACTION = RedactionConfig(
@@ -377,6 +382,28 @@ def test_trace_aware_matchers_accept_typed_view_result_and_session_objects() -> 
     expect(result).to_have_tool_call("lookup")
     expect(SimpleNamespace(trace=trace)).to_have_tool_call("lookup")
     expect(SimpleNamespace(result=result)).to_have_tool_call("lookup")
+
+
+def test_tool_matcher_normalizes_turn_result_snapshot_id_and_rejects_invalid() -> None:
+    trace = _trace().view()
+    call = trace.tool_calls[0].model_copy(update={"turn_id": TurnId("turn-1")})
+    view = trace.model_copy(
+        update={
+            "timeline": tuple(
+                call if item.entry_id == call.entry_id else item
+                for item in trace.timeline
+            )
+        }
+    )
+    snapshot = TurnSnapshot(
+        turn_id="turn-1", session_id="session-1", number=1
+    ).transition(TurnLifecycle.FINISHED, TurnOutcome.COMPLETED)
+    result = TurnResult(snapshot=snapshot)
+    for selector in ("turn-1", TurnId("turn-1"), snapshot, result):
+        expect(view).to_have_tool_call("lookup", turn=selector)
+    expect(view).to_not_have_tool_call("lookup", turn="turn-2")
+    with pytest.raises(TypeError, match="turn selector"):
+        expect(view).to_have_tool_call("lookup", turn=object())  # type: ignore[arg-type]
 
 
 def test_trace_aware_matchers_reject_nonfinalized_trace_instead_of_zero_calls() -> None:

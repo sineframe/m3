@@ -90,6 +90,12 @@ from .types import (
 from .types import (
     TurnId as _TurnId,
 )
+from .types import (
+    TurnResult as _TurnResult,
+)
+from .types import (
+    TurnSnapshot as _TurnSnapshot,
+)
 
 
 class ObservationState(str, _Enum):
@@ -771,8 +777,27 @@ class TraceView(_FrozenModel):
     def _filtered(self, entries: tuple[TraceEntry, ...]) -> TraceView:
         return self.model_copy(update={"timeline": entries})
 
-    def for_turn(self, turn_id: _TurnId | str) -> TraceView:
-        value = turn_id.root if isinstance(turn_id, _TurnId) else str(turn_id)
+    def for_turn(
+        self,
+        turn: _TurnResult | _TurnSnapshot | _TurnId | str,
+    ) -> TraceView:
+        """Return the finalized evidence belonging to one turn.
+
+        ``TurnResult`` and ``TurnSnapshot`` are accepted as convenient public
+        selectors; neither object owns a finalized ``TraceView`` itself.
+        """
+        if isinstance(turn, _TurnResult):
+            value = turn.snapshot.turn_id.root
+        elif isinstance(turn, _TurnSnapshot):
+            value = turn.turn_id.root
+        elif isinstance(turn, _TurnId):
+            value = turn.root
+        elif isinstance(turn, str):
+            value = turn
+        else:
+            raise TypeError(
+                "turn selector must be a TurnResult, TurnSnapshot, TurnId, or str"
+            )
         return self._filtered(
             tuple(
                 item

@@ -16,7 +16,6 @@ from mcp_pal.errors import InvalidTransitionError, ModelValidationError
 from mcp_pal.types import (
     AgentExecutionSpec,
     ACPAgent,
-    ActivityHealth,
     ArtifactId,
     ArtifactRef,
     AudioContent,
@@ -260,6 +259,15 @@ def test_all_serializable_model_representatives_round_trip() -> None:
     for value in values:
         restored = type(value).model_validate(value.model_dump(mode="json", by_alias=True))
         assert restored == value, type(value).__name__
+
+
+def test_turn_result_exposes_its_selector_id_without_a_trace_view() -> None:
+    turn = TurnSnapshot(turn_id="turn-selector", session_id="session-1", number=1)
+    result = TurnResult(
+        snapshot=turn.transition(TurnLifecycle.FINISHED, TurnOutcome.COMPLETED)
+    )
+    assert result.turn_id == TurnId("turn-selector")
+    assert not hasattr(result, "trace_view")
 
 
 def test_artifact_refs_cannot_claim_unredacted_state() -> None:

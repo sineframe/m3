@@ -1,19 +1,21 @@
 # MCP Pal Python SDK
 
-Use these pages to start writing pytest tests for MCP servers. The executable
-tests in [`sdk/examples/tests`](../examples/tests/) are the source of truth for
-every documented example; the documentation links to them instead of carrying
-copies that can drift.
+Use these pages to start writing pytest tests for MCP servers and agent
+harnesses. The examples are ordinary executable pytest tests linked from the
+guide.
 
 - [Quick start](quick-start.md) — install the SDK and run the first real MCP test.
 - [Concepts](concepts.md) — understand server bindings, lifecycle, results,
   schemas, chained workflows, traces, and isolation.
-- [Examples](examples.md) — browse every verified sync/async and finalized
-  typed-trace scenario.
+- [Examples](examples.md) — choose a direct-server, deterministic-harness, or
+  opt-in live-provider workflow.
 
 The copyable typed observability starting point is
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py); it is
 also linked from the [quick start](quick-start.md) and [concepts](concepts.md).
+
+For harness-driven tool assertions, start with
+[`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py).
 
 The examples run against the deterministic stdio server in
 [`example_mcp_server.py`](../examples/servers/example_mcp_server.py). They use

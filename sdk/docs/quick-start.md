@@ -1,6 +1,6 @@
 # Quick start
 
-The shortest useful MCP Pal test discovers a server's tools, calls one, and
+The shortest useful direct MCP test discovers a server's tools, calls one, and
 asserts its typed result. The complete, executable version is
 [`test_quick_start.py`](../examples/tests/test_quick_start.py).
 
@@ -72,7 +72,56 @@ that must happen before client shutdown.
 Both objects are context managers. Exiting the direct client closes its MCP
 connection and subprocess; exiting the kit provides the outer cleanup boundary.
 
-## Run the verified examples from a checkout
+## Test an agent harness
+
+Use `agent_session` when an ACP, Claude Code, or OpenCode process should drive
+the server. `session.send` returns a completed `TurnResult`; after the session
+closes, finalized trace assertions go through `session.result`:
+
+```python
+import sys
+from pathlib import Path
+from mcp_pal import MCPTestKit, expect
+from mcp_pal.types import ACPAgent, AgentExecutionSpec, RestrictiveToolPolicy, ServerBinding, StdioServer
+
+examples = Path("sdk/examples")
+server = StdioServer(
+    name="example-mcp", command=sys.executable,
+    args=(str(examples / "servers" / "example_mcp_server.py"),),
+    cwd=str(examples),
+)
+spec = AgentExecutionSpec(
+    harness=ACPAgent(
+        model="deterministic-fixture",
+        manifest={
+            "command": sys.executable,
+            "args": (str(examples / "servers" / "deterministic_acp_agent.py"),),
+            "protocol": "acp", "protocol_version": 1,
+        },
+    ),
+    servers=(ServerBinding(server=server, alias="example-mcp"),),
+    tool_policy=RestrictiveToolPolicy(
+        allowed_tools=("example-mcp:shipping_quote",)
+    ),
+)
+
+with MCPTestKit(env={}) as kit:
+    with kit.agent_session(spec) as session:
+        turn = session.send("Use shipping_quote for a local quote")
+
+expect(session.result).to_have_tool_call("shipping_quote", turn=turn)
+turn_view = session.result.trace_view.for_turn(turn)
+assert turn_view.tool_calls
+```
+
+The `TurnResult` is a supported turn selector and has a `turn_id` convenience
+property; it does not own a `trace_view`. See the deterministic
+[`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py)
+for a complete local harness flow. Direct MCP testing and harness-driven agent
+testing are separate workflows: only the latter has an agent process and
+turn-scoped responses.
+
+## Run the examples from a checkout
 
 From the repository root, run exactly:
 

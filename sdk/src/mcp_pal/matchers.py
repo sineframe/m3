@@ -94,6 +94,9 @@ from .types import (
     TraceResult as _TraceResult,
 )
 from .types import (
+    TurnId as _TurnId,
+)
+from .types import (
     TurnLifecycle as _TurnLifecycle,
 )
 from .types import (
@@ -105,6 +108,8 @@ from .types import (
 from .types import (
     TurnSnapshot as _TurnSnapshot,
 )
+
+_TurnSelector = _TurnResult | _TurnSnapshot | _TurnId | str
 
 _SubjectT = _TypeVar("_SubjectT")
 _FailureSink = _Callable[[AssertionError], None]
@@ -128,6 +133,21 @@ def _plain(value: _Any) -> _Any:
     if hasattr(value, "value") and isinstance(value.value, str):
         return value.value
     return value
+
+
+def _normalize_turn_selector(value: _Any) -> str:
+    """Normalize the supported public turn selector forms."""
+    if isinstance(value, _TurnResult):
+        return value.snapshot.turn_id.root
+    if isinstance(value, _TurnSnapshot):
+        return value.turn_id.root
+    if isinstance(value, _TurnId):
+        return value.root
+    if isinstance(value, str):
+        return value
+    raise TypeError(
+        "turn selector must be a TurnResult, TurnSnapshot, TurnId, or str"
+    )
 
 
 def _redact(value: _Any, depth: int = 0) -> _Any:
@@ -739,7 +759,7 @@ class Expectation(_Generic[_SubjectT]):
         count: int | None = None,
         min_count: int | None = None,
         max_count: int | None = None,
-        turn: _Any = None,
+        turn: _TurnSelector | None = None,
         predicate: _Callable[[_Mapping[str, _Any]], bool] | None = None,
         server_name: str | None = None,
         evidence: _Literal["wire", "reported", "any"] = "wire",
@@ -800,6 +820,9 @@ class Expectation(_Generic[_SubjectT]):
             return
         if evidence not in {"wire", "reported", "any"}:
             raise ValueError("tool-call evidence must be 'wire', 'reported', or 'any'")
+        requested_turn = (
+            _normalize_turn_selector(turn) if turn is not None else None
+        )
         requested_tool = name or tool
         server = server or server_name
         views = self._typed_views()
@@ -900,8 +923,14 @@ class Expectation(_Generic[_SubjectT]):
                 or call["latency_ms"] > max_latency_ms
             ):
                 continue
-            if turn is not None and _plain(call["turn"]) != _plain(turn):
-                continue
+            if requested_turn is not None:
+                actual_turn = call["turn"]
+                if (
+                    actual_turn is _UNAVAILABLE
+                    or actual_turn is None
+                    or _normalize_turn_selector(actual_turn) != requested_turn
+                ):
+                    continue
             if predicate is not None:
                 try:
                     predicate_match = bool(predicate(call))

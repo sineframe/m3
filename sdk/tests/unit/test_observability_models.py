@@ -28,7 +28,13 @@ from mcp_pal.observability import (
     TraceView,
     UsageValue,
 )
-from mcp_pal.types import RawEvidenceRef
+from mcp_pal.types import (
+    RawEvidenceRef,
+    TurnLifecycle,
+    TurnOutcome,
+    TurnResult,
+    TurnSnapshot,
+)
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 import mcp_pal
@@ -484,6 +490,46 @@ def test_trace_view_indexes_and_filters_use_one_timeline() -> None:
         view.between(-1, 1)
     with pytest.raises(ValueError):
         view.between(2, 1)
+
+
+def test_trace_view_for_turn_accepts_public_turn_selectors() -> None:
+    turn = TurnSnapshot(
+        turn_id="turn-1", session_id="session-1", number=1
+    ).transition(TurnLifecycle.FINISHED, TurnOutcome.COMPLETED)
+    result = TurnResult(snapshot=turn)
+    view = TraceView(
+        trace_id="trace-1",
+        execution_id="execution-1",
+        timeline=(
+            MessageEntry(
+                entry_id="message-1",
+                execution_id="execution-1",
+                session_id="session-1",
+                turn_id="turn-1",
+                sequence_start=0,
+                sequence_end=0,
+            ),
+            MessageEntry(
+                entry_id="message-2",
+                execution_id="execution-1",
+                session_id="session-1",
+                turn_id="turn-2",
+                sequence_start=1,
+                sequence_end=1,
+            ),
+        ),
+    )
+    for selector in ("turn-1", turn.turn_id, turn, result):
+        assert [entry.entry_id for entry in view.for_turn(selector).timeline] == [
+            "message-1"
+        ]
+    with pytest.raises(TypeError, match="turn selector"):
+        view.for_turn(object())  # type: ignore[arg-type]
+
+
+def test_sync_and_async_exports_share_turn_selector_contract() -> None:
+    assert sync_api.TraceView.for_turn is TraceView.for_turn
+    assert async_api.TraceView.for_turn is TraceView.for_turn
 
 
 def test_observability_types_are_root_exports() -> None:

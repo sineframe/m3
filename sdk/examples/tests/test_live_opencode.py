@@ -29,7 +29,7 @@ from mcp_pal.types import (
     TurnOutcome,
 )
 
-from mcp_pal import MCPTestKit
+from mcp_pal import MCPTestKit, expect
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live]
 
@@ -87,6 +87,16 @@ def test_live_opencode_uses_shipping_quote_and_captures_wire_evidence() -> None:
         assert turn.snapshot.outcome is TurnOutcome.COMPLETED, turn.error
         view = session.result.trace_view
         assert view is not None
+        expect(session.result).to_have_tool_call(
+            "shipping_quote",
+            turn=turn,
+            server="example-mcp",
+            arguments={"weight_kg": 2, "zone": "local"},
+            result={"structured_content": {"currency": "USD"}},
+            result_partial=True,
+            status="success",
+            count=1,
+        )
         calls = [
             call
             for call in view.tool_calls
