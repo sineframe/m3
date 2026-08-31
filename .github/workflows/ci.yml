@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  ANTHROPIC_API_KEY: ""
+  OPENAI_API_KEY: ""
+  OPENROUTER_API_KEY: ""
+  OPENCODE_API_KEY: ""
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Install locked workspace
+        run: uv sync --locked --all-packages --all-extras --all-groups
+
+      - name: Run SDK tests without live providers
+        run: >-
+          uv run --locked --project sdk --all-extras --all-groups
+          pytest -q -m "not live" sdk/tests
+
+      - name: Run application tests without live providers
+        run: >-
+          uv run --locked --project app --group test --group typecheck
+          pytest -q -m "not live" app/tests
+
+  quality:
+    name: Source and lock checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Verify lockfile
+        run: uv lock --check
+
+      - name: Install locked workspace
+        run: uv sync --locked --all-packages --all-extras --all-groups
+
+      - name: Compile SDK
+        run: uv run --locked --project sdk python -m compileall -q sdk/src
+
+      - name: Compile application
+        run: uv run --locked --project app python -m compileall -q app/src
+
+      - name: Import application
+        run: uv run --locked --project app python -c "from mcp_pal_app.main import app; print(app.title)"
+
+  package:
+    name: Package smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Build application distributions
+        run: uv build --project app
+
+      - name: Build and smoke-test SDK distributions
+        run: uv run --locked --project sdk --all-extras python scripts/check_packaging.py
