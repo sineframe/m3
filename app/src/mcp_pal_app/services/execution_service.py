@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from mcp_pal.storage import StorageConflict
-from mcp_pal.types import (
+from mcp_pal.storage import StorageConflict, StorageError
+from mcp_pal import (
     AgentExecutionSpec,
     DirectExecutionSpec,
     ExecutionId,
@@ -20,7 +20,11 @@ from mcp_pal.types import (
     ExecutionSpec,
     LifecycleState,
     PersistedExecutionReport,
+    RawEvidence,
+    RawEvidenceRef,
+    TraceView,
 )
+from mcp_pal import RawEvidenceIntegrityError, RawEvidenceUnavailable, TraceUnavailable
 
 
 class AppExecutionError(RuntimeError):
@@ -43,6 +47,10 @@ class AppExecutionStore(Protocol):
         event_limit: int | None = None,
         artifact_limit: int | None = None,
     ) -> PersistedExecutionReport | None: ...
+
+    def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None: ...
+    def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None: ...
+    def read_raw_evidence(self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence: ...
 
     def list_executions(
         self,
@@ -136,6 +144,41 @@ class AppExecutionService:
     def get(self, execution_id: ExecutionId | str) -> PersistedExecutionReport:
         self._ensure_open()
         return self._report(self._id(execution_id))
+
+    def specification(self, execution_id: ExecutionId | str) -> ExecutionSpec:
+        self._ensure_open()
+        identifier = self._id(execution_id)
+        self._report(identifier)
+        try:
+            spec = self.store.get_execution_spec(identifier)
+        except (StorageError, TypeError, ValueError) as exc:
+            raise AppExecutionError("execution_data_unavailable", "execution data is unavailable") from exc
+        if spec is None:
+            raise AppExecutionError("execution_data_unavailable", "execution data is unavailable")
+        return spec
+
+    def trace_view(self, execution_id: ExecutionId | str) -> TraceView:
+        self._ensure_open()
+        identifier = self._id(execution_id)
+        report = self._report(identifier)
+        if report.snapshot.lifecycle is not LifecycleState.FINISHED:
+            raise AppExecutionError("execution_not_terminal", "execution report is available only after termination")
+        try:
+            view = self.store.get_trace_view(identifier)
+        except (TraceUnavailable, StorageError, TypeError, ValueError) as exc:
+            raise AppExecutionError("trace_unavailable", "execution trace is unavailable") from exc
+        if view is None:
+            raise AppExecutionError("trace_unavailable", "execution trace is unavailable")
+        return view
+
+    def read_raw_evidence(self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence:
+        self._ensure_open()
+        try:
+            return self.store.read_raw_evidence(reference, max_bytes=max_bytes)
+        except RawEvidenceUnavailable as exc:
+            raise AppExecutionError("raw_evidence_not_found", "raw evidence was not found") from exc
+        except RawEvidenceIntegrityError as exc:
+            raise AppExecutionError("raw_evidence_integrity_error", "raw evidence integrity could not be verified") from exc
 
     def list(
         self,

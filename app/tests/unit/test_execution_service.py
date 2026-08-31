@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sys
 from typing import Any
 import pytest
@@ -14,10 +15,13 @@ from mcp_pal.types import (
     LifecycleState,
     ListToolsOperation,
     PersistedExecutionReport,
+    RawEvidenceRef,
     ServerBinding,
     StdioServer,
+    TraceId,
 )
-from mcp_pal.storage import StorageConflict
+from mcp_pal import RawEvidence, RawEvidenceIntegrityError, RawEvidenceUnavailable, TraceUnavailable, TraceView
+from mcp_pal.storage import StorageConflict, StorageError
 from mcp_pal_app.services.execution_service import AppExecutionError, AppExecutionService
 
 
@@ -35,6 +39,14 @@ class FakeStore:
         self.cancelled = False
         self.conflict: StorageConflict | None = None
         self.closed = 0
+        self.specification: ExecutionSpec | None = spec()
+        self.trace: TraceView | None = TraceView(
+            trace_id=TraceId("trace-1"), execution_id=ExecutionId("execution-1")
+        )
+        self.raw_error: Exception | None = None
+        self.spec_error: Exception | None = None
+        self.trace_error: Exception | None = None
+        self.raw_max_bytes: int | None = None
 
     def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> PersistedExecutionReport | None:
         if after_sequence < -1:
@@ -43,6 +55,42 @@ class FakeStore:
         if self.report is None or self.report.snapshot.execution_id != identifier:
             return None
         return self.report
+
+    def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None:
+        if self.spec_error:
+            raise self.spec_error
+        identifier = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(execution_id)
+        if self.report is None or self.report.snapshot.execution_id != identifier:
+            return None
+        return self.specification
+
+    def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None:
+        if self.trace_error:
+            raise self.trace_error
+        identifier = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(execution_id)
+        if self.report is None or self.report.snapshot.execution_id != identifier:
+            return None
+        return self.trace
+
+    def read_raw_evidence(self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence:
+        self.raw_max_bytes = max_bytes
+        if self.raw_error:
+            raise self.raw_error
+        content = b"abc"
+        actual = RawEvidenceRef(
+            evidence_id=reference.evidence_id,
+            sha256=hashlib.sha256(content).hexdigest(),
+            size_bytes=3,
+            media_type="text/plain",
+        )
+        return RawEvidence(
+            reference=actual,
+            media_type="text/plain",
+            content=content[:max_bytes].decode(),
+            size_bytes=3,
+            returned_size_bytes=min(max_bytes, 3),
+            truncated=max_bytes < 3,
+        )
 
     def list_executions(self, *, limit: int = 50, offset: int = 0, lifecycle: Any = None, outcome: Any = None) -> ExecutionPage:
         if lifecycle == "bad":
@@ -141,6 +189,72 @@ def test_service_validation_not_found_conflicts_and_cursor() -> None:
     with pytest.raises(AppExecutionError) as error:
         service.cancel("execution-1")
     assert error.value.code == "cancellation_conflict"
+
+
+def test_service_specification_and_trace_availability() -> None:
+    store = FakeStore(active_report())
+    service = AppExecutionService(store, FakeKit(store, ExecutionId("execution-1")))
+    assert service.specification("execution-1") == store.specification
+    store.specification = None
+    with pytest.raises(AppExecutionError) as error:
+        service.specification("execution-1")
+    assert error.value.code == "execution_data_unavailable"
+    store.specification = spec()
+    store.spec_error = StorageError("database canary must not escape")
+    with pytest.raises(AppExecutionError) as error:
+        service.specification("execution-1")
+    assert error.value.code == "execution_data_unavailable"
+    assert "canary" not in error.value.message
+    store.spec_error = None
+    store.specification = spec()
+    with pytest.raises(AppExecutionError) as error:
+        service.trace_view("execution-1")
+    assert error.value.code == "execution_not_terminal"
+    assert store.report is not None
+    store.report = PersistedExecutionReport(
+        snapshot=store.report.snapshot.transition(
+            LifecycleState.FINISHED, ExecutionOutcome.COMPLETED
+        )
+    )
+    assert service.trace_view("execution-1") == store.trace
+    store.trace = None
+    with pytest.raises(AppExecutionError) as error:
+        service.trace_view("execution-1")
+    assert error.value.code == "trace_unavailable"
+    store.trace = TraceView(trace_id=TraceId("trace-1"), execution_id=ExecutionId("execution-1"))
+    store.trace_error = TraceUnavailable("trace canary must not escape")
+    with pytest.raises(AppExecutionError) as error:
+        service.trace_view("execution-1")
+    assert error.value.code == "trace_unavailable"
+    assert "canary" not in error.value.message
+
+
+def test_service_specification_missing_execution_and_raw_evidence_bound() -> None:
+    store = FakeStore(active_report())
+    service = AppExecutionService(store, FakeKit(store, ExecutionId("execution-1")))
+    with pytest.raises(AppExecutionError) as error:
+        service.specification("missing")
+    assert error.value.code == "execution_not_found"
+    result = service.read_raw_evidence(RawEvidenceRef(evidence_id="evidence-1"), max_bytes=2)
+    assert result.returned_size_bytes == 2 and result.truncated is True
+    assert store.raw_max_bytes == 2
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    (
+        (RawEvidenceUnavailable("missing"), "raw_evidence_not_found"),
+        (RawEvidenceIntegrityError("bad digest"), "raw_evidence_integrity_error"),
+    ),
+)
+def test_service_raw_evidence_maps_stable_errors(failure: Exception, code: str) -> None:
+    store = FakeStore(active_report())
+    store.raw_error = failure
+    service = AppExecutionService(store, FakeKit(store, ExecutionId("execution-1")))
+    with pytest.raises(AppExecutionError) as error:
+        service.read_raw_evidence(RawEvidenceRef(evidence_id="evidence-1"))
+    assert error.value.code == code
+    assert "digest" not in error.value.message and "missing" not in error.value.message
 
 
 def test_close_is_idempotent_and_honors_ownership() -> None:
