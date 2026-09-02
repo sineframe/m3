@@ -1052,10 +1052,24 @@ class AsyncMCPTestKit:
         if recorder is None:
             from .types import ExecutionId as _ExecutionId
 
+            store = self._execution_controller._persistent_store
+            recorder_store = store if store is not None else _InMemoryExecutionStore()
+            recorder_artifacts = _artifact_store
+            if recorder_artifacts is None and store is not None:
+                recorder_artifacts = getattr(store, "artifacts", None)
             recorder = _ExecutionTraceRecorder(
-                _InMemoryExecutionStore(),
+                recorder_store,
                 _execution_id if _execution_id is not None else _ExecutionId(str(_uuid4())),
+                redaction_config=self._execution_controller.redaction_config,
+                specification=spec.model_dump(mode="json"),
             )
+        elif _artifact_store is None:
+            # Runtime-owned sessions already receive their artifact backend
+            # through the execution handle.  Never replace the injected
+            # recorder or create a second execution here.
+            recorder_artifacts = None
+        else:
+            recorder_artifacts = _artifact_store
         session = AsyncAgentSession(
             spec,
             resolved,
@@ -1066,7 +1080,7 @@ class AsyncMCPTestKit:
             interaction_controller=interactions,
             trace_recorder=recorder,
             trace_owner=_trace_owner,
-            artifact_store=_artifact_store,
+            artifact_store=recorder_artifacts,
         )
         self._active_sessions.add(session)
         return session

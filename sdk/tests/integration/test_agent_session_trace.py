@@ -17,6 +17,7 @@ from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.types import (
     ACPAgent,
+    ArtifactPolicy,
     AgentExecutionSpec,
     CanonicalEvent,
     ErrorCode,
@@ -28,6 +29,7 @@ from mcp_pal.types import (
     StdioServer,
     TextContent,
     TurnResponse,
+    TurnLifecycle,
     TurnOutcome,
     UserMessage,
 )
@@ -91,6 +93,26 @@ class _TerminalFailureHarness(_TraceHarness):
     ) -> TurnResponse:
         del message, timeout, metadata
         raise HarnessTurnError("provider-turn-secret", terminal=True)
+
+
+class _SecondTurnFailureHarness(_TraceHarness):
+    def __init__(self) -> None:
+        self._turns = 0
+
+    async def send(
+        self,
+        message: UserMessage,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TurnResponse:
+        del timeout, metadata
+        self._turns += 1
+        if self._turns > 1:
+            raise HarnessTurnError("provider-second-turn-secret", terminal=True)
+        content = message.content[0]
+        assert isinstance(content, TextContent)
+        return TurnResponse(content=(TextContent(text=content.text),))
 
 
 class _TerminalCompleteEvidenceHarness(_TraceHarness):
@@ -215,6 +237,140 @@ def test_direct_sync_agent_session_result_owns_one_finalized_trace() -> None:
 
 
 @pytest.mark.asyncio
+async def test_caller_async_agent_session_uses_configured_store_for_all_turns(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteExecutionStore(tmp_path / "caller-async.sqlite")
+    try:
+        async with AsyncMCPTestKit(
+            env={},
+            cwd="/tmp/mcp-pal-no-project",
+            store=store,
+            embedded_worker=False,
+        ) as kit:
+            session = kit.agent_session(_spec(), adapter=_TraceHarness())
+            async with session:
+                await session.send("first")
+                await session.send("second")
+            result = session.result
+
+        execution_id = result.snapshot.execution_id
+        persisted = store.get_report(execution_id)
+        assert persisted is not None
+        assert persisted.snapshot.outcome is ExecutionOutcome.COMPLETED
+        assert persisted.events
+        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events) == 1
+        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events) == 1
+        assert [
+            event.payload["number"]
+            for event in persisted.events
+            if event.kind is EventKind.TURN_CREATED
+        ] == [1, 2]
+        assert store.get_execution_spec(execution_id) == _spec()
+        reopened = SQLiteExecutionStore(tmp_path / "caller-async.sqlite")
+        try:
+            assert reopened.get_trace(execution_id) is not None
+        finally:
+            reopened.close()
+    finally:
+        store.close()
+
+
+def test_caller_sync_agent_session_uses_configured_store_for_all_turns(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteExecutionStore(tmp_path / "caller-sync.sqlite")
+    try:
+        with MCPTestKit(
+            env={},
+            cwd="/tmp/mcp-pal-no-project",
+            store=store,
+            embedded_worker=False,
+        ) as kit:
+            session = kit.agent_session(_spec(), adapter=_TraceHarness())
+            with session:
+                session.send("first")
+                session.send("second")
+            result = session.result
+
+        execution_id = result.snapshot.execution_id
+        persisted = store.get_report(execution_id)
+        assert persisted is not None
+        assert persisted.snapshot.outcome is ExecutionOutcome.COMPLETED
+        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events) == 1
+        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events) == 1
+        assert [
+            event.payload["number"]
+            for event in persisted.events
+            if event.kind is EventKind.TURN_CREATED
+        ] == [1, 2]
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_caller_async_agent_session_startup_failure_is_terminal_and_persisted(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteExecutionStore(tmp_path / "caller-startup-failure.sqlite")
+    try:
+        async with AsyncMCPTestKit(
+            env={},
+            cwd="/tmp/mcp-pal-no-project",
+            store=store,
+            embedded_worker=False,
+        ) as kit:
+            session = kit.agent_session(_spec(), adapter=_StartupFailureHarness())
+            with pytest.raises(TransportError):
+                await session.__aenter__()
+            result = session.result
+
+        execution_id = result.snapshot.execution_id
+        persisted = store.get_report(execution_id)
+        assert persisted is not None
+        assert persisted.snapshot.outcome is ExecutionOutcome.FAILED
+        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events) == 1
+        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events) == 1
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_caller_async_agent_session_uses_store_artifact_backend(
+    tmp_path: Path,
+) -> None:
+    class _ArtifactHarness(_TraceHarness):
+        async def open(self, launch: object) -> "_ArtifactHarness":
+            root = Path(str(getattr(launch, "workspace_root")))
+            (root / "result.txt").write_bytes(b"caller-session-artifact")
+            return self
+
+    store = SQLiteExecutionStore(tmp_path / "caller-artifact.sqlite")
+    try:
+        spec = _spec().model_copy(
+            update={
+                "artifact_policy": ArtifactPolicy.ALWAYS,
+                "declared_artifacts": ("result.txt",),
+            }
+        )
+        async with AsyncMCPTestKit(
+            env={},
+            cwd="/tmp/mcp-pal-no-project",
+            store=store,
+            embedded_worker=False,
+        ) as kit:
+            session = kit.agent_session(spec, adapter=_ArtifactHarness())
+            async with session:
+                await session.send("artifact")
+            result = session.result
+
+        assert len(result.artifacts) == 1
+        assert store.artifacts.get(result.artifacts[0]) == b"caller-session-artifact"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_submitted_agent_execution_reuses_outer_execution_trace_authority() -> None:
     registry = HarnessAdapterRegistry({"acp": lambda _harness: _TraceHarness()})
     async with AsyncMCPTestKit(
@@ -230,6 +386,77 @@ async def test_submitted_agent_execution_reuses_outer_execution_trace_authority(
     assert [event.kind for event in events] == [event.kind for event in result.trace.events]
     assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in events) == 1
     assert result.trace.events[-1].kind is EventKind.EXECUTION_FINISHED
+
+
+@pytest.mark.asyncio
+async def test_submitted_agent_execution_persists_one_outer_trace_in_sqlite(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteExecutionStore(tmp_path / "submitted-agent.sqlite")
+    try:
+        registry = HarnessAdapterRegistry({"acp": lambda _harness: _TraceHarness()})
+        async with AsyncMCPTestKit(
+            env={},
+            cwd="/tmp/mcp-pal-no-project",
+            adapter_registry=registry,
+            store=store,
+        ) as kit:
+            result = await kit.run(_spec(message="persist"))
+
+        _assert_trace_identity(result)
+        persisted = store.get_report(result.snapshot.execution_id)
+        assert persisted is not None
+        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events) == 1
+        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events) == 1
+        assert result.trace is not None
+        assert [event.event_id for event in persisted.events] == [
+            event.event_id for event in result.trace.events
+        ]
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_caller_async_agent_session_persists_prior_turn_before_terminal_failure(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteExecutionStore(tmp_path / "caller-late-failure.sqlite")
+    try:
+        async with AsyncMCPTestKit(
+            env={},
+            cwd="/tmp/mcp-pal-no-project",
+            store=store,
+            embedded_worker=False,
+        ) as kit:
+            session = kit.agent_session(_spec(), adapter=_SecondTurnFailureHarness())
+            async with session:
+                first = await session.send("first")
+                second = await session.send("second")
+                assert first.snapshot.outcome is TurnOutcome.COMPLETED
+                assert second.snapshot.outcome is TurnOutcome.FAILED
+            result = session.result
+
+        _assert_trace_identity(result)
+        assert result.snapshot.outcome is ExecutionOutcome.FAILED
+        assert len(result.turns) == 2
+        persisted = store.get_report(result.snapshot.execution_id)
+        assert persisted is not None
+        assert persisted.snapshot.outcome is ExecutionOutcome.FAILED
+        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events) == 1
+        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events) == 1
+        assert [
+            event.payload["number"]
+            for event in persisted.events
+            if event.kind is EventKind.TURN_CREATED
+        ] == [1, 2]
+        assert [
+            event.turn_id
+            for event in persisted.events
+            if event.kind is EventKind.TURN_STATE_CHANGED
+            and event.payload.get("lifecycle") == TurnLifecycle.FINISHED.value
+        ] == [first.snapshot.turn_id, second.snapshot.turn_id]
+    finally:
+        store.close()
 
 
 @pytest.mark.asyncio

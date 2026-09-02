@@ -54,6 +54,11 @@ jobs:
           uv run --locked --project sdk --all-extras --all-groups
           pytest -q -m "not live" sdk/tests
 
+      - name: Run SDK examples without live providers
+        run: >-
+          uv run --locked --project sdk --all-extras --all-groups
+          pytest -q -m "not live" sdk/examples/tests
+
       - name: Run application tests without live providers
         run: >-
           uv run --locked --project app --group test --group typecheck

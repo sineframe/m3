@@ -43,6 +43,55 @@ restrictive policy, sends instructions, and verifies the typed finalized
 explicit environment opt-in and credentials, so they are separate from the
 deterministic suite and should have generous operation timeouts.
 
+## Test matrices
+
+`ToolMatrix` directly invokes known tools with known arguments. It does not
+prompt a harness or test which tool an agent selects. Put each tool under the
+`ServerCase` that owns it; this gives deterministic MCP contract coverage
+across servers and tools. A ToolMatrix case answers practical questions such
+as:
+
+- Are the accepted arguments correct?
+- Does the tool return the expected structured output?
+- Does a normal MCP tool error arrive as a typed tool result?
+- Does schema validation accept and reject the right inputs and outputs?
+- Are trace, timing, and persistence records captured as expected?
+- Does the same contract hold across multiple servers or server versions and
+  configurations?
+
+Each case runs through the normal SDK execution boundary and returns the usual
+`ExecutionResult`.
+
+`HarnessMatrix` sends prompts to Claude Code, OpenCode, or ACP and tests which
+tool the harness chooses and how it uses that tool. Choose the shape that
+matches the question:
+
+- `each_server` creates a server × harness case and lets the harness choose
+  from that selected server's listed tools.
+- `each_tool` creates a server-owned-tool × harness case and restricts the
+  harness to that selected tool.
+- `all_servers` creates one all-servers × harness case, useful for workflows
+  that move between servers.
+- `trials=3` repeats each cell as three independent pytest items and SDK
+  executions.
+
+Use `@matrix.parametrize()` for ordinary pytest collection, stable case IDs,
+marks, fixtures, and `pytest -k`; use `.cases()` at any other boundary. Matrix
+construction and expansion perform no MCP, harness, subprocess, network, or
+persistence work. Work begins only when a case helper such as `run()` or
+`session()` is called. Sync and async cases use the matching kit helpers.
+
+The SDK derives restrictive tool policies from each case. OpenCode and ACP
+receive qualified `server:tool` allowlists; Claude Code uses its native
+server-scoped MCP policy, so exact tool restriction is not portable. Claude
+Code is therefore not supported for `all_servers` with multiple servers.
+
+Every cell has stable matrix metadata such as its case ID, mode, servers,
+harness, tool, and trial. Normal one-turn and multi-turn execution traces can
+be persisted through the existing SQLite execution store; a multi-turn matrix
+session remains one execution containing all turns. Pytest pass/fail verdicts
+and matrix summaries are intentionally not persisted yet.
+
 ## Tool errors and exceptions
 
 An MCP server can successfully answer `tools/call` while reporting that the

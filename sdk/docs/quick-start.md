@@ -72,6 +72,30 @@ that must happen before client shutdown.
 Both objects are context managers. Exiting the direct client closes its MCP
 connection and subprocess; exiting the kit provides the outer cleanup boundary.
 
+## Run one test per server-owned tool
+
+When several servers expose different tools, keep each tool under its owning
+`ServerCase`. `ToolMatrix` expands those definitions into ordinary pytest
+items, each receiving one immutable case:
+
+```python
+from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
+
+matrix = ToolMatrix(servers=(ServerCase(
+    name="catalog",
+    server=example_server,
+    tools=(ToolCase(name="shipping_quote", arguments={"weight_kg": 2, "zone": "local"}),),
+),))
+
+@matrix.parametrize()
+def test_catalog_tool(case):
+    result = case.run()
+    assert result.direct_result is not None
+```
+
+`@matrix.parametrize()` uses pytest's normal collection and filtering. Call
+`matrix.cases()` when you want the same expansion without pytest.
+
 ## Use Claude Code or OpenCode
 
 MCP Pal supports the built-in `ClaudeCode` and `OpenCode` harness choices.

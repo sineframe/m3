@@ -99,6 +99,15 @@ from .services.acp_probes import (
     ACPProbeRequest, ACPProbeResult, ACPProbeStatus, ACPProbeStore,
     redacted_probe, run_acp_probe,
 )
+from .matrix import (
+    HarnessCase,
+    HarnessMatrix,
+    HarnessMatrixCase,
+    ServerCase,
+    ToolCase,
+    ToolMatrix,
+    ToolMatrixCase,
+)
 
 __version__ = _distribution_version("mcp-pal")
 
@@ -143,6 +152,13 @@ if _TYPE_CHECKING:
         "SDKConfig",
         "load_config",
         "resolve_config",
+        "ToolCase",
+        "ServerCase",
+        "HarnessCase",
+        "ToolMatrix",
+        "HarnessMatrix",
+        "ToolMatrixCase",
+        "HarnessMatrixCase",
     ]
 else:
     __all__ = list(_PUBLIC_EXPORTS["mcp_pal"])

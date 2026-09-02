@@ -22,6 +22,7 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "ToolDescriptor", "ToolPolicyDecision", "ToolPolicyEvidence", "ToolPolicyEvaluator", "evaluate_tool_policy",
         "AsyncEvaluator", "EvaluationRunner", "EvaluationStore", "EvaluationVerdict", "Evaluator", "EvaluatorCallable", "EvaluatorRegistry", "EvaluatorRegistration", "InMemoryEvaluationStore", "RequiredEvaluationError", "SnapshotOptions", "canonical_snapshot", "normalize_snapshot",
         "AllowlistedTerminalHandler", "ElicitationRequest", "ElicitationResult", "ElicitationHandler", "FilesystemHandler", "FilesystemRequest", "FilesystemResult", "InteractionController", "InteractionHandlers", "InteractionReceipt", "PermissionRequest", "PermissionResult", "PermissionHandler", "SamplingRequest", "SamplingResult", "SamplingHandler", "TerminalHandler", "TerminalRequest", "TerminalResult", "WorkspaceFilesystemHandler",
+        "ToolCase", "ServerCase", "HarnessCase", "ToolMatrix", "HarnessMatrix", "ToolMatrixCase", "HarnessMatrixCase",
     ),
         "mcp_pal.types": (
         "EVENT_SCHEMA_ID", "EVENT_SCHEMA_VERSION", "ACPAgent", "ActivityHealth", "AgentExecutionSpec", "ArtifactId", "ArtifactPolicy", "ArtifactRef",
@@ -50,6 +51,7 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
     "mcp_pal.snapshots": ("SnapshotOptions", "canonical_snapshot", "normalize_snapshot"),
     "mcp_pal.policy": ("ConfirmationHook", "ToolDescriptor", "ToolPolicyDecision", "ToolPolicyEvidence", "ToolPolicyEvaluator", "evaluate_tool_policy"),
     "mcp_pal.pytest_plugin": (),
+    "mcp_pal.matrix": ("HarnessCase", "HarnessMatrix", "HarnessMatrixCase", "ServerCase", "ToolCase", "ToolMatrix", "ToolMatrixCase"),
 }
 
 # Phase 4 implementation modules deliberately remain internal.  They expose

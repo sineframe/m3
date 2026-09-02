@@ -308,3 +308,176 @@ reopened.close()
 
 The close/reopen and public raw-evidence examples are in
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py).
+
+## 14. Run a matrix across servers and harnesses
+
+Use `HarnessMatrix` when the same prompt should be tried against several MCP
+servers and harnesses. In `each_server` mode, every case contains one selected
+server, so a harness cannot accidentally use a different server. The matrix
+below expands to four cases—two servers × two built-in harnesses—with stable
+IDs such as `catalog/claude` and `warehouse/opencode`:
+
+```python
+import os
+from mcp_pal import expect
+from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
+from mcp_pal.types import ClaudeCode, OpenCode, SecretReference
+
+def env_secret(name: str) -> SecretReference:
+    return SecretReference(source="environment", name=name)
+
+catalog = ServerCase(
+    name="catalog",
+    server=example_server.model_copy(update={"name": "catalog"}),
+    tools=(
+        ToolCase(name="normalize_customer"),
+        ToolCase(name="batch_total"),
+        ToolCase(name="shipping_quote"),
+    ),
+)
+warehouse = ServerCase(
+    name="warehouse",
+    server=example_server.model_copy(update={"name": "warehouse"}),
+    tools=(ToolCase(name="shipping_quote"), ToolCase(name="get_order")),
+)
+harnesses = (
+    HarnessCase(name="claude", harness=ClaudeCode(
+        model=os.environ["MCP_PAL_CLAUDE_MODEL"],
+        credential_references={"ANTHROPIC_API_KEY": env_secret("ANTHROPIC_API_KEY")},
+    )),
+    HarnessCase(name="opencode", harness=OpenCode(
+        model=os.environ["MCP_PAL_OPENCODE_MODEL"],
+        credential_references={"OPENCODE_API_KEY": env_secret("OPENCODE_API_KEY")},
+    )),
+)
+matrix = HarnessMatrix.each_server(
+    servers=(catalog, warehouse), harnesses=harnesses,
+)
+
+@matrix.parametrize()
+def test_server_case(case):
+    tool = case.server.tools[0].name
+    prompt = {
+        "catalog": "Use normalize_customer with name Ada Lovelace.",
+        "warehouse": "Use shipping_quote with weight_kg 2 and zone regional.",
+    }[case.server.name]
+    result = case.run(prompt)
+    expect(result).to_have_tool_call(tool, server=case.server.name, status="success")
+```
+
+Provider choices can be nondeterministic, and these cases need the matching
+CLI and credentials. The complete executable, credential-free matrix
+examples are in [`test_matrix_usage.py`](../examples/tests/test_matrix_usage.py).
+
+### Deterministic tools across server-owned tools
+
+Use `ToolMatrix` when calls and arguments are known. Define every tool under
+the `ServerCase` that owns it; servers often expose different tool sets. Each
+parametrized case runs the normal SDK boundary and supports typed result and
+trace assertions:
+
+```python
+from mcp_pal.matrix import ToolMatrix, ServerCase, ToolCase
+from mcp_pal.types import CallToolOperationResult
+
+matrix = ToolMatrix(servers=(
+    ServerCase(
+        name="catalog", server=example_server.model_copy(update={"name": "catalog"}),
+        tools=(
+            ToolCase(name="normalize_customer", arguments={"name": "Ada Lovelace"}),
+            ToolCase(name="batch_total", arguments={"values": [1, 2, 3]}),
+        ),
+    ),
+    ServerCase(
+        name="warehouse", server=example_server.model_copy(update={"name": "warehouse"}),
+        tools=(ToolCase(
+            name="shipping_quote",
+            arguments={"weight_kg": 2, "zone": "regional"},
+        ),),
+    ),
+))
+
+@matrix.parametrize()
+def test_owned_tool(case):
+    result = case.run()
+    assert isinstance(result.direct_result, CallToolOperationResult)
+    expected = {
+        "catalog/normalize_customer": {"customer_id": "ada-lovelace"},
+        "catalog/batch_total": {"total": 6.0},
+        "warehouse/shipping_quote": {"amount": 12.0, "currency": "USD"},
+    }
+    assert result.direct_result.structured_content == expected[case.id]
+    assert result.trace_view.tool_calls
+```
+
+### Bring your own harness
+
+ACP is the **Bring your own harness** path: provide an `ACPAgent` manifest for
+the executable you control. The deterministic local process accepts structured
+JSON instructions so its server/tool choices are reproducible; a compatible
+ACP harness can use the same matrix API. For the local executable used below:
+
+```python
+import sys
+from pathlib import Path
+from mcp_pal.types import ACPAgent
+
+examples = Path("sdk/examples")
+acp_harness = HarnessCase(
+    name="acp",
+    harness=ACPAgent(
+        model="deterministic-example",
+        manifest={
+            "schema_version": "mcp-pal.harness.v1",
+            "protocol": "acp",
+            "protocol_version": 1,
+            "command": sys.executable,
+            "args": [str(examples / "servers" / "deterministic_acp_agent.py")],
+            "env": {},
+        },
+    ),
+)
+```
+
+### Modes, trials, and a continuing chain
+
+`each_tool` creates one case for each server-owned tool. `all_servers` keeps
+all declared servers available, which is useful when one turn feeds a value
+to another server. This example uses the explicit ACP harness above; Claude's
+multi-server restriction means it cannot be substituted here:
+
+```python
+import json
+
+case = HarnessMatrix.all_servers(
+    servers=(catalog, warehouse), harnesses=(acp_harness,)
+).cases()[0]
+with case.session() as session:
+    first = session.send(json.dumps({
+        "server": "catalog", "tool": "shipping_quote",
+        "arguments": {"weight_kg": 2, "zone": "local"},
+    }))
+    amount = json.loads(first.response.text)["amount"]
+    second = session.send(json.dumps({
+        "server": "warehouse", "tool": "shipping_quote",
+        "arguments": {"weight_kg": amount, "zone": "regional"},
+    }))
+```
+
+The runnable version uses these server-owned tools and checks their returned
+structured values in [`test_matrix_usage.py`](../examples/tests/test_matrix_usage.py).
+Use `.cases()` when pytest is not the caller; `.parametrize("item")` gives the
+pytest argument a custom name while preserving the case IDs. `trials=2` repeats
+every matrix cell as independent `/trial-1` and `/trial-2` cases. The
+executable example also covers sync and async helpers, SQLite reopen, typed
+failure inspection, and this two-turn chain. Normal execution specifications,
+events, turns, and traces persist through SQLite; pytest verdicts and matrix
+summaries do not.
+
+### Live provider matrices
+
+Opt-in live coverage is available in
+[`test_live_matrix_api.py`](../tests/e2e/test_live_matrix_api.py). Set
+`MCP_PAL_RUN_LIVE_OPENCODE=1` or `MCP_PAL_RUN_LIVE_CLAUDE=1` with the matching
+credential; these tests may incur cost. Claude's multi-server limitation is
+respected by keeping its live case to one server.

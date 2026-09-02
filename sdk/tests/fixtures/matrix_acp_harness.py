@@ -227,6 +227,27 @@ def main() -> int:
                     },
                 }
             )
+            content = result.get("content")
+            response_text = "".join(
+                str(item.get("text", ""))
+                for item in content
+                if isinstance(item, dict) and isinstance(item.get("text"), str)
+            ) if isinstance(content, list) else ""
+            if not response_text:
+                response_text = json.dumps(result, sort_keys=True, separators=(",", ":"))
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": session_id,
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": {"type": "text", "text": response_text},
+                        },
+                    },
+                }
+            )
             _send(
                 {
                     "jsonrpc": "2.0",
