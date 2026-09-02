@@ -451,9 +451,13 @@ async def test_opencode_official_response_matrix(case: str) -> None:
         assert all(block.text for block in result.response.content if isinstance(block, TextContent))
     if case == "tool-only":
         assert result.response is None
-        assert result.tool_calls == ({"tool": "echo", "call_id": "c1"},)
+        assert result.tool_calls == (
+            {"tool": "echo", "call_id": "c1", "server": None},
+        )
     if case == "mixed-text-tool":
-        assert result.tool_calls == ({"tool": "echo", "call_id": "c1"},)
+        assert result.tool_calls == (
+            {"tool": "echo", "call_id": "c1", "server": None},
+        )
     if case == "numeric-tokens-cost":
         assert result.evidence["tokens_input"] == 1
         assert result.evidence["cost_observed"] == 0.2

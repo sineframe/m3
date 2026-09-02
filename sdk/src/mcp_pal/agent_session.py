@@ -1060,6 +1060,17 @@ class AsyncAgentSession:
             tool = name
         if server is None and tool is None:
             return None, None
+        # Native adapters explicitly retain provider-owned tools in the trace
+        # with ``server=None``. They are useful observability, but they are not
+        # MCP traffic and must not be evaluated against an MCP tool policy.
+        # An unqualified call that omits the server field entirely remains
+        # ambiguous and follows the fail-closed path below.
+        if server is None and tool is not None and "server" in call:
+            return (
+                (None, "provider_native")
+                if cls._safe_tool_label(tool) is not None
+                else (None, "tool_identity_invalid")
+            )
         server_text = cls._safe_tool_label(server)
         tool_text = cls._safe_tool_label(tool)
         if server_text is None or tool_text is None:
@@ -1145,6 +1156,8 @@ class AsyncAgentSession:
                 violations.append(self._policy_violation(None, "tool_call_invalid", evidence))
                 continue
             descriptor, identity_error = self._reported_tool_identity(call)
+            if identity_error == "provider_native":
+                continue
             if ordered_canonical and not any(
                 call.get(key) is not None
                 for key in (

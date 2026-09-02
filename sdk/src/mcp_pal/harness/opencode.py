@@ -1013,9 +1013,14 @@ class OpenCodeHarnessAdapter:
                         turn_started=turn_started,
                         turn_wall_time=turn_wall_time,
                     )
-            call_record: dict[str, Any] = {"tool": tool_name, "call_id": call_id}
-            if server_name is not None:
-                call_record["server"] = server_name
+            # Keep provider-native tools observable while classifying them
+            # explicitly as serverless. AgentSession uses this field to avoid
+            # applying MCP policy to OpenCode's own built-in tools.
+            call_record: dict[str, Any] = {
+                "tool": tool_name,
+                "call_id": call_id,
+                "server": server_name,
+            }
             tool_calls_list.append(call_record)
         if history_ambiguous:
             limitations.append("capture_incomplete")

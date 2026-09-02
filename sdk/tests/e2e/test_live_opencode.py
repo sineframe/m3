@@ -11,6 +11,7 @@ MCP_PAL_LIVE_OPENCODE_MODEL when validating another configured provider.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -31,7 +32,7 @@ from mcp_pal.types import (
     TurnResponse,
 )
 
-from mcp_pal import MCPTestKit
+from mcp_pal import MCPTestKit, expect
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live]
 
@@ -67,6 +68,54 @@ def _live_spec(executable: str, model: str) -> AgentExecutionSpec:
         ),
         tool_policy=RestrictiveToolPolicy(allowed_tools=("e2e-mcp:echo",)),
     )
+
+
+def _live_matrix_spec(
+    executable: str,
+    model: str,
+    server_names: tuple[str, ...],
+    marker_root: Path,
+    allowed_tools: tuple[str, ...],
+) -> AgentExecutionSpec:
+    provider = model.split("/", 1)[0] if "/" in model else None
+    return AgentExecutionSpec(
+        harness=OpenCode(
+            model=model,
+            provider=provider,
+            executable=executable,
+            credential_references={
+                "OPENCODE_API_KEY": SecretReference(
+                    source="environment", name="OPENCODE_API_KEY"
+                )
+            },
+        ),
+        servers=tuple(
+            ServerBinding(
+                server=StdioServer(
+                    name=name,
+                    command=sys.executable,
+                    args=(str(_MATRIX_SERVER),),
+                    cwd=str(_REPOSITORY_ROOT),
+                    environment={
+                        "MCP_PAL_E2E_MCP_MARKER": str(marker_root / f"{name}.jsonl")
+                    },
+                ),
+                alias=name,
+            )
+            for name in server_names
+        ),
+        tool_policy=RestrictiveToolPolicy(allowed_tools=allowed_tools),
+    )
+
+
+def _observed_tool_calls(marker: Path) -> list[dict[str, object]]:
+    assert marker.exists(), "OpenCode did not start the configured MCP server"
+    return [
+        value
+        for line in marker.read_text(encoding="utf-8").splitlines()
+        if isinstance(value := json.loads(line), dict)
+        and value.get("method") == "tools/call"
+    ]
 
 
 def _assert_response_contains(response: TurnResponse | None, expected: str) -> None:
@@ -149,3 +198,155 @@ def test_live_opencode_calls_the_mcp_across_two_turns() -> None:
             assert _contains_text(call.arguments.value, nonce)
             assert call.result.state.value == "observed"
             assert _contains_text(call.result.value, nonce)
+
+
+@pytest.mark.skipif(
+    not _LIVE_ENABLED, reason="set MCP_PAL_RUN_LIVE_OPENCODE=1 to call OpenCode"
+)
+@pytest.mark.parametrize("server_name", ("catalog", "warehouse"))
+def test_live_opencode_server_search_matrix_chooses_the_right_tool(
+    tmp_path: Path, server_name: str
+) -> None:
+    """Real model-driven N×M search cells do not name the expected tool."""
+
+    executable = shutil.which("opencode")
+    if executable is None:
+        pytest.skip("OpenCode is not installed")
+    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
+    nonce = f"live-search-{server_name}"
+    spec = _live_matrix_spec(
+        executable,
+        model,
+        (server_name,),
+        tmp_path,
+        (f"{server_name}:echo", f"{server_name}:failure"),
+    )
+
+    with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
+        with kit.agent_session(spec) as session:
+            turn = session.send(
+                f"Use the available MCP server to return the text {nonce}. "
+                "Choose the appropriate available tool yourself, call it exactly "
+                "once, and return its result.",
+                timeout=90,
+            )
+
+    assert turn.snapshot.outcome is TurnOutcome.COMPLETED, (
+        turn.error.model_dump(mode="json") if turn.error is not None else None
+    )
+    expect(session.result).to_have_tool_call(
+        "echo",
+        turn=turn,
+        server=server_name,
+        arguments={"text": nonce},
+        status="success",
+        count=1,
+    )
+    expect(session.result).to_not_have_tool_call("failure", turn=turn)
+    calls = _observed_tool_calls(tmp_path / f"{server_name}.jsonl")
+    assert len(calls) == 1
+    assert calls[0]["name"] == "echo"
+    assert calls[0]["arguments"] == {"text": nonce}
+
+
+@pytest.mark.skipif(
+    not _LIVE_ENABLED, reason="set MCP_PAL_RUN_LIVE_OPENCODE=1 to call OpenCode"
+)
+@pytest.mark.parametrize("server_name", ("catalog", "warehouse"))
+@pytest.mark.parametrize(
+    ("tool", "arguments", "is_error"),
+    (
+        ("echo", {"text": "live-matrix-value"}, False),
+        ("failure", {}, True),
+    ),
+)
+def test_live_opencode_server_by_tool_matrix(
+    tmp_path: Path,
+    server_name: str,
+    tool: str,
+    arguments: dict[str, object],
+    is_error: bool,
+) -> None:
+    """Real OpenCode N×T cells, complementing the real ACP matrix."""
+
+    executable = shutil.which("opencode")
+    if executable is None:
+        pytest.skip("OpenCode is not installed")
+    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
+    spec = _live_matrix_spec(
+        executable,
+        model,
+        (server_name,),
+        tmp_path,
+        (f"{server_name}:{tool}",),
+    )
+    instruction = (
+        f"Call the {server_name} MCP server's {tool} tool exactly once with "
+        f"these JSON arguments: {arguments!r}. Do not call any other tool and "
+        "do not retry if the tool returns an error."
+    )
+
+    with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
+        with kit.agent_session(spec) as session:
+            turn = session.send(instruction, timeout=90)
+
+    assert turn.snapshot.outcome is TurnOutcome.COMPLETED, (
+        turn.error.model_dump(mode="json") if turn.error is not None else None
+    )
+    expect(session.result).to_have_tool_call(
+        tool,
+        turn=turn,
+        server=server_name,
+        arguments=arguments,
+        status="tool_error" if is_error else "success",
+        count=1,
+    )
+    calls = _observed_tool_calls(tmp_path / f"{server_name}.jsonl")
+    assert len(calls) == 1
+    assert calls[0]["name"] == tool
+    assert calls[0]["arguments"] == arguments
+
+
+@pytest.mark.skipif(
+    not _LIVE_ENABLED, reason="set MCP_PAL_RUN_LIVE_OPENCODE=1 to call OpenCode"
+)
+def test_live_opencode_uses_all_servers_in_one_session(tmp_path: Path) -> None:
+    """Real OpenCode receives N servers and uses each across multiple turns."""
+
+    executable = shutil.which("opencode")
+    if executable is None:
+        pytest.skip("OpenCode is not installed")
+    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
+    server_names = ("catalog", "warehouse")
+    spec = _live_matrix_spec(
+        executable,
+        model,
+        server_names,
+        tmp_path,
+        tuple(f"{name}:echo" for name in server_names),
+    )
+
+    with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
+        with kit.agent_session(spec) as session:
+            turns = tuple(
+                session.send(
+                    f"Call only the {name} MCP server's echo tool exactly once "
+                    f"with text live-{name}. Return its result.",
+                    timeout=90,
+                )
+                for name in server_names
+            )
+
+    for name, turn in zip(server_names, turns, strict=True):
+        assert turn.snapshot.outcome is TurnOutcome.COMPLETED, turn.error
+        expect(session.result).to_have_tool_call(
+            "echo",
+            turn=turn,
+            server=name,
+            arguments={"text": f"live-{name}"},
+            status="success",
+            count=1,
+        )
+        calls = _observed_tool_calls(tmp_path / f"{name}.jsonl")
+        assert len(calls) == 1
+        assert calls[0]["arguments"] == {"text": f"live-{name}"}

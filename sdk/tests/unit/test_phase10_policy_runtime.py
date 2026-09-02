@@ -120,6 +120,42 @@ def test_advisory_identity_requires_a_canonical_call_from_the_same_turn() -> Non
     assert violations[0]["reason"] == "tool_identity_unavailable"
 
 
+def test_explicit_provider_native_tool_is_not_evaluated_as_mcp_traffic() -> None:
+    adapter = ReportingAdapter(
+        {"server": None, "tool": "provider_read", "call_id": "native-1"}
+    )
+    session = AsyncAgentSession(
+        _spec(RestrictiveToolPolicy(allowed_tools=("fixture:allowed",))),
+        adapter,
+    )
+    session._tool_policy_evidence = adapter.last_policy_evidence
+    raw = AdapterTurn(
+        response=TurnResponse(content=(TextContent(text="done"),)),
+        tool_calls=(
+            {"server": None, "tool": "provider_read", "call_id": "native-1"},
+        ),
+    )
+
+    assert session._evaluate_reported_tool_calls(raw) == ()
+
+
+def test_unqualified_reported_tool_without_server_field_still_fails_closed() -> None:
+    adapter = ReportingAdapter({"tool": "provider_read", "call_id": "unknown-1"})
+    session = AsyncAgentSession(
+        _spec(RestrictiveToolPolicy(allowed_tools=("fixture:allowed",))),
+        adapter,
+    )
+    session._tool_policy_evidence = adapter.last_policy_evidence
+    raw = AdapterTurn(
+        response=TurnResponse(content=(TextContent(text="done"),)),
+        tool_calls=({"tool": "provider_read", "call_id": "unknown-1"},),
+    )
+
+    violations = session._evaluate_reported_tool_calls(raw)
+    assert len(violations) == 1
+    assert violations[0]["reason"] == "tool_identity_invalid"
+
+
 def test_two_anonymous_updates_correlate_to_two_same_turn_canonical_calls() -> None:
     adapter = ReportingAdapter({"kind": "tool_call"})
     session = AsyncAgentSession(
