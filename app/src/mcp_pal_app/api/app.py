@@ -1,9 +1,10 @@
 import os, re, shutil, subprocess
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from importlib.metadata import version as distribution_version
 from pathlib import Path
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -230,7 +231,7 @@ def profile_json(p: McpProfile, include_json=False):
         except ProfileValidationError as e: out["validation"] = {"valid": False, "errors": e.errors, "warnings": e.warnings}
     return out
 
-def create_app(settings: Settings | None = None, engine_override=None, session_factory=None, v2_store=None, v2_kit=None) -> FastAPI:
+def create_app(settings: Settings | None = None, engine_override=None, session_factory=None, v2_store=None, v2_kit=None, *, v2_embedded_worker=True) -> FastAPI:
     settings = settings or get_settings(); eng = engine_override or make_engine(settings.database_url)
     # Resolve the application-selected path before handing it to the SDK
     # store. macOS commonly exposes the temporary directory through /var,
@@ -264,7 +265,7 @@ def create_app(settings: Settings | None = None, engine_override=None, session_f
             v2_store.close()
     app=FastAPI(title="MCP Testing Platform", version=_package_version(), description="Agent-facing API for local MCP testing", lifespan=lifespan)
     app.state.settings, app.state.session_factory, app.state.manager = settings, factory, manager
-    install_v2(app, v2_store, v2_kit)
+    install_v2(app, v2_store, v2_kit, embedded_worker=v2_embedded_worker)
     app.state.v2_store_owned = owns_v2_store
     def db_dep():
         d=factory()
@@ -686,4 +687,43 @@ def create_app(settings: Settings | None = None, engine_override=None, session_f
     app.include_router(router)
     return app
 
-app=create_app()
+
+def create_viewer_app(
+    settings: Settings | None = None,
+    engine_override=None,
+    session_factory=None,
+    v2_store=None,
+    v2_kit=None,
+) -> FastAPI:
+    """Create the history viewer's read-only HTTP application.
+
+    Raw-evidence reads use POST because their bounded reference is structured,
+    but they do not mutate server state and remain available to the viewer.
+    """
+
+    application = create_app(
+        settings,
+        engine_override=engine_override,
+        session_factory=session_factory,
+        v2_store=v2_store,
+        v2_kit=v2_kit,
+        v2_embedded_worker=False,
+    )
+    allowed_post_paths = frozenset({"/api/v2/evidence/read"})
+
+    @application.middleware("http")
+    async def enforce_viewer_read_only(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and not (
+            request.method == "POST" and request.url.path in allowed_post_paths
+        ):
+            return JSONResponse(
+                status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+                content={"detail": "viewer API is read-only"},
+                headers={"Allow": "GET, HEAD, OPTIONS"},
+            )
+        return await call_next(request)
+
+    application.state.viewer_read_only = True
+    return application

@@ -157,9 +157,15 @@ def _service_fault(error: AppExecutionError) -> V2Fault:
     return V2Fault(status_by_code.get(error.code, 500), error.code, error.message)
 
 
-def install_v2(application: Any, store: SQLiteExecutionStore, kit: MCPTestKit | None = None) -> tuple[AppExecutionService, bool]:
+def install_v2(
+    application: Any,
+    store: SQLiteExecutionStore,
+    kit: MCPTestKit | None = None,
+    *,
+    embedded_worker: bool = True,
+) -> tuple[AppExecutionService, bool]:
     owned_kit = kit is None
-    execution_kit = kit or MCPTestKit(store=store, embedded_worker=True)
+    execution_kit = kit or MCPTestKit(store=store, embedded_worker=embedded_worker)
     service = AppExecutionService(store, execution_kit)
     application.state.v2_store = store
     application.state.v2_kit = execution_kit

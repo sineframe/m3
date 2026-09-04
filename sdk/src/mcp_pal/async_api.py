@@ -99,6 +99,7 @@ from .direct_trace import DirectTraceBridge as _DirectTraceBridge
 from .execution_runtime import AsyncExecutionController as _AsyncExecutionController, AsyncExecutionHandle
 from .execution_trace import ExecutionTraceRecorder as _ExecutionTraceRecorder
 from .storage import ExecutionStore as _ExecutionStore
+from ._default_store import make_default_store as _make_default_store
 from .storage import InMemoryExecutionStore as _InMemoryExecutionStore
 from .trace.redaction import RedactionConfig as _RedactionConfig
 from .types import ExecutionOutcome as _ExecutionOutcome
@@ -716,6 +717,13 @@ class AsyncMCPTestKit:
         embedded_worker: bool = True,
     ) -> None:
         self._closed = False
+        self.config = config if isinstance(config, SDKConfig) else resolve_config(config, env=env, cwd=cwd)
+        self._owns_store = False
+        if store is None:
+            scoped_store = _make_default_store()
+            if scoped_store is not None:
+                store = scoped_store
+                self._owns_store = True
         self._close_lock = asyncio.Lock()
         self._active_direct: set[AsyncDirectClient] = set()
         self._active_sessions: set[AsyncAgentSession] = set()
@@ -741,7 +749,6 @@ class AsyncMCPTestKit:
                 # bind the worker to the loop that executes the work.
                 pass
         self._evaluations = _EvaluationRunner()
-        self.config = config if isinstance(config, SDKConfig) else resolve_config(config, env=env, cwd=cwd)
         self._probes = AsyncCapabilityProbeService(
             timeout_seconds=probe_timeout_seconds,
             output_limit=probe_output_limit,
@@ -846,6 +853,15 @@ class AsyncMCPTestKit:
             for session in tuple(self._active_sessions):
                 try:
                     await session.aclose()
+                except BaseException as exc:
+                    failures.append(exc)
+            owned_store = self.store if self._owns_store else None
+            self._owns_store = False
+            if owned_store is not None:
+                try:
+                    close = getattr(owned_store, "close", None)
+                    if callable(close):
+                        close()
                 except BaseException as exc:
                     failures.append(exc)
             if failures:

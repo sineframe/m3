@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import mcp_pal.cli as cli_module
+import mcp_pal.cli.doctor as doctor_module
 from mcp_pal.cli import main
 
 
@@ -115,7 +115,7 @@ def test_doctor_env_file_without_config_fails_before_reading_file(tmp_path: Path
     def fail_if_read(_path: Path):
         pytest.fail("doctor read an env file without a config requirement")
 
-    monkeypatch.setattr(cli_module, "_read_selected_environment", fail_if_read)
+    monkeypatch.setattr(doctor_module, "_read_selected_environment", fail_if_read)
     assert main(["doctor", "--require", "storage:memory", "--env-file", str(tmp_path / "secret.env")]) == 2
     captured = capsys.readouterr()
     assert captured.err.strip() == "mcp-pal doctor: --env-file requires a config requirement"

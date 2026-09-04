@@ -122,6 +122,7 @@ from .observability import __all__ as _OBSERVABILITY_EXPORTS
 from .execution_runtime import AsyncExecutionHandle as _AsyncExecutionHandle
 from .storage import ExecutionStore as _ExecutionStore
 from .harness.contracts import HarnessAdapterRegistry as _HarnessAdapterRegistry
+from ._default_store import make_default_store as _make_default_store
 
 
 _CURRENT_MCP_PROTOCOL = "2025-11-25"
@@ -907,10 +908,16 @@ class MCPTestKit:
         self._evaluations = _EvaluationRunner()
         self._probe_timeout_seconds = probe_timeout_seconds
         self._probe_output_limit = probe_output_limit
+        self.config = config if isinstance(config, SDKConfig) else resolve_config(config, env=env, cwd=cwd)
+        self._owns_store = False
+        if store is None:
+            scoped_store = _make_default_store()
+            if scoped_store is not None:
+                store = scoped_store
+                self._owns_store = True
         self._store = store
         self._embedded_worker = embedded_worker
         self._adapter_registry = adapter_registry
-        self.config = config if isinstance(config, SDKConfig) else resolve_config(config, env=env, cwd=cwd)
         self._probes = CapabilityProbeService(
             timeout_seconds=probe_timeout_seconds,
             output_limit=probe_output_limit,
@@ -1031,6 +1038,15 @@ class MCPTestKit:
                 portal.close()
                 with self._state_lock:
                     self._portal = None
+            except BaseException as exc:
+                failures.append(exc)
+        owned_store = self._store if self._owns_store else None
+        self._owns_store = False
+        if owned_store is not None:
+            try:
+                close = getattr(owned_store, "close", None)
+                if callable(close):
+                    close()
             except BaseException as exc:
                 failures.append(exc)
         if failures:

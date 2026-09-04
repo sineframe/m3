@@ -50,7 +50,7 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
     "mcp_pal.evaluations": ("AsyncEvaluator", "EvaluationRunner", "EvaluationStore", "EvaluationVerdict", "Evaluator", "EvaluatorCallable", "EvaluatorRegistry", "EvaluatorRegistration", "InMemoryEvaluationStore", "RequiredEvaluationError"),
     "mcp_pal.snapshots": ("SnapshotOptions", "canonical_snapshot", "normalize_snapshot"),
     "mcp_pal.policy": ("ConfirmationHook", "ToolDescriptor", "ToolPolicyDecision", "ToolPolicyEvidence", "ToolPolicyEvaluator", "evaluate_tool_policy"),
-    "mcp_pal.pytest_plugin": (),
+    "mcp_pal.pytest_plugin": ("pytest_addoption", "pytest_configure", "pytest_unconfigure"),
     "mcp_pal.matrix": ("HarnessCase", "HarnessMatrix", "HarnessMatrixCase", "ServerCase", "ToolCase", "ToolMatrix", "ToolMatrixCase"),
 }
 

@@ -21,6 +21,11 @@ test:
     PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests
     PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test --group typecheck pytest -q app/tests
 
+# Manual-only live OpenCode + browser merge gate. This performs one external
+# provider call and may incur provider usage/cost; it is never a CI job.
+live-ui-gate:
+    uv run --env-file .env --project sdk --extra pytest --extra storage python scripts/live_ui_gate.py
+
 test-unit:
     PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests/unit
     PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test --group typecheck pytest -q app/tests/unit
