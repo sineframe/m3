@@ -13,7 +13,8 @@ uv run --project sdk --extra pytest pytest -q sdk/examples/tests
 
 ## 1. Discover a direct server tool before calling it
 
-Use `kit.direct` when you want to test an MCP server without an agent. The
+Write this test to catch regressions in a server's advertised tool contract and
+result without involving an agent. Use `kit.direct` to connect to the server. The
 shared [`example_server` fixture](../examples/tests/conftest.py) points to the
 server above. [`test_quick_start.py`](../examples/tests/test_quick_start.py)
 lists all pages, checks the tool description and input shape, and then calls it:
@@ -36,10 +37,9 @@ For pagination and the other direct operations, see
 
 ## 2. Use Claude Code or OpenCode
 
-Choose a built-in harness when the test should send a prompt to an installed
-Claude Code or OpenCode process. Both use the same `agent_session` API and may
-call tools available to the harness. Start with the shared server definition and
-choose one harness:
+Write this test to assert that an agent chooses and successfully calls the
+intended MCP tool, rather than only checking its final prose. Choose a built-in
+harness to send the prompt to an installed Claude Code or OpenCode process:
 
 ```python
 import os
@@ -88,9 +88,10 @@ login state is not inherited from the parent environment.
 
 ## 3. Bring your own harness with ACP
 
-Use ACP when you have an ACP-compatible agent of your own. The local fixture
-below is just a credential-free example process, not a required way to build an
-agent. It calls the real example server and reports the result through ACP.
+Use this test to make the same tool-selection assertion for an ACP-compatible
+agent you provide. The local fixture below is just a credential-free example
+process, not a required way to build an agent. It calls the real example server
+and reports the result through ACP.
 The complete fixture is
 [`deterministic_acp_agent.py`](../examples/servers/deterministic_acp_agent.py),
 and the complete test is
@@ -137,8 +138,8 @@ expect(session.result).to_have_tool_call(
 
 ## 4. Match arguments, results, status, counts, and choices
 
-Use exact or partial arguments, result projections, status, count bounds,
-predicates, latency limits, and negative checks:
+Use these assertions when the tool name alone is not enough: verify how it was
+called, what it returned, how often it ran, and which tools it avoided:
 
 ```python
 with kit.agent_session(spec) as session:
@@ -162,9 +163,10 @@ For an evidence-source comparison, use `evidence="reported"` or
 
 ## 5. Test multiple turns by `TurnResult`
 
-Each `session.send(prompt)` returns one completed turn. After closing the
-session, pass either `TurnResult`, `TurnSnapshot`, `TurnId`, or a string ID to
-the matcher and `TraceView.for_turn`:
+Use turn-scoped assertions to prove which prompt caused each tool call in a
+multi-turn session. Each `session.send(prompt)` returns one completed turn.
+After closing the session, pass either `TurnResult`, `TurnSnapshot`, `TurnId`,
+or a string ID to the matcher and `TraceView.for_turn`:
 
 ```python
 with kit.agent_session(spec) as session:
@@ -181,7 +183,8 @@ See the two-turn implementation in
 
 ## 6. Chain tool outputs
 
-Keep one direct client open when one tool feeds the next:
+Write a chained test when later tools depend on earlier output or shared server
+state. Keep one direct client open for the whole workflow:
 
 ```python
 normalized = client.call_tool("normalize_customer", {"name": "Ada Lovelace"})
@@ -195,7 +198,8 @@ Complete test: [`test_chained_workflow.py`](../examples/tests/test_chained_workf
 
 ## 7. Test resources, prompts, errors, and schemas
 
-The direct client also handles resources and prompts:
+Use direct tests to verify non-tool MCP surfaces and distinguish expected tool
+errors from invalid contracts. The client also handles resources and prompts:
 
 ```python
 guide = client.read_resource("memory://testing-guide")
@@ -214,7 +218,8 @@ with kit.direct(example_server, validate_schemas=True) as client:
 
 ## 8. Use async APIs
 
-The async kit follows the same shape:
+Use the async API when the code under test is already async; it verifies the
+same MCP behavior without a synchronous wrapper:
 
 ```python
 async with AsyncMCPTestKit(env={}) as kit:
@@ -229,7 +234,8 @@ async evaluation in
 
 ## 9. Inspect and debug traces
 
-After a client or session closes, inspect its typed view:
+Inspect a trace when you need evidence of what ran—not just whether the final
+assertion passed. After a client or session closes, use its typed view:
 
 ```python
 with kit.agent_session(spec) as session:
@@ -250,7 +256,8 @@ are in [`test_tracing_and_lifecycle.py`](../examples/tests/test_tracing_and_life
 
 ## 10. Check capabilities and probes
 
-Check readiness before using an environment-dependent feature:
+Probe readiness before an environment-dependent test so a missing runtime or
+transport is diagnosed directly:
 
 ```python
 with MCPTestKit(env={}) as kit:
@@ -262,7 +269,8 @@ See [`test_capabilities_and_probes.py`](../examples/tests/test_capabilities_and_
 
 ## 11. Use snapshots, evaluations, and grouped assertions
 
-Group related checks and register an evaluator against a typed result:
+Use these helpers for stable result snapshots, reusable quality checks, or
+several failures reported together:
 
 ```python
 with check() as checks:
@@ -277,7 +285,8 @@ sync/async evaluations.
 
 ## 12. Use a mock server
 
-When the test owns the server behavior, use the in-process helper:
+Use a mock server to test client behavior against expected MCP calls without
+starting an external server process:
 
 ```python
 server = MockMCPServer(name="contract-example")
@@ -292,8 +301,8 @@ Complete setup, expectations, verification, and recording are in
 
 ## 13. Persist and reopen when needed
 
-Memory storage is the default. Use SQLite when you want history to survive
-process boundaries:
+Use SQLite only when traces must be reopened from durable storage; otherwise
+memory storage is the default:
 
 ```python
 store = SQLiteExecutionStore("traces.sqlite")
@@ -311,11 +320,13 @@ The close/reopen and public raw-evidence examples are in
 
 ## 14. Run a matrix across servers and harnesses
 
-Use `HarnessMatrix` when the same prompt should be tried against several MCP
-servers and harnesses. In `each_server` mode, every case contains one selected
-server, so a harness cannot accidentally use a different server. The matrix
-below expands to four cases—two servers × two built-in harnesses—with stable
-IDs such as `catalog/claude` and `warehouse/opencode`:
+Use a matrix to apply one testing question consistently across several servers,
+tools, or harnesses without hand-writing each pytest case. `HarnessMatrix`
+tries the same prompt against several MCP servers and harnesses. In
+`each_server` mode, every case contains one selected server, so a harness cannot
+accidentally use a different server. The matrix below expands to four cases—two
+servers × two built-in harnesses—with stable IDs such as `catalog/claude` and
+`warehouse/opencode`:
 
 ```python
 import os
