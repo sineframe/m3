@@ -81,7 +81,7 @@ for line in __import__('sys').stdin:
 
 def test_acp_clone_preserves_snapshot_and_latest_override(tmp_path):
     from mcp_pal_app.persistence.models import HarnessProbe
-    client=TestClient(create_app(Settings(database_path=str(tmp_path/'db.sqlite')))); a=exe(tmp_path/'a.py','')
+    app=create_app(Settings(database_path=str(tmp_path/'db.sqlite'))); client=TestClient(app); app.state.manager.submit=lambda _run_id: None; a=exe(tmp_path/'a.py','')
     hp=client.post('/api/v1/harness-profiles',json={'name':'a','manifest':{'command':a},'trusted_unsandboxed':True}).json(); mp=client.post('/api/v1/profiles',json={'name':'m','mcp_json':{'mcpServers':{'e':{'command':'echo'}}}}).json()
     db=client.app.state.session_factory(); db.add(HarnessProbe(revision_id=hp['current_revision_id'],kind='protocol',status='verified',evidence={'config_options':[{'id':'flag','type':'select','options':[{'value':'on'}]}]},agent_identity={'name':'fixture','version':'1'})); db.commit(); db.close()
     body={'harness':'acp','harness_revision_id':hp['current_revision_id'],'model':'agent-default','tool_mode':'agent_default','prompt':'p','expected_output':'x','profile_revision_id':mp['current_revision_id'],'enabled_server':'e','session_config':{'flag':'on'}}; original=client.post('/api/v1/runs',json=body).json(); clone=client.post(f"/api/v1/runs/{original['id']}/clone",json={}).json()

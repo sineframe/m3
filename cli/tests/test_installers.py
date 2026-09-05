@@ -213,20 +213,22 @@ exit 30
 
 
 def test_private_install_docs_use_exact_authenticated_assets() -> None:
-    docs = ((ROOT / "README.md").read_text(encoding="utf-8"), (ROOT / "cli" / "README.md").read_text(encoding="utf-8"))
-    for contents in docs:
-        assert "gh auth login" in contents
-        assert (
-            "gh release download vX.Y.Z --repo rishhavv/mcp-pal "
-            "--pattern install.sh --output install.sh"
-        ) in contents
-        assert "--pattern install.sh --output install.sh" in contents
-        assert "sh install.sh\nrm install.sh" in contents
-        assert "--pattern install.ps1 --output install.ps1" in contents
-        assert ".\\install.ps1\nRemove-Item install.ps1" in contents
-        assert 'mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SDK_WHEEL' in contents
-        assert "only downloads files" in contents
-        assert "does not create or modify a" in contents
+    root_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "[CLI guide](cli/README.md)" in root_readme
+
+    contents = (ROOT / "cli" / "README.md").read_text(encoding="utf-8")
+    assert "gh auth login" in contents
+    assert (
+        "gh release download vX.Y.Z --repo rishhavv/mcp-pal "
+        "--pattern install.sh --output install.sh"
+    ) in contents
+    assert "--pattern install.sh --output install.sh" in contents
+    assert "sh install.sh\nrm install.sh" in contents
+    assert "--pattern install.ps1 --output install.ps1" in contents
+    assert ".\\install.ps1\nRemove-Item install.ps1" in contents
+    assert 'mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SDK_WHEEL' in contents
+    assert "only downloads files" in contents
+    assert "does not create or modify a" in contents
 
 
 def test_release_workflow_publishes_only_tag_runs() -> None:
