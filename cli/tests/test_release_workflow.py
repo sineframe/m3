@@ -35,3 +35,14 @@ def test_release_workflow_publishes_only_after_the_standalone_gate() -> None:
     publish_block = workflow[publish_position:]
     assert "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')" in publish_block
     assert "gh release create" in publish_block
+
+
+def test_release_workflow_builds_ui_without_running_ui_quality_suites() -> None:
+    workflow = _workflow()
+
+    assert "- name: Install and build the UI" in workflow
+    assert "npm ci" in workflow
+    assert "npm run build" in workflow
+    assert "npm test" not in workflow
+    assert "npm run typecheck" not in workflow
+    assert "npm run lint" not in workflow

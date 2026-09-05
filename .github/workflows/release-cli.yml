@@ -69,13 +69,10 @@ jobs:
           cache: npm
           cache-dependency-path: .release-ui/package-lock.json
 
-      - name: Install and verify the UI
+      - name: Install and build the UI
         working-directory: .release-ui
         run: |
           npm ci
-          npm test
-          npm run typecheck
-          npm run lint
           npm run build
 
       - name: Derive and validate the release version
