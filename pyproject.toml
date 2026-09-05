@@ -1,9 +1,9 @@
 [tool.uv.workspace]
-members = ["sdk", "app"]
+members = ["sdk", "app", "cli"]
 
 [tool.pytest.ini_options]
-testpaths = ["sdk/tests", "app/tests"]
-pythonpath = ["sdk/src", "app/src"]
+testpaths = ["sdk/tests", "app/tests", "cli/tests"]
+pythonpath = ["sdk/src", "app/src", "cli/src"]
 asyncio_mode = "auto"
 addopts = "-p no:cacheprovider"
 markers = [

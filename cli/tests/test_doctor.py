@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import mcp_pal.cli.doctor as doctor_module
-from mcp_pal.cli import main
+import mcp_pal_cli.doctor as doctor_module
+from mcp_pal_cli import main
 
 
 def test_doctor_without_requirements_checks_config_and_memory(capsys) -> None:
@@ -134,3 +134,26 @@ def test_doctor_transport_and_storage_namespaces(capsys) -> None:
     ) == 0
     report = json.loads(capsys.readouterr().out)
     assert [item["capability"]["status"] for item in report["results"]] == ["ready", "ready"]
+
+
+def test_doctor_checks_discovered_project_python(capsys) -> None:
+    assert main(["doctor", "--python", "./.venv/bin/python", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["project_python"] == {"status": "ready", "version": "0.2.0a2"}
+
+
+def test_doctor_checks_default_project_python(capsys) -> None:
+    assert main(["doctor", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["project_python"]["status"] == "ready"
+
+
+def test_doctor_project_python_failure_is_actionable_and_safe(capsys, tmp_path: Path) -> None:
+    secret_path = tmp_path / "secret-python"
+    assert main(["doctor", "--python", str(secret_path), "--json"]) == 2
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["error"]["code"] == "project_python_unavailable"
+    assert "install" in report["error"]["reason"] or "started" in report["error"]["reason"]
+    assert str(secret_path) not in captured.out
+    assert str(secret_path) not in captured.err

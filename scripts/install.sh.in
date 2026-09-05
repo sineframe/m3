@@ -1,0 +1,216 @@
+#!/bin/sh
+set -eu
+
+# This file is rendered into a release asset.  Keep the version placeholder
+# unique: scripts/render_cli_installers.py rejects templates that do not have
+# exactly one occurrence.
+VERSION='@MCP_PAL_VERSION@'
+REPOSITORY='rishhavv/mcp-pal'
+RELEASE_TAG="v${VERSION}"
+HAS_BASE_URL=0
+[ -n "${MCP_PAL_RELEASE_BASE_URL:-}" ] && HAS_BASE_URL=1
+BASE_URL=${MCP_PAL_RELEASE_BASE_URL:-"https://github.com/${REPOSITORY}/releases/download/v${VERSION}"}
+BASE_URL=${BASE_URL%/}
+
+CLI_WHEEL="mcp_pal_cli-${VERSION}-py3-none-any.whl"
+SDK_WHEEL="mcp_pal-${VERSION}-py3-none-any.whl"
+APP_WHEEL="mcp_pal_app-${VERSION}-py3-none-any.whl"
+CHECKSUMS='SHA256SUMS'
+
+die() {
+    printf '%s\n' "mcp-pal install failed: $*" >&2
+    exit 1
+}
+
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/mcp-pal-install.XXXXXX") || die 'could not create a temporary directory'
+cleanup() {
+    rm -rf "$TMP_DIR"
+}
+on_interrupt() { exit 130; }
+on_terminate() { exit 143; }
+trap cleanup EXIT
+trap on_interrupt INT
+trap on_terminate TERM
+
+download() {
+    artifact=$1
+    destination=$2
+
+    # A release from the private repository must be fetched through the user's
+    # authenticated gh session.  The base URL override remains available for
+    # local release tests and public mirrors.
+    if [ "$HAS_BASE_URL" -eq 0 ]; then
+        if command -v gh >/dev/null 2>&1; then
+            if gh auth status --hostname github.com >/dev/null 2>&1; then
+                gh release download "$RELEASE_TAG" \
+                    --repo "$REPOSITORY" \
+                    --pattern "$artifact" \
+                    --output "$destination" \
+                    >/dev/null \
+                    || die "could not download ${artifact} with gh; check repository access"
+                [ -f "$destination" ] || die "gh did not create ${artifact}"
+                return 0
+            fi
+        fi
+    fi
+
+    url="${BASE_URL}/${artifact}"
+    if command -v curl >/dev/null 2>&1; then
+        curl --fail --silent --show-error --location --retry 2 --output "$destination" "$url" || die "could not download ${artifact}"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --quiet --output-document="$destination" "$url" || die "could not download ${artifact}"
+    else
+        die 'gh, curl, or wget is required to download the release'
+    fi
+}
+
+for artifact in "$CLI_WHEEL" "$SDK_WHEEL" "$APP_WHEEL" "$CHECKSUMS"; do
+    download "$artifact" "${TMP_DIR}/${artifact}"
+done
+
+# Require exactly one ordinary SHA256SUMS record for each of the three wheels.
+# Filenames are compared as fixed strings; no downloaded value is evaluated as
+# shell code.
+awk -v cli="$CLI_WHEEL" -v sdk="$SDK_WHEEL" -v app="$APP_WHEEL" '
+    BEGIN { wanted[cli] = 1; wanted[sdk] = 1; wanted[app] = 1 }
+    {
+        remainder = $1
+        gsub(/[0-9A-Fa-f]/, "", remainder)
+        if (NF != 2 || length($1) != 64 || length(remainder) != 0 || !($2 in wanted)) exit 10
+        count[$2]++
+        if (count[$2] != 1) exit 11
+    }
+    END {
+        if (NR != 3) exit 12
+        for (name in wanted) if (count[name] != 1) exit 13
+    }
+' "${TMP_DIR}/${CHECKSUMS}" || die 'SHA256SUMS must contain exactly one valid record for each wheel'
+
+checksum() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{ print $1 }'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{ print $1 }'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$1" | awk '{ print $NF }'
+    else
+        die 'sha256sum, shasum, or openssl is required to verify the release'
+    fi
+}
+
+expected_checksum() {
+    awk -v name="$1" '$2 == name { print tolower($1) }' "${TMP_DIR}/${CHECKSUMS}"
+}
+
+for artifact in "$CLI_WHEEL" "$SDK_WHEEL" "$APP_WHEEL"; do
+    actual=$(checksum "${TMP_DIR}/${artifact}" | tr '[:upper:]' '[:lower:]')
+    expected=$(expected_checksum "$artifact")
+    [ "$actual" = "$expected" ] || die "checksum mismatch for ${artifact}"
+done
+
+ui_check='from importlib import resources; root = resources.files("mcp_pal_cli").joinpath("ui"); assert root.joinpath("index.html").is_file(); assert any(item.is_file() for item in root.joinpath("assets").iterdir())'
+
+if command -v uv >/dev/null 2>&1; then
+    uv tool install --force "${TMP_DIR}/${CLI_WHEEL}" \
+        --with "${TMP_DIR}/${SDK_WHEEL}" \
+        --with "${TMP_DIR}/${APP_WHEEL}" \
+        || die 'uv tool install failed'
+    UV_BIN=$(uv tool dir --bin 2>/dev/null || true)
+    if [ -n "$UV_BIN" ] && [ -x "${UV_BIN}/mcp-pal" ]; then
+        "${UV_BIN}/mcp-pal" --help >/dev/null || die 'installed mcp-pal command failed'
+    else
+        die 'uv installed mcp-pal but its tool bin directory is missing the command'
+    fi
+    UV_TOOL_ROOT=$(uv tool dir 2>/dev/null || true)
+    [ -n "$UV_TOOL_ROOT" ] || die 'could not locate the installed uv tool environment'
+    UV_TOOL_PYTHON="${UV_TOOL_ROOT}/mcp-pal-cli/bin/python"
+    [ -x "$UV_TOOL_PYTHON" ] || die 'uv tool environment Python is missing'
+    "$UV_TOOL_PYTHON" -c "$ui_check" || die 'packaged UI could not be imported from the CLI wheel'
+    printf '%s\n' 'mcp-pal installed with uv in isolated tool storage.'
+    exit 0
+fi
+
+find_python() {
+    for candidate in "${MCP_PAL_PYTHON:-}" python3 python; do
+        [ -n "$candidate" ] || continue
+        executable=$(command -v "$candidate" 2>/dev/null || true)
+        [ -n "$executable" ] || continue
+        if "$executable" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+            printf '%s\n' "$executable"
+            return 0
+        fi
+    done
+    return 1
+}
+
+PYTHON=$(find_python) || die 'Python 3.10 or newer is required when uv is unavailable'
+INSTALL_ROOT=${MCP_PAL_INSTALL_ROOT:-"${XDG_DATA_HOME:-$HOME/.local/share}/mcp-pal"}
+BIN_DIR=${MCP_PAL_BIN_DIR:-"${XDG_BIN_HOME:-$HOME/.local/bin}"}
+[ -n "$INSTALL_ROOT" ] && [ -n "$BIN_DIR" ] || die 'installation paths must not be empty'
+
+mkdir -p "$(dirname "$INSTALL_ROOT")" "$BIN_DIR"
+COMMAND_PATH="${BIN_DIR}/mcp-pal"
+if [ -e "$COMMAND_PATH" ] || [ -L "$COMMAND_PATH" ]; then
+    target=$(readlink "$COMMAND_PATH" 2>/dev/null || true)
+    [ "$target" = "${INSTALL_ROOT}/bin/mcp-pal" ] || die "refusing to overwrite existing ${COMMAND_PATH}"
+fi
+if [ -e "$INSTALL_ROOT" ]; then
+    [ -f "${INSTALL_ROOT}/.mcp-pal-install" ] || die "refusing to overwrite existing ${INSTALL_ROOT}"
+fi
+
+BACKUP="${INSTALL_ROOT}.backup.$$"
+LINK_TMP="${COMMAND_PATH}.tmp.$$"
+had_root=0
+new_root=0
+created_link=0
+transaction_done=0
+[ ! -e "$BACKUP" ] && [ ! -L "$BACKUP" ] || die "temporary backup path already exists: ${BACKUP}"
+[ ! -e "$LINK_TMP" ] && [ ! -L "$LINK_TMP" ] || die "temporary command path already exists: ${LINK_TMP}"
+cleanup_fallback() {
+    status=$?
+    trap - EXIT INT TERM
+    rm -rf "$TMP_DIR"
+    [ -z "${LINK_TMP:-}" ] || rm -f "$LINK_TMP"
+    if [ "$transaction_done" -eq 0 ]; then
+        if [ "$created_link" -eq 1 ] && { [ -e "$COMMAND_PATH" ] || [ -L "$COMMAND_PATH" ]; }; then
+            rm -f "$COMMAND_PATH"
+        fi
+        if [ "$new_root" -eq 1 ] && [ -e "$INSTALL_ROOT" ]; then
+            rm -rf "$INSTALL_ROOT"
+        fi
+        if [ "$had_root" -eq 1 ] && [ ! -e "$INSTALL_ROOT" ] && [ -e "$BACKUP" ]; then
+            mv "$BACKUP" "$INSTALL_ROOT" || status=1
+        fi
+    else
+        [ "$had_root" -eq 0 ] || rm -rf "$BACKUP"
+    fi
+    exit "$status"
+}
+trap cleanup_fallback EXIT
+
+if [ -e "$INSTALL_ROOT" ]; then
+    mv "$INSTALL_ROOT" "$BACKUP" || die 'could not stage the previous MCP Pal environment'
+    had_root=1
+fi
+new_root=1
+"$PYTHON" -m venv "$INSTALL_ROOT" || die 'could not create the dedicated virtual environment'
+VENV_PYTHON="${INSTALL_ROOT}/bin/python"
+"$VENV_PYTHON" -m pip install --disable-pip-version-check \
+    "${TMP_DIR}/${CLI_WHEEL}" "${TMP_DIR}/${SDK_WHEEL}" "${TMP_DIR}/${APP_WHEEL}" \
+    || die 'could not install the release wheels in the dedicated virtual environment'
+"$VENV_PYTHON" -c "$ui_check" || die 'packaged UI could not be imported from the CLI wheel'
+printf '%s\n' "$VERSION" > "${INSTALL_ROOT}/.mcp-pal-install"
+
+if [ ! -e "$COMMAND_PATH" ] && [ ! -L "$COMMAND_PATH" ]; then
+    ln -s "${INSTALL_ROOT}/bin/mcp-pal" "$LINK_TMP" || die 'could not prepare the MCP Pal command'
+    mv "$LINK_TMP" "$COMMAND_PATH" || die 'could not activate the MCP Pal command'
+    created_link=1
+fi
+
+"$COMMAND_PATH" --help >/dev/null || die 'installed mcp-pal command failed'
+transaction_done=1
+printf '%s\n' "mcp-pal installed in ${INSTALL_ROOT}."
+case ":${PATH}:" in
+    *:"${BIN_DIR}":*) ;;
+    *) printf '%s\n' "Add ${BIN_DIR} to PATH to run mcp-pal." ;;
+esac

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator, Mapping
+import os
+from pathlib import Path
+import subprocess
+import sys
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -630,3 +635,66 @@ def test_expectations_are_ordered_unless_explicitly_unordered() -> None:
     unordered.expect("tools/call", tool="first", unordered="g")
     unordered.expect("tools/call", tool="second", unordered="g")
     assert unordered._expect_call("tools/call", {"tool": "second", "arguments": {}}) is not None
+
+
+def test_native_pytest_setup_and_teardown_errors_remain_in_summary(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_failures.py"
+    test_file.write_text(
+        "import pytest\n"
+        "@pytest.fixture\n"
+        "def setup_failure():\n    raise RuntimeError('setup')\n"
+        "@pytest.fixture\n"
+        "def teardown_failure():\n    yield\n    raise RuntimeError('teardown')\n"
+        "def test_setup(setup_failure): pass\n"
+        "def test_teardown(teardown_failure): pass\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "mcp_pal.pytest_plugin", "--mcp-pal-results-db", str(tmp_path / "results.sqlite"), str(test_file)],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 1
+    assert "errors" in result.stdout
+
+
+def test_progress_counts_setup_and_teardown_without_double_completion() -> None:
+    from mcp_pal.pytest_plugin import _Progress
+
+    reporter = SimpleNamespace(isatty=True, rewrite=lambda *_args, **_kwargs: None, write_line=lambda *_args: None)
+    config = SimpleNamespace(option=SimpleNamespace(verbose=0, numprocesses=0), pluginmanager=SimpleNamespace(getplugin=lambda _: reporter))
+    progress = _Progress(config)
+    progress.reporter = reporter
+    progress.enabled = True
+    progress.pytest_collection_finish(SimpleNamespace(items=[1, 2, 3]))
+    progress.pytest_runtest_logreport(SimpleNamespace(nodeid="skip", when="setup", outcome="skipped"))
+    progress.pytest_runtest_logreport(SimpleNamespace(nodeid="fail", when="setup", outcome="failed"))
+    progress.pytest_runtest_logreport(SimpleNamespace(nodeid="ok", when="setup", outcome="passed"))
+    progress.pytest_runtest_logreport(SimpleNamespace(nodeid="ok", when="call", outcome="passed"))
+    progress.pytest_runtest_logreport(SimpleNamespace(nodeid="ok", when="teardown", outcome="failed"))
+    assert (progress.completed, progress.passed, progress.failed, progress.skipped) == (3, 0, 2, 1)
+
+
+def test_progress_is_disabled_for_non_tty() -> None:
+    from mcp_pal.pytest_plugin import _Progress
+
+    reporter = SimpleNamespace(isatty=False)
+    config = SimpleNamespace(option=SimpleNamespace(verbose=0, numprocesses=0), pluginmanager=SimpleNamespace(getplugin=lambda _: reporter))
+    progress = _Progress(config)
+    progress.reporter = reporter
+    progress.enabled = progress.enabled and progress._is_tty()
+    assert progress.enabled is False
+
+
+def test_progress_restores_exact_native_reporter_mode() -> None:
+    from mcp_pal.pytest_plugin import _Progress
+
+    reporter = SimpleNamespace(isatty=True, _show_progress_info="count")
+    config = SimpleNamespace(option=SimpleNamespace(verbose=0, numprocesses=0), pluginmanager=SimpleNamespace(getplugin=lambda _: reporter))
+    progress = _Progress(config)
+    progress.reporter = reporter
+    progress.disable_native_progress()
+    assert reporter._show_progress_info is False
+    progress.restore_native_progress()
+    assert reporter._show_progress_info == "count"

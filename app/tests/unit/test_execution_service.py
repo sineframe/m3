@@ -126,6 +126,32 @@ class FakeHandle:
         self.store.request_cancel(self.execution_id)
 
 
+class DelayedCancelStore(FakeStore):
+    """Expose the small durable-commit window after a local cancel returns."""
+
+    def __init__(self, report: PersistedExecutionReport) -> None:
+        super().__init__(report)
+        self.cancel_requested = False
+        self.report_reads = 0
+
+    def get_report(self, execution_id: ExecutionId | str, **kwargs: Any) -> PersistedExecutionReport | None:
+        self.report_reads += 1
+        if self.cancel_requested and self.report_reads >= 3 and self.report is not None:
+            self.report = PersistedExecutionReport(
+                snapshot=self.report.snapshot.transition(
+                    LifecycleState.FINISHED, ExecutionOutcome.CANCELLED
+                )
+            )
+        return super().get_report(execution_id, **kwargs)
+
+
+class DelayedCancelHandle(FakeHandle):
+    def cancel(self) -> None:
+        self.cancelled = True
+        assert isinstance(self.store, DelayedCancelStore)
+        self.store.cancel_requested = True
+
+
 class FakeKit:
     def __init__(self, store: FakeStore, execution_id: ExecutionId) -> None:
         self.store, self.execution_id = store, execution_id
@@ -137,6 +163,12 @@ class FakeKit:
 
     def close(self) -> None:
         self.closed += 1
+
+
+class DelayedCancelKit(FakeKit):
+    def __init__(self, store: DelayedCancelStore) -> None:
+        super().__init__(store, ExecutionId("execution-1"))
+        self.handle = DelayedCancelHandle(store, self.execution_id)
 
 
 def active_report(identifier: ExecutionId = ExecutionId("execution-1")) -> PersistedExecutionReport:
@@ -155,6 +187,19 @@ def test_service_crud_and_local_handle_cancel() -> None:
     assert kit.handle.cancelled and store.cancelled
     assert service.delete("execution-1") == ExecutionId("execution-1")
     assert not service._active_handles
+
+
+def test_local_cancel_waits_for_terminal_snapshot_commit() -> None:
+    store = DelayedCancelStore(active_report())
+    kit = DelayedCancelKit(store)
+    service = AppExecutionService(store, kit)
+    service.create(spec())
+
+    cancelled = service.cancel("execution-1")
+
+    assert cancelled.snapshot.lifecycle is LifecycleState.FINISHED
+    assert cancelled.snapshot.outcome is ExecutionOutcome.CANCELLED
+    assert store.report_reads >= 3
 
 
 def test_durable_cancel_without_local_handle_and_terminal_cancel() -> None:

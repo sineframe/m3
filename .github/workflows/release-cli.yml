@@ -1,0 +1,153 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and verify CLI release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out MCP Pal
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate the pinned UI commit
+        id: ui-ref
+        shell: bash
+        env:
+          UI_REPOSITORY_TOKEN: ${{ secrets.MCPPAL_UI_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UI_REPOSITORY_TOKEN" ]]; then
+            echo 'MCPPAL_UI_TOKEN must be configured with read access to the private mcppal-ui repository' >&2
+            exit 1
+          fi
+          ui_ref=$(tr -d '\r\n' < cli/UI_REF)
+          if [[ ! "$ui_ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'cli/UI_REF must contain exactly 40 lowercase hexadecimal characters' >&2
+            exit 1
+          fi
+          printf 'sha=%s\n' "$ui_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the pinned UI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rishhavv/mcppal-ui
+          ref: ${{ steps.ui-ref.outputs.sha }}
+          path: .release-ui
+          token: ${{ secrets.MCPPAL_UI_TOKEN }}
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install Node.js
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .release-ui/package-lock.json
+
+      - name: Install and verify the UI
+        working-directory: .release-ui
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+          npm run lint
+          npm run build
+
+      - name: Derive and validate the release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            case "$GITHUB_REF_NAME" in
+              v*) expected_version=${GITHUB_REF_NAME#v} ;;
+              *) echo 'release workflow received a non-version tag' >&2; exit 1 ;;
+            esac
+          else
+            expected_version=$(python scripts/build_cli_release.py --print-version)
+          fi
+          python scripts/build_cli_release.py --print-version --expected-version "$expected_version" >/dev/null
+          printf 'version=%s\n' "$expected_version" >> "$GITHUB_OUTPUT"
+
+      - name: Build and inspect the three release wheels
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/mcp-pal-release"
+          rm -rf "$release_dir"
+          mkdir -p "$release_dir"
+          python scripts/build_cli_release.py \
+            --ui-dist .release-ui/dist \
+            --out-dir "$release_dir" \
+            --expected-version '${{ steps.version.outputs.version }}'
+          python scripts/render_cli_installers.py \
+            --version '${{ steps.version.outputs.version }}' \
+            --output-dir "$release_dir"
+          mapfile -t wheels < <(find "$release_dir" -maxdepth 1 -type f -name '*.whl' -printf '%f\n' | sort)
+          test "${#wheels[@]}" -eq 3
+          printf '%s\n' "${wheels[@]}" | grep -Fx \
+            "mcp_pal-${{ steps.version.outputs.version }}-py3-none-any.whl"
+          printf '%s\n' "${wheels[@]}" | grep -Fx \
+            "mcp_pal_app-${{ steps.version.outputs.version }}-py3-none-any.whl"
+          printf '%s\n' "${wheels[@]}" | grep -Fx \
+            "mcp_pal_cli-${{ steps.version.outputs.version }}-py3-none-any.whl"
+          (cd "$release_dir" && sha256sum "${wheels[@]}" > SHA256SUMS)
+          test "$(wc -l < "$release_dir/SHA256SUMS")" -eq 3
+          python scripts/smoke_cli_uv_install.py \
+            --release-dir "$release_dir" \
+            --version '${{ steps.version.outputs.version }}'
+
+      - name: Run the isolated two-environment standalone gate
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/mcp-pal-release"
+          python scripts/check_cli_standalone.py \
+            --release-dir "$release_dir" \
+            --version '${{ steps.version.outputs.version }}'
+
+      - name: Publish the GitHub Release for a version tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/mcp-pal-release"
+          prerelease=()
+          case "$VERSION" in
+            *a*|*b*|*rc*|*dev*) prerelease=(--prerelease) ;;
+          esac
+          gh release create "v${VERSION}" \
+            --verify-tag \
+            --generate-notes \
+            "${prerelease[@]}" \
+            "$release_dir/mcp_pal-${VERSION}-py3-none-any.whl" \
+            "$release_dir/mcp_pal_app-${VERSION}-py3-none-any.whl" \
+            "$release_dir/mcp_pal_cli-${VERSION}-py3-none-any.whl" \
+            "$release_dir/SHA256SUMS" \
+            "$release_dir/install.sh" \
+            "$release_dir/install.ps1"

@@ -9,8 +9,8 @@ from typing import Any
 
 from dotenv import dotenv_values
 
-from ..configuration import ConfigurationError, resolve_config
-from ..services.probes import CapabilityProbeService, ProbeKind, ProbeRequest
+from mcp_pal.configuration import ConfigurationError, resolve_config
+from mcp_pal.services.probes import CapabilityProbeService, ProbeKind, ProbeRequest
 from .errors import CLIError
 
 _TRANSPORT_MODULES = {
@@ -28,6 +28,10 @@ class DoctorCLIError(CLIError):
 
 class DoctorArgumentError(DoctorCLIError):
     """A safe diagnostic for an invalid doctor argument combination."""
+
+
+class DoctorProjectPythonError(DoctorCLIError):
+    """A safe diagnostic for an unavailable or mismatched project Python."""
 
 
 class DoctorConfigurationError(DoctorCLIError):
@@ -195,6 +199,21 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         except OSError:
             raise DoctorCLIError("project root unavailable") from None
     configuration: dict[str, Any] | None = None
+    project_python: dict[str, Any] | None = None
+    from .supervisor import ProjectPythonError, resolve_project_python, validate_project_python
+
+    try:
+        selected = resolve_project_python(
+            getattr(args, "python", None),
+            project_root=(args.project_root or Path.cwd()),
+        )
+        version = validate_project_python(
+            selected,
+            project_root=(args.project_root or Path.cwd()),
+        )
+    except ProjectPythonError as error:
+        raise DoctorProjectPythonError(str(error)) from None
+    project_python = {"status": "ready", "version": version}
     include_config = any(kind == "config" for kind, _ in requirements)
     if include_config:
         try:
@@ -211,6 +230,7 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         "ready": ready,
         "requirements": [_requirement_label(kind, target) for kind, target in requirements],
         "configuration": configuration,
+        "project_python": project_python,
         "results": results,
     }
     return (0 if ready else 1), report
@@ -218,6 +238,9 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
 
 def print_human(report: dict[str, Any]) -> None:
     print(f"mcp-pal doctor: {'ready' if report['ready'] else 'not ready'}")
+    project_python = report.get("project_python")
+    if project_python is not None:
+        print(f"project Python: {project_python['status']} (mcp-pal {project_python['version']})")
     if report.get("configuration") is not None:
         print(f"config: {report['configuration']['status']}")
     for result in report["results"]:
@@ -239,6 +262,7 @@ def print_configuration_error(error: ConfigurationError) -> None:
 __all__ = [
     "DoctorCLIError",
     "DoctorArgumentError",
+    "DoctorProjectPythonError",
     "DoctorConfigurationError",
     "run",
     "print_human",

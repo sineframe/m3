@@ -61,6 +61,19 @@ def inspect_artifacts(wheel: Path, sdist: Path) -> None:
         assert not any(name.startswith("mcp_pal/tests/") for name in names)
         assert not any(name.startswith("mcp_pal/examples/") for name in names)
         assert not any(name.startswith("mcp_pal/docs/") for name in names)
+        entry_points_name = next(
+            (name for name in names if name.endswith(".dist-info/entry_points.txt")),
+            None,
+        )
+        assert entry_points_name is not None
+        entry_points = archive.read(entry_points_name).decode("utf-8")
+        console_scripts = {
+            line.split("=", 1)[0].strip()
+            for line in entry_points.splitlines()
+            if "=" in line and not line.lstrip().startswith("[")
+        }
+        assert {"mcp-pal-harness", "mcp-pal-reference-bridge"} <= console_scripts
+        assert "mcp-pal" not in console_scripts
         assert sum(name == "mcp_pal/schemas/mcp-pal.harness.v1.schema.json" for name in names) == 1
         assert sum(name == "mcp_pal/schemas/mcp-pal.event.v0.2.schema.json" for name in names) == 1
 
@@ -80,6 +93,12 @@ def inspect_artifacts(wheel: Path, sdist: Path) -> None:
 def python_executable(venv: Path) -> Path:
     directory = venv / ("Scripts" if os.name == "nt" else "bin")
     return directory / ("python.exe" if os.name == "nt" else "python")
+
+
+def script_executable(directory: Path, name: str) -> Path:
+    """Return a venv console-script path on both POSIX and Windows."""
+
+    return directory / (f"{name}.exe" if os.name == "nt" else name)
 
 
 def extract_sdist(sdist: Path, destination: Path) -> Path:
@@ -203,9 +222,10 @@ def main() -> None:
             smoke_dir = root / ("smoke-" + version.replace(".", "-"))
             smoke_dir.mkdir()
             installed_import_smoke(python, smoke_dir, EXPECTED_VERSION)
-            run([str(python.parent / "mcp-pal"), "--help"], cwd=smoke_dir)
-            run([str(python.parent / "mcp-pal-harness"), "--help"], cwd=smoke_dir)
-            run([str(python.parent / "mcp-pal-reference-bridge"), "--help"], cwd=smoke_dir)
+            scripts = python.parent
+            assert not script_executable(scripts, "mcp-pal").exists()
+            run([str(script_executable(scripts, "mcp-pal-harness")), "--help"], cwd=smoke_dir)
+            run([str(script_executable(scripts, "mcp-pal-reference-bridge")), "--help"], cwd=smoke_dir)
             assert [path.name for path in smoke_dir.iterdir()] == [".env"], f"import/entry-point artifacts left in {smoke_dir}"
             assert smoke_dir.joinpath(".env").read_text() == "MCP_PAL_IMPORT_SMOKE_SENTINEL=must-not-load\n"
 

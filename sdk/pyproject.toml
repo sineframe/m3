@@ -64,7 +64,6 @@ all = [
 ]
 
 [project.scripts]
-mcp-pal = "mcp_pal.cli:main"
 mcp-pal-harness = "mcp_pal.harness.cli:main"
 mcp-pal-reference-bridge = "mcp_pal.bridge.reference:main"
 

@@ -1,13 +1,78 @@
-# MCP Testing Platform v0.1
+# MCP Pal
 
-Local Streamlit UI and FastAPI backend for testing one MCP server interaction at a time with Claude Code, OpenCode, or a custom ACP harness. SQLite stores immutable profile revisions, run snapshots, backend-normalized events, and raw harness events.
+MCP Pal is a Python SDK and local test-results viewer for MCP servers and agent
+harnesses. The standalone `mcp-pal` CLI runs SDK-backed pytest tests, stores
+their results through the SDK, and can serve the bundled FastAPI/UI viewer.
+SQLite stores immutable run snapshots, normalized events, and raw harness
+events.
 
 ## Setup
 
-The repository is a uv workspace whose published `mcp-pal` project lives under
-`sdk/`. The SDK supports Python 3.10+; the current application is exercised on
-Python 3.13+ and requires at least one
-installed harness. Copy `.env.example` to `.env`, then configure either Claude
+The repository is a uv workspace whose SDK project lives under `sdk/`. The SDK
+supports Python 3.10+. The repository is private, so authenticate GitHub CLI
+once before downloading a release (the token needs read access to repository
+contents):
+
+```sh
+gh auth login
+gh auth status
+```
+
+Download and run the installer from the exact release you want:
+
+```sh
+gh release download v0.2.0a2 --repo rishhavv/mcp-pal \
+  --pattern install.sh --output install.sh
+sh install.sh
+rm install.sh
+```
+
+```powershell
+gh release download v0.2.0a2 --repo rishhavv/mcp-pal `
+  --pattern install.ps1 --output install.ps1
+.\install.ps1
+Remove-Item install.ps1
+```
+
+The installer prefers and is tested first with `uv`; its fallback creates a
+dedicated virtual environment. Neither path modifies global Python modules or
+the project's virtual environment. It uses the same authenticated `gh` session
+to download each exact wheel and checksum. The `gh release download` command
+only downloads files from an existing release; it does not create or modify a
+release.
+
+The project being tested still needs a matching SDK environment with pytest and
+SQLite storage. Until PyPI publishing is added, download the exact SDK wheel
+with `gh`, then install it into that project's environment:
+
+```sh
+VERSION=0.2.0a2
+SDK_WHEEL="mcp_pal-${VERSION}-py3-none-any.whl"
+mkdir -p .mcp-pal-download
+gh release download "v${VERSION}" -R rishhavv/mcp-pal -p "$SDK_WHEEL" \
+  -O ".mcp-pal-download/$SDK_WHEEL"
+uv venv .venv
+. .venv/bin/activate
+uv pip install "mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SDK_WHEEL"
+```
+
+On Windows, use the equivalent authenticated download and local wheel path:
+
+```powershell
+$Version = '0.2.0a2'
+$SdkWheel = "mcp_pal-$Version-py3-none-any.whl"
+New-Item -ItemType Directory -Force .mcp-pal-download | Out-Null
+gh release download "v$Version" -R rishhavv/mcp-pal -p $SdkWheel -O ".mcp-pal-download/$SdkWheel"
+if ($LASTEXITCODE -ne 0) { throw 'gh release download failed' }
+uv venv .venv
+. .venv\Scripts\Activate.ps1
+uv pip install "mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SdkWheel"
+```
+
+This wheel command is a pre-PyPI workflow; the release also includes matching
+CLI and app wheels, which the installer handles for the standalone command.
+
+For repository development, copy `.env.example` to `.env`, then configure either Claude
 Code (`ANTHROPIC_API_KEY`, `CLAUDE_MODEL_IDS`) or OpenCode (`OPENCODE_API_KEY`,
 provider-specific credentials such as `OPENROUTER_API_KEY`, and
 `OPENCODE_MODEL_IDS`). OpenCode also accepts credentials saved by `opencode auth
@@ -17,15 +82,28 @@ OpenCode's `provider/model` form.
 ```bash
 just setup
 # equivalent raw command: uv sync --all-packages --all-extras --all-groups
-just api
-# equivalent raw command: uv run --project app uvicorn mcp_pal_app.main:app --reload
-# in another terminal
-just ui
-# equivalent raw command: uv run --project app streamlit run app/src/mcp_pal_app/ui/app.py
+# run the standalone CLI against the current project
+uv run --project cli mcp-pal doctor
+uv run --project cli mcp-pal test --ui -- -q
 ```
 
+The CLI prints a localhost history link such as
+`http://127.0.0.1:8000/history` and direct links such as
+`http://127.0.0.1:8000/playground/run/<runId>`.
+
+The legacy development UI remains available for work on the old Streamlit
+surface. It requires the app's optional `legacy-ui` extra:
+
+```bash
+uv run --project app --extra legacy-ui streamlit run app/src/mcp_pal_app/ui/app.py
+```
+
+It is not the standalone CLI product. The FastAPI API can still be run directly
+for backend development with `uv run --project app uvicorn
+mcp_pal_app.main:app --reload`.
+
 Run `just --list` to list recipes. Use `just setup` to install dependencies for
-both workspace projects, `just test` (or the two project-specific pytest
+all three workspace projects, `just test` (or the project-specific pytest
 commands) for the full suite, and `just check` for
 compile/import checks. Focused suites are available as `just test-unit` and
 `just test-integration`.
@@ -103,10 +181,37 @@ On startup queued/running runs from a previous process are marked failed with an
 just test
 # equivalent raw commands:
 # PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest pytest -q sdk/tests
-# PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test pytest -q app/tests
+# PYTHONDONTWRITEBYTECODE=1 uv run --project app --extra legacy-ui --group test pytest -q app/tests
+# PYTHONDONTWRITEBYTECODE=1 uv run --project cli pytest -q cli/tests
 # focused equivalents:
 # just test-unit        -> runs both sdk/tests/unit and app/tests/unit
 # just test-integration -> runs both sdk/tests/integration and app/tests/integration
-# just check            -> compiles sdk/src and app/src, then imports mcp_pal_app
+# just check            -> compiles all three projects and imports the SDK, app, and CLI
 # just package-check    -> uv run --project sdk --all-extras python scripts/check_packaging.py
+# CI also runs the isolated CLI wheel/tool + project-venv gate on Ubuntu.
 ```
+
+The manual live merge gate (`just live-ui-gate`) runs one real OpenCode API
+request and a browser check against the UI. It is opt-in, may incur provider
+cost, and has not passed as part of the ordinary local or CI test suite unless
+you run it with the required credentials.
+
+Because `rishhavv/mcppal-ui` is a private sibling repository, repository
+maintainers must configure the `MCPPAL_UI_TOKEN` Actions secret with read-only
+Contents access to that repository. Both the standalone CI gate and CLI release
+workflow use it to check out the exact commit pinned in `cli/UI_REF`; the token
+is not included in release artifacts.
+
+## CLI releases
+
+Pushing a version tag such as `v0.2.0a2` triggers the CLI release workflow. The
+tag must exactly match the versions in the SDK, app, and CLI projects. After the
+pinned UI build and isolated release gates pass, the workflow stores these
+artifacts on the tag's GitHub Release:
+
+- the matching SDK, app, and standalone CLI wheels;
+- `SHA256SUMS` for those three wheels;
+- the rendered `install.sh` and `install.ps1` bootstrap scripts.
+
+A manual workflow dispatch builds and verifies the same release payload but
+does not publish it. PyPI publication is intentionally deferred.

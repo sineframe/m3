@@ -15,16 +15,17 @@ api:
     uv run --project app uvicorn mcp_pal_app.main:app --reload
 
 ui:
-    uv run --project app streamlit run app/src/mcp_pal_app/ui/app.py
+    uv run --project app --extra legacy-ui streamlit run app/src/mcp_pal_app/ui/app.py
 
 test:
     PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests
-    PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test --group typecheck pytest -q app/tests
+    PYTHONDONTWRITEBYTECODE=1 uv run --project app --extra legacy-ui --group test --group typecheck pytest -q app/tests
+    PYTHONDONTWRITEBYTECODE=1 uv run --project cli pytest -q cli/tests
 
 # Manual-only live OpenCode + browser merge gate. This performs one external
 # provider call and may incur provider usage/cost; it is never a CI job.
 live-ui-gate:
-    uv run --env-file .env --project sdk --extra pytest --extra storage python scripts/live_ui_gate.py
+    uv run --env-file .env --project cli python scripts/live_ui_gate.py
 
 test-unit:
     PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests/unit
@@ -71,6 +72,8 @@ compile:
     uv run --project sdk python -m compileall -q sdk/src
     uv run --project app python -m compileall -q app/src
     uv run --project app python -c 'from mcp_pal_app.main import app; print(app.title)'
+    uv run --project cli python -m compileall -q cli/src
+    uv run --project cli python -c 'import mcp_pal_cli; print(mcp_pal_cli.__name__)'
 
 check: compile
 

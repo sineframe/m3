@@ -61,8 +61,11 @@ jobs:
 
       - name: Run application tests without live providers
         run: >-
-          uv run --locked --project app --group test --group typecheck
+          uv run --locked --project app --extra legacy-ui --group test --group typecheck
           pytest -q -m "not live" app/tests
+
+      - name: Run standalone CLI tests
+        run: uv run --locked --project cli pytest -q cli/tests
 
   quality:
     name: Source and lock checks
@@ -97,6 +100,56 @@ jobs:
       - name: Import application
         run: uv run --locked --project app python -c "from mcp_pal_app.main import app; print(app.title)"
 
+      - name: Compile CLI
+        run: uv run --locked --project cli python -m compileall -q cli/src
+
+      - name: Import CLI
+        run: uv run --locked --project cli python -c "import mcp_pal_cli; print(mcp_pal_cli.__name__)"
+
+  windows-installer:
+    name: Windows installer syntax
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Render and parse PowerShell installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $project = Get-Content -Raw -LiteralPath 'cli/pyproject.toml'
+          $versionMatch = [regex]::Match($project, '(?m)^version = "([^"]+)"\r?$')
+          if (-not $versionMatch.Success) {
+            throw 'Could not read the CLI version'
+          }
+          $version = $versionMatch.Groups[1].Value
+          $outputDir = Join-Path $env:RUNNER_TEMP 'mcp-pal-installer'
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+          $installer = Join-Path $outputDir 'install.ps1'
+          $template = Get-Content -Raw -LiteralPath 'scripts/install.ps1.in'
+          if (($template.Split('@MCP_PAL_VERSION@').Count - 1) -ne 1) {
+            throw 'PowerShell installer template must contain one version placeholder'
+          }
+          Set-Content -NoNewline -LiteralPath $installer -Value (
+            $template.Replace('@MCP_PAL_VERSION@', $version)
+          )
+
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            $installer,
+            [ref] $tokens,
+            [ref] $parseErrors
+          ) | Out-Null
+          if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+            $messages = $parseErrors | ForEach-Object { $_.Message }
+            throw "PowerShell parser found syntax errors in ${installer}: $($messages -join '; ')"
+          }
+
   package:
     name: Package smoke tests
     runs-on: ubuntu-latest
@@ -120,3 +173,95 @@ jobs:
 
       - name: Build and smoke-test SDK distributions
         run: uv run --locked --project sdk --all-extras python scripts/check_packaging.py
+
+  cli-standalone:
+    name: Standalone CLI gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate the pinned UI commit
+        id: ui-ref
+        shell: bash
+        env:
+          UI_REPOSITORY_TOKEN: ${{ secrets.MCPPAL_UI_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UI_REPOSITORY_TOKEN" ]]; then
+            echo 'MCPPAL_UI_TOKEN must be configured with read access to the private mcppal-ui repository' >&2
+            exit 1
+          fi
+          ui_ref=$(tr -d '\r\n' < cli/UI_REF)
+          if [[ ! "$ui_ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'cli/UI_REF must contain exactly 40 lowercase hexadecimal characters' >&2
+            exit 1
+          fi
+          printf 'sha=%s\n' "$ui_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the pinned UI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rishhavv/mcppal-ui
+          ref: ${{ steps.ui-ref.outputs.sha }}
+          path: .release-ui
+          token: ${{ secrets.MCPPAL_UI_TOKEN }}
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install Node.js
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .release-ui/package-lock.json
+
+      - name: Build production UI
+        working-directory: .release-ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build the three production wheels
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/mcp-pal-cli-release"
+          mkdir -p "$release_dir"
+          version=$(python scripts/build_cli_release.py --print-version)
+          python scripts/build_cli_release.py \
+            --ui-dist .release-ui/dist \
+            --out-dir "$release_dir" \
+            --expected-version "$version"
+          python scripts/render_cli_installers.py --version "$version" --output-dir "$release_dir"
+          wheels=(
+            "mcp_pal-${version}-py3-none-any.whl"
+            "mcp_pal_app-${version}-py3-none-any.whl"
+            "mcp_pal_cli-${version}-py3-none-any.whl"
+          )
+          (cd "$release_dir" && sha256sum "${wheels[@]}" | sort -k2 > SHA256SUMS)
+          test "$(wc -l < "$release_dir/SHA256SUMS")" -eq 3
+          printf 'dir=%s\nversion=%s\n' "$release_dir" "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke-test uv tool installation
+        run: |
+          python scripts/smoke_cli_uv_install.py \
+            --release-dir '${{ steps.release.outputs.dir }}' \
+            --version '${{ steps.release.outputs.version }}'
+
+      - name: Run the isolated two-environment standalone gate
+        run: |
+          python scripts/check_cli_standalone.py \
+            --release-dir '${{ steps.release.outputs.dir }}' \
+            --version '${{ steps.release.outputs.version }}'

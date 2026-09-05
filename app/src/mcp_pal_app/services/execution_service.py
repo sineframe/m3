@@ -8,6 +8,7 @@ or response-envelope dependencies.
 
 from __future__ import annotations
 
+import time
 from typing import Protocol
 
 from mcp_pal.storage import StorageConflict, StorageError
@@ -25,6 +26,10 @@ from mcp_pal import (
     TraceView,
 )
 from mcp_pal import RawEvidenceIntegrityError, RawEvidenceUnavailable, TraceUnavailable
+
+
+_CANCEL_SETTLE_TIMEOUT_SECONDS = 2.0
+_CANCEL_SETTLE_POLL_SECONDS = 0.01
 
 
 class AppExecutionError(RuntimeError):
@@ -232,6 +237,23 @@ class AppExecutionService:
         try:
             if handle is not None:
                 handle.cancel()
+                # A local handle normally waits for the runtime's terminal
+                # event, but the durable snapshot and trace are committed by
+                # separate storage operations.  Give that final commit a
+                # small settling window before returning a successful cancel
+                # response.  Otherwise the next report request can observe
+                # the still-active snapshot and incorrectly receive 409.
+                deadline = time.monotonic() + _CANCEL_SETTLE_TIMEOUT_SECONDS
+                while True:
+                    settled = self._report(identifier)
+                    if settled.snapshot.lifecycle is LifecycleState.FINISHED:
+                        return settled
+                    if time.monotonic() >= deadline:
+                        raise AppExecutionError(
+                            "cancellation_conflict",
+                            "execution cancellation did not finish",
+                        )
+                    time.sleep(_CANCEL_SETTLE_POLL_SECONDS)
             else:
                 self.store.request_cancel(identifier, reason=reason)
         except (StorageConflict, RuntimeError) as exc:
