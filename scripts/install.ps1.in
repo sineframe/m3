@@ -13,6 +13,7 @@ $AppWheel = "mcp_pal_app-$Version-py3-none-any.whl"
 $WheelNames = @($CliWheel, $SdkWheel, $AppWheel)
 $TempDir = Join-Path ([IO.Path]::GetTempPath()) ('mcp-pal-install-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+Write-Output "Installing MCP Pal CLI $Version"
 
 function Fail([string]$Message) {
     throw "mcp-pal install failed: $Message"
@@ -32,14 +33,20 @@ function Download([string]$Name, [string]$Destination) {
         }
     }
 
-    Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/$Name" -OutFile $Destination
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/$Name" -OutFile $Destination | Out-Null
+    } catch {
+        Fail "could not download $Name"
+    }
 }
 
 try {
+    Write-Output '[1/4] Downloading release assets'
     foreach ($Name in ($WheelNames + 'SHA256SUMS')) {
         Download $Name (Join-Path $TempDir $Name)
     }
 
+    Write-Output '[2/4] Verifying checksums'
     $records = @{}
     $lines = @(Get-Content -LiteralPath (Join-Path $TempDir 'SHA256SUMS'))
     if ($lines.Count -ne 3) { Fail 'SHA256SUMS must contain exactly three records' }
@@ -58,6 +65,7 @@ try {
     }
 
     $UiCheck = 'from importlib import resources; root = resources.files("mcp_pal_cli").joinpath("ui"); assert root.joinpath("index.html").is_file(); assert any(item.is_file() for item in root.joinpath("assets").iterdir())'
+    Write-Output '[3/4] Installing into isolated tool storage'
     $Uv = Get-Command uv -ErrorAction SilentlyContinue
     if ($Uv) {
         & $Uv.Source tool install --force (Join-Path $TempDir $CliWheel) --with (Join-Path $TempDir $SdkWheel) --with (Join-Path $TempDir $AppWheel)
@@ -66,6 +74,7 @@ try {
         if (-not $UvBin) { Fail 'could not locate the uv tool bin directory' }
         $Command = Join-Path $UvBin 'mcp-pal.exe'
         if (-not (Test-Path -LiteralPath $Command)) { Fail 'uv tool bin directory is missing mcp-pal.exe' }
+        Write-Output '[4/4] Verifying command and bundled UI'
         & $Command --help | Out-Null
         if ($LASTEXITCODE -ne 0) { Fail 'installed mcp-pal command failed' }
         $ToolRoot = (& $Uv.Source tool dir 2>$null).Trim()
@@ -74,6 +83,8 @@ try {
         & $ToolPython -c $UiCheck
         if ($LASTEXITCODE -ne 0) { Fail 'packaged UI could not be imported from the CLI wheel' }
         Write-Output 'mcp-pal installed with uv in isolated tool storage.'
+        Write-Output "Command: $Command"
+        Write-Output 'Next: cd <project>; mcp-pal setup'
     } else {
 
     $PythonCandidates = @()
@@ -131,6 +142,7 @@ try {
         Set-Content -LiteralPath $ShimTemp -Value $Shim -Encoding ASCII
         Move-Item -Force -LiteralPath $ShimTemp -Destination $CommandPath
         $CreatedCommand = $true
+        Write-Output '[4/4] Verifying command and bundled UI'
         & $CommandPath --help | Out-Null
         if ($LASTEXITCODE -ne 0) { Fail 'installed mcp-pal command failed' }
     } catch {
@@ -143,6 +155,8 @@ try {
     if ($HadRoot -and (Test-Path -LiteralPath $Backup)) { Remove-Item -Recurse -Force -LiteralPath $Backup }
     if ($HadCommand -and (Test-Path -LiteralPath $CommandBackup)) { Remove-Item -Force -LiteralPath $CommandBackup }
         Write-Output "mcp-pal installed in $InstallRoot."
+        Write-Output "Command: $CommandPath"
+        Write-Output 'Next: cd <project>; mcp-pal setup'
         if ($env:PATH -notlike "*$BinDir*") { Write-Output "Add $BinDir to PATH to run mcp-pal." }
     }
 } finally {

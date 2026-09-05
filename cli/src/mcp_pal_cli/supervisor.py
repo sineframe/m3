@@ -138,6 +138,7 @@ def resolve_project_python(
     *,
     project_root: Path | None = None,
     environment: Mapping[str, str] | None = None,
+    fallback_to_system: bool = True,
 ) -> Path:
     """Resolve Python in the documented order, without importing project code."""
 
@@ -145,9 +146,19 @@ def resolve_project_python(
     env = os.environ if environment is None else environment
     if explicit is not None:
         return _explicit_python(explicit, path=env.get("PATH"))
+    if not fallback_to_system:
+        for variable in ("VIRTUAL_ENV", "CONDA_PREFIX"):
+            active = env.get(variable)
+            if active:
+                candidate = _python_in_environment(root, {variable: active})
+                if candidate is None:
+                    raise ProjectPythonError("the active project environment is unavailable")
+                return candidate
     selected = _python_in_environment(root, env)
     if selected is not None:
         return selected
+    if not fallback_to_system:
+        raise ProjectPythonError("no project environment is configured; run mcp-pal setup")
     for name in ("python3", "python"):
         found = shutil.which(name, path=env.get("PATH"))
         if found:

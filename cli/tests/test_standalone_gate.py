@@ -88,3 +88,10 @@ def test_parse_ui_links_uses_the_complete_encoded_run_suffix() -> None:
     )
     with pytest.raises(_GATE.StandaloneGateError, match="history link"):
         _GATE._parse_ui_links(output.replace("8123/history", "8124/history"), "http://127.0.0.1:8123", "run id/part")
+
+
+def test_standalone_gate_exercises_public_setup_command() -> None:
+    source = _SCRIPT.read_text(encoding="utf-8")
+    assert '"setup", "--project-root"' in source
+    assert 'MCP_PAL_RELEASE_BASE_URL' in source
+    assert '"uv", "pip", "install"' not in source

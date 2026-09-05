@@ -35,14 +35,15 @@ def test_doctor_binary_and_unavailable_exit_codes(capsys) -> None:
     ready = json.loads(capsys.readouterr().out)
     assert ready["results"][0]["capability"]["status"] == "ready"
     assert ready["requirements"] == ["binary"]
-    assert sys.executable not in json.dumps(ready)
+    assert ready["project_python"]["executable"]
+    assert sys.executable not in json.dumps(ready["results"])
 
     assert main(["doctor", "--require", "binary:/definitely/missing-secret", "--json"]) == 1
     unavailable = json.loads(capsys.readouterr().out)
     assert unavailable["ready"] is False
     assert unavailable["results"][0]["capability"]["status"] == "unavailable"
     assert unavailable["requirements"] == ["binary"]
-    assert "/definitely/missing-secret" not in json.dumps(unavailable)
+    assert "/definitely/missing-secret" not in json.dumps(unavailable["results"])
 
 
 def test_doctor_selected_env_file_and_ambient_precedence(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -140,10 +141,10 @@ def test_doctor_transport_and_storage_namespaces(capsys) -> None:
 def test_doctor_checks_discovered_project_python(capsys) -> None:
     assert main(["doctor", "--python", "./.venv/bin/python", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert report["project_python"] == {
-        "status": "ready",
-        "version": metadata.version("mcp-pal"),
-    }
+    assert report["project_python"]["status"] == "ready"
+    assert report["project_python"]["version"] == metadata.version("mcp-pal")
+    assert report["project_python"]["source"] == "--python"
+    assert report["project_python"]["executable"].endswith("/.venv/bin/python")
 
 
 def test_doctor_checks_default_project_python(capsys) -> None:
@@ -161,3 +162,20 @@ def test_doctor_project_python_failure_is_actionable_and_safe(capsys, tmp_path: 
     assert "install" in report["error"]["reason"] or "started" in report["error"]["reason"]
     assert str(secret_path) not in captured.out
     assert str(secret_path) not in captured.err
+
+
+def test_doctor_reports_unconfigured_project_without_operational_error(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.delenv("CONDA_PREFIX", raising=False)
+    assert main(["doctor", "--project-root", str(tmp_path), "--json"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["cli"]["status"] == "ready"
+    assert report["project_python"]["status"] == "not ready"
+    assert "mcp-pal setup" in report["project_python"]["reason"]
+
+
+def test_doctor_human_not_ready_has_direct_remediation(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.delenv("CONDA_PREFIX", raising=False)
+    assert main(["doctor", "--project-root", str(tmp_path)]) == 1
+    assert "Next: mcp-pal setup" in capsys.readouterr().out

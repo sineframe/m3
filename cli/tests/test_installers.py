@@ -78,6 +78,13 @@ def test_installers_use_isolated_paths_and_local_wheels() -> None:
     assert "-m pip install" in powershell
     assert ".mcp-pal-install" in shell
     assert ".mcp-pal-install" in powershell
+    for contents in (shell, powershell):
+        assert "[1/4] Downloading release assets" in contents
+        assert "[2/4] Verifying checksums" in contents
+        assert "[3/4] Installing into isolated tool storage" in contents
+        assert "[4/4] Verifying command and bundled UI" in contents
+        assert "Next:" in contents and "mcp-pal setup" in contents
+        assert "Command:" in contents
     assert "STAGE=" not in shell
     assert "$Stage" not in powershell
     assert 'created_link=1' in shell

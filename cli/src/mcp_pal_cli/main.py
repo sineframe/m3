@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from . import doctor
+from . import setup
 from .errors import CLIError
 
 
@@ -44,6 +45,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     doctor_parser.add_argument("--json", action="store_true", help="emit a machine-readable report")
 
+    setup_parser = subparsers.add_parser("setup", help="install the SDK into a project environment")
+    setup_parser.add_argument("--project-root", type=Path, help="project root used for environment setup")
+    setup_parser.add_argument("--python", type=Path, metavar="PATH", help="isolated Python environment to update")
+
     test = subparsers.add_parser("test", help="run pytest")
     test.add_argument("--python", type=Path, metavar="PATH", help="Python used to run pytest")
     test.add_argument("--results-db", type=Path, metavar="PATH", help="SQLite history database")
@@ -60,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     effective_argv = list(sys.argv[1:] if argv is None else argv)
     command_name = (
         effective_argv[0]
-        if effective_argv and effective_argv[0] in {"doctor", "test"}
+        if effective_argv and effective_argv[0] in {"doctor", "setup", "test"}
         else "doctor"
     )
     pytest_args: list[str] = []
@@ -83,6 +88,12 @@ def main(argv: list[str] | None = None) -> int:
                 ui=args.ui,
                 port=args.port,
             )
+        if args.command == "setup":
+            try:
+                return setup.run(args)
+            except setup.SetupError as exc:
+                print(f"mcp-pal setup: {exc}", file=sys.stderr)
+                return 2
         code, report = doctor.run(args)
         if args.json:
             print(json.dumps(report, indent=2, sort_keys=True))

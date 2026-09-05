@@ -32,6 +32,8 @@ trap cleanup EXIT
 trap on_interrupt INT
 trap on_terminate TERM
 
+printf '%s\n' "Installing MCP Pal CLI ${VERSION}"
+
 download() {
     artifact=$1
     destination=$2
@@ -64,10 +66,12 @@ download() {
     fi
 }
 
+printf '%s\n' '[1/4] Downloading release assets'
 for artifact in "$CLI_WHEEL" "$SDK_WHEEL" "$APP_WHEEL" "$CHECKSUMS"; do
     download "$artifact" "${TMP_DIR}/${artifact}"
 done
 
+printf '%s\n' '[2/4] Verifying checksums'
 # Require exactly one ordinary SHA256SUMS record for each of the three wheels.
 # Filenames are compared as fixed strings; no downloaded value is evaluated as
 # shell code.
@@ -110,6 +114,7 @@ done
 
 ui_check='from importlib import resources; root = resources.files("mcp_pal_cli").joinpath("ui"); assert root.joinpath("index.html").is_file(); assert any(item.is_file() for item in root.joinpath("assets").iterdir())'
 
+printf '%s\n' '[3/4] Installing into isolated tool storage'
 if command -v uv >/dev/null 2>&1; then
     uv tool install --force "${TMP_DIR}/${CLI_WHEEL}" \
         --with "${TMP_DIR}/${SDK_WHEEL}" \
@@ -117,6 +122,7 @@ if command -v uv >/dev/null 2>&1; then
         || die 'uv tool install failed'
     UV_BIN=$(uv tool dir --bin 2>/dev/null || true)
     if [ -n "$UV_BIN" ] && [ -x "${UV_BIN}/mcp-pal" ]; then
+        printf '%s\n' '[4/4] Verifying command and bundled UI'
         "${UV_BIN}/mcp-pal" --help >/dev/null || die 'installed mcp-pal command failed'
     else
         die 'uv installed mcp-pal but its tool bin directory is missing the command'
@@ -127,6 +133,8 @@ if command -v uv >/dev/null 2>&1; then
     [ -x "$UV_TOOL_PYTHON" ] || die 'uv tool environment Python is missing'
     "$UV_TOOL_PYTHON" -c "$ui_check" || die 'packaged UI could not be imported from the CLI wheel'
     printf '%s\n' 'mcp-pal installed with uv in isolated tool storage.'
+    printf '%s\n' "Command: ${UV_BIN}/mcp-pal"
+    printf '%s\n' 'Next: cd <project> && mcp-pal setup'
     exit 0
 fi
 
@@ -207,9 +215,12 @@ if [ ! -e "$COMMAND_PATH" ] && [ ! -L "$COMMAND_PATH" ]; then
     created_link=1
 fi
 
+printf '%s\n' '[4/4] Verifying command and bundled UI'
 "$COMMAND_PATH" --help >/dev/null || die 'installed mcp-pal command failed'
 transaction_done=1
 printf '%s\n' "mcp-pal installed in ${INSTALL_ROOT}."
+printf '%s\n' "Command: ${COMMAND_PATH}"
+printf '%s\n' 'Next: cd <project> && mcp-pal setup'
 case ":${PATH}:" in
     *:"${BIN_DIR}":*) ;;
     *) printf '%s\n' "Add ${BIN_DIR} to PATH to run mcp-pal." ;;

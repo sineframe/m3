@@ -30,15 +30,36 @@ gh release download vX.Y.Z --repo rishhavv/mcp-pal --pattern install.ps1 --outpu
 Remove-Item install.ps1
 ```
 
-The installer prefers `uv tool install`, and falls back to a dedicated virtual
-environment when `uv` is unavailable. Both paths keep the CLI and its app out
-of the global Python installation and out of the project virtual environment.
-It uses the authenticated `gh` session for the exact CLI, SDK, app, and
-checksum assets. The `gh release download` command only downloads files from an
-existing release; it does not create or modify a release.
+The installer prefers `uv tool install`, and otherwise creates a dedicated
+virtual environment. The machine-level CLI and bundled UI stay isolated from
+global Python and from every project environment. Releases are currently
+pre-releases, so select an explicit release tag.
+The authenticated `gh` session downloads exact release assets; `gh release
+download` only downloads files from an existing release and does not create or modify a release.
 
-Until PyPI publishing is added, install the matching SDK wheel into the
-project's own virtual environment using an authenticated exact-asset download:
+## Set up a project
+
+After installing the CLI, project setup is one explicit command:
+
+```sh
+cd my-project
+mcp-pal setup
+mcp-pal doctor
+mcp-pal test --ui -- -q
+```
+
+`mcp-pal setup` installs only `mcp-pal[pytest,storage]` into the project
+environment. It selects `--python`, then an active `VIRTUAL_ENV` or
+`CONDA_PREFIX`, then `.venv`, creating `.venv` when needed. It never installs
+the CLI or bundled app there, never edits dependency manifests or lockfiles,
+and verifies the exact SDK version and release checksum. If you recreate or
+sync the environment, run setup again until PyPI publishing is available.
+
+<details>
+<summary>Advanced recovery: install the SDK wheel manually</summary>
+
+This is only needed when setup is unavailable. Keep the exact release version
+and remove the temporary download after installation:
 
 ```sh
 VERSION=X.Y.Z
@@ -49,6 +70,7 @@ gh release download "v${VERSION}" -R rishhavv/mcp-pal -p "$SDK_WHEEL" \
 uv venv .venv
 . .venv/bin/activate
 uv pip install "mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SDK_WHEEL"
+rm -rf .mcp-pal-download
 ```
 
 On Windows:
@@ -62,13 +84,16 @@ if ($LASTEXITCODE -ne 0) { throw 'gh release download failed' }
 uv venv .venv
 . .venv\Scripts\Activate.ps1
 uv pip install "mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SdkWheel"
+Remove-Item -Recurse -Force .mcp-pal-download
 ```
+</details>
 
 ## Commands
 
-There are exactly two public commands:
+There are three public commands:
 
 ```text
+mcp-pal setup [options]
 mcp-pal doctor
 mcp-pal test [options] -- [pytest arguments]
 ```
@@ -78,7 +103,10 @@ shows the runs produced by that test command.
 
 ### `doctor`
 
-`doctor` checks the project Python and explicitly requested capabilities:
+`doctor` reports the standalone CLI and project environment independently. A
+missing project environment is a normal `not ready` result with `mcp-pal setup`
+as remediation; invalid interpreters and invalid configuration are operational
+errors. It also checks explicitly requested capabilities:
 
 ```sh
 mcp-pal doctor

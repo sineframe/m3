@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import importlib.metadata
 from pathlib import Path
 from typing import Any
 
@@ -202,18 +203,56 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
     project_python: dict[str, Any] | None = None
     from .supervisor import ProjectPythonError, resolve_project_python, validate_project_python
 
+    root = (args.project_root or Path.cwd()).resolve()
+    try:
+        cli_version = importlib.metadata.version("mcp-pal-cli")
+        bundled_sdk_version = importlib.metadata.version("mcp-pal")
+    except importlib.metadata.PackageNotFoundError:
+        raise DoctorCLIError("the CLI installation is incomplete; reinstall mcp-pal-cli") from None
+    cli = {
+        "status": "ready" if cli_version == bundled_sdk_version else "not ready",
+        "version": cli_version,
+        "sdk_version": bundled_sdk_version,
+    }
+    cli_ready = cli["status"] == "ready"
+    source = None
+    selected_path = None
+
     try:
         selected = resolve_project_python(
             getattr(args, "python", None),
-            project_root=(args.project_root or Path.cwd()),
+            project_root=root,
+            fallback_to_system=False,
         )
+        selected_path = selected
+        if getattr(args, "python", None) is not None:
+            source = "--python"
+        elif os.environ.get("VIRTUAL_ENV"):
+            source = "VIRTUAL_ENV"
+        elif os.environ.get("CONDA_PREFIX"):
+            source = "CONDA_PREFIX"
+        else:
+            source = "project .venv"
         version = validate_project_python(
             selected,
-            project_root=(args.project_root or Path.cwd()),
+            cli_sdk_version=bundled_sdk_version,
+            project_root=root,
         )
     except ProjectPythonError as error:
-        raise DoctorProjectPythonError(str(error)) from None
-    project_python = {"status": "ready", "version": version}
+        reason = str(error)
+        if reason.startswith("no project environment is configured"):
+            project_python = {"status": "not ready", "reason": reason}
+        elif "missing required MCP Pal packages" in reason or "does not match CLI SDK" in reason or "distribution version could not be determined" in reason:
+            project_python = {"status": "not ready", "reason": reason, "source": source}
+        else:
+            raise DoctorProjectPythonError(reason) from None
+    else:
+        project_python = {
+            "status": "ready",
+            "version": version,
+            "source": source,
+            "executable": str(selected_path) if selected_path is not None else None,
+        }
     include_config = any(kind == "config" for kind, _ in requirements)
     if include_config:
         try:
@@ -225,9 +264,11 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         configuration = {"status": "ready", "settings": _json_value(config)}
     probe_report = CapabilityProbeService().probe_requested(_requests(requirements))
     results = _safe_probe_results(list(probe_report.results), requirements)
-    ready = (configuration is None or configuration["status"] == "ready") and probe_report.readiness.ready
+    ready = cli_ready and project_python["status"] == "ready" and (configuration is None or configuration["status"] == "ready") and probe_report.readiness.ready
     report = {
         "ready": ready,
+        "cli": cli,
+        "project_root": str(root),
         "requirements": [_requirement_label(kind, target) for kind, target in requirements],
         "configuration": configuration,
         "project_python": project_python,
@@ -238,15 +279,36 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
 
 def print_human(report: dict[str, Any]) -> None:
     print(f"mcp-pal doctor: {'ready' if report['ready'] else 'not ready'}")
+    cli = report.get("cli")
+    if cli is not None:
+        print(f"MCP Pal CLI {cli.get('version')}: {cli.get('status')}")
+        if cli.get("sdk_version") != cli.get("version"):
+            print(f"bundled SDK: {cli.get('sdk_version')}")
     project_python = report.get("project_python")
     if project_python is not None:
-        print(f"project Python: {project_python['status']} (mcp-pal {project_python['version']})")
+        detail = f" (mcp-pal {project_python['version']})" if project_python.get("version") else ""
+        print(f"project environment: {project_python['status']}{detail}")
+        if project_python.get("source"):
+            print(f"project environment source: {project_python['source']}")
+        if project_python.get("executable"):
+            print(f"project Python: {project_python['executable']}")
+        if project_python.get("reason"):
+            print(f"reason: {project_python['reason']}")
     if report.get("configuration") is not None:
         print(f"config: {report['configuration']['status']}")
     for result in report["results"]:
         capability = result["capability"]
         reason = capability.get("reason")
         print(f"{capability['name']}: {capability['status']}" + (f" ({reason})" if reason else ""))
+    if not report.get("ready"):
+        if cli := report.get("cli"):
+            if cli.get("status") != "ready":
+                print("Next: reinstall mcp-pal-cli")
+                return
+        if project_python is not None and project_python.get("status") != "ready":
+            print("Next: mcp-pal setup")
+        else:
+            print("Next: mcp-pal doctor")
 
 
 def print_configuration_error(error: ConfigurationError) -> None:

@@ -523,7 +523,6 @@ def check(release_dir: str | os.PathLike[str], version: str) -> None:
         tool_dir = root / "uv-tools"
         tool_bin = root / "uv-bin"
         cache_dir = root / "uv-cache"
-        project_venv = repo / ".venv"
         tool_bin.mkdir()
         env = _clean_environment()
         env.update({
@@ -548,12 +547,13 @@ def check(release_dir: str | os.PathLike[str], version: str) -> None:
             raise StandaloneGateError("uv tool environment Python is missing")
         _tool_probe(tool_python, version, env)
 
-        _run([uv, "venv", "--python", sys.executable, str(project_venv)], cwd=repo, env=env)
-        project_python = _python_path(project_venv)
-        # Put extras on the package name in a PEP 508 direct reference so the
-        # requirement remains portable across uv and pip.
-        sdk_requirement = f"mcp-pal[pytest,storage] @ {sdk_wheel.as_uri()}"
-        _run([uv, "pip", "install", "--python", str(project_python), sdk_requirement], cwd=repo, env=env)
+        # Exercise the public project setup command against the exact release
+        # assets.  The file URL is a local release mirror for this isolated
+        # gate; production setup uses authenticated ``gh release download``.
+        setup_env = dict(env)
+        setup_env["MCP_PAL_RELEASE_BASE_URL"] = Path(release_dir).resolve().as_uri()
+        _run([str(executable), "setup", "--project-root", str(repo)], cwd=repo, env=setup_env)
+        project_python = _python_path(repo / ".venv")
         _project_probe(project_python, repo, version, env)
         database = repo / ".mcp-pal" / "executions.sqlite"
         _run([str(executable), "doctor", "--python", str(project_python), "--project-root", str(repo), "--require", "storage:sqlite"], cwd=repo, env=env)

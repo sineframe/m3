@@ -40,9 +40,29 @@ to download each exact wheel and checksum. The `gh release download` command
 only downloads files from an existing release; it does not create or modify a
 release.
 
-The project being tested still needs a matching SDK environment with pytest and
-SQLite storage. Until PyPI publishing is added, download the exact SDK wheel
-with `gh`, then install it into that project's environment:
+After installing the CLI, configure each project explicitly:
+
+```sh
+cd my-project
+mcp-pal setup
+mcp-pal doctor
+mcp-pal test --ui -- -q
+```
+
+The CLI is a machine-level isolated tool; setup installs only the matching SDK,
+pytest plugin, and SQLite storage into the project environment. Setup chooses
+`--python`, active `VIRTUAL_ENV`, active `CONDA_PREFIX`, then `.venv`, and may
+create `.venv`. It does not edit `pyproject.toml`, requirements, or lockfiles,
+and it never installs the CLI or app package into the project. Recreating or
+syncing the environment means setup may need to be rerun until PyPI publishing
+is available. Releases are currently pre-releases, so use an explicit tag.
+The authenticated `gh` session downloads exact release assets; `gh release
+download` only downloads files from an existing release and does not create or modify a release.
+
+<details>
+<summary>Advanced recovery: install the SDK wheel manually</summary>
+
+This pre-PyPI fallback uses a temporary download directory:
 
 ```sh
 VERSION=X.Y.Z
@@ -53,9 +73,8 @@ gh release download "v${VERSION}" -R rishhavv/mcp-pal -p "$SDK_WHEEL" \
 uv venv .venv
 . .venv/bin/activate
 uv pip install "mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SDK_WHEEL"
+rm -rf .mcp-pal-download
 ```
-
-On Windows, use the equivalent authenticated download and local wheel path:
 
 ```powershell
 $Version = 'X.Y.Z'
@@ -66,7 +85,9 @@ if ($LASTEXITCODE -ne 0) { throw 'gh release download failed' }
 uv venv .venv
 . .venv\Scripts\Activate.ps1
 uv pip install "mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SdkWheel"
+Remove-Item -Recurse -Force .mcp-pal-download
 ```
+</details>
 
 This wheel command is a pre-PyPI workflow; the release also includes matching
 CLI and app wheels, which the installer handles for the standalone command.
