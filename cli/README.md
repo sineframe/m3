@@ -11,8 +11,7 @@ The repository is private, so authenticate GitHub CLI once before downloading a
 release (the token needs read access to repository contents):
 
 ```sh
-gh auth login
-gh auth status
+gh auth login && gh auth status
 ```
 
 Replace `X.Y.Z` with the exact release you want, then download and run its
@@ -23,7 +22,7 @@ gh release download vX.Y.Z --repo rishhavv/mcp-pal --pattern install.sh --output
 sh install.sh
 rm install.sh
 ```
-
+On Windows:
 ```powershell
 gh release download vX.Y.Z --repo rishhavv/mcp-pal --pattern install.ps1 --output install.ps1
 .\install.ps1
@@ -45,7 +44,7 @@ After installing the CLI, project setup is one explicit command:
 cd my-project
 mcp-pal setup
 mcp-pal doctor
-mcp-pal test --ui -- -q
+mcp-pal test --ui
 ```
 
 `mcp-pal setup` installs only `mcp-pal[pytest,storage]` into the project
@@ -152,7 +151,7 @@ plugin and results database options itself.
 Add `--ui` to keep a local viewer open after pytest finishes:
 
 ```sh
-mcp-pal test --ui -- -q
+mcp-pal test --ui
 ```
 
 This starts one FastAPI server and one loopback port. The production UI is
