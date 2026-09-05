@@ -46,3 +46,25 @@ def test_release_workflow_builds_ui_without_running_ui_quality_suites() -> None:
     assert "npm test" not in workflow
     assert "npm run typecheck" not in workflow
     assert "npm run lint" not in workflow
+
+
+def test_release_workflow_uses_the_tag_as_the_package_version() -> None:
+    workflow = _workflow()
+    derive_position = workflow.index("- name: Derive the release version")
+    prepare_position = workflow.index(
+        "- name: Prepare the tag version in the disposable checkout"
+    )
+    validate_position = workflow.index("- name: Validate the prepared release version")
+    build_position = workflow.index("- name: Build and inspect the three release wheels")
+
+    assert "expected_version=${GITHUB_REF_NAME#v}" in workflow
+    assert "python scripts/prepare_release.py \"$VERSION\"" in workflow
+    assert "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')" in workflow
+    assert derive_position < prepare_position < validate_position < build_position
+
+
+def test_release_workflow_does_not_commit_prepared_versions() -> None:
+    workflow = _workflow()
+
+    assert "git commit" not in workflow
+    assert "git push" not in workflow

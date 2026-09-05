@@ -11,6 +11,9 @@ default:
 setup install:
     uv sync --all-packages --all-extras --all-groups
 
+prepare-release VERSION:
+    uv run --no-project --with packaging python scripts/prepare_release.py {{VERSION}}
+
 api:
     uv run --project app uvicorn mcp_pal_app.main:app --reload
 

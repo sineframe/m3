@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import metadata
 import json
 import sys
 from pathlib import Path
@@ -139,7 +140,10 @@ def test_doctor_transport_and_storage_namespaces(capsys) -> None:
 def test_doctor_checks_discovered_project_python(capsys) -> None:
     assert main(["doctor", "--python", "./.venv/bin/python", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert report["project_python"] == {"status": "ready", "version": "0.2.0a2"}
+    assert report["project_python"] == {
+        "status": "ready",
+        "version": metadata.version("mcp-pal"),
+    }
 
 
 def test_doctor_checks_default_project_python(capsys) -> None:

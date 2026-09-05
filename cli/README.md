@@ -15,18 +15,17 @@ gh auth login
 gh auth status
 ```
 
-Download and run the installer from the exact release you want:
+Replace `X.Y.Z` with the exact release you want, then download and run its
+installer:
 
 ```sh
-gh release download v0.2.0a3 --repo rishhavv/mcp-pal \
-  --pattern install.sh --output install.sh
+gh release download vX.Y.Z --repo rishhavv/mcp-pal --pattern install.sh --output install.sh
 sh install.sh
 rm install.sh
 ```
 
 ```powershell
-gh release download v0.2.0a3 --repo rishhavv/mcp-pal `
-  --pattern install.ps1 --output install.ps1
+gh release download vX.Y.Z --repo rishhavv/mcp-pal --pattern install.ps1 --output install.ps1
 .\install.ps1
 Remove-Item install.ps1
 ```
@@ -42,7 +41,7 @@ Until PyPI publishing is added, install the matching SDK wheel into the
 project's own virtual environment using an authenticated exact-asset download:
 
 ```sh
-VERSION=0.2.0a3
+VERSION=X.Y.Z
 SDK_WHEEL="mcp_pal-${VERSION}-py3-none-any.whl"
 mkdir -p .mcp-pal-download
 gh release download "v${VERSION}" -R rishhavv/mcp-pal -p "$SDK_WHEEL" \
@@ -55,7 +54,7 @@ uv pip install "mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SDK_WHEEL"
 On Windows:
 
 ```powershell
-$Version = '0.2.0a3'
+$Version = 'X.Y.Z'
 $SdkWheel = "mcp_pal-$Version-py3-none-any.whl"
 New-Item -ItemType Directory -Force .mcp-pal-download | Out-Null
 gh release download "v$Version" -R rishhavv/mcp-pal -p $SdkWheel -O ".mcp-pal-download/$SdkWheel"
