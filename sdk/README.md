@@ -2,7 +2,7 @@
 
 MCP Pal is a Python SDK for direct MCP-server tests and agent-driven testing.
 
-The package is currently `0.2.0a2`. The direct-testing SDK, multi-turn agent
+The package is currently `0.2.0a3`. The direct-testing SDK, multi-turn agent
 runtime, harness adapters, policies, workspaces, canonical tracing, and the
 SQLAlchemy-backed persistent store are implemented. Phase 13 still has open
 cross-process and shared store-contract acceptance tests, tracked in

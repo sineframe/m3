@@ -21,14 +21,14 @@ gh auth status
 Download and run the installer from the exact release you want:
 
 ```sh
-gh release download v0.2.0a2 --repo rishhavv/mcp-pal \
+gh release download v0.2.0a3 --repo rishhavv/mcp-pal \
   --pattern install.sh --output install.sh
 sh install.sh
 rm install.sh
 ```
 
 ```powershell
-gh release download v0.2.0a2 --repo rishhavv/mcp-pal `
+gh release download v0.2.0a3 --repo rishhavv/mcp-pal `
   --pattern install.ps1 --output install.ps1
 .\install.ps1
 Remove-Item install.ps1
@@ -46,7 +46,7 @@ SQLite storage. Until PyPI publishing is added, download the exact SDK wheel
 with `gh`, then install it into that project's environment:
 
 ```sh
-VERSION=0.2.0a2
+VERSION=0.2.0a3
 SDK_WHEEL="mcp_pal-${VERSION}-py3-none-any.whl"
 mkdir -p .mcp-pal-download
 gh release download "v${VERSION}" -R rishhavv/mcp-pal -p "$SDK_WHEEL" \
@@ -59,7 +59,7 @@ uv pip install "mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SDK_WHEEL"
 On Windows, use the equivalent authenticated download and local wheel path:
 
 ```powershell
-$Version = '0.2.0a2'
+$Version = '0.2.0a3'
 $SdkWheel = "mcp_pal-$Version-py3-none-any.whl"
 New-Item -ItemType Directory -Force .mcp-pal-download | Out-Null
 gh release download "v$Version" -R rishhavv/mcp-pal -p $SdkWheel -O ".mcp-pal-download/$SdkWheel"
@@ -204,7 +204,7 @@ is not included in release artifacts.
 
 ## CLI releases
 
-Pushing a version tag such as `v0.2.0a2` triggers the CLI release workflow. The
+Pushing a version tag such as `v0.2.0a3` triggers the CLI release workflow. The
 tag must exactly match the versions in the SDK, app, and CLI projects. After the
 pinned UI build and isolated release gates pass, the workflow stores these
 artifacts on the tag's GitHub Release:

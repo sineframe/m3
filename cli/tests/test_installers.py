@@ -209,7 +209,7 @@ def test_private_install_docs_use_exact_authenticated_assets() -> None:
     docs = ((ROOT / "README.md").read_text(encoding="utf-8"), (ROOT / "cli" / "README.md").read_text(encoding="utf-8"))
     for contents in docs:
         assert "gh auth login" in contents
-        assert "gh release download v0.2.0a2 --repo rishhavv/mcp-pal" in contents
+        assert "gh release download v0.2.0a3 --repo rishhavv/mcp-pal" in contents
         assert "--pattern install.sh --output install.sh" in contents
         assert "sh install.sh\nrm install.sh" in contents
         assert "--pattern install.ps1 --output install.ps1" in contents

@@ -1,14 +1,14 @@
 [project]
 name = "mcp-pal-cli"
-version = "0.2.0a2"
+version = "0.2.0a3"
 description = "Standalone command line interface for MCP Pal"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-  "mcp-pal[storage]==0.2.0a2",
-  "mcp-pal-app==0.2.0a2",
+  "mcp-pal[storage]==0.2.0a3",
+  "mcp-pal-app==0.2.0a3",
 ]
 
 [project.scripts]

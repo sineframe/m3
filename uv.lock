@@ -1163,7 +1163,7 @@ wheels = [
 
 [[package]]
 name = "mcp-pal"
-version = "0.2.0a2"
+version = "0.2.0a3"
 source = { editable = "sdk" }
 dependencies = [
     { name = "agent-client-protocol" },
@@ -1241,7 +1241,7 @@ typecheck = [{ name = "mypy", specifier = ">=1.11,<2" }]
 
 [[package]]
 name = "mcp-pal-app"
-version = "0.2.0a2"
+version = "0.2.0a3"
 source = { editable = "app" }
 dependencies = [
     { name = "fastapi" },
@@ -1287,7 +1287,7 @@ typecheck = [{ name = "mypy", specifier = ">=1.11,<2" }]
 
 [[package]]
 name = "mcp-pal-cli"
-version = "0.2.0a2"
+version = "0.2.0a3"
 source = { editable = "cli" }
 dependencies = [
     { name = "mcp-pal", extra = ["storage"] },
