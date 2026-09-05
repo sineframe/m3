@@ -4,7 +4,7 @@ The shortest useful direct MCP test discovers a server's tools, calls one, and
 asserts its typed result. The complete, executable version is
 [`test_quick_start.py`](../examples/tests/test_quick_start.py).
 
-## Install
+## Install the project SDK
 
 Add MCP Pal and its pytest dependencies to a uv-managed project:
 
@@ -19,6 +19,33 @@ python -m pip install "mcp-pal[pytest]"
 ```
 
 The SDK requires Python 3.10 or newer.
+
+These commands install the `mcp-pal` Python SDK and pytest support inside the
+project environment. They do **not** install the standalone `mcp-pal` command
+or the bundled UI.
+
+## Install the standalone CLI
+
+Install the CLI separately when you want CLI-managed test runs, persistent run
+history, or the local UI. The CLI is a machine-level tool isolated from the
+project environment; its release installer includes the production UI. Follow
+the [CLI installation guide](../../cli/README.md#install), which covers GitHub
+authentication and macOS, Linux, and Windows installation.
+
+After installing the CLI, prepare the project environment and verify that its
+SDK version matches the CLI:
+
+```bash
+cd my-project
+mcp-pal setup
+mcp-pal doctor
+```
+
+`mcp-pal setup` installs the matching `mcp-pal[pytest,storage]` SDK into the
+selected project environment. It does not install the CLI there and does not
+edit dependency manifests or lockfiles. This setup step is separate from both
+the machine-level CLI installation and declaring the SDK as a project
+dependency.
 
 ## Define the server under test
 
@@ -71,6 +98,35 @@ that must happen before client shutdown.
 
 Both objects are context managers. Exiting the direct client closes its MCP
 connection and subprocess; exiting the kit provides the outer cleanup boundary.
+
+## Run the test
+
+The separately installed MCP Pal CLI runs the test with pytest in your project
+environment and records MCP Pal executions. From the project root:
+
+```bash
+mcp-pal doctor
+mcp-pal test -- tests/test_shipping.py
+```
+
+Everything after `--` is passed to pytest unchanged, so selectors such as
+`-k`, `-m`, and individual test node IDs work normally. Add `--ui` before the
+separator to open the bundled local viewer after the test run:
+
+```bash
+mcp-pal test --ui -- tests/test_shipping.py
+```
+
+The UI shows the recorded runs and keeps the command open until you press
+Ctrl+C. It is bundled with the standalone CLI; the project does not need
+Node.js or a separate frontend.
+
+The tests remain ordinary pytest tests. Run pytest directly when you do not
+need CLI-managed result storage or the UI:
+
+```bash
+uv run pytest tests/test_shipping.py
+```
 
 ## Run one test per server-owned tool
 
@@ -163,8 +219,9 @@ From the repository root, run exactly:
 uv run --project sdk --extra pytest pytest -q sdk/examples/tests
 ```
 
-This command installs the SDK project's pytest extra and runs every documented
-example against a real local MCP subprocess. To run only the quick start:
+This direct pytest command is convenient for the repository's SDK subproject:
+it installs the SDK project's pytest extra and runs every documented example
+against a real local MCP subprocess. To run only the quick start:
 
 ```bash
 uv run --project sdk --extra pytest pytest -q sdk/examples/tests/test_quick_start.py

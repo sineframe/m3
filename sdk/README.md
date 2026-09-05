@@ -1,21 +1,50 @@
-# MCP Pal
+# MCP Pal Python SDK
 
-MCP Pal is a Python SDK for direct MCP-server tests and agent-driven testing.
+`mcp-pal` is the public Python SDK for testing MCP servers and verifying how
+agent harnesses use their tools. It provides direct MCP clients, pytest
+integration, agent sessions, matrices, typed traces, assertions, and optional
+persistent storage.
 
-The direct-testing SDK, multi-turn agent
-runtime, harness adapters, policies, workspaces, canonical tracing, and the
-SQLAlchemy-backed persistent store are implemented. Phase 13 still has open
-cross-process and shared store-contract acceptance tests, tracked in
-`plans/python-testing-sdk-v0.2.md`; the existing application remains available
-until the planned API and UI migration.
+## Install the SDK
 
-Install the supported optional capabilities with:
+Add the SDK and pytest support to the project being tested:
 
 ```bash
 uv add "mcp-pal[pytest]"
-pip install "mcp-pal[pytest]"
 ```
 
-The repository contains the current application README and executable
-fixtures. The SDK source distribution includes the SDK tests, examples, docs,
-and legal files needed for source validation.
+With pip:
+
+```bash
+python -m pip install "mcp-pal[pytest]"
+```
+
+The SDK requires Python 3.10 or newer. This project dependency does not install
+the standalone `mcp-pal` command or bundled UI. Those come from the separate
+machine-level CLI installation described in the
+[quick start](docs/quick-start.md#install-the-standalone-cli).
+
+## Learn the SDK
+
+- [Quick start](docs/quick-start.md) — install, write, and run the first MCP
+  test with either the CLI or direct pytest.
+- [Concepts](docs/concepts.md) — server bindings, lifecycle, results, schemas,
+  workflows, traces, and isolation.
+- [Examples](docs/examples.md) — executable direct-server, built-in harness,
+  ACP, live-provider, and matrix patterns.
+
+The examples use only public SDK APIs and run as ordinary pytest tests.
+
+## Develop the SDK
+
+From the repository root, install the workspace with `just setup`, then run the
+SDK suite directly:
+
+```bash
+uv run --project sdk --extra pytest --group typecheck pytest sdk/tests
+```
+
+Run all workspace suites with `just test` and compile/import checks with
+`just check`. Product installation and UI troubleshooting belong in the
+[CLI guide](../cli/README.md); internal viewer/API development belongs in the
+[App guide](../app/README.md).

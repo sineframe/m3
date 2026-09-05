@@ -1,6 +1,8 @@
 # MCP Pal test patterns
 
-Install test support with `uv add "mcp-pal[pytest]"`. Prefer the target
+Install project test support with `uv add "mcp-pal[pytest]"`. This installs the
+SDK, not the standalone CLI or UI. When CLI installation or project setup is
+part of the task, read [cli-runner.md](cli-runner.md). Prefer the target
 project's existing server fixture. This example uses stdio:
 
 ```python
@@ -133,5 +135,20 @@ Run the narrow test first:
 ```bash
 # Export ANTHROPIC_API_KEY securely first.
 MCP_PAL_RUN_LIVE_CLAUDE=1 MCP_PAL_CLAUDE_MODEL=your-enabled-model \
-  uv run pytest -q tests/test_shipping.py
+  mcp-pal test -- tests/test_shipping.py
+```
+
+The standalone CLI delegates everything after `--` to pytest and records MCP
+Pal executions. When the user wants to inspect the run locally, place `--ui`
+before the separator; the viewer stays open until interrupted:
+
+```bash
+mcp-pal test --ui -- tests/test_shipping.py
+```
+
+If `mcp-pal` is unavailable, `mcp-pal doctor` says the project is not ready,
+or the project defines its own test command, run pytest directly instead:
+
+```bash
+uv run pytest tests/test_shipping.py
 ```

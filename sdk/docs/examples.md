@@ -1,11 +1,14 @@
 # Examples
 
-These are ordinary pytest tests using public MCP Pal APIs. The example server
-is a small stateful stdio MCP program with deterministic tools, resources, and
-prompts. It runs as a real subprocess, so these tests exercise the protocol
-boundary too: [`example_mcp_server.py`](../examples/servers/example_mcp_server.py).
+These are ordinary pytest tests using public MCP Pal APIs. In your project,
+run tests with `mcp-pal test -- tests` and add `--ui` before `--` to inspect
+recorded executions in the bundled local viewer. Direct pytest remains
+supported. The example server is a small stateful stdio MCP program with
+deterministic tools, resources, and prompts. It runs as a real subprocess, so
+these tests exercise the protocol boundary too:
+[`example_mcp_server.py`](../examples/servers/example_mcp_server.py).
 
-Run the local examples with:
+From this repository checkout, run the local examples directly with:
 
 ```bash
 uv run --project sdk --extra pytest pytest -q sdk/examples/tests

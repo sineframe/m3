@@ -1,6 +1,6 @@
 ---
 name: testing-with-mcp-pal
-description: Use when writing, reviewing, or debugging Python tests for MCP servers, MCP tool calls, coding-agent tool selection, traces, or harnesses with the MCP Pal SDK
+description: Use when installing or setting up the MCP Pal CLI, or when writing, reviewing, running, or debugging Python tests for MCP servers, MCP tool calls, coding-agent tool selection, traces, or harnesses with the MCP Pal SDK
 ---
 
 # Testing with MCP Pal
@@ -13,6 +13,12 @@ agent's prose.
 
 **REQUIRED REFERENCE:** Read [references/test-patterns.md](references/test-patterns.md)
 before implementing a test.
+
+When the task involves installing or setting up the standalone CLI, or intends
+to use the CLI and the `mcp-pal` command is missing, read
+[references/cli-runner.md](references/cli-runner.md). The project SDK and CLI
+are separate installations; never assume `uv add "mcp-pal[pytest]"` provides
+the CLI or UI.
 
 ## Choose the Boundary
 
@@ -32,7 +38,14 @@ before implementing a test.
    than guessing or relying on a plan.
 2. Reuse its fixture and pytest conventions.
 3. Write the smallest test that proves the requested claim.
-4. Run that test and report live-provider skips separately from passes.
+4. Choose the runner. Prefer `mcp-pal test -- <pytest arguments>` when the
+   separately installed CLI is available and `mcp-pal doctor` reports that the
+   project is ready. It runs the same pytest tests while recording MCP Pal
+   executions. Use direct pytest when the CLI is unavailable or the project
+   already has a specific test command. Do not install the optional CLI merely
+   to run one test unless CLI setup is part of the task. Add `--ui` only when
+   the user wants the local viewer; it keeps the command open until interrupted.
+5. Run the narrow test and report live-provider skips separately from passes.
 
 ## Invariants
 
@@ -69,3 +82,5 @@ before implementing a test.
 | Parsing text when structured output exists | Assert `structured_content` |
 | Restricting selection to one possible tool | Include safe competing tools |
 | Assuming a parent CLI login is inherited | Use environment `SecretReference`s |
+| Assuming the SDK installs the `mcp-pal` command | Install the standalone CLI separately |
+| Passing pytest flags directly to `mcp-pal test` | Put them after `--` |
