@@ -3,18 +3,31 @@
 These are ordinary pytest tests using public MCP Pal APIs. In your project,
 run tests with `mcp-pal test -- tests` and add `--ui` before `--` to inspect
 recorded executions in the bundled local viewer. Direct pytest remains
-supported. The example server is a small stateful stdio MCP program with
-deterministic tools, resources, and prompts. It runs as a real subprocess, so
-these tests exercise the protocol boundary too:
+supported. The local examples use a small stateful stdio MCP program with
+deterministic tools, resources, and prompts. The Streamable HTTP example uses
+an external DeepWiki endpoint and is documented separately below. The local
+server runs as a real subprocess, so those tests exercise the protocol boundary:
 [`example_mcp_server.py`](../examples/servers/example_mcp_server.py).
 
-From this repository checkout, run the local examples directly with:
+From this repository checkout, run the deterministic local examples directly
+with:
 
 ```bash
 uv run --project sdk --extra pytest pytest -q sdk/examples/tests
 ```
 
-## 1. Discover a direct server tool before calling it
+## 1. Test a deployed MCP endpoint with Streamable HTTP
+
+Use `StreamableHTTPServer` for a deployed MCP endpoint. Start with the direct
+contract path—initialize, discover tools, call a tool, and assert the typed
+result—then use the finalized trace after client closure. The
+[Streamable HTTP guide](streamable-http.md) explains the route. Its external
+DeepWiki example,
+[`test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py),
+also demonstrates an OpenCode session and `HarnessMatrix.each_tool`; invoke
+that exact file when needed. It is outside the deterministic examples command.
+
+## 2. Discover a direct local server tool before calling it
 
 Write this test to catch regressions in a server's advertised tool contract and
 result without involving an agent. Use `kit.direct` to connect to the server. The
@@ -38,7 +51,7 @@ assert result.structured_content == {"amount": 9.0, "currency": "USD"}
 For pagination and the other direct operations, see
 [`test_direct_client_surface.py`](../examples/tests/test_direct_client_surface.py).
 
-## 2. Use Claude Code or OpenCode
+## 3. Use Claude Code or OpenCode with the local stdio server
 
 Write this test to assert that an agent chooses and successfully calls the
 intended MCP tool, rather than only checking its final prose. Choose a built-in
@@ -80,16 +93,16 @@ def test_agent_uses_shipping_quote(example_server: StdioServer) -> None:
 
 `ClaudeCode(...)` and `OpenCode(...)` are the built-in choices. The test sends
 one prompt to the selected installed process; that process may choose and call
-an available MCP tool. The genuine provider example is
-[`test_live_opencode.py`](../examples/tests/test_live_opencode.py); it needs
-OpenCode and `OPENCODE_API_KEY` and may incur provider charges. Claude Code
-uses the same session flow when its CLI is installed and configured.
+an available MCP tool. The nondeterministic OpenCode-over-HTTP example is
+[`test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py);
+it needs OpenCode and `OPENCODE_API_KEY` and may incur provider charges. Claude
+Code uses the same session flow when its CLI is installed and configured.
 Tool restrictions are optional; add a policy later when a test needs tighter
 control over available tools. Credentials are resolved at launch from the
 referenced environment variables and are not stored by the SDK; child process
 login state is not inherited from the parent environment.
 
-## 3. Bring your own harness with ACP
+## 4. Bring your own harness with ACP
 
 Use this test to make the same tool-selection assertion for an ACP-compatible
 agent you provide. The local fixture below is just a credential-free example
@@ -139,7 +152,7 @@ expect(session.result).to_have_tool_call(
 )
 ```
 
-## 4. Match arguments, results, status, counts, and choices
+## 5. Match arguments, results, status, counts, and choices
 
 Use these assertions when the tool name alone is not enough: verify how it was
 called, what it returned, how often it ran, and which tools it avoided:
@@ -164,7 +177,7 @@ The complete harness assertions are in
 For an evidence-source comparison, use `evidence="reported"` or
 `evidence="any"`; wire evidence is the default.
 
-## 5. Test multiple turns by `TurnResult`
+## 6. Test multiple turns by `TurnResult`
 
 Use turn-scoped assertions to prove which prompt caused each tool call in a
 multi-turn session. Each `session.send(prompt)` returns one completed turn.
@@ -184,7 +197,7 @@ assert session.result.trace_view.for_turn(first).tool_calls
 See the two-turn implementation in
 [`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py).
 
-## 6. Chain tool outputs
+## 7. Chain tool outputs
 
 Write a chained test when later tools depend on earlier output or shared server
 state. Keep one direct client open for the whole workflow:
@@ -199,7 +212,7 @@ assert order.structured_content["customer_id"] == customer_id
 
 Complete test: [`test_chained_workflow.py`](../examples/tests/test_chained_workflow.py).
 
-## 7. Test resources, prompts, errors, and schemas
+## 8. Test resources, prompts, errors, and schemas
 
 Use direct tests to verify non-tool MCP surfaces and distinguish expected tool
 errors from invalid contracts. The client also handles resources and prompts:
@@ -219,7 +232,7 @@ with kit.direct(example_server, validate_schemas=True) as client:
         client.call_tool("shipping_quote", {"weight_kg": -1, "zone": "local"})
 ```
 
-## 8. Use async APIs
+## 9. Use async APIs
 
 Use the async API when the code under test is already async; it verifies the
 same MCP behavior without a synchronous wrapper:
@@ -235,7 +248,7 @@ See [`test_async_usage.py`](../examples/tests/test_async_usage.py) and the
 async evaluation in
 [`test_assertions_snapshots_evaluations.py`](../examples/tests/test_assertions_snapshots_evaluations.py).
 
-## 9. Inspect and debug traces
+## 10. Inspect and debug traces
 
 Inspect a trace when you need evidence of what ran—not just whether the final
 assertion passed. After a client or session closes, use its typed view:
@@ -257,7 +270,7 @@ availability states, and bounded raw-evidence reads. Raw capture is optional,
 must be configured, and is bounded. Process cleanup and connection isolation
 are in [`test_tracing_and_lifecycle.py`](../examples/tests/test_tracing_and_lifecycle.py).
 
-## 10. Check capabilities and probes
+## 11. Check capabilities and probes
 
 Probe readiness before an environment-dependent test so a missing runtime or
 transport is diagnosed directly:
@@ -270,7 +283,7 @@ with MCPTestKit(env={}) as kit:
 
 See [`test_capabilities_and_probes.py`](../examples/tests/test_capabilities_and_probes.py).
 
-## 11. Use snapshots, evaluations, and grouped assertions
+## 12. Use snapshots, evaluations, and grouped assertions
 
 Use these helpers for stable result snapshots, reusable quality checks, or
 several failures reported together:
@@ -286,7 +299,7 @@ See [`test_assertions_snapshots_evaluations.py`](../examples/tests/test_assertio
 for snapshots, lifecycle/error checks, artifacts, workspace checks, and
 sync/async evaluations.
 
-## 12. Use a mock server
+## 13. Use a mock server
 
 Use a mock server to test client behavior against expected MCP calls without
 starting an external server process:
@@ -302,7 +315,7 @@ def shipping_quote(arguments: dict[str, object]) -> dict[str, str]:
 Complete setup, expectations, verification, and recording are in
 [`test_mock_server_expectations.py`](../examples/tests/test_mock_server_expectations.py).
 
-## 13. Persist and reopen when needed
+## 14. Persist and reopen when needed
 
 Use SQLite only when traces must be reopened from durable storage; otherwise
 memory storage is the default:
@@ -321,7 +334,7 @@ reopened.close()
 The close/reopen and public raw-evidence examples are in
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py).
 
-## 14. Run a matrix across servers and harnesses
+## 15. Run a matrix across servers and harnesses
 
 Use a matrix to apply one testing question consistently across several servers,
 tools, or harnesses without hand-writing each pytest case. `HarnessMatrix`
@@ -488,10 +501,11 @@ failure inspection, and this two-turn chain. Normal execution specifications,
 events, turns, and traces persist through SQLite; pytest verdicts and matrix
 summaries do not.
 
-### Live provider matrices
+### External provider matrices
 
-Opt-in live coverage is available in
-[`test_live_matrix_api.py`](../tests/e2e/test_live_matrix_api.py). Set
-`MCP_PAL_RUN_LIVE_OPENCODE=1` or `MCP_PAL_RUN_LIVE_CLAUDE=1` with the matching
-credential; these tests may incur cost. Claude's multi-server limitation is
-respected by keeping its live case to one server.
+External-provider coverage is available in
+[`test_live_matrix_api.py`](../tests/e2e/test_live_matrix_api.py). These tests
+require `MCP_PAL_RUN_LIVE_OPENCODE=1` or
+`MCP_PAL_RUN_LIVE_CLAUDE=1` with the matching harness credential and may incur
+provider usage. Claude's multi-server limitation is respected by keeping its
+case to one server.

@@ -2,8 +2,10 @@
 
 ## Server definition, kit, and client
 
-A server definition such as `StdioServer` describes how to reach an MCP
-server. It does not connect when it is constructed. The shared
+A server definition such as `StreamableHTTPServer` or `StdioServer` describes
+how to reach an MCP server. It does not connect when it is constructed. Use
+`StreamableHTTPServer` for a deployed MCP endpoint and `StdioServer` for a
+local subprocess. The shared
 [`example_server` fixture](../examples/tests/conftest.py) shows a stdio binding
 to a Python subprocess.
 
@@ -34,14 +36,13 @@ deterministic protocol-level assertions without involving an LLM or agent
 harness. Resource and prompt coverage lives in
 [`test_resources_and_prompts.py`](../examples/tests/test_resources_and_prompts.py).
 
-For an agent-driven workflow, see the deterministic local ACP harness example
-[`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py) or
-the opt-in live OpenCode example
-[`test_live_opencode.py`](../examples/tests/test_live_opencode.py). It uses a
-restrictive policy, sends instructions, and verifies the typed finalized
-`TraceView` tool calls rather than trusting model prose. Live tests need an
-explicit environment opt-in and credentials, so they are separate from the
-deterministic suite and should have generous operation timeouts.
+For HTTP direct, agent, and matrix patterns, see the
+[Streamable HTTP guide](streamable-http.md) and its external endpoint example
+[`test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py).
+For an agent-driven local workflow, see the deterministic ACP harness example
+[`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py).
+Harness assertions verify typed finalized `TraceView` tool calls rather than
+trusting model prose.
 
 ## Test matrices
 
@@ -124,16 +125,16 @@ one tool into the arguments of the next. Because all calls share one MCP
 connection and server process, the workflow may also verify state written by
 an earlier call.
 
-The canonical
+The complete
 [`test_chained_workflow.py`](../examples/tests/test_chained_workflow.py)
 normalizes a customer, passes that identifier into order creation, then passes
 the returned order identifier into retrieval and asserts the stored record.
 This is a multi-step protocol workflow, not a conversational agent session:
 the test explicitly controls every call and transition.
 
-## Live and finalized traces
+## Finalized traces
 
-The SDK records a canonical `TraceResult` and derives the public immutable
+The SDK records a `TraceResult` and derives the public immutable
 `TraceView` from it. `TraceResult.events` is useful for storage and auditing;
 application and test assertions should use `trace.view()` (or
 `result.trace_view`). Projection is finalized-only: attempting to project an

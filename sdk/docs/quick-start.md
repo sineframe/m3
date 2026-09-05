@@ -1,8 +1,37 @@
 # Quick start
 
-The shortest useful direct MCP test discovers a server's tools, calls one, and
-asserts its typed result. The complete, executable version is
-[`test_quick_start.py`](../examples/tests/test_quick_start.py).
+For a deployed MCP URL, use `StreamableHTTPServer` and assert direct discovery
+and a tool call. The complete external example is
+[`examples/nondeterministic/test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py);
+it is nondeterministic and is run by invoking that exact file. For a local
+command, use the deterministic stdio example
+[`examples/tests/test_quick_start.py`](../examples/tests/test_quick_start.py).
+For the HTTP route, see the [Streamable HTTP guide](streamable-http.md).
+
+```python
+from collections.abc import Mapping
+
+from mcp_pal import MCPTestKit
+from mcp_pal.types import StreamableHTTPServer
+
+server = StreamableHTTPServer(name="deepwiki", url="https://mcp.deepwiki.com/mcp")
+with MCPTestKit(env={}) as kit, kit.direct(server) as client:
+    assert client.initialization is not None
+    tools = client.list_all_tools()
+    assert {"ask_question", "read_wiki_contents", "read_wiki_structure"} <= {
+        tool.name for tool in tools
+    }
+    result = client.call_tool(
+        "read_wiki_structure", {"repoName": "modelcontextprotocol/python-sdk"}
+    )
+    assert result.is_error is False
+    assert any(
+        isinstance(block, Mapping)
+        and isinstance(block.get("text"), str)
+        and block["text"].strip()
+        for block in result.content
+    )
+```
 
 ## Install the project SDK
 
@@ -49,8 +78,11 @@ dependency.
 
 ## Define the server under test
 
+The remainder of this walkthrough uses the deterministic local fixture.
 MCP Pal receives a server definition rather than starting a hidden fixture.
-For a local stdio server, construct a public `StdioServer` with its command,
+For a deployed HTTP endpoint, use `StreamableHTTPServer` as shown in the
+[Streamable HTTP guide](streamable-http.md). For a local subprocess, construct
+a `StdioServer` with its command,
 arguments, and working directory. The examples do this in the ordinary pytest
 fixture [`example_server`](../examples/tests/conftest.py), which points to the
 real subprocess server
@@ -97,7 +129,8 @@ Trace projection is finalized-only; use the operation result for assertions
 that must happen before client shutdown.
 
 Both objects are context managers. Exiting the direct client closes its MCP
-connection and subprocess; exiting the kit provides the outer cleanup boundary.
+connection and any subprocess it owns; a deployed HTTP service keeps running.
+Exiting the kit provides the outer cleanup boundary and finalizes trace data.
 
 ## Run the test
 
@@ -158,9 +191,9 @@ MCP Pal supports the built-in `ClaudeCode` and `OpenCode` harness choices.
 They use the same `agent_session` flow with their normal tool access. Tool
 restrictions can be added later when a test needs tighter control. The complete
 server and harness definitions are in the
-[`built-in harness example`](examples.md#2-use-claude-code-or-opencode).
-OpenCode needs its provider credential; the repository's live example shows
-the explicit opt-in.
+[`built-in harness example`](examples.md#3-use-claude-code-or-opencode-with-the-local-stdio-server).
+OpenCode needs its provider credential; the repository's external endpoint
+example shows the explicit command and credential reference.
 
 ## Bring your own harness with ACP
 

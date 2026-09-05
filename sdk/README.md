@@ -26,12 +26,14 @@ machine-level CLI installation described in the
 
 ## Learn the SDK
 
+- [Streamable HTTP](docs/streamable-http.md) — test a deployed MCP endpoint
+  directly, through an agent session, or with a harness matrix.
 - [Quick start](docs/quick-start.md) — install, write, and run the first MCP
-  test with either the CLI or direct pytest.
+  test with Streamable HTTP or the local stdio alternative.
 - [Concepts](docs/concepts.md) — server bindings, lifecycle, results, schemas,
   workflows, traces, and isolation.
-- [Examples](docs/examples.md) — executable direct-server, built-in harness,
-  ACP, live-provider, and matrix patterns.
+- [Examples](docs/examples.md) — executable Streamable HTTP, local stdio,
+  built-in harness, ACP, and matrix patterns.
 
 The examples use only public SDK APIs and run as ordinary pytest tests.
 

@@ -30,6 +30,25 @@ the CLI or UI.
 | Prompts should work across harnesses or servers | `HarnessMatrix` |
 | Surrounding test is async | `AsyncMCPTestKit` |
 
+## Choose the transport
+
+| Target | Definition |
+|---|---|
+| Deployed MCP endpoint | `StreamableHTTPServer` |
+| Local command you own | `StdioServer` |
+| Existing legacy HTTP+SSE endpoint | `SSEServer` |
+
+For HTTP, the URL is one MCP protocol endpoint, not a REST route. Keep
+credentials out of URLs and query parameters: static non-secret headers may be
+declared on `StreamableHTTPServer`, while direct-client bearer authentication
+uses a `SecretReference` with `kit.direct(..., bearer_token=...)`.
+This is a direct-client option, not an `AgentExecutionSpec` option.
+A public endpoint exposed to an agent requires `TrustLevel.PUBLIC`; private or
+localhost endpoints you own require
+`TrustLevel.TRUSTED_PRIVATE`. These labels describe ownership and exposure,
+not validation bypasses. `MCPTestKit` owns connection/client cleanup and trace
+finalization but does not start or stop a deployed service.
+
 ## Workflow
 
 1. Inspect the target project's server command, existing fixtures, tool schema,
@@ -45,7 +64,10 @@ the CLI or UI.
    already has a specific test command. Do not install the optional CLI merely
    to run one test unless CLI setup is part of the task. Add `--ui` only when
    the user wants the local viewer; it keeps the command open until interrupted.
-5. Run the narrow test and report live-provider skips separately from passes.
+5. Run the narrow test and report nondeterministic external/provider tests
+   separately from deterministic contract tests. Follow the target project's
+   isolation convention; this repository isolates its external example by
+   placing it under `examples/nondeterministic/`.
 
 ## Invariants
 
@@ -66,8 +88,8 @@ the CLI or UI.
 - Tool failures are results with `is_error=True`; transport and local schema
   failures are exceptions. Schema checking requires `validate_schemas=True`.
 - Reference credentials with `SecretReference`; never embed or log secrets.
-  Keep real-provider tests explicitly opt-in because they are nondeterministic
-  and may cost money.
+  Keep nondeterministic external/provider tests separate from deterministic
+  tests because they may change or incur provider usage.
 - There is no hidden `mcp_test` fixture or scenario format. Define the server
   explicitly with `StdioServer`, `StreamableHTTPServer`, `SSEServer`, or an
   existing project fixture.

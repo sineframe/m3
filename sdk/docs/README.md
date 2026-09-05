@@ -6,12 +6,14 @@ for persisted results and an optional local UI, or invoke pytest directly.
 The project SDK and standalone CLI are separate installations; adding the SDK
 to a project does not install the `mcp-pal` command or its bundled UI.
 
+- [Streamable HTTP](streamable-http.md) — test a deployed MCP endpoint
+  directly, through an agent session, or with a harness matrix.
 - [Quick start](quick-start.md) — install the SDK, write the first real MCP
   test, and run it with the CLI or pytest.
 - [Concepts](concepts.md) — understand server bindings, lifecycle, results,
   schemas, chained workflows, traces, and isolation.
-- [Examples](examples.md) — choose direct-server testing, a built-in Claude
-  Code/OpenCode harness, a bring-your-own ACP agent, or an opt-in live provider.
+- [Examples](examples.md) — choose the example matching a deployed endpoint,
+  local stdio server, harness, ACP agent, or matrix workflow.
 
 The copyable typed observability starting point is
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py); it is

@@ -3,7 +3,59 @@
 Install project test support with `uv add "mcp-pal[pytest]"`. This installs the
 SDK, not the standalone CLI or UI. When CLI installation or project setup is
 part of the task, read [cli-runner.md](cli-runner.md). Prefer the target
-project's existing server fixture. This example uses stdio:
+project's existing server fixture.
+
+## Streamable HTTP: deployed endpoint
+
+Use `StreamableHTTPServer` for one deployed MCP endpoint. This generic pattern
+does not assume a provider's tool names or result shape:
+
+```python
+from mcp_pal import MCPTestKit
+from mcp_pal.types import StreamableHTTPServer
+
+server = StreamableHTTPServer(name="catalog", url="https://example.test/mcp")
+
+with MCPTestKit(env={}) as kit:
+    with kit.direct(server) as client:
+        assert client.initialization is not None
+        tools = client.list_all_tools()
+        assert tools
+        result = client.call_tool("known_tool", {"query": "fixture"})
+        assert result.is_error is False
+
+evidence = client.transport_evidence
+assert evidence is not None and evidence.state == "closed"
+trace = client.final_trace
+assert trace is not None
+assert trace.view().transports
+```
+
+The URL is an MCP protocol endpoint, not a REST route. A direct public endpoint
+can use the default `UNTRUSTED` trust. For a bearer credential, keep the value
+in the environment and reference it through direct-client authentication,
+without embedding it in the URL:
+
+```python
+from mcp_pal.types import SecretReference
+
+token = SecretReference(source="environment", name="CATALOG_MCP_TOKEN")
+with MCPTestKit(env={}) as kit:
+    with kit.direct(server, bearer_token=token) as client:
+        tools = client.list_all_tools()
+        assert tools
+```
+
+Static non-secret headers may be declared on the server. Never put credentials
+literally or in URL query parameters. The kit owns connection and client
+cleanup and finalizes the trace, but does not start or stop a deployed HTTP
+service; keep operations inside the client context and inspect finalized trace
+data after closure.
+
+Use `SSEServer` only for an existing legacy HTTP+SSE endpoint. Use `StdioServer`
+when the project owns a local command and should test its subprocess boundary.
+
+## Stdio: local command
 
 ```python
 import os
@@ -48,10 +100,6 @@ def test_shipping_quote_contract(shipping_server: StdioServer) -> None:
     assert result.structured_content == {"amount": 9.0, "currency": "USD"}
 
 
-@pytest.mark.skipif(
-    os.environ.get("MCP_PAL_RUN_LIVE_CLAUDE") != "1",
-    reason="set MCP_PAL_RUN_LIVE_CLAUDE=1 to run the live agent test",
-)
 def test_agent_selects_shipping_quote(shipping_server: StdioServer) -> None:
     with MCPTestKit(env={}) as kit, kit.direct(shipping_server) as client:
         advertised = {tool.name for tool in client.list_all_tools()}
@@ -133,13 +181,16 @@ against multiple harnesses or server configurations.
 Run the narrow test first:
 
 ```bash
-# Export ANTHROPIC_API_KEY securely first.
-MCP_PAL_RUN_LIVE_CLAUDE=1 MCP_PAL_CLAUDE_MODEL=your-enabled-model \
+# Export ANTHROPIC_API_KEY securely first and follow the target project's
+# nondeterministic-test isolation convention.
+MCP_PAL_CLAUDE_MODEL=your-enabled-model \
   mcp-pal test -- tests/test_shipping.py
 ```
 
 The standalone CLI delegates everything after `--` to pytest and records MCP
-Pal executions. When the user wants to inspect the run locally, place `--ui`
+Pal executions. Keep nondeterministic external/provider tests isolated
+according to the target project's convention; do not assume a universal flag.
+When the user wants to inspect the run locally, place `--ui`
 before the separator; the viewer stays open until interrupted:
 
 ```bash
