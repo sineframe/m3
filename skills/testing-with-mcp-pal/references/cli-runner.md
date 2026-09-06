@@ -113,5 +113,6 @@ explicitly attached to executions. Direct SDK evaluation persistence requires
 `store=SQLiteExecutionStore(path)`; the CLI/plugin flag
 `--mcp-pal-results-db PATH` selects the same saved store. Without either,
 SDK storage is in memory. Pytest item outcomes, Python assertion results, and
-aggregate matrix/trial trends are not saved. Do not report a saved
-`completed` execution as a saved passing result.
+aggregate summary rows are not saved; calculate trends from saved evaluations
+with `store.aggregate_evaluations(...)`. Do not report a saved `completed`
+execution as a saved passing result.

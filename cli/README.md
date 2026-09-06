@@ -154,9 +154,11 @@ traces, sessions/turns, saved artifacts/evidence, and evaluations attached
 to those executions. Direct SDK evaluations are saved only with
 `store=SQLiteExecutionStore(path)`; `mcp-pal test` selects the equivalent
 store through `--mcp-pal-results-db`. In-memory SDK storage is temporary.
-Pytest item outcomes, ordinary assertion results, and aggregate matrix/trial
-trends are not saved. A completed execution is a saved run record, not by
-itself a saved test-pass result.
+Pytest item outcomes and ordinary assertion results are not saved. Aggregate
+matrix/trial trends are calculated from saved evaluations with the SDK store or
+the API v2 aggregate route; summary rows are not duplicated in SQLite. A
+completed execution is a saved run record, not by itself a saved test-pass
+result.
 
 ### `--ui`
 

@@ -728,6 +728,9 @@ DirectOperation = _Annotated[
 
 class BaseExecutionSpec(FrozenModel):
     run_id: RunId | None = None
+    # Optional logical case identity. It is stable across repeated trials;
+    # execution_id remains the identity of one attempt.
+    case_id: str | None = _Field(default=None, min_length=1, max_length=256)
     servers: tuple[ServerBinding, ...] = ()
     protocol: ProtocolConstraint = _Field(default_factory=ProtocolConstraint)
     timeout_seconds: float | None = _Field(default=None, gt=0)
@@ -1208,6 +1211,7 @@ class EvaluationContext(FrozenModel):
     subject: _Any = None
     subject_kind: str = "unknown"
     execution_id: ExecutionId | None = None
+    case_id: str | None = _Field(default=None, min_length=1, max_length=256)
     turn_id: TurnId | None = None
     goal: str | None = None
     trace: TraceResult | None = None
@@ -1281,6 +1285,7 @@ class PersistedEvaluationRecord(FrozenModel):
 
     evaluation_id: EvaluationId
     execution_id: ExecutionId
+    case_id: str | None = _Field(default=None, min_length=1, max_length=256)
     turn_id: TurnId | None = None
     name: str
     status: EvaluationStatus

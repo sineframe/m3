@@ -68,6 +68,7 @@ from ..types import (
     TurnSnapshot,
     TurnResult,
 )
+from ..aggregations import EvaluationAggregateQuery, EvaluationAggregateReport, aggregate_evaluations
 from .evidence import (
     evidence_id_for as _evidence_id_for,
 )
@@ -182,6 +183,8 @@ class ExecutionStore(Protocol):
     def save_evaluation(self, execution_id: ExecutionId | str, result: EvaluationResult | Mapping[str, object], *, evaluation_id: str | None = None, turn_id: TurnId | str | None = None) -> str: ...
 
     def evaluations(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[PersistedEvaluationRecord, ...]: ...
+
+    def aggregate_evaluations(self, query: EvaluationAggregateQuery) -> EvaluationAggregateReport: ...
 
     def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnSnapshot, TurnResult | None], ...]: ...
 
@@ -522,6 +525,7 @@ class InMemoryExecutionStore:
             record = PersistedEvaluationRecord(
                 evaluation_id=EvaluationId(identifier),
                 execution_id=ExecutionId(key),
+                case_id=str(value.get("case_id") or context.get("case_id")) if (value.get("case_id") or context.get("case_id")) is not None else None,
                 turn_id=TurnId(str(getattr(turn_value, "root", turn_value))) if turn_value else None,
                 name=str(value.get("name", "")),
                 status=EvaluationStatus(value.get("status", "error")),
@@ -563,6 +567,24 @@ class InMemoryExecutionStore:
             turn_key = str(getattr(turn_id, "root", turn_id))
             values = tuple(item for item in values if str(getattr(item.turn_id, "root", item.turn_id)) == turn_key)
         return tuple(item.model_copy() for item in values)
+
+    def aggregate_evaluations(self, query: EvaluationAggregateQuery) -> EvaluationAggregateReport:
+        """Calculate summaries from the evaluations currently in memory."""
+        if not isinstance(query, EvaluationAggregateQuery):
+            query = EvaluationAggregateQuery.model_validate(query)
+        with self._lock:
+            records = [record for values in self._evaluations.values() for record in values]
+            snapshots = {key: value for key, value in self._snapshots.items()}
+            specifications = {key: value for key, value in self._specifications.items()}
+        traces = {}
+        for execution_id in {record.execution_id.root for record in records}:
+            try:
+                trace = self.get_trace_view(execution_id)
+            except (TraceUnavailable, TraceNotFinalized, StorageError, ValueError):
+                trace = None
+            if trace is not None:
+                traces[execution_id] = trace
+        return aggregate_evaluations(query, records, snapshots=snapshots, specifications=specifications, traces=traces)
 
     def get_trace(self, execution_id: ExecutionId | str) -> TraceResult | None:
         snapshot = self.get_snapshot(execution_id)

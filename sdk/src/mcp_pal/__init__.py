@@ -28,6 +28,15 @@ from .errors import (
     UnsupportedFeature,
 )
 from .matchers import check, expect
+from .aggregations import (
+    EvaluationAggregateGroup,
+    EvaluationAggregateQuery,
+    EvaluationAggregateReport,
+    EvaluationAggregateValues,
+    EvaluationHealthSummary,
+    EvaluationLatencySummary,
+    EvaluationToolCallSummary,
+)
 from .evaluations import (
     AsyncEvaluator,
     EvaluationDecision,

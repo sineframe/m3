@@ -99,8 +99,8 @@ finalization but does not start or stop a deployed service.
 - Persistence of an execution is not persistence of a test verdict. SQLite
   retains execution specs/snapshots, recorded events/traces, sessions/turns,
   artifacts/evidence, and explicit evaluations attached to an execution. It does
-  not retain pytest item outcomes or matrix pass-rate summaries. Never infer a
-  pass from lifecycle `completed`.
+  not retain pytest item outcomes or saved summary rows. Never infer a pass from
+  lifecycle `completed`; use an explicit evaluator result.
 
 ## Evaluations and saved history
 
@@ -118,6 +118,12 @@ be queried after reopening SQLite; in-memory SDK storage remains ephemeral.
 
 Matrix cases expose stable matrix/cell/trial metadata. Use the same evaluator
 name across trials; aggregate statistics are derived later from raw records.
+Call `store.aggregate_evaluations(EvaluationAggregateQuery(...))` for pass rates,
+status counts, run/time trends, case labels, and execution/tool health. Filter
+to one evaluator or group by `evaluator`; deterministic and user-supplied LLM
+evaluators must not be mixed into one pass rate. MCP Pal has no built-in LLM
+judge: SDK users may write callbacks that call an LLM, while API v2 only groups
+their saved results and provenance. Summaries are calculated on request.
 
 ## Common Mistakes
 

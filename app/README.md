@@ -30,6 +30,9 @@ default. The legacy Streamlit development surface is still available with:
 just ui
 ```
 
+The maintained [API v2 capability guide](docs/api-v2.md) lists every route,
+request and response shape, persistence behavior, and example flow.
+
 That Streamlit surface is for maintaining the legacy app; it is not the
 production UI bundled with the standalone CLI.
 

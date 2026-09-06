@@ -41,15 +41,40 @@ sessions/turns, stored artifacts/evidence, and evaluations explicitly attached
 to executions. The explicit `store=SQLiteExecutionStore(path)` or
 `--mcp-pal-results-db PATH` selection is required; otherwise SDK storage is in
 memory. It does not persist pytest item outcomes, ordinary Python assertions,
-or matrix/trial pass-rate summaries. Execution outcome, MCP activity health,
+or matrix/trial summary rows. Use `store.aggregate_evaluations(...)` for
+pass-rate summaries. Execution outcome, MCP activity health,
 and evaluation/test verdict are separate; `completed` alone does not mean
 passed.
 
-An async LLM judge belongs inside the evaluator callback and returns an
-`EvaluationDecision` (with redacted source details); it is not a separate
-post-evaluator layer. Chained direct calls share one client execution, agent
-evaluations can use `turn_id`, and matrix trials carry matrix/cell/trial
-metadata.
+MCP Pal has no built-in LLM judge. An SDK user may put an LLM call inside a
+sync or async evaluator callback and return an `EvaluationDecision` (with
+redacted source details); it is not a separate post-evaluator layer. Chained
+direct calls share one client execution, agent evaluations can use `turn_id`,
+and matrix trials carry matrix/cell/trial metadata. API v2 only reads the
+saved result and provenance; it does not run the callback.
+
+For a user-supplied LLM evaluator, the client and credentials stay in your
+application:
+
+```python
+from mcp_pal import EvaluationDecision, EvaluationProvenance, EvaluationStatus
+
+def answer_quality_with_llm(context):
+    verdict = my_llm_client.score(context.subject)  # your client and key
+    return EvaluationDecision(
+        status=EvaluationStatus.PASSED if verdict.ok else EvaluationStatus.FAILED,
+        score=verdict.score, rationale=verdict.reason,
+        provenance=EvaluationProvenance(kind="user_llm", provider="acme", model="judge-1"),
+    )
+
+kit.register_evaluator("project.answer-quality.llm.v1", answer_quality_with_llm)
+kit.evaluate(report, "project.answer-quality.llm.v1")
+```
+
+With SQLite selected, MCP Pal persists the returned result and provenance,
+not the client, key, prompt, or hidden LLM state. Keep credentials out of
+rationale and metadata. API v2 later groups that saved output and provenance;
+it never calls the LLM.
 
 ## Streamable HTTP: deployed endpoint
 

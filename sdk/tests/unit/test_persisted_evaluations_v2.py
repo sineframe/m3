@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timezone
 
 from mcp_pal import MCPTestKit
+from mcp_pal import EvaluationAggregateQuery
 from mcp_pal.evaluations import EvaluationRunner
 from mcp_pal.storage.sqlite import SQLiteExecutionStore
 from mcp_pal.types import (
@@ -82,6 +83,10 @@ def test_existing_evaluation_schema_is_migrated_before_indexes(tmp_path) -> None
     columns = {row[1] for row in connection.execute("PRAGMA table_info(v2_evaluations)")}
     connection.close()
     assert {"evaluator_name", "status", "score", "run_id"} <= columns
+    connection = sqlite3.connect(database)
+    execution_columns = {row[1] for row in connection.execute("PRAGMA table_info(v2_executions)")}
+    connection.close()
+    assert "deleted_at" in execution_columns
 
 
 def test_legacy_evaluation_row_is_backfilled_and_malformed_row_is_skipped(tmp_path) -> None:
@@ -118,6 +123,8 @@ def test_legacy_evaluation_row_is_backfilled_and_malformed_row_is_skipped(tmp_pa
         assert records[0].run_id.root == "legacy-run"
         assert records[0].subject_digest is not None
         assert "answer" not in repr(reopened.evaluation_json(execution_id)[0])
+        aggregate = reopened.aggregate_evaluations(EvaluationAggregateQuery(group_by=("evaluator",), filters={"evaluator": "legacy.v1"}))
+        assert aggregate.totals.trial_count == 1
     finally:
         reopened.close()
 
@@ -173,8 +180,8 @@ def test_builtins_use_redacted_mapping_view() -> None:
     assert runner.evaluate(result.direct_result, "mcp_pal.tool_call.succeeded.v1").status is EvaluationStatus.PASSED
 
 
-def test_async_fake_llm_judge_uses_structured_decision_without_network() -> None:
-    async def judge(context):
+def test_async_user_llm_evaluator_uses_structured_decision_without_network() -> None:
+    async def evaluate_with_llm(context):
         assert context.subject == {"answer": "correct"}
         return EvaluationDecision(
             status=EvaluationStatus.PASSED,
@@ -185,8 +192,8 @@ def test_async_fake_llm_judge_uses_structured_decision_without_network() -> None
 
     async def run():
         runner = EvaluationRunner()
-        runner.register("project.llm-judge.v1", judge)
-        return await runner.evaluate_async({"answer": "correct"}, "project.llm-judge.v1")
+        runner.register("project.user-llm-evaluator.v1", evaluate_with_llm)
+        return await runner.evaluate_async({"answer": "correct"}, "project.user-llm-evaluator.v1")
 
     result = asyncio.run(run())
     assert result.status is EvaluationStatus.PASSED

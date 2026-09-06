@@ -709,7 +709,7 @@ def create_viewer_app(
         v2_kit=v2_kit,
         v2_embedded_worker=False,
     )
-    allowed_post_paths = frozenset({"/api/v2/evidence/read"})
+    allowed_post_paths = frozenset({"/api/v2/evidence/read", "/api/v2/evaluations/aggregate"})
 
     @application.middleware("http")
     async def enforce_viewer_read_only(

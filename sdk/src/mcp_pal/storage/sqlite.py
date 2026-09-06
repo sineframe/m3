@@ -74,6 +74,7 @@ from ..types import (
     TurnResult,
     TurnSnapshot,
 )
+from ..aggregations import EvaluationAggregateQuery, EvaluationAggregateReport, aggregate_evaluations
 from .blobs import FilesystemBlobStore
 from .ephemeral import (
     ArtifactNotFound,
@@ -490,6 +491,7 @@ class _SqliteBase:
                 # local to the store so old SDK databases remain readable.
                 for table, column, definition in (
                     ("v2_executions", "run_id", "TEXT"),
+                    ("v2_executions", "deleted_at", "TEXT"),
                     ("v2_evaluations", "evaluator_name", "TEXT"),
                     ("v2_evaluations", "status", "TEXT"),
                     ("v2_evaluations", "score", "REAL"),
@@ -500,6 +502,8 @@ class _SqliteBase:
                         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
                 connection.execute("CREATE INDEX IF NOT EXISTS v2_evaluations_execution_turn ON v2_evaluations(execution_id, turn_id, created_at, id)")
                 connection.execute("CREATE INDEX IF NOT EXISTS v2_evaluations_run_evaluator ON v2_evaluations(run_id, evaluator_name, created_at, id)")
+                connection.execute("CREATE INDEX IF NOT EXISTS v2_evaluations_evaluator ON v2_evaluations(evaluator_name, created_at, id)")
+                connection.execute("CREATE INDEX IF NOT EXISTS v2_executions_created_at ON v2_executions(created_at, id)")
                 migrate = getattr(self, "_migrate_legacy_evaluations", None)
                 if callable(migrate):
                     migrate(connection)
@@ -1534,6 +1538,7 @@ class SQLiteExecutionStore(_SqliteBase):
             "context": {
                 "execution_id": context.get("execution_id") or _execution_key(execution_id),
                 "turn_id": context.get("turn_id") or (str(turn_id.root if isinstance(turn_id, TurnId) else turn_id) if turn_id else None),
+                "case_id": context.get("case_id") or value.get("case_id"),
                 "goal": context.get("goal"),
                 "artifacts": context.get("artifacts", []),
                 "metadata": context.get("metadata", {}),
@@ -1615,6 +1620,7 @@ class SQLiteExecutionStore(_SqliteBase):
             projected = dict(value)
             projected["execution_id"] = _execution_key(execution_id)
             projected["turn_id"] = context.get("turn_id")
+            projected["case_id"] = context.get("case_id") or projected.get("case_id")
             projected["goal"] = context.get("goal")
             projected["metadata"] = context.get("metadata", {})
             projected.pop("context", None)
@@ -1626,6 +1632,63 @@ class SQLiteExecutionStore(_SqliteBase):
                 continue
 
         return tuple(records)
+
+    def aggregate_evaluations(self, query: EvaluationAggregateQuery) -> EvaluationAggregateReport:
+        """Calculate summaries from persisted evaluations and execution traces."""
+        if not isinstance(query, EvaluationAggregateQuery):
+            query = EvaluationAggregateQuery.model_validate(query)
+        where = ["x.deleted_at IS NULL"]
+        params: list[Any] = []
+        if query.start is not None:
+            where.append("x.created_at >= ?")
+            params.append(_iso(query.start.astimezone(timezone.utc)))
+        if query.to is not None:
+            where.append("x.created_at < ?")
+            params.append(_iso(query.to.astimezone(timezone.utc)))
+        for label, column in (("evaluator", "e.evaluator_name"), ("run_id", "COALESCE(e.run_id, x.run_id)")):
+            values = query.filters.get(label)
+            if values:
+                placeholders = ",".join("?" for _ in values)
+                where.append(f"{column} IN ({placeholders})")
+                params.extend(str(value) for value in values)
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT e.execution_id,e.result_json,x.snapshot_json,x.specification_json "
+                "FROM v2_evaluations e JOIN v2_executions x ON x.id=e.execution_id WHERE " + " AND ".join(where) + " ORDER BY x.created_at,e.created_at,e.id",
+                params,
+            ).fetchall()
+        records: list[PersistedEvaluationRecord] = []
+        snapshots: dict[str, ExecutionSnapshot] = {}
+        specifications: dict[str, ExecutionSpec] = {}
+        traces: dict[str, TraceView] = {}
+        loaded_executions: set[str] = set()
+        attempted_traces: set[str] = set()
+        for row in rows:
+            execution_id = str(row[0])
+            try:
+                if execution_id not in loaded_executions:
+                    loaded_executions.add(execution_id)
+                    snapshots[execution_id] = ExecutionSnapshot.model_validate(_loads(row[2]))
+                    if row[3] is not None:
+                        specifications[execution_id] = TypeAdapter(ExecutionSpec).validate_python(_loads(row[3]))
+                value = _loads(row[1], {})
+                raw_context = value.get("context") if isinstance(value, Mapping) else None
+                context: Mapping[str, Any] = raw_context if isinstance(raw_context, Mapping) else {}
+                projected = dict(value) if isinstance(value, Mapping) else {}
+                projected.update({"execution_id": execution_id, "turn_id": context.get("turn_id"), "case_id": context.get("case_id") or projected.get("case_id"), "goal": context.get("goal"), "metadata": context.get("metadata", {})})
+                projected.pop("context", None)
+                records.append(PersistedEvaluationRecord.model_validate(projected))
+            except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
+                continue
+            if execution_id not in attempted_traces:
+                attempted_traces.add(execution_id)
+                try:
+                    trace = self.get_trace_view(execution_id)
+                except (TraceUnavailable, TraceNotFinalized, StorageError, ValueError):
+                    trace = None
+                if trace is not None:
+                    traces[execution_id] = trace
+        return aggregate_evaluations(query, records, snapshots=snapshots, specifications=specifications, traces=traces)
 
     persisted_evaluations = evaluations
 

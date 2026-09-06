@@ -210,9 +210,9 @@ and traces, sessions and turns, persisted artifacts/raw-evidence references,
 and evaluations explicitly attached to an execution. Use
 `MCPTestKit(store=SQLiteExecutionStore(path))` or pytest's
 `--mcp-pal-results-db PATH` to select it; no-store SDK use remains in memory.
-Pytest item outcomes, ordinary Python assertion results, and aggregate
-matrix/trial trends are not persisted and must not be inferred from a merely
-completed execution.
+Pytest item outcomes and ordinary Python assertion results are not persisted.
+Use `store.aggregate_evaluations(...)` for matrix/trial trends; do not infer a
+pass from a merely completed execution.
 
 ## Run one test per server-owned tool
 

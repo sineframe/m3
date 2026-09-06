@@ -91,7 +91,9 @@ Every cell has stable matrix metadata such as its case ID, mode, servers,
 harness, tool, and trial. Normal one-turn and multi-turn execution traces can
 be persisted through the existing SQLite execution store; a multi-turn matrix
 session remains one execution containing all turns. Pytest pass/fail verdicts
-and matrix summaries are intentionally not persisted yet.
+and matrix summary rows are not persisted. Use
+`store.aggregate_evaluations(...)` to calculate matrix and run summaries from
+saved evaluations.
 
 ## Tool errors and exceptions
 
@@ -214,7 +216,8 @@ The SQLite execution store currently persists:
 
 It does not currently persist pytest collection/session details, pytest item
 pass/fail/skip outcomes, ordinary Python assertion results, or aggregate
-matrix/trial pass rates. Evaluations created through `kit.evaluate()` are
+matrix/trial summary rows. Use `store.aggregate_evaluations(...)` for rates.
+Evaluations created through `kit.evaluate()` are
 saved when the kit explicitly receives `store=SQLiteExecutionStore(path)`
 or pytest is run with `--mcp-pal-results-db PATH`; otherwise they remain in
 memory.

@@ -520,7 +520,30 @@ executable example also covers sync and async helpers, SQLite reopen, typed
 failure inspection, and this two-turn chain. Normal execution specifications,
 events, turns, traces, and explicitly attached evaluations persist through
 SQLite; pytest verdicts and matrix
-summaries do not.
+summary rows are not saved; use `store.aggregate_evaluations(...)` to calculate
+pass rates from the saved evaluations.
+
+### Aggregate trials
+
+Each execution is one trial. Matrix repetitions share a stable case ID while
+their trial IDs remain different. Query by run for run trends, or by time and
+evaluator for a calendar chart:
+
+```python
+from mcp_pal import EvaluationAggregateQuery
+
+trend = store.aggregate_evaluations(EvaluationAggregateQuery(
+    group_by=("run_id", "evaluator"),
+    filters={"evaluator": "mcp_pal.output.has_text.v1"},
+))
+for group in trend.groups:
+    print(group.key, group.values.pass_rate, group.values.trial_count)
+```
+
+Use `case_id` to compare matrix cells and `trial_id` to open the execution
+report behind one chart point. Deterministic and user-supplied LLM evaluators
+must be queried separately; judge labels come from saved evaluator provenance.
+API v2 does not run either evaluator.
 
 ### External provider matrices
 

@@ -24,6 +24,8 @@ from mcp_pal import (
     RawEvidence,
     RawEvidenceRef,
     TraceView,
+    EvaluationAggregateQuery,
+    EvaluationAggregateReport,
 )
 from mcp_pal import RawEvidenceIntegrityError, RawEvidenceUnavailable, TraceUnavailable
 
@@ -69,6 +71,7 @@ class AppExecutionStore(Protocol):
     def request_cancel(self, execution_id: ExecutionId | str, reason: str | None = None) -> bool: ...
 
     def delete_execution(self, execution_id: ExecutionId | str) -> None: ...
+    def aggregate_evaluations(self, query: EvaluationAggregateQuery) -> EvaluationAggregateReport: ...
 
 
 class AppExecutionKit(Protocol):
@@ -279,6 +282,15 @@ class AppExecutionService:
             raise AppExecutionError(code, message) from exc
         self._active_handles.pop(identifier.root, None)
         return identifier
+
+    def aggregate(self, query: EvaluationAggregateQuery) -> EvaluationAggregateReport:
+        self._ensure_open()
+        try:
+            return self.store.aggregate_evaluations(query)
+        except (TypeError, ValueError) as exc:
+            raise AppExecutionError("invalid_evaluation_aggregate_query", "evaluation aggregate query is invalid") from exc
+        except StorageError as exc:
+            raise AppExecutionError("evaluation_data_unavailable", "evaluation data is unavailable") from exc
 
     def close(self) -> None:
         if self._closed:

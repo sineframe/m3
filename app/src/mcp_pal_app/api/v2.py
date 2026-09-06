@@ -25,6 +25,8 @@ from mcp_pal import (
     RawEvidence,
     RawEvidenceRef,
     TraceView,
+    EvaluationAggregateQuery,
+    EvaluationAggregateReport,
 )
 from mcp_pal_app.services.execution_service import AppExecutionError, AppExecutionService
 
@@ -90,6 +92,11 @@ class V2EvidenceEnvelope(BaseModel):
     evidence: RawEvidence
 
 
+class V2EvaluationAggregateEnvelope(BaseModel):
+    version: Literal["v2"] = "v2"
+    aggregate: EvaluationAggregateReport
+
+
 class V2DeletedEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     execution_id: ExecutionId
@@ -114,7 +121,7 @@ _SAFE_VALIDATION_LOCATIONS = frozenset(
         "tool_policy", "permission_policy", "elicitation_policy", "sampling_policy",
         "filesystem_policy", "terminal_policy", "metadata", "validate_schemas",
         "reference", "max_bytes", "limit", "offset", "lifecycle", "outcome",
-        "after_sequence", "event_limit", "artifact_limit", "execution_id",
+        "after_sequence", "event_limit", "artifact_limit", "execution_id", "from", "to", "group_by", "filters", "evaluator", "trial_id", "case_id", "transport", "model", "time",
     }
 )
 
@@ -153,6 +160,8 @@ def _service_fault(error: AppExecutionError) -> V2Fault:
         "cancellation_conflict": 409,
         "execution_active": 409,
         "execution_conflict": 409,
+        "invalid_evaluation_aggregate_query": 422,
+        "evaluation_data_unavailable": 500,
     }
     return V2Fault(status_by_code.get(error.code, 500), error.code, error.message)
 
@@ -202,8 +211,13 @@ def install_v2(
         spec_value = payload.get("spec") if isinstance(payload, Mapping) else None
         spec_is_object = isinstance(spec_value, Mapping)
         has_spec_error = any(item["loc"] == "body.spec" or str(item["loc"]).startswith("body.spec.") for item in fields)
-        code = "invalid_execution_spec" if spec_is_object and has_spec_error else "invalid_request"
-        return JSONResponse(status_code=422, content=V2ErrorEnvelope(error=V2Error(code=code, message="execution spec is invalid" if code == "invalid_execution_spec" else "request validation failed", details={"fields": cast(JsonValue, fields)})).model_dump(mode="json"))
+        if request.url.path == "/api/v2/evaluations/aggregate":
+            code = "invalid_evaluation_aggregate_query"
+            message = "evaluation aggregate query is invalid"
+        else:
+            code = "invalid_execution_spec" if spec_is_object and has_spec_error else "invalid_request"
+            message = "execution spec is invalid" if code == "invalid_execution_spec" else "request validation failed"
+        return JSONResponse(status_code=422, content=V2ErrorEnvelope(error=V2Error(code=code, message=message, details={"fields": cast(JsonValue, fields)})).model_dump(mode="json"))
 
     application.add_exception_handler(RequestValidationError, validation_handler)
     router = APIRouter(prefix="/api/v2/executions", tags=["executions-v2"])
@@ -242,6 +256,13 @@ def install_v2(
         return V2ExecutionReportEnvelope.from_values(report.snapshot.execution_id, spec, report, trace)
 
     application.include_router(router)
+    aggregate_router = APIRouter(prefix="/api/v2/evaluations", tags=["evaluations-v2"])
+
+    @aggregate_router.post("/aggregate", response_model=V2EvaluationAggregateEnvelope)
+    def aggregate_evaluations(body: EvaluationAggregateQuery, service: AppExecutionService = Depends(get_service)) -> V2EvaluationAggregateEnvelope:
+        return V2EvaluationAggregateEnvelope(aggregate=service.aggregate(body))
+
+    application.include_router(aggregate_router)
     evidence_router = APIRouter(prefix="/api/v2/evidence", tags=["evidence-v2"])
 
     @evidence_router.post("/read", response_model=V2EvidenceEnvelope)

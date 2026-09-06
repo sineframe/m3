@@ -11,6 +11,7 @@ from mcp_pal import (
     ClaudeCode,
     ExecutionPage,
     ExecutionSpec,
+    ExecutionSnapshot,
     EvaluationId,
     EvaluationProvenance,
     EvaluationResult,
@@ -42,6 +43,8 @@ def _payload(run_id=None):
 
 
 def _slow_payload():
+    # Keep the child alive well beyond the cancellation request so scheduling
+    # cannot make this fixture finish before cancellation is exercised.
     spec = DirectExecutionSpec(
         servers=(
             ServerBinding(
@@ -249,6 +252,72 @@ def test_v2_accepts_every_serializable_execution_spec_variant(tmp_path):
     finally:
         kit.close()
         store.close()
+
+
+def test_v2_evaluation_aggregate_endpoint(tmp_path):
+    database = Path(tmp_path).resolve() / "aggregate-api.sqlite"
+    store = SQLiteExecutionStore(database)
+    kit = MCPTestKit(store=store, embedded_worker=False)
+    try:
+        execution_id = "aggregate-execution"
+        store.create(ExecutionSnapshot(execution_id=execution_id, run_id="aggregate-run"))
+        store.save_evaluation(execution_id, EvaluationResult(
+            evaluation_id=EvaluationId("aggregate-evaluation"), name="quality.v1",
+            status=EvaluationStatus.PASSED,
+            context={"execution_id": execution_id, "case_id": "case-1"},
+        ))
+        app = create_app(Settings(database_path=str(Path(tmp_path).resolve() / "unused.sqlite")), v2_store=store, v2_kit=kit)
+        with TestClient(app) as client:
+            response = client.post("/api/v2/evaluations/aggregate", json={
+                "group_by": ["run_id", "case_id", "evaluator"],
+                "filters": {"evaluator": "quality.v1"},
+            })
+            assert response.status_code == 200
+            body = response.json()
+            assert body["version"] == "v2"
+            assert body["aggregate"]["groups"][0]["values"]["pass_rate"] == 1
+            assert body["aggregate"]["groups"][0]["key"]["case_id"] == "case-1"
+    finally:
+        kit.close()
+        store.close()
+
+
+def test_v2_evaluation_aggregate_validation_and_openapi(tmp_path):
+    database = Path(tmp_path).resolve() / "aggregate-validation.sqlite"
+    with TestClient(create_app(Settings(database_path=str(database)))) as client:
+        invalid = client.post("/api/v2/evaluations/aggregate", json={"group_by": ["not-a-label"]})
+        assert invalid.status_code == 422
+        assert invalid.json()["error"]["code"] == "invalid_evaluation_aggregate_query"
+        for payload in (
+            {"group_by": ["run_id"]},
+            {"group_by": ["run_id"], "filters": {"evaluator": ["quality.v1", "judge.v1"]}},
+        ):
+            mixed = client.post("/api/v2/evaluations/aggregate", json=payload)
+            assert mixed.status_code == 422
+            assert mixed.json()["error"]["code"] == "invalid_evaluation_aggregate_query"
+        schema = client.get("/openapi.json").json()
+        operation = schema["paths"]["/api/v2/evaluations/aggregate"]["post"]
+        assert operation["responses"]["200"]["content"]["application/json"]
+        assert "EvaluationAggregateReport" in schema["components"]["schemas"]
+
+
+def test_v2_capability_doc_lists_every_route(tmp_path):
+    source = Path(__file__).parents[2] / "docs" / "api-v2.md"
+    text = source.read_text()
+    import re
+    documented = set(re.findall(r"`(GET|POST|DELETE|PUT|PATCH) (/api/v2/[^`]+)`", text))
+    with TestClient(create_app(Settings(database_path=str(tmp_path / "unused-doc-test.sqlite")))) as client:
+        schema = client.get("/openapi.json").json()
+    actual = {(method.upper(), path) for path, operations in schema["paths"].items() if path.startswith("/api/v2/") for method in operations if method.upper() in {"GET", "POST", "DELETE", "PUT", "PATCH"}}
+    assert actual <= documented
+    assert documented <= actual
+    prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    backticked = set(re.findall(r"`([^`]+)`", prose))
+    assert {
+        "DirectExecutionSpec", "AgentExecutionSpec", "ExecutionSnapshot",
+        "events", "next_after_sequence", "evaluations", "TraceView",
+        "Observation", "max_bytes", "group_by", "filters", "health",
+    } <= backticked
 
 
 def test_v2_validation_codes_are_shape_stable_and_value_free(tmp_path):

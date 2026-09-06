@@ -1,4 +1,4 @@
-"""Deterministic evaluator registration and persistence contracts."""
+"""Evaluator callback registration and persistence contracts."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ class RequiredEvaluationError(AssertionError):
 
 
 class Evaluator(_Protocol):
-    """A deterministic evaluator over an immutable context."""
+    """An evaluator callback over an immutable context."""
 
     def __call__(self, context: _EvaluationContext) -> EvaluationVerdict: ...
 
@@ -66,7 +66,7 @@ class EvaluatorRegistration:
 
 
 class EvaluatorRegistry:
-    """Explicit runtime registry for deterministic evaluator callables."""
+    """Explicit runtime registry for evaluator callables."""
 
     def __init__(self) -> None:
         self._evaluators: dict[str, _Any] = {}
@@ -260,6 +260,7 @@ def _subject_context(
     config: _RedactionConfig,
     execution_id: _ExecutionId | str | None,
     turn_id: _TurnId | str | None,
+    case_id: str | None,
 ) -> _EvaluationContext:
     declared_kind = getattr(subject, "kind", None)
     if not isinstance(declared_kind, str) or not declared_kind:
@@ -284,6 +285,7 @@ def _subject_context(
             "subject": subject,
             "subject_kind": declared_kind,
             "execution_id": resolved_execution_id,
+            "case_id": case_id,
             "turn_id": resolved_turn,
             "goal": goal,
             "trace": trace,
@@ -329,6 +331,7 @@ class EvaluationRunner:
         evaluation_id: _EvaluationId | str | None = None,
         execution_id: _ExecutionId | str | None = None,
         turn_id: _TurnId | str | None = None,
+        case_id: str | None = None,
     ) -> _EvaluationResult:
         if isinstance(evaluator, str):
             name = evaluator
@@ -351,6 +354,7 @@ class EvaluationRunner:
             config=self.redaction_config,
             execution_id=execution_id,
             turn_id=turn_id,
+            case_id=case_id,
         )
         identifier = evaluation_id if isinstance(evaluation_id, _EvaluationId) else _EvaluationId(evaluation_id or f"evaluation-{_uuid4().hex}")
         message: str | None = None
@@ -407,6 +411,7 @@ class EvaluationRunner:
         evaluation_id: _EvaluationId | str | None = None,
         execution_id: _ExecutionId | str | None = None,
         turn_id: _TurnId | str | None = None,
+        case_id: str | None = None,
     ) -> _EvaluationResult:
         if isinstance(evaluator, str):
             name = evaluator
@@ -429,6 +434,7 @@ class EvaluationRunner:
             config=self.redaction_config,
             execution_id=execution_id,
             turn_id=turn_id,
+            case_id=case_id,
         )
         identifier = evaluation_id if isinstance(evaluation_id, _EvaluationId) else _EvaluationId(evaluation_id or f"evaluation-{_uuid4().hex}")
         message: str | None = None

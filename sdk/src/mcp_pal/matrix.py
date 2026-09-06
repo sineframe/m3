@@ -197,6 +197,7 @@ class ToolMatrixCase(_FrozenModel):
     ) -> _DirectExecutionSpec:
         alias = self.server.name
         return _DirectExecutionSpec(
+            case_id=f"{self.matrix_id}:{self.cell_id or self.id}",
             servers=(_ServerBinding(server=self.server.server, alias=alias),),
             operation=_CallToolOperation(
                 server=alias,
@@ -417,6 +418,7 @@ class HarnessMatrixCase(_FrozenModel):
         metadata: _Mapping[str, _Scalar] | None,
     ) -> _AgentExecutionSpec:
         return _AgentExecutionSpec(
+            case_id=f"{self.matrix_id}:{self.cell_id or self.id}",
             servers=self._bindings(),
             harness=self.harness.harness,
             message=self._message(message),
@@ -432,6 +434,7 @@ class HarnessMatrixCase(_FrozenModel):
         metadata: _Mapping[str, _Scalar] | None,
     ) -> _AgentExecutionSpec:
         return _AgentExecutionSpec(
+            case_id=f"{self.matrix_id}:{self.cell_id or self.id}",
             servers=self._bindings(),
             harness=self.harness.harness,
             message=None,

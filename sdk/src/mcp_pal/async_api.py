@@ -905,7 +905,7 @@ class AsyncMCPTestKit:
         return ProbeReport(readiness=_Readiness(ready=True, capabilities=capabilities), results=results)
 
     def register_evaluator(self, name: str, evaluator: _EvaluatorCallable | _AsyncEvaluator) -> None:
-        """Register a deterministic evaluator by its serializable name."""
+        """Register an evaluator callback by its serializable name."""
 
         self._ensure_open()
         self._evaluations.register(name, evaluator)
@@ -922,8 +922,9 @@ class AsyncMCPTestKit:
         metadata: _Mapping[str, str | int | float | bool | None] | None = None,
         execution_id: _Any = None,
         turn_id: _Any = None,
+        case_id: str | None = None,
     ) -> _EvaluationResult:
-        """Run and persist one deterministic evaluation without changing lifecycle."""
+        """Run and persist one evaluation without changing lifecycle."""
 
         self._ensure_open()
         return await self._evaluations.evaluate_async(
@@ -936,6 +937,7 @@ class AsyncMCPTestKit:
             metadata=metadata,
             execution_id=execution_id,
             turn_id=turn_id,
+            case_id=case_id,
         )
 
     def evaluation_results(self) -> tuple[_EvaluationResult, ...]:
