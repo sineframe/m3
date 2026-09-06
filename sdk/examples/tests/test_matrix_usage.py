@@ -189,6 +189,38 @@ def test_harness_matrix_trials_are_independent(example_server: StdioServer) -> N
     assert results[0].snapshot.execution_id != results[1].snapshot.execution_id
 
 
+def test_harness_matrix_explicit_id_is_shared_by_trial_cases(example_server: StdioServer) -> None:
+    server = ServerCase(
+        name="example-mcp", server=example_server,
+        tools=(ToolCase(name="shipping_quote"),),
+    )
+    matrix = HarnessMatrix.each_tool(
+        id="shipping-quality", servers=(server,), harnesses=(_harness(),), trials=2,
+    )
+    cases = matrix.cases()
+    assert matrix.id == "shipping-quality"
+    assert {case.matrix_id for case in cases} == {"shipping-quality"}
+    assert [case.trial for case in cases] == [1, 2]
+    assert [case.trial_count for case in cases] == [2, 2]
+
+
+def test_tool_matrix_explicit_id_and_trials_are_stable(example_server: StdioServer) -> None:
+    matrix = ToolMatrix(
+        id="tool-quality", trials=2,
+        servers=(ServerCase(
+            name="example-mcp", server=example_server,
+            tools=(ToolCase(name="shipping_quote"),),
+        ),),
+    )
+    cases = matrix.cases()
+    assert matrix.id == "tool-quality"
+    assert [case.id for case in cases] == [
+        "example-mcp/shipping_quote/trial-1",
+        "example-mcp/shipping_quote/trial-2",
+    ]
+    assert {case.matrix_id for case in cases} == {"tool-quality"}
+
+
 @pytest.mark.asyncio
 async def test_tool_matrix_supports_the_async_helper(example_server: StdioServer) -> None:
     server = ServerCase(

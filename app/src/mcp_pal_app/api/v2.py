@@ -107,7 +107,7 @@ class V2Fault(Exception):
 
 _SAFE_VALIDATION_LOCATIONS = frozenset(
     {
-        "body", "query", "path", "spec", "kind", "direct", "agent",
+        "body", "query", "path", "spec", "run_id", "kind", "direct", "agent",
         "servers", "server", "profile", "alias", "required", "operation",
         "harness", "harness_profile", "message", "protocol", "timeout_seconds",
         "goal", "evaluations", "artifact_policy", "declared_artifacts", "workspace",

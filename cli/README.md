@@ -144,7 +144,19 @@ mcp-pal test --python .venv/bin/python -- -q --maxfail=1
 ```
 
 Everything after `--` is passed to pytest unchanged. The CLI adds its storage
-plugin and results database options itself.
+plugin and `--mcp-pal-results-db` option itself. In other words, SQLite
+execution persistence is automatic whenever tests run through `mcp-pal test`;
+tests run directly with pytest use in-memory SDK storage unless they pass an
+explicit `SQLiteExecutionStore` or install the plugin and flag themselves.
+
+The database records SDK executions, specifications, recorded events and
+traces, sessions/turns, saved artifacts/evidence, and evaluations attached
+to those executions. Direct SDK evaluations are saved only with
+`store=SQLiteExecutionStore(path)`; `mcp-pal test` selects the equivalent
+store through `--mcp-pal-results-db`. In-memory SDK storage is temporary.
+Pytest item outcomes, ordinary assertion results, and aggregate matrix/trial
+trends are not saved. A completed execution is a saved run record, not by
+itself a saved test-pass result.
 
 ### `--ui`
 

@@ -8,6 +8,8 @@ called.  Pytest integration remains an optional boundary around ``cases()``.
 from __future__ import annotations
 
 import keyword as _keyword
+import hashlib as _hashlib
+import json as _json
 from collections.abc import Iterable as _Iterable, Mapping as _Mapping
 from math import isfinite as _isfinite
 from typing import (
@@ -164,6 +166,10 @@ class ToolMatrixCase(_FrozenModel):
     id: str = _Field(min_length=1, max_length=1024)
     server: ServerCase
     tool: ToolCase
+    matrix_id: str | None = None
+    cell_id: str | None = None
+    trial: int = _Field(default=1, strict=True, ge=1)
+    trial_count: int = _Field(default=1, strict=True, ge=1)
 
     def _metadata(
         self,
@@ -175,6 +181,10 @@ class ToolMatrixCase(_FrozenModel):
             "mcp_pal.matrix.mode": "tool",
             "mcp_pal.matrix.servers": self.server.name,
             "mcp_pal.matrix.tool": self.tool.name,
+            "mcp_pal.matrix.matrix_id": self.matrix_id,
+            "mcp_pal.matrix.cell_id": self.cell_id or self.id,
+            "mcp_pal.matrix.trial": self.trial,
+            "mcp_pal.matrix.trial_count": self.trial_count,
         }
         return _merge_metadata(values, metadata)
 
@@ -261,6 +271,9 @@ class HarnessMatrixCase(_FrozenModel):
     harness: HarnessCase
     servers: tuple[ServerCase, ...]
     trial: int = _Field(strict=True, ge=1)
+    matrix_id: str | None = None
+    cell_id: str | None = None
+    trial_count: int = _Field(default=1, strict=True, ge=1)
     selected_tool_id: str | None = _Field(default=None, min_length=1, max_length=256)
 
     @_model_validator(mode="after")
@@ -306,6 +319,9 @@ class HarnessMatrixCase(_FrozenModel):
         servers: tuple[ServerCase, ...],
         trial: int,
         tool: ToolCase | None = None,
+        matrix_id: str | None = None,
+        cell_id: str | None = None,
+        trial_count: int = 1,
     ) -> "HarnessMatrixCase":
         return cls(
             id=id,
@@ -314,6 +330,9 @@ class HarnessMatrixCase(_FrozenModel):
             servers=servers,
             trial=trial,
             selected_tool_id=_tool_id(tool) if tool is not None else None,
+            matrix_id=matrix_id,
+            cell_id=cell_id,
+            trial_count=trial_count,
         )
 
     def _metadata(
@@ -327,6 +346,9 @@ class HarnessMatrixCase(_FrozenModel):
             "mcp_pal.matrix.servers": ",".join(server.name for server in self.servers),
             "mcp_pal.matrix.harness": self.harness.name,
             "mcp_pal.matrix.trial": self.trial,
+            "mcp_pal.matrix.matrix_id": self.matrix_id,
+            "mcp_pal.matrix.cell_id": self.cell_id or self.id,
+            "mcp_pal.matrix.trial_count": self.trial_count,
         }
         if self.mode == "each_tool":
             values["mcp_pal.matrix.tool"] = self.tool.name
@@ -547,14 +569,29 @@ def _ensure_unique_ids(ids: _Iterable[str]) -> None:
         seen.add(case_id)
 
 
+def _derived_matrix_id(value: object) -> str:
+    """Derive a stable identity from the logical matrix definition."""
+    encoded = _json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+    return "matrix-" + _hashlib.sha256(encoded).hexdigest()[:24]
+
+
 class ToolMatrix(_FrozenModel):
     """Expand server-owned deterministic tool cases in declared order."""
 
     servers: tuple[ServerCase, ...]
+    id: str | None = _Field(default=None, min_length=1, max_length=256)
+    matrix_id: str | None = _Field(default=None, min_length=1, max_length=256)
+    trials: int = _Field(default=1, strict=True, ge=1)
 
     @_model_validator(mode="after")
     def _validate_matrix(self) -> "ToolMatrix":
         _validate_servers(self.servers)
+        _validate_trials(self.trials)
+        if self.id is not None and self.matrix_id is not None and self.id != self.matrix_id:
+            raise ValueError("matrix id and matrix_id must match")
+        resolved_id = self.matrix_id or self.id or _derived_matrix_id(self.model_dump(mode="json", exclude={"id", "matrix_id", "trials"}))
+        object.__setattr__(self, "matrix_id", resolved_id)
+        object.__setattr__(self, "id", resolved_id)
         _ensure_unique_ids(
             f"{server.name}/{_tool_id(tool)}"
             for server in self.servers
@@ -565,12 +602,17 @@ class ToolMatrix(_FrozenModel):
     def cases(self) -> tuple[ToolMatrixCase, ...]:
         return tuple(
             ToolMatrixCase(
-                id=f"{server.name}/{_tool_id(tool)}",
+                id=f"{server.name}/{_tool_id(tool)}" if self.trials == 1 else f"{server.name}/{_tool_id(tool)}/trial-{trial}",
                 server=server,
                 tool=tool,
+                matrix_id=self.matrix_id,
+                cell_id=f"{server.name}/{_tool_id(tool)}",
+                trial=trial,
+                trial_count=self.trials,
             )
             for server in self.servers
             for tool in server.tools
+            for trial in range(1, self.trials + 1)
         )
 
     def parametrize(self, argname: str = "case") -> "_pytest.MarkDecorator":
@@ -586,12 +628,19 @@ class HarnessMatrix(_FrozenModel):
     servers: tuple[ServerCase, ...]
     harnesses: tuple[HarnessCase, ...]
     trials: int = _Field(strict=True, ge=1)
+    id: str | None = _Field(default=None, min_length=1, max_length=256)
+    matrix_id: str | None = _Field(default=None, min_length=1, max_length=256)
 
     @_model_validator(mode="after")
     def _validate_matrix(self) -> "HarnessMatrix":
         _validate_servers(self.servers)
         _validate_harnesses(self.harnesses)
         _validate_trials(self.trials)
+        if self.id is not None and self.matrix_id is not None and self.id != self.matrix_id:
+            raise ValueError("matrix id and matrix_id must match")
+        resolved_id = self.matrix_id or self.id or _derived_matrix_id(self.model_dump(mode="json", exclude={"id", "matrix_id", "trials"}))
+        object.__setattr__(self, "matrix_id", resolved_id)
+        object.__setattr__(self, "id", resolved_id)
         if self.mode == "all_servers" and any(
             isinstance(case.harness, _ClaudeCode) for case in self.harnesses
         ):
@@ -630,12 +679,14 @@ class HarnessMatrix(_FrozenModel):
         servers: _Iterable[ServerCase],
         harnesses: _Iterable[HarnessCase],
         trials: int = 1,
+        id: str | None = None,
     ) -> "HarnessMatrix":
         return cls(
             mode="each_server",
             servers=tuple(servers),
             harnesses=tuple(harnesses),
             trials=trials,
+            id=id,
         )
 
     @classmethod
@@ -645,12 +696,14 @@ class HarnessMatrix(_FrozenModel):
         servers: _Iterable[ServerCase],
         harnesses: _Iterable[HarnessCase],
         trials: int = 1,
+        id: str | None = None,
     ) -> "HarnessMatrix":
         return cls(
             mode="all_servers",
             servers=tuple(servers),
             harnesses=tuple(harnesses),
             trials=trials,
+            id=id,
         )
 
     @classmethod
@@ -660,12 +713,14 @@ class HarnessMatrix(_FrozenModel):
         servers: _Iterable[ServerCase],
         harnesses: _Iterable[HarnessCase],
         trials: int = 1,
+        id: str | None = None,
     ) -> "HarnessMatrix":
         return cls(
             mode="each_tool",
             servers=tuple(servers),
             harnesses=tuple(harnesses),
             trials=trials,
+            id=id,
         )
 
     def cases(self) -> tuple[HarnessMatrixCase, ...]:
@@ -677,6 +732,9 @@ class HarnessMatrix(_FrozenModel):
                     harness=harness,
                     servers=(server,),
                     trial=trial,
+                    matrix_id=self.matrix_id,
+                    cell_id=f"{server.name}/{harness.name}",
+                    trial_count=self.trials,
                 )
                 for server in self.servers
                 for harness in self.harnesses
@@ -691,6 +749,9 @@ class HarnessMatrix(_FrozenModel):
                     harness=harness,
                     servers=servers,
                     trial=trial,
+                    matrix_id=self.matrix_id,
+                    cell_id=f"all-servers/{harness.name}",
+                    trial_count=self.trials,
                 )
                 for harness in self.harnesses
                 for trial in range(1, self.trials + 1)
@@ -703,6 +764,9 @@ class HarnessMatrix(_FrozenModel):
                 servers=(server,),
                 trial=trial,
                 tool=tool,
+                matrix_id=self.matrix_id,
+                cell_id=f"{server.name}/{_tool_id(tool)}/{harness.name}",
+                trial_count=self.trials,
             )
             for server in self.servers
             for tool in server.tools

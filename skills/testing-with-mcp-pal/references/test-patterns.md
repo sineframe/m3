@@ -5,6 +5,52 @@ SDK, not the standalone CLI or UI. When CLI installation or project setup is
 part of the task, read [cli-runner.md](cli-runner.md). Prefer the target
 project's existing server fixture.
 
+## Choose persistence explicitly
+
+Direct SDK and pytest use keeps executions in memory unless storage is
+selected. When the test opens saved data again, install
+`mcp-pal[pytest,storage]` and pass a SQLite store:
+
+```python
+from mcp_pal import MCPTestKit
+from mcp_pal.storage import SQLiteExecutionStore
+
+store = SQLiteExecutionStore(".mcp-pal/executions.sqlite")
+with MCPTestKit(store=store, env={}) as kit:
+    result = kit.run(spec)
+execution_id = result.snapshot.execution_id
+store.close()
+
+reopened = SQLiteExecutionStore(".mcp-pal/executions.sqlite")
+view = reopened.get_trace_view(execution_id)
+reopened.close()
+```
+
+`mcp-pal test` selects SQLite automatically by loading the pytest plugin with
+`--mcp-pal-results-db`; direct pytest can opt into the same default-store
+behavior:
+
+```bash
+uv run pytest -p mcp_pal.pytest_plugin \
+  --mcp-pal-results-db .mcp-pal/executions.sqlite tests
+```
+
+An explicit `store=` takes precedence over the plugin default. Current SQLite
+storage saves execution specs/snapshots, recorded events/traces,
+sessions/turns, stored artifacts/evidence, and evaluations explicitly attached
+to executions. The explicit `store=SQLiteExecutionStore(path)` or
+`--mcp-pal-results-db PATH` selection is required; otherwise SDK storage is in
+memory. It does not persist pytest item outcomes, ordinary Python assertions,
+or matrix/trial pass-rate summaries. Execution outcome, MCP activity health,
+and evaluation/test verdict are separate; `completed` alone does not mean
+passed.
+
+An async LLM judge belongs inside the evaluator callback and returns an
+`EvaluationDecision` (with redacted source details); it is not a separate
+post-evaluator layer. Chained direct calls share one client execution, agent
+evaluations can use `turn_id`, and matrix trials carry matrix/cell/trial
+metadata.
+
 ## Streamable HTTP: deployed endpoint
 
 Use `StreamableHTTPServer` for one deployed MCP endpoint. This generic pattern

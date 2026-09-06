@@ -317,8 +317,8 @@ Complete setup, expectations, verification, and recording are in
 
 ## 14. Persist and reopen when needed
 
-Use SQLite only when traces must be reopened from durable storage; otherwise
-memory storage is the default:
+Use SQLite only when traces must be reopened from saved storage; otherwise
+direct SDK and pytest use keeps executions in memory by default:
 
 ```python
 store = SQLiteExecutionStore("traces.sqlite")
@@ -333,6 +333,26 @@ reopened.close()
 
 The close/reopen and public raw-evidence examples are in
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py).
+
+The standalone CLI enables the same storage automatically for every
+unconfigured kit used during its pytest process:
+
+```bash
+mcp-pal test --results-db .mcp-pal/executions.sqlite -- tests
+```
+
+For direct pytest, opt into that default-store behavior explicitly when it is
+more convenient than passing `store=` in test code:
+
+```bash
+pytest -p mcp_pal.pytest_plugin \
+  --mcp-pal-results-db .mcp-pal/executions.sqlite tests
+```
+
+This saved history contains executions, traces, sessions/turns, stored
+artifacts/evidence, and explicitly attached `kit.evaluate()` records. It does
+not contain pytest verdicts, Python assertion outcomes, or matrix/trial
+aggregate trends.
 
 ## 15. Run a matrix across servers and harnesses
 
@@ -498,7 +518,8 @@ pytest argument a custom name while preserving the case IDs. `trials=2` repeats
 every matrix cell as independent `/trial-1` and `/trial-2` cases. The
 executable example also covers sync and async helpers, SQLite reopen, typed
 failure inspection, and this two-turn chain. Normal execution specifications,
-events, turns, and traces persist through SQLite; pytest verdicts and matrix
+events, turns, traces, and explicitly attached evaluations persist through
+SQLite; pytest verdicts and matrix
 summaries do not.
 
 ### External provider matrices

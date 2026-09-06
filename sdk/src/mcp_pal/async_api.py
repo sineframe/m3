@@ -99,7 +99,7 @@ from .direct_trace import DirectTraceBridge as _DirectTraceBridge
 from .execution_runtime import AsyncExecutionController as _AsyncExecutionController, AsyncExecutionHandle
 from .execution_trace import ExecutionTraceRecorder as _ExecutionTraceRecorder
 from .storage import ExecutionStore as _ExecutionStore
-from ._default_store import make_default_store as _make_default_store
+from ._default_store import make_default_run_id as _make_default_run_id, make_default_store as _make_default_store
 from .storage import InMemoryExecutionStore as _InMemoryExecutionStore
 from .trace.redaction import RedactionConfig as _RedactionConfig
 from .types import ExecutionOutcome as _ExecutionOutcome
@@ -119,6 +119,7 @@ from .types import (
     ExecutionResult as _ExecutionResult,
     ExecutionSpec as _ExecutionSpec,
     ExecutionSnapshot as _ExecutionSnapshot,
+    RunId as _RunId,
     EvaluationResult as _EvaluationResult,
     Readiness as _Readiness,
     ServerBinding as _ServerBinding,
@@ -354,6 +355,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
         trace_bridge: _DirectTraceBridge | None = None,
         trace_owner: bool = True,
         workspace_root: str | None = None,
+        server_bindings: _Iterable[_Mapping[str, _Any]] = (),
     ) -> None:
         self._kit = kit
         self._server: _ServerValue | None = server
@@ -370,7 +372,10 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
         # Keep the bridge private: it observes the official decoded session
         # streams, while the public client exposes only immutable snapshots.
         self._trace_observer = trace_bridge or _DirectTraceBridge(
-            server_binding=type(server).__name__,
+            store=kit.store,
+            server_binding=str(getattr(server, "name", None) or type(server).__name__),
+            server_bindings=tuple(server_bindings),
+            run_id=kit.run_id.root,
             redaction_config=self._redaction_config,
         )
         self._trace_owner = trace_owner
@@ -715,8 +720,11 @@ class AsyncMCPTestKit:
         adapter_registry: _HarnessAdapterRegistry | None = None,
         store: _ExecutionStore | None = None,
         embedded_worker: bool = True,
+        run_id: _RunId | str | None = None,
     ) -> None:
         self._closed = False
+        scoped_run_id = run_id or _make_default_run_id()
+        self._run_id = scoped_run_id if isinstance(scoped_run_id, _RunId) else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
         self.config = config if isinstance(config, SDKConfig) else resolve_config(config, env=env, cwd=cwd)
         self._owns_store = False
         if store is None:
@@ -748,7 +756,7 @@ class AsyncMCPTestKit:
                 # Construction outside an event loop is valid; submit() will
                 # bind the worker to the loop that executes the work.
                 pass
-        self._evaluations = _EvaluationRunner()
+        self._evaluations = _EvaluationRunner(durable_store=store)
         self._probes = AsyncCapabilityProbeService(
             timeout_seconds=probe_timeout_seconds,
             output_limit=probe_output_limit,
@@ -777,6 +785,13 @@ class AsyncMCPTestKit:
         """
 
         return self._execution_controller._persistent_store
+
+    @property
+    def run_id(self) -> _RunId:
+        return self._run_id
+
+    def _with_run_id(self, spec: _ExecutionSpec) -> _ExecutionSpec:
+        return spec
 
     async def get_trace(self, execution_id: _ExecutionId | str) -> _TraceResult:
         """Return the finalized canonical trace for an execution.
@@ -906,6 +921,7 @@ class AsyncMCPTestKit:
         artifacts: _Any = (),
         metadata: _Mapping[str, str | int | float | bool | None] | None = None,
         execution_id: _Any = None,
+        turn_id: _Any = None,
     ) -> _EvaluationResult:
         """Run and persist one deterministic evaluation without changing lifecycle."""
 
@@ -919,6 +935,7 @@ class AsyncMCPTestKit:
             artifacts=artifacts,
             metadata=metadata,
             execution_id=execution_id,
+            turn_id=turn_id,
         )
 
     def evaluation_results(self) -> tuple[_EvaluationResult, ...]:
@@ -931,11 +948,13 @@ class AsyncMCPTestKit:
 
     async def run(self, spec: _DirectExecutionSpec | _AgentExecutionSpec) -> _ExecutionResult:
         self._ensure_open()
-        return await self._execution_controller.run(spec)
+        selected = self._with_run_id(spec)
+        return await self._execution_controller.run(selected, run_id=self._run_id.root)
 
     def submit(self, spec: _ExecutionSpec) -> AsyncExecutionHandle:
         self._ensure_open()
-        return self._execution_controller.submit(spec)
+        selected = self._with_run_id(spec)
+        return self._execution_controller.submit(selected, run_id=self._run_id.root)
 
     def _direct_closed(self, client: AsyncDirectClient) -> None:
         self._active_direct.discard(client)
@@ -974,6 +993,7 @@ class AsyncMCPTestKit:
     ) -> AsyncDirectClient:
         self._ensure_open()
         selected = server.server if hasattr(server, "server") else server
+        binding = server if isinstance(server, _ServerBinding) else _ServerBinding(server=selected)
         if selected is None or not isinstance(selected, (_InProcessServer, _StdioServer, _StreamableHTTPServer, _SSEServer)):
             raise _UnsupportedFeature("direct server profiles require runtime resolution")
         if timeout is not None and timeout <= 0:
@@ -1013,6 +1033,7 @@ class AsyncMCPTestKit:
             trace_bridge=trace_bridge,
             trace_owner=trace_owner,
             workspace_root=workspace_root,
+            server_bindings=(binding.model_dump(mode="json"),),
             session_options={
                 key: value
                 for key, value in {
@@ -1053,6 +1074,7 @@ class AsyncMCPTestKit:
         self._ensure_open()
         if not isinstance(spec, _AgentExecutionSpec):
             self._unsupported("agent_session")
+        spec = _cast(_AgentExecutionSpec, self._with_run_id(spec))
         resolved = adapter or self._adapter_registry.resolve(spec)
         bindings = spec.servers + _runtime_server_bindings(runtime_servers)
         manager = _ServerGroupManager(bindings, tool_policy=spec.tool_policy)
@@ -1077,8 +1099,9 @@ class AsyncMCPTestKit:
                 recorder_store,
                 _execution_id if _execution_id is not None else _ExecutionId(str(_uuid4())),
                 redaction_config=self._execution_controller.redaction_config,
-                specification=spec.model_dump(mode="json"),
-            )
+                    specification=spec.model_dump(mode="json"),
+                    run_id=spec.run_id.root if spec.run_id is not None else self._run_id.root,
+                )
         elif _artifact_store is None:
             # Runtime-owned sessions already receive their artifact backend
             # through the execution handle.  Never replace the injected

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path as _Path
 import time as _time
+from uuid import uuid4 as _uuid4
 from typing import Any as _Any
 
 import pytest as _pytest
 
 from ._default_store import (
+    install_default_run_id_factory as _install_default_run_id_factory,
     install_default_store_factory as _install_default_store_factory,
+    restore_default_run_id_factory as _restore_default_run_id_factory,
     restore_default_store_factory as _restore_default_store_factory,
 )
 
@@ -30,6 +33,11 @@ def pytest_configure(config: _Any) -> None:
     from .storage import SQLiteExecutionStore
 
     path = str(_Path(raw).expanduser().resolve())
+    from .types import RunId
+
+    run_id = RunId(f"run-{_uuid4().hex}")
+    config._mcp_pal_run_id = run_id
+    config._mcp_pal_run_id_previous = _install_default_run_id_factory(lambda: run_id)
     config._mcp_pal_store_token = _install_default_store_factory(lambda: SQLiteExecutionStore(path))
     config._mcp_pal_progress = _Progress(config)
     config._mcp_pal_progress.reporter = config.pluginmanager.getplugin("terminalreporter")
@@ -47,6 +55,8 @@ def pytest_unconfigure(config: _Any) -> None:
     token = getattr(config, "_mcp_pal_store_token", None)
     if token is not None:
         _restore_default_store_factory(token)
+    if hasattr(config, "_mcp_pal_run_id_previous"):
+        _restore_default_run_id_factory(config._mcp_pal_run_id_previous)
 
 
 class _Progress:

@@ -31,9 +31,11 @@ machine-level CLI installation described in the
 - [Quick start](docs/quick-start.md) — install, write, and run the first MCP
   test with Streamable HTTP or the local stdio alternative.
 - [Concepts](docs/concepts.md) — server bindings, lifecycle, results, schemas,
-  workflows, traces, and isolation.
+  workflows, traces, optional persistence, and isolation.
 - [Examples](docs/examples.md) — executable Streamable HTTP, local stdio,
-  built-in harness, ACP, and matrix patterns.
+  and evaluation examples.
+- [Evaluations](docs/evaluations.md) — explicit built-in and custom verdicts,
+  saved SQLite records, and turn-scoped evaluation patterns.
 
 The examples use only public SDK APIs and run as ordinary pytest tests.
 

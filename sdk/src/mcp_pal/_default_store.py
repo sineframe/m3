@@ -21,6 +21,7 @@ _lock = RLock()
 _counter = 0
 _factory: StoreFactory | None = None
 _token: StoreFactoryToken | None = None
+_run_id_factory: Callable[[], Any] | None = None
 
 
 def install_default_store_factory(factory: StoreFactory) -> StoreFactoryToken:
@@ -47,4 +48,24 @@ def make_default_store() -> Any | None:
     return factory() if factory is not None else None
 
 
-__all__ = ["StoreFactoryToken", "install_default_store_factory", "restore_default_store_factory", "make_default_store"]
+def install_default_run_id_factory(factory: Callable[[], Any]) -> Callable[[], Any] | None:
+    global _run_id_factory
+    with _lock:
+        previous = _run_id_factory
+        _run_id_factory = factory
+        return previous
+
+
+def restore_default_run_id_factory(previous: Callable[[], Any] | None) -> None:
+    global _run_id_factory
+    with _lock:
+        _run_id_factory = previous
+
+
+def make_default_run_id() -> Any | None:
+    with _lock:
+        factory = _run_id_factory
+    return factory() if factory is not None else None
+
+
+__all__ = ["StoreFactoryToken", "install_default_store_factory", "restore_default_store_factory", "make_default_store", "install_default_run_id_factory", "restore_default_run_id_factory", "make_default_run_id"]

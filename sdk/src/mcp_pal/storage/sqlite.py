@@ -15,6 +15,7 @@ unreferenced file which is safe for the explicit garbage collector to remove.
 from __future__ import annotations
 
 import json
+import hashlib
 import threading
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -58,6 +59,9 @@ from ..types import (
     ExecutionPage,
     ExecutionSnapshot,
     ExecutionSpec,
+    EvaluationResult,
+    PersistedEvaluationRecord,
+    RunId,
     LifecycleState,
     PersistedExecutionReport,
     RawEvidenceRef,
@@ -210,6 +214,16 @@ def _loads(value: str | None, default: Any = None) -> Any:
     return default if value is None else json.loads(value)
 
 
+def _evaluation_subject_kind(subject: Any) -> str:
+    if subject is None:
+        return "unknown"
+    kind = getattr(subject, "kind", None)
+    if isinstance(kind, str) and kind:
+        return kind
+    name = type(subject).__name__
+    return name if name not in {"dict", "list", "tuple"} else "json"
+
+
 def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex}"
 
@@ -306,7 +320,7 @@ CREATE INDEX IF NOT EXISTS v2_acp_probes_dimension ON v2_acp_probes(dimension_ke
 CREATE TABLE IF NOT EXISTS v2_executions (
   id TEXT PRIMARY KEY, snapshot_json TEXT NOT NULL, specification_json TEXT,
   provenance_json TEXT, parent_execution_id TEXT REFERENCES v2_executions(id),
-  created_at TEXT NOT NULL, deleted_at TEXT
+  created_at TEXT NOT NULL, deleted_at TEXT, run_id TEXT
 );
 CREATE TABLE IF NOT EXISTS v2_execution_server_bindings (
   execution_id TEXT NOT NULL REFERENCES v2_executions(id) ON DELETE CASCADE,
@@ -334,7 +348,7 @@ CREATE TABLE IF NOT EXISTS v2_events (
 CREATE TABLE IF NOT EXISTS v2_evaluations (
   id TEXT PRIMARY KEY, execution_id TEXT NOT NULL REFERENCES v2_executions(id) ON DELETE CASCADE,
   turn_id TEXT REFERENCES v2_turns(id) ON DELETE SET NULL, result_json TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL, evaluator_name TEXT, status TEXT, score REAL, run_id TEXT
 );
 CREATE TABLE IF NOT EXISTS v2_blobs (
   sha256 TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
@@ -471,12 +485,94 @@ class _SqliteBase:
         try:
             with self._init_lock, self._connect() as connection:
                 connection.executescript(SCHEMA)
+                # CREATE TABLE IF NOT EXISTS deliberately does not evolve an
+                # existing database.  Keep migrations small, idempotent, and
+                # local to the store so old SDK databases remain readable.
+                for table, column, definition in (
+                    ("v2_executions", "run_id", "TEXT"),
+                    ("v2_evaluations", "evaluator_name", "TEXT"),
+                    ("v2_evaluations", "status", "TEXT"),
+                    ("v2_evaluations", "score", "REAL"),
+                    ("v2_evaluations", "run_id", "TEXT"),
+                ):
+                    columns = connection.execute(f"PRAGMA table_info({table})").fetchall()
+                    if not any(str(row[1]) == column for row in columns):
+                        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                connection.execute("CREATE INDEX IF NOT EXISTS v2_evaluations_execution_turn ON v2_evaluations(execution_id, turn_id, created_at, id)")
+                connection.execute("CREATE INDEX IF NOT EXISTS v2_evaluations_run_evaluator ON v2_evaluations(run_id, evaluator_name, created_at, id)")
+                migrate = getattr(self, "_migrate_legacy_evaluations", None)
+                if callable(migrate):
+                    migrate(connection)
         except StorageError:
             raise
         except Exception as exc:
             if _is_database_error(exc):
                 raise StorageError("database initialization failed") from None
             raise
+
+    def _migrate_legacy_evaluations(self, connection: _CompatConnection) -> None:
+        """Best-effort projection of pre-v2.1 evaluation JSON."""
+        rows = connection.execute(
+            "SELECT id,execution_id,result_json,created_at,evaluator_name,status,score,run_id "
+            "FROM v2_evaluations WHERE evaluator_name IS NULL OR status IS NULL"
+        ).fetchall()
+        for row in rows:
+            try:
+                value = json.loads(str(row["result_json"]))
+                if not isinstance(value, Mapping):
+                    continue
+                raw_context = value.get("context")
+                context = dict(raw_context) if isinstance(raw_context, Mapping) else {}
+                raw_metadata = context.get("metadata")
+                metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+                execution = connection.execute(
+                    "SELECT run_id FROM v2_executions WHERE id=?", (str(row["execution_id"]),)
+                ).fetchone()
+                execution_run = execution[0] if execution is not None else None
+                run_value = value.get("run_id") or metadata.get("mcp_pal.run_id") or row["run_id"] or execution_run
+                subject = context.get("subject")
+                config = getattr(self, "_redaction_config", RedactionConfig())
+                subject_json = _json(redact_for_persistence(subject, config=config, path="$.evaluation.subject"))
+                digest = value.get("subject_digest")
+                if not isinstance(digest, str) or len(digest) != 64:
+                    digest = hashlib.sha256(subject_json.encode()).hexdigest()
+                subject_kind = value.get("subject_kind")
+                if not isinstance(subject_kind, str) or not subject_kind:
+                    subject_kind = _evaluation_subject_kind(subject)
+                name = str(value.get("name") or row["evaluator_name"] or "")
+                status = str(value.get("status") or row["status"] or "error")
+                score = value.get("score") if value.get("score") is not None else row["score"]
+                compact = {
+                    "evaluation_id": str(value.get("evaluation_id") or row["id"]),
+                    "name": name, "status": status, "required": bool(value.get("required", False)),
+                    "message": value.get("message"), "score": score,
+                    "rationale": value.get("rationale"), "metrics": value.get("metrics", {}),
+                    "provenance": value.get("provenance"),
+                    "context": {
+                        "execution_id": context.get("execution_id") or str(row["execution_id"]),
+                        "turn_id": context.get("turn_id"), "goal": context.get("goal"),
+                        "artifacts": context.get("artifacts", []), "metadata": metadata,
+                    },
+                    "subject_kind": subject_kind, "subject_digest": digest,
+                    "run_id": str(run_value) if run_value is not None else None,
+                    "created_at": str(value.get("created_at") or row["created_at"]),
+                }
+                candidate = dict(compact)
+                candidate_context = candidate.pop("context")
+                candidate.update(
+                    execution_id=str(candidate_context.get("execution_id") or row["execution_id"]),
+                    turn_id=candidate_context.get("turn_id"),
+                    goal=candidate_context.get("goal"),
+                    metadata=candidate_context.get("metadata", {}),
+                )
+                PersistedEvaluationRecord.model_validate(candidate)
+                connection.execute(
+                    "UPDATE v2_evaluations SET result_json=?, evaluator_name=?, status=?, score=?, run_id=? WHERE id=?",
+                    (_json(compact), name, status, score, str(run_value) if run_value is not None else None, str(row["id"])),
+                )
+            except Exception:
+                # Malformed legacy input must not make the database unusable.
+                continue
 
     @staticmethod
     def _begin(connection: _CompatConnection, *, immediate: bool = False) -> None:
@@ -693,8 +789,13 @@ class SQLiteExecutionStore(_SqliteBase):
         self._callbacks: dict[str, list[EventCallback]] = {}
         self._callback_lock = threading.RLock()
 
-    def create(self, snapshot: ExecutionSnapshot, *, specification: Mapping[str, Any] | None = None, provenance: Mapping[str, Any] | None = None, server_bindings: Sequence[Mapping[str, Any]] = (), harness_binding: Mapping[str, Any] | None = None, parent_execution_id: ExecutionId | str | None = None) -> None:
+    def create(self, snapshot: ExecutionSnapshot, *, specification: Mapping[str, Any] | None = None, provenance: Mapping[str, Any] | None = None, server_bindings: Sequence[Mapping[str, Any]] = (), harness_binding: Mapping[str, Any] | None = None, parent_execution_id: ExecutionId | str | None = None, run_id: RunId | str | None = None) -> None:
         key = _execution_key(snapshot.execution_id)
+        snapshot_run = snapshot.run_id.root if snapshot.run_id is not None else None
+        fallback_run = run_id.root if isinstance(run_id, RunId) else run_id
+        run_key = snapshot_run or fallback_run
+        if run_key is not None and snapshot.run_id is None:
+            snapshot = snapshot.model_copy(update={"run_id": RunId(run_key)})
         safe_snapshot = snapshot.model_dump(mode="json")
         # Specifications and bindings are later rehydrated and may be
         # executed. Evidence redaction would turn a typed SecretReference
@@ -706,7 +807,7 @@ class SQLiteExecutionStore(_SqliteBase):
         try:
             self._begin(connection, immediate=True)
             parent_key = _execution_key(parent_execution_id) if parent_execution_id is not None else None
-            connection.execute("INSERT INTO v2_executions(id,snapshot_json,specification_json,provenance_json,parent_execution_id,created_at) VALUES(?,?,?,?,?,?)", (key, _json(safe_snapshot), _json(safe_spec) if safe_spec is not None else None, _json(safe_provenance) if safe_provenance is not None else None, parent_key, _iso(snapshot.created_at)))
+            connection.execute("INSERT INTO v2_executions(id,snapshot_json,specification_json,provenance_json,parent_execution_id,created_at,run_id) VALUES(?,?,?,?,?,?,?)", (key, _json(safe_snapshot), _json(safe_spec) if safe_spec is not None else None, _json(safe_provenance) if safe_provenance is not None else None, parent_key, _iso(snapshot.created_at), run_key))
             for ordinal, binding in enumerate(server_bindings):
                 value = dict(binding)
                 connection.execute("INSERT INTO v2_execution_server_bindings(execution_id,ordinal,profile_id,revision_id,binding_json) VALUES(?,?,?,?,?)", (key, ordinal, value.get("profile_id"), value.get("revision_id"), _json(serialize_durable(value, config=self._redaction_config, path="$.execution.server_binding"))))
@@ -756,6 +857,7 @@ class SQLiteExecutionStore(_SqliteBase):
         offset: int = 0,
         lifecycle: LifecycleState | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
+        run_id: str | None = None,
     ) -> ExecutionPage:
         page = ExecutionPage(limit=limit, offset=offset)
         lifecycle_value = LifecycleState(lifecycle) if lifecycle is not None else None
@@ -768,6 +870,9 @@ class SQLiteExecutionStore(_SqliteBase):
         if outcome_value is not None:
             clauses.append("json_extract(snapshot_json, '$.outcome')=?")
             parameters.append(outcome_value.value)
+        if run_id is not None:
+            clauses.append("run_id=?")
+            parameters.append(str(getattr(run_id, "root", run_id)))
         where = " AND ".join(clauses)
         with self._connect() as connection:
             total_row = connection.execute(f"SELECT COUNT(*) FROM v2_executions WHERE {where}", tuple(parameters)).fetchone()
@@ -807,6 +912,8 @@ class SQLiteExecutionStore(_SqliteBase):
             direct_result=direct_result,
             error=error,
             evidence=evidence,
+            turns=tuple(result for _snapshot, result in self.turns(execution_id) if result is not None),
+            evaluations=self.persisted_evaluations(execution_id),
             event_count=event_count,
             events_truncated=event_limit is not None and event_count > event_limit,
             next_after_sequence=events[-1].sequence if events else after_sequence,
@@ -955,7 +1062,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 except (KeyError, TypeError, ValueError):
                     raise StorageConflict("execution terminal payload is invalid") from None
                 lifecycle, finished_at = LifecycleState.FINISHED, event.timestamp
-        return ExecutionSnapshot(execution_id=ExecutionId(execution_id), lifecycle=lifecycle, outcome=outcome, sequence=values[-1].sequence if values else existing.sequence, created_at=created_at, finished_at=finished_at, provenance=existing.provenance)
+        return ExecutionSnapshot(execution_id=ExecutionId(execution_id), run_id=existing.run_id, lifecycle=lifecycle, outcome=outcome, sequence=values[-1].sequence if values else existing.sequence, created_at=created_at, finished_at=finished_at, provenance=existing.provenance)
 
     def _safe_event(self, event: CanonicalEvent) -> CanonicalEvent:
         projected = redact_model_json(event, config=self._redaction_config, path="$.event")
@@ -1323,6 +1430,13 @@ class SQLiteExecutionStore(_SqliteBase):
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
+            existing = connection.execute("SELECT execution_id FROM v2_sessions WHERE id=?", (session_key,)).fetchone()
+            if existing is not None:
+                if str(existing[0]) != execution_key:
+                    self._rollback(connection)
+                    raise StorageConflict("session identity belongs to another execution")
+                self._commit(connection)
+                return SessionId(session_key)
             connection.execute("INSERT INTO v2_sessions(id,execution_id,state,created_at) VALUES(?,?,?,?)", (session_key, execution_key, state, _iso(_utcnow())))
             self._commit(connection)
         except Exception as exc:
@@ -1333,6 +1447,14 @@ class SQLiteExecutionStore(_SqliteBase):
         finally:
             connection.close()
         return SessionId(session_key)
+
+    def close_session(self, session_id: SessionId | str) -> None:
+        key = str(session_id.root if isinstance(session_id, SessionId) else session_id)
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE v2_sessions SET state='closed', closed_at=? WHERE id=?",
+                (_iso(_utcnow()), key),
+            )
 
     def save_turn(self, snapshot: TurnSnapshot, result: TurnResult | Mapping[str, Any] | None = None) -> None:
         session_key = str(snapshot.session_id.root)
@@ -1387,8 +1509,40 @@ class SQLiteExecutionStore(_SqliteBase):
         return tuple((TurnSnapshot.model_validate(_loads(row[0])), TurnResult.model_validate(_loads(row[1])) if row[1] else None) for row in rows)
 
     def save_evaluation(self, execution_id: ExecutionId | str, result: Mapping[str, Any] | Any, *, evaluation_id: str | None = None, turn_id: TurnId | str | None = None) -> str:
+        runtime_subject = getattr(getattr(result, "context", None), "subject", None)
         value = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
         identifier = evaluation_id or str(value.get("evaluation_id") or _new_id("evaluation"))
+        raw_context = value.get("context")
+        context: Mapping[str, Any] = raw_context if isinstance(raw_context, Mapping) else {}
+        subject = context.get("subject")
+        subject_digest = hashlib.sha256(_json(redact_for_persistence(subject, config=self._redaction_config, path="$.evaluation.subject")).encode()).hexdigest()
+        created_at = _utcnow()
+        run_id = value.get("run_id") or context.get("metadata", {}).get("mcp_pal.run_id")
+        if run_id is None:
+            snapshot = self.get_snapshot(execution_id)
+            run_id = snapshot.run_id.root if snapshot is not None and snapshot.run_id is not None else None
+        compact = {
+            "evaluation_id": identifier,
+            "name": value.get("name", ""),
+            "status": value.get("status", "error"),
+            "required": bool(value.get("required", False)),
+            "message": value.get("message"),
+            "score": value.get("score"),
+            "rationale": value.get("rationale"),
+            "metrics": value.get("metrics", {}),
+            "provenance": value.get("provenance"),
+            "context": {
+                "execution_id": context.get("execution_id") or _execution_key(execution_id),
+                "turn_id": context.get("turn_id") or (str(turn_id.root if isinstance(turn_id, TurnId) else turn_id) if turn_id else None),
+                "goal": context.get("goal"),
+                "artifacts": context.get("artifacts", []),
+                "metadata": context.get("metadata", {}),
+            },
+            "subject_kind": context.get("subject_kind") or self._subject_kind(runtime_subject if runtime_subject is not None else subject),
+            "subject_digest": subject_digest,
+            "run_id": str(run_id) if run_id is not None else None,
+            "created_at": _iso(created_at),
+        }
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
@@ -1399,7 +1553,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     (turn_key, _execution_key(execution_id)),
                 ).fetchone() is None:
                     raise StorageConflict("turn does not belong to execution")
-            connection.execute("INSERT INTO v2_evaluations(id,execution_id,turn_id,result_json,created_at) VALUES(?,?,?,?,?)", (identifier, _execution_key(execution_id), str(turn_id.root if isinstance(turn_id, TurnId) else turn_id) if turn_id else None, _json(redact_for_persistence(value, config=self._redaction_config, path="$.evaluation")), _iso(_utcnow())))
+            connection.execute("INSERT INTO v2_evaluations(id,execution_id,turn_id,result_json,created_at,evaluator_name,status,score,run_id) VALUES(?,?,?,?,?,?,?,?,?)", (identifier, _execution_key(execution_id), str(turn_id.root if isinstance(turn_id, TurnId) else turn_id) if turn_id else None, _json(redact_for_persistence(compact, config=self._redaction_config, path="$.evaluation")), _iso(created_at), str(value.get("name") or ""), str(value.get("status") or "error"), value.get("score"), str(run_id) if run_id is not None else None))
             self._commit(connection)
             return identifier
         except Exception as exc:
@@ -1410,10 +1564,86 @@ class SQLiteExecutionStore(_SqliteBase):
         finally:
             connection.close()
 
-    def evaluations(self, execution_id: ExecutionId | str) -> tuple[Mapping[str, Any], ...]:
+    @staticmethod
+    def _subject_kind(subject: Any) -> str:
+        return _evaluation_subject_kind(subject)
+
+    def save(self, result: EvaluationResult) -> None:
+        context = result.context
+        if context is None or context.execution_id is None:
+            raise StorageConflict("SQLite evaluations require an execution identity")
+        self.save_evaluation(context.execution_id, result, turn_id=context.turn_id)
+
+    @staticmethod
+    def _evaluation_model(value: Mapping[str, Any]) -> EvaluationResult:
+        # Durable-only identity fields belong to PersistedEvaluationRecord,
+        # while the runtime result remains backwards-compatible.
+        projected = dict(value)
+        for key in ("subject_kind", "subject_digest", "created_at", "run_id"):
+            projected.pop(key, None)
+        return EvaluationResult.model_validate(projected)
+
+    def get(self, evaluation_id: str) -> EvaluationResult | None:
         with self._connect() as connection:
-            rows = connection.execute("SELECT result_json FROM v2_evaluations WHERE execution_id=? ORDER BY created_at,id", (_execution_key(execution_id),)).fetchall()
-        return tuple(_loads(row[0], {}) for row in rows)
+            row = connection.execute("SELECT result_json FROM v2_evaluations WHERE id=?", (str(evaluation_id),)).fetchone()
+        return self._evaluation_model(_loads(row[0], {})) if row else None
+
+    def all(self) -> tuple[EvaluationResult, ...]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT result_json FROM v2_evaluations ORDER BY created_at,id").fetchall()
+        return tuple(self._evaluation_model(_loads(row[0], {})) for row in rows)
+
+    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[PersistedEvaluationRecord, ...]:
+        with self._connect() as connection:
+            query = "SELECT result_json FROM v2_evaluations WHERE execution_id=?"
+            params: list[Any] = [_execution_key(execution_id)]
+            if turn_id is not None:
+                query += " AND turn_id=?"
+                params.append(str(turn_id.root if isinstance(turn_id, TurnId) else turn_id))
+            query += " ORDER BY created_at,id"
+            rows = connection.execute(query, params).fetchall()
+        records: list[PersistedEvaluationRecord] = []
+        for row in rows:
+            try:
+                value = _loads(row[0], {})
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(value, Mapping):
+                continue
+            raw_context = value.get("context")
+            context: Mapping[str, Any] = raw_context if isinstance(raw_context, Mapping) else {}
+            projected = dict(value)
+            projected["execution_id"] = _execution_key(execution_id)
+            projected["turn_id"] = context.get("turn_id")
+            projected["goal"] = context.get("goal")
+            projected["metadata"] = context.get("metadata", {})
+            projected.pop("context", None)
+            try:
+                records.append(PersistedEvaluationRecord.model_validate(projected))
+            except (TypeError, ValueError, ValidationError):
+                # A malformed legacy row remains opaque and is excluded from
+                # typed reports/aggregates rather than breaking the report.
+                continue
+
+        return tuple(records)
+
+    persisted_evaluations = evaluations
+
+    def evaluation_json(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[Mapping[str, Any], ...]:
+        with self._connect() as connection:
+            if turn_id is None:
+                rows = connection.execute("SELECT result_json FROM v2_evaluations WHERE execution_id=? ORDER BY created_at,id", (_execution_key(execution_id),)).fetchall()
+            else:
+                rows = connection.execute("SELECT result_json FROM v2_evaluations WHERE execution_id=? AND turn_id=? ORDER BY created_at,id", (_execution_key(execution_id), str(turn_id.root if isinstance(turn_id, TurnId) else turn_id))).fetchall()
+        values: list[Mapping[str, Any]] = []
+        for row in rows:
+            try:
+                value = _loads(row[0], {})
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(value, Mapping):
+                values.append(value)
+        return tuple(values)
 
     def transaction(self, execution_id: ExecutionId | str) -> ExecutionTransaction:
         if self.get_snapshot(execution_id) is None:

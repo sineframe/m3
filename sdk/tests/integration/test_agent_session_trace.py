@@ -253,6 +253,13 @@ async def test_caller_async_agent_session_uses_configured_store_for_all_turns(
                 await session.send("first")
                 await session.send("second")
             result = session.result
+            kit.register_evaluator("turn.present.v1", lambda context: True)
+            turn_evaluation = await kit.evaluate(
+                result.turns[0], "turn.present.v1",
+                execution_id=result.snapshot.execution_id,
+                turn_id=result.turns[0].snapshot.turn_id,
+            )
+            assert turn_evaluation.status.value == "passed"
 
         execution_id = result.snapshot.execution_id
         persisted = store.get_report(execution_id)
@@ -266,6 +273,13 @@ async def test_caller_async_agent_session_uses_configured_store_for_all_turns(
             for event in persisted.events
             if event.kind is EventKind.TURN_CREATED
         ] == [1, 2]
+        assert len(persisted.turns) == 2
+        reopened = SQLiteExecutionStore(tmp_path / "caller-async.sqlite")
+        try:
+            assert len(reopened.get_report(execution_id).turns) == 2
+            assert len(reopened.evaluations(execution_id, turn_id=result.turns[0].snapshot.turn_id)) == 1
+        finally:
+            reopened.close()
         assert store.get_execution_spec(execution_id) == _spec()
         reopened = SQLiteExecutionStore(tmp_path / "caller-async.sqlite")
         try:

@@ -205,6 +205,7 @@ class AsyncExecutionHandle:
         store: ExecutionStore | None = None,
         persistent: bool = False,
         execution_id: ExecutionId | str | None = None,
+        run_id: str | None = None,
     ) -> None:
         self._controller = controller
         self._spec = spec
@@ -238,6 +239,10 @@ class AsyncExecutionHandle:
             # retain the immutable submission even for ordinary in-memory
             # executions so history/clone clients see one consistent shape.
             specification=spec.model_dump(mode="json"),
+            # An explicit spec run ID has precedence over the controller
+            # default while preserving the caller's immutable spec object.
+            run_id=(spec.run_id.root if spec.run_id is not None else run_id),
+            server_bindings=tuple(binding.model_dump(mode="json") for binding in spec.servers),
         )
         self._terminal = asyncio.Event()
         self._cancel_requested = False
@@ -950,6 +955,7 @@ class AsyncExecutionController:
                     store=self._persistent_store,
                     persistent=True,
                     execution_id=command.execution_id,
+                    run_id=str(command.payload.get("run_id")) if command.payload.get("run_id") else None,
                 )
                 self._handles_by_id[identifier] = handle
             loop = self._worker_loop
@@ -984,15 +990,17 @@ class AsyncExecutionController:
         )
         self._worker_thread.start()
 
-    def submit(self, spec: ExecutionSpec) -> AsyncExecutionHandle:
+    def submit(self, spec: ExecutionSpec, *, run_id: str | None = None) -> AsyncExecutionHandle:
         if not isinstance(spec, (DirectExecutionSpec, AgentExecutionSpec)):
             raise ModelValidationError("execution spec is invalid", details={"operation": "execution.submit"})
+        explicit_run_id = getattr(spec.run_id, "root", spec.run_id)
+        effective_run_id = str(explicit_run_id or run_id) if (explicit_run_id or run_id) else None
         if self._persistent_store is None:
-            handle = AsyncExecutionHandle(self, spec)
+            handle = AsyncExecutionHandle(self, spec, run_id=effective_run_id)
         else:
             if not callable(getattr(self._persistent_store, "enqueue_command", None)):
                 raise ModelValidationError("persistent execution store does not support durable commands", details={"operation": "execution.submit"})
-            handle = AsyncExecutionHandle(self, spec, store=self._persistent_store, persistent=True)
+            handle = AsyncExecutionHandle(self, spec, store=self._persistent_store, persistent=True, run_id=effective_run_id)
             handle._recorder.emit(
                 EventKind.EXECUTION_STATE_CHANGED,
                 payload={"lifecycle": LifecycleState.QUEUED.value},
@@ -1002,7 +1010,7 @@ class AsyncExecutionController:
                 enqueue_command = getattr(self._persistent_store, "enqueue_command")
                 enqueue_command(
                     handle.execution_id,
-                    payload={"spec": payload},
+                    payload={"spec": payload, "run_id": effective_run_id},
                     command_id=f"command-{handle.execution_id.root}",
                 )
             except Exception:
@@ -1022,8 +1030,8 @@ class AsyncExecutionController:
             self._ensure_persistent_worker()
         return handle
 
-    async def run(self, spec: ExecutionSpec) -> ExecutionResult:
-        return await self.submit(spec).result()
+    async def run(self, spec: ExecutionSpec, *, run_id: str | None = None) -> ExecutionResult:
+        return await self.submit(spec, run_id=run_id).result()
 
     async def close(self) -> None:
         handles = tuple(self._handles)

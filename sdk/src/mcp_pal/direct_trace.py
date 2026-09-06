@@ -9,7 +9,7 @@ wire-capture layer is attached.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from threading import Lock, RLock
 from types import TracebackType
 from typing import Any, Literal, Protocol, cast
@@ -168,6 +168,8 @@ class DirectTraceBridge:
         event_factory: EventFactory | None = None,
         recorder: ExecutionTraceRecorder | None = None,
         server_binding: str | None = None,
+        server_bindings: Sequence[Mapping[str, Any]] = (),
+        run_id: str | None = None,
         redaction_config: RedactionConfig | None = None,
     ) -> None:
         self._store = store if store is not None else InMemoryExecutionStore()
@@ -182,6 +184,7 @@ class DirectTraceBridge:
             else ConnectionId(connection_id or f"connection-{uuid4().hex}")
         )
         self._server_binding = server_binding
+        self._server_bindings = tuple(dict(item) for item in server_bindings)
         self._redaction_config = redaction_config if redaction_config is not None else RedactionConfig.from_environment()
         self._factory = event_factory or EventFactory(
             self._execution_id,
@@ -196,6 +199,8 @@ class DirectTraceBridge:
             self._store,
             self._execution_id,
             trace_id=trace_id,
+            run_id=run_id,
+            server_bindings=self._server_bindings,
             redaction_config=self._redaction_config,
         )
         if self._recorder.execution_id != self._execution_id:

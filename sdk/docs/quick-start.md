@@ -161,6 +161,59 @@ need CLI-managed result storage or the UI:
 uv run pytest tests/test_shipping.py
 ```
 
+## Choose whether test executions persist
+
+Persistence is optional when the SDK is used directly. An `MCPTestKit` with no
+configured store keeps execution data in memory for the lifetime of the kit;
+closing the kit does not leave a saved run history.
+
+Direct SDK users who choose SQLite must install the storage extra in addition
+to pytest support:
+
+```bash
+uv add "mcp-pal[pytest,storage]"
+```
+
+`mcp-pal test` makes a different product-level choice: it always enables the
+SDK pytest plugin and supplies a SQLite results database. The default is
+`.mcp-pal/executions.sqlite` below the project root, and `--results-db` selects
+another path:
+
+```bash
+mcp-pal test --results-db /tmp/mcp-pal-runs.sqlite -- tests/test_shipping.py
+```
+
+Tests can opt into saved storage without the standalone CLI by constructing
+the store explicitly:
+
+```python
+from mcp_pal import MCPTestKit
+from mcp_pal.storage import SQLiteExecutionStore
+
+store = SQLiteExecutionStore(".mcp-pal/executions.sqlite")
+with MCPTestKit(store=store, env={}) as kit:
+    result = kit.run(spec)
+execution_id = result.snapshot.execution_id
+store.close()
+```
+
+Alternatively, a direct pytest invocation can install the same plugin and
+default-store flag used by the CLI:
+
+```bash
+uv run pytest -p mcp_pal.pytest_plugin \
+  --mcp-pal-results-db .mcp-pal/executions.sqlite tests/test_shipping.py
+```
+
+SQLite saves SDK execution specifications and snapshots, recorded events
+and traces, sessions and turns, persisted artifacts/raw-evidence references,
+and evaluations explicitly attached to an execution. Use
+`MCPTestKit(store=SQLiteExecutionStore(path))` or pytest's
+`--mcp-pal-results-db PATH` to select it; no-store SDK use remains in memory.
+Pytest item outcomes, ordinary Python assertion results, and aggregate
+matrix/trial trends are not persisted and must not be inferred from a merely
+completed execution.
+
 ## Run one test per server-owned tool
 
 When several servers expose different tools, keep each tool under its owning

@@ -30,6 +30,7 @@ from .errors import (
 from .matchers import check, expect
 from .evaluations import (
     AsyncEvaluator,
+    EvaluationDecision,
     EvaluationRunner,
     EvaluationStore,
     EvaluationVerdict,
@@ -136,6 +137,7 @@ if _TYPE_CHECKING:
         "ProbeService",
         "ReadinessProbeService",
         "AsyncEvaluator",
+        "EvaluationDecision",
         "EvaluationRunner",
         "EvaluationStore",
         "EvaluationVerdict",

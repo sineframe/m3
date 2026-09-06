@@ -60,10 +60,13 @@ finalization but does not start or stop a deployed service.
 4. Choose the runner. Prefer `mcp-pal test -- <pytest arguments>` when the
    separately installed CLI is available and `mcp-pal doctor` reports that the
    project is ready. It runs the same pytest tests while recording MCP Pal
-   executions. Use direct pytest when the CLI is unavailable or the project
-   already has a specific test command. Do not install the optional CLI merely
-   to run one test unless CLI setup is part of the task. Add `--ui` only when
-   the user wants the local viewer; it keeps the command open until interrupted.
+   executions to SQLite. Use direct pytest when the CLI is unavailable or the
+   project already has a specific test command; direct SDK/pytest use is
+   in-memory unless the test passes `SQLiteExecutionStore` or pytest installs
+   the MCP Pal plugin with `--mcp-pal-results-db`. Do not install the optional
+   CLI merely to run one test unless CLI setup is part of the task. Add `--ui`
+   only when the user wants the local viewer; it keeps the command open until
+   interrupted.
 5. Run the narrow test and report nondeterministic external/provider tests
    separately from deterministic contract tests. Follow the target project's
    isolation convention; this repository isolates its external example by
@@ -78,7 +81,7 @@ finalization but does not start or stop a deployed service.
 - `session.send()` returns a `TurnResult`. After the session closes, assert
   against `session.result`, optionally scoped with `turn=turn`.
 - For local debugging, `view.model_dump(mode="json")` exposes the complete
-  JSON-compatible public trace projection. Use typed fields for assertions and
+  JSON-compatible public trace view. Use typed fields for assertions and
   do not print whole traces to shared logs; messages, arguments, and results may
   contain sensitive application data.
 - A tool-selection test must inspect finalized wire evidence. The default
@@ -93,6 +96,28 @@ finalization but does not start or stop a deployed service.
 - There is no hidden `mcp_test` fixture or scenario format. Define the server
   explicitly with `StdioServer`, `StreamableHTTPServer`, `SSEServer`, or an
   existing project fixture.
+- Persistence of an execution is not persistence of a test verdict. SQLite
+  retains execution specs/snapshots, recorded events/traces, sessions/turns,
+  artifacts/evidence, and explicit evaluations attached to an execution. It does
+  not retain pytest item outcomes or matrix pass-rate summaries. Never infer a
+  pass from lifecycle `completed`.
+
+## Evaluations and saved history
+
+Evaluators are explicit runtime callbacks. Register them on the kit and invoke
+`kit.evaluate(...)`; `ExecutionSpec.evaluations` is retained as portable
+metadata and is intentionally not executed across worker-process boundaries.
+Use a stable, versioned evaluator name such as `project.answer-quality.v1`.
+
+`EvaluationDecision` can carry a normalized `score`, rationale, metrics, and
+model/rubric source details. Built-ins include
+`mcp_pal.execution.completed.v1`, `mcp_pal.tool_call.succeeded.v1`, and
+`mcp_pal.output.has_text.v1`. When using `store=SQLiteExecutionStore(...)` or
+`--mcp-pal-results-db`, evaluations attached to an execution are saved and can
+be queried after reopening SQLite; in-memory SDK storage remains ephemeral.
+
+Matrix cases expose stable matrix/cell/trial metadata. Use the same evaluator
+name across trials; aggregate statistics are derived later from raw records.
 
 ## Common Mistakes
 
@@ -106,3 +131,5 @@ finalization but does not start or stop a deployed service.
 | Assuming a parent CLI login is inherited | Use environment `SecretReference`s |
 | Assuming the SDK installs the `mcp-pal` command | Install the standalone CLI separately |
 | Passing pytest flags directly to `mcp-pal test` | Put them after `--` |
+| Assuming direct pytest writes run history | Pass `store=SQLiteExecutionStore(...)` or load the plugin with `--mcp-pal-results-db` |
+| Treating a completed persisted execution as a passed test | Record or inspect an explicit test/evaluation verdict |

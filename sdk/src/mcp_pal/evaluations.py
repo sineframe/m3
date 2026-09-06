@@ -15,15 +15,19 @@ from .trace.redaction import RedactionConfig as _RedactionConfig, redact_for_api
 from .types import (
     ArtifactRef as _ArtifactRef,
     EvaluationContext as _EvaluationContext,
+    EvaluationDecision as _EvaluationDecision,
     EvaluationId as _EvaluationId,
     EvaluationResult as _EvaluationResult,
     EvaluationStatus as _EvaluationStatus,
     ExecutionId as _ExecutionId,
     TraceResult as _TraceResult,
+    TurnId as _TurnId,
+    TurnResult as _TurnResult,
 )
 
 
-EvaluationVerdict: _TypeAlias = _EvaluationStatus | bool | str
+EvaluationVerdict: _TypeAlias = _EvaluationStatus | bool | str | _EvaluationDecision
+EvaluationDecision = _EvaluationDecision
 
 
 class RequiredEvaluationError(AssertionError):
@@ -88,6 +92,60 @@ class EvaluatorRegistry:
             return tuple(sorted(self._evaluators))
 
 
+def _built_in_completed(context: _EvaluationContext) -> _EvaluationDecision:
+    def get(value: _Any, key: str, default: _Any = None) -> _Any:
+        return value.get(key, default) if isinstance(value, _Mapping) else getattr(value, key, default)
+    snapshot = get(context.subject, "snapshot")
+    outcome = get(snapshot, "outcome")
+    if outcome is None:
+        return _EvaluationDecision(status=_EvaluationStatus.INCONCLUSIVE)
+    return _EvaluationDecision(
+        status=_EvaluationStatus.PASSED if str(getattr(outcome, "value", outcome)) == "completed" else _EvaluationStatus.FAILED
+    )
+
+
+def _built_in_tool_succeeded(context: _EvaluationContext) -> _EvaluationDecision:
+    subject = context.subject
+    is_error = subject.get("is_error") if isinstance(subject, _Mapping) else getattr(subject, "is_error", None)
+    if is_error is None:
+        return _EvaluationDecision(status=_EvaluationStatus.NOT_RUN)
+    return _EvaluationDecision(status=_EvaluationStatus.FAILED if bool(is_error) else _EvaluationStatus.PASSED)
+
+
+def _built_in_has_text(context: _EvaluationContext) -> _EvaluationDecision:
+    subject = context.subject
+    def get(value: _Any, key: str, default: _Any = None) -> _Any:
+        return value.get(key, default) if isinstance(value, _Mapping) else getattr(value, key, default)
+    candidates: list[_Any] = [get(subject, "text")]
+    response = get(subject, "response")
+    candidates.append(get(response, "text"))
+    direct = get(subject, "direct_result")
+    candidates.extend([get(direct, "text"), get(get(direct, "response"), "text")])
+    turns = get(subject, "turns", ()) or ()
+    candidates.extend(get(get(turn, "response"), "text") for turn in turns)
+    # MCP content blocks often carry text under a nested ``text`` key.
+    for value in (get(subject, "content", ()), get(direct, "content", ())):
+        if isinstance(value, (list, tuple)):
+            candidates.extend(get(item, "text") for item in value)
+    if isinstance(subject, str):
+        candidates.append(subject)
+    applicable = any(value is not None for value in candidates)
+    if not applicable:
+        return _EvaluationDecision(status=_EvaluationStatus.NOT_RUN)
+    return _EvaluationDecision(status=_EvaluationStatus.PASSED if any(isinstance(value, str) and value.strip() for value in candidates) else _EvaluationStatus.FAILED)
+
+
+def register_builtin_evaluators(registry: EvaluatorRegistry) -> None:
+    """Install the reserved deterministic evaluators on a runtime registry."""
+    for name, callback in (
+        ("mcp_pal.execution.completed.v1", _built_in_completed),
+        ("mcp_pal.tool_call.succeeded.v1", _built_in_tool_succeeded),
+        ("mcp_pal.output.has_text.v1", _built_in_has_text),
+    ):
+        if name not in registry.names():
+            registry.register(name, callback)
+
+
 class EvaluationStore(_Protocol):
     def save(self, result: _EvaluationResult) -> None: ...
 
@@ -122,6 +180,8 @@ class InMemoryEvaluationStore:
 
 
 def _status(value: EvaluationVerdict) -> _EvaluationStatus:
+    if isinstance(value, _EvaluationDecision):
+        return value.status
     if isinstance(value, bool):
         return _EvaluationStatus.PASSED if value else _EvaluationStatus.FAILED
     if isinstance(value, _EvaluationStatus):
@@ -160,6 +220,11 @@ def _consistent_execution_id(
             candidates.append(explicit_id)
         if trace is not None:
             candidates.append(trace.execution_id)
+        subject_trace = getattr(subject, "trace", None)
+        if subject_trace is not None:
+            subject_trace_id = coerce(getattr(subject_trace, "execution_id", None))
+            if subject_trace_id is not None:
+                candidates.append(subject_trace_id)
         snapshot = getattr(subject, "snapshot", None)
         snapshot_id = coerce(getattr(snapshot, "execution_id", None))
         if snapshot_id is not None:
@@ -194,7 +259,22 @@ def _subject_context(
     metadata: _Mapping[str, str | int | float | bool | None],
     config: _RedactionConfig,
     execution_id: _ExecutionId | str | None,
+    turn_id: _TurnId | str | None,
 ) -> _EvaluationContext:
+    declared_kind = getattr(subject, "kind", None)
+    if not isinstance(declared_kind, str) or not declared_kind:
+        declared_kind = type(subject).__name__ if subject is not None else "unknown"
+        if declared_kind in {"dict", "list", "tuple"}:
+            declared_kind = "json"
+    inferred_turn = getattr(subject, "turn_id", None)
+    if inferred_turn is None:
+        snapshot = getattr(subject, "snapshot", None)
+        inferred_turn = getattr(snapshot, "turn_id", None)
+    if turn_id is not None and inferred_turn is not None:
+        explicit_turn = turn_id if isinstance(turn_id, _TurnId) else _TurnId(turn_id)
+        if explicit_turn != inferred_turn:
+            raise _ModelValidationError("evaluation turn IDs do not match", details={"operation": "evaluation"})
+    resolved_turn = turn_id if isinstance(turn_id, _TurnId) else _TurnId(turn_id) if turn_id is not None else inferred_turn
     resolved_execution_id = _consistent_execution_id(subject, trace, artifacts, execution_id)
     # EvaluationContext is a frozen model and recursively freezes its mapping
     # inputs.  Redacting first also prevents evaluator inputs from retaining a
@@ -202,7 +282,9 @@ def _subject_context(
     projected = _redact_for_api(
         {
             "subject": subject,
+            "subject_kind": declared_kind,
             "execution_id": resolved_execution_id,
+            "turn_id": resolved_turn,
             "goal": goal,
             "trace": trace,
             "artifacts": tuple(artifacts),
@@ -222,10 +304,13 @@ class EvaluationRunner:
         *,
         registry: EvaluatorRegistry | None = None,
         store: EvaluationStore | None = None,
+        durable_store: _Any | None = None,
         redaction_config: _RedactionConfig | None = None,
     ) -> None:
         self.registry = registry or EvaluatorRegistry()
+        register_builtin_evaluators(self.registry)
         self.store = store or InMemoryEvaluationStore()
+        self.durable_store = durable_store
         self.redaction_config = redaction_config or _RedactionConfig.from_environment()
 
     def register(self, name: str, evaluator: EvaluatorCallable | AsyncEvaluator) -> EvaluatorRegistration:
@@ -243,6 +328,7 @@ class EvaluationRunner:
         metadata: _Mapping[str, str | int | float | bool | None] | None = None,
         evaluation_id: _EvaluationId | str | None = None,
         execution_id: _ExecutionId | str | None = None,
+        turn_id: _TurnId | str | None = None,
     ) -> _EvaluationResult:
         if isinstance(evaluator, str):
             name = evaluator
@@ -264,9 +350,14 @@ class EvaluationRunner:
             metadata=metadata or {},
             config=self.redaction_config,
             execution_id=execution_id,
+            turn_id=turn_id,
         )
         identifier = evaluation_id if isinstance(evaluation_id, _EvaluationId) else _EvaluationId(evaluation_id or f"evaluation-{_uuid4().hex}")
         message: str | None = None
+        score = None
+        rationale = None
+        metrics: dict[str, float] = {}
+        provenance = None
         try:
             raw = callback(context)
         except Exception:
@@ -282,6 +373,8 @@ class EvaluationRunner:
             else:
                 try:
                     status = _status(raw)
+                    if isinstance(raw, _EvaluationDecision):
+                        score, rationale, metrics, provenance = raw.score, raw.rationale, dict(raw.metrics), raw.provenance
                 except Exception:
                     status = _EvaluationStatus.ERROR
                     message = "evaluator failed"
@@ -292,8 +385,12 @@ class EvaluationRunner:
             required=required,
             message=message,
             context=context,
+            score=score,
+            rationale=rationale,
+            metrics=metrics,
+            provenance=provenance,
         )
-        self.store.save(result)
+        self._persist(result)
         _raise_for_required(result)
         return result.model_copy()
 
@@ -309,6 +406,7 @@ class EvaluationRunner:
         metadata: _Mapping[str, str | int | float | bool | None] | None = None,
         evaluation_id: _EvaluationId | str | None = None,
         execution_id: _ExecutionId | str | None = None,
+        turn_id: _TurnId | str | None = None,
     ) -> _EvaluationResult:
         if isinstance(evaluator, str):
             name = evaluator
@@ -330,17 +428,28 @@ class EvaluationRunner:
             metadata=metadata or {},
             config=self.redaction_config,
             execution_id=execution_id,
+            turn_id=turn_id,
         )
         identifier = evaluation_id if isinstance(evaluation_id, _EvaluationId) else _EvaluationId(evaluation_id or f"evaluation-{_uuid4().hex}")
         message: str | None = None
+        score: float | None = None
+        rationale: str | None = None
+        metrics: dict[str, float] = {}
+        provenance: _Any = None
         try:
             raw = callback(context)
             if _inspect.isawaitable(raw):
                 raw = await raw
             status = _status(raw)
+            score = raw.score if isinstance(raw, _EvaluationDecision) else None
+            rationale = raw.rationale if isinstance(raw, _EvaluationDecision) else None
+            metrics = dict(raw.metrics) if isinstance(raw, _EvaluationDecision) else {}
+            provenance = raw.provenance if isinstance(raw, _EvaluationDecision) else None
         except Exception:
             status = _EvaluationStatus.ERROR
             message = "evaluator failed"
+            score = rationale = provenance = None
+            metrics = {}
         result = _EvaluationResult(
             evaluation_id=identifier,
             name=name,
@@ -348,17 +457,28 @@ class EvaluationRunner:
             required=required,
             message=message,
             context=context,
+            score=score,
+            rationale=rationale,
+            metrics=metrics,
+            provenance=provenance,
         )
-        self.store.save(result)
+        self._persist(result)
         _raise_for_required(result)
         return result.model_copy()
 
     def results(self) -> tuple[_EvaluationResult, ...]:
         return self.store.all()
 
+    def _persist(self, result: _EvaluationResult) -> None:
+        execution_id = result.context.execution_id if result.context is not None else None
+        self.store.save(result)
+        save_evaluation = getattr(self.durable_store, "save_evaluation", None)
+        if callable(save_evaluation) and execution_id is not None:
+            save_evaluation(execution_id, result, turn_id=result.context.turn_id if result.context else None)
+
 
 __all__ = [
-    "AsyncEvaluator", "EvaluationRunner", "EvaluationStore", "EvaluationVerdict",
+    "AsyncEvaluator", "EvaluationDecision", "EvaluationRunner", "EvaluationStore", "EvaluationVerdict",
     "Evaluator", "EvaluatorCallable", "EvaluatorRegistry", "EvaluatorRegistration",
-    "InMemoryEvaluationStore", "RequiredEvaluationError",
+    "InMemoryEvaluationStore", "RequiredEvaluationError", "register_builtin_evaluators",
 ]

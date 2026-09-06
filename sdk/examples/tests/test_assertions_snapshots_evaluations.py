@@ -17,6 +17,7 @@ from mcp_pal import (
     DirectExecutionSpec,
     ErrorCode,
     ErrorInfo,
+    EvaluationDecision,
     EvaluationStatus,
     ExecutionOutcome,
     LifecycleState,
@@ -28,6 +29,8 @@ from mcp_pal import (
     check,
     expect,
 )
+from mcp_pal.storage import SQLiteExecutionStore
+import sqlite3
 
 _QUOTE_CONTENT = {"type": "text", "text": '{"amount": 7.0, "currency": "USD"}'}
 _QUOTE_CONTENT_RESULT = {**_QUOTE_CONTENT, "annotations": None, "_meta": None}
@@ -214,6 +217,75 @@ def test_sync_evaluations_pass_fail_and_persist(example_server: StdioServer) -> 
             "usd-quote": EvaluationStatus.PASSED,
             "must-fail": EvaluationStatus.FAILED,
         }
+
+
+def test_sqlite_evaluations_reopen_with_builtin_and_structured_custom(
+    example_server: StdioServer, tmp_path
+) -> None:
+    database = tmp_path / "example-evaluations.sqlite"
+    store = SQLiteExecutionStore(database)
+    spec = DirectExecutionSpec(
+        servers=(ServerBinding(server=example_server, alias="example"),),
+        operation=CallToolOperation(
+            server="example", name="shipping_quote",
+            arguments={"weight_kg": 1, "zone": "local"},
+        ),
+    )
+    with MCPTestKit(store=store, env={}) as kit:
+        execution = kit.run(spec)
+        kit.register_evaluator(
+            "example.structured.v1",
+            lambda context: EvaluationDecision(
+                status=EvaluationStatus.PASSED,
+                score=1.0,
+                rationale="deterministic example output",
+                metrics={"has_currency": 1.0},
+            ),
+        )
+        builtin = kit.evaluate(execution, "mcp_pal.output.has_text.v1")
+        custom = kit.evaluate(execution, "example.structured.v1")
+        execution_id = execution.snapshot.execution_id
+    store.close()
+    reopened = SQLiteExecutionStore(database)
+    try:
+        records = reopened.evaluations(execution_id)
+        assert {record.name for record in records} == {
+            "mcp_pal.output.has_text.v1", "example.structured.v1"
+        }
+        assert custom.score == 1.0 and builtin.status is EvaluationStatus.PASSED
+    finally:
+        reopened.close()
+
+
+def test_public_direct_binding_alias_is_persisted(example_server: StdioServer, tmp_path) -> None:
+    database = tmp_path / "direct-binding.sqlite"
+    store = SQLiteExecutionStore(database)
+    binding = ServerBinding(server=example_server, alias="shipping")
+    with MCPTestKit(store=store, env={}) as kit:
+        with kit.direct(binding) as client:
+            client.call_tool("shipping_quote", {"weight_kg": 1, "zone": "local"})
+            client.call_tool("shipping_quote", {"weight_kg": 2, "zone": "regional"})
+        trace = client.final_trace
+    assert trace is not None
+    execution_id = trace.execution_id
+    store.close()
+    reopened = SQLiteExecutionStore(database)
+    try:
+        assert reopened.list_executions().total == 1
+        report = reopened.get_report(execution_id)
+        assert report is not None
+        assert sum(event.kind.value == "tool.call_requested" for event in report.events) == 2
+    finally:
+        reopened.close()
+    connection = sqlite3.connect(database)
+    try:
+        row = connection.execute(
+            "SELECT binding_json FROM v2_execution_server_bindings WHERE execution_id=?",
+            (execution_id.root,),
+        ).fetchone()
+        assert row is not None and '"alias":"shipping"' in row[0]
+    finally:
+        connection.close()
 
 
 @pytest.mark.asyncio

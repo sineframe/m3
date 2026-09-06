@@ -34,6 +34,7 @@ testpaths = ["tests"]
 pythonpath = ["src", "../sdk/src"]
 asyncio_mode = "auto"
 addopts = "-p no:cacheprovider"
+markers = ["live: opt-in external network tests", "e2e: end-to-end tests"]
 
 [build-system]
 requires = ["hatchling>=1.27"]

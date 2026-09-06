@@ -11,6 +11,10 @@ from mcp_pal import (
     ClaudeCode,
     ExecutionPage,
     ExecutionSpec,
+    EvaluationId,
+    EvaluationProvenance,
+    EvaluationResult,
+    EvaluationStatus,
     MCPTestKit,
     OpenCode,
     PersistedExecutionReport,
@@ -28,18 +32,28 @@ from mcp_pal_app.api.app import create_app
 from mcp_pal_app.settings import Settings
 
 
-def _payload():
+def _payload(run_id=None):
     spec = DirectExecutionSpec(
         servers=(ServerBinding(server=StdioServer(name="echo", command=sys.executable, args=("-m", "mcp_pal.fixtures.echo_server"))),),
         operation=CallToolOperation(server="echo", name="echo", arguments={"text": "hello"}),
+        run_id=run_id,
     )
     return {"spec": spec.model_dump(mode="json")}
 
 
 def _slow_payload():
     spec = DirectExecutionSpec(
-        servers=(ServerBinding(server=StdioServer(name="echo", command="sleep", args=("30",))),),
+        servers=(
+            ServerBinding(
+                server=StdioServer(
+                    name="echo",
+                    command=sys.executable,
+                    args=("-c", "import time; time.sleep(300)"),
+                ),
+            ),
+        ),
         operation=ListToolsOperation(server="echo"),
+        timeout_seconds=300.0,
     )
     return {"spec": spec.model_dump(mode="json")}
 
@@ -69,13 +83,17 @@ def _wait_finished(client, execution_id):
 
 def test_v2_execution_lifecycle_and_reopen(tmp_path):
     database = Path(tmp_path).resolve() / "v2.sqlite"
-    with TestClient(create_app(Settings(database_path=str(database)))) as client:
-        created = client.post("/api/v2/executions", json=_payload())
+    application = create_app(Settings(database_path=str(database)))
+    with TestClient(application) as client:
+        payload = _payload(run_id="api-run")
+        created = client.post("/api/v2/executions", json=payload)
         assert created.status_code == 202
         body = created.json()
         assert body["version"] == "v2"
         execution_id = body["execution_id"]
-        assert TypeAdapter(ExecutionSpec).validate_python(body["spec"]) == DirectExecutionSpec.model_validate(_payload()["spec"])
+        assert TypeAdapter(ExecutionSpec).validate_python(body["spec"]) == DirectExecutionSpec.model_validate(payload["spec"])
+        assert body["spec"]["run_id"] == "api-run"
+        assert body["snapshot"]["run_id"] == "api-run"
         assert body["snapshot"]["lifecycle"] in {"created", "queued", "starting", "finished"}
         listed = client.get("/api/v2/executions")
         assert TypeAdapter(ExecutionPage).validate_python(listed.json()["page"]).total == 1
@@ -87,6 +105,7 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         fetched = client.get(f"/api/v2/executions/{execution_id}")
         assert fetched.status_code == 200
         assert TypeAdapter(ExecutionSpec).validate_python(fetched.json()["spec"]) == TypeAdapter(ExecutionSpec).validate_python(body["spec"])
+        assert fetched.json()["snapshot"]["run_id"] == "api-run"
         report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert report.status_code == 200
         parsed_report = TypeAdapter(PersistedExecutionReport).validate_python(report.json()["report"])
@@ -105,11 +124,49 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         artifact_limited = client.get(f"/api/v2/executions/{execution_id}/report", params={"artifact_limit": 1})
         assert artifact_limited.json()["report"]["artifact_count"] == 0
         assert artifact_limited.json()["report"]["artifacts_truncated"] is False
+
+        application.state.v2_store.save_evaluation(
+            execution_id,
+            EvaluationResult(
+                evaluation_id=EvaluationId("api-evaluation"),
+                name="local.quality.v1",
+                status=EvaluationStatus.PASSED,
+                score=0.91,
+                rationale="The local echo response matched the request.",
+                metrics={"quality": 0.91},
+                provenance=EvaluationProvenance(
+                    kind="local-rule",
+                    provider="test-suite",
+                    model="fixture",
+                    rubric_id="echo-quality",
+                    rubric_version="1",
+                ),
+                context={
+                    "execution_id": execution_id,
+                    "subject": {"secret": "must not be returned"},
+                    "metadata": {"source": "api-test"},
+                },
+            ),
+        )
+        evaluated_report = client.get(f"/api/v2/executions/{execution_id}/report")
+        assert evaluated_report.status_code == 200
+        evaluated_parsed = TypeAdapter(PersistedExecutionReport).validate_python(evaluated_report.json()["report"])
+        saved_evaluation = evaluated_report.json()["report"]["evaluations"][0]
+        assert saved_evaluation["score"] == 0.91
+        assert saved_evaluation["rationale"] == "The local echo response matched the request."
+        assert saved_evaluation["metrics"] == {"quality": 0.91}
+        assert saved_evaluation["provenance"]["provider"] == "test-suite"
+        assert saved_evaluation["provenance"]["rubric_id"] == "echo-quality"
+        assert saved_evaluation["run_id"] == "api-run"
+        assert "subject" not in saved_evaluation
+        assert "context" not in saved_evaluation
+        assert "callback" not in saved_evaluation
+        assert "must not be returned" not in str(evaluated_report.json())
     reopened = SQLiteExecutionStore(database)
     try:
         assert reopened.get_snapshot(execution_id) == parsed_report.snapshot
         assert reopened.get_execution_spec(execution_id) == TypeAdapter(ExecutionSpec).validate_python(body["spec"])
-        assert reopened.get_report(execution_id) == parsed_report
+        assert reopened.get_report(execution_id) == evaluated_parsed
         assert reopened.get_trace_view(execution_id) == full_trace
     finally:
         reopened.close()

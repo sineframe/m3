@@ -323,6 +323,10 @@ class AsyncAgentSession:
         )
         if kind is EventKind.SESSION_CREATED:
             self._session_created_emitted = True
+            store = getattr(self._trace_recorder, "_store", None)
+            create_session = getattr(store, "create_session", None)
+            if callable(create_session):
+                create_session(self._execution_id, self._session_id, state="open")
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in {"spec", "adapter"} and name in self.__dict__:
@@ -1356,6 +1360,10 @@ class AsyncAgentSession:
                 turn_id=turn_id,
                 phase=LifecyclePhase.TURN,
             )
+        store = getattr(self._trace_recorder, "_store", None)
+        save_turn = getattr(store, "save_turn", None)
+        if callable(save_turn):
+            save_turn(result.snapshot, result)
 
     @staticmethod
     def _safe_failure_message(exc: BaseException) -> str:
@@ -1617,6 +1625,10 @@ class AsyncAgentSession:
                 {"lifecycle": LifecycleState.FINISHED.value, "outcome": outcome.value},
                 phase=LifecyclePhase.CLEANUP,
             )
+            store = getattr(self._trace_recorder, "_store", None)
+            close_session = getattr(store, "close_session", None)
+            if callable(close_session):
+                close_session(self._session_id)
 
             # Preserve the established API: a terminal turn makes the result
             # readable before context exit.  This is deliberately provisional

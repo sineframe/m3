@@ -9,6 +9,8 @@ from mcp_pal._default_store import (
     install_default_store_factory,
     make_default_store,
     restore_default_store_factory,
+    install_default_run_id_factory,
+    restore_default_run_id_factory,
 )
 from mcp_pal.storage import SQLiteExecutionStore
 
@@ -97,3 +99,21 @@ def test_async_scoped_store_explicit_precedence_and_owned_close(tmp_path: Path) 
         asyncio.run(exercise())
     finally:
         restore_default_store_factory(token)
+
+
+def test_default_factory_shares_one_run_id_across_kits(tmp_path: Path) -> None:
+    store_token = install_default_store_factory(
+        lambda: SQLiteExecutionStore((tmp_path / "shared.sqlite").resolve())
+    )
+    from mcp_pal.types import RunId
+    run_token = install_default_run_id_factory(lambda: RunId("pytest-shared"))
+    try:
+        first = MCPTestKit()
+        second = MCPTestKit()
+        assert first.run_id == RunId("pytest-shared")
+        assert second.run_id == first.run_id
+        first.close()
+        second.close()
+    finally:
+        restore_default_run_id_factory(run_token)
+        restore_default_store_factory(store_token)

@@ -222,6 +222,12 @@ class EvaluationId(Identifier):
     pass
 
 
+class RunId(Identifier):
+    """Stable identity for one coordinated test/evaluation run."""
+
+    pass
+
+
 class Metadata(FrozenModel):
     """Non-secret descriptive metadata carried by public values."""
 
@@ -721,6 +727,7 @@ DirectOperation = _Annotated[
 
 
 class BaseExecutionSpec(FrozenModel):
+    run_id: RunId | None = None
     servers: tuple[ServerBinding, ...] = ()
     protocol: ProtocolConstraint = _Field(default_factory=ProtocolConstraint)
     timeout_seconds: float | None = _Field(default=None, gt=0)
@@ -826,6 +833,7 @@ class SessionProvenance(FrozenModel):
 
 class ExecutionSnapshot(FrozenModel):
     execution_id: ExecutionId
+    run_id: RunId | None = None
     lifecycle: LifecycleState = LifecycleState.CREATED
     outcome: ExecutionOutcome | None = None
     sequence: int = _Field(default=0, ge=0)
@@ -1198,11 +1206,52 @@ class ArtifactRef(FrozenModel):
 
 class EvaluationContext(FrozenModel):
     subject: _Any = None
+    subject_kind: str = "unknown"
     execution_id: ExecutionId | None = None
+    turn_id: TurnId | None = None
     goal: str | None = None
     trace: TraceResult | None = None
     artifacts: tuple[ArtifactRef, ...] = ()
     metadata: _Mapping[str, str | int | float | bool | None] = _Field(default_factory=dict)
+
+
+class EvaluationProvenance(FrozenModel):
+    """Optional, redaction-safe provenance for a structured judgment."""
+
+    kind: str = _Field(min_length=1, max_length=128)
+    provider: str | None = _Field(default=None, max_length=256)
+    model: str | None = _Field(default=None, max_length=256)
+    rubric_id: str | None = _Field(default=None, max_length=256)
+    rubric_version: str | None = _Field(default=None, max_length=128)
+    config_digest: str | None = _Field(default=None, max_length=256)
+
+
+class EvaluationDecision(FrozenModel):
+    """Structured evaluator output, compatible with scalar verdicts."""
+
+    status: EvaluationStatus
+    score: float | None = None
+    rationale: str | None = None
+    metrics: _Mapping[str, float] = _Field(default_factory=dict)
+    provenance: EvaluationProvenance | None = None
+
+    @_field_validator("score", mode="before")
+    @classmethod
+    def _finite_score(cls, value: _Any) -> float | None:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not _isfinite(float(value)) or not 0 <= float(value) <= 1):
+            raise ValueError("score must be finite and between 0 and 1")
+        return float(value) if value is not None else None
+
+    @_field_validator("metrics", mode="before")
+    @classmethod
+    def _finite_metrics(cls, value: _Any) -> _Mapping[str, float]:
+        if not isinstance(value, _Mapping):
+            raise ValueError("metrics must be a mapping")
+        if any(not key.strip() for key in value):
+            raise ValueError("metric names must not be empty")
+        if any(isinstance(item, bool) or not isinstance(item, (int, float)) or not _isfinite(float(item)) for item in value.values()):
+            raise ValueError("metric values must be finite")
+        return {key: float(item) for key, item in value.items()}
 
 
 class EvaluationResult(FrozenModel):
@@ -1212,6 +1261,41 @@ class EvaluationResult(FrozenModel):
     required: bool = False
     message: str | None = None
     context: EvaluationContext | None = None
+    score: float | None = None
+    rationale: str | None = None
+    metrics: _Mapping[str, float] = _Field(default_factory=dict)
+    provenance: EvaluationProvenance | None = None
+
+    @_field_validator("score", mode="before")
+    @classmethod
+    def _strict_result_score(cls, value: _Any) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not _isfinite(float(value)) or not 0 <= float(value) <= 1:
+            raise ValueError("score must be finite and between 0 and 1")
+        return float(value)
+
+
+class PersistedEvaluationRecord(FrozenModel):
+    """Compact durable evaluation row linked to an execution report."""
+
+    evaluation_id: EvaluationId
+    execution_id: ExecutionId
+    turn_id: TurnId | None = None
+    name: str
+    status: EvaluationStatus
+    required: bool = False
+    message: str | None = None
+    score: float | None = None
+    rationale: str | None = None
+    metrics: _Mapping[str, float] = _Field(default_factory=dict)
+    provenance: EvaluationProvenance | None = None
+    goal: str | None = None
+    metadata: _Mapping[str, str | int | float | bool | None] = _Field(default_factory=dict)
+    subject_kind: str = "unknown"
+    subject_digest: str | None = _Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    run_id: RunId | None = None
+    created_at: _datetime = _Field(default_factory=_utc_now)
 
 
 class Capability(FrozenModel):
@@ -1420,6 +1504,8 @@ class PersistedExecutionReport(FrozenModel):
     direct_result: DirectOperationResult | None = None
     error: ErrorInfo | None = None
     evidence: ExecutionEvidence | None = None
+    turns: tuple[TurnResult, ...] = ()
+    evaluations: tuple[PersistedEvaluationRecord, ...] = ()
     event_count: int = _Field(default=0, ge=0)
     events_truncated: bool = False
     next_after_sequence: int | None = _Field(default=None, ge=-1)
@@ -1430,6 +1516,8 @@ class PersistedExecutionReport(FrozenModel):
     def _validate_projection(self) -> "PersistedExecutionReport":
         if any(event.execution_id != self.snapshot.execution_id for event in self.events):
             raise ValueError("report events must belong to its execution")
+        if any(evaluation.execution_id != self.snapshot.execution_id for evaluation in self.evaluations):
+            raise ValueError("report evaluations must belong to its execution")
         if any(left.sequence >= right.sequence for left, right in zip(self.events, self.events[1:])):
             raise ValueError("report events must be ordered")
         if len(self.events) > self.event_count or (not self.events_truncated and len(self.events) != self.event_count):
@@ -1444,7 +1532,7 @@ __all__ = [
     "AudioContent", "BaseExecutionSpec", "CanonicalEvent", "CanonicalEventEnvelope", "Capability", "CapabilityStatus", "ClaudeCode",
     "ConnectionId", "ContentBlock", "DirectExecutionSpec", "DirectOperation", "DirectOperationBase", "DirectOperationResultBase", "DirectTool", "DirectResource", "DirectResourceTemplate", "DirectPrompt", "ElicitationPolicy", "ErrorCode", "ErrorInfo",
     "EventDirection", "EventKind", "EventOrigin", "EventPayloadRef", "EventProvenance",
-    "EvaluationContext", "EvaluationId", "EvaluationRegistration", "EvaluationResult", "EvaluationStatus",
+    "EvaluationContext", "EvaluationDecision", "EvaluationId", "EvaluationProvenance", "EvaluationRegistration", "EvaluationResult", "EvaluationStatus", "PersistedEvaluationRecord", "RunId",
     "EventId", "ExecutionId", "ExecutionEvidence", "ExecutionOutcome", "ExecutionPage", "ExecutionResult", "ExecutionSnapshot", "ExecutionSpec", "FileContent",
     "FilesystemPolicy", "FrozenModel", "FullToolPolicy", "HarnessId", "HarnessProfileId", "HarnessProfileRef",
     "HarnessSpec", "HarnessValue", "Identifier", "ImageContent", "InProcessServer", "LifecycleState",

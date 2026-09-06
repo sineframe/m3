@@ -26,6 +26,7 @@ from .types import (
     ExecutionId,
     ExecutionOutcome,
     ExecutionSnapshot,
+    RunId,
     LifecyclePhase,
     LifecycleState,
     RawEvidenceRef,
@@ -91,6 +92,8 @@ class ExecutionTraceRecorder:
         trace_id: TraceId | str | None = None,
         redaction_config: RedactionConfig | None = None,
         specification: Mapping[str, Any] | None = None,
+        run_id: str | None = None,
+        server_bindings: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         self._store = store
         self._execution_id = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(str(execution_id))
@@ -114,9 +117,12 @@ class ExecutionTraceRecorder:
         self._runtime_limitations: list[str] = []
         if store.get_snapshot(self._execution_id) is None:
             self._trace_id = requested_trace_id or TraceId(f"trace-{uuid4().hex}")
+            effective_run_id = run_id or (str(specification.get("run_id")) if isinstance(specification, Mapping) and specification.get("run_id") else None)
             store.create(
-                ExecutionSnapshot(execution_id=self._execution_id),
+                ExecutionSnapshot(execution_id=self._execution_id, run_id=RunId(effective_run_id) if effective_run_id else None),
                 specification=specification,
+                server_bindings=server_bindings,
+                run_id=effective_run_id,
             )
             self.emit(
                 EventKind.EXECUTION_CREATED,

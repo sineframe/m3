@@ -76,6 +76,16 @@ Once the project is ready, run a narrow test with normal pytest feedback:
 mcp-pal test -- tests/test_shipping.py
 ```
 
+`mcp-pal test` always adds both `-p mcp_pal.pytest_plugin` and
+`--mcp-pal-results-db PATH` to the child pytest command. The plugin installs a
+default `SQLiteExecutionStore` for `MCPTestKit` instances that did not receive
+an explicit store. The default database is `.mcp-pal/executions.sqlite` below
+the project root; select another with the CLI's `--results-db` option:
+
+```bash
+mcp-pal test --results-db /tmp/mcp-pal-runs.sqlite -- tests/test_shipping.py
+```
+
 Use `mcp-pal test --ui -- tests/test_shipping.py` only when the user wants the
 local viewer. It stays open after pytest finishes until interrupted. Everything
 after `--` is forwarded to pytest. Direct pytest remains valid when the
@@ -84,3 +94,24 @@ standalone CLI is not needed:
 ```bash
 uv run pytest tests/test_shipping.py
 ```
+
+That direct command uses in-memory SDK execution storage by default. A project
+that wants saved history without the standalone CLI can either pass
+`SQLiteExecutionStore` to its kit or invoke pytest with the storage plugin:
+
+```bash
+uv run pytest -p mcp_pal.pytest_plugin \
+  --mcp-pal-results-db .mcp-pal/executions.sqlite tests/test_shipping.py
+```
+
+Direct SQLite use requires the `mcp-pal[storage]` extra; install
+`mcp-pal[pytest,storage]` when both pytest and SQLite support are needed.
+
+The SQLite history contains SDK executions, specifications, recorded events
+and traces, sessions/turns, saved artifacts/evidence, and evaluations
+explicitly attached to executions. Direct SDK evaluation persistence requires
+`store=SQLiteExecutionStore(path)`; the CLI/plugin flag
+`--mcp-pal-results-db PATH` selects the same saved store. Without either,
+SDK storage is in memory. Pytest item outcomes, Python assertion results, and
+aggregate matrix/trial trends are not saved. Do not report a saved
+`completed` execution as a saved passing result.

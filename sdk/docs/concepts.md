@@ -166,13 +166,11 @@ fields that source can truthfully provide.
 Raw provider/MCP/process evidence is bounded and redacted before persistence.
 When a `raw_messages` entry has an `evidence_ref`, read it through the kit or
 store `read_raw_evidence` API; preview state distinguishes observed, redacted,
-and truncated content. In-memory storage is the default. Pass a
-`SQLiteExecutionStore` when durable reopen is part of the test, then close and
-reopen the store and call `get_trace_view(execution_id)`. Sync and async kits
-project the same typed shape. Harness-specific fields may legitimately be
-`NOT_EMITTED` or `UNSUPPORTED` (for example ACP usage), and failed, timed-out,
-or cancelled traces retain partial evidence and limitations without invented
-provider, usage, reasoning, HTTP, or process facts. See
+and truncated content. Sync and async kits project the same typed shape.
+Harness-specific fields may legitimately be `NOT_EMITTED` or `UNSUPPORTED`
+(for example ACP usage), and failed, timed-out, or cancelled traces retain
+partial evidence and limitations without invented provider, usage, reasoning,
+HTTP, or process facts. See
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py).
 
 An agent `session.send(...)` returns a terminal `TurnResult` for that turn.
@@ -183,6 +181,48 @@ After the session closes, use `session.result` for finalized assertions and
 have its own `trace_view`. Assertions against an open execution remain subject
 to finalized-only errors.
 
+## Optional and CLI-managed persistence
+
+SDK persistence is selected at the toolkit boundary:
+
+- With no `store`, `MCPTestKit` and `AsyncMCPTestKit` retain execution data in
+  memory only. This is the default for direct SDK and pytest use.
+- Passing `SQLiteExecutionStore(path)` as `store=` makes those executions
+  saved and reopenable by execution ID.
+- `mcp-pal test` always supplies SQLite storage for otherwise unconfigured
+  kits. It invokes pytest with the SDK plugin and
+  `--mcp-pal-results-db PATH`; the CLI default path is
+  `.mcp-pal/executions.sqlite` in the project.
+- Direct pytest users may opt into the same behavior explicitly with
+  `-p mcp_pal.pytest_plugin --mcp-pal-results-db PATH`.
+
+`SQLiteExecutionStore` and the pytest database flag require the optional
+`mcp-pal[storage]` dependency; `mcp-pal[pytest,storage]` installs both direct
+pytest support and SQLite storage.
+
+The pytest flag installs a default store factory. An explicit `store=` passed
+to a kit still takes precedence, so a test can choose an isolated database or
+another execution store.
+
+The SQLite execution store currently persists:
+
+- immutable execution specifications, snapshots, and binding revisions;
+- recorded execution events and finalized complete or partial traces;
+- agent sessions and turns;
+- redacted artifacts, blob metadata, and raw-evidence references;
+- worker leases, commands, and cancellation state used by persistent runs.
+
+It does not currently persist pytest collection/session details, pytest item
+pass/fail/skip outcomes, ordinary Python assertion results, or aggregate
+matrix/trial pass rates. Evaluations created through `kit.evaluate()` are
+saved when the kit explicitly receives `store=SQLiteExecutionStore(path)`
+or pytest is run with `--mcp-pal-results-db PATH`; otherwise they remain in
+memory.
+
+Execution lifecycle, MCP activity, and evaluation verdicts are different
+facts. A persisted `completed` execution therefore must not be counted as a
+passed test or evaluation unless an explicit verdict has also been recorded.
+
 ## Determinism and isolation
 
 The example server is local, contains no network or model dependency, and
@@ -191,6 +231,7 @@ state is retained across chained calls on one connection but does not leak to
 the next connection. The isolation and process-cleanup assertions are in
 [`test_tracing_and_lifecycle.py`](../examples/tests/test_tracing_and_lifecycle.py).
 
-Use the same pattern in a project: control fixtures, avoid shared external
-state when testing protocol behavior, and make persistence an explicit part of
-a test only when persistence is the behavior under test.
+Use the same pattern in a project: control fixtures and avoid shared external
+state when testing protocol behavior. Select explicit SQLite storage when
+opening saved data again is part of the test, or use `mcp-pal test` when CLI-managed run
+history and the local viewer are wanted.

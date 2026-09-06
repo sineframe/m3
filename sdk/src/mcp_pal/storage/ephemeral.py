@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -20,7 +21,7 @@ from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
-from typing import Literal, Protocol, TypeAlias, cast
+from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -53,11 +54,19 @@ from ..types import (
     ExecutionPage,
     ExecutionSnapshot,
     ExecutionSpec,
+    EvaluationResult,
+    EvaluationId,
+    EvaluationStatus,
+    PersistedEvaluationRecord,
+    RunId,
     LifecycleState,
     PersistedExecutionReport,
     RawEvidenceRef,
     TraceId,
     TraceResult,
+    TurnId,
+    TurnSnapshot,
+    TurnResult,
 )
 from .evidence import (
     evidence_id_for as _evidence_id_for,
@@ -140,6 +149,7 @@ class ExecutionStore(Protocol):
         server_bindings: Sequence[Mapping[str, object]] = (),
         harness_binding: Mapping[str, object] | None = None,
         parent_execution_id: ExecutionId | str | None = None,
+        run_id: RunId | str | None = None,
     ) -> None: ...
 
     def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionSnapshot | None: ...
@@ -153,6 +163,7 @@ class ExecutionStore(Protocol):
         offset: int = 0,
         lifecycle: LifecycleState | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
+        run_id: RunId | str | None = None,
     ) -> ExecutionPage: ...
 
     def get_report(
@@ -167,6 +178,12 @@ class ExecutionStore(Protocol):
     def get_trace(self, execution_id: ExecutionId | str) -> TraceResult | None: ...
 
     def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None: ...
+
+    def save_evaluation(self, execution_id: ExecutionId | str, result: EvaluationResult | Mapping[str, object], *, evaluation_id: str | None = None, turn_id: TurnId | str | None = None) -> str: ...
+
+    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[PersistedEvaluationRecord, ...]: ...
+
+    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnSnapshot, TurnResult | None], ...]: ...
 
     def save_snapshot(self, snapshot: ExecutionSnapshot) -> None: ...
 
@@ -353,6 +370,8 @@ class InMemoryExecutionStore:
         self._raw_blobs: dict[str, bytes] = {}
         self._raw_refcounts: dict[str, int] = {}
         self._acp_probes: dict[str, ACPProbeResult] = {}
+        self._evaluations: dict[str, list[PersistedEvaluationRecord]] = {}
+        self._turns: dict[str, list[tuple[TurnSnapshot, TurnResult | None]]] = {}
 
     # ACP probe persistence intentionally lives beside execution persistence,
     # but is kept as a small independent collection so tests and applications
@@ -401,6 +420,7 @@ class InMemoryExecutionStore:
         server_bindings: Sequence[Mapping[str, object]] = (),
         harness_binding: Mapping[str, object] | None = None,
         parent_execution_id: ExecutionId | str | None = None,
+        run_id: RunId | str | None = None,
     ) -> None:
         del provenance, server_bindings, harness_binding, parent_execution_id
         key = _execution_key(snapshot.execution_id)
@@ -413,7 +433,8 @@ class InMemoryExecutionStore:
         with self._lock:
             if key in self._snapshots:
                 raise StorageConflict("execution already exists")
-            self._snapshots[key] = snapshot.model_copy()
+            effective_run_id = snapshot.run_id or (run_id if isinstance(run_id, RunId) else RunId(run_id) if run_id is not None else None)
+            self._snapshots[key] = snapshot.model_copy(update={"run_id": effective_run_id})
             self._events[key] = ()
             self._reserved_sequences[key] = set()
             if validated is not None:
@@ -442,6 +463,7 @@ class InMemoryExecutionStore:
         offset: int = 0,
         lifecycle: LifecycleState | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
+        run_id: RunId | str | None = None,
     ) -> ExecutionPage:
         page = ExecutionPage(limit=limit, offset=offset)
         lifecycle_value = LifecycleState(lifecycle) if lifecycle is not None else None
@@ -452,6 +474,7 @@ class InMemoryExecutionStore:
             snapshot for snapshot in snapshots
             if (lifecycle_value is None or snapshot.lifecycle is lifecycle_value)
             and (outcome_value is None or snapshot.outcome is outcome_value)
+            and (run_id is None or snapshot.run_id == (run_id if isinstance(run_id, RunId) else RunId(str(run_id))))
         ]
         filtered.sort(key=lambda item: (item.created_at, str(item.execution_id.root)), reverse=True)
         return page.model_copy(update={"items": tuple(item.model_copy() for item in filtered[offset : offset + limit]), "total": len(filtered)})
@@ -472,12 +495,74 @@ class InMemoryExecutionStore:
             direct_result=direct_result,
             error=error,
             evidence=evidence,
+            turns=tuple(result for _, result in self.turns(execution_id) if result is not None),
+            evaluations=self.evaluations(execution_id),
             event_count=len(events),
             events_truncated=event_limit is not None and len(events) > event_limit,
             next_after_sequence=selected[-1].sequence if selected else after_sequence,
             artifact_count=0,
             artifacts_truncated=False,
         )
+
+    def save_evaluation(self, execution_id: ExecutionId | str, result: EvaluationResult | Mapping[str, object], *, evaluation_id: str | None = None, turn_id: object | None = None) -> str:
+        key = _execution_key(execution_id)
+        with self._lock:
+            if key not in self._snapshots:
+                raise StorageConflict("execution does not exist")
+            value: dict[str, Any] = result.model_dump(mode="json") if isinstance(result, EvaluationResult) else dict(result)
+            raw_context = value.get("context")
+            context: Mapping[str, Any] = raw_context if isinstance(raw_context, Mapping) else {}
+            identifier = evaluation_id or str(value.get("evaluation_id") or f"evaluation-{len(self._evaluations.get(key, [])) + 1}")
+            turn_value = turn_id or context.get("turn_id")
+            if turn_value is not None:
+                turn_key = str(getattr(turn_value, "root", turn_value))
+                if not any(event.turn_id is not None and event.turn_id.root == turn_key for event in self._events.get(key, ())):
+                    raise StorageConflict("turn does not belong to execution")
+            subject_digest = hashlib.sha256(json.dumps(context.get("subject"), sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
+            record = PersistedEvaluationRecord(
+                evaluation_id=EvaluationId(identifier),
+                execution_id=ExecutionId(key),
+                turn_id=TurnId(str(getattr(turn_value, "root", turn_value))) if turn_value else None,
+                name=str(value.get("name", "")),
+                status=EvaluationStatus(value.get("status", "error")),
+                required=bool(value.get("required", False)),
+                message=value.get("message"), score=value.get("score"),
+                rationale=value.get("rationale"), metrics=value.get("metrics", {}),
+                provenance=value.get("provenance"), goal=context.get("goal"),
+                metadata=context.get("metadata", {}),
+                subject_kind=str(context.get("subject_kind", "unknown")),
+                subject_digest=subject_digest,
+                run_id=RunId(str(getattr(self._snapshots[key].run_id, "root", self._snapshots[key].run_id))) if self._snapshots[key].run_id else None,
+            )
+            if any(item.evaluation_id == record.evaluation_id for item in self._evaluations.get(key, [])):
+                raise StorageConflict("evaluation already exists")
+            self._evaluations.setdefault(key, []).append(record)
+            return identifier
+
+    def save_turn(self, snapshot: TurnSnapshot, result: TurnResult | None = None) -> None:
+        execution_key = next((key for key, events in self._events.items() if any(event.session_id == snapshot.session_id for event in events)), None)
+        if execution_key is None:
+            execution_key = _execution_key(str(snapshot.session_id.root))
+        with self._lock:
+            values = self._turns.setdefault(execution_key, [])
+            values[:] = [item for item in values if item[0].turn_id != snapshot.turn_id]
+            values.append((snapshot.model_copy(), result.model_copy() if result is not None else None))
+
+    append_turn = save_turn
+
+    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnSnapshot, TurnResult | None], ...]:
+        with self._lock:
+            values = self._turns.get(_execution_key(execution_id), ())
+            return tuple((snapshot.model_copy(), result.model_copy() if result is not None else None) for snapshot, result in values)
+
+    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: object | None = None) -> tuple[PersistedEvaluationRecord, ...]:
+        key = _execution_key(execution_id)
+        with self._lock:
+            values = tuple(self._evaluations.get(key, ()))
+        if turn_id is not None:
+            turn_key = str(getattr(turn_id, "root", turn_id))
+            values = tuple(item for item in values if str(getattr(item.turn_id, "root", item.turn_id)) == turn_key)
+        return tuple(item.model_copy() for item in values)
 
     def get_trace(self, execution_id: ExecutionId | str) -> TraceResult | None:
         snapshot = self.get_snapshot(execution_id)
@@ -758,6 +843,7 @@ class InMemoryExecutionStore:
                 finished_at = event.timestamp
         return ExecutionSnapshot(
             execution_id=ExecutionId(execution_id),
+            run_id=previous.run_id,
             lifecycle=lifecycle,
             outcome=outcome,
             sequence=highest,
