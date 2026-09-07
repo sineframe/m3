@@ -13,8 +13,8 @@ from mcp_pal.observability import (
     Observation,
     ObservationState,
     RawEvidence,
-    RawEvidenceCapture,
-    TraceCaptureConfig,
+    EvidenceCapture,
+    CaptureOptions,
 )
 from mcp_pal.storage import (
     InMemoryExecutionStore,
@@ -30,8 +30,8 @@ from mcp_pal.types import (
     EventId,
     EventKind,
     ExecutionId,
-    ExecutionSnapshot,
-    RawEvidenceRef,
+    ExecutionState,
+    EvidenceRef,
 )
 
 
@@ -40,7 +40,7 @@ def _execution(
     name: str = "raw-evidence-execution",
 ) -> tuple[ExecutionId, EventId, EventId]:
     execution_id = ExecutionId(name)
-    store.create(ExecutionSnapshot(execution_id=execution_id))
+    store.create(ExecutionState(execution_id=execution_id))
     factory = EventFactory(execution_id)
     created = factory.create(EventKind.EXECUTION_CREATED, payload={})
     evidence_event = factory.create(EventKind.DIAGNOSTIC, payload={"message": "safe"})
@@ -52,7 +52,7 @@ def _store(
     kind: str,
     tmp_path: Path,
     *,
-    config: TraceCaptureConfig | None = None,
+    config: CaptureOptions | None = None,
     redaction: RedactionConfig | None = None,
 ) -> InMemoryExecutionStore | SQLiteExecutionStore:
     if kind == "memory":
@@ -66,7 +66,7 @@ def _store(
 
 
 def test_capture_config_defaults_and_positive_caps() -> None:
-    assert TraceCaptureConfig().model_dump() == {
+    assert CaptureOptions().model_dump() == {
         "capture_raw_evidence": True,
         "capture_provider_messages": True,
         "capture_stderr": True,
@@ -75,17 +75,17 @@ def test_capture_config_defaults_and_positive_caps() -> None:
         "raw_execution_bytes": 67_108_864,
     }
     with pytest.raises(ValueError):
-        TraceCaptureConfig(raw_frame_bytes=0)
+        CaptureOptions(raw_frame_bytes=0)
     with pytest.raises(ValueError):
-        TraceCaptureConfig(raw_preview_bytes=0)
+        CaptureOptions(raw_preview_bytes=0)
     with pytest.raises(ValueError):
-        TraceCaptureConfig(raw_execution_bytes=0)
+        CaptureOptions(raw_execution_bytes=0)
 
 
 def test_public_evidence_models_reject_inconsistent_bounds_and_capture_metadata() -> (
     None
 ):
-    reference = RawEvidenceRef(
+    reference = EvidenceRef(
         evidence_id=evidence_id_for("evidence-model"), size_bytes=3
     )
     with pytest.raises(ValueError):
@@ -108,7 +108,7 @@ def test_public_evidence_models_reject_inconsistent_bounds_and_capture_metadata(
     preview = Observation[str](
         state=ObservationState.OBSERVED, value="abc", evidence_ref=reference
     )
-    RawEvidenceCapture(
+    EvidenceCapture(
         reference=reference,
         preview=preview,
         original_size_bytes=3,
@@ -117,7 +117,7 @@ def test_public_evidence_models_reject_inconsistent_bounds_and_capture_metadata(
         truncated=False,
     )
     with pytest.raises(ValueError):
-        RawEvidenceCapture(
+        EvidenceCapture(
             reference=reference,
             preview=preview,
             original_size_bytes=3,
@@ -126,11 +126,11 @@ def test_public_evidence_models_reject_inconsistent_bounds_and_capture_metadata(
             truncated=False,
         )
     with pytest.raises(ValueError):
-        RawEvidenceCapture(
+        EvidenceCapture(
             reference=reference,
             preview=preview.model_copy(
                 update={
-                    "evidence_ref": RawEvidenceRef(evidence_id=evidence_id_for("other"))
+                    "evidence_ref": EvidenceRef(evidence_id=evidence_id_for("other"))
                 }
             ),
             original_size_bytes=3,
@@ -139,7 +139,7 @@ def test_public_evidence_models_reject_inconsistent_bounds_and_capture_metadata(
             truncated=False,
         )
     with pytest.raises(ValueError):
-        RawEvidenceCapture(
+        EvidenceCapture(
             reference=reference,
             preview=preview,
             original_size_bytes=3,
@@ -164,7 +164,7 @@ def test_long_event_id_round_trips_through_concrete_stores(
 ) -> None:
     store = _store(kind, tmp_path)
     execution_id = ExecutionId(f"long-{kind}")
-    store.create(ExecutionSnapshot(execution_id=execution_id))
+    store.create(ExecutionState(execution_id=execution_id))
     factory = EventFactory(execution_id)
     created = factory.create(EventKind.EXECUTION_CREATED, payload={})
     long_event_id = EventId("e" * 256)
@@ -180,7 +180,7 @@ def test_long_event_id_round_trips_through_concrete_stores(
 def test_preview_is_utf8_safe_and_json_serializable() -> None:
     prepared = prepare_evidence(
         "snowman ✓ and secret".encode(),
-        config=TraceCaptureConfig(
+        config=CaptureOptions(
             raw_preview_bytes=8, raw_frame_bytes=128, raw_execution_bytes=128
         ),
         redaction_config=RedactionConfig(
@@ -238,7 +238,7 @@ def test_malformed_json_and_opaque_binary_use_byte_redaction_only() -> None:
     )
     malformed = prepare_evidence(
         b'{"api_key":"unknown-value", "value":"configured-secret"',
-        config=TraceCaptureConfig(),
+        config=CaptureOptions(),
         redaction_config=config,
         remaining_bytes=1024,
     )
@@ -246,7 +246,7 @@ def test_malformed_json_and_opaque_binary_use_byte_redaction_only() -> None:
     assert b"unknown-value" in malformed.content
     binary = prepare_evidence(
         b"\x00configured-secret\xff",
-        config=TraceCaptureConfig(),
+        config=CaptureOptions(),
         redaction_config=config,
         remaining_bytes=1024,
     )
@@ -256,7 +256,7 @@ def test_malformed_json_and_opaque_binary_use_byte_redaction_only() -> None:
 
 def test_disabled_capture_does_not_publish_evidence() -> None:
     store = InMemoryExecutionStore(
-        capture_config=TraceCaptureConfig(capture_raw_evidence=False)
+        capture_config=CaptureOptions(capture_raw_evidence=False)
     )
     _, _, event_id = _execution(store)
     with pytest.raises(RawEvidenceUnavailable):
@@ -268,7 +268,7 @@ def test_capture_metadata_reports_redaction_without_truncation() -> None:
         config=RedactionConfig(
             secrets=frozenset({"secret"}), include_environment=False
         ),
-        capture_config=TraceCaptureConfig(raw_frame_bytes=64, raw_execution_bytes=64),
+        capture_config=CaptureOptions(raw_frame_bytes=64, raw_execution_bytes=64),
     )
     _, _, event_id = _execution(store)
     capture = store.put_raw_evidence(event_id, b"secret", media_type="text/plain")
@@ -283,7 +283,7 @@ def test_capture_metadata_reports_redaction_without_truncation() -> None:
 def test_redaction_frame_and_execution_caps_are_applied_before_storage(
     kind: str, tmp_path: Path
 ) -> None:
-    config = TraceCaptureConfig(
+    config = CaptureOptions(
         raw_preview_bytes=4, raw_frame_bytes=8, raw_execution_bytes=10
     )
     store = _store(
@@ -332,7 +332,7 @@ def test_frame_cap_boundary(size: int, stored: int, tmp_path: Path) -> None:
     store = SQLiteExecutionStore(
         tmp_path / f"frame-{size}.sqlite",
         blob_root=tmp_path / f"frame-{size}-blobs",
-        capture_config=TraceCaptureConfig(raw_frame_bytes=8, raw_execution_bytes=64),
+        capture_config=CaptureOptions(raw_frame_bytes=8, raw_execution_bytes=64),
     )
     _, _, event_id = _execution(store)
     capture = store.put_raw_evidence(
@@ -357,16 +357,16 @@ def test_missing_malformed_tampered_and_wrong_role_references_are_typed(
     if kind == "sqlite":
         with pytest.raises(RawEvidenceUnavailable):
             store.read_raw_evidence(
-                RawEvidenceRef(evidence_id=evidence_id_for(event_id))
+                EvidenceRef(evidence_id=evidence_id_for(event_id))
             )
     capture = store.put_raw_evidence(event_id, b"safe", media_type="text/plain")
     ref = capture.reference
     assert (
-        store.read_raw_evidence(RawEvidenceRef(evidence_id=ref.evidence_id)).content
+        store.read_raw_evidence(EvidenceRef(evidence_id=ref.evidence_id)).content
         == "safe"
     )
     with pytest.raises(RawEvidenceUnavailable):
-        store.read_raw_evidence(RawEvidenceRef(evidence_id="bad"))
+        store.read_raw_evidence(EvidenceRef(evidence_id="bad"))
     with pytest.raises(RawEvidenceIntegrityError):
         store.read_raw_evidence(ref.model_copy(update={"sha256": "0" * 64}))
     with pytest.raises(RawEvidenceIntegrityError):
@@ -401,7 +401,7 @@ def test_sqlite_fresh_schema_allows_payload_and_raw_roles_and_reopen(
     )
     execution_id, created_id, event_id = _execution(store)
     with pytest.raises(RawEvidenceUnavailable):
-        store.read_raw_evidence(RawEvidenceRef(evidence_id=evidence_id_for(event_id)))
+        store.read_raw_evidence(EvidenceRef(evidence_id=evidence_id_for(event_id)))
     capture = store.put_raw_evidence(event_id, b"durable", media_type="text/plain")
     ref = capture.reference
     with sqlite3.connect(tmp_path / "raw.sqlite") as connection:

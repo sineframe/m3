@@ -1,4 +1,4 @@
-"""Contracts for the canonical event envelope and sequence factory."""
+"""Contracts for the stable event envelope and sequence factory."""
 
 from __future__ import annotations
 
@@ -15,43 +15,43 @@ from mcp_pal.execution_trace import ExecutionTraceRecorder
 from mcp_pal.events import (
     EVENT_SCHEMA_ID,
     EVENT_SCHEMA_VERSION,
-    CanonicalEvent,
+    Event,
     EventDirection,
     EventFactory,
     EventKind,
     EventOrigin,
-    EventPayloadRef,
-    EventProvenance,
+    PayloadRef,
+    EventSource,
     LifecyclePhase,
-    PerExecutionSequenceAllocator,
-    PerConnectionRequestSequenceAllocator,
-    RawEvidenceRef,
+    EventSequence,
+    RequestSequence,
+    EvidenceRef,
     ReasoningState,
     ReasoningVisibility,
-    RequestCorrelation,
+    RequestLink,
 )
 from mcp_pal.storage import InMemoryExecutionStore
 from mcp_pal.types import ExecutionId, ExecutionOutcome, TraceId, TraceResult
 
 
-def _provenance() -> EventProvenance:
-    return EventProvenance(origin=EventOrigin.WIRE_OBSERVED, source="fixture")
+def _provenance() -> EventSource:
+    return EventSource(origin=EventOrigin.WIRE_OBSERVED, source="fixture")
 
 
 def test_event_public_types_have_runtime_schemas() -> None:
     types_module = importlib.import_module("mcp_pal.types")
     names = (
-        "CanonicalEvent",
+        "Event",
         "EventDirection",
         "EventKind",
         "EventOrigin",
-        "EventPayloadRef",
-        "EventProvenance",
+        "PayloadRef",
+        "EventSource",
         "LifecyclePhase",
-        "RawEvidenceRef",
+        "EvidenceRef",
         "ReasoningState",
         "ReasoningVisibility",
-        "RequestCorrelation",
+        "RequestLink",
     )
     for name in names:
         value = getattr(types_module, name)
@@ -67,14 +67,14 @@ def test_packaged_event_schema_matches_authoritative_model() -> None:
     expected = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "https://mcp-pal.local/schemas/mcp-pal.event.v0.2.schema.json",
-        **CanonicalEvent.model_json_schema(by_alias=True),
+        **Event.model_json_schema(by_alias=True),
     }
     assert packaged == expected
     assert packaged["$id"].endswith("mcp-pal.event.v0.2.schema.json")
     assert packaged["properties"]["schema"]["const"] == EVENT_SCHEMA_ID
     assert packaged["properties"]["schema_version"]["const"] == EVENT_SCHEMA_VERSION
     assert packaged["additionalProperties"] is False
-    correlation = packaged["$defs"]["RequestCorrelation"]
+    correlation = packaged["$defs"]["RequestLink"]
     assert {item.get("type") for item in correlation["properties"]["jsonrpc_id"]["anyOf"]} == {
         "integer",
         "string",
@@ -84,7 +84,7 @@ def test_packaged_event_schema_matches_authoritative_model() -> None:
     assert "payload" in packaged["properties"]
 
 
-def _event(**overrides: object) -> CanonicalEvent:
+def _event(**overrides: object) -> Event:
     values: dict[str, object] = {
         "event_id": "event-1",
         "execution_id": "execution-1",
@@ -93,7 +93,7 @@ def _event(**overrides: object) -> CanonicalEvent:
         "timestamp": datetime(2026, 1, 1, tzinfo=timezone.utc),
         "monotonic_offset_ms": 1.5,
         "connection_id": "connection-1",
-        "correlation": RequestCorrelation(
+        "correlation": RequestLink(
             jsonrpc_id=7,
             direction=EventDirection.CLIENT_TO_SERVER,
             request_sequence=1,
@@ -103,18 +103,18 @@ def _event(**overrides: object) -> CanonicalEvent:
         "provenance": _provenance(),
     }
     values.update(overrides)
-    return CanonicalEvent.model_validate(values)
+    return Event.model_validate(values)
 
 
 def test_schema_envelope_and_raw_evidence_are_distinct() -> None:
-    event = _event(raw_evidence_ref=RawEvidenceRef(evidence_id="wire-1"))
+    event = _event(raw_evidence_ref=EvidenceRef(evidence_id="wire-1"))
     encoded = event.model_dump(mode="json", by_alias=True)
     assert encoded["schema"] == EVENT_SCHEMA_ID
     assert encoded["schema_version"] == EVENT_SCHEMA_VERSION
     assert encoded["payload"] == {"method": "tools/call"}
     assert encoded["raw_evidence_ref"]["evidence_id"] == "wire-1"
     assert "wire-1" not in encoded["payload"]
-    assert CanonicalEvent.model_validate(encoded) == event
+    assert Event.model_validate(encoded) == event
 
 
 def test_taxonomy_is_closed_and_provider_events_are_explicit() -> None:
@@ -122,7 +122,7 @@ def test_taxonomy_is_closed_and_provider_events_are_explicit() -> None:
         _event(kind="vendor.new_event")
     provider = _event(
         kind=EventKind.PROVIDER_EVENT,
-        provenance=EventProvenance(
+        provenance=EventSource(
             origin=EventOrigin.HARNESS_REPORTED,
             source="opencode",
             provider_kind="vendor.new_event",
@@ -139,12 +139,12 @@ def test_timestamp_must_be_aware_and_is_normalized_to_utc() -> None:
 
 
 def test_json_rpc_id_preserves_integer_and_string_identity() -> None:
-    integer = RequestCorrelation(jsonrpc_id=7, direction=EventDirection.CLIENT_TO_SERVER)
-    string = RequestCorrelation(jsonrpc_id="7", direction=EventDirection.CLIENT_TO_SERVER)
+    integer = RequestLink(jsonrpc_id=7, direction=EventDirection.CLIENT_TO_SERVER)
+    string = RequestLink(jsonrpc_id="7", direction=EventDirection.CLIENT_TO_SERVER)
     assert type(integer.jsonrpc_id) is int
     assert type(string.jsonrpc_id) is str
     with pytest.raises(ValidationError):
-        RequestCorrelation(jsonrpc_id=True, direction=EventDirection.CLIENT_TO_SERVER)
+        RequestLink(jsonrpc_id=True, direction=EventDirection.CLIENT_TO_SERVER)
 
 
 def test_request_sequence_requires_connection_identity() -> None:
@@ -164,28 +164,28 @@ def test_reasoning_requires_honest_explicit_visibility() -> None:
         _event(kind=EventKind.REASONING)
     encrypted = ReasoningState(
         visibility=ReasoningVisibility.ENCRYPTED,
-        payload_ref=EventPayloadRef(blob_id="reasoning-1", sha256="0" * 64, size_bytes=10),
+        payload_ref=PayloadRef(blob_id="reasoning-1", sha256="0" * 64, size_bytes=10),
     )
     assert "reasoning-1" in encrypted.model_dump_json()
     for visibility in (ReasoningVisibility.UNAVAILABLE, ReasoningVisibility.PROVIDER_HIDDEN):
         with pytest.raises(ValidationError):
             ReasoningState(
                 visibility=visibility,
-                payload_ref=EventPayloadRef(blob_id="must-not-be-inferred", sha256="0" * 64, size_bytes=10),
+                payload_ref=PayloadRef(blob_id="must-not-be-inferred", sha256="0" * 64, size_bytes=10),
             )
         state = ReasoningState(visibility=visibility)
         assert "must-not-be-inferred" not in state.model_dump_json()
 
 
 def test_allocator_is_thread_safe_and_monotonic() -> None:
-    allocator = PerExecutionSequenceAllocator()
+    allocator = EventSequence()
     with ThreadPoolExecutor(max_workers=8) as pool:
         values = list(pool.map(lambda _: allocator.next(), range(200)))
     assert sorted(values) == list(range(200))
 
 
 def test_request_sequences_are_independent_per_connection() -> None:
-    allocator = PerConnectionRequestSequenceAllocator()
+    allocator = RequestSequence()
     assert [allocator.next("a"), allocator.next("a"), allocator.next("b")] == [1, 2, 1]
 
 
@@ -194,19 +194,19 @@ def test_factory_assigns_outbound_request_sequence_per_connection() -> None:
     first = factory.create(
         EventKind.MCP_REQUEST,
         connection_id="connection-a",
-        correlation=RequestCorrelation(jsonrpc_id="7", direction=EventDirection.CLIENT_TO_SERVER),
+        correlation=RequestLink(jsonrpc_id="7", direction=EventDirection.CLIENT_TO_SERVER),
         lifecycle_phase=LifecyclePhase.MCP_CALL,
     )
     second = factory.create(
         EventKind.MCP_REQUEST,
         connection_id="connection-a",
-        correlation=RequestCorrelation(jsonrpc_id=8, direction=EventDirection.CLIENT_TO_SERVER),
+        correlation=RequestLink(jsonrpc_id=8, direction=EventDirection.CLIENT_TO_SERVER),
         lifecycle_phase=LifecyclePhase.MCP_CALL,
     )
     other = factory.create(
         EventKind.MCP_REQUEST,
         connection_id="connection-b",
-        correlation=RequestCorrelation(jsonrpc_id=9, direction=EventDirection.CLIENT_TO_SERVER),
+        correlation=RequestLink(jsonrpc_id=9, direction=EventDirection.CLIENT_TO_SERVER),
         lifecycle_phase=LifecyclePhase.MCP_CALL,
     )
     assert first.correlation is not None and first.correlation.request_sequence == 1
@@ -232,14 +232,14 @@ def test_failed_outbound_request_rolls_back_both_sequences() -> None:
         factory.create(
             EventKind.MCP_REQUEST,
             connection_id="connection-a",
-            correlation=RequestCorrelation(jsonrpc_id=7, direction=EventDirection.CLIENT_TO_SERVER),
+            correlation=RequestLink(jsonrpc_id=7, direction=EventDirection.CLIENT_TO_SERVER),
             lifecycle_phase=LifecyclePhase.MCP_CALL,
             monotonic_offset_ms=-1,
         )
     successful = factory.create(
         EventKind.MCP_REQUEST,
         connection_id="connection-a",
-        correlation=RequestCorrelation(jsonrpc_id=7, direction=EventDirection.CLIENT_TO_SERVER),
+        correlation=RequestLink(jsonrpc_id=7, direction=EventDirection.CLIENT_TO_SERVER),
         lifecycle_phase=LifecyclePhase.MCP_CALL,
     )
     assert successful.sequence == 0
@@ -250,7 +250,7 @@ def test_same_typed_request_id_can_correlate_on_different_connections() -> None:
     first = _event(
         event_id="request-a",
         connection_id="connection-a",
-        correlation=RequestCorrelation(
+        correlation=RequestLink(
             jsonrpc_id=7,
             direction=EventDirection.CLIENT_TO_SERVER,
             request_sequence=1,
@@ -259,7 +259,7 @@ def test_same_typed_request_id_can_correlate_on_different_connections() -> None:
     response = _event(
         event_id="response-a",
         connection_id="connection-a",
-        correlation=RequestCorrelation(
+        correlation=RequestLink(
             jsonrpc_id=7,
             direction=EventDirection.SERVER_TO_CLIENT,
             request_sequence=1,
@@ -269,7 +269,7 @@ def test_same_typed_request_id_can_correlate_on_different_connections() -> None:
     other = _event(
         event_id="request-b",
         connection_id="connection-b",
-        correlation=RequestCorrelation(
+        correlation=RequestLink(
             jsonrpc_id="7",
             direction=EventDirection.CLIENT_TO_SERVER,
             request_sequence=1,

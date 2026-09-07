@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from starlette.requests import Request
 
-from mcp_pal.server_group import HarnessServerConfiguration
+from mcp_pal.server_group import HarnessServerConfig
 from mcp_pal.transport.capture_proxy import McpCaptureManager
 from mcp_pal.transport.tool_policy import ProxyToolPolicy
 from mcp_pal.types import RestrictiveToolPolicy, TransportKind
@@ -133,7 +133,7 @@ async def test_stdio_policy_is_a_one_shot_handoff(tmp_path: Path) -> None:
         tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:read",)),
         server_aliases=("echo", "other"),
     )
-    config = HarnessServerConfiguration(
+    config = HarnessServerConfig(
         key="echo",
         transport=TransportKind.STDIO,
         required=True,
@@ -158,7 +158,7 @@ async def test_capture_reports_policy_proof_only_for_enforcing_transports(tmp_pa
         tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:read",)),
         server_aliases=("echo",),
     )
-    in_process = HarnessServerConfiguration(
+    in_process = HarnessServerConfig(
         key="echo",
         transport=TransportKind.IN_PROCESS,
         required=True,
@@ -188,7 +188,7 @@ async def test_stdio_policy_handoff_refuses_a_preexisting_symlink(tmp_path: Path
         tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:read",)),
         server_aliases=("echo",),
     )
-    config = HarnessServerConfiguration(
+    config = HarnessServerConfig(
         key="echo",
         transport=TransportKind.STDIO,
         required=True,
@@ -220,7 +220,7 @@ async def test_stdio_policy_blocks_child_before_side_effect_and_returns_jsonrpc_
         tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:allowed",)),
         server_aliases=("echo",),
     )
-    config = HarnessServerConfiguration(
+    config = HarnessServerConfig(
         key="echo", transport=TransportKind.STDIO, required=True, available=True,
         connection_id="connection-echo", command=sys.executable, args=(str(child),),
     )

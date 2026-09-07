@@ -15,7 +15,7 @@ from mcp_pal.types import (
     InProcessServer,
     ServerBinding,
     StdioServer,
-    StreamableHTTPServer,
+    HTTPServer,
     TrustLevel,
 )
 
@@ -81,7 +81,7 @@ def test_untrusted_private_endpoint_is_rejected_without_network_access() -> None
     manager = ServerGroupManager(
         (
             ServerBinding(
-                server=StreamableHTTPServer(
+                server=HTTPServer(
                     name="private",
                     url="http://127.0.0.1:1234/mcp",
                     trust=TrustLevel.UNTRUSTED,
@@ -121,7 +121,7 @@ async def test_loopback_endpoint_is_reachable_by_the_official_direct_client() ->
     try:
         async with AsyncMCPTestKit() as kit:
             async with kit.direct(
-                StreamableHTTPServer(
+                HTTPServer(
                     name="loopback",
                     url=endpoint,
                     trust=TrustLevel.SDK_LOOPBACK,

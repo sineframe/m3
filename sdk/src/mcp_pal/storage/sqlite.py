@@ -6,7 +6,7 @@ is an explicit application decision.  The schema is deliberately namespaced
 with ``v2_`` and is created from scratch.  There is no schema inspection,
 version detector, migration path, or legacy import in this module.
 
-SQLite stores redacted canonical values only.  Large artifact values are
+SQLite stores redacted stable values only.  Large artifact values are
 written atomically to a content-addressed filesystem directory before their
 metadata reference is committed.  A failed metadata transaction leaves an
 unreferenced file which is safe for the explicit garbage collector to remove.
@@ -36,8 +36,8 @@ from ..errors import (
 )
 from ..observability import (
     RawEvidence,
-    RawEvidenceCapture,
-    TraceCaptureConfig,
+    EvidenceCapture,
+    CaptureOptions,
     TraceView,
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
@@ -50,21 +50,21 @@ from ..trace.redaction import (
 from ..types import (
     ArtifactId,
     ArtifactRef,
-    CanonicalEvent,
+    Event,
     EventId,
     EventKind,
-    EventPayloadRef,
+    PayloadRef,
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
-    ExecutionSnapshot,
+    ExecutionState,
     ExecutionSpec,
     EvaluationResult,
-    PersistedEvaluationRecord,
+    EvaluationRecord,
     RunId,
-    LifecycleState,
-    PersistedExecutionReport,
-    RawEvidenceRef,
+    ExecutionStatus,
+    ExecutionReport,
+    EvidenceRef,
     RevisionId,
     RevisionSelection,
     SessionId,
@@ -72,9 +72,9 @@ from ..types import (
     TraceResult,
     TurnId,
     TurnResult,
-    TurnSnapshot,
+    TurnState,
 )
-from ..aggregations import EvaluationAggregateQuery, EvaluationAggregateReport, aggregate_evaluations
+from ..aggregations import EvaluationQuery, EvaluationReport, aggregate_evaluations
 from .blobs import FilesystemBlobStore
 from .ephemeral import (
     ArtifactNotFound,
@@ -569,7 +569,7 @@ class _SqliteBase:
                     goal=candidate_context.get("goal"),
                     metadata=candidate_context.get("metadata", {}),
                 )
-                PersistedEvaluationRecord.model_validate(candidate)
+                EvaluationRecord.model_validate(candidate)
                 connection.execute(
                     "UPDATE v2_evaluations SET result_json=?, evaluator_name=?, status=?, score=?, run_id=? WHERE id=?",
                     (_json(compact), name, status, score, str(run_value) if run_value is not None else None, str(row["id"])),
@@ -728,10 +728,10 @@ class _SqliteBatch(AbstractContextManager["_SqliteBatch"]):
     def __init__(self, store: "SQLiteExecutionStore", execution_id: str) -> None:
         self.store = store
         self.execution_id = execution_id
-        self.events: list[CanonicalEvent] = []
+        self.events: list[Event] = []
         self.done = False
 
-    def append(self, events: Sequence[CanonicalEvent]) -> None:
+    def append(self, events: Sequence[Event]) -> None:
         if self.done:
             raise StorageConflict("transaction is already closed")
         if any(_execution_key(event.execution_id) != self.execution_id for event in events):
@@ -777,7 +777,7 @@ class SQLiteExecutionStore(_SqliteBase):
         *,
         blob_root: str | Path | None = None,
         config: RedactionConfig | None = None,
-        capture_config: TraceCaptureConfig | None = None,
+        capture_config: CaptureOptions | None = None,
         payload_blob_threshold: int = 64 * 1024,
         **kwargs: Any,
     ) -> None:
@@ -786,14 +786,14 @@ class SQLiteExecutionStore(_SqliteBase):
         super().__init__(database, **kwargs)
         self._redaction_config = config or RedactionConfig.from_environment()
         self._capture_config = (
-            capture_config if capture_config is not None else TraceCaptureConfig()
+            capture_config if capture_config is not None else CaptureOptions()
         )
         self.artifacts = SQLiteArtifactStore(database, blob_root, config=self._redaction_config, busy_timeout_ms=self.busy_timeout_ms, wal=False)
         self.payload_blob_threshold = payload_blob_threshold
         self._callbacks: dict[str, list[EventCallback]] = {}
         self._callback_lock = threading.RLock()
 
-    def create(self, snapshot: ExecutionSnapshot, *, specification: Mapping[str, Any] | None = None, provenance: Mapping[str, Any] | None = None, server_bindings: Sequence[Mapping[str, Any]] = (), harness_binding: Mapping[str, Any] | None = None, parent_execution_id: ExecutionId | str | None = None, run_id: RunId | str | None = None) -> None:
+    def create(self, snapshot: ExecutionState, *, specification: Mapping[str, Any] | None = None, provenance: Mapping[str, Any] | None = None, server_bindings: Sequence[Mapping[str, Any]] = (), harness_binding: Mapping[str, Any] | None = None, parent_execution_id: ExecutionId | str | None = None, run_id: RunId | str | None = None) -> None:
         key = _execution_key(snapshot.execution_id)
         snapshot_run = snapshot.run_id.root if snapshot.run_id is not None else None
         fallback_run = run_id.root if isinstance(run_id, RunId) else run_id
@@ -832,10 +832,10 @@ class SQLiteExecutionStore(_SqliteBase):
 
     create_execution = create
 
-    def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionSnapshot | None:
+    def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None:
         with self._connect() as connection:
             row = connection.execute("SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL", (_execution_key(execution_id),)).fetchone()
-        return ExecutionSnapshot.model_validate(_loads(row[0])) if row else None
+        return ExecutionState.model_validate(_loads(row[0])) if row else None
 
     def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None:
         """Return the immutable typed submission spec, if one was saved."""
@@ -859,12 +859,12 @@ class SQLiteExecutionStore(_SqliteBase):
         *,
         limit: int = 50,
         offset: int = 0,
-        lifecycle: LifecycleState | str | None = None,
+        lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
         run_id: str | None = None,
     ) -> ExecutionPage:
         page = ExecutionPage(limit=limit, offset=offset)
-        lifecycle_value = LifecycleState(lifecycle) if lifecycle is not None else None
+        lifecycle_value = ExecutionStatus(lifecycle) if lifecycle is not None else None
         outcome_value = ExecutionOutcome(outcome) if outcome is not None else None
         clauses = ["deleted_at IS NULL"]
         parameters: list[Any] = []
@@ -884,10 +884,10 @@ class SQLiteExecutionStore(_SqliteBase):
                 f"SELECT snapshot_json FROM v2_executions WHERE {where} ORDER BY json_extract(snapshot_json, '$.created_at') DESC, id DESC LIMIT ? OFFSET ?",
                 tuple(parameters) + (limit, offset),
             ).fetchall()
-        snapshots = [ExecutionSnapshot.model_validate(_loads(row[0])) for row in rows]
+        snapshots = [ExecutionState.model_validate(_loads(row[0])) for row in rows]
         return page.model_copy(update={"items": tuple(snapshots), "total": int(total_row[0]) if total_row else 0})
 
-    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> PersistedExecutionReport | None:
+    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> ExecutionReport | None:
         snapshot = self.get_snapshot(execution_id)
         if snapshot is None:
             return None
@@ -909,7 +909,7 @@ class SQLiteExecutionStore(_SqliteBase):
         direct_result, error, evidence = _report_fields(terminal_events)
         all_artifacts = tuple(self.artifacts.iter_refs(execution_id))
         artifacts = all_artifacts if artifact_limit is None else all_artifacts[:artifact_limit]
-        return PersistedExecutionReport(
+        return ExecutionReport(
             snapshot=snapshot,
             events=events,
             artifacts=artifacts,
@@ -946,7 +946,7 @@ class SQLiteExecutionStore(_SqliteBase):
         except ValueError:
             raise TraceUnavailable("trace identity evidence is invalid") from None
         if typed_trace_id.root != trace_id:
-            raise TraceUnavailable("trace identity evidence is not canonical")
+            raise TraceUnavailable("trace identity evidence is not stable")
         terminal = [
             event for event in events if event.kind is EventKind.EXECUTION_FINISHED
         ]
@@ -971,7 +971,7 @@ class SQLiteExecutionStore(_SqliteBase):
             typed_outcome = ExecutionOutcome(outcome)
         except ValueError:
             raise TraceUnavailable("persisted execution outcome is invalid") from None
-        if snapshot.lifecycle is not LifecycleState.FINISHED or snapshot.outcome != typed_outcome:
+        if snapshot.lifecycle is not ExecutionStatus.FINISHED or snapshot.outcome != typed_outcome:
             raise TraceUnavailable("persisted snapshot outcome conflicts with terminal evidence")
         try:
             return TraceResult(
@@ -989,7 +989,7 @@ class SQLiteExecutionStore(_SqliteBase):
         trace = self.get_trace(execution_id)
         return trace.view() if trace is not None else None
 
-    def save_snapshot(self, snapshot: ExecutionSnapshot) -> None:
+    def save_snapshot(self, snapshot: ExecutionState) -> None:
         key = _execution_key(snapshot.execution_id)
         actual = self.get_snapshot(key)
         if actual is None:
@@ -1002,13 +1002,13 @@ class SQLiteExecutionStore(_SqliteBase):
 
     update_snapshot = save_snapshot
 
-    def _events(self, execution_id: str) -> tuple[CanonicalEvent, ...]:
+    def _events(self, execution_id: str) -> tuple[Event, ...]:
         with self._connect() as connection:
             rows = connection.execute("SELECT event_json FROM v2_events WHERE execution_id=? ORDER BY sequence", (execution_id,)).fetchall()
         return tuple(self._restore_event(_loads(row[0])) for row in rows)
 
-    def _restore_event(self, value: Mapping[str, Any]) -> CanonicalEvent:
-        event = CanonicalEvent.model_validate(value)
+    def _restore_event(self, value: Mapping[str, Any]) -> Event:
+        event = Event.model_validate(value)
         marker = event.payload.get("__mcp_pal_blob__")
         if isinstance(marker, Mapping) and event.payload_ref is not None:
             payload = self.artifacts.blob_store.read(
@@ -1024,7 +1024,7 @@ class SQLiteExecutionStore(_SqliteBase):
             event = event.model_copy(update={"payload": decoded})
         return event
 
-    def _events_page(self, execution_id: str, *, after_sequence: int, event_limit: int) -> tuple[tuple[CanonicalEvent, ...], int]:
+    def _events_page(self, execution_id: str, *, after_sequence: int, event_limit: int) -> tuple[tuple[Event, ...], int]:
         with self._connect() as connection:
             count_row = connection.execute(
                 "SELECT COUNT(*) FROM v2_events WHERE execution_id=? AND sequence>?",
@@ -1036,7 +1036,7 @@ class SQLiteExecutionStore(_SqliteBase):
             ).fetchall()
         return tuple(self._restore_event(_loads(row[0])) for row in rows), int(count_row[0]) if count_row else 0
 
-    def _derive_snapshot(self, execution_id: str, events: Sequence[CanonicalEvent] | None = None) -> ExecutionSnapshot:
+    def _derive_snapshot(self, execution_id: str, events: Sequence[Event] | None = None) -> ExecutionState:
         existing = self.get_snapshot(execution_id)
         if existing is None:
             raise StorageConflict("execution does not exist")
@@ -1045,33 +1045,33 @@ class SQLiteExecutionStore(_SqliteBase):
         values = tuple(events if events is not None else self._events(execution_id))
         for event in values:
             if event.kind is EventKind.EXECUTION_CREATED:
-                if lifecycle is LifecycleState.FINISHED:
+                if lifecycle is ExecutionStatus.FINISHED:
                     raise StorageConflict("terminal execution cannot receive more events")
-                created_at, lifecycle, outcome, finished_at = event.timestamp, LifecycleState.CREATED, None, None
+                created_at, lifecycle, outcome, finished_at = event.timestamp, ExecutionStatus.CREATED, None, None
             elif event.kind is EventKind.EXECUTION_STATE_CHANGED:
-                if lifecycle is LifecycleState.FINISHED:
+                if lifecycle is ExecutionStatus.FINISHED:
                     raise StorageConflict("terminal execution cannot receive more events")
                 try:
-                    next_lifecycle = LifecycleState(event.payload.get("lifecycle", event.payload.get("state")))
+                    next_lifecycle = ExecutionStatus(event.payload.get("lifecycle", event.payload.get("state")))
                 except (TypeError, ValueError):
                     raise StorageConflict("execution state payload is invalid") from None
-                if next_lifecycle is LifecycleState.FINISHED:
+                if next_lifecycle is ExecutionStatus.FINISHED:
                     raise StorageConflict("execution state event cannot finish an execution")
                 lifecycle = next_lifecycle
             elif event.kind is EventKind.EXECUTION_FINISHED:
-                if lifecycle is LifecycleState.FINISHED:
+                if lifecycle is ExecutionStatus.FINISHED:
                     raise StorageConflict("terminal execution cannot receive more events")
                 try:
                     outcome = ExecutionOutcome(event.payload["outcome"])
                 except (KeyError, TypeError, ValueError):
                     raise StorageConflict("execution terminal payload is invalid") from None
-                lifecycle, finished_at = LifecycleState.FINISHED, event.timestamp
-        return ExecutionSnapshot(execution_id=ExecutionId(execution_id), run_id=existing.run_id, lifecycle=lifecycle, outcome=outcome, sequence=values[-1].sequence if values else existing.sequence, created_at=created_at, finished_at=finished_at, provenance=existing.provenance)
+                lifecycle, finished_at = ExecutionStatus.FINISHED, event.timestamp
+        return ExecutionState(execution_id=ExecutionId(execution_id), run_id=existing.run_id, lifecycle=lifecycle, outcome=outcome, sequence=values[-1].sequence if values else existing.sequence, created_at=created_at, finished_at=finished_at, provenance=existing.provenance)
 
-    def _safe_event(self, event: CanonicalEvent) -> CanonicalEvent:
+    def _safe_event(self, event: Event) -> Event:
         projected = redact_model_json(event, config=self._redaction_config, path="$.event")
         try:
-            safe = CanonicalEvent.model_validate(projected)
+            safe = Event.model_validate(projected)
         except Exception:
             raise StorageError("event projection is invalid") from None
         for field in ("event_id", "execution_id", "sequence", "kind", "session_id", "turn_id", "server_binding", "connection_id", "correlation", "lifecycle_phase", "payload_ref", "raw_evidence_ref", "reasoning"):
@@ -1093,7 +1093,7 @@ class SQLiteExecutionStore(_SqliteBase):
         reason_path: str = "$.execution.terminal.reason",
         limitations: Sequence[str] = ("capture_incomplete",),
     ) -> dict[str, Any]:
-        """Build the canonical payload for a store-owned terminal event.
+        """Build the stable payload for a store-owned terminal event.
 
         SQLite can close an execution without owning the provider adapter's
         cleanup or evidence capture.  Such terminal events are therefore
@@ -1127,11 +1127,11 @@ class SQLiteExecutionStore(_SqliteBase):
         ).fetchone()
         if row is None:
             return 0, 0.0
-        latest = CanonicalEvent.model_validate(_loads(row["event_json"]))
+        latest = Event.model_validate(_loads(row["event_json"]))
         return int(row["sequence"]) + 1, latest.monotonic_offset_ms
 
     def _ensure_created_event(self, connection: _CompatConnection, execution_id: str) -> None:
-        """Ensure store-owned terminalization has canonical trace identity.
+        """Ensure store-owned terminalization has stable trace identity.
 
         Worker-owned cancellation/lease paths can run before a provider has
         opened a recorder.  They still need to produce the same immutable
@@ -1144,7 +1144,7 @@ class SQLiteExecutionStore(_SqliteBase):
             (execution_id,),
         ).fetchall()
         if rows:
-            events = tuple(CanonicalEvent.model_validate(_loads(row[0])) for row in rows)
+            events = tuple(Event.model_validate(_loads(row[0])) for row in rows)
             created = tuple(event for event in events if event.kind is EventKind.EXECUTION_CREATED)
             if (
                 events[0].sequence != 0
@@ -1160,16 +1160,16 @@ class SQLiteExecutionStore(_SqliteBase):
             except ValueError:
                 raise StorageConflict("persisted trace ID is invalid") from None
             if typed_trace_id.root != trace_id:
-                raise StorageConflict("persisted trace ID is not canonical")
+                raise StorageConflict("persisted trace ID is not stable")
             return
-        event = CanonicalEvent(
+        event = Event(
             event_id=EventId(_new_id("event")),
             execution_id=ExecutionId(execution_id),
             sequence=0,
             kind=EventKind.EXECUTION_CREATED,
             monotonic_offset_ms=0.0,
             payload={
-                "lifecycle": LifecycleState.CREATED.value,
+                "lifecycle": ExecutionStatus.CREATED.value,
                 "trace_id": f"trace-{uuid.uuid4().hex}",
             },
         )
@@ -1187,9 +1187,9 @@ class SQLiteExecutionStore(_SqliteBase):
     def _append(
         self,
         execution_id: str,
-        events: Sequence[CanonicalEvent],
+        events: Sequence[Event],
         *,
-        raw_evidence: tuple[RawEvidenceRef, Any] | None = None,
+        raw_evidence: tuple[EvidenceRef, Any] | None = None,
     ) -> None:
         if not events:
             return
@@ -1201,15 +1201,15 @@ class SQLiteExecutionStore(_SqliteBase):
         # marker and the typed reference; readers restore the original payload
         # transparently.  A failed metadata transaction leaves only an
         # unreferenced, explicitly-GC-able file.
-        persisted_events: list[CanonicalEvent] = []
-        payload_blobs: list[tuple[CanonicalEvent, Any]] = []
+        persisted_events: list[Event] = []
+        payload_blobs: list[tuple[Event, Any]] = []
         for event in safe_events:
             encoded_payload = _json(event.model_dump(mode="json")["payload"]).encode("utf-8")
             if len(encoded_payload) <= self.payload_blob_threshold:
                 persisted_events.append(event)
                 continue
             blob = self.artifacts.blob_store.put(encoded_payload)
-            reference = EventPayloadRef(
+            reference = PayloadRef(
                 blob_id=f"event-payload-{event.event_id.root}",
                 sha256=blob.sha256,
                 size_bytes=blob.size_bytes,
@@ -1220,7 +1220,7 @@ class SQLiteExecutionStore(_SqliteBase):
             persisted_events.append(persisted)
             payload_blobs.append((persisted, blob))
         connection = self._connect()
-        committed: tuple[CanonicalEvent, ...] = ()
+        committed: tuple[Event, ...] = ()
         try:
             self._begin(connection, immediate=True)
             if connection.execute("SELECT 1 FROM v2_executions WHERE id=? AND deleted_at IS NULL", (execution_id,)).fetchone() is None:
@@ -1344,16 +1344,16 @@ class SQLiteExecutionStore(_SqliteBase):
                 except Exception:
                     pass
 
-    def append_events(self, events: Sequence[CanonicalEvent]) -> None:
+    def append_events(self, events: Sequence[Event]) -> None:
         batch = tuple(events)
         if batch:
             self._append(_execution_key(batch[0].execution_id), batch)
 
     append = append_events
 
-    def append_event_with_raw_evidence(
-        self, event: CanonicalEvent, content: bytes, *, media_type: str
-    ) -> CanonicalEvent:
+    def append_event(
+        self, event: Event, content: bytes, *, media_type: str
+    ) -> Event:
         """Commit an event and its raw blob in one SQLite transaction."""
         if event.raw_evidence_ref is not None:
             raise StorageConflict("raw evidence reference must be store-owned")
@@ -1419,13 +1419,13 @@ class SQLiteExecutionStore(_SqliteBase):
 
     def iter_events(
         self, execution_id: ExecutionId | str, *, after_sequence: int = -1
-    ) -> Iterator[CanonicalEvent]:
+    ) -> Iterator[Event]:
         if after_sequence < -1:
             raise ValueError("after_sequence must be >= -1")
         events = self._events(_execution_key(execution_id))
         return iter(event for event in events if event.sequence > after_sequence)
 
-    def events(self, execution_id: ExecutionId | str, *, after_sequence: int = -1) -> tuple[CanonicalEvent, ...]:
+    def events(self, execution_id: ExecutionId | str, *, after_sequence: int = -1) -> tuple[Event, ...]:
         return tuple(self.iter_events(execution_id, after_sequence=after_sequence))
 
     # -- sessions, turns, evaluations ------------------------------------
@@ -1460,7 +1460,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 (_iso(_utcnow()), key),
             )
 
-    def save_turn(self, snapshot: TurnSnapshot, result: TurnResult | Mapping[str, Any] | None = None) -> None:
+    def save_turn(self, snapshot: TurnState, result: TurnResult | Mapping[str, Any] | None = None) -> None:
         session_key = str(snapshot.session_id.root)
         if isinstance(result, TurnResult) and (
             result.snapshot.turn_id != snapshot.turn_id
@@ -1504,13 +1504,13 @@ class SQLiteExecutionStore(_SqliteBase):
 
     append_turn = save_turn
 
-    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnSnapshot, TurnResult | None], ...]:
+    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnState, TurnResult | None], ...]:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT t.snapshot_json,t.result_json FROM v2_turns t JOIN v2_sessions s ON s.id=t.session_id WHERE s.execution_id=? ORDER BY s.created_at,t.number",
                 (_execution_key(execution_id),),
             ).fetchall()
-        return tuple((TurnSnapshot.model_validate(_loads(row[0])), TurnResult.model_validate(_loads(row[1])) if row[1] else None) for row in rows)
+        return tuple((TurnState.model_validate(_loads(row[0])), TurnResult.model_validate(_loads(row[1])) if row[1] else None) for row in rows)
 
     def save_evaluation(self, execution_id: ExecutionId | str, result: Mapping[str, Any] | Any, *, evaluation_id: str | None = None, turn_id: TurnId | str | None = None) -> str:
         runtime_subject = getattr(getattr(result, "context", None), "subject", None)
@@ -1581,7 +1581,7 @@ class SQLiteExecutionStore(_SqliteBase):
 
     @staticmethod
     def _evaluation_model(value: Mapping[str, Any]) -> EvaluationResult:
-        # Durable-only identity fields belong to PersistedEvaluationRecord,
+        # Durable-only identity fields belong to EvaluationRecord,
         # while the runtime result remains backwards-compatible.
         projected = dict(value)
         for key in ("subject_kind", "subject_digest", "created_at", "run_id"):
@@ -1598,7 +1598,7 @@ class SQLiteExecutionStore(_SqliteBase):
             rows = connection.execute("SELECT result_json FROM v2_evaluations ORDER BY created_at,id").fetchall()
         return tuple(self._evaluation_model(_loads(row[0], {})) for row in rows)
 
-    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[PersistedEvaluationRecord, ...]:
+    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[EvaluationRecord, ...]:
         with self._connect() as connection:
             query = "SELECT result_json FROM v2_evaluations WHERE execution_id=?"
             params: list[Any] = [_execution_key(execution_id)]
@@ -1607,7 +1607,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 params.append(str(turn_id.root if isinstance(turn_id, TurnId) else turn_id))
             query += " ORDER BY created_at,id"
             rows = connection.execute(query, params).fetchall()
-        records: list[PersistedEvaluationRecord] = []
+        records: list[EvaluationRecord] = []
         for row in rows:
             try:
                 value = _loads(row[0], {})
@@ -1625,7 +1625,7 @@ class SQLiteExecutionStore(_SqliteBase):
             projected["metadata"] = context.get("metadata", {})
             projected.pop("context", None)
             try:
-                records.append(PersistedEvaluationRecord.model_validate(projected))
+                records.append(EvaluationRecord.model_validate(projected))
             except (TypeError, ValueError, ValidationError):
                 # A malformed legacy row remains opaque and is excluded from
                 # typed reports/aggregates rather than breaking the report.
@@ -1633,10 +1633,10 @@ class SQLiteExecutionStore(_SqliteBase):
 
         return tuple(records)
 
-    def aggregate_evaluations(self, query: EvaluationAggregateQuery) -> EvaluationAggregateReport:
+    def aggregate_evaluations(self, query: EvaluationQuery) -> EvaluationReport:
         """Calculate summaries from persisted evaluations and execution traces."""
-        if not isinstance(query, EvaluationAggregateQuery):
-            query = EvaluationAggregateQuery.model_validate(query)
+        if not isinstance(query, EvaluationQuery):
+            query = EvaluationQuery.model_validate(query)
         where = ["x.deleted_at IS NULL"]
         params: list[Any] = []
         if query.start is not None:
@@ -1657,8 +1657,8 @@ class SQLiteExecutionStore(_SqliteBase):
                 "FROM v2_evaluations e JOIN v2_executions x ON x.id=e.execution_id WHERE " + " AND ".join(where) + " ORDER BY x.created_at,e.created_at,e.id",
                 params,
             ).fetchall()
-        records: list[PersistedEvaluationRecord] = []
-        snapshots: dict[str, ExecutionSnapshot] = {}
+        records: list[EvaluationRecord] = []
+        snapshots: dict[str, ExecutionState] = {}
         specifications: dict[str, ExecutionSpec] = {}
         traces: dict[str, TraceView] = {}
         loaded_executions: set[str] = set()
@@ -1668,7 +1668,7 @@ class SQLiteExecutionStore(_SqliteBase):
             try:
                 if execution_id not in loaded_executions:
                     loaded_executions.add(execution_id)
-                    snapshots[execution_id] = ExecutionSnapshot.model_validate(_loads(row[2]))
+                    snapshots[execution_id] = ExecutionState.model_validate(_loads(row[2]))
                     if row[3] is not None:
                         specifications[execution_id] = TypeAdapter(ExecutionSpec).validate_python(_loads(row[3]))
                 value = _loads(row[1], {})
@@ -1677,7 +1677,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 projected = dict(value) if isinstance(value, Mapping) else {}
                 projected.update({"execution_id": execution_id, "turn_id": context.get("turn_id"), "case_id": context.get("case_id") or projected.get("case_id"), "goal": context.get("goal"), "metadata": context.get("metadata", {})})
                 projected.pop("context", None)
-                records.append(PersistedEvaluationRecord.model_validate(projected))
+                records.append(EvaluationRecord.model_validate(projected))
             except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
                 continue
             if execution_id not in attempted_traces:
@@ -1777,9 +1777,9 @@ class SQLiteExecutionStore(_SqliteBase):
     # -- ACP probes -------------------------------------------------------
     def save_acp_probe(self, result: ACPProbeResult) -> ACPProbeResult:
         """Persist one redacted ACP probe result and return its safe copy."""
-        from ..services.acp_probes import redacted_probe
+        from ..services.acp_probes import redact_probe
 
-        safe = redacted_probe(result, self._redaction_config)
+        safe = redact_probe(result, self._redaction_config)
         # Probe history is tied to a real harness profile revision.  Keeping
         # this check at the durable boundary prevents forged/stale dimensions
         # from becoming selectable readiness evidence.
@@ -1795,7 +1795,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 "SELECT dimension_key,created_at FROM v2_acp_probes WHERE id=?", (safe.id,)
             ).fetchone()
             if existing is not None and (
-                str(existing["dimension_key"]) != safe.canonical_key
+                str(existing["dimension_key"]) != safe.stable_key
                 or str(existing["created_at"]) != str(value["created_at"])
             ):
                 raise StorageConflict("ACP probe id was already used for another dimension")
@@ -1805,7 +1805,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 (
                     safe.id, safe.profile_id, safe.revision_id, safe.probe_type.value,
                     safe.transport, safe.agent_mode_id, _json(value["session_config"]),
-                    safe.canonical_key, safe.status.value,
+                    safe.stable_key, safe.status.value,
                     _json(value["agent_identity"]) if safe.agent_identity is not None else None,
                     _json(value["agent_capabilities"]), _json(value["agent_modes"]), safe.current_agent_mode_id,
                     _json(value["config_options"]),
@@ -1847,7 +1847,7 @@ class SQLiteExecutionStore(_SqliteBase):
         clauses: list[str] = []
         if dimension is not None:
             clauses.append("dimension_key=?")
-            parameters.append(dimension.canonical_key)
+            parameters.append(dimension.stable_key)
         if not include_inflight:
             clauses.append("status NOT IN ('queued','running')")
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
@@ -2118,7 +2118,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 execution = connection.execute("SELECT snapshot_json FROM v2_executions WHERE id=?", (execution_id,)).fetchone()
                 self._ensure_created_event(connection, execution_id)
                 sequence, monotonic_offset_ms = self._next_event_position(connection, execution_id)
-                event = CanonicalEvent(
+                event = Event(
                     event_id=EventId(_new_id("event")), execution_id=ExecutionId(execution_id),
                     sequence=sequence, kind=EventKind.EXECUTION_FINISHED, monotonic_offset_ms=monotonic_offset_ms,
                     payload=self._terminal_payload(
@@ -2128,9 +2128,9 @@ class SQLiteExecutionStore(_SqliteBase):
                     ),
                 )
                 if execution is not None:
-                    snapshot = ExecutionSnapshot.model_validate(_loads(execution["snapshot_json"]))
+                    snapshot = ExecutionState.model_validate(_loads(execution["snapshot_json"]))
                     interrupted = snapshot.model_copy(update={
-                        "lifecycle": LifecycleState.FINISHED,
+                        "lifecycle": ExecutionStatus.FINISHED,
                         "outcome": ExecutionOutcome.INTERRUPTED,
                         "sequence": sequence,
                         "finished_at": event.timestamp,
@@ -2200,11 +2200,11 @@ class SQLiteExecutionStore(_SqliteBase):
                 connection.execute("DELETE FROM v2_leases WHERE execution_id=?", (execution_id,))
                 self._commit(connection)
                 return False
-            snapshot = ExecutionSnapshot.model_validate(_loads(execution["snapshot_json"]))
-            if snapshot.lifecycle is not LifecycleState.FINISHED:
+            snapshot = ExecutionState.model_validate(_loads(execution["snapshot_json"]))
+            if snapshot.lifecycle is not ExecutionStatus.FINISHED:
                 self._ensure_created_event(connection, execution_id)
                 sequence, monotonic_offset_ms = self._next_event_position(connection, execution_id)
-                event = CanonicalEvent(
+                event = Event(
                     event_id=EventId(_new_id("event")),
                     execution_id=ExecutionId(execution_id),
                     sequence=sequence,
@@ -2218,7 +2218,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 )
                 interrupted = snapshot.model_copy(
                     update={
-                        "lifecycle": LifecycleState.FINISHED,
+                        "lifecycle": ExecutionStatus.FINISHED,
                         "outcome": ExecutionOutcome.INTERRUPTED,
                         "sequence": sequence,
                         "finished_at": event.timestamp,
@@ -2302,11 +2302,11 @@ class SQLiteExecutionStore(_SqliteBase):
                 "SELECT 1 FROM v2_leases WHERE execution_id=?",
                 (key,),
             ).fetchone()
-            snapshot = ExecutionSnapshot.model_validate(_loads(execution["snapshot_json"]))
-            if active_lease is None and snapshot.lifecycle is not LifecycleState.FINISHED:
+            snapshot = ExecutionState.model_validate(_loads(execution["snapshot_json"]))
+            if active_lease is None and snapshot.lifecycle is not ExecutionStatus.FINISHED:
                 self._ensure_created_event(connection, key)
                 sequence, monotonic_offset_ms = self._next_event_position(connection, key)
-                event = CanonicalEvent(
+                event = Event(
                     event_id=EventId(_new_id("event")),
                     execution_id=ExecutionId(key),
                     sequence=sequence,
@@ -2320,7 +2320,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 )
                 cancelled = snapshot.model_copy(
                     update={
-                        "lifecycle": LifecycleState.FINISHED,
+                        "lifecycle": ExecutionStatus.FINISHED,
                         "outcome": ExecutionOutcome.CANCELLED,
                         "sequence": sequence,
                         "finished_at": event.timestamp,
@@ -2362,13 +2362,13 @@ class SQLiteExecutionStore(_SqliteBase):
             if row is None:
                 self._rollback(connection)
                 return False
-            snapshot = ExecutionSnapshot.model_validate(_loads(row["snapshot_json"]))
-            if snapshot.lifecycle is LifecycleState.FINISHED:
+            snapshot = ExecutionState.model_validate(_loads(row["snapshot_json"]))
+            if snapshot.lifecycle is ExecutionStatus.FINISHED:
                 self._rollback(connection)
                 return False
             self._ensure_created_event(connection, key)
             sequence, monotonic_offset_ms = self._next_event_position(connection, key)
-            event = CanonicalEvent(
+            event = Event(
                 event_id=EventId(_new_id("event")),
                 execution_id=ExecutionId(key),
                 sequence=sequence,
@@ -2382,7 +2382,7 @@ class SQLiteExecutionStore(_SqliteBase):
             )
             cancelled = snapshot.model_copy(
                 update={
-                    "lifecycle": LifecycleState.FINISHED,
+                    "lifecycle": ExecutionStatus.FINISHED,
                     "outcome": ExecutionOutcome.CANCELLED,
                     "sequence": sequence,
                     "finished_at": event.timestamp,
@@ -2429,13 +2429,13 @@ class SQLiteExecutionStore(_SqliteBase):
                 if execution is None:
                     connection.execute("DELETE FROM v2_leases WHERE execution_id=?", (key,))
                     continue
-                snapshot = ExecutionSnapshot.model_validate(_loads(execution["snapshot_json"]))
-                if snapshot.lifecycle is LifecycleState.FINISHED:
+                snapshot = ExecutionState.model_validate(_loads(execution["snapshot_json"]))
+                if snapshot.lifecycle is ExecutionStatus.FINISHED:
                     connection.execute("DELETE FROM v2_leases WHERE execution_id=?", (key,))
                     continue
                 self._ensure_created_event(connection, key)
                 sequence, monotonic_offset_ms = self._next_event_position(connection, key)
-                event = CanonicalEvent(
+                event = Event(
                     event_id=EventId(_new_id("event")),
                     execution_id=ExecutionId(key),
                     sequence=sequence,
@@ -2449,7 +2449,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 )
                 interrupted = snapshot.model_copy(
                     update={
-                        "lifecycle": LifecycleState.FINISHED,
+                        "lifecycle": ExecutionStatus.FINISHED,
                         "outcome": ExecutionOutcome.INTERRUPTED,
                         "sequence": sequence,
                         "finished_at": event.timestamp,
@@ -2488,7 +2488,7 @@ class SQLiteExecutionStore(_SqliteBase):
         snapshot = self.get_snapshot(key)
         if snapshot is None:
             raise StorageConflict("execution does not exist")
-        if snapshot.lifecycle is not LifecycleState.FINISHED:
+        if snapshot.lifecycle is not ExecutionStatus.FINISHED:
             raise StorageConflict("active execution cannot be deleted")
         connection = self._connect()
         try:
@@ -2516,7 +2516,7 @@ class SQLiteExecutionStore(_SqliteBase):
 
     def put_raw_evidence(
         self, event_id: EventId | str, content: bytes, *, media_type: str
-    ) -> RawEvidenceCapture:
+    ) -> EvidenceCapture:
         """Redact, bound, and durably associate evidence with one event."""
 
         event_key = str(event_id.root if isinstance(event_id, EventId) else event_id)
@@ -2617,9 +2617,9 @@ class SQLiteExecutionStore(_SqliteBase):
             connection.close()
 
     def read_raw_evidence(
-        self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576
+        self, reference: EvidenceRef, *, max_bytes: int = 1_048_576
     ) -> RawEvidence:
-        if not isinstance(reference, RawEvidenceRef):
+        if not isinstance(reference, EvidenceRef):
             raise RawEvidenceUnavailable("raw evidence reference is invalid")
         _validate_evidence_id(reference.evidence_id)
         with self._connect() as connection:
@@ -2642,7 +2642,7 @@ class SQLiteExecutionStore(_SqliteBase):
             raise RawEvidenceIntegrityError(
                 "raw evidence evidence_id binding is invalid"
             )
-        expected = RawEvidenceRef(
+        expected = EvidenceRef(
             evidence_id=recomputed_evidence_id,
             sha256=str(row["sha256"]),
             size_bytes=int(row["size_bytes"]),
@@ -2699,7 +2699,7 @@ class SQLiteExecutionStore(_SqliteBase):
             if harness_value and harness_value.get("profile_id"):
                 harness_value["revision_id"] = str(self.resolve_revision(str(harness_value["profile_id"])).id.root)
         provenance = {"clone_of": source, "revision_selection": "latest" if use_latest else "original"}
-        self.create(original.model_copy(update={"execution_id": new_id, "lifecycle": LifecycleState.CREATED, "outcome": None, "sequence": 0, "finished_at": None}), specification=_loads(row[0]) if row and row[0] else None, provenance=provenance, server_bindings=server_values, harness_binding=harness_value, parent_execution_id=source)
+        self.create(original.model_copy(update={"execution_id": new_id, "lifecycle": ExecutionStatus.CREATED, "outcome": None, "sequence": 0, "finished_at": None}), specification=_loads(row[0]) if row and row[0] else None, provenance=provenance, server_bindings=server_values, harness_binding=harness_value, parent_execution_id=source)
         return new_id
 
     clone = clone_execution

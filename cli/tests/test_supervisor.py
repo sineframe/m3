@@ -437,14 +437,14 @@ def test_plain_test_does_not_scan_results_database(monkeypatch: pytest.MonkeyPat
 
 def test_real_store_listing_excludes_deleted_runs(tmp_path: Path) -> None:
     from mcp_pal.storage import SQLiteExecutionStore
-    from mcp_pal.types import ExecutionId, ExecutionOutcome, ExecutionSnapshot, LifecycleState
+    from mcp_pal.types import ExecutionId, ExecutionOutcome, ExecutionState, ExecutionStatus
 
     database = tmp_path / "real.sqlite"
     store = SQLiteExecutionStore(database)
     store.create(
-        ExecutionSnapshot(
+        ExecutionState(
             execution_id=ExecutionId("visible"),
-            lifecycle=LifecycleState.FINISHED,
+            lifecycle=ExecutionStatus.FINISHED,
             outcome=ExecutionOutcome.COMPLETED,
             finished_at=datetime.now(timezone.utc),
         )

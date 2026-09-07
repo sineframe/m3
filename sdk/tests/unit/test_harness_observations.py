@@ -9,7 +9,7 @@ from mcp_pal.agent_session import HarnessAdapter as AgentHarnessAdapter
 from mcp_pal.errors import RawEvidenceIntegrityError
 from mcp_pal.execution_trace import ExecutionTraceRecorder
 from mcp_pal.harness.contracts import HarnessAdapter as ContractHarnessAdapter
-from mcp_pal.observability import TraceCaptureConfig
+from mcp_pal.observability import CaptureOptions
 from mcp_pal.storage import (
     InMemoryExecutionStore,
     SQLiteExecutionStore,
@@ -21,9 +21,9 @@ from mcp_pal.types import (
     EventId,
     EventKind,
     EventOrigin,
-    EventProvenance,
+    EventSource,
     ExecutionOutcome,
-    RequestCorrelation,
+    RequestLink,
 )
 
 from mcp_pal import expect
@@ -273,7 +273,7 @@ def test_turn_and_session_evidence_reject_identity_order_and_limitations() -> No
 
 
 def _sink(
-    *, config: TraceCaptureConfig | None = None
+    *, config: CaptureOptions | None = None
 ) -> tuple[InMemoryExecutionStore, ExecutionTraceRecorder, HarnessObservationSink]:
     store = InMemoryExecutionStore(capture_config=config)
     recorder = ExecutionTraceRecorder(store, "r5-test")
@@ -311,7 +311,7 @@ def test_sink_maps_variants_and_preserves_order_and_identity() -> None:
     assert store.get_snapshot("r5-test") is not None
 
 
-def test_sink_maps_all_remaining_variants_to_canonical_kinds() -> None:
+def test_sink_maps_all_remaining_variants_to_stable_kinds() -> None:
     _, recorder, sink = _sink()
     values = (
         RawFrameObservation(**_common(observation_id="raw", text="frame")),
@@ -341,7 +341,7 @@ def test_sink_maps_all_remaining_variants_to_canonical_kinds() -> None:
 
 def test_sink_raw_evidence_is_bounded_redacted_and_readable() -> None:
     store, recorder, sink = _sink(
-        config=TraceCaptureConfig(raw_frame_bytes=8, raw_preview_bytes=8)
+        config=CaptureOptions(raw_frame_bytes=8, raw_preview_bytes=8)
     )
     value = RawFrameObservation(
         **_common(
@@ -366,7 +366,7 @@ def test_sink_raw_evidence_is_bounded_redacted_and_readable() -> None:
 def test_raw_capture_metadata_and_source_timing_survive_projection_and_reopen(
     backend: str, tmp_path: Path
 ) -> None:
-    config = TraceCaptureConfig(raw_frame_bytes=4, raw_preview_bytes=3)
+    config = CaptureOptions(raw_frame_bytes=4, raw_preview_bytes=3)
     if backend == "memory":
         store = InMemoryExecutionStore(capture_config=config)
     else:
@@ -425,7 +425,7 @@ def test_raw_capture_metadata_and_source_timing_survive_projection_and_reopen(
 
 def test_raw_evidence_uses_utf8_byte_cap() -> None:
     store, recorder, sink = _sink(
-        config=TraceCaptureConfig(raw_frame_bytes=4, raw_preview_bytes=4)
+        config=CaptureOptions(raw_frame_bytes=4, raw_preview_bytes=4)
     )
     sink.emit(
         RawFrameObservation(
@@ -440,7 +440,7 @@ def test_raw_evidence_uses_utf8_byte_cap() -> None:
 
 
 def test_raw_capture_disabled_is_policy_limitation_not_capture_failure() -> None:
-    config = TraceCaptureConfig(capture_raw_evidence=False)
+    config = CaptureOptions(capture_raw_evidence=False)
     _, recorder, sink = _sink(config=config)
     sink.emit(
         RawFrameObservation(
@@ -480,7 +480,7 @@ def test_duplicate_observation_id_preserves_first_capture(
 
 
 def test_sink_respects_provider_and_stderr_switches() -> None:
-    config = TraceCaptureConfig(capture_provider_messages=False, capture_stderr=False)
+    config = CaptureOptions(capture_provider_messages=False, capture_stderr=False)
     _, recorder, sink = _sink(config=config)
     sink.emit(
         MessageChunkObservation(
@@ -505,7 +505,7 @@ def test_sink_respects_provider_and_stderr_switches() -> None:
 
 
 def test_provider_filter_does_not_drop_raw_frames_or_structured_observations() -> None:
-    config = TraceCaptureConfig(
+    config = CaptureOptions(
         capture_provider_messages=False, capture_raw_evidence=False
     )
     _, recorder, sink = _sink(config=config)
@@ -594,7 +594,7 @@ def test_sink_bounds_redacts_text_and_derives_stderr_state() -> None:
         config=RedactionConfig(
             secrets=frozenset({"CANARY"}), include_environment=False
         ),
-        capture_config=TraceCaptureConfig(raw_preview_bytes=5),
+        capture_config=CaptureOptions(raw_preview_bytes=5),
     )
     recorder = ExecutionTraceRecorder(
         store,
@@ -732,7 +732,7 @@ def test_stderr_states_are_lossless_without_trusting_claims(
 
 def test_sink_limitations_are_merged_into_terminal_trace() -> None:
     _, recorder, sink = _sink(
-        config=TraceCaptureConfig(capture_provider_messages=False)
+        config=CaptureOptions(capture_provider_messages=False)
     )
     sink.emit(MessageChunkObservation(**_common(text="not captured")))
     trace = recorder.finalize(ExecutionOutcome.COMPLETED)
@@ -745,7 +745,7 @@ def test_sink_limitations_are_merged_into_terminal_trace() -> None:
 def test_sink_limitations_and_observations_survive_reopen(
     tmp_path: Path, outcome: ExecutionOutcome, backend: str
 ) -> None:
-    config = TraceCaptureConfig(capture_provider_messages=False)
+    config = CaptureOptions(capture_provider_messages=False)
     if backend == "memory":
         store = InMemoryExecutionStore(capture_config=config)
         reopened = store
@@ -888,7 +888,7 @@ def test_memory_duplicate_raw_event_preserves_existing_reference() -> None:
         update={"sequence": committed.sequence + 1, "raw_evidence_ref": None}
     )
     with pytest.raises(StorageConflict):
-        store.append_event_with_raw_evidence(
+        store.append_event(
             duplicate, b"replacement", media_type="text/plain"
         )
     assert store.read_raw_evidence(reference).content == "original"
@@ -931,7 +931,7 @@ def test_sqlite_atomic_raw_metadata_failure_is_transactional(tmp_path: Path) -> 
         }
     )
     with pytest.raises(RawEvidenceIntegrityError):
-        store.append_event_with_raw_evidence(
+        store.append_event(
             replacement, b"original", media_type="text/plain"
         )
     assert len(recorder.events()) == first.sequence + 1
@@ -940,7 +940,7 @@ def test_sqlite_atomic_raw_metadata_failure_is_transactional(tmp_path: Path) -> 
             "UPDATE v2_blobs SET size_bytes=? WHERE sha256=?",
             (reference.size_bytes, reference.sha256),
         )
-    store.append_event_with_raw_evidence(
+    store.append_event(
         replacement, b"original", media_type="text/plain"
     )
     assert recorder.events()[-1].sequence == replacement.sequence
@@ -1041,13 +1041,13 @@ def test_explicit_chunk_identity_is_turn_and_role_scoped_across_interleaving() -
 
 def test_reported_and_wire_calls_correlate_once_with_wire_authority() -> None:
     _, recorder, sink = _sink()
-    wire_provenance = EventProvenance(origin=EventOrigin.WIRE_OBSERVED, source="direct")
+    wire_provenance = EventSource(origin=EventOrigin.WIRE_OBSERVED, source="direct")
     recorder.emit(
         EventKind.MCP_REQUEST,
         turn_id="turn-2",
         server_binding="fixture",
         connection_id="connection",
-        correlation=RequestCorrelation(
+        correlation=RequestLink(
             jsonrpc_id=7,
             direction=EventDirection.CLIENT_TO_SERVER,
             request_sequence=3,
@@ -1064,7 +1064,7 @@ def test_reported_and_wire_calls_correlate_once_with_wire_authority() -> None:
         turn_id="turn-2",
         server_binding="fixture",
         connection_id="connection",
-        correlation=RequestCorrelation(
+        correlation=RequestLink(
             jsonrpc_id=7,
             direction=EventDirection.SERVER_TO_CLIENT,
             request_sequence=3,
@@ -1151,13 +1151,13 @@ def test_reported_malformed_error_flag_is_incomplete_not_success(key: str) -> No
 
 def test_correlated_sources_retain_field_conflicts_with_wire_authority() -> None:
     _, recorder, sink = _sink()
-    provenance = EventProvenance(origin=EventOrigin.WIRE_OBSERVED, source="direct")
+    provenance = EventSource(origin=EventOrigin.WIRE_OBSERVED, source="direct")
     recorder.emit(
         EventKind.MCP_REQUEST,
         turn_id="turn-1",
         server_binding="wire-server",
         connection_id="connection",
-        correlation=RequestCorrelation(
+        correlation=RequestLink(
             jsonrpc_id=8,
             direction=EventDirection.CLIENT_TO_SERVER,
             request_sequence=1,
@@ -1174,7 +1174,7 @@ def test_correlated_sources_retain_field_conflicts_with_wire_authority() -> None
         turn_id="turn-1",
         server_binding="wire-server",
         connection_id="connection",
-        correlation=RequestCorrelation(
+        correlation=RequestLink(
             jsonrpc_id=8,
             direction=EventDirection.SERVER_TO_CLIENT,
             request_sequence=1,

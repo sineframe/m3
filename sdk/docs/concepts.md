@@ -2,9 +2,9 @@
 
 ## Server definition, kit, and client
 
-A server definition such as `StreamableHTTPServer` or `StdioServer` describes
+A server definition such as `HTTPServer` or `StdioServer` describes
 how to reach an MCP server. It does not connect when it is constructed. Use
-`StreamableHTTPServer` for a deployed MCP endpoint and `StdioServer` for a
+`HTTPServer` for a deployed MCP endpoint and `StdioServer` for a
 local subprocess. The shared
 [`example_server` fixture](../examples/tests/conftest.py) shows a stdio binding
 to a Python subprocess.
@@ -37,7 +37,7 @@ harness. Resource and prompt coverage lives in
 [`test_resources_and_prompts.py`](../examples/tests/test_resources_and_prompts.py).
 
 For HTTP direct, agent, and matrix patterns, see the
-[Streamable HTTP guide](streamable-http.md) and its external endpoint example
+[Streamable HTTP guide](http.md) and its external endpoint example
 [`test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py).
 For an agent-driven local workflow, see the deterministic ACP harness example
 [`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py).
@@ -178,7 +178,7 @@ HTTP, or process facts. See
 An agent `session.send(...)` returns a terminal `TurnResult` for that turn.
 After the session closes, use `session.result` for finalized assertions and
 `session.result.trace_view` for the immutable view. `TurnResult` (and its
-`turn_id`), `TurnSnapshot`, `TurnId`, and string IDs are accepted by
+`turn_id`), `TurnState`, `TurnId`, and string IDs are accepted by
 `TraceView.for_turn(...)` and matcher `turn=` selectors; a turn result does not
 have its own `trace_view`. Assertions against an open execution remain subject
 to finalized-only errors.

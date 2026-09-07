@@ -1,4 +1,4 @@
-"""Contract tests for canonical trace projection and finalization."""
+"""Contract tests for stable trace projection and finalization."""
 
 from __future__ import annotations
 
@@ -17,16 +17,16 @@ from mcp_pal.events import EventFactory
 from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore, StorageConflict
 from mcp_pal.trace.redaction import REDACTED, RedactionConfig, RedactionError
 from mcp_pal.types import (
-    CanonicalEvent,
+    Event,
     EventId,
     EventKind,
     ExecutionId,
     ExecutionOutcome,
-    LifecycleState,
+    ExecutionStatus,
     SessionId,
     TraceId,
     TurnId,
-    TurnLifecycle,
+    TurnStatus,
     TurnOutcome,
 )
 
@@ -47,14 +47,14 @@ def test_snapshot_is_derived_from_committed_events_and_previous_value_stays_immu
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-snapshot")
     before = recorder.snapshot()
-    recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": LifecycleState.STARTING.value})
-    recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": LifecycleState.IDLE.value})
+    recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": ExecutionStatus.STARTING.value})
+    recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": ExecutionStatus.IDLE.value})
     after = recorder.snapshot()
-    assert before.lifecycle is LifecycleState.CREATED
+    assert before.lifecycle is ExecutionStatus.CREATED
     assert before.sequence == 0
-    assert after.lifecycle is LifecycleState.IDLE
+    assert after.lifecycle is ExecutionStatus.IDLE
     assert after.sequence == 2
-    assert before.lifecycle is LifecycleState.CREATED
+    assert before.lifecycle is ExecutionStatus.CREATED
 
 
 def test_typed_root_model_identifiers_are_preserved() -> None:
@@ -112,18 +112,18 @@ def test_turn_and_session_attribution_is_projected_from_committed_events() -> No
         EventKind.TURN_STATE_CHANGED,
         session_id="session-1",
         turn_id="turn-1",
-        payload={"lifecycle": TurnLifecycle.RUNNING.value},
+        payload={"lifecycle": TurnStatus.RUNNING.value},
     )
     recorder.emit(
         EventKind.TURN_STATE_CHANGED,
         session_id="session-1",
         turn_id="turn-1",
-        payload={"lifecycle": TurnLifecycle.FINISHED.value, "outcome": TurnOutcome.COMPLETED.value},
+        payload={"lifecycle": TurnStatus.FINISHED.value, "outcome": TurnOutcome.COMPLETED.value},
     )
     turn = recorder.turn_snapshots()[0]
     assert turn.session_id.root == "session-1"
     assert turn.number == 1
-    assert turn.lifecycle is TurnLifecycle.FINISHED
+    assert turn.lifecycle is TurnStatus.FINISHED
     assert turn.outcome is TurnOutcome.COMPLETED
 
 
@@ -150,7 +150,7 @@ def test_every_terminal_outcome_has_a_terminal_trace_and_snapshot(outcome: Execu
     assert trace.completeness == "complete"
     assert trace.highest_sequence == trace.events[-1].sequence
     assert trace.events[-1].kind is EventKind.EXECUTION_FINISHED
-    assert recorder.snapshot().lifecycle is LifecycleState.FINISHED
+    assert recorder.snapshot().lifecycle is ExecutionStatus.FINISHED
     assert recorder.snapshot().outcome is outcome
 
 
@@ -197,7 +197,7 @@ def test_callbacks_see_the_whole_committed_batch_before_delivery() -> None:
     recorder = ExecutionTraceRecorder(store, "execution-callback")
     observed: list[tuple[int, tuple[int, ...]]] = []
 
-    def callback(event: CanonicalEvent) -> None:
+    def callback(event: Event) -> None:
         sequence = event.sequence
         observed.append((sequence, tuple(item.sequence for item in recorder.events())))
 
@@ -262,7 +262,7 @@ def test_redaction_covers_event_metadata_outside_payload_without_changing_identi
     store = InMemoryExecutionStore()
     config = RedactionConfig(secrets=frozenset({"server-secret"}), include_environment=False)
     recorder = ExecutionTraceRecorder(store, "execution-metadata-redaction", redaction_config=config)
-    event = CanonicalEvent(
+    event = Event(
         event_id=EventId("metadata-event"),
         execution_id=ExecutionId("execution-metadata-redaction"),
         sequence=1,
@@ -279,7 +279,7 @@ def test_redaction_covers_event_metadata_outside_payload_without_changing_identi
 def test_malformed_terminal_and_turn_payloads_are_rejected_before_commit() -> None:
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-validation")
-    malformed_terminal = CanonicalEvent(
+    malformed_terminal = Event(
         event_id=EventId("malformed-terminal"),
         execution_id=ExecutionId("execution-validation"),
         sequence=1,
@@ -296,13 +296,13 @@ def test_illegal_lifecycle_and_orphan_turn_events_are_rejected_without_commit() 
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-illegal")
     with pytest.raises(TraceRecorderError):
-        recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": LifecycleState.IDLE.value})
+        recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": ExecutionStatus.IDLE.value})
     with pytest.raises(TraceRecorderError):
         recorder.emit(
             EventKind.TURN_STATE_CHANGED,
             session_id="missing-session",
             turn_id="missing-turn",
-            payload={"lifecycle": TurnLifecycle.RUNNING.value},
+            payload={"lifecycle": TurnStatus.RUNNING.value},
         )
     assert len(recorder.events()) == 1
     with pytest.raises(TraceRecorderError):
@@ -310,7 +310,7 @@ def test_illegal_lifecycle_and_orphan_turn_events_are_rejected_without_commit() 
             EventKind.TURN_STATE_CHANGED,
             session_id="session-1",
             turn_id="turn-1",
-            payload={"lifecycle": TurnLifecycle.FINISHED.value},
+            payload={"lifecycle": TurnStatus.FINISHED.value},
         )
     assert len(recorder.events()) == 1
 
@@ -333,7 +333,7 @@ def test_startup_failure_and_cleanup_failure_retain_terminal_evidence() -> None:
 def test_concurrent_emits_are_serialized_into_one_contiguous_trace() -> None:
     recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-concurrent-emits")
     barrier = threading.Barrier(12)
-    results: list[CanonicalEvent] = []
+    results: list[Event] = []
     failures: list[BaseException] = []
     result_lock = threading.Lock()
 
@@ -360,7 +360,7 @@ def test_concurrent_emits_are_serialized_into_one_contiguous_trace() -> None:
 def test_failed_emit_releases_its_reservation_for_the_next_producer() -> None:
     recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-release")
     with pytest.raises(TraceRecorderError):
-        recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": LifecycleState.IDLE.value})
+        recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": ExecutionStatus.IDLE.value})
     event = recorder.emit(EventKind.DIAGNOSTIC, payload={"after": "failure"})
     assert event.sequence == 1
     assert [item.sequence for item in recorder.events()] == [0, 1]
@@ -443,7 +443,7 @@ def test_concurrent_same_outcome_finalization_is_idempotent() -> None:
 def test_concurrent_session_creation_allows_one_lifecycle_transition() -> None:
     recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-session-race")
     barrier = threading.Barrier(6)
-    successes: list[CanonicalEvent] = []
+    successes: list[Event] = []
     failures: list[BaseException] = []
     result_lock = threading.Lock()
 

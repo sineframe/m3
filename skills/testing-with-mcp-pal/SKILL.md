@@ -34,15 +34,15 @@ the CLI or UI.
 
 | Target | Definition |
 |---|---|
-| Deployed MCP endpoint | `StreamableHTTPServer` |
+| Deployed MCP endpoint | `HTTPServer` |
 | Local command you own | `StdioServer` |
 | Existing legacy HTTP+SSE endpoint | `SSEServer` |
 
 For HTTP, the URL is one MCP protocol endpoint, not a REST route. Keep
 credentials out of URLs and query parameters: static non-secret headers may be
-declared on `StreamableHTTPServer`, while direct-client bearer authentication
+declared on `HTTPServer`, while direct-client bearer authentication
 uses a `SecretReference` with `kit.direct(..., bearer_token=...)`.
-This is a direct-client option, not an `AgentExecutionSpec` option.
+This is a direct-client option, not an `AgentSpec` option.
 A public endpoint exposed to an agent requires `TrustLevel.PUBLIC`; private or
 localhost endpoints you own require
 `TrustLevel.TRUSTED_PRIVATE`. These labels describe ownership and exposure,
@@ -94,7 +94,7 @@ finalization but does not start or stop a deployed service.
   Keep nondeterministic external/provider tests separate from deterministic
   tests because they may change or incur provider usage.
 - There is no hidden `mcp_test` fixture or scenario format. Define the server
-  explicitly with `StdioServer`, `StreamableHTTPServer`, `SSEServer`, or an
+  explicitly with `StdioServer`, `HTTPServer`, `SSEServer`, or an
   existing project fixture.
 - Persistence of an execution is not persistence of a test verdict. SQLite
   retains execution specs/snapshots, recorded events/traces, sessions/turns,
@@ -118,7 +118,7 @@ be queried after reopening SQLite; in-memory SDK storage remains ephemeral.
 
 Matrix cases expose stable matrix/cell/trial metadata. Use the same evaluator
 name across trials; aggregate statistics are derived later from raw records.
-Call `store.aggregate_evaluations(EvaluationAggregateQuery(...))` for pass rates,
+Call `store.aggregate_evaluations(EvaluationQuery(...))` for pass rates,
 status counts, run/time trends, case labels, and execution/tool health. Filter
 to one evaluator or group by `evaluator`; deterministic and user-supplied LLM
 evaluators must not be mixed into one pass rate. MCP Pal has no built-in LLM

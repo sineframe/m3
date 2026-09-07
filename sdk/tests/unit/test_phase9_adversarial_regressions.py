@@ -15,7 +15,7 @@ from mcp_pal.harness import DeterministicHarnessAdapter, HarnessAdapterRegistry
 from mcp_pal.types import (
     ACPAgent,
     ActivityHealth,
-    AgentExecutionSpec,
+    AgentSpec,
     EventKind,
     ExecutionOutcome,
     InProcessServer,
@@ -28,8 +28,8 @@ from mcp_pal.types import (
 )
 
 
-def _spec() -> AgentExecutionSpec:
-    return AgentExecutionSpec(
+def _spec() -> AgentSpec:
+    return AgentSpec(
         harness=ACPAgent(model="phase9-test"),
         servers=(
             ServerBinding(server=StdioServer(name="required", command="fixture"), alias="required"),
@@ -56,7 +56,7 @@ class _SlowStartupAdapter:
         self.close_count = 0
         self.messages: list[str] = []
 
-    async def start(self, _spec: AgentExecutionSpec) -> None:
+    async def start(self, _spec: AgentSpec) -> None:
         self.start_count += 1
         self.started.set()
         await self.release.wait()
@@ -180,7 +180,7 @@ class _ToolEvidenceAdapter:
         self._outcomes = outcomes
         self._index = 0
 
-    async def start(self, _spec: AgentExecutionSpec) -> None:
+    async def start(self, _spec: AgentSpec) -> None:
         return None
 
     async def send(self, message: UserMessage, *, timeout: float | None = None, metadata: Mapping[str, object] | None = None) -> AdapterTurn:

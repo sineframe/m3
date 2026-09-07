@@ -12,7 +12,7 @@ from mcp import types
 
 from mcp_pal.direct_client import AsyncDirectClient
 from mcp_pal.direct_trace import DirectTraceBridge
-from mcp_pal.events import EventFactory, PerExecutionSequenceAllocator
+from mcp_pal.events import EventFactory, EventSequence
 from mcp_pal.execution_trace import ExecutionTraceRecorder
 from mcp_pal.errors import TransportError
 from mcp_pal.storage import InMemoryExecutionStore
@@ -210,7 +210,7 @@ async def test_request_sequences_are_scoped_by_connection() -> None:
     store = InMemoryExecutionStore()
     factory = EventFactory(
         execution,
-        allocator=PerExecutionSequenceAllocator(start=1),
+        allocator=EventSequence(start=1),
     )
     recorder = ExecutionTraceRecorder(store, execution)
     first = DirectTraceBridge(

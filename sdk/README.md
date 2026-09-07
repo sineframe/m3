@@ -26,7 +26,7 @@ machine-level CLI installation described in the
 
 ## Learn the SDK
 
-- [Streamable HTTP](docs/streamable-http.md) — test a deployed MCP endpoint
+- [Streamable HTTP](docs/http.md) — test a deployed MCP endpoint
   directly, through an agent session, or with a harness matrix.
 - [Quick start](docs/quick-start.md) — install, write, and run the first MCP
   test with Streamable HTTP or the local stdio alternative.

@@ -1,6 +1,6 @@
 # Streamable HTTP
 
-Use `StreamableHTTPServer` when the MCP server is already available at an HTTP
+Use `HTTPServer` when the MCP server is already available at an HTTP
 endpoint. The concrete server value selects Streamable HTTP; there is no
 separate transport argument. Its URL identifies one MCP protocol endpoint, not
 a collection of REST routes.
@@ -18,9 +18,9 @@ client has closed:
 from collections.abc import Mapping
 
 from mcp_pal import MCPTestKit
-from mcp_pal.types import ExecutionOutcome, StreamableHTTPServer, TransportKind
+from mcp_pal.types import ExecutionOutcome, HTTPServer, TransportKind
 
-server = StreamableHTTPServer(
+server = HTTPServer(
     name="deepwiki",
     url="https://mcp.deepwiki.com/mcp",
 )
@@ -89,9 +89,9 @@ header, not recorded as a literal in test code:
 
 ```python
 from mcp_pal import MCPTestKit
-from mcp_pal.types import SecretReference, StreamableHTTPServer
+from mcp_pal.types import SecretReference, HTTPServer
 
-server = StreamableHTTPServer(
+server = HTTPServer(
     name="catalog",
     url="https://example.test/mcp",
     headers={"X-Client": "catalog-tests"},
@@ -119,23 +119,23 @@ import shutil
 
 from mcp_pal import MCPTestKit, expect
 from mcp_pal.types import (
-    AgentExecutionSpec,
+    AgentSpec,
     OpenCode,
     RestrictiveToolPolicy,
     SecretReference,
     ServerBinding,
-    StreamableHTTPServer,
+    HTTPServer,
     TrustLevel,
 )
 
-server = StreamableHTTPServer(
+server = HTTPServer(
     name="deepwiki",
     url="https://mcp.deepwiki.com/mcp",
     trust=TrustLevel.PUBLIC,
 )
 model = os.environ.get("MCP_PAL_OPENCODE_MODEL", "opencode/big-pickle")
 provider = model.split("/", 1)[0] if "/" in model else None
-spec = AgentExecutionSpec(
+spec = AgentSpec(
     harness=OpenCode(
         model=model,
         provider=provider,
@@ -195,7 +195,7 @@ from mcp_pal.types import (
     ExecutionOutcome,
     OpenCode,
     SecretReference,
-    StreamableHTTPServer,
+    HTTPServer,
     TrustLevel,
 )
 
@@ -214,7 +214,7 @@ opencode = OpenCode(
 
 server = ServerCase(
     name="deepwiki",
-    server=StreamableHTTPServer(
+    server=HTTPServer(
         name="deepwiki",
         url="https://mcp.deepwiki.com/mcp",
         trust=TrustLevel.PUBLIC,

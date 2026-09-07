@@ -1,4 +1,4 @@
-"""Phase 7 contracts for canonical snapshots and deterministic evaluations."""
+"""Phase 7 contracts for stable snapshots and deterministic evaluations."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from mcp_pal import MCPTestKit, canonical_snapshot, normalize_snapshot
+from mcp_pal import MCPTestKit, snapshot, snapshot
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.errors import ModelValidationError, UnsupportedFeature
 from mcp_pal.evaluations import EvaluationRunner, InMemoryEvaluationStore, RequiredEvaluationError
 from mcp_pal.snapshots import SnapshotOptions
 from mcp_pal.trace.redaction import RedactionConfig, REDACTED
-from mcp_pal.types import ArtifactId, ArtifactRef, EvaluationStatus, ExecutionId, ExecutionOutcome, ExecutionResult, ExecutionSnapshot, LifecycleState, TraceId, TraceResult
+from mcp_pal.types import ArtifactId, ArtifactRef, EvaluationStatus, ExecutionId, ExecutionOutcome, ExecutionResult, ExecutionState, ExecutionStatus, TraceId, TraceResult
 
 
 class _SnapshotModel(BaseModel):
@@ -24,7 +24,7 @@ class _SnapshotModel(BaseModel):
     nested: dict[str, object]
 
 
-def test_canonical_snapshot_is_json_compatible_sorted_redacted_and_stable() -> None:
+def test_stable_snapshot_is_json_compatible_sorted_redacted_and_stable() -> None:
     value = {
         "z": 2,
         "a": 1,
@@ -32,7 +32,7 @@ def test_canonical_snapshot_is_json_compatible_sorted_redacted_and_stable() -> N
         "timestamp": "2026-01-01T00:00:00Z",
         "nested": {"trace_id": "trace-unstable", "message": "api-secret"},
     }
-    projected = canonical_snapshot(
+    projected = snapshot(
         value,
         config=RedactionConfig(secrets=frozenset({"api-secret"}), include_environment=False),
     )
@@ -40,12 +40,12 @@ def test_canonical_snapshot_is_json_compatible_sorted_redacted_and_stable() -> N
     assert list(projected) == ["a", "nested", "z"]
     assert projected["nested"] == {"message": REDACTED}
     assert "run_id" not in repr(projected)
-    assert normalize_snapshot(value, config=RedactionConfig(secrets=frozenset({"api-secret"}), include_environment=False)) == projected
+    assert snapshot(value, config=RedactionConfig(secrets=frozenset({"api-secret"}), include_environment=False)) == projected
 
 
 def test_snapshot_field_opt_in_restores_only_selected_unstable_fields() -> None:
     value = {"duration_ms": 4, "nested": {"trace_id": "trace-1", "duration_ms": 9}}
-    projected = canonical_snapshot(
+    projected = snapshot(
         value,
         options=SnapshotOptions(include_fields=frozenset({"duration_ms", "$.nested.trace_id"})),
         config=RedactionConfig(include_environment=False),
@@ -54,7 +54,7 @@ def test_snapshot_field_opt_in_restores_only_selected_unstable_fields() -> None:
 
 
 def test_snapshot_accepts_pydantic_models_without_leaking_omitted_fields() -> None:
-    projected = canonical_snapshot(
+    projected = snapshot(
         _SnapshotModel(z=2, timestamp="unstable", nested={"path": "/private", "value": 1}),
         config=RedactionConfig(include_environment=False),
     )
@@ -65,18 +65,18 @@ def test_snapshot_accepts_pydantic_models_without_leaking_omitted_fields() -> No
 def test_snapshot_removes_url_ports_by_default_and_restores_explicit_opt_in() -> None:
     value = {"endpoint": "https://example.test:8443/mcp", "port": 8443}
     config = RedactionConfig(include_environment=False)
-    assert canonical_snapshot(value, config=config) == {"endpoint": "https://example.test/mcp"}
-    assert canonical_snapshot(value, include_fields=("port",), config=config) == value
+    assert snapshot(value, config=config) == {"endpoint": "https://example.test/mcp"}
+    assert snapshot(value, include_fields=("port",), config=config) == value
 
 
 def test_snapshot_cycles_and_opaque_values_fail_closed() -> None:
     cyclic: dict[str, object] = {}
     cyclic["self"] = cyclic
     with pytest.raises(Exception) as cycle_error:
-        canonical_snapshot(cyclic, config=RedactionConfig(include_environment=False))
+        snapshot(cyclic, config=RedactionConfig(include_environment=False))
     assert "self" not in str(cycle_error.value)
     with pytest.raises(Exception):
-        canonical_snapshot({"stable": object()}, config=RedactionConfig(include_environment=False))
+        snapshot({"stable": object()}, config=RedactionConfig(include_environment=False))
 
 
 def test_evaluation_runner_persists_statuses_and_sanitizes_failures() -> None:
@@ -109,11 +109,11 @@ def test_evaluation_infers_execution_id_from_execution_result_snapshot() -> None
     execution_id = ExecutionId("execution-evaluation-link")
     trace = TraceResult(trace_id=TraceId("trace-evaluation-link"), execution_id=execution_id)
     result = ExecutionResult(
-        snapshot=ExecutionSnapshot(
+        snapshot=ExecutionState(
             execution_id=execution_id,
             created_at=datetime.now(timezone.utc),
             finished_at=datetime.now(timezone.utc),
-            lifecycle=LifecycleState.FINISHED,
+            lifecycle=ExecutionStatus.FINISHED,
             outcome=ExecutionOutcome.COMPLETED,
         ),
         trace=trace,
@@ -143,11 +143,11 @@ def test_evaluation_infers_execution_id_from_execution_result_snapshot() -> None
 
 def test_evaluation_rejects_conflicting_execution_result_and_artifact_ids() -> None:
     result = ExecutionResult(
-        snapshot=ExecutionSnapshot(
+        snapshot=ExecutionState(
             execution_id=ExecutionId("execution-result"),
             created_at=datetime.now(timezone.utc),
             finished_at=datetime.now(timezone.utc),
-            lifecycle=LifecycleState.FINISHED,
+            lifecycle=ExecutionStatus.FINISHED,
             outcome=ExecutionOutcome.COMPLETED,
         ),
     )
@@ -204,11 +204,11 @@ def test_evaluation_rejects_conflicting_subject_and_artifact_ids() -> None:
 def test_async_evaluation_rejects_conflicting_result_and_artifact_ids() -> None:
     async def run() -> None:
         result = ExecutionResult(
-            snapshot=ExecutionSnapshot(
+            snapshot=ExecutionState(
                 execution_id=ExecutionId("execution-subject"),
                 created_at=datetime.now(timezone.utc),
                 finished_at=datetime.now(timezone.utc),
-                lifecycle=LifecycleState.FINISHED,
+                lifecycle=ExecutionStatus.FINISHED,
                 outcome=ExecutionOutcome.COMPLETED,
             ),
         )

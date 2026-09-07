@@ -13,11 +13,11 @@ from mcp_pal.harness.contracts import (
     UnsupportedHarnessFeature,
 )
 from mcp_pal.server_group import ServerGroupManager
-from mcp_pal.types import ACPAgent, AgentExecutionSpec, RestrictiveToolPolicy, ServerBinding, StdioServer
+from mcp_pal.types import ACPAgent, AgentSpec, RestrictiveToolPolicy, ServerBinding, StdioServer
 
 
 def _launch(manager: ServerGroupManager) -> HarnessLaunch:
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="fake"),
         servers=(
             ServerBinding(
@@ -79,7 +79,7 @@ async def test_fake_adapter_attaches_portable_policy_evidence_to_effective_launc
         (ServerBinding(server=StdioServer(name="memory", command="memory-server")),)
     )
     await manager.start()
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="fake"),
         servers=(ServerBinding(server=StdioServer(name="memory", command="memory-server")),),
         tool_policy=RestrictiveToolPolicy(allowed_tools=("memory:read",)),
@@ -100,7 +100,7 @@ async def test_fake_adapter_rejects_portable_policy_when_capability_is_unavailab
         (ServerBinding(server=StdioServer(name="memory", command="memory-server")),)
     )
     await manager.start()
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="fake"),
         servers=(ServerBinding(server=StdioServer(name="memory", command="memory-server")),),
         tool_policy=RestrictiveToolPolicy(allowed_tools=("memory:read",)),

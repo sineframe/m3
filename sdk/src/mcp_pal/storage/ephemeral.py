@@ -28,8 +28,8 @@ from pydantic import TypeAdapter, ValidationError
 from ..errors import RawEvidenceUnavailable, TraceNotFinalized, TraceUnavailable
 from ..observability import (
     RawEvidence,
-    RawEvidenceCapture,
-    TraceCaptureConfig,
+    EvidenceCapture,
+    CaptureOptions,
     TraceView,
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
@@ -42,8 +42,8 @@ from ..trace.redaction import (
 from ..types import (
     ArtifactId,
     ArtifactRef,
-    CanonicalEvent,
-    DirectOperationResult,
+    Event,
+    DirectResult,
     ErrorCode,
     ErrorInfo,
     EventId,
@@ -52,23 +52,23 @@ from ..types import (
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
-    ExecutionSnapshot,
+    ExecutionState,
     ExecutionSpec,
     EvaluationResult,
     EvaluationId,
     EvaluationStatus,
-    PersistedEvaluationRecord,
+    EvaluationRecord,
     RunId,
-    LifecycleState,
-    PersistedExecutionReport,
-    RawEvidenceRef,
+    ExecutionStatus,
+    ExecutionReport,
+    EvidenceRef,
     TraceId,
     TraceResult,
     TurnId,
-    TurnSnapshot,
+    TurnState,
     TurnResult,
 )
-from ..aggregations import EvaluationAggregateQuery, EvaluationAggregateReport, aggregate_evaluations
+from ..aggregations import EvaluationQuery, EvaluationReport, aggregate_evaluations
 from .evidence import (
     evidence_id_for as _evidence_id_for,
 )
@@ -116,13 +116,13 @@ class ArtifactNotFound(StorageError):
     code = "artifact_not_found"
 
 
-EventCallback: TypeAlias = Callable[[CanonicalEvent], None]
+EventCallback: TypeAlias = Callable[[Event], None]
 
 
 class ExecutionTransaction(Protocol):
     """Uncommitted event batch used by :class:`ExecutionStore`."""
 
-    def append(self, events: Sequence[CanonicalEvent]) -> None: ...
+    def append(self, events: Sequence[Event]) -> None: ...
 
     def commit(self) -> None: ...
 
@@ -143,7 +143,7 @@ class ExecutionStore(Protocol):
 
     def create(
         self,
-        snapshot: ExecutionSnapshot,
+        snapshot: ExecutionState,
         *,
         specification: Mapping[str, object] | None = None,
         provenance: Mapping[str, object] | None = None,
@@ -153,7 +153,7 @@ class ExecutionStore(Protocol):
         run_id: RunId | str | None = None,
     ) -> None: ...
 
-    def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionSnapshot | None: ...
+    def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None: ...
 
     def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None: ...
 
@@ -162,7 +162,7 @@ class ExecutionStore(Protocol):
         *,
         limit: int = 50,
         offset: int = 0,
-        lifecycle: LifecycleState | str | None = None,
+        lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
         run_id: RunId | str | None = None,
     ) -> ExecutionPage: ...
@@ -174,7 +174,7 @@ class ExecutionStore(Protocol):
         after_sequence: int = -1,
         event_limit: int | None = None,
         artifact_limit: int | None = None,
-    ) -> PersistedExecutionReport | None: ...
+    ) -> ExecutionReport | None: ...
 
     def get_trace(self, execution_id: ExecutionId | str) -> TraceResult | None: ...
 
@@ -182,23 +182,23 @@ class ExecutionStore(Protocol):
 
     def save_evaluation(self, execution_id: ExecutionId | str, result: EvaluationResult | Mapping[str, object], *, evaluation_id: str | None = None, turn_id: TurnId | str | None = None) -> str: ...
 
-    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[PersistedEvaluationRecord, ...]: ...
+    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[EvaluationRecord, ...]: ...
 
-    def aggregate_evaluations(self, query: EvaluationAggregateQuery) -> EvaluationAggregateReport: ...
+    def aggregate_evaluations(self, query: EvaluationQuery) -> EvaluationReport: ...
 
-    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnSnapshot, TurnResult | None], ...]: ...
+    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnState, TurnResult | None], ...]: ...
 
-    def save_snapshot(self, snapshot: ExecutionSnapshot) -> None: ...
+    def save_snapshot(self, snapshot: ExecutionState) -> None: ...
 
-    def append_events(self, events: Sequence[CanonicalEvent]) -> None: ...
+    def append_events(self, events: Sequence[Event]) -> None: ...
 
-    def append_event_with_raw_evidence(
-        self, event: CanonicalEvent, content: bytes, *, media_type: str
-    ) -> CanonicalEvent: ...
+    def append_event(
+        self, event: Event, content: bytes, *, media_type: str
+    ) -> Event: ...
 
     def iter_events(
         self, execution_id: ExecutionId | str, *, after_sequence: int = -1
-    ) -> Iterator[CanonicalEvent]: ...
+    ) -> Iterator[Event]: ...
 
     def transaction(self, execution_id: ExecutionId | str) -> ExecutionTransaction: ...
 
@@ -208,10 +208,10 @@ class ExecutionStore(Protocol):
 
     def put_raw_evidence(
         self, event_id: EventId | str, content: bytes, *, media_type: str
-    ) -> RawEvidenceCapture: ...
+    ) -> EvidenceCapture: ...
 
     def read_raw_evidence(
-        self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576
+        self, reference: EvidenceRef, *, max_bytes: int = 1_048_576
     ) -> RawEvidence: ...
 
     def delete_execution(self, execution_id: ExecutionId | str) -> None: ...
@@ -244,7 +244,7 @@ def _execution_key(value: ExecutionId | str) -> str:
     return str(value.root if isinstance(value, ExecutionId) else value)
 
 
-_DIRECT_RESULT_ADAPTER: TypeAdapter[DirectOperationResult] = TypeAdapter(DirectOperationResult)
+_DIRECT_RESULT_ADAPTER: TypeAdapter[DirectResult] = TypeAdapter(DirectResult)
 _ERROR_INFO_ADAPTER: TypeAdapter[ErrorInfo] = TypeAdapter(ErrorInfo)
 _EXECUTION_SPEC_ADAPTER: TypeAdapter[ExecutionSpec] = TypeAdapter(ExecutionSpec)
 
@@ -263,7 +263,7 @@ def _copy_execution_spec(specification: ExecutionSpec) -> ExecutionSpec:
     )
 
 
-def _report_fields(events: Sequence[CanonicalEvent]) -> tuple[DirectOperationResult | None, ErrorInfo | None, ExecutionEvidence | None]:
+def _report_fields(events: Sequence[Event]) -> tuple[DirectResult | None, ErrorInfo | None, ExecutionEvidence | None]:
     """Reconstruct only typed values explicitly committed in terminal events."""
     terminal = next((event for event in reversed(events) if event.kind is EventKind.EXECUTION_FINISHED), None)
     if terminal is None:
@@ -308,10 +308,10 @@ class _ExecutionBatch(AbstractContextManager["_ExecutionBatch"]):
     def __init__(self, store: "InMemoryExecutionStore", execution_id: str) -> None:
         self._store = store
         self._execution_id = execution_id
-        self._events: list[CanonicalEvent] = []
+        self._events: list[Event] = []
         self._done = False
 
-    def append(self, events: Sequence[CanonicalEvent]) -> None:
+    def append(self, events: Sequence[Event]) -> None:
         if self._done:
             raise StorageConflict("transaction is already closed")
         for event in events:
@@ -354,39 +354,39 @@ class InMemoryExecutionStore:
         self,
         *,
         config: RedactionConfig | None = None,
-        capture_config: TraceCaptureConfig | None = None,
+        capture_config: CaptureOptions | None = None,
     ) -> None:
         self._lock = threading.RLock()
-        self._snapshots: dict[str, ExecutionSnapshot] = {}
+        self._snapshots: dict[str, ExecutionState] = {}
         self._specifications: dict[str, ExecutionSpec] = {}
-        self._events: dict[str, tuple[CanonicalEvent, ...]] = {}
+        self._events: dict[str, tuple[Event, ...]] = {}
         self._callbacks: dict[str, list[EventCallback]] = {}
         self._reserved_sequences: dict[str, set[int]] = {}
         self._redaction_config = (
             config if config is not None else RedactionConfig.from_environment()
         )
         self._capture_config = (
-            capture_config if capture_config is not None else TraceCaptureConfig()
+            capture_config if capture_config is not None else CaptureOptions()
         )
-        self._raw_refs: dict[str, RawEvidenceRef] = {}
+        self._raw_refs: dict[str, EvidenceRef] = {}
         self._raw_event_ids: dict[str, str] = {}
         self._raw_blobs: dict[str, bytes] = {}
         self._raw_refcounts: dict[str, int] = {}
         self._acp_probes: dict[str, ACPProbeResult] = {}
-        self._evaluations: dict[str, list[PersistedEvaluationRecord]] = {}
-        self._turns: dict[str, list[tuple[TurnSnapshot, TurnResult | None]]] = {}
+        self._evaluations: dict[str, list[EvaluationRecord]] = {}
+        self._turns: dict[str, list[tuple[TurnState, TurnResult | None]]] = {}
 
     # ACP probe persistence intentionally lives beside execution persistence,
     # but is kept as a small independent collection so tests and applications
     # can use the exact same service contract without SQLAlchemy/legacy rows.
     def save_acp_probe(self, result: ACPProbeResult) -> ACPProbeResult:
-        from ..services.acp_probes import redacted_probe
+        from ..services.acp_probes import redact_probe
 
-        safe = redacted_probe(result, self._redaction_config)
+        safe = redact_probe(result, self._redaction_config)
         with self._lock:
             existing = self._acp_probes.get(safe.id)
             if existing is not None and (
-                existing.canonical_key != safe.canonical_key
+                existing.stable_key != safe.stable_key
                 or existing.created_at != safe.created_at
             ):
                 raise StorageConflict("ACP probe id was already used for another dimension")
@@ -401,9 +401,9 @@ class InMemoryExecutionStore:
     def list_acp_probes(self, dimension: ACPProbeDimension | None = None, *, include_inflight: bool = True) -> tuple[ACPProbeResult, ...]:
         with self._lock:
             values = list(self._acp_probes.values())
-        key = getattr(dimension, "canonical_key", None)
+        key = getattr(dimension, "stable_key", None)
         if key is not None:
-            values = [item for item in values if item.canonical_key == key]
+            values = [item for item in values if item.stable_key == key]
         if not include_inflight:
             values = [item for item in values if item.status.value not in {"queued", "running"}]
         values.sort(key=lambda item: (item.created_at, item.id), reverse=True)
@@ -416,7 +416,7 @@ class InMemoryExecutionStore:
 
     def create(
         self,
-        snapshot: ExecutionSnapshot,
+        snapshot: ExecutionState,
         *,
         specification: Mapping[str, object] | None = None,
         provenance: Mapping[str, object] | None = None,
@@ -447,7 +447,7 @@ class InMemoryExecutionStore:
     # protocol stays small and framework-neutral.
     create_execution = create
 
-    def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionSnapshot | None:
+    def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None:
         key = _execution_key(execution_id)
         with self._lock:
             snapshot = self._snapshots.get(key)
@@ -464,12 +464,12 @@ class InMemoryExecutionStore:
         *,
         limit: int = 50,
         offset: int = 0,
-        lifecycle: LifecycleState | str | None = None,
+        lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
         run_id: RunId | str | None = None,
     ) -> ExecutionPage:
         page = ExecutionPage(limit=limit, offset=offset)
-        lifecycle_value = LifecycleState(lifecycle) if lifecycle is not None else None
+        lifecycle_value = ExecutionStatus(lifecycle) if lifecycle is not None else None
         outcome_value = ExecutionOutcome(outcome) if outcome is not None else None
         with self._lock:
             snapshots = list(self._snapshots.values())
@@ -482,7 +482,7 @@ class InMemoryExecutionStore:
         filtered.sort(key=lambda item: (item.created_at, str(item.execution_id.root)), reverse=True)
         return page.model_copy(update={"items": tuple(item.model_copy() for item in filtered[offset : offset + limit]), "total": len(filtered)})
 
-    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> PersistedExecutionReport | None:
+    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> ExecutionReport | None:
         snapshot = self.get_snapshot(execution_id)
         if snapshot is None:
             return None
@@ -492,7 +492,7 @@ class InMemoryExecutionStore:
         events = tuple(event for event in all_events if event.sequence > after_sequence)
         selected = events if event_limit is None else events[:event_limit]
         direct_result, error, evidence = _report_fields(all_events)
-        return PersistedExecutionReport(
+        return ExecutionReport(
             snapshot=snapshot,
             events=selected,
             direct_result=direct_result,
@@ -522,7 +522,7 @@ class InMemoryExecutionStore:
                 if not any(event.turn_id is not None and event.turn_id.root == turn_key for event in self._events.get(key, ())):
                     raise StorageConflict("turn does not belong to execution")
             subject_digest = hashlib.sha256(json.dumps(context.get("subject"), sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
-            record = PersistedEvaluationRecord(
+            record = EvaluationRecord(
                 evaluation_id=EvaluationId(identifier),
                 execution_id=ExecutionId(key),
                 case_id=str(value.get("case_id") or context.get("case_id")) if (value.get("case_id") or context.get("case_id")) is not None else None,
@@ -543,7 +543,7 @@ class InMemoryExecutionStore:
             self._evaluations.setdefault(key, []).append(record)
             return identifier
 
-    def save_turn(self, snapshot: TurnSnapshot, result: TurnResult | None = None) -> None:
+    def save_turn(self, snapshot: TurnState, result: TurnResult | None = None) -> None:
         execution_key = next((key for key, events in self._events.items() if any(event.session_id == snapshot.session_id for event in events)), None)
         if execution_key is None:
             execution_key = _execution_key(str(snapshot.session_id.root))
@@ -554,12 +554,12 @@ class InMemoryExecutionStore:
 
     append_turn = save_turn
 
-    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnSnapshot, TurnResult | None], ...]:
+    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnState, TurnResult | None], ...]:
         with self._lock:
             values = self._turns.get(_execution_key(execution_id), ())
             return tuple((snapshot.model_copy(), result.model_copy() if result is not None else None) for snapshot, result in values)
 
-    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: object | None = None) -> tuple[PersistedEvaluationRecord, ...]:
+    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: object | None = None) -> tuple[EvaluationRecord, ...]:
         key = _execution_key(execution_id)
         with self._lock:
             values = tuple(self._evaluations.get(key, ()))
@@ -568,10 +568,10 @@ class InMemoryExecutionStore:
             values = tuple(item for item in values if str(getattr(item.turn_id, "root", item.turn_id)) == turn_key)
         return tuple(item.model_copy() for item in values)
 
-    def aggregate_evaluations(self, query: EvaluationAggregateQuery) -> EvaluationAggregateReport:
+    def aggregate_evaluations(self, query: EvaluationQuery) -> EvaluationReport:
         """Calculate summaries from the evaluations currently in memory."""
-        if not isinstance(query, EvaluationAggregateQuery):
-            query = EvaluationAggregateQuery.model_validate(query)
+        if not isinstance(query, EvaluationQuery):
+            query = EvaluationQuery.model_validate(query)
         with self._lock:
             records = [record for values in self._evaluations.values() for record in values]
             snapshots = {key: value for key, value in self._snapshots.items()}
@@ -607,7 +607,7 @@ class InMemoryExecutionStore:
         except ValueError:
             raise TraceUnavailable("trace identity evidence is invalid") from None
         if typed_trace_id.root != trace_id:
-            raise TraceUnavailable("trace identity evidence is not canonical")
+            raise TraceUnavailable("trace identity evidence is not stable")
         terminal = [
             event for event in events if event.kind is EventKind.EXECUTION_FINISHED
         ]
@@ -632,7 +632,7 @@ class InMemoryExecutionStore:
             typed_outcome = ExecutionOutcome(outcome)
         except ValueError:
             raise TraceUnavailable("persisted execution outcome is invalid") from None
-        if snapshot.lifecycle is not LifecycleState.FINISHED or snapshot.outcome != typed_outcome:
+        if snapshot.lifecycle is not ExecutionStatus.FINISHED or snapshot.outcome != typed_outcome:
             raise TraceUnavailable("persisted snapshot outcome conflicts with terminal evidence")
         try:
             return TraceResult(
@@ -650,7 +650,7 @@ class InMemoryExecutionStore:
         trace = self.get_trace(execution_id)
         return trace.view() if trace is not None else None
 
-    def save_snapshot(self, snapshot: ExecutionSnapshot) -> None:
+    def save_snapshot(self, snapshot: ExecutionState) -> None:
         key = _execution_key(snapshot.execution_id)
         with self._lock:
             if key not in self._snapshots:
@@ -662,7 +662,7 @@ class InMemoryExecutionStore:
 
     update_snapshot = save_snapshot
 
-    def append_events(self, events: Sequence[CanonicalEvent]) -> None:
+    def append_events(self, events: Sequence[Event]) -> None:
         batch = tuple(events)
         if not batch:
             return
@@ -671,9 +671,9 @@ class InMemoryExecutionStore:
 
     append = append_events
 
-    def append_event_with_raw_evidence(
-        self, event: CanonicalEvent, content: bytes, *, media_type: str
-    ) -> CanonicalEvent:
+    def append_event(
+        self, event: Event, content: bytes, *, media_type: str
+    ) -> Event:
         """Commit an event and its raw blob as one in-memory operation."""
         execution_id = _execution_key(event.execution_id)
         with self._lock:
@@ -759,7 +759,7 @@ class InMemoryExecutionStore:
                         self._raw_blobs.pop(digest, None)
                 raise
 
-    def _commit(self, execution_id: str, events: tuple[CanonicalEvent, ...]) -> None:
+    def _commit(self, execution_id: str, events: tuple[Event, ...]) -> None:
         try:
             self._commit_checked(execution_id, events)
         except Exception:
@@ -770,12 +770,12 @@ class InMemoryExecutionStore:
                     reserved.difference_update(failed_sequences)
             raise
 
-    def _commit_checked(self, execution_id: str, events: tuple[CanonicalEvent, ...]) -> None:
+    def _commit_checked(self, execution_id: str, events: tuple[Event, ...]) -> None:
         if not events:
             return
         safe_events = tuple(self._redact_event(event) for event in events)
         callbacks: tuple[EventCallback, ...]
-        committed: tuple[CanonicalEvent, ...]
+        committed: tuple[Event, ...]
         with self._lock:
             if execution_id not in self._snapshots:
                 raise StorageConflict("execution does not exist")
@@ -817,7 +817,7 @@ class InMemoryExecutionStore:
             candidate_snapshot = self._derive_snapshot(execution_id, candidate_events)
             # Tuple replacement is the commit point. Readers cannot observe
             # the candidate batch because it is never placed in _events earlier.
-            # CanonicalEvent is recursively immutable, so a shallow model
+            # Event is recursively immutable, so a shallow model
             # copy preserves isolation without deepcopying its private frozen
             # mapping implementation.
             committed = tuple(item.model_copy() for item in safe_events)
@@ -835,9 +835,9 @@ class InMemoryExecutionStore:
                 except Exception:
                     continue
 
-    def _derive_snapshot(self, execution_id: str, events: tuple[CanonicalEvent, ...]) -> ExecutionSnapshot:
+    def _derive_snapshot(self, execution_id: str, events: tuple[Event, ...]) -> ExecutionState:
         previous = self._snapshots[execution_id]
-        lifecycle = LifecycleState.CREATED
+        lifecycle = ExecutionStatus.CREATED
         outcome: ExecutionOutcome | None = None
         created_at = previous.created_at
         finished_at: datetime | None = None
@@ -845,25 +845,25 @@ class InMemoryExecutionStore:
         for event in events:
             if event.kind is EventKind.EXECUTION_CREATED:
                 created_at = event.timestamp
-                lifecycle = LifecycleState.CREATED
+                lifecycle = ExecutionStatus.CREATED
                 outcome = None
                 finished_at = None
             elif event.kind is EventKind.EXECUTION_STATE_CHANGED:
                 value = event.payload.get("lifecycle", event.payload.get("state"))
                 try:
-                    lifecycle = LifecycleState(value)
+                    lifecycle = ExecutionStatus(value)
                 except (TypeError, ValueError) as exc:
                     raise StorageConflict("execution state payload is invalid") from exc
-                if lifecycle is LifecycleState.FINISHED:
+                if lifecycle is ExecutionStatus.FINISHED:
                     raise StorageConflict("execution state payload is invalid")
             elif event.kind is EventKind.EXECUTION_FINISHED:
                 try:
                     outcome = ExecutionOutcome(event.payload["outcome"])
                 except (KeyError, TypeError, ValueError) as exc:
                     raise StorageConflict("execution terminal payload is invalid") from exc
-                lifecycle = LifecycleState.FINISHED
+                lifecycle = ExecutionStatus.FINISHED
                 finished_at = event.timestamp
-        return ExecutionSnapshot(
+        return ExecutionState(
             execution_id=ExecutionId(execution_id),
             run_id=previous.run_id,
             lifecycle=lifecycle,
@@ -873,7 +873,7 @@ class InMemoryExecutionStore:
             finished_at=finished_at,
         )
 
-    def _redact_event(self, event: CanonicalEvent) -> CanonicalEvent:
+    def _redact_event(self, event: Event) -> Event:
         projected = redact_model_json(event, config=self._redaction_config, path="$.event")
         if not isinstance(projected, Mapping):
             raise StorageError("event projection is invalid")
@@ -883,7 +883,7 @@ class InMemoryExecutionStore:
             "lifecycle_phase", "payload_ref", "raw_evidence_ref", "reasoning",
         )
         try:
-            safe_event = CanonicalEvent.model_validate(projected)
+            safe_event = Event.model_validate(projected)
         except Exception:
             # Pydantic's validation context can render projected input.  The
             # redaction boundary must not preserve it as an exception cause.
@@ -892,7 +892,7 @@ class InMemoryExecutionStore:
             raise StorageError("event identity changed during redaction")
         return safe_event
 
-    def iter_events(self, execution_id: ExecutionId | str, *, after_sequence: int = -1) -> Iterator[CanonicalEvent]:
+    def iter_events(self, execution_id: ExecutionId | str, *, after_sequence: int = -1) -> Iterator[Event]:
         if after_sequence < -1:
             raise ValueError("after_sequence must be >= -1")
         key = _execution_key(execution_id)
@@ -900,7 +900,7 @@ class InMemoryExecutionStore:
             events = tuple(event.model_copy() for event in self._events.get(key, ()))
         return iter(event for event in events if event.sequence > after_sequence)
 
-    def events(self, execution_id: ExecutionId | str, *, after_sequence: int = -1) -> tuple[CanonicalEvent, ...]:
+    def events(self, execution_id: ExecutionId | str, *, after_sequence: int = -1) -> tuple[Event, ...]:
         return tuple(self.iter_events(execution_id, after_sequence=after_sequence))
 
     def transaction(self, execution_id: ExecutionId | str) -> ExecutionTransaction:
@@ -975,7 +975,7 @@ class InMemoryExecutionStore:
 
     def put_raw_evidence(
         self, event_id: EventId | str, content: bytes, *, media_type: str
-    ) -> RawEvidenceCapture:
+    ) -> EvidenceCapture:
         event_key = str(event_id.root if isinstance(event_id, EventId) else event_id)
         with self._lock:
             event = next(
@@ -1037,9 +1037,9 @@ class InMemoryExecutionStore:
             return _make_evidence_capture(ref.model_copy(), prepared)
 
     def read_raw_evidence(
-        self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576
+        self, reference: EvidenceRef, *, max_bytes: int = 1_048_576
     ) -> RawEvidence:
-        if not isinstance(reference, RawEvidenceRef):
+        if not isinstance(reference, EvidenceRef):
             raise RawEvidenceUnavailable("raw evidence reference is invalid")
         _validate_evidence_id(reference.evidence_id)
         with self._lock:
@@ -1060,7 +1060,7 @@ class InMemoryExecutionStore:
             snapshot = self._snapshots.get(key)
             if snapshot is None:
                 raise StorageConflict("execution does not exist")
-            if snapshot.lifecycle is not LifecycleState.FINISHED:
+            if snapshot.lifecycle is not ExecutionStatus.FINISHED:
                 raise StorageConflict("active execution cannot be deleted")
             event_ids = {str(item.event_id.root) for item in self._events[key]}
             for evidence_id, reference in tuple(self._raw_refs.items()):

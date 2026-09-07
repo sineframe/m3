@@ -16,7 +16,7 @@ from mcp_pal.sync_api import DirectClient, MCPTestKit
 from mcp_pal.sync_api import _adapt_callback
 from mcp_pal.storage import InMemoryExecutionStore
 from mcp_pal.types import (
-    AgentExecutionSpec,
+    AgentSpec,
     ClaudeCode,
     InProcessServer,
     ServerBinding,
@@ -211,7 +211,7 @@ def test_close_during_inflight_sync_operation_maps_teardown_to_cancelled() -> No
 
 
 def test_sync_kit_forwards_injected_empty_adapter_registry() -> None:
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="server", command="echo")),),
         harness=ClaudeCode(model="model"),
         message=UserMessage(content=(TextContent(text="hello"),)),

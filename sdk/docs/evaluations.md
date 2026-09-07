@@ -51,9 +51,9 @@ share a case while keeping separate trial IDs. `ExecutionSpec.evaluations` is
 saved as metadata; it is not run.
 
 ```python
-from mcp_pal import EvaluationAggregateQuery
+from mcp_pal import EvaluationQuery
 
-report = store.aggregate_evaluations(EvaluationAggregateQuery(
+report = store.aggregate_evaluations(EvaluationQuery(
     group_by=("time.day", "evaluator"),
     filters={"evaluator": "project.answer-quality.v1"},
 ))

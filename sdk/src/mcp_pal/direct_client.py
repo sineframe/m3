@@ -22,21 +22,21 @@ from .errors import ModelValidationError, OperationCancelled, OperationTimeout, 
 from .direct_trace import DirectTraceBridge
 from .trace.redaction import RedactionConfig, redact_for_api
 from .types import (
-    DirectPrompt as _PublicDirectPrompt,
-    DirectResource as _PublicDirectResource,
-    DirectResourceTemplate as _PublicDirectResourceTemplate,
-    DirectTool as _PublicDirectTool,
+    PromptInfo as _PublicPromptInfo,
+    ResourceInfo as _PublicResourceInfo,
+    TemplateInfo as _PublicTemplateInfo,
+    ToolInfo as _PublicToolInfo,
     FrozenModel,
     TraceResult,
 )
 
-# Backwards-compatible direct-client names share identity with the canonical
+# Backwards-compatible direct-client names share identity with the stable
 # public models.  This lets converted values be used directly in durable
 # operation results while retaining their process-local ``raw`` evidence.
-Tool = _PublicDirectTool
-Resource = _PublicDirectResource
-ResourceTemplate = _PublicDirectResourceTemplate
-Prompt = _PublicDirectPrompt
+Tool = _PublicToolInfo
+Resource = _PublicResourceInfo
+ResourceTemplate = _PublicTemplateInfo
+Prompt = _PublicPromptInfo
 
 
 class _Session(Protocol):
@@ -155,7 +155,7 @@ class _RawValue(FrozenModel):
 
 
 class DirectOperationEvent(FrozenModel):
-    """A narrow, ownership-free hook event for canonical trace integration."""
+    """A narrow, ownership-free hook event for stable trace integration."""
 
     operation: str
     phase: Literal["started", "succeeded", "failed"]
@@ -453,13 +453,13 @@ class AsyncDirectClient:
 
     @property
     def trace(self) -> TraceResult | None:
-        """Immutable live canonical trace when a bridge is attached."""
+        """Immutable live stable trace when a bridge is attached."""
 
         return self._trace_bridge.trace if self._trace_bridge is not None else None
 
     @property
     def final_trace(self) -> TraceResult | None:
-        """Immutable finalized canonical trace, if available."""
+        """Immutable finalized stable trace, if available."""
 
         return self._trace_bridge.final_trace if self._trace_bridge is not None else None
 
@@ -1036,15 +1036,15 @@ class AsyncDirectClient:
 
 # Explicit SDK names avoid confusing these wrappers with the official MCP
 # classes while keeping familiar result names available to callers.
-# Public serializable values are canonicalized in ``mcp_pal.types`` so that
+# Public serializable values are defined in ``mcp_pal.types`` so that
 # the type exported by the direct-client adapters is identical to the durable
 # model used by execution results.  The process-local ``Tool``/``Resource``/
 # ``Prompt`` aliases retain their excluded ``raw`` evidence at the direct
 # protocol boundary.
-DirectTool = _PublicDirectTool
-DirectResource = _PublicDirectResource
-DirectResourceTemplate = _PublicDirectResourceTemplate
-DirectPrompt = _PublicDirectPrompt
+ToolInfo = _PublicToolInfo
+ResourceInfo = _PublicResourceInfo
+TemplateInfo = _PublicTemplateInfo
+PromptInfo = _PublicPromptInfo
 ToolPage = ToolsPage
 ResourcePage = ResourcesPage
 ResourceTemplatePage = ResourceTemplatesPage
@@ -1067,10 +1067,10 @@ __all__ = [
     "DirectEvidenceProvider",
     "DirectEventHook",
     "DirectOperationEvent",
-    "DirectPrompt",
-    "DirectResource",
-    "DirectResourceTemplate",
-    "DirectTool",
+    "PromptInfo",
+    "ResourceInfo",
+    "TemplateInfo",
+    "ToolInfo",
     "GetPromptResult",
     "InitializeResult",
     "InitializationResult",

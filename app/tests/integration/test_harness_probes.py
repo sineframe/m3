@@ -69,7 +69,7 @@ def test_identity_mismatch_downgrades_full_and_missing_identity_warns(tmp_path):
     client,p=_profile_with_probes(tmp_path,[{'kind':'protocol','status':'verified','evidence':{},'agent_identity':{'name':'a'}},{'kind':'full','status':'verified','evidence':{},'agent_identity':{'name':'b'},'mode_id':'m'}]); d=next(x for x in client.get('/api/v1/capabilities').json()['harnesses'] if x.get('profile_id')==p['id']); assert not d['full_verified'] and any('Identity changed' in w for w in d['warnings'])
     (tmp_path/'second').mkdir(); client,p=_profile_with_probes(tmp_path/'second',[{'kind':'protocol','status':'verified','evidence':{},'agent_identity':None},{'kind':'full','status':'verified','evidence':{},'agent_identity':None,'mode_id':'m'}]); d=next(x for x in client.get('/api/v1/capabilities').json()['harnesses'] if x.get('profile_id')==p['id']); assert d['full_verified'] and any('identity unavailable' in w.lower() for w in d['warnings'])
 
-def test_canonical_config_order_is_one_dimension_and_failed_latest_invalidates(tmp_path):
+def test_stable_config_order_is_one_dimension_and_failed_latest_invalidates(tmp_path):
     client,p=_profile_with_probes(tmp_path,[{'kind':'full','status':'verified','evidence':{},'session_config':{'a':1,'b':2},'mode_id':'m'},{'kind':'full','status':'failed','evidence':{},'session_config':{'b':2,'a':1},'mode_id':'m'}]); d=next(x for x in client.get('/api/v1/capabilities').json()['harnesses'] if x.get('profile_id')==p['id']); assert not d['full_verified']
 
 

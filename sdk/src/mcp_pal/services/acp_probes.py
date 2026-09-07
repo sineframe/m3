@@ -39,7 +39,7 @@ class ACPProbeStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-def _canonical(value: Any, *, depth: int = 0) -> JsonValue:
+def _normalize(value: Any, *, depth: int = 0) -> JsonValue:
     if depth > 32:
         raise ValueError("session configuration is too deeply nested")
     if isinstance(value, Mapping):
@@ -51,12 +51,12 @@ def _canonical(value: Any, *, depth: int = 0) -> JsonValue:
                 raise ValueError("session configuration keys must be bounded strings")
             if key in converted:
                 raise ValueError("session configuration keys must be unique")
-            converted[key] = _canonical(item, depth=depth + 1)
+            converted[key] = _normalize(item, depth=depth + 1)
         return {key: converted[key] for key in sorted(converted)}
     if isinstance(value, (list, tuple)):
         if len(value) > 1024:
             raise ValueError("session configuration contains too many values")
-        return [_canonical(item, depth=depth + 1) for item in value]
+        return [_normalize(item, depth=depth + 1) for item in value]
     if value is None or isinstance(value, (str, bool, int)):
         if isinstance(value, str) and len(value) > 16 * 1024:
             raise ValueError("session configuration string is too long")
@@ -98,7 +98,7 @@ class ACPProbeDimension(FrozenModel):
             return {}
         if not isinstance(value, Mapping):
             raise ValueError("session_config must be an object")
-        result = _canonical(value)
+        result = _normalize(value)
         if not isinstance(result, dict):
             raise ValueError("session_config must be an object")
         return result
@@ -133,12 +133,12 @@ class ACPProbeDimension(FrozenModel):
         return self.agent_mode_id
 
     @property
-    def canonical_session_config(self) -> str:
-        return json.dumps(_canonical(self.session_config), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    def stable_session_config(self) -> str:
+        return json.dumps(_normalize(self.session_config), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     @property
-    def canonical_key(self) -> str:
-        value = "|".join((self.profile_id, self.revision_id, self.probe_type.value, self.transport, self.agent_mode_id or "", self.canonical_session_config))
+    def stable_key(self) -> str:
+        value = "|".join((self.profile_id, self.revision_id, self.probe_type.value, self.transport, self.agent_mode_id or "", self.stable_session_config))
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
@@ -239,7 +239,7 @@ def _contains_secret(value: object, secrets: frozenset[str]) -> bool:
     return False
 
 
-def redacted_probe(result: ACPProbeResult, config: RedactionConfig | None = None) -> ACPProbeResult:
+def redact_probe(result: ACPProbeResult, config: RedactionConfig | None = None) -> ACPProbeResult:
     """Project hostile runner output before it reaches durable storage."""
     cfg = config or RedactionConfig.from_environment()
     if _contains_secret(result.session_config, cfg.secrets):
@@ -335,11 +335,11 @@ async def run_acp_probe(
             duration_ms=(time.monotonic() - monotonic) * 1000, error="probe result was invalid",
         )
         candidate = ACPProbeResult.model_validate(safe_base)
-    return redacted_probe(candidate, config)
+    return redact_probe(candidate, config)
 
 
 __all__ = [
     "ACPAgentIdentity", "ACPAgentMode", "ACPProbeDimension", "ACPProbeHistory", "ACPProbeKind",
     "ACPProbeRequest", "ACPProbeResult", "ACPProbeStatus", "ACPProbeStore",
-    "JsonObject", "JsonValue", "Runner", "redacted_probe", "run_acp_probe",
+    "JsonObject", "JsonValue", "Runner", "redact_probe", "run_acp_probe",
 ]

@@ -29,13 +29,13 @@ from .errors import (
 )
 from .matchers import check, expect
 from .aggregations import (
-    EvaluationAggregateGroup,
-    EvaluationAggregateQuery,
-    EvaluationAggregateReport,
-    EvaluationAggregateValues,
-    EvaluationHealthSummary,
-    EvaluationLatencySummary,
-    EvaluationToolCallSummary,
+    EvaluationGroup,
+    EvaluationQuery,
+    EvaluationReport,
+    EvaluationStats,
+    HealthStats,
+    LatencyStats,
+    ToolCallStats,
 )
 from .evaluations import (
     AsyncEvaluator,
@@ -50,7 +50,7 @@ from .evaluations import (
     InMemoryEvaluationStore,
     RequiredEvaluationError,
 )
-from .snapshots import SnapshotOptions, canonical_snapshot, normalize_snapshot
+from .snapshots import SnapshotOptions, snapshot, snapshot
 from .policy import (
     ToolDescriptor,
     ToolPolicyDecision,
@@ -59,14 +59,14 @@ from .policy import (
     evaluate_tool_policy,
 )
 from .interaction_handlers import (
-    AllowlistedTerminalHandler,
+    AllowedCommands,
     ElicitationRequest,
     ElicitationResult,
     ElicitationHandler,
     FilesystemHandler,
     FilesystemRequest,
     FilesystemResult,
-    InteractionController,
+    Interactions,
     InteractionHandlers,
     InteractionReceipt,
     PermissionRequest,
@@ -78,17 +78,16 @@ from .interaction_handlers import (
     TerminalHandler,
     TerminalRequest,
     TerminalResult,
-    WorkspaceFilesystemHandler,
+    WorkspaceFiles,
 )
 from .sync_api import (
     AgentSession,
     ExecutionHandle,
-    CapabilityProbeService,
+    Probes,
     ConfigOrigin,
     ConfigSource,
-    Configuration,
-    ConfigurationError,
-    MCPConfig,
+    Config,
+    ConfigError,
     MCPTestKit,
     HarnessAdapter,
     ProbeEvidence,
@@ -96,18 +95,14 @@ from .sync_api import (
     ProbeReport,
     ProbeRequest,
     ProbeResult,
-    ProbeService,
-    ReadinessProbeService,
-    SDKConfig,
     load_config,
-    resolve_config,
 )
 from .types import *
 from .observability import *
 from .services.acp_probes import (
     ACPAgentIdentity, ACPAgentMode, ACPProbeDimension, ACPProbeHistory, ACPProbeKind,
     ACPProbeRequest, ACPProbeResult, ACPProbeStatus, ACPProbeStore,
-    redacted_probe, run_acp_probe,
+    redact_probe, run_acp_probe,
 )
 from .matrix import (
     HarnessCase,
@@ -123,7 +118,7 @@ __version__ = _distribution_version("mcp-pal")
 
 from ._exports import PUBLIC_EXPORTS as _PUBLIC_EXPORTS
 
-# Keep the runtime manifest authoritative while exposing the two canonical
+# Keep the runtime manifest authoritative while exposing the two stable
 # examples to static analyzers that do not evaluate dynamic ``__all__`` values.
 if _TYPE_CHECKING:
     __all__: list[str] = [
@@ -132,19 +127,16 @@ if _TYPE_CHECKING:
         "ExecutionHandle",
         "HarnessAdapter",
         "expect",
-        "CapabilityProbeService",
+        "Probes",
         "ConfigOrigin",
         "ConfigSource",
-        "Configuration",
-        "ConfigurationError",
-        "MCPConfig",
+        "Config",
+        "ConfigError",
         "ProbeEvidence",
         "ProbeKind",
         "ProbeReport",
         "ProbeRequest",
         "ProbeResult",
-        "ProbeService",
-        "ReadinessProbeService",
         "AsyncEvaluator",
         "EvaluationDecision",
         "EvaluationRunner",
@@ -157,12 +149,9 @@ if _TYPE_CHECKING:
         "InMemoryEvaluationStore",
         "RequiredEvaluationError",
         "SnapshotOptions",
-        "canonical_snapshot",
-        "normalize_snapshot",
+        "snapshot",
         "KitClosed",
-        "SDKConfig",
         "load_config",
-        "resolve_config",
         "ToolCase",
         "ServerCase",
         "HarnessCase",

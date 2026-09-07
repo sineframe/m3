@@ -16,13 +16,13 @@ from mcp_pal.harness import (
     HarnessTurnResult,
     HarnessTurnRequest,
     UnsupportedHarnessFeature,
-    default_harness_adapter_registry,
+    default_adapters,
 )
-from mcp_pal.interaction_handlers import InteractionController, InteractionHandlers, PermissionRequest
+from mcp_pal.interaction_handlers import Interactions, InteractionHandlers, PermissionRequest
 from mcp_pal.server_group import ServerGroupManager
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     AudioContent,
     PermissionPolicy,
     RestrictiveToolPolicy,
@@ -34,8 +34,8 @@ from mcp_pal.types import (
 )
 
 
-def _spec() -> AgentExecutionSpec:
-    return AgentExecutionSpec(
+def _spec() -> AgentSpec:
+    return AgentSpec(
         harness=ACPAgent(model="fake-contract"),
         servers=(
             ServerBinding(server=StdioServer(name="memory", command="memory-server")),
@@ -107,7 +107,7 @@ async def test_common_contract_preserves_evidence_and_interaction_wiring(
     async def permission(_request: PermissionRequest) -> bool:
         return True
 
-    interactions = InteractionController(
+    interactions = Interactions(
         permission_policy=PermissionPolicy(mode="prompt"),
         handlers=InteractionHandlers(permission=permission),
     )
@@ -217,7 +217,7 @@ async def test_common_contract_isolates_concurrent_sessions_and_no_fallback() ->
     finally:
         await manager.close()
 
-    registry = default_harness_adapter_registry()
+    registry = default_adapters()
     with pytest.raises(HarnessStartupError):
         registry.resolve(_spec())
 

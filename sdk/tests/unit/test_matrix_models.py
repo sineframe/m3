@@ -22,10 +22,10 @@ from mcp_pal.matrix import (
 from mcp_pal.errors import UnsupportedFeature
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
-    CallToolOperation,
+    AgentSpec,
+    CallTool,
     ClaudeCode,
-    DirectExecutionSpec,
+    DirectSpec,
     InProcessServer,
     NativeToolPolicy,
     OpenCode,
@@ -482,9 +482,9 @@ def test_tool_case_run_builds_direct_spec_and_preserves_caller_kit() -> None:
     kit = _RecordingKit()
 
     assert case.run(kit=kit, timeout=3, validate_schemas=True, metadata={"suite": "unit"}) == "result"
-    assert isinstance(kit.spec, DirectExecutionSpec)
+    assert isinstance(kit.spec, DirectSpec)
     assert kit.spec.servers[0].alias == "catalog"
-    assert isinstance(kit.spec.operation, CallToolOperation)
+    assert isinstance(kit.spec.operation, CallTool)
     assert kit.spec.operation.server == "catalog"
     assert kit.spec.operation.name == "search"
     assert kit.spec.operation.arguments["q"] == "x"
@@ -501,7 +501,7 @@ async def test_tool_case_async_run_builds_direct_spec_and_preserves_caller_kit()
     kit = _AsyncRecordingKit()
 
     assert await case.run_async(kit=kit) == "result"
-    assert isinstance(kit.spec, DirectExecutionSpec)
+    assert isinstance(kit.spec, DirectSpec)
     assert kit.spec.operation.name == "default"
     assert kit.closed is False
 
@@ -517,7 +517,7 @@ def test_harness_case_run_applies_prompt_and_policy_rules() -> None:
     ).cases()[0]
     kit = _RecordingKit()
     each_server.run("explicit message", kit=kit)
-    assert isinstance(kit.spec, AgentExecutionSpec)
+    assert isinstance(kit.spec, AgentSpec)
     assert kit.spec.message is not None
     assert kit.spec.message.content[0].text == "explicit message"
     assert isinstance(kit.spec.tool_policy, RestrictiveToolPolicy)
@@ -577,7 +577,7 @@ def test_harness_session_uses_normal_session_and_preserves_supplied_kit() -> Non
         assert session.result == "session-result"
     assert kit.session.closed is True
     assert kit.closed is False
-    assert isinstance(kit.spec, AgentExecutionSpec)
+    assert isinstance(kit.spec, AgentSpec)
     assert kit.spec.message is None
 
 
@@ -592,7 +592,7 @@ async def test_harness_async_session_uses_normal_session_and_preserves_supplied_
         assert session.result == "session-result"
     assert kit.session.closed is True
     assert kit.closed is False
-    assert isinstance(kit.spec, AgentExecutionSpec)
+    assert isinstance(kit.spec, AgentSpec)
     assert kit.spec.message is None
 
 

@@ -4,7 +4,7 @@ import pytest
 
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal import MCPTestKit
-from mcp_pal.types import ACPAgent, AgentExecutionSpec, ClaudeCode, NativeToolPolicy, OpenCode, SSEServer, SecretReference, StdioServer, StreamableHTTPServer, TextContent
+from mcp_pal.types import ACPAgent, AgentSpec, ClaudeCode, NativeToolPolicy, OpenCode, SSEServer, SecretReference, StdioServer, HTTPServer, TextContent
 from mcp_pal_app.services.profile_service import HarnessProfileInput, MCPProfileInput, ProfileService, ProfileServiceError
 from mcp_pal_app.services.spec_builder import ExecutionSpecBuilder, OneTurnRunDraft
 from mcp_pal_app.settings import Settings
@@ -57,7 +57,7 @@ def test_profile_lifecycle_import_export_and_trust(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("server", "expected"),
-    [("stdio", StdioServer), ("http", StreamableHTTPServer), ("sse", SSEServer)],
+    [("stdio", StdioServer), ("http", HTTPServer), ("sse", SSEServer)],
 )
 def test_spec_builder_converts_all_transports_and_secret_references(tmp_path: Path, server: str, expected: type) -> None:
     store, service = _service(tmp_path)
@@ -73,7 +73,7 @@ def test_spec_builder_converts_all_transports_and_secret_references(tmp_path: Pa
     if isinstance(value, StdioServer):
         assert isinstance(value.environment["TOKEN"], SecretReference) and value.environment["TOKEN"].name == "MCP_TOKEN"
         assert value.args == ("ok",)
-    if isinstance(value, StreamableHTTPServer):
+    if isinstance(value, HTTPServer):
         assert isinstance(value.headers["Authorization"], SecretReference) and value.headers["Authorization"].name == "MCP_AUTH"
     store.close()
 
@@ -136,7 +136,7 @@ def test_typed_credentials_and_acp_options_round_trip_through_durable_queue(tmp_
             assert command is not None and isinstance(command.payload["spec"], dict)
             payload = command.payload["spec"]
             assert canary not in str(payload)
-            rehydrated = AgentExecutionSpec.model_validate(payload)
+            rehydrated = AgentSpec.model_validate(payload)
             assert rehydrated.model_dump(mode="json") == spec.model_dump(mode="json")
             if isinstance(rehydrated.harness, ClaudeCode):
                 assert rehydrated.harness.credential_references["ANTHROPIC_API_KEY"].name == "ANTHROPIC_API_KEY"

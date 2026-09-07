@@ -9,7 +9,7 @@ from pathlib import Path
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.execution_trace import ExecutionTraceRecorder
 from mcp_pal.observability import (
-    ACPTraceInfo,
+    ACPTrace,
     Observation,
     ObservationReason,
     ObservationState,
@@ -17,8 +17,8 @@ from mcp_pal.observability import (
 from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.types import (
-    CallToolOperation,
-    DirectExecutionSpec,
+    CallTool,
+    DirectSpec,
     ExecutionOutcome,
     ExecutionResult,
     ServerBinding,
@@ -33,10 +33,10 @@ from mcp_pal.harness import (
 )
 
 
-def _quote_spec(example_server: StdioServer) -> DirectExecutionSpec:
-    return DirectExecutionSpec(
+def _quote_spec(example_server: StdioServer) -> DirectSpec:
+    return DirectSpec(
         servers=(ServerBinding(server=example_server, alias="example-mcp"),),
-        operation=CallToolOperation(
+        operation=CallTool(
             server="example-mcp",
             name="shipping_quote",
             arguments={"weight_kg": 2, "zone": "local"},
@@ -97,7 +97,7 @@ def test_observation_availability_states_are_explicit_data_contract_examples() -
         state=ObservationState.NOT_EMITTED,
         reason=ObservationReason.PROVIDER_DID_NOT_EMIT,
     )
-    unsupported = ACPTraceInfo().usage
+    unsupported = ACPTrace().usage
     encrypted_reasoning = Observation[str](
         state=ObservationState.ENCRYPTED,
         reason=ObservationReason.PROVIDER_ENCRYPTED,

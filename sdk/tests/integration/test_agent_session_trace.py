@@ -18,8 +18,8 @@ from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.types import (
     ACPAgent,
     ArtifactPolicy,
-    AgentExecutionSpec,
-    CanonicalEvent,
+    AgentSpec,
+    Event,
     ErrorCode,
     ErrorInfo,
     EventKind,
@@ -29,14 +29,14 @@ from mcp_pal.types import (
     StdioServer,
     TextContent,
     TurnResponse,
-    TurnLifecycle,
+    TurnStatus,
     TurnOutcome,
     UserMessage,
 )
 
 
-def _spec(*, message: str | None = None) -> AgentExecutionSpec:
-    return AgentExecutionSpec(
+def _spec(*, message: str | None = None) -> AgentSpec:
+    return AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ACPAgent(model="fixture"),
         message=(UserMessage(content=(TextContent(text=message),)) if message is not None else None),
@@ -44,7 +44,7 @@ def _spec(*, message: str | None = None) -> AgentExecutionSpec:
 
 
 class _TraceHarness(HarnessAdapter):
-    async def start(self, _spec: AgentExecutionSpec) -> None:
+    async def start(self, _spec: AgentSpec) -> None:
         return None
 
     async def send(
@@ -79,7 +79,7 @@ def _assert_trace_identity(result: ExecutionResult) -> None:
 
 
 class _StartupFailureHarness(_TraceHarness):
-    async def start(self, _spec: AgentExecutionSpec) -> None:
+    async def start(self, _spec: AgentSpec) -> None:
         raise RuntimeError("provider-startup-secret")
 
 
@@ -163,7 +163,7 @@ class _ActiveCancellationHarness(_TraceHarness):
         await self.release.wait()
         return TurnResponse(content=(TextContent(text="released"),))
 
-    async def start(self, _spec: AgentExecutionSpec) -> None:
+    async def start(self, _spec: AgentSpec) -> None:
         return None
 
     async def cancel(self) -> None:
@@ -467,7 +467,7 @@ async def test_caller_async_agent_session_persists_prior_turn_before_terminal_fa
             event.turn_id
             for event in persisted.events
             if event.kind is EventKind.TURN_STATE_CHANGED
-            and event.payload.get("lifecycle") == TurnLifecycle.FINISHED.value
+            and event.payload.get("lifecycle") == TurnStatus.FINISHED.value
         ] == [first.snapshot.turn_id, second.snapshot.turn_id]
     finally:
         store.close()
@@ -643,8 +643,8 @@ async def test_submitted_active_cancellation_overrides_session_close_outcome() -
     assert result.error.code is ErrorCode.CANCELLED
 
 
-def test_submitted_agent_trace_reopens_with_identical_canonical_events(tmp_path: Path) -> None:
-    async def run() -> tuple[ExecutionResult, tuple[CanonicalEvent, ...], str]:
+def test_submitted_agent_trace_reopens_with_identical_stable_events(tmp_path: Path) -> None:
+    async def run() -> tuple[ExecutionResult, tuple[Event, ...], str]:
         path = tmp_path / "agent-trace.sqlite"
         store = SQLiteExecutionStore(path)
         registry = HarnessAdapterRegistry({"acp": lambda _harness: _TraceHarness()})

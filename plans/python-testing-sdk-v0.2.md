@@ -103,7 +103,7 @@ async with AsyncMCPTestKit() as kit:
 
 `MCPTestKit` and `AsyncMCPTestKit` must support context managers and explicit `close()`/`aclose()`. Closing waits for owned sessions, MCP processes, proxies, readers, workers, and storage writes. Cleanup failures are recorded in the terminal result and raised when appropriate.
 
-Configuration precedence is:
+Config precedence is:
 
 1. Explicit constructor or method arguments.
 2. MCP Pal environment variables.
@@ -160,8 +160,8 @@ In-process direct testing defaults to `raise_server_exceptions=True` for useful 
 
 Provide two public frozen, serializable specification families:
 
-- `DirectExecutionSpec`
-- `AgentExecutionSpec`
+- `DirectSpec`
+- `AgentSpec`
 
 These are ordinary Pydantic Python objects used by `kit.run(...)`, storage, the UI, and the API. They are not scenario files and are not a parallel test-discovery system.
 
@@ -283,7 +283,7 @@ Core matchers include:
 - Execution-wide and session-wide assertions across all turns.
 - Lifecycle, outcome, error, timing, protocol, transport, capability, artifact, workspace-diff, and trace assertions.
 - Eventual assertions for live handles using event-driven waiting.
-- Canonical model serialization for use with existing snapshot libraries.
+- Stable model serialization for use with existing snapshot libraries.
 
 If multiple servers expose the same tool, a serverless tool assertion fails as ambiguous.
 
@@ -305,7 +305,7 @@ Evaluations never rewrite execution lifecycle or outcome. A required failed/erro
 
 No built-in LLM-as-judge is included in v0.2. Users can implement an evaluator that calls an LLM explicitly.
 
-Canonical snapshot normalization removes run IDs, timestamps, durations, costs, paths, ports, session IDs, trace IDs, secrets, and unstable vendor metadata by default. Users may opt specific fields back in.
+Stable snapshot normalization removes run IDs, timestamps, durations, costs, paths, ports, session IDs, trace IDs, secrets, and unstable vendor metadata by default. Users may opt specific fields back in.
 
 ### Testing utilities
 
@@ -329,11 +329,11 @@ Optional property-testing helpers generate valid and invalid values from MCP inp
 
 Every execution creates an in-memory complete or partial trace, regardless of persistence mode or outcome.
 
-The canonical normalized trace is the authoritative cross-harness representation. Preserve raw harness and MCP evidence separately for debugging. Raw evidence must never replace canonical semantic events.
+The stable normalized trace is the authoritative cross-harness representation. Preserve raw harness and MCP evidence separately for debugging. Raw evidence must never replace stable semantic events.
 
 Capture:
 
-- Configuration resolution and readiness.
+- Config resolution and readiness.
 - Process and transport lifecycle.
 - MCP initialization and negotiation.
 - Requests, responses, errors, notifications, progress, and cancellation.
@@ -345,11 +345,11 @@ Capture:
 
 Never infer or reconstruct hidden chain-of-thought. Mark unavailable, encrypted, or provider-hidden reasoning honestly.
 
-Correlation uses connection identity, typed JSON-RPC ID, request sequence, direction, session, and turn. Persistence and streaming preserve canonical sequence ordering.
+Correlation uses connection identity, typed JSON-RPC ID, request sequence, direction, session, and turn. Persistence and streaming preserve stable sequence ordering.
 
 Apply configurable redaction before persistence, artifact export, UI rendering, API serialization, logs, and telemetry. Keep original values only in process long enough for assertions that explicitly need them.
 
-Do not truncate canonical evidence. Move large values to content-addressed compressed blobs while retaining searchable metadata in SQLite.
+Do not truncate stable evidence. Move large values to content-addressed compressed blobs while retaining searchable metadata in SQLite.
 
 ### Ephemeral and persistent modes
 
@@ -435,7 +435,7 @@ Provide:
 - Create execution, returning `202`.
 - List/get executions with cursor pagination and filtering.
 - Snapshot and terminal report retrieval.
-- Event snapshot and resumable SSE using canonical sequence numbers.
+- Event snapshot and resumable SSE using stable sequence numbers.
 - Cancel and delete operations.
 - Interactive agent session open, enqueue turn, snapshot, close, and cancel operations.
 - Optional idempotency keys for execution and turn creation; conflicting reuse returns `409`.
@@ -526,7 +526,7 @@ It must not:
 - Replace pytest reporting.
 - Interpret JSON/YAML test definitions.
 
-`uv run pytest` remains canonical and behaviorally equivalent.
+`uv run pytest` remains stable and behaviorally equivalent.
 
 Add strict `mcp-pal doctor` preflight for users who want to validate all requested harnesses, binaries, transports, persistence, and configuration before a test run. Preserve existing operational CLI capabilities under the consolidated CLI.
 
@@ -564,9 +564,9 @@ Organize examples by capability, with combined E2E journeys and explicit expecte
 
 The first direct quickstart uses an in-process MCP server. The first agent quickstart uses a deterministic local ACP agent. Live Claude Code, OpenCode, and model-backed variants are separate and carry cost, credentials, privacy, and nondeterminism warnings.
 
-The canonical multi-turn example writes state through an MCP tool during one turn and retrieves it during a later turn, proving that the agent conversation and MCP process survived.
+The stable multi-turn example writes state through an MCP tool during one turn and retrieves it during a later turn, proving that the agent conversation and MCP process survived.
 
-The canonical multi-server example connects servers exposing overlapping tool names and asserts correct server-qualified routing.
+The stable multi-server example connects servers exposing overlapping tool names and asserts correct server-qualified routing.
 
 Trace examples assert semantic events and correlation rather than unstable raw strings.
 
@@ -620,7 +620,7 @@ Cover:
 - Minimal direct and agent examples run from outside the repository against the installed wheel.
 - Unsupported Python versions receive a clear installer rejection.
 
-### B. Configuration and capability tests
+### B. Config and capability tests
 
 Cover:
 
@@ -901,9 +901,9 @@ Cover:
 - Grouped soft assertions report all failures.
 - Structural failure diffs redact secrets.
 - Failure output contains trace and artifact locations.
-- Canonical snapshots remove all default unstable fields.
+- Stable snapshots remove all default unstable fields.
 - Explicit opt-in restores selected fields.
-- Existing snapshot libraries accept canonical output.
+- Existing snapshot libraries accept stable output.
 - Evaluator passed, failed, inconclusive, error, and not-run states.
 - Required failed evaluator fails pytest.
 - Optional failed evaluator does not rewrite execution outcome.
@@ -930,13 +930,13 @@ Cover every outcome:
 For each, verify:
 
 - A complete or partial trace exists.
-- Canonical sequence numbers are contiguous.
+- Stable sequence numbers are contiguous.
 - Events are persisted before delivery.
 - Wall time and monotonic ordering are present.
 - Requests correlate to responses across transports.
 - Connection identity prevents cross-server ID collisions.
 - Turn and session attribution is correct.
-- Canonical and raw evidence remain separately addressable.
+- Stable and raw evidence remain separately addressable.
 - Large content is blob-backed without semantic truncation.
 - Blob hash, length, media type, schema, redaction, and generation metadata are correct.
 - Explicit reasoning is retained.
@@ -1111,7 +1111,7 @@ Execute actual pytest reference modules covering at minimum:
 - Timeout and partial trace.
 - Required deterministic evaluator.
 - Soft grouped assertions.
-- Canonical snapshot integration.
+- Stable snapshot integration.
 - Persistent execution and reload.
 - Pytest artifact export configuration.
 - Expected readiness failure.
@@ -1238,7 +1238,7 @@ Work through this list in order. Each checkbox should be completed as a small re
 - [x] Implement serializable server and harness profile references with immutable revision identity.
 - [x] Implement typed harness values for Claude Code, OpenCode, and ACP.
 - [x] Implement workspace, tool, permission, elicitation, sampling, filesystem, and terminal policy models.
-- [x] Implement `DirectExecutionSpec` and `AgentExecutionSpec` as frozen Pydantic models.
+- [x] Implement `DirectSpec` and `AgentSpec` as frozen Pydantic models.
 - [x] Implement immutable execution, turn, trace, evaluation, artifact, readiness, and capability results.
 - [x] Define stable public exception types and machine-readable error codes.
 - [x] Define secret-reference types that cannot serialize resolved secret values.
@@ -1261,9 +1261,9 @@ Phase 2 boundary note: profile references represent either a submission-time `la
 - [x] Implement strict `mcp-pal doctor` behavior for explicitly requested capabilities.
 - [x] Add redaction tests for configuration errors, probe output, reprs, and serialized snapshots.
 
-### Phase 4 — Build canonical tracing and ephemeral execution storage
+### Phase 4 — Build stable tracing and ephemeral execution storage
 
-- [x] Define the canonical event taxonomy and versioned event schema.
+- [x] Define the stable event taxonomy and versioned event schema.
 - [x] Define raw-evidence references separately from normalized semantic events.
 - [x] Implement a per-execution sequence allocator.
 - [x] Add UTC timestamps and monotonic offsets to events and lifecycle records.
@@ -1344,8 +1344,8 @@ MCP messages and explicitly report raw-wire capture as incomplete.
 - [x] Implement event-driven eventual assertions without polling sleeps.
 - [x] Implement grouped soft assertions through `check()`.
 - [x] Add structural diffs, candidate summaries, scope, identifiers, redacted excerpts, and artifact paths to failures.
-- [x] Implement canonical snapshot normalization and field opt-ins.
-- [x] Verify canonical values work with established Python snapshot plugins.
+- [x] Implement stable snapshot normalization and field opt-ins.
+- [x] Verify stable values work with established Python snapshot plugins.
 - [x] Define `EvaluationContext`, evaluator protocol, registrations, and all evaluation statuses.
 - [x] Implement persisted optional and required deterministic evaluations.
 - [x] Ensure evaluation cannot mutate execution lifecycle, results, trace, or artifacts.
@@ -1485,7 +1485,7 @@ MCP messages and explicitly report raw-wire capture as incomplete.
 - [ ] Preserve browser-session isolation for draft and selection state.
 - [ ] Map current server and harness profile forms to SDK profile services.
 - [ ] Map probes to SDK capability/readiness services.
-- [ ] Map one-turn submissions to `AgentExecutionSpec` with one selected server.
+- [ ] Map one-turn submissions to `AgentSpec` with one selected server.
 - [ ] Rename the SDK field to optional `goal` while keeping the UI field required and correctly labelled.
 - [ ] Preserve clone, cancel, history, deletion, and report behavior.
 - [ ] Render lifecycle, MCP activity health, and evaluations as separate concepts.
@@ -1622,10 +1622,10 @@ Do not improvise a simpler fallback when a requirement is difficult. In particul
 - Direct MCP tests and agent-driven tests are equally supported public surfaces.
 - Multi-turn means one continuing agent conversation and the same living MCP server processes/connections.
 - Multiple MCP servers are first-class in the SDK even though the initial migrated UI selects one.
-- Every execution produces a complete or partial canonical trace.
+- Every execution produces a complete or partial stable trace.
 - Persistent mode stores traces for every outcome, including successes.
 - Failed-only is solely the default pytest file-export policy; it is never the trace-generation or persistent-storage policy.
-- Canonical semantic evidence and raw provider/wire evidence are separate layers.
+- Stable semantic evidence and raw provider/wire evidence are separate layers.
 - A harness-reported MCP call without correlated MCP wire evidence remains visible but cannot satisfy an assertion that requires an actual MCP call.
 - A wire MCP call without a matching harness event remains visible and assertable as wire evidence.
 - Hidden reasoning is never inferred, synthesized, or presented as captured reasoning.
@@ -1708,14 +1708,14 @@ Use this mapping while replacing the existing implementation:
 | `enabled_server` | Ordered server bindings on the specification | Migrated UI supplies a one-item list |
 | `claude_result` / `final_output` | Ordered response content blocks plus `.text` | Remove provider-named result aliases from the new API |
 | One status field | Lifecycle plus terminal outcome | Never overload “completed” to mean assertion success |
-| `RunTrace` JSON | Canonical event stream plus derived immutable trace/report | Do not store one mutable provider-shaped trace as authority |
-| `claude.v1`, `opencode.v1`, `acp.v1` | Raw evidence adapters feeding one canonical v0.2 event schema | Vendor raw formats remain evidence, not public semantic authority |
-| `mcp.v1` normalized calls | Canonical MCP request/call/result events | Preserve correlation and provenance behavior |
+| `RunTrace` JSON | Stable event stream plus derived immutable trace/report | Do not store one mutable provider-shaped trace as authority |
+| `claude.v1`, `opencode.v1`, `acp.v1` | Raw evidence adapters feeding one stable v0.2 event schema | Vendor raw formats remain evidence, not public semantic authority |
+| `mcp.v1` normalized calls | Stable MCP request/call/result events | Preserve correlation and provenance behavior |
 | `RunManager` FIFO worker | Execution service plus lease-owning worker | Reuse proven cleanup logic behind new contracts |
 | API-created runs | SDK-created execution specifications | API is serialization only |
 | Streamlit HTTP client | Cached persistent `MCPTestKit` | Delete the local HTTP dependency after parity tests pass |
 
-The old provider trace schemas do not need a reader or migration. New executions use one canonical schema identifier and schema version. Event-schema versioning is allowed and required for artifacts/API consumers; it is not database-version detection and must not be used to branch on a legacy database.
+The old provider trace schemas do not need a reader or migration. New executions use one stable schema identifier and schema version. Event-schema versioning is allowed and required for artifacts/API consumers; it is not database-version detection and must not be used to branch on a legacy database.
 
 ### 9.6 Public API contract details
 
@@ -1762,7 +1762,7 @@ Do not add implicit fixture-teardown failure merely because an author created an
 
 ### 9.7 Event and trace envelope
 
-Each canonical event must contain at least:
+Each stable event must contain at least:
 
 - Schema identifier and schema version.
 - Execution ID and monotonically increasing execution sequence.
@@ -1778,12 +1778,12 @@ Each canonical event must contain at least:
 
 Rules:
 
-- The canonical sequence is assigned once and never renumbered.
+- The stable sequence is assigned once and never renumbered.
 - A transaction may append multiple events, but consumers see none of them before commit.
-- Canonical events are append-only. Corrections are new events or derived projections, not row updates that rewrite history.
+- Stable events are append-only. Corrections are new events or derived projections, not row updates that rewrite history.
 - Derived snapshots/reports use the highest committed sequence and declare that sequence.
-- Provider timestamps are payload evidence; local receipt time controls canonical ordering.
-- Unknown valid provider events are retained as raw evidence and may produce a generic canonical provider event.
+- Provider timestamps are payload evidence; local receipt time controls stable ordering.
+- Unknown valid provider events are retained as raw evidence and may produce a generic stable provider event.
 - Malformed provider events are captured as evidence and diagnostics without crashing the trace recorder.
 - Trace completeness is `complete` only after owned cleanup and final persistence succeed. Otherwise it is `partial` with limitations.
 - Raw stdout protocol channels and stderr diagnostics remain separate. Never parse diagnostic stderr as protocol data.
@@ -1796,7 +1796,7 @@ The fresh database should model these logical records, regardless of exact SQLAl
 - Harness profiles and immutable harness-profile revisions.
 - Executions and their resolved server/harness bindings.
 - Interactive sessions and ordered turns.
-- Append-only canonical events with unique `(execution_id, sequence)`.
+- Append-only stable events with unique `(execution_id, sequence)`.
 - Raw-evidence metadata and blob references.
 - Evaluation results.
 - Collected artifacts and content-addressed blobs.
@@ -1977,7 +1977,7 @@ Exact profile route nesting should follow one consistent resource pattern genera
 
 SSE rules:
 
-- Send canonical sequence numbers as SSE IDs.
+- Send stable sequence numbers as SSE IDs.
 - Accept a cursor/last-event sequence and resume after it.
 - Send committed events only.
 - Avoid duplicate delivery across a normal reconnect.
@@ -2028,7 +2028,7 @@ Idempotency applies only when a key is supplied. Reuse with an identical normali
 - Redact recursively in mappings, lists, model objects, protocol frames, errors, reprs, logs, traces, artifacts, API responses, UI output, and telemetry.
 - Redaction must handle exact secret values, configured sensitive keys, authorization headers, URLs with credentials/query tokens, and known credential-file content.
 - Redaction failures fail persistence/export safely; they do not fall back to storing raw content.
-- Raw evidence is subject to the same persistence redaction guarantee as canonical events.
+- Raw evidence is subject to the same persistence redaction guarantee as stable events.
 
 ### 9.18 Observability rules
 

@@ -6,16 +6,16 @@ from typing import Any
 import pytest
 
 from mcp_pal.types import (
-    DirectExecutionSpec,
+    DirectSpec,
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
-    ExecutionSnapshot,
+    ExecutionState,
     ExecutionSpec,
-    LifecycleState,
-    ListToolsOperation,
-    PersistedExecutionReport,
-    RawEvidenceRef,
+    ExecutionStatus,
+    ListTools,
+    ExecutionReport,
+    EvidenceRef,
     ServerBinding,
     StdioServer,
     TraceId,
@@ -26,14 +26,14 @@ from mcp_pal_app.services.execution_service import AppExecutionError, AppExecuti
 
 
 def spec() -> ExecutionSpec:
-    return DirectExecutionSpec(
+    return DirectSpec(
         servers=(ServerBinding(server=StdioServer(name="x", command=sys.executable)),),
-        operation=ListToolsOperation(server="x"),
+        operation=ListTools(server="x"),
     )
 
 
 class FakeStore:
-    def __init__(self, report: PersistedExecutionReport | None = None) -> None:
+    def __init__(self, report: ExecutionReport | None = None) -> None:
         self.report = report
         self.deleted = False
         self.cancelled = False
@@ -48,7 +48,7 @@ class FakeStore:
         self.trace_error: Exception | None = None
         self.raw_max_bytes: int | None = None
 
-    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> PersistedExecutionReport | None:
+    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> ExecutionReport | None:
         if after_sequence < -1:
             raise ValueError("bad cursor")
         identifier = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(execution_id)
@@ -72,12 +72,12 @@ class FakeStore:
             return None
         return self.trace
 
-    def read_raw_evidence(self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence:
+    def read_raw_evidence(self, reference: EvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence:
         self.raw_max_bytes = max_bytes
         if self.raw_error:
             raise self.raw_error
         content = b"abc"
-        actual = RawEvidenceRef(
+        actual = EvidenceRef(
             evidence_id=reference.evidence_id,
             sha256=hashlib.sha256(content).hexdigest(),
             size_bytes=3,
@@ -102,7 +102,7 @@ class FakeStore:
             raise self.conflict
         self.cancelled = True
         assert self.report
-        self.report = PersistedExecutionReport(snapshot=self.report.snapshot.transition(LifecycleState.FINISHED, ExecutionOutcome.CANCELLED))
+        self.report = ExecutionReport(snapshot=self.report.snapshot.transition(ExecutionStatus.FINISHED, ExecutionOutcome.CANCELLED))
         return True
 
     def delete_execution(self, execution_id: ExecutionId | str) -> None:
@@ -129,17 +129,17 @@ class FakeHandle:
 class DelayedCancelStore(FakeStore):
     """Expose the small durable-commit window after a local cancel returns."""
 
-    def __init__(self, report: PersistedExecutionReport) -> None:
+    def __init__(self, report: ExecutionReport) -> None:
         super().__init__(report)
         self.cancel_requested = False
         self.report_reads = 0
 
-    def get_report(self, execution_id: ExecutionId | str, **kwargs: Any) -> PersistedExecutionReport | None:
+    def get_report(self, execution_id: ExecutionId | str, **kwargs: Any) -> ExecutionReport | None:
         self.report_reads += 1
         if self.cancel_requested and self.report_reads >= 3 and self.report is not None:
-            self.report = PersistedExecutionReport(
+            self.report = ExecutionReport(
                 snapshot=self.report.snapshot.transition(
-                    LifecycleState.FINISHED, ExecutionOutcome.CANCELLED
+                    ExecutionStatus.FINISHED, ExecutionOutcome.CANCELLED
                 )
             )
         return super().get_report(execution_id, **kwargs)
@@ -171,8 +171,8 @@ class DelayedCancelKit(FakeKit):
         self.handle = DelayedCancelHandle(store, self.execution_id)
 
 
-def active_report(identifier: ExecutionId = ExecutionId("execution-1")) -> PersistedExecutionReport:
-    return PersistedExecutionReport(snapshot=ExecutionSnapshot(execution_id=identifier))
+def active_report(identifier: ExecutionId = ExecutionId("execution-1")) -> ExecutionReport:
+    return ExecutionReport(snapshot=ExecutionState(execution_id=identifier))
 
 
 def test_service_crud_and_local_handle_cancel() -> None:
@@ -197,7 +197,7 @@ def test_local_cancel_waits_for_terminal_snapshot_commit() -> None:
 
     cancelled = service.cancel("execution-1")
 
-    assert cancelled.snapshot.lifecycle is LifecycleState.FINISHED
+    assert cancelled.snapshot.lifecycle is ExecutionStatus.FINISHED
     assert cancelled.snapshot.outcome is ExecutionOutcome.CANCELLED
     assert store.report_reads >= 3
 
@@ -256,9 +256,9 @@ def test_service_specification_and_trace_availability() -> None:
         service.trace_view("execution-1")
     assert error.value.code == "execution_not_terminal"
     assert store.report is not None
-    store.report = PersistedExecutionReport(
+    store.report = ExecutionReport(
         snapshot=store.report.snapshot.transition(
-            LifecycleState.FINISHED, ExecutionOutcome.COMPLETED
+            ExecutionStatus.FINISHED, ExecutionOutcome.COMPLETED
         )
     )
     assert service.trace_view("execution-1") == store.trace
@@ -280,7 +280,7 @@ def test_service_specification_missing_execution_and_raw_evidence_bound() -> Non
     with pytest.raises(AppExecutionError) as error:
         service.specification("missing")
     assert error.value.code == "execution_not_found"
-    result = service.read_raw_evidence(RawEvidenceRef(evidence_id="evidence-1"), max_bytes=2)
+    result = service.read_raw_evidence(EvidenceRef(evidence_id="evidence-1"), max_bytes=2)
     assert result.returned_size_bytes == 2 and result.truncated is True
     assert store.raw_max_bytes == 2
 
@@ -297,7 +297,7 @@ def test_service_raw_evidence_maps_stable_errors(failure: Exception, code: str) 
     store.raw_error = failure
     service = AppExecutionService(store, FakeKit(store, ExecutionId("execution-1")))
     with pytest.raises(AppExecutionError) as error:
-        service.read_raw_evidence(RawEvidenceRef(evidence_id="evidence-1"))
+        service.read_raw_evidence(EvidenceRef(evidence_id="evidence-1"))
     assert error.value.code == code
     assert "digest" not in error.value.message and "missing" not in error.value.message
 

@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 
 from mcp_pal import MCPTestKit
-from mcp_pal import EvaluationAggregateQuery
+from mcp_pal import EvaluationQuery
 from mcp_pal.evaluations import EvaluationRunner
 from mcp_pal.storage.sqlite import SQLiteExecutionStore
 from mcp_pal.types import (
@@ -19,13 +19,13 @@ from mcp_pal.types import (
     EvaluationStatus,
     ExecutionId,
     ExecutionOutcome,
-    ExecutionSnapshot,
-    LifecycleState,
+    ExecutionState,
+    ExecutionStatus,
 )
 
 
-def _snapshot(identifier: str = "execution-v2") -> ExecutionSnapshot:
-    return ExecutionSnapshot(
+def _snapshot(identifier: str = "execution-v2") -> ExecutionState:
+    return ExecutionState(
         execution_id=ExecutionId(identifier),
         created_at=datetime.now(timezone.utc),
     )
@@ -123,7 +123,7 @@ def test_legacy_evaluation_row_is_backfilled_and_malformed_row_is_skipped(tmp_pa
         assert records[0].run_id.root == "legacy-run"
         assert records[0].subject_digest is not None
         assert "answer" not in repr(reopened.evaluation_json(execution_id)[0])
-        aggregate = reopened.aggregate_evaluations(EvaluationAggregateQuery(group_by=("evaluator",), filters={"evaluator": "legacy.v1"}))
+        aggregate = reopened.aggregate_evaluations(EvaluationQuery(group_by=("evaluator",), filters={"evaluator": "legacy.v1"}))
         assert aggregate.totals.trial_count == 1
     finally:
         reopened.close()
@@ -156,11 +156,11 @@ def test_recorder_propagates_spec_run_id_into_snapshot(tmp_path) -> None:
 
 
 def _snapshot_spec():
-    from mcp_pal.types import DirectExecutionSpec, PingOperation, ServerBinding, StdioServer
+    from mcp_pal.types import DirectSpec, Ping, ServerBinding, StdioServer
 
-    return DirectExecutionSpec(
+    return DirectSpec(
         servers=(ServerBinding(server=StdioServer(name="server", command="server")),),
-        operation=PingOperation(server="server"),
+        operation=Ping(server="server"),
     )
 
 
@@ -168,7 +168,7 @@ def test_builtins_use_redacted_mapping_view() -> None:
     runner = EvaluationRunner()
     completed = _snapshot("completed").model_copy(
         update={
-            "lifecycle": LifecycleState.FINISHED,
+            "lifecycle": ExecutionStatus.FINISHED,
             "outcome": ExecutionOutcome.COMPLETED,
             "finished_at": datetime.now(timezone.utc),
         }

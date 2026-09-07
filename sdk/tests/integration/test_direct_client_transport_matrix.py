@@ -15,7 +15,7 @@ from mcp import types
 from mcp.server.lowlevel import Server
 
 from mcp_pal.async_api import AsyncDirectClient, AsyncMCPTestKit, CallToolResult, PromptResult, ResourceReadResult
-from mcp_pal.types import InProcessServer, SSEServer, StdioServer, StreamableHTTPServer, TrustLevel
+from mcp_pal.types import InProcessServer, SSEServer, StdioServer, HTTPServer, TrustLevel
 
 
 _ROOT = Path(__file__).parents[2]
@@ -228,7 +228,7 @@ async def _client_for(kind: TransportKind) -> AsyncIterator[AsyncDirectClient]:
         fixture = _RemoteMatrixFixture(kind)
         url = await fixture.start()
         binding = (
-            StreamableHTTPServer(name="matrix-remote", url=url, trust=TrustLevel.TRUSTED_PRIVATE)
+            HTTPServer(name="matrix-remote", url=url, trust=TrustLevel.TRUSTED_PRIVATE)
             if kind == "streamable_http"
             else SSEServer(name="matrix-remote", url=url, trust=TrustLevel.TRUSTED_PRIVATE)
         )

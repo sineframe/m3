@@ -30,7 +30,7 @@ def test_sync_async_parity_checker_passes() -> None:
     assert "parity check passed" in result.stdout
 
 
-def test_sync_async_parity_manifest_is_generator_canonical() -> None:
+def test_sync_async_parity_manifest_is_generator_normalize() -> None:
     result = _run(GENERATOR, "--check")
     assert result.returncode == 0, result.stdout + result.stderr
 

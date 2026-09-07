@@ -11,19 +11,19 @@ import pytest
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.harness import DeterministicHarnessAdapter, HarnessTurnRequest
 from mcp_pal.interaction_handlers import (
-    AllowlistedTerminalHandler,
+    AllowedCommands,
     ElicitationRequest,
     FilesystemRequest,
-    InteractionController,
+    Interactions,
     InteractionHandlers,
     PermissionRequest,
     SamplingRequest,
     TerminalRequest,
-    WorkspaceFilesystemHandler,
+    WorkspaceFiles,
 )
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     PermissionPolicy,
     ServerBinding,
     StdioServer,
@@ -34,8 +34,8 @@ from mcp_pal.types import (
 )
 
 
-def _spec() -> AgentExecutionSpec:
-    return AgentExecutionSpec(
+def _spec() -> AgentSpec:
+    return AgentSpec(
         harness=ACPAgent(model="interaction-test"),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
         permission_policy=PermissionPolicy(mode="prompt"),
@@ -97,7 +97,7 @@ async def test_explicit_handlers_enforce_policy_and_record_safe_receipts() -> No
 @pytest.mark.asyncio
 async def test_workspace_filesystem_handler_contains_paths_and_honors_read_only(tmp_path: Path) -> None:
     (tmp_path / "inside.txt").write_bytes(b"inside")
-    readonly = WorkspaceFilesystemHandler(tmp_path)
+    readonly = WorkspaceFiles(tmp_path)
     read = await readonly(FilesystemRequest("read", "inside.txt"))
     write = await readonly(FilesystemRequest("write", "new.txt", b"no"))
     escape = await readonly(FilesystemRequest("read", "../outside"))
@@ -105,7 +105,7 @@ async def test_workspace_filesystem_handler_contains_paths_and_honors_read_only(
     assert write.allowed is False
     assert escape.allowed is False
 
-    writable = WorkspaceFilesystemHandler(tmp_path, mode="read_write")
+    writable = WorkspaceFiles(tmp_path, mode="read_write")
     created = await writable(FilesystemRequest("write", "new.txt", b"yes"))
     assert created.allowed is True
     assert (tmp_path / "new.txt").read_bytes() == b"yes"
@@ -117,8 +117,8 @@ async def test_concurrent_workspace_handlers_remain_isolated(tmp_path: Path) -> 
     second_root = tmp_path / "second"
     first_root.mkdir()
     second_root.mkdir()
-    first = WorkspaceFilesystemHandler(first_root, mode="read_write")
-    second = WorkspaceFilesystemHandler(second_root, mode="read_write")
+    first = WorkspaceFiles(first_root, mode="read_write")
+    second = WorkspaceFiles(second_root, mode="read_write")
     await asyncio.gather(
         first(FilesystemRequest("write", "value.txt", b"first")),
         second(FilesystemRequest("write", "value.txt", b"second")),
@@ -129,7 +129,7 @@ async def test_concurrent_workspace_handlers_remain_isolated(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_terminal_handler_is_argv_only_allowlisted_and_bounded(tmp_path: Path) -> None:
-    handler = AllowlistedTerminalHandler(allowed_executables=(sys.executable,), root=tmp_path)
+    handler = AllowedCommands(allowed_executables=(sys.executable,), root=tmp_path)
     result = await handler(TerminalRequest((sys.executable, "-c", "print('ok')")))
     denied = await handler(TerminalRequest(("/bin/sh", "-c", "echo unsafe")))
     timeout = await handler(
@@ -208,7 +208,7 @@ async def test_handler_cancellation_is_not_converted_to_a_deny() -> None:
 
 @pytest.mark.asyncio
 async def test_interaction_configuration_and_requests_are_immutable() -> None:
-    controller = InteractionController(
+    controller = Interactions(
         permission_policy=PermissionPolicy(mode="prompt"),
     )
     with pytest.raises(AttributeError):
@@ -228,7 +228,7 @@ async def test_workspace_rejects_symlink_hardlink_and_special_file(tmp_path: Pat
     (root / "hardlink").hardlink_to(outside)
     fifo = root / "pipe"
     os.mkfifo(fifo)
-    handler = WorkspaceFilesystemHandler(root, mode="read_write")
+    handler = WorkspaceFiles(root, mode="read_write")
 
     for path in ("link", "hardlink", "pipe"):
         result = await asyncio.wait_for(handler(FilesystemRequest("read", path)), 1)
@@ -240,7 +240,7 @@ async def test_workspace_rejects_symlink_hardlink_and_special_file(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_terminal_resolves_allowlisted_executables_and_does_not_inherit_environment(tmp_path: Path) -> None:
-    handler = AllowlistedTerminalHandler(allowed_executables=(sys.executable,), root=tmp_path)
+    handler = AllowedCommands(allowed_executables=(sys.executable,), root=tmp_path)
     result = await handler(
         TerminalRequest(
             (sys.executable, "-c", "import os; print(os.environ.get('MCP_PAL_CANARY', 'missing'))"),
@@ -258,7 +258,7 @@ async def test_terminal_timeout_kills_process_group_and_descendants(tmp_path: Pa
         "subprocess.Popen([sys.executable,'-c','import time; time.sleep(5)']); "
         "time.sleep(5)"
     )
-    handler = AllowlistedTerminalHandler(allowed_executables=(sys.executable,), root=tmp_path)
+    handler = AllowedCommands(allowed_executables=(sys.executable,), root=tmp_path)
     result = await handler(TerminalRequest((sys.executable, "-c", script), timeout_seconds=0.1))
     assert result.timed_out is True
     assert result.returncode is not None

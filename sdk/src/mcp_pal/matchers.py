@@ -85,10 +85,10 @@ from .types import (
     ExecutionResult as _ExecutionResult,
 )
 from .types import (
-    ExecutionSnapshot as _ExecutionSnapshot,
+    ExecutionState as _ExecutionState,
 )
 from .types import (
-    LifecycleState as _LifecycleState,
+    ExecutionStatus as _ExecutionStatus,
 )
 from .types import (
     TraceResult as _TraceResult,
@@ -97,7 +97,7 @@ from .types import (
     TurnId as _TurnId,
 )
 from .types import (
-    TurnLifecycle as _TurnLifecycle,
+    TurnStatus as _TurnStatus,
 )
 from .types import (
     TurnResponse as _TurnResponse,
@@ -106,10 +106,10 @@ from .types import (
     TurnResult as _TurnResult,
 )
 from .types import (
-    TurnSnapshot as _TurnSnapshot,
+    TurnState as _TurnState,
 )
 
-_TurnSelector = _TurnResult | _TurnSnapshot | _TurnId | str
+_TurnSelector = _TurnResult | _TurnState | _TurnId | str
 
 _SubjectT = _TypeVar("_SubjectT")
 _FailureSink = _Callable[[AssertionError], None]
@@ -139,14 +139,14 @@ def _normalize_turn_selector(value: _Any) -> str:
     """Normalize the supported public turn selector forms."""
     if isinstance(value, _TurnResult):
         return value.snapshot.turn_id.root
-    if isinstance(value, _TurnSnapshot):
+    if isinstance(value, _TurnState):
         return value.turn_id.root
     if isinstance(value, _TurnId):
         return value.root
     if isinstance(value, str):
         return value
     raise TypeError(
-        "turn selector must be a TurnResult, TurnSnapshot, TurnId, or str"
+        "turn selector must be a TurnResult, TurnState, TurnId, or str"
     )
 
 
@@ -521,7 +521,7 @@ def _matches(
 
 
 def _snapshot(subject: _Any) -> _Any:
-    if isinstance(subject, (_ExecutionSnapshot, _TurnSnapshot)):
+    if isinstance(subject, (_ExecutionState, _TurnState)):
         return subject
     return getattr(subject, "snapshot", None)
 
@@ -1012,7 +1012,7 @@ class Expectation(_Generic[_SubjectT]):
         self.to_have_duration(min_ms=min_ms, max_ms=max_ms)
 
     def to_have_lifecycle(
-        self, lifecycle: _LifecycleState | _TurnLifecycle | str
+        self, lifecycle: _ExecutionStatus | _TurnStatus | str
     ) -> None:
         snapshot = _snapshot(self.subject)
         self._require(
@@ -1247,7 +1247,7 @@ class Expectation(_Generic[_SubjectT]):
     ) -> None:
         if isinstance(kind, _EventKind):
             self._fail(
-                "canonical EventKind assertions are unavailable from finalized "
+                "stable EventKind assertions are unavailable from finalized "
                 "typed traces; use a public typed entry kind instead"
             )
             return
@@ -1258,7 +1258,7 @@ class Expectation(_Generic[_SubjectT]):
                 pass
             else:
                 self._fail(
-                    "canonical EventKind assertions are unavailable from finalized "
+                    "stable EventKind assertions are unavailable from finalized "
                     "typed traces; use a public typed entry kind instead"
                 )
                 return

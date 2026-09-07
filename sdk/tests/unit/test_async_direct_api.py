@@ -30,7 +30,7 @@ from mcp_pal.types import (
     ServerProfileId,
     ServerProfileRef,
     StdioServer,
-    StreamableHTTPServer,
+    HTTPServer,
     TransportKind,
     TrustLevel,
 )
@@ -268,7 +268,7 @@ async def test_kit_direct_uses_remote_streamable_http_and_closes_the_server_conn
         async def sampling(*args: object, **kwargs: object) -> object:
             return None
 
-        server = StreamableHTTPServer(
+        server = HTTPServer(
             name="remote-fixture",
             url=f"http://127.0.0.1:{port}/mcp",
             trust=TrustLevel.TRUSTED_PRIVATE,

@@ -30,7 +30,7 @@ from mcp.shared._httpx_utils import (
     McpHttpClientFactory,
 )
 
-from ..types import SSEServer, SecretReference, StreamableHTTPServer, TrustLevel
+from ..types import SSEServer, SecretReference, HTTPServer, TrustLevel
 from ..direct_trace import DirectTraceBridge
 from ..trace.redaction import is_sensitive_key
 
@@ -220,7 +220,7 @@ def _is_credential_query_name(name: str) -> bool:
 
 
 def validate_endpoint_trust(
-    server: StreamableHTTPServer | SSEServer,
+    server: HTTPServer | SSEServer,
     *,
     for_agent: bool = False,
     resolve_host: HostResolver = _default_host_resolver,
@@ -346,7 +346,7 @@ class _RemoteConnection:
 
     def __init__(
         self,
-        server: StreamableHTTPServer | SSEServer,
+        server: HTTPServer | SSEServer,
         *,
         resolver: SecretResolver | None = None,
         bearer_token: SecretReference | None = None,
@@ -595,7 +595,7 @@ class StreamableHTTPConnection(_RemoteConnection):
 
     _transport: TransportName = "streamable_http"
 
-    def __init__(self, server: StreamableHTTPServer, **kwargs: Any) -> None:
+    def __init__(self, server: HTTPServer, **kwargs: Any) -> None:
         super().__init__(server, **kwargs)
 
 
@@ -609,16 +609,16 @@ class SSEConnection(_RemoteConnection):
 
 
 def remote_connection(
-    server: StreamableHTTPServer | SSEServer,
+    server: HTTPServer | SSEServer,
     **kwargs: Any,
 ) -> StreamableHTTPConnection | SSEConnection:
     """Select the official transport adapter from a typed server value."""
 
-    if isinstance(server, StreamableHTTPServer):
+    if isinstance(server, HTTPServer):
         return StreamableHTTPConnection(server, **kwargs)
     if isinstance(server, SSEServer):
         return SSEConnection(server, **kwargs)
-    raise TypeError("remote_connection requires a StreamableHTTPServer or SSEServer")
+    raise TypeError("remote_connection requires a HTTPServer or SSEServer")
 
 
 __all__ = [

@@ -11,23 +11,23 @@ import pytest
 from mcp_pal.execution_runtime import AsyncExecutionController
 from mcp_pal.trace.redaction import RedactionConfig
 from mcp_pal.types import (
-    CallToolOperation,
-    CallToolOperationResult,
-    DirectExecutionSpec,
+    CallTool,
+    CallToolResult,
+    DirectSpec,
     ErrorCode,
     ExecutionOutcome,
-    PingOperation,
-    PingOperationResult,
+    Ping,
+    PingResult,
     ServerBinding,
     StdioServer,
 )
 from mcp_pal.workspace import WorkspaceError, WorkspaceManager
 
 
-def _spec(*, operation: object = None, timeout: float | None = None, validate_schemas: bool = False) -> DirectExecutionSpec:
-    return DirectExecutionSpec(
+def _spec(*, operation: object = None, timeout: float | None = None, validate_schemas: bool = False) -> DirectSpec:
+    return DirectSpec(
         servers=(ServerBinding(server=StdioServer(name="outcome", command="unused"), alias="outcome"),),
-        operation=operation or PingOperation(server="outcome"),
+        operation=operation or Ping(server="outcome"),
         timeout_seconds=timeout,
         validate_schemas=validate_schemas,
     )
@@ -93,7 +93,7 @@ async def test_direct_call_tool_terminal_outcomes(
     controller = AsyncExecutionController(kit)
     result = await controller.run(
         _spec(
-            operation=CallToolOperation(server="outcome", name="echo", arguments={}),
+            operation=CallTool(server="outcome", name="echo", arguments={}),
             timeout=0.05,
         )
     )
@@ -101,7 +101,7 @@ async def test_direct_call_tool_terminal_outcomes(
     assert result.snapshot.outcome is expected_outcome
     assert result.trace is not None
     if expected_code is None:
-        assert isinstance(result.direct_result, CallToolOperationResult)
+        assert isinstance(result.direct_result, CallToolResult)
         assert result.direct_result.is_error is is_error
     else:
         assert result.direct_result is None
@@ -115,7 +115,7 @@ async def test_active_direct_operation_cancellation_is_terminal() -> None:
     client = _OutcomeClient("blocked")
     controller = AsyncExecutionController(_OutcomeKit(client))
     handle = controller.submit(
-        _spec(operation=CallToolOperation(server="outcome", name="echo", arguments={}))
+        _spec(operation=CallTool(server="outcome", name="echo", arguments={}))
     )
     await client.started.wait()
 
@@ -137,10 +137,10 @@ async def test_terminal_event_persists_redacted_typed_direct_result_without_raw(
         redaction_config=RedactionConfig(secrets=frozenset({"direct-secret"}), include_environment=False),
     )
     result = await controller.run(
-        _spec(operation=CallToolOperation(server="outcome", name="echo", arguments={}))
+        _spec(operation=CallTool(server="outcome", name="echo", arguments={}))
     )
 
-    assert isinstance(result.direct_result, CallToolOperationResult)
+    assert isinstance(result.direct_result, CallToolResult)
     assert result.direct_result.raw is not None
     assert result.direct_result.raw.secret == "direct-secret"
     assert result.trace is not None
@@ -166,7 +166,7 @@ async def test_workspace_cleanup_failure_keeps_direct_result_terminal(
     result = await controller.run(_spec())
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
-    assert isinstance(result.direct_result, PingOperationResult)
+    assert isinstance(result.direct_result, PingResult)
     assert result.error is not None and result.error.code is ErrorCode.CLEANUP_FAILED
     assert result.trace is not None
     assert result.trace.completeness == "partial"

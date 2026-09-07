@@ -1,15 +1,13 @@
 """Application-independent SDK services."""
 
 from .probes import (
-    AsyncCapabilityProbeService,
-    CapabilityProbeService,
+    AsyncProbes,
+    Probes,
     ProbeEvidence,
     ProbeKind,
     ProbeReport,
     ProbeRequest,
     ProbeResult,
-    ProbeService,
-    ReadinessProbeService,
 )
 from .persistent import SQLiteStoreWorker
 from .acp_probes import (
@@ -21,22 +19,20 @@ from .acp_probes import (
     ACPProbeResult,
     ACPProbeStatus,
     ACPProbeStore,
-    redacted_probe,
+    redact_probe,
     run_acp_probe,
 )
 
 __all__ = [
-    "AsyncCapabilityProbeService",
-    "CapabilityProbeService",
+    "AsyncProbes",
+    "Probes",
     "ProbeEvidence",
     "ProbeKind",
     "ProbeReport",
     "ProbeRequest",
     "ProbeResult",
-    "ProbeService",
-    "ReadinessProbeService",
     "SQLiteStoreWorker",
     "ACPAgentIdentity", "ACPAgentMode", "ACPProbeDimension", "ACPProbeHistory", "ACPProbeKind",
     "ACPProbeRequest", "ACPProbeResult", "ACPProbeStatus", "ACPProbeStore",
-    "redacted_probe", "run_acp_probe",
+    "redact_probe", "run_acp_probe",
 ]

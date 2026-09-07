@@ -23,7 +23,7 @@ from mcp_pal.transport.direct import (
     remote_connection,
     validate_endpoint_trust,
 )
-from mcp_pal.types import SSEServer, SecretReference, StreamableHTTPServer, TrustLevel
+from mcp_pal.types import SSEServer, SecretReference, HTTPServer, TrustLevel
 
 
 def test_secret_references_resolve_only_into_headers_and_never_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,7 +37,7 @@ def test_secret_references_resolve_only_into_headers_and_never_evidence(monkeypa
     reference = SecretReference(source="environment", name="MCP_TEST_TOKEN")
     assert "transport-secret" not in repr(reference)
 
-    server = StreamableHTTPServer(
+    server = HTTPServer(
         name="remote",
         url="https://example.test/mcp?access_token=transport-secret",
         headers={"Authorization": reference},
@@ -69,7 +69,7 @@ def test_header_secret_observer_classifies_api_keys_but_not_ordinary_fields(
 
 
 def test_private_endpoint_requires_explicit_trust_and_agent_exposure_is_stricter() -> None:
-    untrusted = StreamableHTTPServer(name="local", url="http://127.0.0.1:8765/mcp")
+    untrusted = HTTPServer(name="local", url="http://127.0.0.1:8765/mcp")
     with pytest.raises(EndpointTrustError):
         validate_endpoint_trust(untrusted, resolve_host=lambda host, port: ("127.0.0.1",))
 
@@ -79,7 +79,7 @@ def test_private_endpoint_requires_explicit_trust_and_agent_exposure_is_stricter
     with pytest.raises(EndpointTrustError):
         validate_endpoint_trust(loopback, for_agent=True, resolve_host=lambda host, port: ("127.0.0.1",))
 
-    public_untrusted = StreamableHTTPServer(name="public", url="https://example.test/mcp")
+    public_untrusted = HTTPServer(name="public", url="https://example.test/mcp")
     with pytest.raises(EndpointTrustError):
         validate_endpoint_trust(
             public_untrusted,
@@ -95,7 +95,7 @@ def test_private_endpoint_requires_explicit_trust_and_agent_exposure_is_stricter
 
 
 def test_credential_query_parameters_are_rejected_before_connecting() -> None:
-    server = StreamableHTTPServer(name="remote", url="https://example.test/mcp?access_token=fixture")
+    server = HTTPServer(name="remote", url="https://example.test/mcp?access_token=fixture")
     with pytest.raises(EndpointTrustError, match="credential query"):
         validate_endpoint_trust(server, resolve_host=lambda host, port: ("93.184.216.34",))
 
@@ -105,7 +105,7 @@ def test_credential_query_parameters_are_rejected_before_connecting() -> None:
     ("169.254.169.254", "10.0.0.1", "::1", "fe80::1", "::ffff:169.254.169.254"),
 )
 def test_untrusted_endpoints_reject_metadata_private_and_ipv6_addresses(address: str) -> None:
-    server = StreamableHTTPServer(name="local", url="https://example.test/mcp")
+    server = HTTPServer(name="local", url="https://example.test/mcp")
     with pytest.raises(EndpointTrustError):
         validate_endpoint_trust(server, resolve_host=lambda host, port: (address,))
 
@@ -116,7 +116,7 @@ def test_remote_connection_selects_the_legacy_sse_adapter() -> None:
 
 
 def test_endpoint_evidence_removes_credentials_and_query_tokens() -> None:
-    server = StreamableHTTPServer(
+    server = HTTPServer(
         name="remote",
         url="https://user:password@example.test/mcp?token=secret&safe=1",
     )
@@ -173,7 +173,7 @@ def test_streamable_http_uses_official_client_and_closes_cleanly() -> None:
         def factory(headers: Mapping[str, str]) -> httpx2.AsyncClient:
             return httpx2.AsyncClient(transport=transport, headers=dict(headers))
 
-        server = StreamableHTTPServer(
+        server = HTTPServer(
             name="fixture",
             url="http://localhost/mcp",
             trust=TrustLevel.TRUSTED_PRIVATE,
@@ -230,7 +230,7 @@ def test_remote_transport_forwards_official_client_session_options(
             return OfficialClientSession(*args, **kwargs)
 
         monkeypatch.setattr(direct_module, "ClientSession", spy)
-        server = StreamableHTTPServer(
+        server = HTTPServer(
             name="fixture",
             url="http://localhost/mcp",
             trust=TrustLevel.TRUSTED_PRIVATE,
@@ -286,7 +286,7 @@ def test_hostile_secret_resolver_and_observer_fail_closed_without_values() -> No
 
 
 def test_default_http_client_does_not_follow_untrusted_redirects() -> None:
-    server = StreamableHTTPServer(name="remote", url="https://example.test/mcp")
+    server = HTTPServer(name="remote", url="https://example.test/mcp")
     connection = StreamableHTTPConnection(
         server,
         resolve_host=lambda host, port: ("93.184.216.34",),
@@ -303,7 +303,7 @@ def test_remote_connection_rejects_double_enter_and_does_not_retain_closed_sessi
         def factory(headers: Mapping[str, str]) -> httpx2.AsyncClient:
             return httpx2.AsyncClient(transport=transport, headers=dict(headers))
 
-        server = StreamableHTTPServer(
+        server = HTTPServer(
             name="fixture",
             url="http://localhost/mcp",
             trust=TrustLevel.TRUSTED_PRIVATE,
@@ -331,7 +331,7 @@ def test_remote_connection_rejects_double_enter_and_does_not_retain_closed_sessi
 
 def test_connection_failure_is_not_masked_by_cleanup_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     async def run() -> None:
-        server = StreamableHTTPServer(name="local", url="http://127.0.0.1/mcp")
+        server = HTTPServer(name="local", url="http://127.0.0.1/mcp")
         connection = StreamableHTTPConnection(
             server,
             resolve_host=lambda host, port: ("127.0.0.1",),
@@ -359,7 +359,7 @@ def test_hostile_resolvers_fail_closed_without_propagating_their_messages() -> N
         )
     assert "resolver-secret" not in str(caught.value)
 
-    server = StreamableHTTPServer(name="remote", url="https://example.test/mcp")
+    server = HTTPServer(name="remote", url="https://example.test/mcp")
     with pytest.raises(EndpointTrustError) as caught_endpoint:
         validate_endpoint_trust(
             server,

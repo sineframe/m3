@@ -28,7 +28,7 @@ def _call(**values: Any) -> dict[str, Any]:
     values.setdefault("provenance", {"model": True, "wire": values["wire_request"] is not None or values["wire_response"] is not None})
     return values
 
-def _canonical_arguments(wire_request: Any, native_arguments: Any) -> Any:
+def _normalized_arguments(wire_request: Any, native_arguments: Any) -> Any:
     """Prefer the arguments actually transmitted to the MCP server."""
     if isinstance(wire_request, dict):
         params = wire_request.get("params")
@@ -55,7 +55,7 @@ def from_claude_trace(trace: dict[str, Any], selected_server: str, transport: st
         call = _call(id=str(span.get("id") or f"claude-mcp-{index}"), server=selected_server, tool=tool, status="error" if err or span.get("status") in {"error", "failed"} else span.get("status", "completed"), error=err, start_ms=span.get("start_ms"), end_ms=span.get("end_ms"), duration_ms=span.get("duration_ms"), arguments=span.get("input"), result=result, harness="claude-code", transport=transport)
         if wire_match:
             wire_request = wire_match.get("input")
-            call.update(arguments=_canonical_arguments(wire_request, call["arguments"]), server_latency_ms=wire_match.get("duration_ms"), wire_request=wire_request, wire_response=wire_match.get("output"), provenance={"model": True, "wire": True})
+            call.update(arguments=_normalized_arguments(wire_request, call["arguments"]), server_latency_ms=wire_match.get("duration_ms"), wire_request=wire_request, wire_response=wire_match.get("output"), provenance={"model": True, "wire": True})
         calls.append(call)
     return calls
 
@@ -116,7 +116,7 @@ def build_opencode_trace(*, events: Iterable[dict[str, Any]], protocol_events: I
             tool = str(request_payload.get("params", {}).get("name") or "")
             target = next((c for c in calls if c["tool"] == tool and c["wire_request"] is None), None)
             if target:
-                target["arguments"] = _canonical_arguments(request_payload, target["arguments"]); target["wire_request"] = request_payload; target["wire_response"] = payload; target["server_latency_ms"] = max(0.0, float(record.get("offset_ms", 0) or 0) - float(request.get("offset_ms", 0) or 0)); target["provenance"]["wire"] = True
+                target["arguments"] = _normalized_arguments(request_payload, target["arguments"]); target["wire_request"] = request_payload; target["wire_response"] = payload; target["server_latency_ms"] = max(0.0, float(record.get("offset_ms", 0) or 0) - float(request.get("offset_ms", 0) or 0)); target["provenance"]["wire"] = True
                 target["limitations"] = [limitation for limitation in target.get("limitations", []) if limitation != UNMATCHED_LIMITATION]
                 wire_links[target["id"]] = (request, record)
                 if isinstance(payload, dict) and payload.get("error"):

@@ -16,7 +16,7 @@ from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase, Too
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.types import (
     ACPAgent,
-    CallToolOperationResult,
+    CallToolResult,
     ExecutionOutcome,
     RestrictiveToolPolicy,
     StdioServer,
@@ -119,10 +119,10 @@ def test_tool_matrix_calls_owned_tools_and_persists_each_cell(tmp_path: Path) ->
                 assert persisted.metadata["mcp_pal.matrix.case_id"] == case.id
                 assert persisted.metadata["mcp_pal.matrix.servers"] == case.server.name
         assert [case.id for case in matrix.cases()] == ["catalog/echo", "warehouse/failure"]
-        assert isinstance(results[0].direct_result, CallToolOperationResult)
+        assert isinstance(results[0].direct_result, CallToolResult)
         assert results[0].direct_result.is_error is False
         assert results[0].direct_result.content[0]["text"] == "catalog"
-        assert isinstance(results[1].direct_result, CallToolOperationResult)
+        assert isinstance(results[1].direct_result, CallToolResult)
         assert results[1].direct_result.is_error is True
         assert results[1].direct_result.content[0]["text"] == "expected failure"
         assert len(_calls(markers["catalog"])) == 1

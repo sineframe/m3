@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 from mcp_pal.types import (
-    AgentExecutionSpec,
+    AgentSpec,
     ExecutionOutcome,
     OpenCode,
     RestrictiveToolPolicy,
@@ -42,9 +42,9 @@ _MATRIX_SERVER = _SDK_ROOT / "tests" / "fixtures" / "matrix_stdio_server.py"
 _LIVE_ENABLED = os.environ.get("MCP_PAL_RUN_LIVE_OPENCODE") == "1"
 
 
-def _live_spec(executable: str, model: str) -> AgentExecutionSpec:
+def _live_spec(executable: str, model: str) -> AgentSpec:
     provider = model.split("/", 1)[0] if "/" in model else None
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=OpenCode(
             model=model,
             provider=provider,
@@ -76,9 +76,9 @@ def _live_matrix_spec(
     server_names: tuple[str, ...],
     marker_root: Path,
     allowed_tools: tuple[str, ...],
-) -> AgentExecutionSpec:
+) -> AgentSpec:
     provider = model.split("/", 1)[0] if "/" in model else None
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=OpenCode(
             model=model,
             provider=provider,

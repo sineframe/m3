@@ -13,7 +13,7 @@ import pytest
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.errors import OperationCancelled
 from mcp_pal.transport.direct import TransportConnectionError
-from mcp_pal.types import SecretReference, SSEServer, StreamableHTTPServer, TrustLevel
+from mcp_pal.types import SecretReference, SSEServer, HTTPServer, TrustLevel
 
 
 _PROTOCOL = "2025-11-25"
@@ -213,7 +213,7 @@ async def test_streamable_http_live_matrix_with_bearer_and_tools() -> None:
     server, port = await _start_server(handler)
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
     try:
-        binding = StreamableHTTPServer(
+        binding = HTTPServer(
             name="live-http",
             url=f"http://127.0.0.1:{port}/mcp",
             headers={"X-Fixture": "live"},
@@ -336,7 +336,7 @@ async def test_remote_initialization_cancellation_closes_transport() -> None:
     server, port = await _start_server(hanging_handler)
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
     client = kit.direct(
-        StreamableHTTPServer(
+        HTTPServer(
             name="hanging-http",
             url=f"http://127.0.0.1:{port}/mcp",
             trust=TrustLevel.TRUSTED_PRIVATE,

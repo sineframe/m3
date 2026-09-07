@@ -13,7 +13,7 @@ from mcp_pal.storage import ArtifactNotFound, BlobIntegrityError, FilesystemBlob
 
 def test_blob_write_is_content_addressed_and_verified(tmp_path: Path) -> None:
     store = FilesystemBlobStore(tmp_path / "blobs")
-    content = b"large canonical evidence\x00" * 4096
+    content = b"large stable evidence\x00" * 4096
     digest = hashlib.sha256(content).hexdigest()
     record = store.put(content, sha256=digest, size_bytes=len(content))
     assert record.sha256 == digest

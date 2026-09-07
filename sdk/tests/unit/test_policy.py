@@ -13,7 +13,7 @@ from mcp_pal.harness.contracts import DeterministicHarnessAdapter, HarnessAdapte
 from mcp_pal.policy import ToolDescriptor, ToolPolicyEvaluator
 from mcp_pal.server_group import ServerGroupManager, ServerGroupSnapshot, ServerRecord
 from mcp_pal.types import TransportKind
-from mcp_pal.types import ACPAgent, AgentExecutionSpec, FullToolPolicy, NativeToolPolicy, RestrictiveToolPolicy, ServerBinding, StdioServer, TurnResponse, UserMessage
+from mcp_pal.types import ACPAgent, AgentSpec, FullToolPolicy, NativeToolPolicy, RestrictiveToolPolicy, ServerBinding, StdioServer, TurnResponse, UserMessage
 
 
 def _evaluator() -> ToolPolicyEvaluator:
@@ -112,7 +112,7 @@ def test_tool_descriptors_reject_ambiguous_or_controlled_identities() -> None:
 
 @pytest.mark.asyncio
 async def test_unavailable_server_tools_do_not_make_available_unqualified_tools_ambiguous() -> None:
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="fixture"),
         servers=(
             ServerBinding(server=StdioServer(name="available", command="server")),
@@ -150,7 +150,7 @@ def test_malformed_allowlist_fails_closed_without_parser_details() -> None:
 @pytest.mark.asyncio
 async def test_session_surfaces_portable_policy_preflight_failure_before_open() -> None:
     server = StdioServer(name="memory", command="memory-server")
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="fixture"),
         servers=(ServerBinding(server=server),),
         tool_policy=RestrictiveToolPolicy(allowed_tools=("memory:read",)),
@@ -168,7 +168,7 @@ async def test_session_surfaces_portable_policy_preflight_failure_before_open() 
 
 @pytest.mark.asyncio
 async def test_adapter_without_policy_preflight_cannot_silently_accept_explicit_allowlist() -> None:
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="fixture"),
         servers=(ServerBinding(server=StdioServer(name="memory", command="memory-server")),),
         tool_policy=RestrictiveToolPolicy(allowed_tools=("memory:read",)),
@@ -177,7 +177,7 @@ async def test_adapter_without_policy_preflight_cannot_silently_accept_explicit_
     class LegacyAdapter:
         started = False
 
-        async def start(self, _spec: AgentExecutionSpec) -> None:
+        async def start(self, _spec: AgentSpec) -> None:
             self.started = True
 
         async def send(

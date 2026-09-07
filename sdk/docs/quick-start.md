@@ -1,20 +1,20 @@
 # Quick start
 
-For a deployed MCP URL, use `StreamableHTTPServer` and assert direct discovery
+For a deployed MCP URL, use `HTTPServer` and assert direct discovery
 and a tool call. The complete external example is
 [`examples/nondeterministic/test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py);
 it is nondeterministic and is run by invoking that exact file. For a local
 command, use the deterministic stdio example
 [`examples/tests/test_quick_start.py`](../examples/tests/test_quick_start.py).
-For the HTTP route, see the [Streamable HTTP guide](streamable-http.md).
+For the HTTP route, see the [Streamable HTTP guide](http.md).
 
 ```python
 from collections.abc import Mapping
 
 from mcp_pal import MCPTestKit
-from mcp_pal.types import StreamableHTTPServer
+from mcp_pal.types import HTTPServer
 
-server = StreamableHTTPServer(name="deepwiki", url="https://mcp.deepwiki.com/mcp")
+server = HTTPServer(name="deepwiki", url="https://mcp.deepwiki.com/mcp")
 with MCPTestKit(env={}) as kit, kit.direct(server) as client:
     assert client.initialization is not None
     tools = client.list_all_tools()
@@ -80,8 +80,8 @@ dependency.
 
 The remainder of this walkthrough uses the deterministic local fixture.
 MCP Pal receives a server definition rather than starting a hidden fixture.
-For a deployed HTTP endpoint, use `StreamableHTTPServer` as shown in the
-[Streamable HTTP guide](streamable-http.md). For a local subprocess, construct
+For a deployed HTTP endpoint, use `HTTPServer` as shown in the
+[Streamable HTTP guide](http.md). For a local subprocess, construct
 a `StdioServer` with its command,
 arguments, and working directory. The examples do this in the ordinary pytest
 fixture [`example_server`](../examples/tests/conftest.py), which points to the
@@ -258,7 +258,7 @@ go through `session.result`:
 import sys
 from pathlib import Path
 from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import ACPAgent, AgentExecutionSpec, RestrictiveToolPolicy, ServerBinding, StdioServer
+from mcp_pal.types import ACPAgent, AgentSpec, RestrictiveToolPolicy, ServerBinding, StdioServer
 
 examples = Path("sdk/examples")
 server = StdioServer(
@@ -266,7 +266,7 @@ server = StdioServer(
     args=(str(examples / "servers" / "example_mcp_server.py"),),
     cwd=str(examples),
 )
-spec = AgentExecutionSpec(
+spec = AgentSpec(
     harness=ACPAgent(
         model="deterministic-fixture",
         manifest={

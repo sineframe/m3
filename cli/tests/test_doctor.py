@@ -1,4 +1,4 @@
-"""Deterministic tests for the canonical ``mcp-pal doctor`` command."""
+"""Deterministic tests for the stable ``mcp-pal doctor`` command."""
 
 from __future__ import annotations
 

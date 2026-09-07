@@ -17,7 +17,7 @@ from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.transport.local import current_workspace_root
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     ArtifactPolicy,
     InProcessServer,
     ServerBinding,
@@ -88,7 +88,7 @@ async def test_agent_execution_has_one_workspace_event_and_projects_artifacts(tm
 
             return Readiness(ready=True)
 
-        async def start(self, _spec: AgentExecutionSpec) -> None:
+        async def start(self, _spec: AgentSpec) -> None:
             return None
 
         async def open(self, launch: object) -> "Adapter":
@@ -114,7 +114,7 @@ async def test_agent_execution_has_one_workspace_event_and_projects_artifacts(tm
     class Kit:
         def agent_session(
             self,
-            spec: AgentExecutionSpec,
+            spec: AgentSpec,
             *,
             _event_sink: object,
             _trace_recorder: object,
@@ -131,7 +131,7 @@ async def test_agent_execution_has_one_workspace_event_and_projects_artifacts(tm
                 trace_owner=_trace_owner,
             )
 
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="workspace-agent"),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="echo")),),
         message=UserMessage(content=(TextContent(text="run"),)),
@@ -153,7 +153,7 @@ async def test_persistent_agent_workspace_uses_outer_execution_artifact_store_an
     """Submitted agent capture must survive the session boundary and reopen."""
 
     class Adapter:
-        async def start(self, _spec: AgentExecutionSpec) -> None:
+        async def start(self, _spec: AgentSpec) -> None:
             return None
 
         async def open(self, launch: object) -> "Adapter":
@@ -181,7 +181,7 @@ async def test_persistent_agent_workspace_uses_outer_execution_artifact_store_an
     class Kit:
         def agent_session(
             self,
-            spec: AgentExecutionSpec,
+            spec: AgentSpec,
             *,
             _event_sink: object,
             _trace_recorder: object,
@@ -200,7 +200,7 @@ async def test_persistent_agent_workspace_uses_outer_execution_artifact_store_an
                 artifact_store=_artifact_store,  # type: ignore[arg-type]
             )
 
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="persistent-workspace-agent"),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="echo")),),
         message=UserMessage(content=(TextContent(text="run"),)),

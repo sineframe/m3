@@ -1,4 +1,4 @@
-"""Canonical execution trace recording and immutable projections.
+"""Stable execution trace recording and immutable projections.
 
 Redaction is applied inside this recorder before an event reaches storage.
 The configured redaction policy is fail-closed; original provider values are
@@ -17,27 +17,27 @@ from uuid import uuid4
 from .storage import ExecutionStore, StorageConflict
 from .trace.redaction import RedactionConfig, redact_for_persistence, redact_model_json
 from .types import (
-    CanonicalEvent,
+    Event,
     ConnectionId,
     EventId,
     EventKind,
     EventOrigin,
-    EventProvenance,
+    EventSource,
     ExecutionId,
     ExecutionOutcome,
-    ExecutionSnapshot,
+    ExecutionState,
     RunId,
     LifecyclePhase,
-    LifecycleState,
-    RawEvidenceRef,
-    RequestCorrelation,
+    ExecutionStatus,
+    EvidenceRef,
+    RequestLink,
     SessionId,
     TraceId,
     TraceResult,
     TurnId,
-    TurnLifecycle,
+    TurnStatus,
     TurnOutcome,
-    TurnSnapshot,
+    TurnState,
 )
 
 
@@ -49,25 +49,25 @@ class TraceFinalizationConflict(TraceRecorderError):
     """A terminal execution was finalized again with another outcome."""
 
 
-_EXECUTION_TRANSITIONS: dict[LifecycleState, frozenset[LifecycleState]] = {
-    LifecycleState.CREATED: frozenset({LifecycleState.QUEUED, LifecycleState.STARTING, LifecycleState.FINISHED}),
-    LifecycleState.QUEUED: frozenset({LifecycleState.STARTING, LifecycleState.FINISHED}),
-    LifecycleState.STARTING: frozenset({LifecycleState.IDLE, LifecycleState.RUNNING_TURN, LifecycleState.CLOSING, LifecycleState.FINISHED}),
-    LifecycleState.IDLE: frozenset({LifecycleState.RUNNING_TURN, LifecycleState.CLOSING, LifecycleState.FINISHED}),
-    LifecycleState.RUNNING_TURN: frozenset({LifecycleState.IDLE, LifecycleState.CLOSING, LifecycleState.FINISHED}),
-    LifecycleState.CLOSING: frozenset({LifecycleState.FINISHED}),
-    LifecycleState.FINISHED: frozenset(),
+_EXECUTION_TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
+    ExecutionStatus.CREATED: frozenset({ExecutionStatus.QUEUED, ExecutionStatus.STARTING, ExecutionStatus.FINISHED}),
+    ExecutionStatus.QUEUED: frozenset({ExecutionStatus.STARTING, ExecutionStatus.FINISHED}),
+    ExecutionStatus.STARTING: frozenset({ExecutionStatus.IDLE, ExecutionStatus.RUNNING_TURN, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED}),
+    ExecutionStatus.IDLE: frozenset({ExecutionStatus.RUNNING_TURN, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED}),
+    ExecutionStatus.RUNNING_TURN: frozenset({ExecutionStatus.IDLE, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED}),
+    ExecutionStatus.CLOSING: frozenset({ExecutionStatus.FINISHED}),
+    ExecutionStatus.FINISHED: frozenset(),
 }
 
-_TURN_TRANSITIONS: dict[TurnLifecycle, frozenset[TurnLifecycle]] = {
-    TurnLifecycle.QUEUED: frozenset({TurnLifecycle.RUNNING, TurnLifecycle.FINISHED}),
-    TurnLifecycle.RUNNING: frozenset({TurnLifecycle.FINISHED}),
-    TurnLifecycle.FINISHED: frozenset(),
+_TURN_TRANSITIONS: dict[TurnStatus, frozenset[TurnStatus]] = {
+    TurnStatus.QUEUED: frozenset({TurnStatus.RUNNING, TurnStatus.FINISHED}),
+    TurnStatus.RUNNING: frozenset({TurnStatus.FINISHED}),
+    TurnStatus.FINISHED: frozenset(),
 }
 
 
 class ExecutionTraceRecorder:
-    """Record committed canonical events and derive immutable projections.
+    """Record committed stable events and derive immutable projections.
 
     Construction creates the execution metadata and commits an
     ``execution.created`` event. Both ``emit`` and ``record`` redact payloads
@@ -119,7 +119,7 @@ class ExecutionTraceRecorder:
             self._trace_id = requested_trace_id or TraceId(f"trace-{uuid4().hex}")
             effective_run_id = run_id or (str(specification.get("run_id")) if isinstance(specification, Mapping) and specification.get("run_id") else None)
             store.create(
-                ExecutionSnapshot(execution_id=self._execution_id, run_id=RunId(effective_run_id) if effective_run_id else None),
+                ExecutionState(execution_id=self._execution_id, run_id=RunId(effective_run_id) if effective_run_id else None),
                 specification=specification,
                 server_bindings=server_bindings,
                 run_id=effective_run_id,
@@ -127,7 +127,7 @@ class ExecutionTraceRecorder:
             self.emit(
                 EventKind.EXECUTION_CREATED,
                 payload={
-                    "lifecycle": LifecycleState.CREATED.value,
+                    "lifecycle": ExecutionStatus.CREATED.value,
                     "trace_id": self._trace_id.root,
                 },
             )
@@ -135,14 +135,14 @@ class ExecutionTraceRecorder:
             # A persistent execution may be reopened by another process.  Its
             # perf-counter origin is different, so continue from the committed
             # trace offset rather than allowing the next event to move time
-            # backwards in the canonical sequence.
+            # backwards in the stable sequence.
             existing_events = self._committed_events()
             if not existing_events:
                 self._trace_id = requested_trace_id or TraceId(f"trace-{uuid4().hex}")
                 self.emit(
                     EventKind.EXECUTION_CREATED,
                     payload={
-                        "lifecycle": LifecycleState.CREATED.value,
+                        "lifecycle": ExecutionStatus.CREATED.value,
                         "trace_id": self._trace_id.root,
                     },
                 )
@@ -165,7 +165,7 @@ class ExecutionTraceRecorder:
                 except ValueError:
                     raise TraceRecorderError("persisted trace ID is invalid") from None
                 if self._trace_id.root != persisted_trace_id:
-                    raise TraceRecorderError("persisted trace ID is not canonical")
+                    raise TraceRecorderError("persisted trace ID is not stable")
                 if (
                     requested_trace_id is not None
                     and requested_trace_id != self._trace_id
@@ -203,7 +203,7 @@ class ExecutionTraceRecorder:
             if limitation not in self._runtime_limitations:
                 self._runtime_limitations.append(limitation)
                 # Runtime capture metadata must survive a recorder reopen
-                # before finalization.  A bounded diagnostic is canonical
+                # before finalization.  A bounded diagnostic is stable
                 # evidence, not an in-memory side channel.
                 try:
                     self.emit(
@@ -213,7 +213,7 @@ class ExecutionTraceRecorder:
                             "limitation": limitation,
                             "message": "capture limitation recorded",
                         },
-                        provenance=EventProvenance(
+                        provenance=EventSource(
                             origin=EventOrigin.DERIVED, source="mcp_pal.recorder"
                         ),
                     )
@@ -236,8 +236,8 @@ class ExecutionTraceRecorder:
                 raise TraceRecorderError("redaction policy must be bound before trace capture")
             self._redaction_config = config
 
-    def record(self, event: CanonicalEvent) -> CanonicalEvent:
-        """Redact, validate, and commit one canonical event."""
+    def record(self, event: Event) -> Event:
+        """Redact, validate, and commit one stable event."""
         with self._record_lock:
             if event.execution_id != self._execution_id:
                 raise StorageConflict("event belongs to another execution")
@@ -246,7 +246,7 @@ class ExecutionTraceRecorder:
             self._validate_event(event)
             safe_event = self._redacted_event(event)
             timestamp, offset = self._clock()
-            safe_event = CanonicalEvent.model_validate(
+            safe_event = Event.model_validate(
                 {
                     **safe_event.model_dump(mode="python"),
                     "timestamp": timestamp,
@@ -265,15 +265,15 @@ class ExecutionTraceRecorder:
         turn_id: TurnId | str | None = None,
         server_binding: str | None = None,
         connection_id: ConnectionId | str | None = None,
-        correlation: RequestCorrelation | None = None,
+        correlation: RequestLink | None = None,
         lifecycle_phase: LifecyclePhase = LifecyclePhase.UNKNOWN,
-        provenance: EventProvenance | None = None,
-        raw_evidence_ref: RawEvidenceRef | None = None,
+        provenance: EventSource | None = None,
+        raw_evidence_ref: EvidenceRef | None = None,
         reasoning: Any | None = None,
         raw_evidence_content: bytes | None = None,
         raw_evidence_media_type: str | None = None,
-    ) -> CanonicalEvent:
-        """Allocate, build, and commit a canonical event."""
+    ) -> Event:
+        """Allocate, build, and commit a stable event."""
         with self._record_lock:
             if self._final is not None or self._has_committed_terminal():
                 raise TraceFinalizationConflict("execution is already terminal")
@@ -285,7 +285,7 @@ class ExecutionTraceRecorder:
             sequence = self._allocate_sequence()
             try:
                 event_id = EventId(f"event-{uuid4().hex}")
-                event = CanonicalEvent(
+                event = Event(
                     event_id=event_id,
                     execution_id=self._execution_id,
                     sequence=sequence,
@@ -307,7 +307,7 @@ class ExecutionTraceRecorder:
                     reasoning=reasoning,
                     raw_evidence_ref=raw_evidence_ref,
                     provenance=provenance
-                    or EventProvenance(origin=EventOrigin.NORMALIZED, source="mcp_pal"),
+                    or EventSource(origin=EventOrigin.NORMALIZED, source="mcp_pal"),
                 )
                 if raw_evidence_content is not None:
                     if raw_evidence_media_type is None:
@@ -318,7 +318,7 @@ class ExecutionTraceRecorder:
                         update={"timestamp": timestamp, "monotonic_offset_ms": offset}
                     )
                     append_atomic = getattr(
-                        self._store, "append_event_with_raw_evidence", None
+                        self._store, "append_event", None
                     )
                     if not callable(append_atomic):
                         raise TraceRecorderError(
@@ -337,17 +337,17 @@ class ExecutionTraceRecorder:
                     pass
                 raise
 
-    def snapshot(self) -> ExecutionSnapshot:
+    def snapshot(self) -> ExecutionState:
         """Return a fresh snapshot derived solely from committed events."""
         with self._record_lock:
             return self._project_snapshot()
 
-    def turn_snapshots(self) -> tuple[TurnSnapshot, ...]:
+    def turn_snapshots(self) -> tuple[TurnState, ...]:
         """Return fresh immutable turn projections ordered by turn number."""
         with self._record_lock:
             return tuple(self._project_turns().values())
 
-    def events(self) -> tuple[CanonicalEvent, ...]:
+    def events(self) -> tuple[Event, ...]:
         with self._record_lock:
             return tuple(self._store.iter_events(self._execution_id))
 
@@ -404,7 +404,7 @@ class ExecutionTraceRecorder:
             raise TraceRecorderError("execution store does not support sequence allocation")
         return int(allocator(self._execution_id))
 
-    def _committed_events(self) -> tuple[CanonicalEvent, ...]:
+    def _committed_events(self) -> tuple[Event, ...]:
         return tuple(self._store.iter_events(self._execution_id))
 
     def _has_committed_terminal(self) -> bool:
@@ -415,7 +415,7 @@ class ExecutionTraceRecorder:
             return None
         return self._project_trace()
 
-    def _redacted_event(self, event: CanonicalEvent) -> CanonicalEvent:
+    def _redacted_event(self, event: Event) -> Event:
         # The helper projects the model through python values first, then
         # redacts and validates JSON-compatible output.  Comparing typed
         # fields prevents representation changes from being mistaken for a
@@ -429,7 +429,7 @@ class ExecutionTraceRecorder:
             "lifecycle_phase", "payload_ref", "raw_evidence_ref", "reasoning",
         )
         try:
-            safe_event = CanonicalEvent.model_validate(projected)
+            safe_event = Event.model_validate(projected)
         except Exception:
             # Do not retain a validation exception as a cause: its rendered
             # context may include hostile provider values.
@@ -445,26 +445,26 @@ class ExecutionTraceRecorder:
             self._last_offset_ms = max(self._last_offset_ms, offset)
             return timestamp, self._last_offset_ms
 
-    def _validate_event(self, event: CanonicalEvent) -> None:
+    def _validate_event(self, event: Event) -> None:
         payload = event.payload
         if event.kind is EventKind.EXECUTION_CREATED:
-            if ExecutionTraceRecorder._required_lifecycle(payload) is not LifecycleState.CREATED:
+            if ExecutionTraceRecorder._required_lifecycle(payload) is not ExecutionStatus.CREATED:
                 raise TraceRecorderError("execution creation payload is invalid")
             if any(item.kind is EventKind.EXECUTION_CREATED for item in self._committed_events()):
                 raise TraceRecorderError("execution already exists")
         elif event.kind is EventKind.EXECUTION_STATE_CHANGED:
             lifecycle = ExecutionTraceRecorder._required_lifecycle(payload)
             current = self._project_snapshot().lifecycle
-            if lifecycle is LifecycleState.FINISHED or "outcome" in payload or lifecycle not in _EXECUTION_TRANSITIONS[current]:
+            if lifecycle is ExecutionStatus.FINISHED or "outcome" in payload or lifecycle not in _EXECUTION_TRANSITIONS[current]:
                 raise TraceRecorderError("execution state payload is invalid")
         elif event.kind is EventKind.EXECUTION_FINISHED:
             outcome = _string(payload.get("outcome"))
             if outcome is None or _enum_or_none(ExecutionOutcome, outcome) is None:
                 raise TraceRecorderError("execution terminal payload is invalid")
-            if self._project_snapshot().lifecycle is LifecycleState.FINISHED:
+            if self._project_snapshot().lifecycle is ExecutionStatus.FINISHED:
                 raise TraceRecorderError("execution already finished")
             lifecycle_value = _string(payload.get("lifecycle"))
-            if lifecycle_value is not None and lifecycle_value != LifecycleState.FINISHED.value:
+            if lifecycle_value is not None and lifecycle_value != ExecutionStatus.FINISHED.value:
                 raise TraceRecorderError("execution terminal payload is invalid")
         elif event.kind is EventKind.SESSION_CREATED or event.kind is EventKind.SESSION_STATE_CHANGED:
             if event.session_id is None:
@@ -499,7 +499,7 @@ class ExecutionTraceRecorder:
                 raise TraceRecorderError("turn does not exist")
             turn_lifecycle = ExecutionTraceRecorder._required_turn_lifecycle(payload)
             outcome = _string(payload.get("outcome"))
-            if turn_lifecycle is TurnLifecycle.FINISHED:
+            if turn_lifecycle is TurnStatus.FINISHED:
                 if outcome is None or _enum_or_none(TurnOutcome, outcome) is None:
                     raise TraceRecorderError("turn terminal payload is invalid")
             elif outcome is not None:
@@ -508,24 +508,24 @@ class ExecutionTraceRecorder:
                 raise TraceRecorderError("turn state transition is invalid")
 
     @staticmethod
-    def _required_lifecycle(payload: Mapping[str, Any]) -> LifecycleState:
+    def _required_lifecycle(payload: Mapping[str, Any]) -> ExecutionStatus:
         value = _string(payload.get("lifecycle")) or _string(payload.get("state"))
-        result = _enum_or_none(LifecycleState, value) if value is not None else None
+        result = _enum_or_none(ExecutionStatus, value) if value is not None else None
         if result is None:
             raise TraceRecorderError("execution state payload is invalid")
-        return cast(LifecycleState, result)
+        return cast(ExecutionStatus, result)
 
     @staticmethod
-    def _required_turn_lifecycle(payload: Mapping[str, Any]) -> TurnLifecycle:
+    def _required_turn_lifecycle(payload: Mapping[str, Any]) -> TurnStatus:
         value = _string(payload.get("lifecycle")) or _string(payload.get("state"))
-        result = _enum_or_none(TurnLifecycle, value) if value is not None else None
+        result = _enum_or_none(TurnStatus, value) if value is not None else None
         if result is None:
             raise TraceRecorderError("turn state payload is invalid")
-        return cast(TurnLifecycle, result)
+        return cast(TurnStatus, result)
 
-    def _project_snapshot(self) -> ExecutionSnapshot:
+    def _project_snapshot(self) -> ExecutionState:
         events = self._committed_events()
-        lifecycle = LifecycleState.CREATED
+        lifecycle = ExecutionStatus.CREATED
         outcome: ExecutionOutcome | None = None
         created_at = events[0].timestamp if events else datetime.now(timezone.utc)
         finished_at: datetime | None = None
@@ -539,9 +539,9 @@ class ExecutionTraceRecorder:
                 value = _string(event.payload.get("outcome"))
                 if value is not None:
                     outcome = _enum_or_none(ExecutionOutcome, value)
-                lifecycle = LifecycleState.FINISHED
+                lifecycle = ExecutionStatus.FINISHED
                 finished_at = event.timestamp
-        return ExecutionSnapshot(
+        return ExecutionState(
             execution_id=self._execution_id,
             lifecycle=lifecycle,
             outcome=outcome,
@@ -550,15 +550,15 @@ class ExecutionTraceRecorder:
             finished_at=finished_at,
         )
 
-    def _project_turns(self) -> dict[TurnId, TurnSnapshot]:
-        turns: dict[TurnId, TurnSnapshot] = {}
+    def _project_turns(self) -> dict[TurnId, TurnState]:
+        turns: dict[TurnId, TurnState] = {}
         for event in self._committed_events():
             if event.turn_id is None or event.session_id is None:
                 continue
             turn_id = event.turn_id
             if event.kind is EventKind.TURN_CREATED:
                 number = _positive_int(event.payload.get("number"), len(turns) + 1)
-                turns[turn_id] = TurnSnapshot(
+                turns[turn_id] = TurnState(
                     turn_id=turn_id,
                     session_id=event.session_id,
                     number=number,
@@ -569,10 +569,10 @@ class ExecutionTraceRecorder:
                 lifecycle = _turn_lifecycle(event.payload, current.lifecycle)
                 outcome_value = _string(event.payload.get("outcome"))
                 turn_outcome = _enum_or_none(TurnOutcome, outcome_value) if outcome_value is not None else None
-                finished_at = event.timestamp if lifecycle is TurnLifecycle.FINISHED else None
-                if lifecycle is TurnLifecycle.FINISHED and turn_outcome is None:
+                finished_at = event.timestamp if lifecycle is TurnStatus.FINISHED else None
+                if lifecycle is TurnStatus.FINISHED and turn_outcome is None:
                     continue
-                turns[turn_id] = TurnSnapshot(
+                turns[turn_id] = TurnState(
                     turn_id=current.turn_id,
                     session_id=current.session_id,
                     number=current.number,
@@ -642,7 +642,7 @@ class ExecutionTraceRecorder:
 
     @classmethod
     def _limitations_from_events(
-        cls, events: Sequence[CanonicalEvent]
+        cls, events: Sequence[Event]
     ) -> tuple[str, ...]:
         values: list[str] = []
         for event in events:
@@ -698,15 +698,15 @@ def _enum_or_none(enum_type: Any, value: str) -> Any:
         return None
 
 
-def _lifecycle(payload: Mapping[str, Any], default: LifecycleState) -> LifecycleState:
+def _lifecycle(payload: Mapping[str, Any], default: ExecutionStatus) -> ExecutionStatus:
     value = _string(payload.get("lifecycle")) or _string(payload.get("state"))
-    result = _enum_or_none(LifecycleState, value) if value is not None else None
+    result = _enum_or_none(ExecutionStatus, value) if value is not None else None
     return result if result is not None else default
 
 
-def _turn_lifecycle(payload: Mapping[str, Any], default: TurnLifecycle) -> TurnLifecycle:
+def _turn_lifecycle(payload: Mapping[str, Any], default: TurnStatus) -> TurnStatus:
     value = _string(payload.get("lifecycle")) or _string(payload.get("state"))
-    result = _enum_or_none(TurnLifecycle, value) if value is not None else None
+    result = _enum_or_none(TurnStatus, value) if value is not None else None
     return result if result is not None else default
 
 

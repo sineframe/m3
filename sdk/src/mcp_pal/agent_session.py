@@ -29,7 +29,7 @@ from .errors import (
     UnsupportedFeature,
 )
 from .execution_trace import ExecutionTraceRecorder
-from .interaction_handlers import InteractionController
+from .interaction_handlers import Interactions
 from .policy import (
     ToolDescriptor,
     ToolPolicyDecision,
@@ -40,28 +40,28 @@ from .storage import ArtifactStore, InMemoryExecutionStore
 from .trace.redaction import redact_for_api
 from .types import (
     ActivityHealth,
-    AgentExecutionSpec,
+    AgentSpec,
     ErrorCode,
     ErrorInfo,
     EventDirection,
     EventKind,
     EventOrigin,
-    EventProvenance,
+    EventSource,
     ExecutionId,
     ExecutionOutcome,
     ExecutionResult,
-    ExecutionSnapshot,
+    ExecutionState,
     FullToolPolicy,
     LifecyclePhase,
-    LifecycleState,
+    ExecutionStatus,
     NativeToolPolicy,
     OpaqueContent,
     RestrictiveToolPolicy,
     SessionForkRequest,
     SessionId,
-    SessionProvenance,
+    SessionSource,
     TurnId,
-    TurnLifecycle,
+    TurnStatus,
     TurnOutcome,
     TurnResponse,
     TurnResult,
@@ -82,7 +82,7 @@ class HarnessAdapter(Protocol):
     ``supported_content_kinds`` or ``supports_content`` for preflight.
     """
 
-    async def start(self, spec: AgentExecutionSpec) -> None: ...
+    async def start(self, spec: AgentSpec) -> None: ...
 
     async def send(
         self,
@@ -160,13 +160,13 @@ class AsyncAgentSession:
 
     def __init__(
         self,
-        spec: AgentExecutionSpec,
+        spec: AgentSpec,
         adapter: HarnessAdapter,
         *,
         server_manager: Any = None,
         server_manager_factory: Callable[[], Any] | None = None,
-        interaction_controller: InteractionController | None = None,
-        provenance: SessionProvenance | None = None,
+        interaction_controller: Interactions | None = None,
+        provenance: SessionSource | None = None,
         on_close: Callable[["AsyncAgentSession"], None] | None = None,
         event_sink: _EventSink | None = None,
         trace_recorder: ExecutionTraceRecorder | None = None,
@@ -180,7 +180,7 @@ class AsyncAgentSession:
         # state machine independent from the richer harness contract module.
         self._server_manager = server_manager
         self._server_manager_factory = server_manager_factory
-        self._interactions = interaction_controller or InteractionController(
+        self._interactions = interaction_controller or Interactions(
             permission_policy=spec.permission_policy,
             elicitation_policy=spec.elicitation_policy,
             sampling_policy=spec.sampling_policy,
@@ -198,7 +198,7 @@ class AsyncAgentSession:
         self._execution_id = self._trace_recorder.execution_id
         self._session_id = SessionId(str(uuid4()))
         self._session_created_emitted = False
-        self._snapshot = ExecutionSnapshot(execution_id=self._execution_id, provenance=provenance)
+        self._snapshot = ExecutionState(execution_id=self._execution_id, provenance=provenance)
         self._turns: list[TurnResult] = []
         self._tool_outcomes: list[bool] = []
         # Keep wire-derived tool outcomes after the server manager releases
@@ -270,9 +270,9 @@ class AsyncAgentSession:
         if isinstance(direction_value, str):
             try:
                 direction = EventDirection(direction_value)
-                from .types import RawEvidenceRef, RequestCorrelation
+                from .types import EvidenceRef, RequestLink
 
-                correlation = RequestCorrelation(
+                correlation = RequestLink(
                     jsonrpc_id=event_payload.get("jsonrpc_id")
                     if isinstance(event_payload.get("jsonrpc_id"), (int, str))
                     and not isinstance(event_payload.get("jsonrpc_id"), bool)
@@ -286,9 +286,9 @@ class AsyncAgentSession:
                 correlation = None
         raw_evidence = None
         if isinstance(raw_ref, str) and raw_ref:
-            from .types import RawEvidenceRef
+            from .types import EvidenceRef
 
-            raw_evidence = RawEvidenceRef(evidence_id=raw_ref, media_type="application/json")
+            raw_evidence = EvidenceRef(evidence_id=raw_ref, media_type="application/json")
         origin = (
             EventOrigin.NORMALIZED
             if kind in {EventKind.TRANSPORT_CONNECTED, EventKind.TRANSPORT_DISCONNECTED}
@@ -308,7 +308,7 @@ class AsyncAgentSession:
             connection_id=connection_id if isinstance(connection_id, str) else None,
             correlation=correlation,
             raw_evidence_ref=raw_evidence,
-            provenance=EventProvenance(
+            provenance=EventSource(
                 origin=origin,
                 source=(
                     "mcp_pal.server_group"
@@ -342,13 +342,13 @@ class AsyncAgentSession:
             current = asyncio.current_task()
             startup = self._startup_task
             if startup is None:
-                self._snapshot = self._snapshot.transition(LifecycleState.STARTING)
+                self._snapshot = self._snapshot.transition(ExecutionStatus.STARTING)
                 self._startup_task = current
                 startup = current
                 self._emit_event(EventKind.SESSION_CREATED, {"lifecycle": "created"})
                 self._emit_event(
                     EventKind.SESSION_STATE_CHANGED,
-                    {"lifecycle": LifecycleState.STARTING.value},
+                    {"lifecycle": ExecutionStatus.STARTING.value},
                     phase=LifecyclePhase.STARTUP,
                 )
         if startup is not asyncio.current_task():
@@ -365,11 +365,11 @@ class AsyncAgentSession:
                 if self._closing or self._closed:
                     raise KitClosed("agent session is closing")
                 self._entered = True
-                if self._snapshot.lifecycle is LifecycleState.STARTING:
-                    self._snapshot = self._snapshot.transition(LifecycleState.IDLE)
+                if self._snapshot.lifecycle is ExecutionStatus.STARTING:
+                    self._snapshot = self._snapshot.transition(ExecutionStatus.IDLE)
                     self._emit_event(
                         EventKind.SESSION_STATE_CHANGED,
-                        {"lifecycle": LifecycleState.IDLE.value},
+                        {"lifecycle": ExecutionStatus.IDLE.value},
                         phase=LifecyclePhase.IDLE,
                     )
         except BaseException as exc:
@@ -916,8 +916,8 @@ class AsyncAgentSession:
         self._validate_timeout(timeout)
         turn_id = turn_id or TurnId(str(uuid4()))
         async with self._state_lock:
-            if self._snapshot.lifecycle is LifecycleState.IDLE:
-                self._snapshot = self._snapshot.transition(LifecycleState.RUNNING_TURN)
+            if self._snapshot.lifecycle is ExecutionStatus.IDLE:
+                self._snapshot = self._snapshot.transition(ExecutionStatus.RUNNING_TURN)
         self._emit_event(
             EventKind.TURN_CREATED,
             {"number": len(self._turns) + 1},
@@ -932,7 +932,7 @@ class AsyncAgentSession:
         )
         self._emit_event(
             EventKind.SESSION_STATE_CHANGED,
-            {"lifecycle": LifecycleState.RUNNING_TURN.value},
+            {"lifecycle": ExecutionStatus.RUNNING_TURN.value},
             phase=LifecyclePhase.TURN,
         )
         try:
@@ -941,12 +941,12 @@ class AsyncAgentSession:
                 raise UnsupportedFeature("harness adapter does not implement turn sending")
             operation = sender(message, timeout=timeout, metadata=metadata)
             raw = await asyncio.wait_for(operation, timeout=timeout) if timeout is not None else await operation
-            canonical_tool_calls = self._pending_captured_tool_calls()
+            captured_tool_calls = self._pending_captured_tool_calls()
             self._emit_captured_wire_events(turn_id)
             self._record_tool_outcomes(raw)
             policy_violations = self._evaluate_reported_tool_calls(
                 raw,
-                canonical_tool_calls=canonical_tool_calls,
+                captured_tool_calls=captured_tool_calls,
             )
             self._emit_adapter_events(raw, turn_id, policy_violations)
             if policy_violations:
@@ -970,11 +970,11 @@ class AsyncAgentSession:
                 self._turns.append(result)
                 if self._terminal_requested(raw):
                     await self._finish(ExecutionOutcome.FAILED, ErrorCode.UNSUPPORTED, "tool policy violation")
-                elif self._snapshot.lifecycle is LifecycleState.RUNNING_TURN:
-                    self._snapshot = self._snapshot.transition(LifecycleState.IDLE)
+                elif self._snapshot.lifecycle is ExecutionStatus.RUNNING_TURN:
+                    self._snapshot = self._snapshot.transition(ExecutionStatus.IDLE)
                     self._emit_event(
                         EventKind.SESSION_STATE_CHANGED,
-                        {"lifecycle": LifecycleState.IDLE.value},
+                        {"lifecycle": ExecutionStatus.IDLE.value},
                         phase=LifecyclePhase.IDLE,
                     )
                 return result
@@ -982,11 +982,11 @@ class AsyncAgentSession:
             self._emit_turn_finished(turn_id, result)
             if not self._terminal_requested(raw):
                 async with self._state_lock:
-                    if self._snapshot.lifecycle is LifecycleState.RUNNING_TURN:
-                        self._snapshot = self._snapshot.transition(LifecycleState.IDLE)
+                    if self._snapshot.lifecycle is ExecutionStatus.RUNNING_TURN:
+                        self._snapshot = self._snapshot.transition(ExecutionStatus.IDLE)
                         self._emit_event(
                             EventKind.SESSION_STATE_CHANGED,
-                            {"lifecycle": LifecycleState.IDLE.value},
+                            {"lifecycle": ExecutionStatus.IDLE.value},
                             phase=LifecyclePhase.IDLE,
                         )
             self._turns.append(result)
@@ -1025,11 +1025,11 @@ class AsyncAgentSession:
                     self._code_for(exc),
                     self._safe_failure_message(exc),
                 )
-            elif self._snapshot.lifecycle is LifecycleState.RUNNING_TURN:
-                self._snapshot = self._snapshot.transition(LifecycleState.IDLE)
+            elif self._snapshot.lifecycle is ExecutionStatus.RUNNING_TURN:
+                self._snapshot = self._snapshot.transition(ExecutionStatus.IDLE)
                 self._emit_event(
                     EventKind.SESSION_STATE_CHANGED,
-                    {"lifecycle": LifecycleState.IDLE.value},
+                    {"lifecycle": ExecutionStatus.IDLE.value},
                     phase=LifecyclePhase.IDLE,
                 )
             return result
@@ -1113,7 +1113,7 @@ class AsyncAgentSession:
         self,
         raw: object,
         *,
-        canonical_tool_calls: tuple[ToolDescriptor, ...] = (),
+        captured_tool_calls: tuple[ToolDescriptor, ...] = (),
     ) -> tuple[dict[str, object], ...]:
         calls = getattr(raw, "tool_calls", ())
         if not isinstance(calls, (tuple, list)) or not calls:
@@ -1154,7 +1154,7 @@ class AsyncAgentSession:
         # entirely anonymous updates, but never use it to repair malformed or
         # ambiguous identities. Exact cardinality is required and the adapter
         # must omit every identity field.
-        ordered_canonical = canonical_tool_calls if len(canonical_tool_calls) == len(calls) else ()
+        ordered_captured = captured_tool_calls if len(captured_tool_calls) == len(calls) else ()
         for call_index, call in enumerate(calls):
             if not isinstance(call, Mapping):
                 violations.append(self._policy_violation(None, "tool_call_invalid", evidence))
@@ -1162,7 +1162,7 @@ class AsyncAgentSession:
             descriptor, identity_error = self._reported_tool_identity(call)
             if identity_error == "provider_native":
                 continue
-            if ordered_canonical and not any(
+            if ordered_captured and not any(
                 call.get(key) is not None
                 for key in (
                     "server",
@@ -1173,7 +1173,7 @@ class AsyncAgentSession:
                     "qualified_name",
                 )
             ):
-                descriptor = ordered_canonical[call_index]
+                descriptor = ordered_captured[call_index]
                 identity_error = None
             if descriptor is None:
                 try:
@@ -1181,15 +1181,15 @@ class AsyncAgentSession:
                 except Exception:
                     reported_name = None
                 safe_name = self._safe_tool_label(reported_name)
-                canonical_candidates = tuple(
+                captured_candidates = tuple(
                     item
-                    for item in canonical_tool_calls
+                    for item in captured_tool_calls
                     if safe_name is None or item.name == safe_name
                 )
-                if len(canonical_candidates) == 1:
-                    descriptor = canonical_candidates[0]
+                if len(captured_candidates) == 1:
+                    descriptor = captured_candidates[0]
                     identity_error = None
-                elif len(canonical_candidates) > 1:
+                elif len(captured_candidates) > 1:
                     violations.append(self._policy_violation(None, "ambiguous_tool", evidence))
                     continue
             if descriptor is None and identity_error is None and records:
@@ -1251,7 +1251,7 @@ class AsyncAgentSession:
                 )
 
     def _pending_captured_tool_calls(self) -> tuple[ToolDescriptor, ...]:
-        """Return this turn's canonical forwarded calls before advancing capture."""
+        """Return this turn's stable forwarded calls before advancing capture."""
 
         manager = self._server_manager
         capture = getattr(manager, "capture", None) if manager is not None else None
@@ -1344,7 +1344,7 @@ class AsyncAgentSession:
             )
 
     def _emit_turn_finished(self, turn_id: TurnId, result: TurnResult) -> None:
-        payload: dict[str, Any] = {"lifecycle": TurnLifecycle.FINISHED.value}
+        payload: dict[str, Any] = {"lifecycle": TurnStatus.FINISHED.value}
         if result.snapshot.outcome is not None:
             payload["outcome"] = result.snapshot.outcome.value
         self._emit_event(
@@ -1543,11 +1543,11 @@ class AsyncAgentSession:
         return outcomes
 
     def _turn_snapshot(self, turn_id: TurnId, outcome: TurnOutcome) -> Any:
-        from .types import TurnSnapshot
+        from .types import TurnState
 
-        return TurnSnapshot(turn_id=turn_id, session_id=self._session_id, number=len(self._turns) + 1).transition(
-            TurnLifecycle.RUNNING
-        ).transition(TurnLifecycle.FINISHED, outcome)
+        return TurnState(turn_id=turn_id, session_id=self._session_id, number=len(self._turns) + 1).transition(
+            TurnStatus.RUNNING
+        ).transition(TurnStatus.FINISHED, outcome)
 
     def _failure_turn(self, turn_id: TurnId, outcome: TurnOutcome, code: ErrorCode, message: str) -> TurnResult:
         return TurnResult(snapshot=self._turn_snapshot(turn_id, outcome), error=ErrorInfo(code=code, message=message))
@@ -1603,26 +1603,26 @@ class AsyncAgentSession:
             if self._terminal_outcome is not None:
                 return
             if not self._session_created_emitted:
-                self._emit_event(EventKind.SESSION_CREATED, {"lifecycle": LifecycleState.CREATED.value})
+                self._emit_event(EventKind.SESSION_CREATED, {"lifecycle": ExecutionStatus.CREATED.value})
             if outcome is not ExecutionOutcome.COMPLETED:
                 self._closing = True
             self._emit_event(
                 EventKind.SESSION_STATE_CHANGED,
-                {"lifecycle": LifecycleState.CLOSING.value},
+                {"lifecycle": ExecutionStatus.CLOSING.value},
                 phase=LifecyclePhase.CLEANUP,
             )
-            if self._snapshot.lifecycle is not LifecycleState.FINISHED:
-                if self._snapshot.lifecycle is LifecycleState.CREATED:
-                    self._snapshot = self._snapshot.transition(LifecycleState.FINISHED, outcome)
+            if self._snapshot.lifecycle is not ExecutionStatus.FINISHED:
+                if self._snapshot.lifecycle is ExecutionStatus.CREATED:
+                    self._snapshot = self._snapshot.transition(ExecutionStatus.FINISHED, outcome)
                 else:
-                    if self._snapshot.lifecycle is not LifecycleState.CLOSING:
-                        self._snapshot = self._snapshot.transition(LifecycleState.CLOSING)
-                    self._snapshot = self._snapshot.transition(LifecycleState.FINISHED, outcome)
+                    if self._snapshot.lifecycle is not ExecutionStatus.CLOSING:
+                        self._snapshot = self._snapshot.transition(ExecutionStatus.CLOSING)
+                    self._snapshot = self._snapshot.transition(ExecutionStatus.FINISHED, outcome)
             self._terminal_outcome = outcome
             self._terminal_error = None if outcome is ExecutionOutcome.COMPLETED else ErrorInfo(code=code, message=message)
             self._emit_event(
                 EventKind.SESSION_STATE_CHANGED,
-                {"lifecycle": LifecycleState.FINISHED.value, "outcome": outcome.value},
+                {"lifecycle": ExecutionStatus.FINISHED.value, "outcome": outcome.value},
                 phase=LifecyclePhase.CLEANUP,
             )
             store = getattr(self._trace_recorder, "_store", None)
@@ -1769,7 +1769,7 @@ class AsyncAgentSession:
                 self._close_requested_outcome = ExecutionOutcome.CANCELLED
             await self._run_close_safely(ExecutionOutcome.CANCELLED)
 
-    async def snapshot(self) -> ExecutionSnapshot:
+    async def snapshot(self) -> ExecutionState:
         return self._snapshot
 
     @property
@@ -1792,13 +1792,13 @@ class AsyncAgentSession:
         return self._terminal_result
 
     @property
-    def provenance(self) -> SessionProvenance | None:
+    def provenance(self) -> SessionSource | None:
         """Immutable source linkage for a portable fork/replay session."""
 
         return self._provenance
 
     @property
-    def interactions(self) -> InteractionController:
+    def interactions(self) -> Interactions:
         """Policy-gated permission, filesystem, terminal, and model handlers."""
 
         return self._interactions
@@ -1808,7 +1808,7 @@ class AsyncAgentSession:
         request: SessionForkRequest,
         *,
         adapter_factory: Callable[
-            [AgentExecutionSpec, SessionProvenance], HarnessAdapter | Awaitable[HarnessAdapter]
+            [AgentSpec, SessionSource], HarnessAdapter | Awaitable[HarnessAdapter]
         ],
     ) -> "AsyncAgentSession":
         """Create a fresh child execution from this terminal session.
@@ -1829,7 +1829,7 @@ class AsyncAgentSession:
         ):
             raise UnsupportedFeature("fork source turn is not part of the source result")
         try:
-            provenance = SessionProvenance(
+            provenance = SessionSource(
                 mode=request.mode,
                 source_execution_id=source.snapshot.execution_id,
                 source_session_id=(source_turn_id and next(

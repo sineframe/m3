@@ -10,8 +10,8 @@ from typing import Any
 
 from dotenv import dotenv_values
 
-from mcp_pal.configuration import ConfigurationError, resolve_config
-from mcp_pal.services.probes import CapabilityProbeService, ProbeKind, ProbeRequest
+from mcp_pal.configuration import ConfigError, load_config
+from mcp_pal.services.probes import Probes, ProbeKind, ProbeRequest
 from .errors import CLIError
 
 _TRANSPORT_MODULES = {
@@ -38,12 +38,12 @@ class DoctorProjectPythonError(DoctorCLIError):
 class DoctorConfigurationError(DoctorCLIError):
     """A value-free configuration diagnostic at the CLI boundary."""
 
-    def __init__(self, error: ConfigurationError) -> None:
+    def __init__(self, error: ConfigError) -> None:
         self.configuration_error = error
         super().__init__("invalid configuration")
 
 
-def _configuration_error_payload(error: ConfigurationError) -> dict[str, str]:
+def _configuration_error_payload(error: ConfigError) -> dict[str, str]:
     return {
         "code": str(error.code),
         "field": str(error.field),
@@ -256,13 +256,13 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
     include_config = any(kind == "config" for kind, _ in requirements)
     if include_config:
         try:
-            config = resolve_config(env=environment, cwd=args.project_root)
-        except ConfigurationError as error:
+            config = load_config(env=environment, cwd=args.project_root)
+        except ConfigError as error:
             raise DoctorConfigurationError(error) from None
         except (OSError, TypeError, ValueError):
             raise DoctorCLIError("invalid configuration") from None
         configuration = {"status": "ready", "settings": _json_value(config)}
-    probe_report = CapabilityProbeService().probe_requested(_requests(requirements))
+    probe_report = Probes().probe_requested(_requests(requirements))
     results = _safe_probe_results(list(probe_report.results), requirements)
     ready = cli_ready and project_python["status"] == "ready" and (configuration is None or configuration["status"] == "ready") and probe_report.readiness.ready
     report = {
@@ -311,7 +311,7 @@ def print_human(report: dict[str, Any]) -> None:
             print("Next: mcp-pal doctor")
 
 
-def print_configuration_error(error: ConfigurationError) -> None:
+def print_configuration_error(error: ConfigError) -> None:
     details = _configuration_error_payload(error)
     print(
         "mcp-pal doctor: configuration error "

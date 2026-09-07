@@ -9,23 +9,23 @@ import pytest
 
 from mcp_pal.execution_runtime import AsyncExecutionController
 from mcp_pal.types import (
-    CallToolOperation,
-    CallToolOperationResult,
-    DirectExecutionSpec,
-    GetPromptOperation,
-    GetPromptOperationResult,
-    ListPromptsOperation,
-    ListPromptsOperationResult,
-    ListResourcesOperation,
-    ListResourcesOperationResult,
-    ListResourceTemplatesOperation,
-    ListResourceTemplatesOperationResult,
-    ListToolsOperation,
-    ListToolsOperationResult,
-    PingOperation,
-    PingOperationResult,
-    ReadResourceOperation,
-    ReadResourceOperationResult,
+    CallTool,
+    CallToolResult,
+    DirectSpec,
+    GetPrompt,
+    GetPromptResult,
+    ListPrompts,
+    ListPromptsResult,
+    ListResources,
+    ListResourcesResult,
+    ListTemplates,
+    ListTemplatesResult,
+    ListTools,
+    ListToolsResult,
+    Ping,
+    PingResult,
+    ReadResource,
+    ReadResourceResult,
     ServerBinding,
     StdioServer,
 )
@@ -116,8 +116,8 @@ class _DispatchKit:
         return self.client
 
 
-def _spec(operation: object) -> DirectExecutionSpec:
-    return DirectExecutionSpec(
+def _spec(operation: object) -> DirectSpec:
+    return DirectSpec(
         servers=(
             ServerBinding(
                 server=StdioServer(name="dispatch", command="unused"),
@@ -133,28 +133,28 @@ async def test_all_direct_operation_variants_dispatch_to_typed_results() -> None
     client = _DispatchClient()
     controller = AsyncExecutionController(_DispatchKit(client))
     operations = (
-        (ListToolsOperation(server="dispatch"), ListToolsOperationResult),
-        (ListResourcesOperation(server="dispatch"), ListResourcesOperationResult),
-        (ListResourceTemplatesOperation(server="dispatch"), ListResourceTemplatesOperationResult),
-        (ListPromptsOperation(server="dispatch"), ListPromptsOperationResult),
+        (ListTools(server="dispatch"), ListToolsResult),
+        (ListResources(server="dispatch"), ListResourcesResult),
+        (ListTemplates(server="dispatch"), ListTemplatesResult),
+        (ListPrompts(server="dispatch"), ListPromptsResult),
         (
-            CallToolOperation(
+            CallTool(
                 server="dispatch",
                 name="echo",
                 arguments={"text": "dispatch"},
             ),
-            CallToolOperationResult,
+            CallToolResult,
         ),
-        (ReadResourceOperation(server="dispatch", uri="memory://value"), ReadResourceOperationResult),
+        (ReadResource(server="dispatch", uri="memory://value"), ReadResourceResult),
         (
-            GetPromptOperation(
+            GetPrompt(
                 server="dispatch",
                 name="greeting",
                 arguments={"name": "Ada"},
             ),
-            GetPromptOperationResult,
+            GetPromptResult,
         ),
-        (PingOperation(server="dispatch"), PingOperationResult),
+        (Ping(server="dispatch"), PingResult),
     )
 
     for operation, result_type in operations:
@@ -162,7 +162,7 @@ async def test_all_direct_operation_variants_dispatch_to_typed_results() -> None
         assert result.snapshot.outcome.value == "completed"
         assert isinstance(result.direct_result, result_type)
         assert result.direct_result.raw is not None
-        if isinstance(result.direct_result, CallToolOperationResult):
+        if isinstance(result.direct_result, CallToolResult):
             assert result.direct_result.is_error is True
 
     await controller.close()
@@ -173,15 +173,15 @@ async def test_list_operation_honors_start_cursor_and_all_pages() -> None:
     client = _DispatchClient()
     controller = AsyncExecutionController(_DispatchKit(client))
 
-    all_pages = await controller.run(_spec(ListToolsOperation(server="dispatch")))
-    assert isinstance(all_pages.direct_result, ListToolsOperationResult)
+    all_pages = await controller.run(_spec(ListTools(server="dispatch")))
+    assert isinstance(all_pages.direct_result, ListToolsResult)
     assert client.tool_cursors == [None, "page-2"]
 
     client.tool_cursors.clear()
     one_page = await controller.run(
-        _spec(ListToolsOperation(server="dispatch", cursor="page-2", all_pages=False))
+        _spec(ListTools(server="dispatch", cursor="page-2", all_pages=False))
     )
-    assert isinstance(one_page.direct_result, ListToolsOperationResult)
+    assert isinstance(one_page.direct_result, ListToolsResult)
     assert client.tool_cursors == ["page-2"]
     await controller.close()
 
@@ -193,12 +193,12 @@ async def test_explicit_selector_dispatches_to_the_requested_second_binding() ->
     controller = AsyncExecutionController(kit)
     first = StdioServer(name="first", command="unused")
     second = StdioServer(name="second", command="unused")
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(
             ServerBinding(server=first, alias="first"),
             ServerBinding(server=second, alias="second"),
         ),
-        operation=PingOperation(server="second"),
+        operation=Ping(server="second"),
     )
 
     result = await controller.run(spec)

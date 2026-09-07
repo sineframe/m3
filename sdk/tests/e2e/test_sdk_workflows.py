@@ -34,33 +34,33 @@ from mcp_pal.errors import UnsupportedFeature
 from mcp_pal.observability import ObservationState, TransportEntry
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     ArtifactPolicy,
-    CallToolOperation,
-    CallToolOperationResult,
-    DirectExecutionSpec,
-    DirectOperationResult,
+    CallTool,
+    CallToolResult,
+    DirectSpec,
+    DirectResult,
     DirectOperation,
-    DirectOperationResultBase,
+    _DirectResult,
     ExecutionOutcome,
     ExecutionResult,
     ErrorCode,
     FullToolPolicy,
-    GetPromptOperation,
-    GetPromptOperationResult,
-    ListPromptsOperation,
-    ListPromptsOperationResult,
-    ListResourcesOperation,
-    ListResourcesOperationResult,
-    ListResourceTemplatesOperation,
-    ListResourceTemplatesOperationResult,
-    ListToolsOperation,
-    ListToolsOperationResult,
+    GetPrompt,
+    GetPromptResult,
+    ListPrompts,
+    ListPromptsResult,
+    ListResources,
+    ListResourcesResult,
+    ListTemplates,
+    ListTemplatesResult,
+    ListTools,
+    ListToolsResult,
     OpaqueContent,
-    PingOperation,
-    PingOperationResult,
-    ReadResourceOperation,
-    ReadResourceOperationResult,
+    Ping,
+    PingResult,
+    ReadResource,
+    ReadResourceResult,
     ServerBinding,
     SecretReference,
     RestrictiveToolPolicy,
@@ -95,7 +95,7 @@ def _stdio_server(path: Path = _MATRIX_SERVER, *, environment: dict[str, str] | 
     )
 
 
-def _acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentExecutionSpec:
+def _acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentSpec:
     manifest = {
         "schema_version": "mcp-pal.harness.v1",
         "protocol": "acp",
@@ -112,7 +112,7 @@ def _acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentExecutionSpec:
         ],
         "env": {},
     }
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=ACPAgent(model="agent-default", manifest=manifest),
         servers=(
             ServerBinding(
@@ -126,11 +126,11 @@ def _acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentExecutionSpec:
     )
 
 
-def _scenario_acp_spec(mode: str, *, mcp_marker: Path) -> AgentExecutionSpec:
+def _scenario_acp_spec(mode: str, *, mcp_marker: Path) -> AgentSpec:
     """Build a public agent spec around the test-only ACP subprocess."""
 
     fixture = _FIXTURES / "acp_scenario_agent.py"
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=ACPAgent(
             model="fixture",
             manifest={
@@ -152,11 +152,11 @@ def _scenario_acp_spec(mode: str, *, mcp_marker: Path) -> AgentExecutionSpec:
     )
 
 
-def _scenario_acp_cancel_spec(*, acp_pid_marker: Path, mcp_pid_marker: Path) -> AgentExecutionSpec:
+def _scenario_acp_cancel_spec(*, acp_pid_marker: Path, mcp_pid_marker: Path) -> AgentSpec:
     """Build a real ACP/MCP pair that blocks during MCP initialization."""
 
     fixture = _FIXTURES / "acp_scenario_agent.py"
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=ACPAgent(
             model="fixture",
             manifest={
@@ -182,10 +182,10 @@ def _scenario_acp_cancel_spec(*, acp_pid_marker: Path, mcp_pid_marker: Path) -> 
     )
 
 
-def _authenticated_acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentExecutionSpec:
+def _authenticated_acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentSpec:
     """ACP plus the real stdio proxy, with an MCP credential in a reference."""
 
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=ACPAgent(
             model="fixture",
             manifest={
@@ -309,9 +309,9 @@ def test_sync_author_exercises_stdio_tools_resources_prompts_and_trace() -> None
 
 
 def test_sync_run_dispatches_call_tool_to_real_stdio_and_returns_typed_result() -> None:
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=_stdio_server(), alias="e2e-mcp"),),
-        operation=CallToolOperation(
+        operation=CallTool(
             server="e2e-mcp",
             name="echo",
             arguments={"text": "run-value"},
@@ -321,7 +321,7 @@ def test_sync_run_dispatches_call_tool_to_real_stdio_and_returns_typed_result() 
         result = kit.run(spec)
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
-    assert isinstance(result.direct_result, CallToolOperationResult)
+    assert isinstance(result.direct_result, CallToolResult)
     assert result.direct_result.content[0]["text"] == "run-value"
     assert result.direct_result.raw is not None
     assert result.trace is not None
@@ -335,7 +335,7 @@ def test_sync_run_dispatches_call_tool_to_real_stdio_and_returns_typed_result() 
 
     error_spec = spec.model_copy(
         update={
-            "operation": CallToolOperation(
+            "operation": CallTool(
                 server="e2e-mcp",
                 name="failure",
                 arguments={},
@@ -345,12 +345,12 @@ def test_sync_run_dispatches_call_tool_to_real_stdio_and_returns_typed_result() 
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
         error_result = kit.run(error_spec)
     assert error_result.snapshot.outcome is ExecutionOutcome.COMPLETED
-    assert isinstance(error_result.direct_result, CallToolOperationResult)
+    assert isinstance(error_result.direct_result, CallToolResult)
     assert error_result.direct_result.is_error is True
 
 
 def _run_sync_direct_operation(operation: DirectOperation) -> ExecutionResult:
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=_stdio_server(), alias="e2e-mcp"),),
         operation=operation,
     )
@@ -362,22 +362,22 @@ def _run_sync_direct_operation(operation: DirectOperation) -> ExecutionResult:
 @pytest.mark.parametrize(
     ("operation", "result_type"),
     [
-        pytest.param(ListToolsOperation(server="e2e-mcp"), ListToolsOperationResult, id="list-tools"),
-        pytest.param(ListResourcesOperation(server="e2e-mcp"), ListResourcesOperationResult, id="list-resources"),
-        pytest.param(ListResourceTemplatesOperation(server="e2e-mcp"), ListResourceTemplatesOperationResult, id="list-resource-templates"),
-        pytest.param(ListPromptsOperation(server="e2e-mcp"), ListPromptsOperationResult, id="list-prompts"),
-        pytest.param(CallToolOperation(server="e2e-mcp", name="echo", arguments={"text": "parity"}), CallToolOperationResult, id="call-tool"),
-        pytest.param(ReadResourceOperation(server="e2e-mcp", uri="memory://document"), ReadResourceOperationResult, id="read-resource"),
-        pytest.param(GetPromptOperation(server="e2e-mcp", name="greeting"), GetPromptOperationResult, id="get-prompt"),
-        pytest.param(PingOperation(server="e2e-mcp"), PingOperationResult, id="ping"),
+        pytest.param(ListTools(server="e2e-mcp"), ListToolsResult, id="list-tools"),
+        pytest.param(ListResources(server="e2e-mcp"), ListResourcesResult, id="list-resources"),
+        pytest.param(ListTemplates(server="e2e-mcp"), ListTemplatesResult, id="list-resource-templates"),
+        pytest.param(ListPrompts(server="e2e-mcp"), ListPromptsResult, id="list-prompts"),
+        pytest.param(CallTool(server="e2e-mcp", name="echo", arguments={"text": "parity"}), CallToolResult, id="call-tool"),
+        pytest.param(ReadResource(server="e2e-mcp", uri="memory://document"), ReadResourceResult, id="read-resource"),
+        pytest.param(GetPrompt(server="e2e-mcp", name="greeting"), GetPromptResult, id="get-prompt"),
+        pytest.param(Ping(server="e2e-mcp"), PingResult, id="ping"),
     ],
 )
 async def test_sync_async_direct_operation_parity_roundtrips_json(
     operation: DirectOperation,
-    result_type: type[DirectOperationResultBase],
+    result_type: type[_DirectResult],
 ) -> None:
     sync_result = await asyncio.to_thread(_run_sync_direct_operation, operation)
-    async_spec = DirectExecutionSpec(
+    async_spec = DirectSpec(
         servers=(ServerBinding(server=_stdio_server(), alias="e2e-mcp"),),
         operation=operation,
     )
@@ -395,24 +395,24 @@ async def test_sync_async_direct_operation_parity_roundtrips_json(
     assert "raw" not in sync_json
     assert "raw" not in async_json
     assert sync_json == async_json
-    adapter: TypeAdapter[DirectOperationResult] = TypeAdapter(DirectOperationResult)
+    adapter: TypeAdapter[DirectResult] = TypeAdapter(DirectResult)
     assert adapter.validate_json(json.dumps(sync_json)).model_dump(mode="json") == sync_json
     assert adapter.validate_json(json.dumps(async_json)).model_dump(mode="json") == async_json
 
 
 @pytest.mark.asyncio
 async def test_sync_async_direct_list_tools_cursor_without_following_pages() -> None:
-    operation = ListToolsOperation(server="e2e-mcp", cursor="page-2", all_pages=False)
+    operation = ListTools(server="e2e-mcp", cursor="page-2", all_pages=False)
     sync_result = await asyncio.to_thread(_run_sync_direct_operation, operation)
-    async_spec = DirectExecutionSpec(
+    async_spec = DirectSpec(
         servers=(ServerBinding(server=_stdio_server(), alias="e2e-mcp"),),
         operation=operation,
     )
     async with AsyncMCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
         async_result = await kit.run(async_spec)
 
-    assert isinstance(sync_result.direct_result, ListToolsOperationResult)
-    assert isinstance(async_result.direct_result, ListToolsOperationResult)
+    assert isinstance(sync_result.direct_result, ListToolsResult)
+    assert isinstance(async_result.direct_result, ListToolsResult)
     assert [tool.name for tool in sync_result.direct_result.tools] == ["failure"]
     assert [tool.name for tool in async_result.direct_result.tools] == ["failure"]
     assert sync_result.direct_result.model_dump(mode="json") == async_result.direct_result.model_dump(mode="json")
@@ -423,9 +423,9 @@ async def test_async_run_real_stdio_json_rpc_error_is_failed_and_traced() -> Non
     # Use a regular JSON-RPC application error code.  The harness reserves
     # -32000 for an injected transport failure.
     server = FaultInjector().protocol_error("tools/call", code=-32042)
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=server.stdio_server(), alias="fault"),),
-        operation=CallToolOperation(
+        operation=CallTool(
             server="fault",
             name="echo",
             arguments={},
@@ -443,14 +443,14 @@ async def test_async_run_real_stdio_json_rpc_error_is_failed_and_traced() -> Non
 
 @pytest.mark.asyncio
 async def test_async_run_real_stdio_startup_failure_is_failed_and_traced() -> None:
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(
             ServerBinding(
                 server=StdioServer(name="missing", command="mcp-pal-no-such-executable"),
                 alias="missing",
             ),
         ),
-        operation=PingOperation(server="missing"),
+        operation=Ping(server="missing"),
     )
     async with AsyncMCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
         result = await kit.run(spec)
@@ -466,9 +466,9 @@ async def test_async_run_real_stdio_startup_failure_is_failed_and_traced() -> No
 @pytest.mark.asyncio
 async def test_async_run_real_stdio_operation_timeout_is_timed_out_and_traced() -> None:
     server = FaultInjector().delay("tools/call", 0.5).stdio_server()
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=server, alias="slow"),),
-        operation=CallToolOperation(server="slow", name="echo", arguments={}),
+        operation=CallTool(server="slow", name="echo", arguments={}),
         timeout_seconds=0.05,
     )
     async with AsyncMCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
@@ -483,9 +483,9 @@ async def test_async_run_real_stdio_operation_timeout_is_timed_out_and_traced() 
 @pytest.mark.asyncio
 async def test_async_run_real_stdio_schema_validation_failure_is_failed_and_traced() -> None:
     server = FaultInjector().invalid_result("tools/call").stdio_server()
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=server, alias="invalid"),),
-        operation=CallToolOperation(server="invalid", name="echo", arguments={}),
+        operation=CallTool(server="invalid", name="echo", arguments={}),
         validate_schemas=True,
     )
     async with AsyncMCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
@@ -499,9 +499,9 @@ async def test_async_run_real_stdio_schema_validation_failure_is_failed_and_trac
 
 @pytest.mark.asyncio
 async def test_async_run_dispatches_call_tool_to_real_stdio_and_returns_typed_result() -> None:
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=_stdio_server(), alias="e2e-mcp"),),
-        operation=CallToolOperation(
+        operation=CallTool(
             server="e2e-mcp",
             name="echo",
             arguments={"text": "async-run-value"},
@@ -511,7 +511,7 @@ async def test_async_run_dispatches_call_tool_to_real_stdio_and_returns_typed_re
         result = await kit.run(spec)
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
-    assert isinstance(result.direct_result, CallToolOperationResult)
+    assert isinstance(result.direct_result, CallToolResult)
     assert result.direct_result.content[0]["text"] == "async-run-value"
     assert result.direct_result.raw is not None
     assert result.trace is not None
@@ -797,33 +797,33 @@ async def test_separate_worker_success_returns_a_reopenable_trace(tmp_path: Path
         producer = AsyncMCPTestKit(store=store, embedded_worker=False, env={})
         try:
             handle = producer.submit(
-                DirectExecutionSpec(
+                DirectSpec(
                     servers=(ServerBinding(server=_stdio_server()),),
-                    operation=CallToolOperation(name="echo", arguments={"text": "durable-value"}),
+                    operation=CallTool(name="echo", arguments={"text": "durable-value"}),
                 )
             )
             result = await handle.result(timeout=15)
-            assert isinstance(result.direct_result, CallToolOperationResult)
+            assert isinstance(result.direct_result, CallToolResult)
             assert result.direct_result.content[0]["text"] == "durable-value"
             assert result.direct_result.raw is None
             error_handle = producer.submit(
-                DirectExecutionSpec(
+                DirectSpec(
                     servers=(ServerBinding(server=_stdio_server()),),
-                    operation=CallToolOperation(name="failure", arguments={}),
+                    operation=CallTool(name="failure", arguments={}),
                 )
             )
             error_result = await error_handle.result(timeout=15)
-            assert isinstance(error_result.direct_result, CallToolOperationResult)
+            assert isinstance(error_result.direct_result, CallToolResult)
             assert error_result.direct_result.is_error is True
             assert error_result.direct_result.raw is None
             failed_handle = producer.submit(
-                DirectExecutionSpec(
+                DirectSpec(
                     servers=(
                         ServerBinding(
                             server=FaultInjector().protocol_error("tools/call", code=-32042).stdio_server(),
                         ),
                     ),
-                    operation=CallToolOperation(name="echo", arguments={}),
+                    operation=CallTool(name="echo", arguments={}),
                 )
             )
             failed_result = await failed_handle.result(timeout=15)
@@ -848,9 +848,9 @@ async def test_separate_worker_success_returns_a_reopenable_trace(tmp_path: Path
     assert isinstance(persisted_result, Mapping)
     assert persisted_result["kind"] == "call_tool"
     assert "raw" not in persisted_result
-    adapter: TypeAdapter[DirectOperationResult] = TypeAdapter(DirectOperationResult)
-    persisted_typed: DirectOperationResult = adapter.validate_python(persisted_result)
-    assert isinstance(persisted_typed, CallToolOperationResult)
+    adapter: TypeAdapter[DirectResult] = TypeAdapter(DirectResult)
+    persisted_typed: DirectResult = adapter.validate_python(persisted_result)
+    assert isinstance(persisted_typed, CallToolResult)
     assert persisted_typed.content[0]["text"] == "durable-value"
     assert persisted_typed.raw is None
     error_terminal = next(
@@ -860,8 +860,8 @@ async def test_separate_worker_success_returns_a_reopenable_trace(tmp_path: Path
     )
     error_persisted = error_terminal.payload.get("direct_result")
     assert isinstance(error_persisted, Mapping)
-    error_typed: DirectOperationResult = adapter.validate_python(error_persisted)
-    assert isinstance(error_typed, CallToolOperationResult)
+    error_typed: DirectResult = adapter.validate_python(error_persisted)
+    assert isinstance(error_typed, CallToolResult)
     assert error_typed.is_error is True
     assert error_typed.raw is None
     failed_terminal = next(
@@ -885,9 +885,9 @@ async def test_separate_worker_persists_declared_artifact_bytes(tmp_path: Path) 
         producer = AsyncMCPTestKit(store=store, embedded_worker=False, env={})
         try:
             handle = producer.submit(
-                DirectExecutionSpec(
+                DirectSpec(
                     servers=(ServerBinding(server=_stdio_server()),),
-                    operation=PingOperation(),
+                    operation=Ping(),
                     workspace=WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)),
                     artifact_policy=ArtifactPolicy.ALWAYS,
                     declared_artifacts=("result.txt",),
@@ -928,9 +928,9 @@ async def test_separate_worker_cancel_interrupts_owned_stdio_process(
         )
         try:
             handle = producer.submit(
-                DirectExecutionSpec(
+                DirectSpec(
                     servers=(ServerBinding(server=server),),
-                    operation=PingOperation(),
+                    operation=Ping(),
                     timeout_seconds=30,
                 )
             )

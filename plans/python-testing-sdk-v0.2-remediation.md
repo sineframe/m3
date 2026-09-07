@@ -188,24 +188,24 @@ xfails. Any additional failure blocks the next milestone.
   acceptance run passed 789 tests, with 1 expected skip and exactly the 3
   documented strict xfails.
 
-#### Make `DirectExecutionSpec` an actual execution
+#### Make `DirectSpec` an actual execution
 
 Add a serializable discriminated `DirectOperation` union. Initial operations:
 
-- `ListToolsOperation`, `ListResourcesOperation`, `ListPromptsOperation`;
-- `CallToolOperation(name, arguments)`;
-- `ReadResourceOperation(uri)`;
-- `GetPromptOperation(name, arguments)`; and
-- `PingOperation`.
+- `ListTools`, `ListResources`, `ListPrompts`;
+- `CallTool(name, arguments)`;
+- `ReadResource(uri)`;
+- `GetPrompt(name, arguments)`; and
+- `Ping`.
 
 Implementation requirements:
 
-- [x] Add `operation: DirectOperation` to `DirectExecutionSpec`; do not allow a
+- [x] Add `operation: DirectOperation` to `DirectSpec`; do not allow a
   setup-only spec to validate as an execution.
 
   Evidence note (round 2A): the frozen discriminated operation and typed result
   models, JSON schemas, required-spec field, single-/multi-server selector and
-  effective-alias validation, canonical value-model identities, typed result
+  effective-alias validation, stable value-model identities, typed result
   variants with excluded in-process `raw` responses, and checked public exports
   are implemented and covered by focused model/client tests
   (`sdk/tests/unit/test_direct_operation_models.py`). Luna's focused set and
@@ -267,14 +267,14 @@ Implementation requirements:
 Gate:
 
 - The previously failing in-process exception test passes.
-- A black-box `kit.run(DirectExecutionSpec(...CallToolOperation...))` calls a
+- A black-box `kit.run(DirectSpec(...CallTool...))` calls a
   real stdio MCP and returns the tool result and complete trace.
 - No setup-only direct execution can report `completed`.
 
 ### R2 — Make tracing authoritative for every SDK surface
 
 - [x] Give direct clients, submitted executions, and interactive agent sessions
-  one shared canonical recorder/finalization contract.
+  one shared stable recorder/finalization contract.
 - [ ] Construct `AgentSession` terminal results only after the terminal event is
   committed and the trace is finalized.
 - [x] Set `ExecutionResult.trace` for direct `agent_session()` use, not only for
@@ -286,7 +286,7 @@ Gate:
 - [x] Make finalization idempotent and reject events appended after the terminal
   event.
 - [ ] Reopen every persistent trace through a second `SQLiteExecutionStore`
-  instance and compare the canonical event sequence.
+  instance and compare the stable event sequence.
 - [x] Add outcome-matrix tests covering completed, failed, timed out, cancelled,
   interrupted, startup failed, and cleanup failed.
 - [ ] Assert redaction is identical in SDK results, SQLite, API responses, SSE,
@@ -320,7 +320,7 @@ Gate:
   terminal-turn results remain trace-less until close. Submitted terminal
   failures retain the outer execution ID/event authority without duplicate
   terminal IDs, and a persistent submitted trace reopens from a second
-  `SQLiteExecutionStore` with an identical canonical event sequence. Cleanup
+  `SQLiteExecutionStore` with an identical stable event sequence. Cleanup
   retry finalizes once as partial with `cleanup_failed` retained as a
   limitation. The focused R2B set passed 13 tests and strict mypy passed for
   the touched runtime/session/test files. Independent review added submitted
@@ -333,7 +333,7 @@ Gate:
   above.
 
   Evidence note (round 2C): SQLite-owned cancellation and lease-interruption
-  terminalization now shares a canonical partial payload containing outcome,
+  terminalization now shares a stable partial payload containing outcome,
   completeness, and bounded limitations. Reopen tests cover queued and
   worker-observed cancellation plus stale, heartbeat, and explicit lease-loss
   interruption, proving one terminal event, snapshot/event outcome agreement,
@@ -597,7 +597,7 @@ native-policy separation, denied-call JSON-RPC responses, and argument-free
 denial captures are covered by `sdk/tests/unit/test_proxy_tool_policy.py`.
 ACP policy preflight reports portable enforcement for the real adapter, and
 the real two-turn ACP/MCP trace test is green without an xfail. Adapter-only
-tool reports remain advisory; canonical proxy captures are the enforcement
+tool reports remain advisory; stable proxy captures are the enforcement
 evidence. Focused R5B policy/ACP/manifest tests passed (29 tests), strict
 mypy passed for all seven touched typed runtime modules, and `git diff --check` passed.
 The independently reviewed complete SDK gate then passed 883 tests, with 1
@@ -609,7 +609,7 @@ The remaining terminal policy-evidence todo remains open.
 - [x] Enforce portable MCP tool policy in SDK-owned MCP proxies before forwarding
   `tools/call`, independent of whether the harness has a native allowlist.
 - [x] Normalize every observed call to `(server alias, tool name)` at the proxy.
-- [x] Correlate adapter-reported calls with canonical proxy captures; do not
+- [x] Correlate adapter-reported calls with stable proxy captures; do not
   reject a valid single-server call merely because an ACP update gave only the
   tool name.
 - [x] Reject ambiguous unqualified calls when multiple servers expose the same
@@ -725,7 +725,7 @@ Gate:
   persistence, built-in profiles, run orchestration, and one-shot native
   runners live under `app/src/mcp_pal_app`.
 - [x] Legacy application event normalization and its regression tests live in
-  the app; modern SDK adapters, ACP contracts, canonical trace/storage, and
+  the app; modern SDK adapters, ACP contracts, stable trace/storage, and
   proxy modules remain in the SDK.
 - [x] SDK has no compatibility forwarding modules for the removed application
   paths, and the packaging gate checks both wheel contents and clean-install
@@ -838,7 +838,7 @@ consumption, `/api/v1` removal, and development reset completion remain open.
 
 The typed ACP probe contract now persists protocol and full observations through
 the SDK's in-memory and SQLite stores. Dimensions include profile/current
-revision, probe kind, transport, mode, and canonical session configuration;
+revision, probe kind, transport, mode, and stable session configuration;
 protocol mode/config values normalize to a neutral dimension. The application
 service validates the live harness profile/revision, requires a verified
 protocol probe before full probes, invokes the SDK's real `protocol_probe` and
@@ -1087,7 +1087,7 @@ Keep changes reviewable in this order:
 
 1. Status correction and regression-test preservation.
 2. Direct trace shutdown and original-exception preservation.
-3. Direct operation model and real `DirectExecutionSpec` execution.
+3. Direct operation model and real `DirectSpec` execution.
 4. Shared trace finalization for agent sessions/submitted executions.
 5. Secret-reference persistence and transport canaries.
 6. Persistent artifact-store injection and execution-ID ownership.
@@ -1151,7 +1151,7 @@ than importing from repository `PYTHONPATH`.
 | SecretReference becomes `[REDACTED]` | R3 | SQLite/process round trip |
 | API-key literals miss canary registration | R3 | echoed HTTP/stdio secret scans |
 | Proxy writer loses resolved canaries | R3 | proxy capture scan |
-| DirectExecutionSpec performs no operation | R1 | real stdio operation E2E |
+| DirectSpec performs no operation | R1 | real stdio operation E2E |
 | AgentSession result has no trace | R2 | direct session outcome matrix |
 | Native harness ignores workspace | R4/R5 | real-process workspace tests |
 | Native stderr drain can deadlock | R5 | output above pipe/retention limits |

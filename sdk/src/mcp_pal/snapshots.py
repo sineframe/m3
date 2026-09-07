@@ -35,7 +35,7 @@ def _field_name(value: str) -> str:
 
 @_dataclass(frozen=True, slots=True)
 class SnapshotOptions:
-    """Controls canonical snapshot omission and explicit field opt-ins.
+    """Controls stable snapshot omission and explicit field opt-ins.
 
     ``include_fields`` accepts either a field name (for example
     ``"duration_ms"``) or a structural path (for example
@@ -88,7 +88,7 @@ def _without_url_port(value: str, path: str, options: SnapshotOptions) -> str:
         return value
 
 
-def _canonicalize(value: _Any, *, path: str, options: SnapshotOptions) -> _SnapshotValue | None:
+def _normalize(value: _Any, *, path: str, options: SnapshotOptions) -> _SnapshotValue | None:
     if isinstance(value, _Mapping):
         result: dict[str, _SnapshotValue] = {}
         for raw_key, raw_value in value.items():
@@ -96,25 +96,25 @@ def _canonicalize(value: _Any, *, path: str, options: SnapshotOptions) -> _Snaps
             child_path = f"{path}.{key}"
             if _field_name(key) in options.omitted_fields and not _included(key, child_path, options):
                 continue
-            normalized = _canonicalize(raw_value, path=child_path, options=options)
+            normalized = _normalize(raw_value, path=child_path, options=options)
             result[key] = normalized
         return {key: result[key] for key in sorted(result)}
     if isinstance(value, (list, tuple)):
         return [
-            _canonicalize(item, path=f"{path}[{index}]", options=options)
+            _normalize(item, path=f"{path}[{index}]", options=options)
             for index, item in enumerate(value)
         ]
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
         return _without_url_port(value, path, options)
-    # Redaction should have rejected this before canonicalization.  Keep a
+    # Redaction should have rejected this before stableization.  Keep a
     # defensive failure here so this module never silently returns an opaque
     # provider object to a snapshot plugin.
     raise TypeError("redacted snapshot contains an unsupported value")
 
 
-def canonical_snapshot(
+def snapshot(
     value: _Any,
     *,
     include_fields: _Iterable[str] = (),
@@ -131,13 +131,10 @@ def canonical_snapshot(
         omitted_fields=_DEFAULT_OMITTED_FIELDS if omitted_fields is None else frozenset(omitted_fields),
     )
     redacted = _redact_for_export(value, config=config, path="$.snapshot")
-    result = _canonicalize(redacted, path="$.snapshot", options=selected)
+    result = _normalize(redacted, path="$.snapshot", options=selected)
     if result is None:
         return None
     return result
 
 
-normalize_snapshot = canonical_snapshot
-
-
-__all__ = ["SnapshotOptions", "canonical_snapshot", "normalize_snapshot"]
+__all__ = ["SnapshotOptions", "snapshot"]

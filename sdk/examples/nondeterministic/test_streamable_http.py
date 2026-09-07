@@ -21,13 +21,13 @@ from mcp_pal import MCPTestKit, expect
 from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
 from mcp_pal.sync_api import ToolCallResult
 from mcp_pal.types import (
-    AgentExecutionSpec,
+    AgentSpec,
     ExecutionOutcome,
     OpenCode,
     RestrictiveToolPolicy,
     SecretReference,
     ServerBinding,
-    StreamableHTTPServer,
+    HTTPServer,
     TransportKind,
     TrustLevel,
     TurnOutcome,
@@ -45,7 +45,7 @@ _DOCUMENTED_DEEPWIKI_TOOLS = (
 
 
 def test_streamable_http_discovers_and_calls_documented_tool() -> None:
-    server = StreamableHTTPServer(name="deepwiki", url=_DEEPWIKI_URL)
+    server = HTTPServer(name="deepwiki", url=_DEEPWIKI_URL)
 
     with MCPTestKit(env={}) as kit:
         with kit.direct(server) as client:
@@ -102,8 +102,8 @@ def _opencode(executable: str, model: str) -> OpenCode:
     )
 
 
-def _deepwiki_server() -> StreamableHTTPServer:
-    return StreamableHTTPServer(
+def _deepwiki_server() -> HTTPServer:
+    return HTTPServer(
         name="deepwiki", url=_DEEPWIKI_URL, trust=TrustLevel.PUBLIC
     )
 
@@ -122,7 +122,7 @@ def _require_opencode() -> tuple[str, str]:
 def test_opencode_selects_read_wiki_structure() -> None:
     executable, model = _require_opencode()
     server = _deepwiki_server()
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=_opencode(executable, model),
         servers=(ServerBinding(server=server, alias="deepwiki"),),
         tool_policy=RestrictiveToolPolicy(

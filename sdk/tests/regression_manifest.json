@@ -109,13 +109,13 @@
     },
     {
       "id": "r1-direct-execution-spec",
-      "finding": "DirectExecutionSpec performs no operation",
+      "finding": "DirectSpec performs no operation",
       "owner_milestones": ["R1"],
       "status": "passing",
       "regression": "sdk/tests/e2e/test_sdk_workflows.py::test_async_run_dispatches_call_tool_to_real_stdio_and_returns_typed_result",
       "gate": {
         "command": "uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_sdk_workflows.py -k test_async_run_dispatches_call_tool_to_real_stdio_and_returns_typed_result",
-        "expected": "one real-stdio DirectExecutionSpec operation passes with a typed result and terminal trace"
+        "expected": "one real-stdio DirectSpec operation passes with a typed result and terminal trace"
       }
     },
     {
@@ -126,7 +126,7 @@
       "regression": "sdk/tests/integration/test_agent_session_trace.py::test_direct_async_agent_session_result_owns_one_finalized_trace",
       "gate": {
         "command": "uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_agent_session_trace.py",
-        "expected": "direct async and sync sessions plus submitted agent execution have one canonical terminal trace"
+        "expected": "direct async and sync sessions plus submitted agent execution have one stable terminal trace"
       }
     },
     {

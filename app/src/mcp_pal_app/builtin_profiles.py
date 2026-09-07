@@ -1,4 +1,4 @@
-"""Canonical MCP profiles shipped with MCP Pal."""
+"""Stable MCP profiles shipped with MCP Pal."""
 
 EXCALIDRAW_PROFILE_ID = "00000000-0000-4000-8000-000000000001"
 EXCALIDRAW_REVISION_ID = "00000000-0000-4000-8000-000000000002"

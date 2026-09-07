@@ -14,11 +14,11 @@ from ..observability import (
     ObservationReason,
     ObservationState,
     RawEvidence,
-    RawEvidenceCapture,
-    TraceCaptureConfig,
+    EvidenceCapture,
+    CaptureOptions,
 )
 from ..trace.redaction import RedactionConfig, redact_artifact_bytes, redact_result
-from ..types import EventId, RawEvidenceRef
+from ..types import EventId, EvidenceRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +56,7 @@ def validate_evidence_id(evidence_id: str) -> str:
 def prepare_evidence(
     content: bytes,
     *,
-    config: TraceCaptureConfig,
+    config: CaptureOptions,
     redaction_config: RedactionConfig,
     remaining_bytes: int,
 ) -> PreparedEvidence:
@@ -111,14 +111,14 @@ def prepare_evidence(
 
 def make_ref(
     event_id: EventId | str, content: bytes, *, media_type: str
-) -> RawEvidenceRef:
+) -> EvidenceRef:
     """Build metadata for already-redacted, already-bounded bytes."""
 
     if not media_type or len(media_type) > 256:
         raise ValueError(
             "raw evidence media_type must be non-empty and at most 256 characters"
         )
-    return RawEvidenceRef(
+    return EvidenceRef(
         evidence_id=evidence_id_for(event_id),
         sha256=hashlib.sha256(content).hexdigest(),
         size_bytes=len(content),
@@ -126,7 +126,7 @@ def make_ref(
     )
 
 
-def verify_reference(reference: RawEvidenceRef, expected: RawEvidenceRef) -> None:
+def verify_reference(reference: EvidenceRef, expected: EvidenceRef) -> None:
     """Reject forged, stale, or non-raw references without exposing metadata."""
 
     validate_evidence_id(reference.evidence_id)
@@ -141,8 +141,8 @@ def verify_reference(reference: RawEvidenceRef, expected: RawEvidenceRef) -> Non
 
 
 def make_capture(
-    reference: RawEvidenceRef, prepared: PreparedEvidence
-) -> RawEvidenceCapture:
+    reference: EvidenceRef, prepared: PreparedEvidence
+) -> EvidenceCapture:
     """Build explicit preview state while retaining both capture booleans."""
 
     if prepared.truncated:
@@ -160,7 +160,7 @@ def make_capture(
         reason=reason,
         evidence_ref=reference,
     )
-    return RawEvidenceCapture(
+    return EvidenceCapture(
         reference=reference,
         preview=preview,
         original_size_bytes=prepared.original_size_bytes,
@@ -171,7 +171,7 @@ def make_capture(
 
 
 def make_result(
-    reference: RawEvidenceRef, content: bytes, *, max_bytes: int
+    reference: EvidenceRef, content: bytes, *, max_bytes: int
 ) -> RawEvidence:
     """Verify and expose bounded content through the typed public model."""
 

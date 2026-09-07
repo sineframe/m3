@@ -11,7 +11,7 @@ from mcp_pal.errors import (
     TraceNotFinalized,
     TraceUnavailable,
 )
-from mcp_pal.events import EventFactory, PerExecutionSequenceAllocator
+from mcp_pal.events import EventFactory, EventSequence
 from mcp_pal.execution_trace import ExecutionTraceRecorder, TraceRecorderError
 from mcp_pal.observability import (
     ArtifactEntry,
@@ -42,10 +42,10 @@ from mcp_pal.types import (
     EventKind,
     ExecutionOutcome,
     ExecutionResult,
-    ExecutionSnapshot,
-    LifecycleState,
-    RawEvidenceRef,
-    RequestCorrelation,
+    ExecutionState,
+    ExecutionStatus,
+    EvidenceRef,
+    RequestLink,
     TraceResult,
 )
 
@@ -56,7 +56,7 @@ def _trace(
     execution = "projection-execution"
     factory = EventFactory(
         execution,
-        allocator=PerExecutionSequenceAllocator(start=0),
+        allocator=EventSequence(start=0),
         clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
         source="test.direct",
     )
@@ -76,7 +76,7 @@ def _trace(
         factory.create(
             EventKind.MCP_REQUEST,
             connection_id=connection,
-            correlation=RequestCorrelation(
+            correlation=RequestLink(
                 jsonrpc_id=1,
                 direction=EventDirection.CLIENT_TO_SERVER,
                 request_sequence=1,
@@ -86,7 +86,7 @@ def _trace(
         factory.create(
             EventKind.MCP_RESPONSE,
             connection_id=connection,
-            correlation=RequestCorrelation(
+            correlation=RequestLink(
                 jsonrpc_id=1,
                 direction=EventDirection.SERVER_TO_CLIENT,
                 request_sequence=1,
@@ -111,7 +111,7 @@ def _trace(
         factory.create(
             EventKind.MCP_INITIALIZED,
             connection_id=connection,
-            correlation=RequestCorrelation(
+            correlation=RequestLink(
                 jsonrpc_id=1,
                 direction=EventDirection.SERVER_TO_CLIENT,
                 request_sequence=1,
@@ -121,7 +121,7 @@ def _trace(
         factory.create(
             EventKind.MCP_REQUEST,
             connection_id=connection,
-            correlation=RequestCorrelation(
+            correlation=RequestLink(
                 jsonrpc_id=2,
                 direction=EventDirection.CLIENT_TO_SERVER,
                 request_sequence=2,
@@ -131,7 +131,7 @@ def _trace(
         factory.create(
             EventKind.MCP_RESPONSE,
             connection_id=connection,
-            correlation=RequestCorrelation(
+            correlation=RequestLink(
                 jsonrpc_id=2,
                 direction=EventDirection.SERVER_TO_CLIENT,
                 request_sequence=2,
@@ -141,7 +141,7 @@ def _trace(
         factory.create(
             EventKind.TOOL_CALL_REQUESTED,
             connection_id=connection,
-            correlation=RequestCorrelation(
+            correlation=RequestLink(
                 jsonrpc_id=3,
                 direction=EventDirection.CLIENT_TO_SERVER,
                 request_sequence=3,
@@ -155,7 +155,7 @@ def _trace(
         factory.create(
             EventKind.TOOL_RESULT_RECEIVED,
             connection_id=connection,
-            correlation=RequestCorrelation(
+            correlation=RequestLink(
                 jsonrpc_id=3,
                 direction=EventDirection.SERVER_TO_CLIENT,
                 request_sequence=3,
@@ -179,7 +179,7 @@ def _trace(
         factory.create(
             EventKind.MCP_NOTIFICATION,
             connection_id=connection,
-            correlation=RequestCorrelation(
+            correlation=RequestLink(
                 direction=EventDirection.SERVER_TO_CLIENT,
             ),
             payload={"method": "notifications/progress", "params": {"progress": 1}},
@@ -275,7 +275,7 @@ def test_projector_keeps_unmatched_response_as_diagnostic_and_is_deterministic()
             "sequence": event.sequence,
             "kind": EventKind.MCP_ERROR,
             "payload": {"error": {"code": -32000, "message": "bad"}},
-            "correlation": RequestCorrelation(
+            "correlation": RequestLink(
                 jsonrpc_id="unmatched",
                 direction=EventDirection.SERVER_TO_CLIENT,
             ),
@@ -285,7 +285,7 @@ def test_projector_keeps_unmatched_response_as_diagnostic_and_is_deterministic()
     events = trace.events[:-1] + (unmatched,)
     factory = EventFactory(
         "projection-execution",
-        allocator=PerExecutionSequenceAllocator(start=len(events)),
+        allocator=EventSequence(start=len(events)),
     )
     terminal = factory.create(
         EventKind.EXECUTION_FINISHED,
@@ -323,7 +323,7 @@ def test_store_retrieval_returns_trace_and_view_after_finalization() -> None:
     store = InMemoryExecutionStore()
     trace = _trace()
     store.create(
-        snapshot=ExecutionSnapshot(execution_id=trace.execution_id),
+        snapshot=ExecutionState(execution_id=trace.execution_id),
     )
     store.append_events(trace.events)
     assert store.get_trace(trace.execution_id) == trace
@@ -333,7 +333,7 @@ def test_store_retrieval_returns_trace_and_view_after_finalization() -> None:
 
 def test_raw_evidence_is_a_typed_timeline_entry_without_displacing_protocol() -> None:
     trace = _trace()
-    reference = RawEvidenceRef(
+    reference = EvidenceRef(
         evidence_id="re:" + "a" * 64,
         sha256="b" * 64,
         size_bytes=12,
@@ -353,7 +353,7 @@ def test_paired_response_raw_evidence_remains_chronological_after_intervening_ev
     None
 ):
     trace = _trace()
-    reference = RawEvidenceRef(
+    reference = EvidenceRef(
         evidence_id="re:" + "c" * 64,
         sha256="d" * 64,
         size_bytes=4,
@@ -389,7 +389,7 @@ def test_sqlite_store_reopens_and_projects_the_same_finalized_view(tmp_path) -> 
     database = tmp_path / "projection.sqlite"
     trace = _trace()
     first = SQLiteExecutionStore(database)
-    first.create(snapshot=ExecutionSnapshot(execution_id=trace.execution_id))
+    first.create(snapshot=ExecutionState(execution_id=trace.execution_id))
     first.append_events(trace.events)
     expected = trace.view()
     reopened = SQLiteExecutionStore(database)
@@ -400,20 +400,20 @@ def test_sqlite_store_reopens_and_projects_the_same_finalized_view(tmp_path) -> 
 def test_sync_kit_exposes_store_trace_and_raw_evidence_apis() -> None:
     store = InMemoryExecutionStore()
     trace = _trace()
-    store.create(snapshot=ExecutionSnapshot(execution_id=trace.execution_id))
+    store.create(snapshot=ExecutionState(execution_id=trace.execution_id))
     store.append_events(trace.events)
     with MCPTestKit(store=store) as kit:
         assert kit.get_trace(trace.execution_id) == trace
         assert kit.get_trace_view(trace.execution_id) == trace.view()
         with pytest.raises(RawEvidenceUnavailable):
-            kit.read_raw_evidence(RawEvidenceRef(evidence_id="re:" + "0" * 64))
+            kit.read_raw_evidence(EvidenceRef(evidence_id="re:" + "0" * 64))
 
 
 @pytest.mark.asyncio
 async def test_async_kit_exposes_store_trace_api() -> None:
     store = InMemoryExecutionStore()
     trace = _trace()
-    store.create(snapshot=ExecutionSnapshot(execution_id=trace.execution_id))
+    store.create(snapshot=ExecutionState(execution_id=trace.execution_id))
     store.append_events(trace.events)
     kit = AsyncMCPTestKit(store=store, embedded_worker=False)
     try:
@@ -450,7 +450,7 @@ async def test_async_kit_lookup_requires_a_store_and_respects_closed_state() -> 
 @pytest.mark.asyncio
 async def test_async_kit_lookup_and_raw_evidence_raise_typed_unknown_errors() -> None:
     kit = AsyncMCPTestKit(store=InMemoryExecutionStore(), embedded_worker=False)
-    reference = RawEvidenceRef(evidence_id="re:" + "1" * 64)
+    reference = EvidenceRef(evidence_id="re:" + "1" * 64)
     try:
         with pytest.raises(ExecutionNotFound):
             await kit.get_trace("missing")
@@ -462,8 +462,8 @@ async def test_async_kit_lookup_and_raw_evidence_raise_typed_unknown_errors() ->
 
 def test_execution_result_exposes_the_finalized_typed_view() -> None:
     trace = _trace(outcome=ExecutionOutcome.FAILED)
-    snapshot = ExecutionSnapshot(execution_id=trace.execution_id).transition(
-        LifecycleState.FINISHED, ExecutionOutcome.FAILED
+    snapshot = ExecutionState(execution_id=trace.execution_id).transition(
+        ExecutionStatus.FINISHED, ExecutionOutcome.FAILED
     )
     result = ExecutionResult(snapshot=snapshot, trace=trace)
     assert result.trace_view.outcome is ExecutionOutcome.FAILED
@@ -773,7 +773,7 @@ def test_recorder_reopen_initializes_empty_snapshot_and_rejects_bad_identity(
         SQLiteExecutionStore(tmp_path / "reopen.sqlite"),
     ):
         execution = "reopen-execution"
-        store.create(snapshot=ExecutionSnapshot(execution_id=execution))
+        store.create(snapshot=ExecutionState(execution_id=execution))
         recorder = ExecutionTraceRecorder(store, execution, trace_id="trace-reopen")
         assert recorder.trace_id.root == "trace-reopen"
         with pytest.raises(TraceRecorderError):
@@ -995,7 +995,7 @@ def test_projector_uses_unique_typed_id_fallback_but_not_ambiguous_candidates() 
     trace = _trace()
     request = trace.events[7].model_copy(
         update={
-            "correlation": RequestCorrelation(
+            "correlation": RequestLink(
                 jsonrpc_id=99,
                 direction=EventDirection.CLIENT_TO_SERVER,
                 request_sequence=None,
@@ -1004,7 +1004,7 @@ def test_projector_uses_unique_typed_id_fallback_but_not_ambiguous_candidates() 
     )
     response = trace.events[8].model_copy(
         update={
-            "correlation": RequestCorrelation(
+            "correlation": RequestLink(
                 jsonrpc_id=99,
                 direction=EventDirection.SERVER_TO_CLIENT,
                 request_sequence=999,
@@ -1106,7 +1106,7 @@ def test_typed_jsonrpc_ids_and_fallback_call_ids_remain_distinct() -> None:
     int_request = trace.events[7].model_copy(update={"payload": request_payload})
     string_request = int_request.model_copy(
         update={
-            "correlation": RequestCorrelation(
+            "correlation": RequestLink(
                 jsonrpc_id="3", direction="client_to_server", request_sequence=3
             ),
             "payload": request_payload,
@@ -1114,7 +1114,7 @@ def test_typed_jsonrpc_ids_and_fallback_call_ids_remain_distinct() -> None:
     )
     string_response = trace.events[8].model_copy(
         update={
-            "correlation": RequestCorrelation(
+            "correlation": RequestLink(
                 jsonrpc_id="3", direction="server_to_client", request_sequence=3
             )
         }
@@ -1153,7 +1153,7 @@ def test_typed_jsonrpc_ids_and_fallback_call_ids_remain_distinct() -> None:
         (EventKind.CLEANUP_STARTED, {"state": "running"}, LifecycleEntry),
     ],
 )
-def test_canonical_event_kinds_have_typed_projection(kind, payload, expected) -> None:
+def test_stable_event_kinds_have_typed_projection(kind, payload, expected) -> None:
     trace = _trace()
     event = trace.events[1].model_copy(update={"kind": kind, "payload": payload})
     view = trace.model_copy(

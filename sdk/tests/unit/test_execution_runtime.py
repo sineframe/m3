@@ -23,14 +23,14 @@ from mcp_pal.sync_api import ExecutionHandle, MCPTestKit
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.testing import FaultInjector
 from mcp_pal.types import (
-    AgentExecutionSpec,
+    AgentSpec,
     ClaudeCode,
-    DirectExecutionSpec,
+    DirectSpec,
     ExecutionId,
     EventKind,
     ExecutionOutcome,
     ExecutionResult,
-    PingOperation,
+    Ping,
     ServerBinding,
     StdioServer,
     ErrorInfo,
@@ -43,10 +43,10 @@ from mcp_pal.types import (
 from mcp_pal.workspace import WorkspaceError, WorkspaceManager
 
 
-def _spec() -> DirectExecutionSpec:
-    return DirectExecutionSpec(
+def _spec() -> DirectSpec:
+    return DirectSpec(
         servers=(ServerBinding(server=FaultInjector().stdio_server()),),
-        operation=PingOperation(),
+        operation=Ping(),
     )
 
 
@@ -87,7 +87,7 @@ class _ToolEvidenceHarness:
         self.failed = False
         self.messages: list[object] = []
 
-    async def start(self, _spec: AgentExecutionSpec) -> None:
+    async def start(self, _spec: AgentSpec) -> None:
         return None
 
     async def send(
@@ -294,7 +294,7 @@ async def test_event_iterator_can_resume_after_sequence_and_abandon_cleanly() ->
 
 @pytest.mark.asyncio
 async def test_agent_without_registered_adapter_returns_typed_unavailable() -> None:
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ClaudeCode(model="test-model", executable="mcp-pal-missing-claude"),
         message=UserMessage(content=(TextContent(text="run"),)),
@@ -309,7 +309,7 @@ async def test_agent_without_registered_adapter_returns_typed_unavailable() -> N
 
 @pytest.mark.asyncio
 async def test_submitted_agent_execution_requires_message_and_is_terminal_invalid_argument() -> None:
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ClaudeCode(model="test-model", executable="mcp-pal-missing-claude"),
     )
@@ -326,7 +326,7 @@ async def test_submitted_agent_execution_requires_message_and_is_terminal_invali
 async def test_submitted_agent_execution_sends_exactly_one_message() -> None:
     adapter = _ToolEvidenceHarness()
     registry = HarnessAdapterRegistry({"claude_code": lambda _harness: adapter})
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ClaudeCode(model="test-model"),
         message=UserMessage(content=(TextContent(text="once"),)),
@@ -361,7 +361,7 @@ async def test_result_wait_timeout_does_not_cancel_background_execution() -> Non
 @pytest.mark.asyncio
 async def test_agent_tool_errors_do_not_change_lifecycle_but_do_change_health() -> None:
     adapter = _ToolEvidenceHarness()
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ClaudeCode(model="test-model"),
     )
@@ -381,7 +381,7 @@ async def test_agent_tool_errors_do_not_change_lifecycle_but_do_change_health() 
 def test_sync_agent_session_result_survives_external_kit_close() -> None:
     from mcp_pal.sync_api import MCPTestKit
 
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ClaudeCode(model="test-model"),
     )

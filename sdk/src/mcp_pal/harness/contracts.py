@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 
 from ..agent_session import HarnessAdapter as HarnessAdapter
 from ..errors import MCPError
-from ..interaction_handlers import InteractionController
+from ..interaction_handlers import Interactions
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..types import (
-    AgentExecutionSpec,
+    AgentSpec,
     Capability,
     CapabilityStatus,
     ErrorCode,
@@ -36,7 +36,7 @@ from ..types import (
 )
 
 if TYPE_CHECKING:
-    from ..server_group import HarnessServerConfiguration, ServerGroupSnapshot
+    from ..server_group import HarnessServerConfig, ServerGroupSnapshot
     from .observations import HarnessSessionEvidence, TurnEvidence
 
 
@@ -174,11 +174,11 @@ class HarnessSessionSnapshot:
 class HarnessLaunch:
     """Resolved, non-secret launch inputs supplied by a controller."""
 
-    spec: AgentExecutionSpec
+    spec: AgentSpec
     servers: "ServerGroupSnapshot"
-    configurations: tuple["HarnessServerConfiguration", ...]
+    configurations: tuple["HarnessServerConfig", ...]
     tool_policy: ToolPolicy
-    interactions: InteractionController | None = None
+    interactions: Interactions | None = None
     workspace_root: str | None = None
     tool_policy_evidence: ToolPolicyEvidence | None = None
     # Runtime-owned, read-only capture context.  The adapter may query a
@@ -252,7 +252,7 @@ class HarnessAdapterRegistry:
             raise ValueError("harness kind must be non-empty and bounded")
         self._factories[kind] = factory
 
-    def resolve(self, spec: AgentExecutionSpec) -> HarnessAdapter:
+    def resolve(self, spec: AgentSpec) -> HarnessAdapter:
         harness = spec.harness
         if harness is None:
             raise HarnessStartupError("harness profile resolution is unavailable")
@@ -263,7 +263,7 @@ class HarnessAdapterRegistry:
         return factory(harness)
 
 
-def default_harness_adapter_registry() -> HarnessAdapterRegistry:
+def default_adapters() -> HarnessAdapterRegistry:
     """Return the production registry with explicit real adapters.
 
     Each registered kind resolves only to its own process-backed adapter. ACP,
@@ -399,7 +399,7 @@ class DeterministicHarnessAdapter:
         self._active_session = session
         return session
 
-    async def start(self, spec: AgentExecutionSpec) -> None:
+    async def start(self, spec: AgentSpec) -> None:
         """Open the existing session-controller adapter contract."""
 
         from ..server_group import ServerGroupSnapshot
@@ -636,6 +636,6 @@ __all__ = [
     "HarnessStartupError",
     "HarnessTurnRequest",
     "HarnessTurnResult",
-    "default_harness_adapter_registry",
+    "default_adapters",
     "UnsupportedHarnessFeature",
 ]

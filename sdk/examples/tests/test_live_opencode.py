@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 from mcp_pal.types import (
-    AgentExecutionSpec,
+    AgentSpec,
     OpenCode,
     RestrictiveToolPolicy,
     SecretReference,
@@ -38,7 +38,7 @@ _REPOSITORY_ROOT = _EXAMPLES_ROOT.parents[1]
 _LIVE_ENABLED = os.environ.get("MCP_PAL_RUN_LIVE_OPENCODE") == "1"
 
 
-def _spec(executable: str, model: str) -> AgentExecutionSpec:
+def _spec(executable: str, model: str) -> AgentSpec:
     provider = model.split("/", 1)[0] if "/" in model else None
     server = StdioServer(
         name="example-mcp",
@@ -46,7 +46,7 @@ def _spec(executable: str, model: str) -> AgentExecutionSpec:
         args=(str(_EXAMPLES_ROOT / "servers" / "example_mcp_server.py"),),
         cwd=str(_EXAMPLES_ROOT),
     )
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=OpenCode(
             model=model,
             provider=provider,

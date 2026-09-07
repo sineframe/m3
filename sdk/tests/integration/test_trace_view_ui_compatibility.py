@@ -1,7 +1,7 @@
 """Compact public-schema fixture for consumers such as the UI.
 
 This deliberately exercises the typed fields that a renderer should use.  It
-does not inspect canonical event payloads, which keeps the compatibility
+does not inspect stable event payloads, which keeps the compatibility
 contract independent of any one harness adapter.
 """
 
@@ -12,12 +12,12 @@ from typing import Any, cast
 
 import pytest
 from mcp_pal.observability import (
-    ACPTraceInfo,
-    ClaudeCodeTraceInfo,
+    ACPTrace,
+    ClaudeCodeTrace,
     CorrelationState,
-    DirectTraceInfo,
+    DirectTrace,
     EvidenceConflict,
-    HttpExchangeMetadata,
+    HttpExchange,
     InitializationEntry,
     InitializationValue,
     InteractionEntry,
@@ -26,7 +26,7 @@ from mcp_pal.observability import (
     Observation,
     ObservationReason,
     ObservationState,
-    OpenCodeTraceInfo,
+    OpenCodeTrace,
     ProcessEntry,
     ProtocolEntry,
     ProtocolKind,
@@ -53,10 +53,10 @@ from mcp_pal.types import (
     ErrorInfo,
     EventDirection,
     EventOrigin,
-    EventProvenance,
+    EventSource,
     ExecutionId,
     ExecutionOutcome,
-    RawEvidenceRef,
+    EvidenceRef,
     TextContent,
     TraceId,
     TransportKind,
@@ -86,7 +86,7 @@ def _entry(kind: str, sequence: int) -> Any:
         "sequence_end": sequence,
         "timing": _timing(sequence, sequence + 1),
         "provenance": (
-            EventProvenance(origin=EventOrigin.NORMALIZED, source="ui-fixture"),
+            EventSource(origin=EventOrigin.NORMALIZED, source="ui-fixture"),
         ),
     }
 
@@ -183,7 +183,7 @@ def _timeline() -> tuple[TraceEntry, ...]:
         direction=EventDirection.SERVER_TO_CLIENT,
         method=_observed("tools/call"),
         http=_observed(
-            HttpExchangeMetadata(
+            HttpExchange(
                 method="POST",
                 status_code=200,
                 headers=(
@@ -238,7 +238,7 @@ def _timeline() -> tuple[TraceEntry, ...]:
             reason=ObservationReason.REDACTED_BY_POLICY,
             value="[REDACTED]",
         ),
-        evidence_ref=RawEvidenceRef(evidence_id="raw-1", size_bytes=12),
+        evidence_ref=EvidenceRef(evidence_id="raw-1", size_bytes=12),
         size_bytes=12,
     )
     provider = ProviderEntry(
@@ -329,7 +329,7 @@ def _timeline() -> tuple[TraceEntry, ...]:
 
 def _runtime(
     kind: str,
-) -> DirectTraceInfo | OpenCodeTraceInfo | ClaudeCodeTraceInfo | ACPTraceInfo:
+) -> DirectTrace | OpenCodeTrace | ClaudeCodeTrace | ACPTrace:
     usage = UsageValue(
         input_tokens=_observed(10),
         output_tokens=_observed(5),
@@ -339,7 +339,7 @@ def _runtime(
     )
     usage_observation = _observed(usage)
     if kind == "direct":
-        return DirectTraceInfo(
+        return DirectTrace(
             transport=_observed(TransportKind.STDIO),
             protocol=_observed("mcp"),
             initialization=_observed(
@@ -347,7 +347,7 @@ def _runtime(
             ),
         )
     if kind == "opencode":
-        return OpenCodeTraceInfo(
+        return OpenCodeTrace(
             session_id=_observed("opencode-session"),
             provider_id=_observed("provider"),
             model_id=_observed("model"),
@@ -356,7 +356,7 @@ def _runtime(
             usage=usage_observation,
         )
     if kind == "claude_code":
-        return ClaudeCodeTraceInfo(
+        return ClaudeCodeTrace(
             session_id=_observed("claude-session"),
             model_id=_observed("claude-model"),
             result_subtype=_observed("success"),
@@ -366,7 +366,7 @@ def _runtime(
             encrypted_reasoning=_observed(True),
             usage=usage_observation,
         )
-    return ACPTraceInfo(
+    return ACPTrace(
         session_id=_observed("acp-session"),
         protocol_version=_observed("1"),
         agent_identity=_observed({"name": "fixture-agent"}),
@@ -515,19 +515,19 @@ def test_public_trace_view_is_a_stable_ui_compatibility_surface(
         "exited",
     ]
     runtime = restored.runtime
-    if isinstance(runtime, DirectTraceInfo):
+    if isinstance(runtime, DirectTrace):
         assert runtime_kind == "direct"
         assert runtime.transport.value is TransportKind.STDIO
         assert runtime.initialization.value is not None
         assert runtime.initialization.value.protocol_version.value == "2025-11-25"
-    elif isinstance(runtime, OpenCodeTraceInfo):
+    elif isinstance(runtime, OpenCodeTrace):
         assert runtime_kind == "opencode"
         assert runtime.provider_id.value == "provider"
         assert runtime.model_id.value == "model"
         assert runtime.http_lifecycle.value == {"status": 200}
         assert runtime.usage.value is not None
         assert runtime.usage.value.cost.value == 0.01
-    elif isinstance(runtime, ClaudeCodeTraceInfo):
+    elif isinstance(runtime, ClaudeCodeTrace):
         assert runtime_kind == "claude_code"
         assert runtime.model_id.value == "claude-model"
         assert runtime.stop_reason.value == "end_turn"
@@ -536,7 +536,7 @@ def test_public_trace_view_is_a_stable_ui_compatibility_surface(
         assert runtime.usage.value.cache_read_tokens.value == 2
         assert runtime.api_duration_ms.value == 12.0
     else:
-        assert isinstance(runtime, ACPTraceInfo)
+        assert isinstance(runtime, ACPTrace)
         assert runtime_kind == "acp"
         assert runtime.available_modes.value is not None
         modes = cast(Any, runtime.available_modes.value)

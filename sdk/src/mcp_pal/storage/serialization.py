@@ -6,7 +6,7 @@ will later be executed.  This module provides the separate, fail-closed
 projection used by durable specifications, profiles, and queued commands.
 
 The only credential value accepted at a durable boundary is a
-``SecretReference`` (or its canonical JSON descriptor). References are never
+``SecretReference`` (or its stable JSON descriptor). References are never
 resolved here; resolution belongs to the worker that owns execution. Ordinary
 strings are projected with the supplied ``RedactionConfig`` so a known canary
 cannot be persisted through a non-sensitive field. Legacy placeholders are

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     RestrictiveToolPolicy,
     ServerBinding,
     TurnOutcome,
@@ -20,14 +20,14 @@ _AGENT = _EXAMPLES_ROOT / "servers" / "deterministic_acp_agent.py"
 _SERVER = _EXAMPLES_ROOT / "servers" / "example_mcp_server.py"
 
 
-def _spec() -> AgentExecutionSpec:
+def _spec() -> AgentSpec:
     server = StdioServer(
         name="example-mcp",
         command=sys.executable,
         args=(str(_SERVER),),
         cwd=str(_EXAMPLES_ROOT),
     )
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=ACPAgent(
             model="deterministic-fixture",
             manifest={

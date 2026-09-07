@@ -26,7 +26,7 @@ def test_initialization_summary_requires_selected_status():
     assert derive_mcp_summary([list_connected],"draw")["initialization_state"] == "connected"
     assert derive_mcp_summary([list_failed],"draw")["initialization_state"] == "failed"
 
-def test_opencode_tool_part_is_canonical_and_correlated():
+def test_opencode_tool_part_is_stable_and_correlated():
     event={"type":"tool_use","sessionID":"ses","part":{"type":"tool","callID":"call","tool":"draw_create","state":{"status":"completed","input":{},"output":"ok"}}}
     assert derive_mcp_assertion([event],"draw") == "passed"
     summary=derive_mcp_summary([event],"draw")

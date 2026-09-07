@@ -23,7 +23,7 @@ if TYPE_CHECKING:
         HarnessTurnRequest,
         HarnessTurnResult,
         UnsupportedHarnessFeature,
-        default_harness_adapter_registry,
+        default_adapters,
     )
     from .fakes import (
         DeterministicACPAdapter,
@@ -81,7 +81,7 @@ _LAZY_MODULES = {
             "HarnessTurnRequest",
             "HarnessTurnResult",
             "UnsupportedHarnessFeature",
-            "default_harness_adapter_registry",
+            "default_adapters",
         )
     },
     **{name: ".acp" for name in ("ACPAdapter", "ACPAgentAdapter", "AcpHarnessAdapter")},
@@ -150,7 +150,7 @@ __all__ = [
     "validate_manifest", "DeterministicHarnessAdapter", "HarnessAdapter", "HarnessAdapterContract", "HarnessAdapterCapabilities",
     "HarnessAdapterError", "HarnessCleanupError", "HarnessLaunch", "HarnessSession",
     "HarnessAdapterFactory", "HarnessAdapterRegistry", "HarnessSessionSnapshot", "HarnessStartupError", "HarnessTurnRequest", "HarnessTurnResult",
-    "default_harness_adapter_registry", "UnsupportedHarnessFeature", "DeterministicACPAdapter", "FakeClaudeCodeAdapter", "FakeOpenCodeAdapter",
+    "default_adapters", "UnsupportedHarnessFeature", "DeterministicACPAdapter", "FakeClaudeCodeAdapter", "FakeOpenCodeAdapter",
     "AcpHarnessAdapter", "ACPAdapter", "ACPAgentAdapter", "HarnessObservation", "HARNESS_OBSERVATION_ADAPTER", "HarnessObservationBase",
     "HarnessSessionEvidence", "TurnEvidence", "RawEvidenceInput", "RawFrameObservation", "MessageChunkObservation", "ReasoningChunkObservation",
     "ToolCallObservedObservation", "ToolResultObservedObservation", "UsageObservedObservation", "PlanObservedObservation", "StateObservedObservation",

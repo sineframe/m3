@@ -10,14 +10,14 @@ from datetime import datetime, timedelta, timezone
 from mcp_pal.services.acp_probes import ACPProbeDimension, ACPProbeKind, ACPProbeRequest, ACPProbeResult, ACPProbeStatus, JsonValue
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal_app.services.acp_probe_service import ACPProbeService
+from mcp_pal_app.services.acp_probe_service import ACPProbes
 
 
-def _service(tmp_path: Path, runner: object) -> tuple[SQLiteExecutionStore, ACPProbeService, str, str]:
+def _service(tmp_path: Path, runner: object) -> tuple[SQLiteExecutionStore, ACPProbes, str, str]:
     store = SQLiteExecutionStore(tmp_path / "acp.sqlite")
     profile = store.create_harness_profile("agent", {"manifest": {"command": "echo"}, "trusted_unsandboxed": True})
     revision = store.resolve_revision(profile.id)
-    return store, ACPProbeService(store, runner), profile.id, str(revision.id.root)  # type: ignore[arg-type]
+    return store, ACPProbes(store, runner), profile.id, str(revision.id.root)  # type: ignore[arg-type]
 
 
 def test_real_shaped_protocol_output_is_projected_into_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -35,7 +35,7 @@ def test_real_shaped_protocol_output_is_projected_into_evidence(tmp_path: Path, 
     store = SQLiteExecutionStore(tmp_path / "acp.sqlite")
     profile = store.create_harness_profile("agent", {"manifest": {"command": "echo"}, "trusted_unsandboxed": True})
     revision_id = str(store.resolve_revision(profile.id).id.root)
-    service = ACPProbeService(store)
+    service = ACPProbes(store)
     profile_id = profile.id
     request = ACPProbeRequest(profile_id=profile_id, revision_id=revision_id, probe_type=ACPProbeKind.PROTOCOL)
     result = asyncio.run(service.run(request))
@@ -64,7 +64,7 @@ def test_protocol_wire_frame_fallback_recovers_snake_case_metadata(tmp_path: Pat
     store = SQLiteExecutionStore(tmp_path / "wire-fallback.sqlite")
     profile = store.create_harness_profile("agent", {"manifest": {"command": "echo"}, "trusted_unsandboxed": True})
     revision_id = str(store.resolve_revision(profile.id).id.root)
-    result = asyncio.run(ACPProbeService(store).run(ACPProbeRequest(
+    result = asyncio.run(ACPProbes(store).run(ACPProbeRequest(
         profile_id=profile.id, revision_id=revision_id, probe_type=ACPProbeKind.PROTOCOL,
     )))
     assert result.agent_identity is not None and result.agent_identity.name == "wire-fixture"
@@ -86,7 +86,7 @@ def test_oversized_protocol_frames_keep_typed_modes_options_and_readiness(tmp_pa
     store = SQLiteExecutionStore(tmp_path / "oversized.sqlite")
     profile = store.create_harness_profile("agent", {"manifest": {"command": "echo"}, "trusted_unsandboxed": True})
     revision_id = str(store.resolve_revision(profile.id).id.root)
-    service = ACPProbeService(store)
+    service = ACPProbes(store)
     request = ACPProbeRequest(profile_id=profile.id, revision_id=revision_id, probe_type=ACPProbeKind.PROTOCOL)
     result = asyncio.run(service.run(request))
     assert result.agent_modes[0].id == "safe" and result.config_options[0]["id"] == "quality"
@@ -326,7 +326,7 @@ def test_runtime_owns_probe_service_and_store_path_redacts(tmp_path: Path) -> No
     store = SQLiteExecutionStore(tmp_path / "acp.sqlite", config=RedactionConfig(secrets=frozenset({"probe-secret"}), include_environment=False))
     profile = store.create_harness_profile("agent", {"manifest": {"command": "echo"}})
     revision = store.resolve_revision(profile.id)
-    service = ACPProbeService(store, lambda _request: {"status": "verified", "evidence": {"token": "probe-secret"}})
+    service = ACPProbes(store, lambda _request: {"status": "verified", "evidence": {"token": "probe-secret"}})
     result = asyncio.run(service.run(ACPProbeRequest(profile_id=profile.id, revision_id=str(revision.id.root), probe_type=ACPProbeKind.PROTOCOL)))
     assert "probe-secret" not in repr(result.model_dump(mode="json"))
     from mcp_pal_app.services.app_service import AppRuntimeService

@@ -87,7 +87,7 @@ class ProbeReport(FrozenModel):
 
 @dataclass(frozen=True, repr=False)
 class ProbeRequest:
-    """Typed request used by :meth:`CapabilityProbeService.probe_requested`.
+    """Typed request used by :meth:`Probes.probe_requested`.
 
     The repr intentionally omits command arguments and environment values;
     requests commonly contain credentials passed to a child process.
@@ -401,7 +401,7 @@ def _transport_kind(value: str | TransportKind | None) -> TransportKind | None:
         return None
 
 
-class CapabilityProbeService:
+class Probes:
     """Probe only explicitly requested capability targets.
 
     All subprocesses receive a deterministic minimal environment and are
@@ -706,11 +706,7 @@ class CapabilityProbeService:
         return ProbeReport(readiness=readiness, results=tuple(results))
 
 
-ReadinessProbeService = CapabilityProbeService
-ProbeService = CapabilityProbeService
-
-
-class AsyncCapabilityProbeService:
+class AsyncProbes:
     """Async namespace for capability probes.
 
     The underlying probe implementation remains shared with the synchronous
@@ -720,7 +716,7 @@ class AsyncCapabilityProbeService:
     """
 
     def __init__(self, *, timeout_seconds: float = _DEFAULT_TIMEOUT, output_limit: int = _DEFAULT_OUTPUT_LIMIT) -> None:
-        self._service = CapabilityProbeService(timeout_seconds=timeout_seconds, output_limit=output_limit)
+        self._service = Probes(timeout_seconds=timeout_seconds, output_limit=output_limit)
         self._lifecycle_guard: Callable[[], None] | None = None
 
     def _set_lifecycle_guard(self, guard: Callable[[], None]) -> None:
@@ -826,13 +822,11 @@ class AsyncCapabilityProbeService:
 
 
 __all__ = [
-    "CapabilityProbeService",
-    "AsyncCapabilityProbeService",
+    "Probes",
+    "AsyncProbes",
     "ProbeEvidence",
     "ProbeKind",
     "ProbeReport",
     "ProbeRequest",
     "ProbeResult",
-    "ProbeService",
-    "ReadinessProbeService",
 ]

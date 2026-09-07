@@ -19,7 +19,7 @@ from mcp_pal.matrix import (
     ToolMatrixCase,
 )
 from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import ACPAgent, CallToolOperationResult, ExecutionOutcome, StdioServer, TurnOutcome
+from mcp_pal.types import ACPAgent, CallToolResult, ExecutionOutcome, StdioServer, TurnOutcome
 
 
 _EXAMPLES_ROOT = Path(__file__).parents[1]
@@ -81,7 +81,7 @@ def test_tool_matrix_parametrization_is_regular_pytest(case: ToolMatrixCase) -> 
     with MCPTestKit(env={}) as kit:
         result = case.run(kit=kit)
 
-    assert isinstance(result.direct_result, CallToolOperationResult)
+    assert isinstance(result.direct_result, CallToolResult)
     assert result.trace_view.tool_calls
     if case.id == "catalog/normalize_customer":
         assert result.direct_result.structured_content == {"customer_id": "ada-lovelace"}
@@ -232,7 +232,7 @@ async def test_tool_matrix_supports_the_async_helper(example_server: StdioServer
     async with AsyncMCPTestKit(env={}) as kit:
         result = await matrix.cases()[0].run_async(kit=kit)
 
-    assert isinstance(result.direct_result, CallToolOperationResult)
+    assert isinstance(result.direct_result, CallToolResult)
     assert result.direct_result.structured_content == {"amount": 15.5, "currency": "USD"}
 
 
@@ -309,6 +309,6 @@ def test_tool_matrix_failure_keeps_typed_result_and_trace(example_server: StdioS
     with MCPTestKit(env={}) as kit:
         result = ToolMatrix(servers=(server,)).cases()[0].run(kit=kit)
 
-    assert isinstance(result.direct_result, CallToolOperationResult)
+    assert isinstance(result.direct_result, CallToolResult)
     assert result.direct_result.is_error is True
     assert result.trace_view.tool_calls

@@ -21,17 +21,17 @@ from mcp_pal.interaction_handlers import (
     ElicitationResult,
     FilesystemRequest,
     FilesystemResult,
-    InteractionController,
+    Interactions,
     InteractionHandlers,
     InteractionReceipt,
     SamplingResult,
     TerminalRequest,
     TerminalResult,
 )
-from mcp_pal.server_group import HarnessServerConfiguration, ServerGroupSnapshot, ServerRecord
+from mcp_pal.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     ElicitationPolicy,
     FilesystemPolicy,
     PermissionPolicy,
@@ -40,11 +40,11 @@ from mcp_pal.types import (
     SecretReference,
     ServerBinding,
     StdioServer,
-    StreamableHTTPServer,
+    HTTPServer,
     TerminalPolicy,
     TransportKind,
 )
-from mcp_pal.observability import ACPTraceInfo, ObservationReason, ObservationState
+from mcp_pal.observability import ACPTrace, ObservationReason, ObservationState
 
 
 def _agent(path: Path) -> str:
@@ -149,11 +149,11 @@ for line in sys.stdin:
 
 
 def _launch(command: str) -> HarnessLaunch:
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="fixture", manifest={"command": command, "protocol": "acp", "protocol_version": 1}),
         servers=(ServerBinding(server=StdioServer(name="unused", command="unused")),),
     )
-    configuration = HarnessServerConfiguration(
+    configuration = HarnessServerConfig(
         key="unused",
         transport=TransportKind.STDIO,
         required=True,
@@ -196,7 +196,7 @@ async def test_acp_adapter_keeps_one_session_across_turns(tmp_path: Path) -> Non
 async def test_acp_typed_observations_and_public_runtime_are_finalized(tmp_path: Path) -> None:
     """ACP frames and session metadata survive the public finalized view."""
     command = _agent(tmp_path / "typed-agent.py")
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(
             model="fixture",
             manifest={"command": sys.executable, "args": [command], "protocol": "acp", "protocol_version": 1},
@@ -214,7 +214,7 @@ async def test_acp_typed_observations_and_public_runtime_are_finalized(tmp_path:
             evidence = result.evidence
             assert evidence is not None
         view = session.result.trace_view
-    assert isinstance(view.runtime, ACPTraceInfo)
+    assert isinstance(view.runtime, ACPTrace)
     assert view.runtime.protocol_version.state is ObservationState.OBSERVED
     assert view.runtime.session_id.state is ObservationState.OBSERVED
     assert view.runtime.usage.state is ObservationState.UNSUPPORTED
@@ -297,7 +297,7 @@ async def test_acp_public_runtime_projects_modes_and_selected_config(tmp_path: P
             result = await session.send("runtime")
             assert result.response is not None and result.response.text == "configured"
         view = session.result.trace_view
-    assert isinstance(view.runtime, ACPTraceInfo)
+    assert isinstance(view.runtime, ACPTrace)
     assert view.runtime.available_modes.state is ObservationState.OBSERVED
     assert view.runtime.available_modes.value is not None
     assert [
@@ -314,7 +314,7 @@ async def test_acp_public_runtime_projects_modes_and_selected_config(tmp_path: P
 @pytest.mark.asyncio
 async def test_acp_public_source_shape_preserves_message_reasoning_plan_and_state(tmp_path: Path) -> None:
     command = _rich_agent(tmp_path / "rich-agent.py")
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(
             model="fixture",
             manifest={"command": sys.executable, "args": [command], "protocol": "acp", "protocol_version": 1},
@@ -358,7 +358,7 @@ async def test_acp_native_agent_default_policy_is_explicitly_nonportable(tmp_pat
     del tmp_path
     server = StdioServer(name="selected", command="python")
     policy = NativeToolPolicy(harness="acp", policy={"mode": "agent_default", "server": "selected"}, nonportable_reason="ACP owns MCP tool selection")
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="fixture", manifest={"command": sys.executable}),
         servers=(ServerBinding(server=server, alias="selected"),),
         tool_policy=policy,
@@ -366,7 +366,7 @@ async def test_acp_native_agent_default_policy_is_explicitly_nonportable(tmp_pat
     launch = HarnessLaunch(
         spec,
         ServerGroupSnapshot((ServerRecord("selected", server, True, True, "selected", TransportKind.STDIO),)),
-        (HarnessServerConfiguration(key="selected", transport=TransportKind.STDIO, required=True, available=True, connection_id="selected", command="python"),),
+        (HarnessServerConfig(key="selected", transport=TransportKind.STDIO, required=True, available=True, connection_id="selected", command="python"),),
         policy,
     )
     adapter = AcpHarnessAdapter()
@@ -422,22 +422,22 @@ async def test_acp_policy_capability_requires_proxy_proof_and_rejects_native_pol
 @pytest.mark.asyncio
 async def test_acp_adapter_rejects_credential_query_and_unresolved_secret() -> None:
     command = sys.executable
-    query_spec = AgentExecutionSpec(
+    query_spec = AgentSpec(
         harness=ACPAgent(model="fixture", manifest={"command": command}),
-        servers=(ServerBinding(server=StreamableHTTPServer(name="remote", url="https://example.test/mcp?token=canary")),),
+        servers=(ServerBinding(server=HTTPServer(name="remote", url="https://example.test/mcp?token=canary")),),
     )
-    query_launch = HarnessLaunch(query_spec, ServerGroupSnapshot(), (HarnessServerConfiguration(
+    query_launch = HarnessLaunch(query_spec, ServerGroupSnapshot(), (HarnessServerConfig(
         key="remote", transport=TransportKind.STREAMABLE_HTTP, required=True, available=True,
         connection_id="c", endpoint="https://example.test/mcp?token=canary",
     ),), query_spec.tool_policy)
     # No resolved server configuration means the URL policy is evaluated only
     # when a manager supplies its immutable configuration; this is a separate
     # direct check for the unresolved credential reference boundary.
-    secret_spec = AgentExecutionSpec(
+    secret_spec = AgentSpec(
         harness=ACPAgent(model="fixture", manifest={"command": command}),
         servers=(ServerBinding(server=StdioServer(name="local", command="echo", environment={"TOKEN": SecretReference(source="environment", name="TOKEN")})),),
     )
-    secret_launch = HarnessLaunch(secret_spec, ServerGroupSnapshot(), (HarnessServerConfiguration(
+    secret_launch = HarnessLaunch(secret_spec, ServerGroupSnapshot(), (HarnessServerConfig(
         key="local", transport=TransportKind.STDIO, required=True, available=True,
         connection_id="c", command="echo", environment={"TOKEN": SecretReference(source="environment", name="TOKEN")},
     ),), secret_spec.tool_policy)
@@ -448,7 +448,7 @@ async def test_acp_adapter_rejects_credential_query_and_unresolved_secret() -> N
 @pytest.mark.asyncio
 async def test_default_registry_runs_three_turn_public_agent_session(tmp_path: Path) -> None:
     command = _agent(tmp_path / "persistent-agent.py")
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(
             model="fixture",
             manifest={"command": sys.executable, "args": [command], "protocol": "acp", "protocol_version": 1},
@@ -517,7 +517,7 @@ async def test_acp_callbacks_use_interaction_controller_and_keep_receipts_safe()
     async def terminal_handler(_request: TerminalRequest) -> TerminalResult:
         return TerminalResult(True, 0, canary.encode(), b"", False, False, receipt)
 
-    controller = InteractionController(
+    controller = Interactions(
         permission_policy=PermissionPolicy(mode="prompt"),
         elicitation_policy=ElicitationPolicy(mode="allow"),
         sampling_policy=SamplingPolicy(mode="allow"),

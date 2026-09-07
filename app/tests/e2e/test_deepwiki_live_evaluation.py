@@ -10,11 +10,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mcp_pal import (
-    CallToolOperation,
-    DirectExecutionSpec,
+    CallTool,
+    DirectSpec,
     MCPTestKit,
     ServerBinding,
-    StreamableHTTPServer,
+    HTTPServer,
 )
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal_app.api.app import create_app
@@ -34,9 +34,9 @@ def test_deepwiki_v2_execution_reopen_and_builtin_evaluation(tmp_path, monkeypat
     monkeypatch.delenv("MCP_PAL_DEEPWIKI_URL", raising=False)
 
     database = tmp_path / "deepwiki-live.sqlite"
-    base_spec = DirectExecutionSpec(
-        servers=(ServerBinding(server=StreamableHTTPServer(name="deepwiki", url=url)),),
-        operation=CallToolOperation(
+    base_spec = DirectSpec(
+        servers=(ServerBinding(server=HTTPServer(name="deepwiki", url=url)),),
+        operation=CallTool(
             server="deepwiki",
             name="read_wiki_structure",
             arguments={"repoName": "modelcontextprotocol/python-sdk"},

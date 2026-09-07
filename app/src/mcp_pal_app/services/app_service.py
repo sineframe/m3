@@ -11,14 +11,14 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from mcp_pal import (
-    AgentExecutionSpec,
+    AgentSpec,
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
     ExecutionSpec,
-    ExecutionSnapshot,
+    ExecutionState,
     MCPTestKit,
-    PersistedExecutionReport,
+    ExecutionReport,
     RevisionId,
     RevisionSelection,
 )
@@ -26,10 +26,10 @@ from mcp_pal.harness import AcpHarnessAdapter, ClaudeCodeHarnessAdapter, Harness
 from mcp_pal.services.acp_probes import Runner
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import LifecycleState
+from mcp_pal.types import ExecutionStatus
 
 from mcp_pal_app.services.execution_service import AppExecutionError, AppExecutionService
-from mcp_pal_app.services.acp_probe_service import ACPProbeService
+from mcp_pal_app.services.acp_probe_service import ACPProbes
 from mcp_pal_app.services.profile_service import (
     HarnessProfileInput,
     MCPProfileInput,
@@ -95,9 +95,9 @@ def build_harness_adapter_registry(settings: Settings) -> HarnessAdapterRegistry
 class ExecutionView:
     """Typed history projection with immutable spec and bounded report."""
 
-    snapshot: ExecutionSnapshot
+    snapshot: ExecutionState
     specification: ExecutionSpec | None
-    report: PersistedExecutionReport
+    report: ExecutionReport
 
 
 class RuntimeKit(Protocol):
@@ -132,7 +132,7 @@ class AppRuntimeService:
         kit: RuntimeKit | None = None,
         adapter_registry: HarnessAdapterRegistry | None = None,
         readiness_service: ReadinessProvider | None = None,
-        acp_probe_service: ACPProbeService | None = None,
+        acp_probe_service: ACPProbes | None = None,
         acp_probe_runner: Runner | None = None,
     ) -> None:
         if kit is not None and store is None:
@@ -179,7 +179,7 @@ class AppRuntimeService:
             self.executions = AppExecutionService(self.store, self.kit)
             if acp_probe_service is not None and acp_probe_runner is not None:
                 raise ValueError("acp_probe_service and acp_probe_runner are mutually exclusive")
-            self._acp_probes = acp_probe_service or ACPProbeService(self.store, acp_probe_runner)
+            self._acp_probes = acp_probe_service or ACPProbes(self.store, acp_probe_runner)
             if acp_probe_service is not None and acp_probe_service.store is not self.store:
                 raise ValueError("injected ACP probe service and store must be the same runtime resources")
             # Readiness is an application-owned, transport-neutral snapshot
@@ -217,7 +217,7 @@ class AppRuntimeService:
         return self._readiness.capabilities()
 
     @property
-    def acp_probes(self) -> ACPProbeService:
+    def acp_probes(self) -> ACPProbes:
         """Return the lifecycle-owned ACP protocol/full probe service."""
         self._ensure_open()
         return self._acp_probes
@@ -245,13 +245,13 @@ class AppRuntimeService:
         *,
         limit: int = 50,
         offset: int = 0,
-        lifecycle: LifecycleState | str | None = None,
+        lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
     ) -> ExecutionPage:
         self._ensure_open()
         return self.executions.list(limit=limit, offset=offset, lifecycle=lifecycle, outcome=outcome)
 
-    def report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int = 100, artifact_limit: int = 100) -> PersistedExecutionReport:
+    def report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int = 100, artifact_limit: int = 100) -> ExecutionReport:
         self._ensure_open()
         return self.executions.report(execution_id, after_sequence=after_sequence, event_limit=event_limit, artifact_limit=artifact_limit)
 
@@ -269,7 +269,7 @@ class AppRuntimeService:
         # Preflight the complete view before mutating anything.  The legacy UI
         # treats clear-history as an all-or-nothing operation when even one
         # execution is still active.
-        snapshots: list[ExecutionSnapshot] = []
+        snapshots: list[ExecutionState] = []
         offset = 0
         while True:
             page = self.list(limit=100, offset=offset)
@@ -277,7 +277,7 @@ class AppRuntimeService:
             offset += len(page.items)
             if not page.items or offset >= page.total:
                 break
-        if any(snapshot.lifecycle is not LifecycleState.FINISHED for snapshot in snapshots):
+        if any(snapshot.lifecycle is not ExecutionStatus.FINISHED for snapshot in snapshots):
             raise AppExecutionError(
                 "execution_active",
                 "active executions must finish before history can be cleared",
@@ -288,7 +288,7 @@ class AppRuntimeService:
         """Reconstruct a pinned one-turn draft from the immutable submitted spec."""
         view = self.view(execution_id)
         spec = view.specification
-        if not isinstance(spec, AgentExecutionSpec):
+        if not isinstance(spec, AgentSpec):
             raise ValueError("execution does not contain an agent draft")
         metadata = dict(spec.metadata)
         message = next((getattr(block, "text", "") for block in (spec.message.content if spec.message else ())), "")

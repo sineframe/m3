@@ -185,9 +185,9 @@ def test_model_json_helper_redacts_before_json_validation_and_rejects_constructe
     projected = redact_model_json(model, config=RedactionConfig(secrets=frozenset({"model-secret"})))
     assert projected == {"api_key": REDACTED, "note": REDACTED}
 
-    from mcp_pal.types import CanonicalEvent, EventId, EventKind, ExecutionId
+    from mcp_pal.types import Event, EventId, EventKind, ExecutionId
 
-    malformed = CanonicalEvent.model_construct(
+    malformed = Event.model_construct(
         event_id=EventId("malformed-json"),
         execution_id=ExecutionId("execution-json"),
         sequence=0,

@@ -3,11 +3,11 @@ from datetime import datetime, timezone
 import pytest
 
 from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.types import ExecutionId, ExecutionOutcome, ExecutionPage, ExecutionSnapshot, LifecycleState, PersistedExecutionReport
+from mcp_pal.types import ExecutionId, ExecutionOutcome, ExecutionPage, ExecutionState, ExecutionStatus, ExecutionReport
 
 
-def _snapshot(name: str, seconds: int) -> ExecutionSnapshot:
-    return ExecutionSnapshot(
+def _snapshot(name: str, seconds: int) -> ExecutionState:
+    return ExecutionState(
         execution_id=ExecutionId(name),
         created_at=datetime(2025, 1, 1, 0, 0, seconds, tzinfo=timezone.utc),
     )
@@ -35,13 +35,13 @@ def test_execution_listing_filters_lifecycle_and_outcome(tmp_path, store_kind):
         store.create(_snapshot("created", 1))
         finished = _snapshot("finished", 2).model_copy(
             update={
-                "lifecycle": LifecycleState.FINISHED,
+                "lifecycle": ExecutionStatus.FINISHED,
                 "outcome": ExecutionOutcome.CANCELLED,
                 "finished_at": datetime(2025, 1, 1, 0, 0, 3, tzinfo=timezone.utc),
             }
         )
         store.create(finished)
-        page = store.list_executions(lifecycle=LifecycleState.FINISHED, outcome=ExecutionOutcome.CANCELLED)
+        page = store.list_executions(lifecycle=ExecutionStatus.FINISHED, outcome=ExecutionOutcome.CANCELLED)
         assert [item.execution_id.root for item in page.items] == ["finished"]
     finally:
         store.close()
@@ -68,4 +68,4 @@ def test_sqlite_report_reopens_from_snapshot_and_events(tmp_path):
 def test_report_projection_rejects_inconsistent_counts():
     snapshot = _snapshot("report", 1)
     with pytest.raises(ValueError, match="event count"):
-        PersistedExecutionReport(snapshot=snapshot, event_count=1)
+        ExecutionReport(snapshot=snapshot, event_count=1)

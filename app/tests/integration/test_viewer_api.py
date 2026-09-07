@@ -38,7 +38,7 @@ def test_normal_app_mutation_behavior_is_unchanged(tmp_path: Path) -> None:
     assert application.state.v2_kit._embedded_worker is True
     with TestClient(application) as client:
         # Normal routing/validation handles this request; viewer middleware
-        # must not be installed on the canonical application factory.
+        # must not be installed on the stable application factory.
         response = client.post("/api/v2/executions", json={})
     assert response.status_code == 422
     assert response.json() != {"detail": "viewer API is read-only"}

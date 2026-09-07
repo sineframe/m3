@@ -6,7 +6,7 @@ from typing import cast
 
 from mcp_pal import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     ClaudeCode,
     EventKind,
     ExecutionId,
@@ -25,7 +25,7 @@ from mcp_pal.harness.contracts import HarnessLaunch
 from mcp_pal.harness.opencode import OpenCodeHarnessAdapter
 from mcp_pal.harness.native import _isolated_environment, _resolve_runtime_value, write_config
 from mcp_pal.harness.opencode import _resolve_opencode_environment_value, opencode_configuration
-from mcp_pal.server_group import HarnessServerConfiguration, ServerGroupSnapshot
+from mcp_pal.server_group import HarnessServerConfig, ServerGroupSnapshot
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.types import NativeToolPolicy, TransportKind
 from mcp_pal_app.services.app_service import build_harness_adapter_registry
@@ -44,7 +44,7 @@ def test_settings_credentials_are_explicit_and_not_serialized(monkeypatch, tmp_p
     registry = build_harness_adapter_registry(settings)
     servers = (ServerBinding(server=StdioServer(name="server", command="echo")),)
     message = UserMessage(content=(TextContent(text="hello"),))
-    claude_spec = AgentExecutionSpec(
+    claude_spec = AgentSpec(
         servers=servers,
         message=message,
         harness=ClaudeCode(
@@ -155,7 +155,7 @@ def test_registry_does_not_forward_unrelated_provider_keys() -> None:
     adapter = cast(
         ClaudeCodeHarnessAdapter,
         registry.resolve(
-            AgentExecutionSpec(
+            AgentSpec(
                 servers=servers,
                 message=message,
                 harness=ClaudeCode(
@@ -176,7 +176,7 @@ def test_settings_canary_stays_out_of_durable_spec_and_events(tmp_path: Path) ->
     canary = "durable-settings-canary"
     settings = Settings(anthropic_api_key=canary)
     assert settings.anthropic_api_key == canary
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="server", command="echo")),),
         message=UserMessage(content=(TextContent(text="hello"),)),
         harness=ClaudeCode(
@@ -210,7 +210,7 @@ def test_settings_canary_stays_out_of_durable_spec_and_events(tmp_path: Path) ->
 
 def test_native_launch_boundaries_use_selected_settings_only(tmp_path: Path) -> None:
     canary = "native-settings-canary"
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="server", command="echo", environment={"TOKEN": SecretReference(source="environment", name="ANTHROPIC_API_KEY")})),),
         message=UserMessage(content=(TextContent(text="hello"),)),
         harness=ClaudeCode(
@@ -223,7 +223,7 @@ def test_native_launch_boundaries_use_selected_settings_only(tmp_path: Path) -> 
             nonportable_reason="provider policy",
         ),
     )
-    configuration = HarnessServerConfiguration(
+    configuration = HarnessServerConfig(
         key="server", transport=TransportKind.STDIO, required=True, available=True,
         connection_id="connection", command="echo", environment={
             "TOKEN": SecretReference(source="environment", name="ANTHROPIC_API_KEY")

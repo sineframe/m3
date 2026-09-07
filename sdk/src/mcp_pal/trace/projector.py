@@ -1,4 +1,4 @@
-"""Pure projection of finalized canonical events into :class:`TraceView`."""
+"""Pure projection of finalized stable events into :class:`TraceView`."""
 
 from __future__ import annotations
 
@@ -12,12 +12,12 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from ..errors import TraceNotFinalized, TraceUnavailable
 from ..observability import (
-    ACPTraceInfo,
+    ACPTrace,
     ArtifactEntry,
-    ClaudeCodeTraceInfo,
+    ClaudeCodeTrace,
     CorrelationState,
     DiagnosticEntry,
-    DirectTraceInfo,
+    DirectTrace,
     EvaluationEntry,
     EvidenceConflict,
     InitializationEntry,
@@ -29,13 +29,13 @@ from ..observability import (
     Observation,
     ObservationReason,
     ObservationState,
-    OpenCodeTraceInfo,
+    OpenCodeTrace,
     ProcessEntry,
     ProtocolEntry,
-    ProtocolErrorDetails,
+    ProtocolErrorInfo,
     ProtocolKind,
     ProviderEntry,
-    RawEvidenceCapture,
+    EvidenceCapture,
     RawEvidenceSource,
     RawMessageEntry,
     ReasoningEntry,
@@ -58,7 +58,7 @@ from ..observability import (
 from ..types import (
     ActivityHealth,
     ArtifactRef,
-    CanonicalEvent,
+    Event,
     ContentBlock,
     EventDirection,
     EventKind,
@@ -405,12 +405,12 @@ def _thaw_json(value: Any) -> Any:
     return value
 
 
-def _entry_id(events: Sequence[CanonicalEvent]) -> str:
+def _entry_id(events: Sequence[Event]) -> str:
     seed = "|".join(str(event.event_id.root) for event in events)
     return f"entry:{hashlib.sha256(seed.encode('utf-8')).hexdigest()}"
 
 
-def _timing(events: Sequence[CanonicalEvent]) -> TraceTiming:
+def _timing(events: Sequence[Event]) -> TraceTiming:
     first, last = events[0], events[-1]
     start = first.monotonic_offset_ms
     end = max(start, last.monotonic_offset_ms)
@@ -434,7 +434,7 @@ def _timing(events: Sequence[CanonicalEvent]) -> TraceTiming:
     )
 
 
-def _source_clock(event: CanonicalEvent) -> tuple[datetime, float] | None:
+def _source_clock(event: Event) -> tuple[datetime, float] | None:
     wall_time = event.payload.get("wall_time")
     offset = event.payload.get("monotonic_offset_ms")
     if not isinstance(wall_time, str) or not isinstance(offset, (int, float)):
@@ -451,7 +451,7 @@ def _source_clock(event: CanonicalEvent) -> tuple[datetime, float] | None:
 
 
 def _base_kwargs(
-    events: Sequence[CanonicalEvent], *, status: TraceStatus = TraceStatus.COMPLETED
+    events: Sequence[Event], *, status: TraceStatus = TraceStatus.COMPLETED
 ) -> dict[str, Any]:
     first = events[0]
     return {
@@ -469,26 +469,26 @@ def _base_kwargs(
     }
 
 
-def _payload(event: CanonicalEvent, key: str, default: Any = None) -> Any:
+def _payload(event: Event, key: str, default: Any = None) -> Any:
     value = event.payload.get(key, default)
     return value
 
 
-def _field(event: CanonicalEvent, *names: str) -> Any:
+def _field(event: Event, *names: str) -> Any:
     for name in names:
         if name in event.payload:
             return event.payload[name]
     return None
 
 
-def _id_observation(event: CanonicalEvent) -> Observation[JsonRpcId]:
+def _id_observation(event: Event) -> Observation[JsonRpcId]:
     correlation = event.correlation
     if correlation is None or correlation.jsonrpc_id is None:
         return _not_emitted()
     return _observed(correlation.jsonrpc_id)
 
 
-def _expects_response(event: CanonicalEvent) -> bool:
+def _expects_response(event: Event) -> bool:
     if event.kind not in {
         EventKind.MCP_REQUEST,
         EventKind.TOOL_CALL_REQUESTED,
@@ -501,7 +501,7 @@ def _expects_response(event: CanonicalEvent) -> bool:
     return not (isinstance(method, str) and method.startswith("notifications/"))
 
 
-def _call_id(event: CanonicalEvent) -> str:
+def _call_id(event: Event) -> str:
     explicit = event.payload.get("call_id")
     if isinstance(explicit, str) and explicit:
         return explicit
@@ -635,7 +635,7 @@ def _normalize_init_item(item: Any, adapter: Any) -> Any:
     return TypeAdapter(adapter).validate_python(values)
 
 
-def _tool_result(event: CanonicalEvent) -> ToolResult:
+def _tool_result(event: Event) -> ToolResult:
     if (
         event.kind in {EventKind.MCP_RESPONSE, EventKind.TOOL_RESULT_RECEIVED}
         and "result" not in event.payload
@@ -692,7 +692,7 @@ def _tool_result(event: CanonicalEvent) -> ToolResult:
     )
 
 
-def _raw_entry(event: CanonicalEvent) -> RawMessageEntry:
+def _raw_entry(event: Event) -> RawMessageEntry:
     reference = event.raw_evidence_ref
     assert reference is not None
     source = RawEvidenceSource.MCP
@@ -710,7 +710,7 @@ def _raw_entry(event: CanonicalEvent) -> RawMessageEntry:
     raw_capture = event.payload.get("raw_capture")
     if isinstance(raw_capture, Mapping):
         try:
-            capture = RawEvidenceCapture.model_validate(raw_capture)
+            capture = EvidenceCapture.model_validate(raw_capture)
             if capture.reference != reference:
                 raise ValueError("raw capture reference does not match event")
             preview = capture.preview
@@ -730,7 +730,7 @@ def _raw_entry(event: CanonicalEvent) -> RawMessageEntry:
     )
 
 
-def _protocol_entry(events: Sequence[CanonicalEvent]) -> ProtocolEntry:
+def _protocol_entry(events: Sequence[Event]) -> ProtocolEntry:
     first, last = events[0], events[-1]
     payload = first.payload
     method = _field(first, "method")
@@ -749,7 +749,7 @@ def _protocol_entry(events: Sequence[CanonicalEvent]) -> ProtocolEntry:
             ):
                 raise ValueError("protocol error message is malformed")
             error_observation = _observed(
-                ProtocolErrorDetails(
+                ProtocolErrorInfo(
                     code=cast(int | str | None, raw_code),
                     message=raw_message[:4096],
                     data=_json_observation(
@@ -792,7 +792,7 @@ def _protocol_entry(events: Sequence[CanonicalEvent]) -> ProtocolEntry:
     )
 
 
-def _transport_entry(event: CanonicalEvent) -> TransportEntry:
+def _transport_entry(event: Event) -> TransportEntry:
     phase: Literal["connected", "disconnected"] = (
         "connected" if event.kind is EventKind.TRANSPORT_CONNECTED else "disconnected"
     )
@@ -804,7 +804,7 @@ def _transport_entry(event: CanonicalEvent) -> TransportEntry:
     )
 
 
-def _interaction_entry(events: Sequence[CanonicalEvent]) -> InteractionEntry:
+def _interaction_entry(events: Sequence[Event]) -> InteractionEntry:
     first, last = events[0], events[-1]
     request_present = "request" in first.payload or "params" in first.payload
     request = first.payload.get("request", first.payload.get("params"))
@@ -827,7 +827,7 @@ def _interaction_entry(events: Sequence[CanonicalEvent]) -> InteractionEntry:
     )
 
 
-def _tool_entry(events: Sequence[CanonicalEvent]) -> TraceEntry:
+def _tool_entry(events: Sequence[Event]) -> TraceEntry:
     first, last = events[0], events[-1]
     reported_evidence = first.provenance.origin is EventOrigin.HARNESS_REPORTED
     params_value = first.payload.get("params")
@@ -1036,7 +1036,7 @@ def _tool_entry(events: Sequence[CanonicalEvent]) -> TraceEntry:
 
 
 def _initialization_value(
-    event: CanonicalEvent, value: Mapping[str, Any] | None = None
+    event: Event, value: Mapping[str, Any] | None = None
 ) -> InitializationValue:
     value = value if value is not None else event.payload
     if value.get(_MALFORMED_INITIALIZATION) is True:
@@ -1071,7 +1071,7 @@ def _initialization_value(
         except (TypeError, ValueError, ValidationError):
             return _unavailable(ObservationReason.MALFORMED_SOURCE)
 
-    from ..types import DirectPrompt, DirectResource, DirectResourceTemplate, DirectTool
+    from ..types import PromptInfo, ResourceInfo, TemplateInfo, ToolInfo
 
     return InitializationValue(
         protocol_version=_string_observation(
@@ -1097,17 +1097,17 @@ def _initialization_value(
         capabilities=_json_observation(
             value.get("capabilities"), present="capabilities" in value
         ),
-        tools=_typed_items(("tools",), DirectTool),
-        resources=_typed_items(("resources",), DirectResource),
+        tools=_typed_items(("tools",), ToolInfo),
+        resources=_typed_items(("resources",), ResourceInfo),
         resource_templates=_typed_items(
-            ("resourceTemplates", "resource_templates"), DirectResourceTemplate
+            ("resourceTemplates", "resource_templates"), TemplateInfo
         ),
-        prompts=_typed_items(("prompts",), DirectPrompt),
+        prompts=_typed_items(("prompts",), PromptInfo),
     )
 
 
 def _entry_for_event(
-    event: CanonicalEvent, *, initialization_payload: Mapping[str, Any] | None = None
+    event: Event, *, initialization_payload: Mapping[str, Any] | None = None
 ) -> TraceEntry:
     kwargs = _base_kwargs((event,))
     payload = event.payload
@@ -1388,7 +1388,7 @@ def _entry_for_event(
     return DiagnosticEntry(
         **kwargs,
         code=kind.value.replace(".", "_")[:128],
-        message="canonical event projected without a specialized public entry",
+        message="stable event projected without a specialized public entry",
     )
 
 
@@ -1462,7 +1462,7 @@ class TraceProjector:
 
     @staticmethod
     def from_events(
-        events: Sequence[CanonicalEvent],
+        events: Sequence[Event],
         *,
         trace_id: TraceId | str,
         execution_id: ExecutionId | str,
@@ -1493,10 +1493,10 @@ class TraceProjector:
         return TraceProjector.project(trace)
 
     @staticmethod
-    def _timeline(events: Sequence[CanonicalEvent]) -> tuple[TraceEntry, ...]:
-        requests: dict[tuple[Any, ...], list[CanonicalEvent]] = {}
-        reported_requests: dict[str, list[CanonicalEvent]] = {}
-        responses: dict[int, CanonicalEvent] = {}
+    def _timeline(events: Sequence[Event]) -> tuple[TraceEntry, ...]:
+        requests: dict[tuple[Any, ...], list[Event]] = {}
+        reported_requests: dict[str, list[Event]] = {}
+        responses: dict[int, Event] = {}
         for event in events:
             if event.kind in {
                 EventKind.MCP_REQUEST,
@@ -1513,7 +1513,7 @@ class TraceProjector:
                 if call_id is not None and event.kind is EventKind.TOOL_CALL_REQUESTED:
                     reported_requests.setdefault(call_id, []).append(event)
         used: set[str] = set()
-        paired: dict[int, CanonicalEvent] = {}
+        paired: dict[int, Event] = {}
         all_requests = tuple(item for values in requests.values() for item in values)
         for event in events:
             if event.kind not in {
@@ -1597,7 +1597,7 @@ class TraceProjector:
                 responses[event.sequence] = event
         output: list[TraceEntry] = []
 
-        def append_event(event: CanonicalEvent, entry: TraceEntry) -> None:
+        def append_event(event: Event, entry: TraceEntry) -> None:
             output.append(entry)
             if event.raw_evidence_ref is not None and not isinstance(
                 entry, RawMessageEntry
@@ -1902,7 +1902,7 @@ class TraceProjector:
         return tuple(result)
 
     @staticmethod
-    def _runtime(events: Sequence[CanonicalEvent]) -> RuntimeTraceInfo:
+    def _runtime(events: Sequence[Event]) -> RuntimeTraceInfo:
         opencode_events = tuple(
             event
             for event in events
@@ -2004,7 +2004,7 @@ class TraceProjector:
                 http_lifecycle = _observed(http_fields)
             else:
                 http_lifecycle = _unavailable(ObservationReason.CAPTURE_FAILED)
-            return OpenCodeTraceInfo(
+            return OpenCodeTrace(
                 session_id=string_value("session_id"),
                 provider_id=string_value("provider"),
                 model_id=string_value("model"),
@@ -2128,7 +2128,7 @@ class TraceProjector:
                         ),
                     )
                 )
-            return ClaudeCodeTraceInfo(
+            return ClaudeCodeTrace(
                 session_id=string_value("session_id"),
                 model_id=string_value("model"),
                 result_subtype=string_value("result_subtype"),
@@ -2172,7 +2172,7 @@ class TraceProjector:
             current_mode = acp_value("current_mode")
             if current_mode.state is ObservationState.OBSERVED:
                 current_mode = _string_observation(current_mode.value)
-            return ACPTraceInfo(
+            return ACPTrace(
                 session_id=_identifier_observation(
                     acp_metadata.get("session_id"),
                     present="session_id" in acp_metadata,
@@ -2257,14 +2257,14 @@ class TraceProjector:
             if any(event.kind.value.startswith("mcp.") for event in events)
             else _not_emitted()
         )
-        return DirectTraceInfo(
+        return DirectTrace(
             transport=transport, protocol=protocol, initialization=initialization
         )
 
     @staticmethod
     def _summary(
         trace: TraceResult,
-        events: Sequence[CanonicalEvent],
+        events: Sequence[Event],
         timeline: Sequence[TraceEntry],
         outcome: ExecutionOutcome,
     ) -> TraceSummary:
@@ -2335,7 +2335,7 @@ class TraceProjector:
         )
 
 
-def _reported_call_id(event: CanonicalEvent) -> str | None:
+def _reported_call_id(event: Event) -> str | None:
     """Return a harness call identity without applying name-only matching."""
     if event.provenance.origin is not EventOrigin.HARNESS_REPORTED:
         return None
@@ -2343,7 +2343,7 @@ def _reported_call_id(event: CanonicalEvent) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _same_reported_turn(first: CanonicalEvent, second: CanonicalEvent) -> bool:
+def _same_reported_turn(first: Event, second: Event) -> bool:
     first_turn = first.payload.get("turn_sequence")
     second_turn = second.payload.get("turn_sequence")
     if isinstance(first_turn, int) and isinstance(second_turn, int):
@@ -2351,7 +2351,7 @@ def _same_reported_turn(first: CanonicalEvent, second: CanonicalEvent) -> bool:
     return True
 
 
-def _correlation_key(event: CanonicalEvent) -> tuple[Any, ...] | None:
+def _correlation_key(event: Event) -> tuple[Any, ...] | None:
     correlation = event.correlation
     if correlation is None or correlation.jsonrpc_id is None:
         return None
@@ -2388,7 +2388,7 @@ def _correlation_key(event: CanonicalEvent) -> tuple[Any, ...] | None:
     )
 
 
-def _compatible_pair(request: CanonicalEvent, response: CanonicalEvent) -> bool:
+def _compatible_pair(request: Event, response: Event) -> bool:
     if request.kind is EventKind.TOOL_CALL_REQUESTED or (
         request.kind is EventKind.MCP_REQUEST
         and request.payload.get("method") == "tools/call"
@@ -2408,7 +2408,7 @@ def _compatible_pair(request: CanonicalEvent, response: CanonicalEvent) -> bool:
     return response.kind in {EventKind.MCP_RESPONSE, EventKind.MCP_ERROR}
 
 
-def _fallback_pair(request: CanonicalEvent, response: CanonicalEvent) -> bool:
+def _fallback_pair(request: Event, response: Event) -> bool:
     """Check the narrow typed-ID fallback correlation contract."""
     request_correlation = request.correlation
     response_correlation = response.correlation
@@ -2449,7 +2449,7 @@ def _fallback_pair(request: CanonicalEvent, response: CanonicalEvent) -> bool:
 
 
 def _initialization_request_matches(
-    initialized: CanonicalEvent, request: CanonicalEvent
+    initialized: Event, request: Event
 ) -> bool:
     """Require the initialized marker to describe its initialize request."""
     initialized_correlation = initialized.correlation
@@ -2480,8 +2480,8 @@ def _initialization_request_matches(
 
 
 def _strict_response_candidates(
-    request: CanonicalEvent, events: Sequence[CanonicalEvent]
-) -> tuple[CanonicalEvent, ...]:
+    request: Event, events: Sequence[Event]
+) -> tuple[Event, ...]:
     response_kinds = {
         EventKind.MCP_RESPONSE,
         EventKind.MCP_ERROR,

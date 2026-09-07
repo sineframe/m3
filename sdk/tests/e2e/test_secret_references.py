@@ -14,11 +14,11 @@ from mcp_pal.events import EventFactory
 from mcp_pal.storage import DurableSerializationError, SQLiteExecutionStore, serialize_durable
 from mcp_pal.trace.redaction import RedactionConfig
 from mcp_pal.types import (
-    DirectExecutionSpec,
+    DirectSpec,
     ExecutionId,
-    ExecutionSnapshot,
+    ExecutionState,
     EventKind,
-    PingOperation,
+    Ping,
     SecretReference,
     ServerBinding,
     StdioServer,
@@ -28,8 +28,8 @@ from mcp_pal.types import (
 pytestmark = pytest.mark.e2e
 
 
-def _spec() -> DirectExecutionSpec:
-    return DirectExecutionSpec(
+def _spec() -> DirectSpec:
+    return DirectSpec(
         servers=(
             ServerBinding(
                 server=StdioServer(
@@ -39,7 +39,7 @@ def _spec() -> DirectExecutionSpec:
                 )
             ),
         ),
-        operation=PingOperation(server="secret-server"),
+        operation=Ping(server="secret-server"),
     )
 
 
@@ -77,7 +77,7 @@ def test_secret_reference_survives_sqlite_process_round_trip(tmp_path: Path) -> 
     spec = _spec().model_copy(update={"metadata": {"note": canary}})
     execution_id = ExecutionId("secret-execution")
     store.create(
-        ExecutionSnapshot(execution_id=execution_id),
+        ExecutionState(execution_id=execution_id),
         specification=spec.model_dump(mode="json"),
         server_bindings=[spec.servers[0].model_dump(mode="json")],
     )
@@ -98,7 +98,7 @@ def test_secret_reference_survives_sqlite_process_round_trip(tmp_path: Path) -> 
             """
 import json, sqlite3, sys
 from pathlib import Path
-from mcp_pal.types import DirectExecutionSpec, StdioServer, StreamableHTTPServer, SecretReference
+from mcp_pal.types import DirectSpec, StdioServer, HTTPServer, SecretReference
 from mcp_pal.storage import SQLiteExecutionStore
 db, blobs, profile_id, harness_profile_id, command_id, clone_id = sys.argv[1:]
 store = SQLiteExecutionStore(db, blob_root=blobs)
@@ -106,10 +106,10 @@ profile = store.get_revision(store.resolve_revision(profile_id).id)
 with sqlite3.connect(db) as connection:
     spec_json = connection.execute("SELECT specification_json FROM v2_executions WHERE id='secret-execution'").fetchone()[0]
     command_json = connection.execute("SELECT payload_json FROM v2_commands WHERE id=?", (command_id,)).fetchone()[0]
-spec = DirectExecutionSpec.model_validate(json.loads(spec_json))
+spec = DirectSpec.model_validate(json.loads(spec_json))
 profile_server = profile.value["mcpServers"]["secret-server"]
 server = StdioServer.model_validate({"name": "secret-server", "command": profile_server["command"], "environment": profile_server["env"]})
-http_server = StreamableHTTPServer.model_validate({"name": "secret-http", "url": profile.value["mcpServers"]["secret-http"]["url"], "headers": profile.value["mcpServers"]["secret-http"]["headers"]})
+http_server = HTTPServer.model_validate({"name": "secret-http", "url": profile.value["mcpServers"]["secret-http"]["url"], "headers": profile.value["mcpServers"]["secret-http"]["headers"]})
 harness = store.get_revision(store.resolve_revision(harness_profile_id).id)
 clone_bindings = store.resolved_bindings(clone_id)["servers"]
 print(json.dumps({
@@ -180,7 +180,7 @@ def test_durable_credential_literals_are_rejected_instead_of_redacted(tmp_path: 
     with sqlite3.connect(tmp_path / "reject-secret.sqlite") as connection:
         assert connection.execute("SELECT COUNT(*) FROM v2_server_profiles WHERE name='literal-profile'").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM v2_harness_profiles WHERE name='nested-literal'").fetchone()[0] == 0
-    store.create(ExecutionSnapshot(execution_id=ExecutionId("literal-execution")))
+    store.create(ExecutionState(execution_id=ExecutionId("literal-execution")))
     with pytest.raises(DurableSerializationError, match="requires a SecretReference"):
         store.enqueue_command("literal-execution", payload={"headers": {"Authorization": "literal-token"}})
     with sqlite3.connect(tmp_path / "reject-secret.sqlite") as connection:
@@ -196,7 +196,7 @@ def test_durable_provenance_remains_redacted_metadata(tmp_path: Path) -> None:
         config=RedactionConfig(secrets=frozenset({canary}), include_environment=False),
     )
     execution_id = ExecutionId("provenance-execution")
-    store.create(ExecutionSnapshot(execution_id=execution_id), provenance={"secret": canary, "credential": "literal-metadata"})
+    store.create(ExecutionState(execution_id=execution_id), provenance={"secret": canary, "credential": "literal-metadata"})
     with sqlite3.connect(tmp_path / "provenance.sqlite") as connection:
         value = connection.execute("SELECT provenance_json FROM v2_executions WHERE id=?", (execution_id.root,)).fetchone()[0]
     assert canary not in value
@@ -214,7 +214,7 @@ def test_durable_credential_rejection_is_atomic(tmp_path: Path, boundary: str) -
         "harness_binding": {"credentials": {"Authorization": "literal-token"}},
     }
     with pytest.raises(DurableSerializationError, match="requires a SecretReference"):
-        store.create(ExecutionSnapshot(execution_id=execution_id), **{boundary: kwargs[boundary]})
+        store.create(ExecutionState(execution_id=execution_id), **{boundary: kwargs[boundary]})
     assert store.get_snapshot(execution_id) is None
     store.close()
 
@@ -265,7 +265,7 @@ def test_durable_serialization_rejects_cycles_and_excessive_nesting_atomically(t
     store = SQLiteExecutionStore(tmp_path / "depth.sqlite", blob_root=tmp_path / "blobs")
     with pytest.raises(DurableSerializationError, match="maximum nesting depth"):
         store.create(
-            ExecutionSnapshot(execution_id=ExecutionId("depth-execution")),
+            ExecutionState(execution_id=ExecutionId("depth-execution")),
             specification=deeply_nested,
         )
     assert store.get_snapshot("depth-execution") is None

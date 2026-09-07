@@ -15,17 +15,17 @@ from mcp import ClientSession as _ClientSession
 from .agent_session import AsyncAgentSession as _CoreAsyncAgentSession, HarnessAdapter
 from .harness.contracts import (
     HarnessAdapterRegistry as _HarnessAdapterRegistry,
-    default_harness_adapter_registry as _default_harness_adapter_registry,
+    default_adapters as _default_adapters,
 )
 from .interaction_handlers import (
-    AllowlistedTerminalHandler,
+    AllowedCommands,
     ElicitationRequest,
     ElicitationResult,
     ElicitationHandler,
     FilesystemHandler,
     FilesystemRequest,
     FilesystemResult,
-    InteractionController,
+    Interactions,
     InteractionHandlers,
     InteractionReceipt,
     PermissionRequest,
@@ -37,28 +37,25 @@ from .interaction_handlers import (
     TerminalHandler,
     TerminalRequest,
     TerminalResult,
-    WorkspaceFilesystemHandler,
+    WorkspaceFiles,
 )
 from .server_group import ServerGroupManager as _ServerGroupManager
 from .storage import ArtifactStore as _ArtifactStore
 from .configuration import (
     ConfigOrigin,
     ConfigSource,
-    Configuration,
-    ConfigurationError,
-    MCPConfig,
-    SDKConfig,
+    Config,
+    ConfigError,
     load_config,
-    resolve_config,
 )
 from .direct_client import (
     AsyncDirectClient as _CoreAsyncDirectClient,
     CallToolResult,
     CompletionResult,
-    DirectPrompt,
-    DirectResource,
-    DirectResourceTemplate,
-    DirectTool,
+    PromptInfo,
+    ResourceInfo,
+    TemplateInfo,
+    ToolInfo,
     EmptyResult,
     GetPromptResult,
     InitializeResult,
@@ -104,7 +101,7 @@ from .storage import InMemoryExecutionStore as _InMemoryExecutionStore
 from .trace.redaction import RedactionConfig as _RedactionConfig
 from .types import ExecutionOutcome as _ExecutionOutcome
 from .services.probes import (
-    AsyncCapabilityProbeService,
+    AsyncProbes,
     ProbeEvidence,
     ProbeKind,
     ProbeReport,
@@ -112,13 +109,13 @@ from .services.probes import (
     ProbeResult,
 )
 from .types import (
-    AgentExecutionSpec as _AgentExecutionSpec,
+    AgentSpec as _AgentSpec,
     Capability as _Capability,
     CapabilityStatus as _CapabilityStatus,
-    DirectExecutionSpec as _DirectExecutionSpec,
+    DirectSpec as _DirectSpec,
     ExecutionResult as _ExecutionResult,
     ExecutionSpec as _ExecutionSpec,
-    ExecutionSnapshot as _ExecutionSnapshot,
+    ExecutionState as _ExecutionState,
     RunId as _RunId,
     EvaluationResult as _EvaluationResult,
     Readiness as _Readiness,
@@ -129,12 +126,12 @@ from .types import (
     SecretReference as _SecretReference,
     SSEServer as _SSEServer,
     StdioServer as _StdioServer,
-    StreamableHTTPServer as _StreamableHTTPServer,
+    HTTPServer as _HTTPServer,
     TransportKind as _TransportKind,
     TurnResult as _TurnResult,
     UserMessage as _UserMessage,
     TraceResult as _TraceResult,
-    RawEvidenceRef as _RawEvidenceRef,
+    EvidenceRef as _EvidenceRef,
     ExecutionId as _ExecutionId,
 )
 from .observability import *
@@ -545,7 +542,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
                 await connection.close()
 
             return owner, connection, session, cleanup
-        elif isinstance(server, (_StreamableHTTPServer, _SSEServer)):
+        elif isinstance(server, (_HTTPServer, _SSEServer)):
             kwargs: dict[str, _Any] = {
                 "resolver": self._secret_resolver,
                 "bearer_token": self._bearer_token,
@@ -584,7 +581,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
             transport = _TransportKind.IN_PROCESS
         elif isinstance(server, _StdioServer):
             transport = _TransportKind.STDIO
-        elif isinstance(server, _StreamableHTTPServer):
+        elif isinstance(server, _HTTPServer):
             transport = _TransportKind.STREAMABLE_HTTP
         elif isinstance(server, _SSEServer):
             transport = _TransportKind.SSE
@@ -711,7 +708,7 @@ class AsyncMCPTestKit:
 
     def __init__(
         self,
-        config: SDKConfig | _Mapping[str, _Any] | None = None,
+        config: Config | _Mapping[str, _Any] | None = None,
         *,
         env: _Mapping[str, str] | None = None,
         cwd: str | _Path | None = None,
@@ -725,7 +722,7 @@ class AsyncMCPTestKit:
         self._closed = False
         scoped_run_id = run_id or _make_default_run_id()
         self._run_id = scoped_run_id if isinstance(scoped_run_id, _RunId) else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
-        self.config = config if isinstance(config, SDKConfig) else resolve_config(config, env=env, cwd=cwd)
+        self.config = config if isinstance(config, Config) else load_config(config, env=env, cwd=cwd)
         self._owns_store = False
         if store is None:
             scoped_store = _make_default_store()
@@ -738,7 +735,7 @@ class AsyncMCPTestKit:
         self._adapter_registry = (
             adapter_registry
             if adapter_registry is not None
-            else _default_harness_adapter_registry()
+            else _default_adapters()
         )
         self._execution_controller = _AsyncExecutionController(
             self,
@@ -757,7 +754,7 @@ class AsyncMCPTestKit:
                 # bind the worker to the loop that executes the work.
                 pass
         self._evaluations = _EvaluationRunner(durable_store=store)
-        self._probes = AsyncCapabilityProbeService(
+        self._probes = AsyncProbes(
             timeout_seconds=probe_timeout_seconds,
             output_limit=probe_output_limit,
         )
@@ -768,7 +765,7 @@ class AsyncMCPTestKit:
             raise _KitClosed("AsyncMCPTestKit is closed")
 
     @property
-    def probes(self) -> AsyncCapabilityProbeService:
+    def probes(self) -> AsyncProbes:
         """Asynchronous capability namespace owned by this kit."""
 
         self._ensure_open()
@@ -794,7 +791,7 @@ class AsyncMCPTestKit:
         return spec
 
     async def get_trace(self, execution_id: _ExecutionId | str) -> _TraceResult:
-        """Return the finalized canonical trace for an execution.
+        """Return the finalized stable trace for an execution.
 
         The configured store API is synchronous by contract; this async
         facade preserves that existing storage behavior and does not pretend
@@ -823,7 +820,7 @@ class AsyncMCPTestKit:
         return view
 
     async def read_raw_evidence(
-        self, reference: _RawEvidenceRef, *, max_bytes: int = 1_048_576
+        self, reference: _EvidenceRef, *, max_bytes: int = 1_048_576
     ) -> RawEvidence:
         """Read bounded, redacted raw evidence by its durable reference.
 
@@ -948,7 +945,7 @@ class AsyncMCPTestKit:
         self._ensure_open()
         raise _UnsupportedFeature(f"{operation} is not implemented in the configuration milestone")
 
-    async def run(self, spec: _DirectExecutionSpec | _AgentExecutionSpec) -> _ExecutionResult:
+    async def run(self, spec: _DirectSpec | _AgentSpec) -> _ExecutionResult:
         self._ensure_open()
         selected = self._with_run_id(spec)
         return await self._execution_controller.run(selected, run_id=self._run_id.root)
@@ -996,7 +993,7 @@ class AsyncMCPTestKit:
         self._ensure_open()
         selected = server.server if hasattr(server, "server") else server
         binding = server if isinstance(server, _ServerBinding) else _ServerBinding(server=selected)
-        if selected is None or not isinstance(selected, (_InProcessServer, _StdioServer, _StreamableHTTPServer, _SSEServer)):
+        if selected is None or not isinstance(selected, (_InProcessServer, _StdioServer, _HTTPServer, _SSEServer)):
             raise _UnsupportedFeature("direct server profiles require runtime resolution")
         if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be positive")
@@ -1014,7 +1011,7 @@ class AsyncMCPTestKit:
         actual_transport = {
             _InProcessServer: _TransportKind.IN_PROCESS,
             _StdioServer: _TransportKind.STDIO,
-            _StreamableHTTPServer: _TransportKind.STREAMABLE_HTTP,
+            _HTTPServer: _TransportKind.STREAMABLE_HTTP,
             _SSEServer: _TransportKind.SSE,
         }[type(selected)]
         if requested_transport is not None and requested_transport is not actual_transport:
@@ -1062,7 +1059,7 @@ class AsyncMCPTestKit:
 
     def agent_session(
         self,
-        spec: _AgentExecutionSpec,
+        spec: _AgentSpec,
         *,
         adapter: HarnessAdapter | None = None,
         runtime_servers: _Iterable[_Any] = (),
@@ -1074,13 +1071,13 @@ class AsyncMCPTestKit:
         _artifact_store: _ArtifactStore | None = None,
     ) -> AsyncAgentSession:
         self._ensure_open()
-        if not isinstance(spec, _AgentExecutionSpec):
+        if not isinstance(spec, _AgentSpec):
             self._unsupported("agent_session")
-        spec = _cast(_AgentExecutionSpec, self._with_run_id(spec))
+        spec = _cast(_AgentSpec, self._with_run_id(spec))
         resolved = adapter or self._adapter_registry.resolve(spec)
         bindings = spec.servers + _runtime_server_bindings(runtime_servers)
         manager = _ServerGroupManager(bindings, tool_policy=spec.tool_policy)
-        interactions = InteractionController(
+        interactions = Interactions(
             permission_policy=spec.permission_policy,
             elicitation_policy=spec.elicitation_policy,
             sampling_policy=spec.sampling_policy,
@@ -1130,7 +1127,7 @@ class AsyncMCPTestKit:
 __all__ = [
     "AsyncAgentSession",
     "HarnessAdapter",
-    "AsyncCapabilityProbeService",
+    "AsyncProbes",
     "AsyncDirectClient",
     "AsyncExecutionHandle",
     "AsyncMCPTestKit",
@@ -1138,12 +1135,12 @@ __all__ = [
     "CompletionResult",
     "ConfigOrigin",
     "ConfigSource",
-    "Configuration",
-    "ConfigurationError",
-    "DirectPrompt",
-    "DirectResource",
-    "DirectResourceTemplate",
-    "DirectTool",
+    "Config",
+    "ConfigError",
+    "PromptInfo",
+    "ResourceInfo",
+    "TemplateInfo",
+    "ToolInfo",
     "EmptyResult",
     "GetPromptResult",
     "InitializeResult",
@@ -1153,7 +1150,6 @@ __all__ = [
     "ListResourcesResult",
     "ListResourceTemplatesResult",
     "ListToolsResult",
-    "MCPConfig",
     "ProbeEvidence",
     "ProbeKind",
     "ProbeReport",
@@ -1170,21 +1166,19 @@ __all__ = [
     "ResourceTemplatePage",
     "ResourceTemplatesPage",
     "ResourcesPage",
-    "SDKConfig",
     "Tool",
     "ToolCallResult",
     "ToolPage",
     "ToolsPage",
     "load_config",
-    "resolve_config",
-    "AllowlistedTerminalHandler",
+    "AllowedCommands",
     "ElicitationRequest",
     "ElicitationResult",
     "ElicitationHandler",
     "FilesystemHandler",
     "FilesystemRequest",
     "FilesystemResult",
-    "InteractionController",
+    "Interactions",
     "InteractionHandlers",
     "InteractionReceipt",
     "PermissionRequest",
@@ -1196,7 +1190,7 @@ __all__ = [
     "TerminalHandler",
     "TerminalRequest",
     "TerminalResult",
-    "WorkspaceFilesystemHandler",
+    "WorkspaceFiles",
 ]
 
 __all__ = [*__all__, *_OBSERVABILITY_EXPORTS]

@@ -1,4 +1,4 @@
-"""Failure-safe bridge from harness observations to canonical trace events."""
+"""Failure-safe bridge from harness observations to stable trace events."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..execution_trace import ExecutionTraceRecorder
-from ..observability import TraceCaptureConfig
+from ..observability import CaptureOptions
 from ..trace.redaction import redact_for_persistence
-from ..types import EventKind, EventOrigin, EventProvenance, RawEvidenceRef, TurnId
+from ..types import EventKind, EventOrigin, EventSource, EvidenceRef, TurnId
 from .observations import (
     HARNESS_OBSERVATION_ADAPTER,
     HarnessObservation,
@@ -33,7 +33,7 @@ _PROVIDER_OBSERVATIONS = (
 
 
 class HarnessObservationSink:
-    """Convert typed adapter observations into safe canonical evidence.
+    """Convert typed adapter observations into safe stable evidence.
 
     The sink is deliberately a one-way, best-effort boundary.  ``emit`` never
     raises, including when an adapter hands it malformed data or persistence
@@ -45,16 +45,16 @@ class HarnessObservationSink:
         self,
         recorder: ExecutionTraceRecorder,
         *,
-        capture_config: TraceCaptureConfig | None = None,
+        capture_config: CaptureOptions | None = None,
         turn_id: TurnId | str | None = None,
     ) -> None:
         self._recorder = recorder
         store_config = getattr(
             getattr(recorder, "_store", None), "_capture_config", None
         )
-        self._capture_config = capture_config or store_config or TraceCaptureConfig()
+        self._capture_config = capture_config or store_config or CaptureOptions()
         self._limitations: list[str] = []
-        self._raw_references: dict[str, RawEvidenceRef] = {}
+        self._raw_references: dict[str, EvidenceRef] = {}
         self._observation_ids: set[str] = set()
         self._pending_limitations: set[str] = set()
         # Session callers provide the real TurnId.  Standalone adapters retain
@@ -68,7 +68,7 @@ class HarnessObservationSink:
         return tuple(self._limitations)
 
     @property
-    def raw_references(self) -> Mapping[str, RawEvidenceRef]:
+    def raw_references(self) -> Mapping[str, EvidenceRef]:
         return dict(self._raw_references)
 
     def emit(self, observation: HarnessObservation) -> None:
@@ -87,7 +87,7 @@ class HarnessObservationSink:
             ):
                 self._limit("capture_disabled")
                 return
-            kind, payload, kwargs = self._canonical(value)
+            kind, payload, kwargs = self._normalize(value)
             raw = value.raw_evidence
             raw_content: bytes | None = None
             raw_media_type: str | None = None
@@ -102,7 +102,7 @@ class HarnessObservationSink:
             event = self._recorder.emit(
                 kind,
                 payload=payload,
-                provenance=EventProvenance(
+                provenance=EventSource(
                     origin=EventOrigin.HARNESS_REPORTED,
                     source=value.harness_kind,
                     provider_kind=value.harness_kind,
@@ -131,7 +131,7 @@ class HarnessObservationSink:
             self._limit(limitation)
         self._pending_limitations.clear()
 
-    def _canonical(
+    def _normalize(
         self, observation: HarnessObservation
     ) -> tuple[EventKind, dict[str, Any], dict[str, Any]]:
         payload = self._common_payload(observation)
@@ -397,7 +397,7 @@ class HarnessObservationSink:
                     "code": code,
                     "message": "harness evidence capture was unavailable",
                 },
-                provenance=EventProvenance(
+                provenance=EventSource(
                     origin=EventOrigin.DERIVED, source="mcp_pal.harness"
                 ),
             )

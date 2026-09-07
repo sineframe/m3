@@ -7,20 +7,20 @@ from pydantic import TypeAdapter
 
 from mcp_pal import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     ClaudeCode,
     ExecutionPage,
     ExecutionSpec,
-    ExecutionSnapshot,
+    ExecutionState,
     EvaluationId,
-    EvaluationProvenance,
+    EvaluationSource,
     EvaluationResult,
     EvaluationStatus,
     MCPTestKit,
     OpenCode,
-    PersistedExecutionReport,
+    ExecutionReport,
     RawEvidenceIntegrityError,
-    RawEvidenceRef,
+    EvidenceRef,
     RawEvidenceUnavailable,
     TextContent,
     TraceView,
@@ -28,15 +28,15 @@ from mcp_pal import (
     UserMessage,
 )
 from mcp_pal.storage import SQLiteExecutionStore, StorageError
-from mcp_pal.types import CallToolOperation, DirectExecutionSpec, ListToolsOperation, ServerBinding, StdioServer
+from mcp_pal.types import CallTool, DirectSpec, ListTools, ServerBinding, StdioServer
 from mcp_pal_app.api.app import create_app
 from mcp_pal_app.settings import Settings
 
 
 def _payload(run_id=None):
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=StdioServer(name="echo", command=sys.executable, args=("-m", "mcp_pal.fixtures.echo_server"))),),
-        operation=CallToolOperation(server="echo", name="echo", arguments={"text": "hello"}),
+        operation=CallTool(server="echo", name="echo", arguments={"text": "hello"}),
         run_id=run_id,
     )
     return {"spec": spec.model_dump(mode="json")}
@@ -45,7 +45,7 @@ def _payload(run_id=None):
 def _slow_payload():
     # Keep the child alive well beyond the cancellation request so scheduling
     # cannot make this fixture finish before cancellation is exercised.
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(
             ServerBinding(
                 server=StdioServer(
@@ -55,14 +55,14 @@ def _slow_payload():
                 ),
             ),
         ),
-        operation=ListToolsOperation(server="echo"),
+        operation=ListTools(server="echo"),
         timeout_seconds=300.0,
     )
     return {"spec": spec.model_dump(mode="json")}
 
 
 def _agent_spec(harness):
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=harness,
         servers=(
             ServerBinding(
@@ -94,7 +94,7 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         body = created.json()
         assert body["version"] == "v2"
         execution_id = body["execution_id"]
-        assert TypeAdapter(ExecutionSpec).validate_python(body["spec"]) == DirectExecutionSpec.model_validate(payload["spec"])
+        assert TypeAdapter(ExecutionSpec).validate_python(body["spec"]) == DirectSpec.model_validate(payload["spec"])
         assert body["spec"]["run_id"] == "api-run"
         assert body["snapshot"]["run_id"] == "api-run"
         assert body["snapshot"]["lifecycle"] in {"created", "queued", "starting", "finished"}
@@ -111,7 +111,7 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         assert fetched.json()["snapshot"]["run_id"] == "api-run"
         report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert report.status_code == 200
-        parsed_report = TypeAdapter(PersistedExecutionReport).validate_python(report.json()["report"])
+        parsed_report = TypeAdapter(ExecutionReport).validate_python(report.json()["report"])
         full_trace = TypeAdapter(TraceView).validate_python(report.json()["trace"])
         assert report.json()["report"]["direct_result"]["kind"] == "call_tool"
         assert report.json()["report"]["evidence"]["completeness"] == "partial"
@@ -137,7 +137,7 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
                 score=0.91,
                 rationale="The local echo response matched the request.",
                 metrics={"quality": 0.91},
-                provenance=EvaluationProvenance(
+                provenance=EvaluationSource(
                     kind="local-rule",
                     provider="test-suite",
                     model="fixture",
@@ -153,7 +153,7 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         )
         evaluated_report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert evaluated_report.status_code == 200
-        evaluated_parsed = TypeAdapter(PersistedExecutionReport).validate_python(evaluated_report.json()["report"])
+        evaluated_parsed = TypeAdapter(ExecutionReport).validate_python(evaluated_report.json()["report"])
         saved_evaluation = evaluated_report.json()["report"]["evaluations"][0]
         assert saved_evaluation["score"] == 0.91
         assert saved_evaluation["rationale"] == "The local echo response matched the request."
@@ -193,7 +193,7 @@ def test_v2_errors_and_deletion_constraints(tmp_path):
         cancelled = client.post(f"/api/v2/executions/{execution_id}/cancel")
         assert cancelled.status_code == 200
         cancelled_spec = TypeAdapter(ExecutionSpec).validate_python(cancelled.json()["spec"])
-        assert isinstance(cancelled_spec, DirectExecutionSpec)
+        assert isinstance(cancelled_spec, DirectSpec)
         cancelled_report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert cancelled_report.status_code == 200
         assert TypeAdapter(TraceView).validate_python(cancelled_report.json()["trace"]).outcome == "cancelled"
@@ -229,7 +229,7 @@ def test_v2_accepts_every_serializable_execution_spec_variant(tmp_path):
     store = SQLiteExecutionStore(database)
     kit = MCPTestKit(store=store, embedded_worker=False)
     specs = (
-        DirectExecutionSpec.model_validate(_payload()["spec"]),
+        DirectSpec.model_validate(_payload()["spec"]),
         _agent_spec(ClaudeCode(model="fixture", executable="not-started-claude")),
         _agent_spec(OpenCode(model="fixture", executable="not-started-opencode")),
         _agent_spec(ACPAgent(model="fixture", manifest={"command": "not-started-acp"})),
@@ -260,7 +260,7 @@ def test_v2_evaluation_aggregate_endpoint(tmp_path):
     kit = MCPTestKit(store=store, embedded_worker=False)
     try:
         execution_id = "aggregate-execution"
-        store.create(ExecutionSnapshot(execution_id=execution_id, run_id="aggregate-run"))
+        store.create(ExecutionState(execution_id=execution_id, run_id="aggregate-run"))
         store.save_evaluation(execution_id, EvaluationResult(
             evaluation_id=EvaluationId("aggregate-evaluation"), name="quality.v1",
             status=EvaluationStatus.PASSED,
@@ -298,7 +298,7 @@ def test_v2_evaluation_aggregate_validation_and_openapi(tmp_path):
         schema = client.get("/openapi.json").json()
         operation = schema["paths"]["/api/v2/evaluations/aggregate"]["post"]
         assert operation["responses"]["200"]["content"]["application/json"]
-        assert "EvaluationAggregateReport" in schema["components"]["schemas"]
+        assert "EvaluationReport" in schema["components"]["schemas"]
 
 
 def test_v2_capability_doc_lists_every_route(tmp_path):
@@ -314,7 +314,7 @@ def test_v2_capability_doc_lists_every_route(tmp_path):
     prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     backticked = set(re.findall(r"`([^`]+)`", prose))
     assert {
-        "DirectExecutionSpec", "AgentExecutionSpec", "ExecutionSnapshot",
+        "DirectSpec", "AgentSpec", "ExecutionState",
         "events", "next_after_sequence", "evaluations", "TraceView",
         "Observation", "max_bytes", "group_by", "filters", "health",
     } <= backticked
@@ -387,7 +387,7 @@ def test_v2_service_failures_keep_stable_http_errors_and_hide_store_text(tmp_pat
             assert unavailable.json()["error"]["code"] == "execution_data_unavailable"
             assert canary.encode() not in unavailable.content
             monkeypatch.undo()
-            reference = RawEvidenceRef(evidence_id="synthetic-evidence")
+            reference = EvidenceRef(evidence_id="synthetic-evidence")
             for failure, status_code, code in (
                 (RawEvidenceUnavailable(canary), 404, "raw_evidence_not_found"),
                 (RawEvidenceIntegrityError(canary), 500, "raw_evidence_integrity_error"),
@@ -433,12 +433,12 @@ def test_v2_openapi_preserves_sdk_discriminators(tmp_path):
     assert set(spec_schema["discriminator"]["mapping"]) == {"direct", "agent"}
     assert "oneOf" in spec_schema and spec_schema.get("type") != "object"
     report_schema = schemas["V2ExecutionReportEnvelope"]["properties"]
-    assert report_schema["report"]["$ref"].endswith("/PersistedExecutionReport")
+    assert report_schema["report"]["$ref"].endswith("/ExecutionReport")
     assert report_schema["trace"]["$ref"].endswith("/TraceView")
     trace_schema = schemas["TraceView"]["properties"]
     assert trace_schema["runtime"]["discriminator"]["propertyName"] == "kind"
     assert trace_schema["timeline"]["items"]["discriminator"]["mapping"]["transport"].endswith("/TransportEntry")
-    assert schemas["V2EvidenceRead"]["properties"]["reference"]["$ref"].endswith("/RawEvidenceRef")
+    assert schemas["V2EvidenceRead"]["properties"]["reference"]["$ref"].endswith("/EvidenceRef")
     assert {"reference", "content", "truncated", "redacted"} <= set(schemas["RawEvidence"]["properties"])
 
     def visit(value):

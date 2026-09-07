@@ -1,7 +1,7 @@
 """Typed, immutable observability values.
 
 This module is deliberately a value-model boundary.  It does not know how a
-trace is captured or persisted; later layers project canonical events into
+trace is captured or persisted; later layers project stable events into
 these models.  Keeping the projection separate makes the public contract
 usable by direct clients, harness adapters, matchers, and the UI alike.
 """
@@ -40,16 +40,16 @@ from .types import (
     ContentBlock as _ContentBlock,
 )
 from .types import (
-    DirectPrompt as _DirectPrompt,
+    PromptInfo as _PromptInfo,
 )
 from .types import (
-    DirectResource as _DirectResource,
+    ResourceInfo as _ResourceInfo,
 )
 from .types import (
-    DirectResourceTemplate as _DirectResourceTemplate,
+    TemplateInfo as _TemplateInfo,
 )
 from .types import (
-    DirectTool as _DirectTool,
+    ToolInfo as _ToolInfo,
 )
 from .types import (
     ErrorInfo as _ErrorInfo,
@@ -61,7 +61,7 @@ from .types import (
     EventDirection as _EventDirection,
 )
 from .types import (
-    EventProvenance as _EventProvenance,
+    EventSource as _EventSource,
 )
 from .types import (
     ExecutionId as _ExecutionId,
@@ -76,7 +76,7 @@ from .types import (
     JsonRpcId as _JsonRpcId,
 )
 from .types import (
-    RawEvidenceRef as _RawEvidenceRef,
+    EvidenceRef as _EvidenceRef,
 )
 from .types import (
     SessionId as _SessionId,
@@ -94,7 +94,7 @@ from .types import (
     TurnResult as _TurnResult,
 )
 from .types import (
-    TurnSnapshot as _TurnSnapshot,
+    TurnState as _TurnState,
 )
 
 
@@ -134,8 +134,8 @@ class Observation(_FrozenModel, _Generic[_T]):
     state: ObservationState
     value: _T | None = None
     reason: ObservationReason | None = None
-    provenance: tuple[_EventProvenance, ...] = ()
-    evidence_ref: _RawEvidenceRef | None = None
+    provenance: tuple[_EventSource, ...] = ()
+    evidence_ref: _EvidenceRef | None = None
 
     @_field_validator("value", mode="before")
     @classmethod
@@ -290,7 +290,7 @@ class TraceEntryBase(_FrozenModel):
     sequence_end: int = _Field(ge=0)
     timing: TraceTiming = _Field(default_factory=TraceTiming)
     status: TraceStatus = TraceStatus.COMPLETED
-    provenance: tuple[_EventProvenance, ...] = ()
+    provenance: tuple[_EventSource, ...] = ()
     limitations: tuple[str, ...] = ()
 
     @_model_validator(mode="after")
@@ -404,13 +404,13 @@ class SafeHttpHeader(_FrozenModel):
     value: str
 
 
-class HttpExchangeMetadata(_FrozenModel):
+class HttpExchange(_FrozenModel):
     method: str = _Field(min_length=1)
     status_code: int = _Field(ge=100, le=599)
     headers: tuple[SafeHttpHeader, ...] = ()
 
 
-class ProtocolErrorDetails(_FrozenModel):
+class ProtocolErrorInfo(_FrozenModel):
     code: int | str | None = None
     message: str = _Field(min_length=1, max_length=4096)
     data: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
@@ -424,12 +424,12 @@ class ProtocolEntry(TraceEntryBase):
     jsonrpc_id: Observation[_JsonRpcId] = _Field(default_factory=_not_emitted)
     request: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     response: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    error: Observation[ProtocolErrorDetails] = _Field(default_factory=_not_emitted)
-    http: Observation[HttpExchangeMetadata] = _Field(default_factory=_not_emitted)
+    error: Observation[ProtocolErrorInfo] = _Field(default_factory=_not_emitted)
+    http: Observation[HttpExchange] = _Field(default_factory=_not_emitted)
 
 
 class TransportEntry(TraceEntryBase):
-    """A canonical MCP transport lifecycle observation."""
+    """A stable MCP transport lifecycle observation."""
 
     kind: _Literal["transport"] = "transport"
     phase: _Literal["connected", "disconnected"]
@@ -455,7 +455,7 @@ class RawEvidenceSource(str, _Enum):
 
 
 class RawEvidence(_FrozenModel):
-    reference: _RawEvidenceRef
+    reference: _EvidenceRef
     media_type: str = _Field(min_length=1, max_length=256)
     content: _JsonValue | str
     size_bytes: int = _Field(ge=0)
@@ -472,7 +472,7 @@ class RawEvidence(_FrozenModel):
         return self
 
 
-class TraceCaptureConfig(_FrozenModel):
+class CaptureOptions(_FrozenModel):
     """Boundaries for redacted provider/MCP evidence capture."""
 
     capture_raw_evidence: bool = True
@@ -483,10 +483,10 @@ class TraceCaptureConfig(_FrozenModel):
     raw_execution_bytes: int = _Field(default=67_108_864, gt=0)
 
 
-class RawEvidenceCapture(_FrozenModel):
+class EvidenceCapture(_FrozenModel):
     """Typed result of bounded, redacted raw-evidence capture."""
 
-    reference: _RawEvidenceRef
+    reference: _EvidenceRef
     preview: Observation[str]
     original_size_bytes: int = _Field(ge=0)
     stored_size_bytes: int = _Field(ge=0)
@@ -494,7 +494,7 @@ class RawEvidenceCapture(_FrozenModel):
     truncated: bool
 
     @_model_validator(mode="after")
-    def _validate_capture_metadata(self) -> RawEvidenceCapture:
+    def _validate_capture_metadata(self) -> EvidenceCapture:
         if (
             self.reference.size_bytes is not None
             and self.reference.size_bytes != self.stored_size_bytes
@@ -520,7 +520,7 @@ class RawMessageEntry(TraceEntryBase):
     direction: _EventDirection = _EventDirection.INTERNAL
     media_type: str = _Field(min_length=1, max_length=256)
     preview: Observation[_JsonValue | str] = _Field(default_factory=_not_emitted)
-    evidence_ref: _RawEvidenceRef | None = None
+    evidence_ref: _EvidenceRef | None = None
     size_bytes: int = _Field(default=0, ge=0)
     redacted: _Literal[True] = True
 
@@ -559,14 +559,14 @@ class InitializationEntry(TraceEntryBase):
     server_version: Observation[str] = _Field(default_factory=_not_emitted)
     instructions: Observation[str] = _Field(default_factory=_not_emitted)
     capabilities: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    tools: Observation[tuple[_DirectTool, ...]] = _Field(default_factory=_not_emitted)
-    resources: Observation[tuple[_DirectResource, ...]] = _Field(
+    tools: Observation[tuple[_ToolInfo, ...]] = _Field(default_factory=_not_emitted)
+    resources: Observation[tuple[_ResourceInfo, ...]] = _Field(
         default_factory=_not_emitted
     )
-    resource_templates: Observation[tuple[_DirectResourceTemplate, ...]] = _Field(
+    resource_templates: Observation[tuple[_TemplateInfo, ...]] = _Field(
         default_factory=_not_emitted
     )
-    prompts: Observation[tuple[_DirectPrompt, ...]] = _Field(
+    prompts: Observation[tuple[_PromptInfo, ...]] = _Field(
         default_factory=_not_emitted
     )
 
@@ -579,14 +579,14 @@ class InitializationValue(_FrozenModel):
     server_version: Observation[str] = _Field(default_factory=_not_emitted)
     instructions: Observation[str] = _Field(default_factory=_not_emitted)
     capabilities: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    tools: Observation[tuple[_DirectTool, ...]] = _Field(default_factory=_not_emitted)
-    resources: Observation[tuple[_DirectResource, ...]] = _Field(
+    tools: Observation[tuple[_ToolInfo, ...]] = _Field(default_factory=_not_emitted)
+    resources: Observation[tuple[_ResourceInfo, ...]] = _Field(
         default_factory=_not_emitted
     )
-    resource_templates: Observation[tuple[_DirectResourceTemplate, ...]] = _Field(
+    resource_templates: Observation[tuple[_TemplateInfo, ...]] = _Field(
         default_factory=_not_emitted
     )
-    prompts: Observation[tuple[_DirectPrompt, ...]] = _Field(
+    prompts: Observation[tuple[_PromptInfo, ...]] = _Field(
         default_factory=_not_emitted
     )
 
@@ -631,7 +631,7 @@ class ProviderEntry(TraceEntryBase):
     data: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
 
 
-class DirectTraceInfo(_FrozenModel):
+class DirectTrace(_FrozenModel):
     kind: _Literal["direct"] = "direct"
     transport: Observation[_TransportKind] = _Field(default_factory=_not_emitted)
     protocol: Observation[str] = _Field(default_factory=_not_emitted)
@@ -640,7 +640,7 @@ class DirectTraceInfo(_FrozenModel):
     )
 
 
-class OpenCodeTraceInfo(_FrozenModel):
+class OpenCodeTrace(_FrozenModel):
     kind: _Literal["opencode"] = "opencode"
     session_id: Observation[str] = _Field(default_factory=_not_emitted)
     provider_id: Observation[str] = _Field(default_factory=_not_emitted)
@@ -650,7 +650,7 @@ class OpenCodeTraceInfo(_FrozenModel):
     usage: Observation[UsageValue] = _Field(default_factory=_not_emitted)
 
 
-class ClaudeCodeTraceInfo(_FrozenModel):
+class ClaudeCodeTrace(_FrozenModel):
     kind: _Literal["claude_code"] = "claude_code"
     session_id: Observation[str] = _Field(default_factory=_not_emitted)
     model_id: Observation[str] = _Field(default_factory=_not_emitted)
@@ -662,7 +662,7 @@ class ClaudeCodeTraceInfo(_FrozenModel):
     usage: Observation[UsageValue] = _Field(default_factory=_not_emitted)
 
 
-class ACPTraceInfo(_FrozenModel):
+class ACPTrace(_FrozenModel):
     kind: _Literal["acp"] = "acp"
     session_id: Observation[str] = _Field(default_factory=_not_emitted)
     protocol_version: Observation[str] = _Field(default_factory=_not_emitted)
@@ -681,7 +681,7 @@ class ACPTraceInfo(_FrozenModel):
 
 
 RuntimeTraceInfo: _TypeAlias = _Annotated[
-    DirectTraceInfo | OpenCodeTraceInfo | ClaudeCodeTraceInfo | ACPTraceInfo,
+    DirectTrace | OpenCodeTrace | ClaudeCodeTrace | ACPTrace,
     _Field(discriminator="kind"),
 ]
 
@@ -729,7 +729,7 @@ class TraceView(_FrozenModel):
     outcome: _ExecutionOutcome = _ExecutionOutcome.COMPLETED
     completeness: _Literal["complete", "partial"] = "complete"
     limitations: tuple[str, ...] = ()
-    runtime: RuntimeTraceInfo = _Field(default_factory=DirectTraceInfo)
+    runtime: RuntimeTraceInfo = _Field(default_factory=DirectTrace)
     summary: TraceSummary = _Field(default_factory=TraceSummary)
     timeline: tuple[TraceEntry, ...] = ()
 
@@ -793,16 +793,16 @@ class TraceView(_FrozenModel):
 
     def for_turn(
         self,
-        turn: _TurnResult | _TurnSnapshot | _TurnId | str,
+        turn: _TurnResult | _TurnState | _TurnId | str,
     ) -> TraceView:
         """Return the finalized evidence belonging to one turn.
 
-        ``TurnResult`` and ``TurnSnapshot`` are accepted as convenient public
+        ``TurnResult`` and ``TurnState`` are accepted as convenient public
         selectors; neither object owns a finalized ``TraceView`` itself.
         """
         if isinstance(turn, _TurnResult):
             value = turn.snapshot.turn_id.root
-        elif isinstance(turn, _TurnSnapshot):
+        elif isinstance(turn, _TurnState):
             value = turn.turn_id.root
         elif isinstance(turn, _TurnId):
             value = turn.root
@@ -810,7 +810,7 @@ class TraceView(_FrozenModel):
             value = turn
         else:
             raise TypeError(
-                "turn selector must be a TurnResult, TurnSnapshot, TurnId, or str"
+                "turn selector must be a TurnResult, TurnState, TurnId, or str"
             )
         return self._filtered(
             tuple(
@@ -862,11 +862,11 @@ for _model in (
     WireToolCall,
     EvidenceConflict,
     ToolCallEntry,
-    ProtocolErrorDetails,
+    ProtocolErrorInfo,
     ProtocolEntry,
     TransportEntry,
     RawEvidence,
-    RawEvidenceCapture,
+    EvidenceCapture,
     RawMessageEntry,
     UsageValue,
     UsageEntry,
@@ -879,10 +879,10 @@ for _model in (
     EvaluationEntry,
     DiagnosticEntry,
     ProviderEntry,
-    DirectTraceInfo,
-    OpenCodeTraceInfo,
-    ClaudeCodeTraceInfo,
-    ACPTraceInfo,
+    DirectTrace,
+    OpenCodeTrace,
+    ClaudeCodeTrace,
+    ACPTrace,
     TraceSummary,
     TraceView,
 ):
@@ -891,15 +891,15 @@ del _model
 
 
 __all__ = [
-    "ACPTraceInfo",
+    "ACPTrace",
     "ArtifactEntry",
-    "ClaudeCodeTraceInfo",
+    "ClaudeCodeTrace",
     "CorrelationState",
     "DiagnosticEntry",
-    "DirectTraceInfo",
+    "DirectTrace",
     "EvaluationEntry",
     "EvidenceConflict",
-    "HttpExchangeMetadata",
+    "HttpExchange",
     "InitializationEntry",
     "InitializationValue",
     "InteractionEntry",
@@ -909,15 +909,15 @@ __all__ = [
     "Observation",
     "ObservationReason",
     "ObservationState",
-    "OpenCodeTraceInfo",
+    "OpenCodeTrace",
     "ProcessEntry",
     "ProtocolEntry",
-    "ProtocolErrorDetails",
+    "ProtocolErrorInfo",
     "ProtocolKind",
     "ProviderEntry",
     "TransportEntry",
     "RawEvidence",
-    "RawEvidenceCapture",
+    "EvidenceCapture",
     "RawEvidenceSource",
     "RawMessageEntry",
     "ReasoningEntry",
@@ -927,7 +927,7 @@ __all__ = [
     "ToolCallEntry",
     "ToolCallStatus",
     "ToolResult",
-    "TraceCaptureConfig",
+    "CaptureOptions",
     "TraceEntry",
     "TraceEntryBase",
     "TraceStatus",

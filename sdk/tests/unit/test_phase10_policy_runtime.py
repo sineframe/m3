@@ -11,7 +11,7 @@ from mcp_pal.server_group import ServerGroupManager
 from mcp_pal.types import (
     ACPAgent,
     ActivityHealth,
-    AgentExecutionSpec,
+    AgentSpec,
     ErrorCode,
     EventKind,
     RestrictiveToolPolicy,
@@ -41,7 +41,7 @@ class ReportingAdapter:
         self.opened = True
         return self
 
-    async def start(self, _spec: AgentExecutionSpec) -> None:
+    async def start(self, _spec: AgentSpec) -> None:
         self.opened = True
 
     async def send(self, message, *, timeout=None, metadata=None) -> AdapterTurn:
@@ -55,8 +55,8 @@ class ReportingAdapter:
         return None
 
 
-def _spec(policy: RestrictiveToolPolicy) -> AgentExecutionSpec:
-    return AgentExecutionSpec(
+def _spec(policy: RestrictiveToolPolicy) -> AgentSpec:
+    return AgentSpec(
         harness=ACPAgent(model="fixture"),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
         tool_policy=policy,
@@ -103,7 +103,7 @@ async def test_allowed_reported_qualified_tool_preserves_turn_and_health() -> No
     assert session.result.activity_health is ActivityHealth.ALL_SUCCEEDED
 
 
-def test_advisory_identity_requires_a_canonical_call_from_the_same_turn() -> None:
+def test_advisory_identity_requires_a_stable_call_from_the_same_turn() -> None:
     adapter = ReportingAdapter({"kind": "tool_call"})
     session = AsyncAgentSession(
         _spec(RestrictiveToolPolicy(allowed_tools=("fixture:allowed",))),
@@ -114,9 +114,9 @@ def test_advisory_identity_requires_a_canonical_call_from_the_same_turn() -> Non
         response=TurnResponse(content=(TextContent(text="done"),)),
         tool_calls=({"kind": "tool_call"},),
     )
-    canonical = (ToolDescriptor(server="fixture", name="allowed"),)
-    assert session._evaluate_reported_tool_calls(raw, canonical_tool_calls=canonical) == ()
-    violations = session._evaluate_reported_tool_calls(raw, canonical_tool_calls=())
+    stable = (ToolDescriptor(server="fixture", name="allowed"),)
+    assert session._evaluate_reported_tool_calls(raw, captured_tool_calls=stable) == ()
+    violations = session._evaluate_reported_tool_calls(raw, captured_tool_calls=())
     assert violations[0]["reason"] == "tool_identity_unavailable"
 
 
@@ -156,7 +156,7 @@ def test_unqualified_reported_tool_without_server_field_still_fails_closed() -> 
     assert violations[0]["reason"] == "tool_identity_invalid"
 
 
-def test_two_anonymous_updates_correlate_to_two_same_turn_canonical_calls() -> None:
+def test_two_anonymous_updates_correlate_to_two_same_turn_stable_calls() -> None:
     adapter = ReportingAdapter({"kind": "tool_call"})
     session = AsyncAgentSession(
         _spec(RestrictiveToolPolicy(allowed_tools=("fixture:first", "fixture:second"))),
@@ -167,11 +167,11 @@ def test_two_anonymous_updates_correlate_to_two_same_turn_canonical_calls() -> N
         response=TurnResponse(content=(TextContent(text="done"),)),
         tool_calls=({"kind": "tool_call"}, {"kind": "tool_call"}),
     )
-    canonical = (
+    stable = (
         ToolDescriptor(server="fixture", name="first"),
         ToolDescriptor(server="fixture", name="second"),
     )
-    assert session._evaluate_reported_tool_calls(raw, canonical_tool_calls=canonical) == ()
+    assert session._evaluate_reported_tool_calls(raw, captured_tool_calls=stable) == ()
 
 
 @pytest.mark.asyncio
@@ -201,7 +201,7 @@ async def test_duplicate_unqualified_tool_and_unknown_server_are_violations() ->
     await manager.start()
     manager.register_tools("one", ("read",))
     manager.register_tools("two", ("read",))
-    ambiguous_spec = AgentExecutionSpec(
+    ambiguous_spec = AgentSpec(
         harness=ACPAgent(model="fixture"),
         servers=bindings,
         tool_policy=RestrictiveToolPolicy(allowed_tools=("read",)),

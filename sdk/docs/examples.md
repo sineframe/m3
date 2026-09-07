@@ -18,10 +18,10 @@ uv run --project sdk --extra pytest pytest -q sdk/examples/tests
 
 ## 1. Test a deployed MCP endpoint with Streamable HTTP
 
-Use `StreamableHTTPServer` for a deployed MCP endpoint. Start with the direct
+Use `HTTPServer` for a deployed MCP endpoint. Start with the direct
 contract path—initialize, discover tools, call a tool, and assert the typed
 result—then use the finalized trace after client closure. The
-[Streamable HTTP guide](streamable-http.md) explains the route. Its external
+[Streamable HTTP guide](http.md) explains the route. Its external
 DeepWiki example,
 [`test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py),
 also demonstrates an OpenCode session and `HarnessMatrix.each_tool`; invoke
@@ -61,7 +61,7 @@ harness to send the prompt to an installed Claude Code or OpenCode process:
 import os
 from mcp_pal import MCPTestKit, expect
 from mcp_pal.types import (
-    AgentExecutionSpec, ClaudeCode, OpenCode, SecretReference, ServerBinding, StdioServer,
+    AgentSpec, ClaudeCode, OpenCode, SecretReference, ServerBinding, StdioServer,
 )
 
 def env_secret(name: str) -> SecretReference:
@@ -78,7 +78,7 @@ def test_agent_uses_shipping_quote(example_server: StdioServer) -> None:
     #     model=os.environ["MCP_PAL_OPENCODE_MODEL"],
     #     credential_references={"OPENCODE_API_KEY": env_secret("OPENCODE_API_KEY")},
     # )
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=harness,
         servers=(ServerBinding(server=example_server, alias="example-mcp"),),
     )
@@ -118,7 +118,7 @@ import sys
 from pathlib import Path
 from mcp_pal import MCPTestKit, expect
 from mcp_pal.types import (
-    ACPAgent, AgentExecutionSpec, RestrictiveToolPolicy, ServerBinding, StdioServer,
+    ACPAgent, AgentSpec, RestrictiveToolPolicy, ServerBinding, StdioServer,
 )
 
 examples = Path("sdk/examples")
@@ -130,7 +130,7 @@ server = StdioServer(
 policy = RestrictiveToolPolicy(
     allowed_tools=("example-mcp:shipping_quote",)
 )
-spec = AgentExecutionSpec(
+spec = AgentSpec(
     harness=ACPAgent(
         model="deterministic-fixture",
         manifest={
@@ -181,7 +181,7 @@ For an evidence-source comparison, use `evidence="reported"` or
 
 Use turn-scoped assertions to prove which prompt caused each tool call in a
 multi-turn session. Each `session.send(prompt)` returns one completed turn.
-After closing the session, pass either `TurnResult`, `TurnSnapshot`, `TurnId`,
+After closing the session, pass either `TurnResult`, `TurnState`, `TurnId`,
 or a string ID to the matcher and `TraceView.for_turn`:
 
 ```python
@@ -425,7 +425,7 @@ trace assertions:
 
 ```python
 from mcp_pal.matrix import ToolMatrix, ServerCase, ToolCase
-from mcp_pal.types import CallToolOperationResult
+from mcp_pal.types import CallToolResult
 
 matrix = ToolMatrix(servers=(
     ServerCase(
@@ -447,7 +447,7 @@ matrix = ToolMatrix(servers=(
 @matrix.parametrize()
 def test_owned_tool(case):
     result = case.run()
-    assert isinstance(result.direct_result, CallToolOperationResult)
+    assert isinstance(result.direct_result, CallToolResult)
     expected = {
         "catalog/normalize_customer": {"customer_id": "ada-lovelace"},
         "catalog/batch_total": {"total": 6.0},
@@ -530,9 +530,9 @@ their trial IDs remain different. Query by run for run trends, or by time and
 evaluator for a calendar chart:
 
 ```python
-from mcp_pal import EvaluationAggregateQuery
+from mcp_pal import EvaluationQuery
 
-trend = store.aggregate_evaluations(EvaluationAggregateQuery(
+trend = store.aggregate_evaluations(EvaluationQuery(
     group_by=("run_id", "evaluator"),
     filters={"evaluator": "mcp_pal.output.has_text.v1"},
 ))

@@ -11,13 +11,13 @@ from mcp.server.lowlevel import Server
 from mcp import types
 
 from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.server_group import HarnessServerConfiguration, ServerGroupManager
+from mcp_pal.server_group import HarnessServerConfig, ServerGroupManager
 from mcp_pal.transport.capture_proxy import McpCaptureManager
 from mcp_pal.trace.capture import CaptureWriter
 from mcp_pal.harness.contracts import DeterministicHarnessAdapter, HarnessLaunch, HarnessSession, HarnessTurnRequest
 from mcp_pal.harness import HarnessAdapterRegistry
-from mcp_pal.types import AgentExecutionSpec, ClaudeCode, SecretReference, TextContent, UserMessage
-from mcp_pal.types import InProcessServer, ServerBinding, SSEServer, StdioServer, StreamableHTTPServer, TransportKind, TrustLevel
+from mcp_pal.types import AgentSpec, ClaudeCode, SecretReference, TextContent, UserMessage
+from mcp_pal.types import InProcessServer, ServerBinding, SSEServer, StdioServer, HTTPServer, TransportKind, TrustLevel
 
 
 def _server() -> Server:
@@ -67,7 +67,7 @@ def test_capture_correlates_typed_ids_and_tool_latency(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_stdio_configuration_is_rewritten_to_transparent_capture_proxy(tmp_path: Path) -> None:
     manager = McpCaptureManager(tmp_path)
-    config = HarnessServerConfiguration(
+    config = HarnessServerConfig(
         key="echo",
         transport=TransportKind.STDIO,
         required=True,
@@ -89,7 +89,7 @@ async def test_stdio_configuration_is_rewritten_to_transparent_capture_proxy(tmp
 async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_PAL_CAPTURE_SECRET", "capture-secret-value")
     manager = McpCaptureManager(tmp_path)
-    config = HarnessServerConfiguration(
+    config = HarnessServerConfig(
         key="echo",
         transport=TransportKind.STDIO,
         required=True,
@@ -137,7 +137,7 @@ async def test_in_process_loopback_is_observed_without_rewriting_endpoint() -> N
     try:
         async with AsyncMCPTestKit() as kit:
             async with kit.direct(
-                StreamableHTTPServer(name="loopback", url=endpoint, trust=TrustLevel.SDK_LOOPBACK)
+                HTTPServer(name="loopback", url=endpoint, trust=TrustLevel.SDK_LOOPBACK)
             ) as client:
                 await client.list_tools()
                 await client.call_tool("draw", {})
@@ -151,7 +151,7 @@ async def test_in_process_loopback_is_observed_without_rewriting_endpoint() -> N
 
 
 @pytest.mark.asyncio
-async def test_agent_execution_projects_wire_capture_into_canonical_trace() -> None:
+async def test_agent_execution_projects_wire_capture_into_stable_trace() -> None:
     writer_holder: dict[str, CaptureWriter] = {}
 
     async def handler(_request: HarnessTurnRequest, _state: MutableMapping[str, Any]) -> str:
@@ -178,7 +178,7 @@ async def test_agent_execution_projects_wire_capture_into_canonical_trace() -> N
 
     adapter = WireAdapter(handler=handler)
     registry = HarnessAdapterRegistry({"claude_code": lambda _harness: adapter})
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ClaudeCode(model="fixture"),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
         message=UserMessage(content=(TextContent(text="draw"),)),

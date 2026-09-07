@@ -36,24 +36,24 @@ from mcp_pal.harness.observations import (
 )
 from mcp_pal.harness.opencode import OpenCodeHarnessAdapter, opencode_configuration
 from mcp_pal.server_group import (
-    HarnessServerConfiguration,
+    HarnessServerConfig,
     ServerGroupSnapshot,
     ServerRecord,
 )
 from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     ClaudeCode,
     ErrorCode,
     EventDirection,
     EventKind,
     EventOrigin,
-    EventProvenance,
+    EventSource,
     ExecutionOutcome,
     NativeToolPolicy,
     OpenCode,
-    RequestCorrelation,
+    RequestLink,
     RestrictiveToolPolicy,
     SecretReference,
     ServerBinding,
@@ -63,11 +63,11 @@ from mcp_pal.types import (
     TurnId,
 )
 
-from mcp_pal.harness import default_harness_adapter_registry
+from mcp_pal.harness import default_adapters
 
 
-def _spec() -> AgentExecutionSpec:
-    return AgentExecutionSpec(
+def _spec() -> AgentSpec:
+    return AgentSpec(
         harness=ACPAgent(model="fixture"),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
     )
@@ -97,8 +97,8 @@ def test_opencode_config_has_dedicated_legacy_and_v2_dialects() -> None:
 def test_opencode_nonempty_config_is_dialect_exact() -> None:
     base = _launch()
     launch = HarnessLaunch(base.spec, base.servers, (
-        HarnessServerConfiguration(key="stdio", transport=TransportKind.STDIO, required=True, available=True, connection_id="s", command="python", args=("-m", "server"), environment={"MODE": "test"}, cwd="/workspace"),
-        HarnessServerConfiguration(key="http", transport=TransportKind.STREAMABLE_HTTP, required=True, available=True, connection_id="h", endpoint="https://example.test/mcp", headers={"X-Test": "yes"}),
+        HarnessServerConfig(key="stdio", transport=TransportKind.STDIO, required=True, available=True, connection_id="s", command="python", args=("-m", "server"), environment={"MODE": "test"}, cwd="/workspace"),
+        HarnessServerConfig(key="http", transport=TransportKind.STREAMABLE_HTTP, required=True, available=True, connection_id="h", endpoint="https://example.test/mcp", headers={"X-Test": "yes"}),
     ), base.tool_policy)
     legacy = opencode_configuration(launch, dialect="legacy")
     v2 = opencode_configuration(launch, dialect="v2")
@@ -142,7 +142,7 @@ def test_opencode_nonempty_config_is_dialect_exact() -> None:
 
     assert_no_legacy_key(legacy)
     assert_no_legacy_key(v2)
-    sse = HarnessServerConfiguration(
+    sse = HarnessServerConfig(
         key="sse", transport=TransportKind.SSE, required=True, available=True,
         connection_id="sse", endpoint="https://example.test/events", headers={"X-Test": "yes"},
     )
@@ -157,7 +157,7 @@ def test_opencode_nonempty_config_is_dialect_exact() -> None:
 def test_opencode_config_keeps_secret_references_as_env_substitutions() -> None:
     base = _launch()
     launch = HarnessLaunch(base.spec, base.servers, (
-        HarnessServerConfiguration(
+        HarnessServerConfig(
             key="stdio", transport=TransportKind.STDIO, required=True, available=True,
             connection_id="s", command="python", args=("-m", "server"),
             environment={"MCP_API_KEY": SecretReference(source="environment", name="MCP_API_KEY")},
@@ -367,7 +367,7 @@ async def test_opencode_canary_is_absent_from_public_turn_result_trace_and_captu
     monkeypatch.setenv("OPENCODE_API_KEY", canary)
     marker = tmp_path / "redaction.json"
     fixture = str(Path(__file__).parents[1] / "fixtures" / "opencode_serve_fixture.py")
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=OpenCode(
             model="fixture",
             provider="opencode",
@@ -790,7 +790,7 @@ async def test_opencode_history_cursor_never_attaches_prior_turn_and_deduplicate
 async def test_opencode_server_tool_projects_as_one_correlated_public_call() -> None:
     base = _launch()
     adapter = OpenCodeHarnessAdapter(executable="fixture")
-    configuration = HarnessServerConfiguration(
+    configuration = HarnessServerConfig(
         key="fixture",
         transport=TransportKind.STDIO,
         required=True,
@@ -828,13 +828,13 @@ async def test_opencode_server_tool_projects_as_one_correlated_public_call() -> 
     sink = HarnessObservationSink(recorder, turn_id=TurnId("actual-turn"))
     for observation in turn.turn_evidence.observations:
         sink.emit(observation)
-    provenance = EventProvenance(origin=EventOrigin.WIRE_OBSERVED, source="direct")
+    provenance = EventSource(origin=EventOrigin.WIRE_OBSERVED, source="direct")
     recorder.emit(
         EventKind.MCP_REQUEST,
         turn_id=TurnId("actual-turn"),
         server_binding="fixture",
         connection_id="connection",
-        correlation=RequestCorrelation(
+        correlation=RequestLink(
             jsonrpc_id=1,
             direction=EventDirection.CLIENT_TO_SERVER,
             request_sequence=1,
@@ -850,7 +850,7 @@ async def test_opencode_server_tool_projects_as_one_correlated_public_call() -> 
         turn_id=TurnId("actual-turn"),
         server_binding="fixture",
         connection_id="connection",
-        correlation=RequestCorrelation(
+        correlation=RequestLink(
             jsonrpc_id=1,
             direction=EventDirection.SERVER_TO_CLIENT,
             request_sequence=1,
@@ -926,7 +926,7 @@ async def test_opencode_sqlite_reopen_preserves_public_trace_view(tmp_path: Path
     sink = HarnessObservationSink(recorder, turn_id=TurnId("actual-turn"))
     for observation in turn.turn_evidence.observations:
         sink.emit(observation)
-    provenance = EventProvenance(origin=EventOrigin.WIRE_OBSERVED, source="direct")
+    provenance = EventSource(origin=EventOrigin.WIRE_OBSERVED, source="direct")
     for kind, direction, payload in (
         (
             EventKind.MCP_REQUEST,
@@ -944,7 +944,7 @@ async def test_opencode_sqlite_reopen_preserves_public_trace_view(tmp_path: Path
             turn_id=TurnId("actual-turn"),
             server_binding="fixture",
             connection_id="connection",
-            correlation=RequestCorrelation(
+            correlation=RequestLink(
                 jsonrpc_id=1,
                 direction=direction,
                 request_sequence=1,
@@ -1077,7 +1077,7 @@ async def test_opencode_open_uses_cached_dialect_without_second_version_probe(tm
     assert version_marker.read_text(encoding="utf-8") == "1"
 
 
-def _workspace_launch(workspace: Path, *, configurations: tuple[HarnessServerConfiguration, ...] = ()) -> HarnessLaunch:
+def _workspace_launch(workspace: Path, *, configurations: tuple[HarnessServerConfig, ...] = ()) -> HarnessLaunch:
     base = _launch()
     return HarnessLaunch(
         base.spec,
@@ -1370,7 +1370,7 @@ async def test_claude_native_policy_is_preflighted_and_applied_to_argv(tmp_path:
         )
         spec = base.spec.model_copy(update={"harness": ClaudeCode(model="fixture", executable=executable), "tool_policy": policy})
         adapter = ClaudeCodeHarnessAdapter(executable=executable, environment={"MCP_PAL_MARKER": str(marker)})
-        configuration = HarnessServerConfiguration(key="stdio", transport=TransportKind.STDIO, required=True, available=True, connection_id="stdio", command="python")
+        configuration = HarnessServerConfig(key="stdio", transport=TransportKind.STDIO, required=True, available=True, connection_id="stdio", command="python")
         servers = ServerGroupSnapshot((ServerRecord("stdio", spec.servers[0].server, True, True, "stdio", TransportKind.STDIO),))
         launch = HarnessLaunch(spec, servers, (configuration,), policy)
         readiness = await adapter.preflight(launch)
@@ -1393,12 +1393,12 @@ async def test_claude_native_policy_is_preflighted_and_applied_to_argv(tmp_path:
 @pytest.mark.asyncio
 async def test_opencode_native_policy_is_preflighted_and_rendered_for_each_mode(tmp_path: Path) -> None:
     executable = str(Path(__file__).parents[1] / "fixtures" / "opencode_serve_fixture.py")
-    configuration = HarnessServerConfiguration(key="stdio", transport=TransportKind.STDIO, required=True, available=True, connection_id="stdio", command="python")
+    configuration = HarnessServerConfig(key="stdio", transport=TransportKind.STDIO, required=True, available=True, connection_id="stdio", command="python")
     server = StdioServer(name="stdio", command="python")
     servers = ServerGroupSnapshot((ServerRecord("stdio", server, True, True, "stdio", TransportKind.STDIO),))
     for mode in ("mcp_only", "mcp_read_only", "full"):
         policy = NativeToolPolicy(harness="opencode", policy={"mode": mode, "server": "stdio", "read_only_tools": ("read", "glob")}, nonportable_reason="OpenCode permissions")
-        spec = AgentExecutionSpec(harness=OpenCode(model="fixture"), servers=(ServerBinding(server=server, alias="stdio"),), tool_policy=policy)
+        spec = AgentSpec(harness=OpenCode(model="fixture"), servers=(ServerBinding(server=server, alias="stdio"),), tool_policy=policy)
         launch = HarnessLaunch(spec, servers, (configuration,), policy)
         adapter = OpenCodeHarnessAdapter(executable=executable, environment={"MCP_PAL_OPENCODE_MODE": "legacy"})
         readiness = await adapter.preflight(launch)
@@ -1605,7 +1605,7 @@ async def test_opencode_close_idempotent_removes_owned_control(tmp_path: Path) -
 async def test_opencode_workspace_control_isolation(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"; workspace.mkdir()
     marker = tmp_path / "workspace-marker.json"
-    configuration = HarnessServerConfiguration(
+    configuration = HarnessServerConfig(
         key="fixture", transport=TransportKind.STDIO, required=True, available=True,
         connection_id="fixture", command=sys.executable, args=("-c", "print('mcp')"),
         environment={"MODE": "test"}, cwd=str(workspace),
@@ -1727,7 +1727,7 @@ async def test_native_adapters_fail_closed_for_explicit_tool_policy(
 
 
 def test_default_registry_selects_real_native_adapters_without_fake_fallback() -> None:
-    registry = default_harness_adapter_registry()
+    registry = default_adapters()
     claude = registry.resolve(_spec().model_copy(update={"harness": ClaudeCode(model="fixture", executable="missing-claude")}))
     opencode = registry.resolve(_spec().model_copy(update={"harness": OpenCode(model="fixture", executable="missing-opencode")}))
     assert isinstance(claude, ClaudeCodeHarnessAdapter)
@@ -1740,7 +1740,7 @@ def test_native_mcp_config_redacts_credential_keys() -> None:
         base.spec,
         base.servers,
         (
-            HarnessServerConfiguration(
+            HarnessServerConfig(
                 key="fixture",
                 transport=TransportKind.STDIO,
                 required=True,
@@ -1767,7 +1767,7 @@ def test_native_mcp_config_resolves_environment_reference_only_in_0600_file(tmp_
         base.spec,
         base.servers,
         (
-            HarnessServerConfiguration(
+            HarnessServerConfig(
                 key="fixture",
                 transport=TransportKind.STDIO,
                 required=True,
@@ -1792,7 +1792,7 @@ def test_native_mcp_config_rejects_provider_reference_without_resolver(tmp_path:
         base.spec,
         base.servers,
         (
-            HarnessServerConfiguration(
+            HarnessServerConfig(
                 key="fixture",
                 transport=TransportKind.STDIO,
                 required=True,
@@ -1977,17 +1977,17 @@ async def test_acp_uses_workspace_cwd_session_and_explicit_mcp_cwd(tmp_path: Pat
     marker = tmp_path / "acp-marker.json"
     executable = _acp_workspace_fixture(tmp_path / "acp-workspace.py")
     monkeypatch.setenv("MCP_PAL_MARKER", str(marker))
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="fixture", manifest={"command": executable, "protocol": "acp", "protocol_version": 1, "env": {"MCP_PAL_MARKER": "${MCP_PAL_MARKER}"}}),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
     )
     configurations = (
-        HarnessServerConfiguration(
+        HarnessServerConfig(
             key="default", transport=TransportKind.STDIO, required=True, available=True,
             connection_id="default", command=sys.executable,
             args=("-m", "mcp_pal.transport.stdio_proxy", "--", "fixture"),
         ),
-        HarnessServerConfiguration(
+        HarnessServerConfig(
             key="explicit", transport=TransportKind.STDIO, required=True, available=True,
             connection_id="explicit", command=sys.executable,
             args=("-m", "mcp_pal.transport.stdio_proxy", "--cwd", str(explicit), "--", "fixture"),
@@ -2037,7 +2037,7 @@ async def test_acp_registers_server_canary_before_startup_and_omits_it_from_conf
     spec = base.spec.model_copy(update={
         "harness": ACPAgent(model="fixture", manifest={"command": executable, "protocol": "acp", "protocol_version": 1}),
     })
-    configuration = HarnessServerConfiguration(
+    configuration = HarnessServerConfig(
         key="secret",
         transport=TransportKind.STDIO,
         required=True,
@@ -2090,7 +2090,7 @@ Path({str(marker)!r}).write_text("spawned", encoding="utf-8")
     spec = base.spec.model_copy(update={
         "harness": ACPAgent(model="fixture", manifest={"command": executable, "protocol": "acp", "protocol_version": 1}),
     })
-    configuration = HarnessServerConfiguration(
+    configuration = HarnessServerConfig(
         key="missing",
         transport=TransportKind.STDIO,
         required=True,

@@ -32,7 +32,7 @@ from pydantic import (
 from .types import FrozenModel as _FrozenModel, _FrozenMapping as _FrozenMapping
 
 
-class ConfigurationError(ValueError):
+class ConfigError(ValueError):
     """A strict, value-free configuration diagnostic."""
 
     code = "configuration_error"
@@ -43,7 +43,7 @@ class ConfigurationError(ValueError):
         self.reason = reason
         if code is not None:
             self.code = code
-        # Deliberately omit the rejected value.  Configuration values may be
+        # Deliberately omit the rejected value.  Config values may be
         # credentials or tokens even when the field is not secret today.
         super().__init__(f"{self.code}: {field} from {origin}: {reason}")
 
@@ -74,7 +74,7 @@ def _default_origins() -> dict[str, ConfigOrigin]:
     return {field: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default") for field in _FIELDS}
 
 
-class SDKConfig(_FrozenModel):
+class Config(_FrozenModel):
     """Effective SDK-wide settings and the origin of each setting."""
 
     artifact_policy: _Literal["failed", "always", "never"] = "failed"
@@ -90,7 +90,7 @@ class SDKConfig(_FrozenModel):
         return value
 
     @_model_validator(mode="after")
-    def _validate_sources(self) -> "SDKConfig":
+    def _validate_sources(self) -> "Config":
         if set(self.sources) != set(_FIELDS):
             raise ValueError("sources must identify every supported configuration field")
         if "sources" not in self.__pydantic_fields_set__:
@@ -122,21 +122,15 @@ class SDKConfig(_FrozenModel):
 
     def source_for(self, field: str) -> ConfigOrigin:
         if field not in _FIELDS:
-            raise ConfigurationError(field=field, origin="runtime", reason="unknown setting", code="unknown_setting")
+            raise ConfigError(field=field, origin="runtime", reason="unknown setting", code="unknown_setting")
         return self.sources[field]
-
-
-# Short descriptive aliases keep the contract discoverable without requiring
-# application settings to be imported.
-Configuration = SDKConfig
-MCPConfig = SDKConfig
 
 
 _UNSET = object()
 
 
-def _error(field: str, origin: str, reason: str, *, code: str = "invalid_configuration") -> ConfigurationError:
-    return ConfigurationError(field=field, origin=origin, reason=reason, code=code)
+def _error(field: str, origin: str, reason: str, *, code: str = "invalid_configuration") -> ConfigError:
+    return ConfigError(field=field, origin=origin, reason=reason, code=code)
 
 
 def _validate(field: str, value: _Any, origin: str, *, environment: bool = False) -> _Any:
@@ -216,7 +210,7 @@ def _environment_values(environment: _Mapping[str, str]) -> dict[str, _Any]:
     return values
 
 
-def resolve_config(
+def load_config(
     explicit: _Mapping[str, _Any] | None = None,
     *,
     env: _Mapping[str, str] | None = None,
@@ -224,7 +218,7 @@ def resolve_config(
     artifact_policy: _Any = _UNSET,
     protocol_revision: _Any = _UNSET,
     telemetry_enabled: _Any = _UNSET,
-) -> SDKConfig:
+) -> Config:
     """Resolve SDK settings using explicit, environment, project, default order.
 
     ``env`` is injectable for deterministic callers and tests; omitted means
@@ -268,19 +262,13 @@ def resolve_config(
     for field, value in explicit_values.items():
         values[field] = value
         origins[field] = ConfigOrigin(source=ConfigSource.EXPLICIT, origin=f"argument:{field}")
-    return SDKConfig(**values, sources=origins)
-
-
-load_config = resolve_config
+    return Config(**values, sources=origins)
 
 
 __all__ = [
     "ConfigOrigin",
     "ConfigSource",
-    "Configuration",
-    "ConfigurationError",
-    "MCPConfig",
-    "SDKConfig",
+    "Config",
+    "ConfigError",
     "load_config",
-    "resolve_config",
 ]

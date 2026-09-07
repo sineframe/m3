@@ -1,4 +1,4 @@
-"""Embedded worker for the canonical SQLAlchemy-backed SQLite store.
+"""Embedded worker for the stable SQLAlchemy-backed SQLite store.
 
 The execution store owns the schema, queue, leases, cancellation flags, and
 durable evidence. This module intentionally contains only the worker adapter;

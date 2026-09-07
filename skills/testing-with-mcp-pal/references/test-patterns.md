@@ -57,14 +57,14 @@ For a user-supplied LLM evaluator, the client and credentials stay in your
 application:
 
 ```python
-from mcp_pal import EvaluationDecision, EvaluationProvenance, EvaluationStatus
+from mcp_pal import EvaluationDecision, EvaluationSource, EvaluationStatus
 
 def answer_quality_with_llm(context):
     verdict = my_llm_client.score(context.subject)  # your client and key
     return EvaluationDecision(
         status=EvaluationStatus.PASSED if verdict.ok else EvaluationStatus.FAILED,
         score=verdict.score, rationale=verdict.reason,
-        provenance=EvaluationProvenance(kind="user_llm", provider="acme", model="judge-1"),
+        provenance=EvaluationSource(kind="user_llm", provider="acme", model="judge-1"),
     )
 
 kit.register_evaluator("project.answer-quality.llm.v1", answer_quality_with_llm)
@@ -78,14 +78,14 @@ it never calls the LLM.
 
 ## Streamable HTTP: deployed endpoint
 
-Use `StreamableHTTPServer` for one deployed MCP endpoint. This generic pattern
+Use `HTTPServer` for one deployed MCP endpoint. This generic pattern
 does not assume a provider's tool names or result shape:
 
 ```python
 from mcp_pal import MCPTestKit
-from mcp_pal.types import StreamableHTTPServer
+from mcp_pal.types import HTTPServer
 
-server = StreamableHTTPServer(name="catalog", url="https://example.test/mcp")
+server = HTTPServer(name="catalog", url="https://example.test/mcp")
 
 with MCPTestKit(env={}) as kit:
     with kit.direct(server) as client:
@@ -134,7 +134,7 @@ import sys
 
 import pytest
 from mcp_pal import (
-    AgentExecutionSpec,
+    AgentSpec,
     ClaudeCode,
     MCPTestKit,
     NativeToolPolicy,
@@ -179,7 +179,7 @@ def test_agent_selects_shipping_quote(shipping_server: StdioServer) -> None:
         "selection requires at least one realistic safe alternative"
     )
 
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ClaudeCode(
             model=os.environ["MCP_PAL_CLAUDE_MODEL"],
             credential_references={

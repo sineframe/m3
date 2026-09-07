@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import MCPTestKit, SDKConfig
+from mcp_pal import MCPTestKit, Config
 from mcp_pal._exports import PUBLIC_EXPORTS
-from mcp_pal.async_api import AsyncCapabilityProbeService, AsyncMCPTestKit
+from mcp_pal.async_api import AsyncProbes, AsyncMCPTestKit
 from mcp_pal.errors import KitClosed, UnsupportedFeature
-from mcp_pal.services.probes import CapabilityProbeService
+from mcp_pal.services.probes import Probes
 from mcp_pal.sync_api import ProbeKind, ProbeRequest
 from mcp_pal.types import CapabilityStatus
 
@@ -28,7 +28,7 @@ def test_sync_kit_resolves_config_and_baseline_without_harness_probes(tmp_path: 
 
     report = kit.capabilities()
 
-    assert isinstance(kit.config, SDKConfig)
+    assert isinstance(kit.config, Config)
     assert kit.config.artifact_policy == "always"
     assert kit.config.telemetry_enabled is True
     assert [result.capability.name for result in report.results] == ["configuration", "memory"]
@@ -73,7 +73,7 @@ def test_sync_kit_lifecycle_is_idempotent_and_future_execution_is_explicitly_uns
 
 def test_sync_probe_namespace_is_the_sync_service_and_checks_lifecycle() -> None:
     kit = MCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
-    assert isinstance(kit.probes, CapabilityProbeService)
+    assert isinstance(kit.probes, Probes)
     assert not inspect.iscoroutinefunction(kit.probes.probe_storage)
     kit.close()
     with pytest.raises(KitClosed):
@@ -96,15 +96,15 @@ def test_async_probe_namespace_is_async_only_and_matches_sync_surface() -> None:
         "probe_requested",
     }
     for method_name in async_service_methods:
-        assert inspect.iscoroutinefunction(getattr(AsyncCapabilityProbeService, method_name))
-        assert not hasattr(AsyncCapabilityProbeService, f"sync_{method_name}")
+        assert inspect.iscoroutinefunction(getattr(AsyncProbes, method_name))
+        assert not hasattr(AsyncProbes, f"sync_{method_name}")
 
     kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
-    assert isinstance(kit.probes, AsyncCapabilityProbeService)
-    assert "AsyncCapabilityProbeService" in PUBLIC_EXPORTS["mcp_pal.async_api"]
-    assert "CapabilityProbeService" not in PUBLIC_EXPORTS["mcp_pal.async_api"]
-    assert "ProbeService" not in PUBLIC_EXPORTS["mcp_pal.async_api"]
-    assert "ReadinessProbeService" not in PUBLIC_EXPORTS["mcp_pal.async_api"]
+    assert isinstance(kit.probes, AsyncProbes)
+    assert "AsyncProbes" in PUBLIC_EXPORTS["mcp_pal.async_api"]
+    assert "Probes" not in PUBLIC_EXPORTS["mcp_pal.async_api"]
+    assert "Probes" not in PUBLIC_EXPORTS["mcp_pal.async_api"]
+    assert "Probes" not in PUBLIC_EXPORTS["mcp_pal.async_api"]
 
 
 def test_async_closed_namespace_raises_stable_error() -> None:

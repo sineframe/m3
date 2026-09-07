@@ -185,7 +185,7 @@ class InteractionHandlers:
     terminal: TerminalHandler | None = None
 
 
-class InteractionController:
+class Interactions:
     """Apply immutable policies around explicit interaction callbacks."""
 
     def __init__(
@@ -342,7 +342,7 @@ class InteractionController:
             return TerminalResult(False, None, b"", b"", False, False, await self._record(_deny("terminal", "handler_error")))
 
 
-class WorkspaceFilesystemHandler:
+class WorkspaceFiles:
     """Bounded filesystem handler rooted inside one owned workspace."""
 
     def __init__(self, root: str | Path, *, mode: Literal["read_only", "read_write"] = "read_only", max_bytes: int = 1 << 20) -> None:
@@ -500,7 +500,7 @@ class WorkspaceFilesystemHandler:
         return FilesystemResult(False, None, _deny("filesystem", "unsupported_operation"))
 
 
-class AllowlistedTerminalHandler:
+class AllowedCommands:
     """Safe argv-only terminal handler with cwd, timeout, and output bounds."""
 
     def __init__(
@@ -678,8 +678,8 @@ class AllowlistedTerminalHandler:
 
 
 __all__ = [
-    "AllowlistedTerminalHandler", "ElicitationCallback", "ElicitationHandler", "ElicitationRequest", "ElicitationResult",
-    "FilesystemHandler", "FilesystemOperation", "FilesystemRequest", "FilesystemResult", "InteractionController", "InteractionHandlers",
+    "AllowedCommands", "ElicitationCallback", "ElicitationHandler", "ElicitationRequest", "ElicitationResult",
+    "FilesystemHandler", "FilesystemOperation", "FilesystemRequest", "FilesystemResult", "Interactions", "InteractionHandlers",
     "InteractionReceipt", "PermissionCallback", "PermissionHandler", "PermissionRequest", "PermissionResult", "SamplingCallback", "SamplingHandler",
-    "SamplingRequest", "SamplingResult", "TerminalHandler", "TerminalRequest", "TerminalResult", "WorkspaceFilesystemHandler",
+    "SamplingRequest", "SamplingResult", "TerminalHandler", "TerminalRequest", "TerminalResult", "WorkspaceFiles",
 ]

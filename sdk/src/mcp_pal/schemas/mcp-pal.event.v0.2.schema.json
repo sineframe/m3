@@ -20,7 +20,7 @@
       "type": "string"
     },
     "EventKind": {
-      "description": "Closed taxonomy for canonical harness-neutral events.",
+      "description": "Closed taxonomy for stable harness-neutral events.",
       "enum": [
         "execution.created",
         "execution.state_changed",
@@ -87,7 +87,7 @@
       "title": "EventOrigin",
       "type": "string"
     },
-    "EventPayloadRef": {
+    "PayloadRef": {
       "additionalProperties": false,
       "properties": {
         "blob_id": {
@@ -131,10 +131,10 @@
         "sha256",
         "size_bytes"
       ],
-      "title": "EventPayloadRef",
+      "title": "PayloadRef",
       "type": "object"
     },
-    "EventProvenance": {
+    "EventSource": {
       "additionalProperties": false,
       "properties": {
         "derived_from_sequence": {
@@ -177,7 +177,7 @@
         "origin",
         "source"
       ],
-      "title": "EventProvenance",
+      "title": "EventSource",
       "type": "object"
     },
     "ExecutionId": {
@@ -199,7 +199,7 @@
       "title": "LifecyclePhase",
       "type": "string"
     },
-    "RawEvidenceRef": {
+    "EvidenceRef": {
       "additionalProperties": false,
       "properties": {
         "evidence_id": {
@@ -265,7 +265,7 @@
       "required": [
         "evidence_id"
       ],
-      "title": "RawEvidenceRef",
+      "title": "EvidenceRef",
       "type": "object"
     },
     "ReasoningState": {
@@ -279,7 +279,7 @@
         "payload_ref": {
           "anyOf": [
             {
-              "$ref": "#/$defs/EventPayloadRef"
+              "$ref": "#/$defs/PayloadRef"
             },
             {
               "type": "null"
@@ -307,7 +307,7 @@
       "title": "ReasoningVisibility",
       "type": "string"
     },
-    "RequestCorrelation": {
+    "RequestLink": {
       "additionalProperties": false,
       "properties": {
         "direction": {
@@ -345,7 +345,7 @@
       "required": [
         "direction"
       ],
-      "title": "RequestCorrelation",
+      "title": "RequestLink",
       "type": "object"
     },
     "SessionId": {
@@ -375,7 +375,7 @@
     "correlation": {
       "anyOf": [
         {
-          "$ref": "#/$defs/RequestCorrelation"
+          "$ref": "#/$defs/RequestLink"
         },
         {
           "type": "null"
@@ -409,7 +409,7 @@
     "payload_ref": {
       "anyOf": [
         {
-          "$ref": "#/$defs/EventPayloadRef"
+          "$ref": "#/$defs/PayloadRef"
         },
         {
           "type": "null"
@@ -418,12 +418,12 @@
       "default": null
     },
     "provenance": {
-      "$ref": "#/$defs/EventProvenance"
+      "$ref": "#/$defs/EventSource"
     },
     "raw_evidence_ref": {
       "anyOf": [
         {
-          "$ref": "#/$defs/RawEvidenceRef"
+          "$ref": "#/$defs/EvidenceRef"
         },
         {
           "type": "null"
@@ -507,6 +507,6 @@
     "kind",
     "monotonic_offset_ms"
   ],
-  "title": "CanonicalEvent",
+  "title": "Event",
   "type": "object"
 }

@@ -11,7 +11,7 @@ from .readiness_service import (
     ReadinessView,
     StorageHealthView,
 )
-from .acp_probe_service import ACPProbeService
+from .acp_probe_service import ACPProbes
 
 __all__ = [
     "ACPAgentModeView",
@@ -23,5 +23,5 @@ __all__ = [
     "ReadinessService",
     "ReadinessView",
     "StorageHealthView",
-    "ACPProbeService",
+    "ACPProbes",
 ]

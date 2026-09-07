@@ -16,15 +16,15 @@ from mcp_pal.storage import (
     TemporaryArtifactStore,
 )
 from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import ArtifactRef, CanonicalEvent, EventId, EventKind, ExecutionId, ExecutionSnapshot, SessionId
+from mcp_pal.types import ArtifactRef, Event, EventId, EventKind, ExecutionId, ExecutionState, SessionId
 
 
-def _snapshot() -> ExecutionSnapshot:
-    return ExecutionSnapshot(execution_id=ExecutionId("execution-1"))
+def _snapshot() -> ExecutionState:
+    return ExecutionState(execution_id=ExecutionId("execution-1"))
 
 
-def _event(sequence: int, *, payload: dict[str, object] | None = None) -> CanonicalEvent:
-    return CanonicalEvent(
+def _event(sequence: int, *, payload: dict[str, object] | None = None) -> Event:
+    return Event(
         event_id=EventId(f"event-{sequence}"),
         execution_id=ExecutionId("execution-1"),
         sequence=sequence,
@@ -63,9 +63,9 @@ def test_direct_store_redaction_failure_has_zero_visibility() -> None:
     config = RedactionConfig(secrets=frozenset({"raw-secret"}), include_environment=False)
     store = InMemoryExecutionStore(config=config)
     store.create(_snapshot())
-    callbacks: list[CanonicalEvent] = []
+    callbacks: list[Event] = []
     store.subscribe("execution-1", callbacks.append)
-    malformed = CanonicalEvent.model_construct(
+    malformed = Event.model_construct(
         event_id=EventId("malformed"),
         execution_id=ExecutionId("execution-1"),
         sequence=0,
@@ -82,7 +82,7 @@ def test_direct_store_redaction_failure_has_zero_visibility() -> None:
 def test_store_snapshot_is_atomically_derived_from_terminal_events() -> None:
     store = InMemoryExecutionStore()
     store.create(_snapshot())
-    terminal = CanonicalEvent(
+    terminal = Event(
         event_id=EventId("terminal-snapshot"),
         execution_id=ExecutionId("execution-1"),
         sequence=0,
@@ -103,7 +103,7 @@ def test_failed_append_releases_only_its_reservation_and_preserves_other_reserva
     store = InMemoryExecutionStore()
     store.create(_snapshot())
     reserved = store.allocate("execution-1", count=2)
-    invalid = CanonicalEvent(
+    invalid = Event(
         event_id=EventId("invalid-reservation"),
         execution_id=ExecutionId("execution-1"),
         sequence=reserved[0],
@@ -122,7 +122,7 @@ def test_redaction_failure_releases_reservation_without_visibility() -> None:
     store = InMemoryExecutionStore(config=config)
     store.create(_snapshot())
     sequence = store.allocate_sequence("execution-1")
-    malformed = CanonicalEvent.model_construct(
+    malformed = Event.model_construct(
         event_id=EventId("unsupported-reservation"),
         execution_id=ExecutionId("execution-1"),
         sequence=sequence,
@@ -139,7 +139,7 @@ def test_redaction_failure_releases_reservation_without_visibility() -> None:
 def test_session_state_requires_a_previously_committed_session_creation() -> None:
     store = InMemoryExecutionStore()
     store.create(_snapshot())
-    state = CanonicalEvent(
+    state = Event(
         event_id=EventId("session-state"),
         execution_id=ExecutionId("execution-1"),
         sequence=0,
@@ -153,8 +153,8 @@ def test_session_state_requires_a_previously_committed_session_creation() -> Non
     assert store.events("execution-1") == ()
 
 
-def _session_event(sequence: int, kind: EventKind, session: str = "session-1") -> CanonicalEvent:
-    return CanonicalEvent(
+def _session_event(sequence: int, kind: EventKind, session: str = "session-1") -> Event:
+    return Event(
         event_id=EventId(f"session-event-{sequence}"),
         execution_id=ExecutionId("execution-1"),
         sequence=sequence,
@@ -188,7 +188,7 @@ def test_session_create_then_state_in_one_atomic_batch_is_visible_after_commit()
         (_session_event(0, EventKind.SESSION_CREATED), _session_event(1, EventKind.SESSION_CREATED)),
     ),
 )
-def test_invalid_session_batch_has_no_visibility(events: tuple[CanonicalEvent, CanonicalEvent]) -> None:
+def test_invalid_session_batch_has_no_visibility(events: tuple[Event, Event]) -> None:
     store = InMemoryExecutionStore()
     store.create(_snapshot())
     with pytest.raises(StorageConflict):
@@ -201,7 +201,7 @@ def test_transaction_rollback_has_no_visibility_and_callbacks_are_after_commit()
     store.create(_snapshot())
     observed: list[tuple[int, tuple[int, ...]]] = []
 
-    def callback(event: CanonicalEvent) -> None:
+    def callback(event: Event) -> None:
         observed.append((event.sequence, tuple(item.sequence for item in store.events("execution-1"))))
 
     store.subscribe("execution-1", callback)

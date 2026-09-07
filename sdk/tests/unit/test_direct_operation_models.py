@@ -10,52 +10,52 @@ import mcp_pal.async_api as async_api
 import mcp_pal.sync_api as sync_api
 from mcp_pal.direct_client import AsyncDirectClient, Prompt, Resource, ResourceTemplate, Tool
 from mcp_pal.types import (
-    CallToolOperation,
-    CallToolOperationResult,
-    DirectExecutionSpec,
+    CallTool,
+    CallToolResult,
+    DirectSpec,
     DirectOperation,
-    DirectOperationResult,
-    DirectPrompt,
-    DirectResource,
-    DirectResourceTemplate,
-    DirectTool,
-    GetPromptOperation,
-    GetPromptOperationResult,
-    ListPromptsOperation,
-    ListPromptsOperationResult,
-    ListResourcesOperation,
-    ListResourcesOperationResult,
-    ListResourceTemplatesOperation,
-    ListResourceTemplatesOperationResult,
-    ListToolsOperation,
-    ListToolsOperationResult,
-    PingOperation,
-    PingOperationResult,
-    ReadResourceOperation,
-    ReadResourceOperationResult,
+    DirectResult,
+    PromptInfo,
+    ResourceInfo,
+    TemplateInfo,
+    ToolInfo,
+    GetPrompt,
+    GetPromptResult,
+    ListPrompts,
+    ListPromptsResult,
+    ListResources,
+    ListResourcesResult,
+    ListTemplates,
+    ListTemplatesResult,
+    ListTools,
+    ListToolsResult,
+    Ping,
+    PingResult,
+    ReadResource,
+    ReadResourceResult,
     ServerBinding,
     StdioServer,
 )
 
 
-def test_direct_value_exports_use_the_canonical_types_module_identities() -> None:
+def test_direct_value_exports_use_the_stable_types_module_identities() -> None:
     from mcp_pal import types
 
-    assert types.DirectTool is async_api.DirectTool
-    assert types.DirectResource is async_api.DirectResource
-    assert types.DirectResourceTemplate is async_api.DirectResourceTemplate
-    assert types.DirectPrompt is async_api.DirectPrompt
-    assert types.DirectPrompt is sync_api.DirectPrompt
-    assert types.DirectResource is sync_api.DirectResource
-    assert types.DirectResourceTemplate is sync_api.DirectResourceTemplate
-    assert Tool is types.DirectTool
-    assert Resource is types.DirectResource
-    assert ResourceTemplate is types.DirectResourceTemplate
-    assert Prompt is types.DirectPrompt
+    assert types.ToolInfo is async_api.ToolInfo
+    assert types.ResourceInfo is async_api.ResourceInfo
+    assert types.TemplateInfo is async_api.TemplateInfo
+    assert types.PromptInfo is async_api.PromptInfo
+    assert types.PromptInfo is sync_api.PromptInfo
+    assert types.ResourceInfo is sync_api.ResourceInfo
+    assert types.TemplateInfo is sync_api.TemplateInfo
+    assert Tool is types.ToolInfo
+    assert Resource is types.ResourceInfo
+    assert ResourceTemplate is types.TemplateInfo
+    assert Prompt is types.PromptInfo
 
 
 @pytest.mark.asyncio
-async def test_direct_client_conversions_return_canonical_values_with_raw_evidence() -> None:
+async def test_direct_client_conversions_return_stable_values_with_raw_evidence() -> None:
     class Session:
         async def __aenter__(self) -> "Session":
             return self
@@ -95,10 +95,10 @@ async def test_direct_client_conversions_return_canonical_values_with_raw_eviden
 
     from mcp_pal import types
 
-    assert type(tool) is types.DirectTool
-    assert type(resource) is types.DirectResource
-    assert type(template) is types.DirectResourceTemplate
-    assert type(prompt) is types.DirectPrompt
+    assert type(tool) is types.ToolInfo
+    assert type(resource) is types.ResourceInfo
+    assert type(template) is types.TemplateInfo
+    assert type(prompt) is types.PromptInfo
     assert tool.raw is raw_tool
     assert resource.raw is raw_resource
     assert template.raw is raw_template
@@ -111,14 +111,14 @@ async def test_direct_client_conversions_return_canonical_values_with_raw_eviden
 
 def test_direct_operations_are_discriminated_and_round_trip_as_json() -> None:
     operations = (
-        ListToolsOperation(server="primary", cursor="next"),
-        ListResourcesOperation(),
-        ListResourceTemplatesOperation(all_pages=False),
-        ListPromptsOperation(cursor="cursor"),
-        CallToolOperation(name="add", arguments={"left": 2}),
-        ReadResourceOperation(uri="memory://value"),
-        GetPromptOperation(name="greeting", arguments={"name": "Ada"}),
-        PingOperation(),
+        ListTools(server="primary", cursor="next"),
+        ListResources(),
+        ListTemplates(all_pages=False),
+        ListPrompts(cursor="cursor"),
+        CallTool(name="add", arguments={"left": 2}),
+        ReadResource(uri="memory://value"),
+        GetPrompt(name="greeting", arguments={"name": "Ada"}),
+        Ping(),
     )
     adapter = TypeAdapter(DirectOperation)
     for operation in operations:
@@ -141,68 +141,68 @@ def test_direct_operations_are_discriminated_and_round_trip_as_json() -> None:
 
 
 def test_direct_operation_inputs_are_frozen_and_validate_selectors() -> None:
-    operation = CallToolOperation(name="echo", arguments={"nested": {"value": 1}})
+    operation = CallTool(name="echo", arguments={"nested": {"value": 1}})
     with pytest.raises((TypeError, ValidationError)):
         operation.name = "changed"  # type: ignore[misc]
     with pytest.raises((TypeError, AttributeError)):
         operation.arguments["nested"]["value"] = 2  # type: ignore[index]
 
     server = StdioServer(name="echo", command="echo")
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=server, alias="primary"),),
-        operation=PingOperation(server="primary"),
+        operation=Ping(server="primary"),
         validate_schemas=True,
     )
     assert spec.operation.server == "primary"
-    assert DirectExecutionSpec.model_validate(spec.model_dump(mode="json")).validate_schemas is True
+    assert DirectSpec.model_validate(spec.model_dump(mode="json")).validate_schemas is True
     with pytest.raises(ValidationError, match="unique aliases"):
-        DirectExecutionSpec(
+        DirectSpec(
             servers=(
                 ServerBinding(server=server, alias="same"),
                 ServerBinding(server=StdioServer(name="other", command="echo"), alias="same"),
             ),
-            operation=PingOperation(),
+            operation=Ping(),
         )
     with pytest.raises(ValidationError, match="does not match"):
-        DirectExecutionSpec(
+        DirectSpec(
             servers=(ServerBinding(server=server, alias="primary"),),
-            operation=PingOperation(server="missing"),
+            operation=Ping(server="missing"),
         )
     with pytest.raises(ValidationError, match="required when multiple"):
-        DirectExecutionSpec(
+        DirectSpec(
             servers=(
                 ServerBinding(server=server, alias="one"),
                 ServerBinding(server=StdioServer(name="other", command="echo"), alias="two"),
             ),
-            operation=PingOperation(),
+            operation=Ping(),
         )
     with pytest.raises(ValidationError, match="unique aliases"):
-        DirectExecutionSpec(
+        DirectSpec(
             servers=(
                 ServerBinding(server=server),
                 ServerBinding(server=StdioServer(name="other", command="echo"), alias="echo"),
             ),
-            operation=PingOperation(server="echo"),
+            operation=Ping(server="echo"),
         )
     with pytest.raises(ValidationError):
         ServerBinding(server=server, alias="")
 
 
 def test_direct_operation_results_are_discriminated_and_serializable() -> None:
-    adapter = TypeAdapter(DirectOperationResult)
+    adapter = TypeAdapter(DirectResult)
     results = (
-        ListToolsOperationResult(tools=(DirectTool(name="echo"),), raw=SimpleNamespace(kind="tools")),
-        ListResourcesOperationResult(resources=(DirectResource(name="doc", uri="memory://doc"),), raw=SimpleNamespace(kind="resources")),
-        ListResourceTemplatesOperationResult(resource_templates=(), raw=SimpleNamespace(kind="templates")),
-        ListPromptsOperationResult(prompts=(DirectPrompt(name="greeting"),), raw=SimpleNamespace(kind="prompts")),
-        CallToolOperationResult(
+        ListToolsResult(tools=(ToolInfo(name="echo"),), raw=SimpleNamespace(kind="tools")),
+        ListResourcesResult(resources=(ResourceInfo(name="doc", uri="memory://doc"),), raw=SimpleNamespace(kind="resources")),
+        ListTemplatesResult(resource_templates=(), raw=SimpleNamespace(kind="templates")),
+        ListPromptsResult(prompts=(PromptInfo(name="greeting"),), raw=SimpleNamespace(kind="prompts")),
+        CallToolResult(
             content=({"type": "text", "text": "ok"},),
             structured_content={"value": 3},
             raw=SimpleNamespace(kind="call_tool"),
         ),
-        ReadResourceOperationResult(contents=({"type": "text", "text": "ok"},), raw=SimpleNamespace(kind="read_resource")),
-        GetPromptOperationResult(description="hello", messages=({"role": "user"},), raw=SimpleNamespace(kind="get_prompt")),
-        PingOperationResult(result_type="pong", raw=SimpleNamespace(kind="ping")),
+        ReadResourceResult(contents=({"type": "text", "text": "ok"},), raw=SimpleNamespace(kind="read_resource")),
+        GetPromptResult(description="hello", messages=({"role": "user"},), raw=SimpleNamespace(kind="get_prompt")),
+        PingResult(result_type="pong", raw=SimpleNamespace(kind="ping")),
     )
     for result in results:
         dumped = result.model_dump(mode="json")
@@ -218,4 +218,4 @@ def test_direct_operation_results_are_discriminated_and_serializable() -> None:
 def test_direct_execution_requires_an_explicit_operation() -> None:
     server = StdioServer(name="echo", command="echo")
     with pytest.raises(ValidationError):
-        DirectExecutionSpec(servers=(ServerBinding(server=server),))
+        DirectSpec(servers=(ServerBinding(server=server),))

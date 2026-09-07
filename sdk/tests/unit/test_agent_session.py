@@ -16,7 +16,7 @@ from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.workspace import WorkspaceManager
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     ErrorCode,
     ExecutionOutcome,
     ServerBinding,
@@ -33,8 +33,8 @@ from mcp_pal.types import (
 )
 
 
-def _spec() -> AgentExecutionSpec:
-    return AgentExecutionSpec(
+def _spec() -> AgentSpec:
+    return AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="memory", command="echo")),),
         harness=ACPAgent(model="fixture"),
     )
@@ -51,7 +51,7 @@ class FakeHarness:
         self.messages: list[str] = []
         self.tool_error = False
 
-    async def start(self, spec: AgentExecutionSpec) -> None:
+    async def start(self, spec: AgentSpec) -> None:
         self.started += 1
 
     async def send(self, message, *, timeout=None, metadata: Mapping[str, object] | None = None):
@@ -136,7 +136,7 @@ class StartupBarrierHarness(FakeHarness):
         self.start_called = asyncio.Event()
         self.release_start = asyncio.Event()
 
-    async def start(self, spec: AgentExecutionSpec) -> None:
+    async def start(self, spec: AgentSpec) -> None:
         self.started += 1
         self.start_called.set()
         await self.release_start.wait()
@@ -157,7 +157,7 @@ class FatalStartup(BaseException):
 
 
 class FatalStartupHarness(FakeHarness):
-    async def start(self, spec: AgentExecutionSpec) -> None:
+    async def start(self, spec: AgentSpec) -> None:
         self.started += 1
         raise FatalStartup()
 

@@ -12,13 +12,13 @@ from pydantic import TypeAdapter
 
 from mcp_pal import (
     ACPAgent,
-    AgentExecutionSpec,
-    CallToolOperation,
-    DirectExecutionSpec,
+    AgentSpec,
+    CallTool,
+    DirectSpec,
     ExecutionSpec,
-    PersistedExecutionReport,
+    ExecutionReport,
     RawEvidence,
-    RawEvidenceRef,
+    EvidenceRef,
     ServerBinding,
     StdioServer,
     TraceView,
@@ -40,14 +40,14 @@ def _wait_terminal(client: TestClient, execution_id: str) -> dict:
     raise AssertionError("v2 execution did not become terminal")
 
 
-def _direct_spec() -> DirectExecutionSpec:
-    return DirectExecutionSpec(
+def _direct_spec() -> DirectSpec:
+    return DirectSpec(
         servers=(ServerBinding(server=StdioServer(
             name="echo",
             command=sys.executable,
             args=("-m", "mcp_pal.fixtures.echo_server"),
         )),),
-        operation=CallToolOperation(server="echo", name="echo", arguments={"text": "api-e2e"}),
+        operation=CallTool(server="echo", name="echo", arguments={"text": "api-e2e"}),
     )
 
 
@@ -65,7 +65,7 @@ def test_v2_direct_real_stdio_and_sqlite_reopen(tmp_path: Path) -> None:
         )
         assert report_response.status_code == 200
         report_body = report_response.json()
-        report = TypeAdapter(PersistedExecutionReport).validate_python(report_body["report"])
+        report = TypeAdapter(ExecutionReport).validate_python(report_body["report"])
         trace = TypeAdapter(TraceView).validate_python(report_body["trace"])
         assert report.direct_result is not None and report.direct_result.kind == "call_tool"
         assert trace.schema_version == "1.1"
@@ -84,9 +84,9 @@ def test_v2_direct_real_stdio_and_sqlite_reopen(tmp_path: Path) -> None:
 
 def test_v2_direct_missing_executable_exposes_a_terminal_failed_trace(tmp_path: Path) -> None:
     database = tmp_path / "direct-failed.sqlite"
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=StdioServer(name="missing", command="mcp-pal-no-such-executable")),),
-        operation=CallToolOperation(server="missing", name="echo", arguments={}),
+        operation=CallTool(server="missing", name="echo", arguments={}),
     )
     with TestClient(create_app(Settings(database_path=str(database)))) as client:
         created = client.post("/api/v2/executions", json={"spec": spec.model_dump(mode="json")})
@@ -96,7 +96,7 @@ def test_v2_direct_missing_executable_exposes_a_terminal_failed_trace(tmp_path: 
         assert terminal["snapshot"]["outcome"] == "failed"
         response = client.get(f"/api/v2/executions/{execution_id}/report")
         assert response.status_code == 200
-        assert TypeAdapter(PersistedExecutionReport).validate_python(response.json()["report"]).snapshot.outcome == "failed"
+        assert TypeAdapter(ExecutionReport).validate_python(response.json()["report"]).snapshot.outcome == "failed"
         assert TypeAdapter(TraceView).validate_python(response.json()["trace"]).outcome == "failed"
 
 
@@ -117,7 +117,7 @@ def test_v2_acp_real_agent_and_mcp_stdio_with_raw_evidence(tmp_path: Path) -> No
         ],
         "env": {},
     }
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="agent-default", manifest=manifest),
         servers=(ServerBinding(server=StdioServer(
             name="e2e-mcp", command=sys.executable,
@@ -137,7 +137,7 @@ def test_v2_acp_real_agent_and_mcp_stdio_with_raw_evidence(tmp_path: Path) -> No
         )
         assert response.status_code == 200
         body = response.json()
-        report = TypeAdapter(PersistedExecutionReport).validate_python(body["report"])
+        report = TypeAdapter(ExecutionReport).validate_python(body["report"])
         trace = TypeAdapter(TraceView).validate_python(body["trace"])
         assert trace.runtime.kind == "acp"
         assert trace.runtime.session_id.value

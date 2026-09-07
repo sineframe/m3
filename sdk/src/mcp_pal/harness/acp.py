@@ -60,7 +60,7 @@ from .observations import (
 from ..interaction_handlers import (
     ElicitationRequest,
     FilesystemRequest,
-    InteractionController,
+    Interactions,
     PermissionRequest,
     SamplingRequest,
     TerminalRequest,
@@ -270,11 +270,11 @@ class _Client:
         callback: Callable[..., Any] | None = None,
         interaction_fault: list[BaseException] | None = None,
         secrets: set[str] | None = None,
-        interactions: InteractionController | None = None,
+        interactions: Interactions | None = None,
     ) -> None:
         self.frames, self.output, self.callback, self.interaction_fault = frames, output, callback, interaction_fault
         self.secrets = secrets if secrets is not None else set()
-        self.interactions: InteractionController | None = interactions
+        self.interactions: Interactions | None = interactions
         self._terminals: dict[str, Any] = {}
         self.interaction_events: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
 
@@ -1115,7 +1115,7 @@ class _AcpContractSession:
                 secrets=self._secrets,
                 # Missing callbacks are an explicit default-deny controller,
                 # not an implicit provider-side allow or an unhandled method.
-                interactions=self._launch.interactions or InteractionController(),
+                interactions=self._launch.interactions or Interactions(),
             )
             self._client = client
             self._transport = _AcpTransport(
@@ -1202,7 +1202,7 @@ class _AcpContractSession:
                 if not self._process_started_emitted:
                     self._process_started_emitted = True
                 # Initialization/session metadata is observed once and kept
-                # separate from ACP message updates in the canonical trace.
+                # separate from ACP message updates in the stable trace.
                 if sequence == 1:
                     metadata = {
                         "session_id": self._session_id,

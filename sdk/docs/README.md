@@ -6,7 +6,7 @@ for persisted results and an optional local UI, or invoke pytest directly.
 The project SDK and standalone CLI are separate installations; adding the SDK
 to a project does not install the `mcp-pal` command or its bundled UI.
 
-- [Streamable HTTP](streamable-http.md) — test a deployed MCP endpoint
+- [Streamable HTTP](http.md) — test a deployed MCP endpoint
   directly, through an agent session, or with a harness matrix.
 - [Quick start](quick-start.md) — install the SDK, write the first real MCP
   test, and run it with the CLI or pytest.

@@ -2,11 +2,11 @@ import json
 from typing import Any
 
 def normalize_events(raw: Any, selected_server: str | None = None) -> list[tuple[str, dict]]:
-    """Translate supported harness events into the backend's canonical events."""
+    """Translate supported harness events into the backend's stable events."""
     if not isinstance(raw, dict): return [("error", {"message": str(raw)})]
     typ, subtype = raw.get("type", ""), raw.get("subtype", "")
     # OpenCode JSON output. A completed tool part contains both the call and its
-    # result, so expose both canonical events and correlate them by call ID.
+    # result, so expose both stable events and correlate them by call ID.
     if typ in ("step_start", "step_finish", "text", "reasoning", "tool_use"):
         part = raw.get("part") if isinstance(raw.get("part"), dict) else {}
         session_id = raw.get("sessionID") or part.get("sessionID")
@@ -100,7 +100,7 @@ def _result_error(payload: Any) -> bool:
 
 def _normalized(raw_events: list[Any], server: str):
     out=[]
-    seen=set(); canonical_seen=set()
+    seen=set(); stable_seen=set()
     for raw in raw_events:
         try: key=json.dumps(raw,sort_keys=True,ensure_ascii=False)
         except TypeError: key=repr(raw)
@@ -108,9 +108,9 @@ def _normalized(raw_events: list[Any], server: str):
         seen.add(key)
         for typ,payload in normalize_events(raw, server):
             if typ in ("tool_call", "tool_result") and payload.get("harness") == "opencode":
-                canonical=(typ,payload.get("session_id"),payload.get("tool_use_id"),payload.get("tool_name"))
-                if canonical in canonical_seen: continue
-                canonical_seen.add(canonical)
+                stable=(typ,payload.get("session_id"),payload.get("tool_use_id"),payload.get("tool_name"))
+                if stable in stable_seen: continue
+                stable_seen.add(stable)
             out.append((typ,payload))
     return out
 

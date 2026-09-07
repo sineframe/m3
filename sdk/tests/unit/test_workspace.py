@@ -9,7 +9,7 @@ import pytest
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.harness import DeterministicHarnessAdapter
 from mcp_pal.types import ArtifactPolicy, ExecutionId, ExecutionOutcome, WorkspaceKind, WorkspacePolicy
-from mcp_pal.types import ACPAgent, AgentExecutionSpec, ServerBinding, StdioServer
+from mcp_pal.types import ACPAgent, AgentSpec, ServerBinding, StdioServer
 from mcp_pal.workspace import WorkspaceError, WorkspaceManager
 
 
@@ -295,7 +295,7 @@ async def test_agent_session_uses_and_cleans_its_workspace_before_terminal_resul
     source = tmp_path / "source"
     source.mkdir()
     (source / "input.txt").write_text("input")
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ACPAgent(model="workspace-test"),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
         workspace=WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)),

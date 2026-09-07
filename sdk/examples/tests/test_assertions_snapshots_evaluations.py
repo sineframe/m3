@@ -11,21 +11,21 @@ from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal import (
     ArtifactId,
     ArtifactRef,
-    CallToolOperation,
+    CallTool,
     Capability,
     CapabilityStatus,
-    DirectExecutionSpec,
+    DirectSpec,
     ErrorCode,
     ErrorInfo,
     EvaluationDecision,
     EvaluationStatus,
     ExecutionOutcome,
-    LifecycleState,
+    ExecutionStatus,
     MCPTestKit,
     RequiredEvaluationError,
     ServerBinding,
     StdioServer,
-    canonical_snapshot,
+    snapshot,
     check,
     expect,
 )
@@ -129,9 +129,9 @@ def test_trace_duration_protocol_transport_and_capability_assertions(
 def test_execution_outcome_lifecycle_error_artifact_and_workspace_assertions(
     example_server: StdioServer,
 ) -> None:
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=example_server, alias="example"),),
-        operation=CallToolOperation(
+        operation=CallTool(
             server="example",
             name="shipping_quote",
             arguments={"weight_kg": 1, "zone": "local"},
@@ -140,7 +140,7 @@ def test_execution_outcome_lifecycle_error_artifact_and_workspace_assertions(
     with MCPTestKit(env={}) as kit:
         execution = kit.run(spec)
 
-    expect(execution).to_have_lifecycle(LifecycleState.FINISHED)
+    expect(execution).to_have_lifecycle(ExecutionStatus.FINISHED)
     expect(execution).to_have_outcome(ExecutionOutcome.COMPLETED)
     expect(execution).to_have_terminal_outcome(ExecutionOutcome.COMPLETED)
     expect(execution).to_be_completed()
@@ -181,14 +181,14 @@ def test_execution_outcome_lifecycle_error_artifact_and_workspace_assertions(
     )
 
 
-def test_canonical_snapshot_is_stable_and_json_compatible(
+def test_stable_snapshot_is_stable_and_json_compatible(
     example_server: StdioServer,
 ) -> None:
     with MCPTestKit(env={}) as kit, kit.direct(example_server) as client:
         quote = client.call_tool("shipping_quote", {"weight_kg": 1, "zone": "local"})
 
-    snapshot = canonical_snapshot(quote)
-    assert snapshot == {
+    quote_snapshot = snapshot(quote)
+    assert quote_snapshot == {
         "content": [_QUOTE_CONTENT_RESULT],
         "is_error": False,
         "structured_content": {"amount": 7.0, "currency": "USD"},
@@ -224,9 +224,9 @@ def test_sqlite_evaluations_reopen_with_builtin_and_structured_custom(
 ) -> None:
     database = tmp_path / "example-evaluations.sqlite"
     store = SQLiteExecutionStore(database)
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=example_server, alias="example"),),
-        operation=CallToolOperation(
+        operation=CallTool(
             server="example", name="shipping_quote",
             arguments={"weight_kg": 1, "zone": "local"},
         ),

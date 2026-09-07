@@ -1,4 +1,4 @@
-"""Transparent canonical tracing for official MCP session streams.
+"""Transparent stable tracing for official MCP session streams.
 
 The official ``ClientSession`` remains the protocol engine.  This module only
 wraps its read/write stream objects and observes already-decoded
@@ -24,21 +24,21 @@ from mcp_types import (
     JSONRPCResponse,
 )
 
-from .events import EventFactory, PerExecutionSequenceAllocator
+from .events import EventFactory, EventSequence
 from .execution_trace import ExecutionTraceRecorder, TraceRecorderError
 from .storage import ExecutionStore, InMemoryExecutionStore
 from .trace.redaction import RedactionConfig
 from .types import (
-    CanonicalEvent,
+    Event,
     ConnectionId,
     EventDirection,
     EventKind,
     EventOrigin,
-    EventProvenance,
+    EventSource,
     ExecutionId,
     ExecutionOutcome,
     LifecyclePhase,
-    RequestCorrelation,
+    RequestLink,
     TraceId,
     TraceResult,
     TransportKind,
@@ -151,7 +151,7 @@ def _notification_kind(method: str | None) -> EventKind:
 
 
 class DirectTraceBridge:
-    """Observe one MCP connection and build an immutable canonical trace.
+    """Observe one MCP connection and build an immutable stable trace.
 
     A bridge may be constructed with a shared :class:`EventFactory` when an
     execution owns multiple connections.  Request counters are then scoped by
@@ -188,7 +188,7 @@ class DirectTraceBridge:
         self._redaction_config = redaction_config if redaction_config is not None else RedactionConfig.from_environment()
         self._factory = event_factory or EventFactory(
             self._execution_id,
-            allocator=PerExecutionSequenceAllocator(start=1),
+            allocator=EventSequence(start=1),
             source="mcp_pal.direct.stream",
         )
         if self._factory.execution_id != self._execution_id:
@@ -313,7 +313,7 @@ class DirectTraceBridge:
                         "configured_transport": transport.value,
                         "instrumented_transport": transport.value,
                     },
-                    provenance=EventProvenance(
+                    provenance=EventSource(
                         origin=EventOrigin.NORMALIZED,
                         source="mcp_pal.direct.transport",
                     ),
@@ -462,13 +462,13 @@ class DirectTraceBridge:
         request_sequence: int | None = None,
         phase: LifecyclePhase,
         payload_extra: Mapping[str, Any] | None = None,
-    ) -> CanonicalEvent | None:
+    ) -> Event | None:
         message_payload: dict[str, Any] = {"evidence_mode": "normalized_session_message"}
         if method is not None:
             message_payload["method"] = method
         if payload_extra:
             message_payload.update(payload_extra)
-        correlation = RequestCorrelation(
+        correlation = RequestLink(
             jsonrpc_id=jsonrpc_id,
             direction=direction,
             request_sequence=request_sequence,
@@ -488,7 +488,7 @@ class DirectTraceBridge:
                     correlation=correlation,
                     lifecycle_phase=phase,
                     payload=message_payload,
-                    provenance=EventProvenance(
+                    provenance=EventSource(
                         origin=EventOrigin.NORMALIZED,
                         source="mcp_pal.direct.stream",
                     ),
@@ -500,7 +500,7 @@ class DirectTraceBridge:
                     return None
                 return event
 
-    def _rollback_reservation(self, event: CanonicalEvent) -> None:
+    def _rollback_reservation(self, event: Event) -> None:
         """Return reservations made by a factory event rejected by storage."""
 
         allocator = getattr(self._factory, "_allocator")

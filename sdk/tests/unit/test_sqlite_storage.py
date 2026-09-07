@@ -20,15 +20,15 @@ from mcp_pal.types import (
     EventKind,
     ExecutionId,
     ExecutionOutcome,
-    ExecutionSnapshot,
-    LifecycleState,
+    ExecutionState,
+    ExecutionStatus,
     RevisionSelection,
     SecretReference,
     SessionId,
     TurnId,
-    TurnSnapshot,
-    DirectExecutionSpec,
-    PingOperation,
+    TurnState,
+    DirectSpec,
+    Ping,
     ServerBinding,
     StdioServer,
 )
@@ -40,20 +40,20 @@ def _store(tmp_path: Path) -> SQLiteExecutionStore:
 
 def _created(store: SQLiteExecutionStore, name: str = "execution-1") -> tuple[ExecutionId, EventFactory]:
     execution_id = ExecutionId(name)
-    store.create(ExecutionSnapshot(execution_id=execution_id))
+    store.create(ExecutionState(execution_id=execution_id))
     factory = EventFactory(execution_id)
     store.append_events([factory.create(EventKind.EXECUTION_CREATED, payload={})])
     return execution_id, factory
 
 
 def test_memory_and_sqlite_retain_defensive_typed_execution_specs(tmp_path: Path) -> None:
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=StdioServer(name="server", command="echo")),),
-        operation=PingOperation(server="server"),
+        operation=Ping(server="server"),
     )
     execution_id = ExecutionId("spec-parity")
     memory = InMemoryExecutionStore()
-    memory.create(ExecutionSnapshot(execution_id=execution_id), specification=spec.model_dump(mode="json"))
+    memory.create(ExecutionState(execution_id=execution_id), specification=spec.model_dump(mode="json"))
     memory_spec = memory.get_execution_spec(execution_id)
     assert memory_spec == spec
     assert memory_spec is not None
@@ -61,7 +61,7 @@ def test_memory_and_sqlite_retain_defensive_typed_execution_specs(tmp_path: Path
     assert "mutated" not in memory.get_execution_spec(execution_id).metadata  # type: ignore[union-attr]
 
     sqlite = _store(tmp_path)
-    sqlite.create(ExecutionSnapshot(execution_id=execution_id), specification=spec.model_dump(mode="json"))
+    sqlite.create(ExecutionState(execution_id=execution_id), specification=spec.model_dump(mode="json"))
     assert sqlite.get_execution_spec(execution_id) == spec
     sqlite.close()
 
@@ -120,7 +120,7 @@ def test_profile_revisions_archive_and_explicit_latest_clone(tmp_path: Path) -> 
     store.archive_profile(profile.id)
     assert store.get_profile(profile.id).archived is True  # type: ignore[union-attr]
     execution_id = ExecutionId("clone-source")
-    store.create(ExecutionSnapshot(execution_id=execution_id), server_bindings=[{"profile_id": profile.id, "revision_id": first.id.root}])
+    store.create(ExecutionState(execution_id=execution_id), server_bindings=[{"profile_id": profile.id, "revision_id": first.id.root}])
     clone = store.clone_execution(execution_id, use_latest=True)
     assert clone != execution_id
     assert store.resolved_bindings(clone)["servers"][0]["revision_id"] == second.id.root
@@ -183,7 +183,7 @@ def test_active_delete_rejected_and_terminal_delete_cascades(tmp_path: Path) -> 
     with pytest.raises(StorageConflict):
         store.delete_execution(execution_id)
     store.append_events([factory.create(EventKind.EXECUTION_FINISHED, payload={"outcome": ExecutionOutcome.COMPLETED.value})])
-    assert store.get_snapshot(execution_id).lifecycle is LifecycleState.FINISHED  # type: ignore[union-attr]
+    assert store.get_snapshot(execution_id).lifecycle is ExecutionStatus.FINISHED  # type: ignore[union-attr]
     store.delete_execution(execution_id)
     assert store.get_snapshot(execution_id) is None
 
@@ -246,7 +246,7 @@ def test_session_events_materialize_turn_foreign_key_rows(tmp_path: Path) -> Non
     execution_id, factory = _created(store)
     session_id = SessionId("session-1")
     store.append_events([factory.create(EventKind.SESSION_CREATED, session_id=session_id, payload={})])
-    turn = TurnSnapshot(turn_id=TurnId("turn-1"), session_id=session_id, number=1)
+    turn = TurnState(turn_id=TurnId("turn-1"), session_id=session_id, number=1)
     store.save_turn(turn)
     assert store.turns(execution_id)[0][0].turn_id == turn.turn_id
 
@@ -259,9 +259,9 @@ def test_turn_id_cannot_move_between_sessions_on_idempotent_update(tmp_path: Pat
         factory.create(EventKind.SESSION_CREATED, session_id=first, payload={}),
         factory.create(EventKind.SESSION_CREATED, session_id=second, payload={}),
     ])
-    store.save_turn(TurnSnapshot(turn_id=TurnId("turn-1"), session_id=first, number=1))
+    store.save_turn(TurnState(turn_id=TurnId("turn-1"), session_id=first, number=1))
     with pytest.raises(StorageConflict):
-        store.save_turn(TurnSnapshot(turn_id=TurnId("turn-1"), session_id=second, number=1))
+        store.save_turn(TurnState(turn_id=TurnId("turn-1"), session_id=second, number=1))
 
 
 def test_terminal_execution_rejects_later_events_and_finished_state_only(tmp_path: Path) -> None:
@@ -280,7 +280,7 @@ def test_clone_records_parent_and_keeps_original_revision_after_profile_edit(tmp
     profile = store.create_server_profile("server", {"version": 1})
     original = ExecutionId("clone-source")
     first = store.resolve_revision(profile.id)
-    store.create(ExecutionSnapshot(execution_id=original), server_bindings=[{"profile_id": profile.id, "revision_id": first.id.root}])
+    store.create(ExecutionState(execution_id=original), server_bindings=[{"profile_id": profile.id, "revision_id": first.id.root}])
     store.add_revision(profile.id, {"version": 2})
     clone = store.clone_execution(original)
     assert store.resolved_bindings(clone)["servers"][0]["revision_id"] == first.id.root

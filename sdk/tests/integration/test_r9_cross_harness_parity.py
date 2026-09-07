@@ -18,20 +18,20 @@ from mcp_pal.harness.claude import ClaudeCodeHarnessAdapter
 from mcp_pal.harness.contracts import HarnessLaunch, HarnessTurnRequest, HarnessTurnResult
 from mcp_pal.harness.observation_sink import HarnessObservationSink
 from mcp_pal.harness.opencode import OpenCodeHarnessAdapter
-from mcp_pal.observability import DirectTraceInfo, ObservationState, TraceView
-from mcp_pal.server_group import HarnessServerConfiguration, ServerGroupSnapshot
+from mcp_pal.observability import DirectTrace, ObservationState, TraceView
+from mcp_pal.server_group import HarnessServerConfig, ServerGroupSnapshot
 from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.testing import FaultInjector
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
-    CallToolOperation,
+    AgentSpec,
+    CallTool,
     ClaudeCode,
-    DirectExecutionSpec,
+    DirectSpec,
     ExecutionOutcome,
     OpenCode,
-    PingOperation,
+    Ping,
     ServerBinding,
     StdioServer,
     TextContent,
@@ -80,8 +80,8 @@ def _assert_common(view: TraceView, runtime: str) -> None:
         assert entry.provenance
 
 
-def _acp_spec(mode: str = "recover") -> AgentExecutionSpec:
-    return AgentExecutionSpec(
+def _acp_spec(mode: str = "recover") -> AgentSpec:
+    return AgentSpec(
         harness=ACPAgent(
             model="fixture",
             manifest={
@@ -98,7 +98,7 @@ def _acp_spec(mode: str = "recover") -> AgentExecutionSpec:
     )
 
 
-def _rich_acp_spec(path: Path) -> AgentExecutionSpec:
+def _rich_acp_spec(path: Path) -> AgentSpec:
     path.write_text(
         """#!/usr/bin/env python3
 import json, sys
@@ -128,7 +128,7 @@ for line in sys.stdin:
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | 0o100)
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=ACPAgent(
             model="fixture",
             manifest={
@@ -144,18 +144,18 @@ for line in sys.stdin:
     )
 
 
-def _claude_spec() -> AgentExecutionSpec:
+def _claude_spec() -> AgentSpec:
     executable = str(FIXTURES / "claude_observability_fixture.py")
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=ClaudeCode(model="fixture", executable=executable),
         servers=(_server(),),
         message=UserMessage(content=(TextContent(text="r9"),)),
     )
 
 
-def _opencode_spec() -> AgentExecutionSpec:
+def _opencode_spec() -> AgentSpec:
     executable = str(FIXTURES / "opencode_serve_fixture.py")
-    return AgentExecutionSpec(
+    return AgentSpec(
         harness=OpenCode(model="fixture", executable=executable),
         servers=(_server(),),
         message=UserMessage(content=(TextContent(text="r9"),)),
@@ -163,7 +163,7 @@ def _opencode_spec() -> AgentExecutionSpec:
 
 
 async def _native_trace(
-    spec: AgentExecutionSpec,
+    spec: AgentSpec,
     adapter: Any,
     *,
     message: str = "r9",
@@ -171,11 +171,11 @@ async def _native_trace(
     store: Any = None,
     execution_id: str = "r9-native",
 ) -> tuple[TraceView, HarnessTurnResult]:
-    configurations: tuple[HarnessServerConfiguration, ...] = ()
+    configurations: tuple[HarnessServerConfig, ...] = ()
     capture = None
     if isinstance(adapter, AcpHarnessAdapter):
         configurations = (
-            HarnessServerConfiguration(
+            HarnessServerConfig(
                 key="e2e-mcp",
                 transport=TransportKind.STDIO,
                 required=True,
@@ -220,7 +220,7 @@ async def _native_trace(
 
 
 async def _native_view(
-    spec: AgentExecutionSpec,
+    spec: AgentSpec,
     adapter: Any,
     **kwargs: Any,
 ) -> TraceView:
@@ -230,9 +230,9 @@ async def _native_view(
 
 @pytest.mark.asyncio
 async def test_r9_common_finalized_view_covers_all_local_harnesses() -> None:
-    direct = DirectExecutionSpec(
+    direct = DirectSpec(
         servers=(_server(),),
-        operation=CallToolOperation(
+        operation=CallTool(
             server="e2e-mcp", name="echo", arguments={"text": "r9"}
         ),
     )
@@ -240,7 +240,7 @@ async def test_r9_common_finalized_view_covers_all_local_harnesses() -> None:
         direct_result = await kit.run(direct)
         assert direct_result.trace_view is not None
         _assert_common(direct_result.trace_view, "direct")
-        assert isinstance(direct_result.trace_view.runtime, DirectTraceInfo)
+        assert isinstance(direct_result.trace_view.runtime, DirectTrace)
         assert direct_result.trace_view.runtime.initialization.state is ObservationState.OBSERVED
         assert direct_result.trace_view.tool_calls
         assert direct_result.trace_view.tool_calls[0].wire.state is ObservationState.OBSERVED
@@ -307,9 +307,9 @@ async def test_r9_acp_rich_runtime_plan_state_and_modes_are_publicly_typed(
 
 @pytest.mark.asyncio
 async def test_r9_tool_source_parity_keeps_wire_reported_and_builtin_identity() -> None:
-    direct = DirectExecutionSpec(
+    direct = DirectSpec(
         servers=(_server(),),
-        operation=CallToolOperation(
+        operation=CallTool(
             server="e2e-mcp", name="echo", arguments={"text": "wire"}
         ),
     )
@@ -345,7 +345,7 @@ async def test_r9_reused_provider_call_ids_remain_distinct_across_turns() -> Non
         spec,
         ServerGroupSnapshot(),
         (
-            HarnessServerConfiguration(
+            HarnessServerConfig(
                 key="e2e-mcp",
                 transport=TransportKind.STDIO,
                 required=True,
@@ -449,7 +449,7 @@ async def test_r9_native_terminal_turns_finalize_and_reopen(
             store.close()
 
 
-async def _run_async_direct(spec: DirectExecutionSpec) -> TraceView:
+async def _run_async_direct(spec: DirectSpec) -> TraceView:
     async with AsyncMCPTestKit(env={}, cwd=ROOT.parent) as kit:
         result = await kit.run(spec)
     assert result.trace_view is not None
@@ -457,9 +457,9 @@ async def _run_async_direct(spec: DirectExecutionSpec) -> TraceView:
 
 
 def test_r9_direct_sync_async_public_views_have_matching_semantics() -> None:
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(_server(),),
-        operation=CallToolOperation(
+        operation=CallTool(
             server="e2e-mcp", name="echo", arguments={"text": "sync-async"}
         ),
     )
@@ -480,31 +480,31 @@ def test_r9_direct_terminal_outcomes_persist_and_reopen(
     tmp_path: Path, case: str
 ) -> None:
     if case == "completed":
-        spec = DirectExecutionSpec(
+        spec = DirectSpec(
             servers=(_server(),),
-            operation=CallToolOperation(
+            operation=CallTool(
                 server="e2e-mcp", name="echo", arguments={"text": "terminal"}
             ),
         )
     elif case == "failed":
-        spec = DirectExecutionSpec(
+        spec = DirectSpec(
             servers=(
                 ServerBinding(
                     server=StdioServer(name="missing", command="r9-no-such-command"),
                     alias="missing",
                 ),
             ),
-            operation=PingOperation(server="missing"),
+            operation=Ping(server="missing"),
         )
     else:
-        spec = DirectExecutionSpec(
+        spec = DirectSpec(
             servers=(
                 ServerBinding(
                     server=FaultInjector().delay("tools/call", 0.5).stdio_server(),
                     alias="slow",
                 ),
             ),
-            operation=CallToolOperation(server="slow", name="echo", arguments={}),
+            operation=CallTool(server="slow", name="echo", arguments={}),
             timeout_seconds=0.05,
         )
     database = tmp_path / f"direct-{case}.sqlite"
@@ -541,9 +541,9 @@ async def test_r9_direct_cancelled_trace_persists_and_reopens(tmp_path: Path) ->
         cwd=str(ROOT.parent),
         environment={"MCP_PAL_E2E_PID_FILE": str(marker)},
     )
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=server, alias="hanging"),),
-        operation=PingOperation(server="hanging"),
+        operation=Ping(server="hanging"),
         timeout_seconds=30,
     )
     database = tmp_path / "direct-cancelled.sqlite"

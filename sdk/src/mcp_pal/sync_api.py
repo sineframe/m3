@@ -19,14 +19,14 @@ from anyio.from_thread import BlockingPortal as _BlockingPortal, start_blocking_
 
 from .agent_session import AsyncAgentSession as _AsyncAgentSession, HarnessAdapter
 from .interaction_handlers import (
-    AllowlistedTerminalHandler,
+    AllowedCommands,
     ElicitationRequest,
     ElicitationResult,
     ElicitationHandler,
     FilesystemHandler,
     FilesystemRequest,
     FilesystemResult,
-    InteractionController,
+    Interactions,
     InteractionHandlers,
     InteractionReceipt,
     PermissionRequest,
@@ -38,17 +38,14 @@ from .interaction_handlers import (
     TerminalHandler,
     TerminalRequest,
     TerminalResult,
-    WorkspaceFilesystemHandler,
+    WorkspaceFiles,
 )
 from .configuration import (
     ConfigOrigin,
     ConfigSource,
-    Configuration,
-    ConfigurationError,
-    MCPConfig,
-    SDKConfig,
+    Config,
+    ConfigError,
     load_config,
-    resolve_config,
 )
 from .errors import (
     ExecutionNotFound as _ExecutionNotFound,
@@ -61,10 +58,10 @@ from .direct_client import (
     AsyncDirectClient as _AsyncDirectClient,
     CallToolResult,
     CompletionResult,
-    DirectPrompt,
-    DirectResource,
-    DirectResourceTemplate,
-    DirectTool,
+    PromptInfo,
+    ResourceInfo,
+    TemplateInfo,
+    ToolInfo,
     EmptyResult,
     GetPromptResult,
     InitializationResult,
@@ -82,41 +79,39 @@ from .direct_client import (
 )
 from .evaluations import EvaluationRunner as _EvaluationRunner, EvaluatorCallable as _EvaluatorCallable
 from .services.probes import (
-    CapabilityProbeService,
+    Probes,
     ProbeEvidence,
     ProbeKind,
     ProbeReport,
     ProbeRequest,
     ProbeResult,
-    ProbeService,
-    ReadinessProbeService,
 )
 from .types import (
-    AgentExecutionSpec as _AgentExecutionSpec,
+    AgentSpec as _AgentSpec,
     Capability as _Capability,
     CapabilityStatus as _CapabilityStatus,
-    DirectExecutionSpec as _DirectExecutionSpec,
+    DirectSpec as _DirectSpec,
     ExecutionResult as _ExecutionResult,
     ExecutionSpec as _ExecutionSpec,
-    ExecutionSnapshot as _ExecutionSnapshot,
+    ExecutionState as _ExecutionState,
     RunId as _RunId,
     EvaluationResult as _EvaluationResult,
     Readiness as _Readiness,
     ServerBinding as _ServerBinding,
     InProcessServer as _InProcessServer,
     StdioServer as _StdioServer,
-    StreamableHTTPServer as _StreamableHTTPServer,
+    HTTPServer as _HTTPServer,
     SSEServer as _SSEServer,
     ProtocolConstraint as _ProtocolConstraint,
     TransportKind as _TransportKind,
     ServerValue as _ServerValue,
     TurnResult as _TurnResult,
     UserMessage as _UserMessage,
-    CanonicalEvent as _CanonicalEvent,
+    Event as _Event,
     SessionForkRequest as _SessionForkRequest,
-    SessionProvenance as _SessionProvenance,
+    SessionSource as _SessionSource,
     TraceResult as _TraceResult,
-    RawEvidenceRef as _RawEvidenceRef,
+    EvidenceRef as _EvidenceRef,
     ExecutionId as _ExecutionId,
 )
 from .observability import *
@@ -128,7 +123,7 @@ from ._default_store import make_default_run_id as _make_default_run_id, make_de
 
 
 _CURRENT_MCP_PROTOCOL = "2025-11-25"
-_DIRECT_SERVER_TYPES = (_InProcessServer, _StdioServer, _StreamableHTTPServer, _SSEServer)
+_DIRECT_SERVER_TYPES = (_InProcessServer, _StdioServer, _HTTPServer, _SSEServer)
 
 
 def _adapt_callback(callback: _Any) -> _Any:
@@ -188,7 +183,7 @@ def _runtime_server_bindings(runtime_servers: _Iterable[_Any]) -> tuple[_ServerB
 class _PortalRuntime:
     """Async state owned exclusively by the AnyIO portal thread."""
 
-    def __init__(self, config: SDKConfig, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None, run_id: _RunId | str | None = None) -> None:
+    def __init__(self, config: Config, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None, run_id: _RunId | str | None = None) -> None:
         from .async_api import AsyncMCPTestKit
 
         self.kit = AsyncMCPTestKit(
@@ -271,7 +266,7 @@ class _PortalRuntime:
 
     def create_session(
         self,
-        spec: _AgentExecutionSpec,
+        spec: _AgentSpec,
         adapter: HarnessAdapter | None = None,
         runtime_servers: _Iterable[_Any] = (),
         interaction_handlers: InteractionHandlers | None = None,
@@ -292,7 +287,7 @@ class _PortalRuntime:
         handle: int,
         request: _SessionForkRequest,
         adapter_factory: _Callable[..., _Any],
-    ) -> tuple[int, _AgentExecutionSpec]:
+    ) -> tuple[int, _AgentSpec]:
         child = await self.session(handle).fork(request, adapter_factory=adapter_factory)
         child_handle = self._next_session
         self._next_session += 1
@@ -308,7 +303,7 @@ class _PortalRuntime:
             except KeyError:
                 raise RuntimeError("agent session is closed") from None
 
-    def session_interactions(self, handle: int) -> InteractionController:
+    def session_interactions(self, handle: int) -> Interactions:
         """Return the policy controller owned by a session's portal task."""
 
         return self.session(handle).interactions
@@ -374,7 +369,7 @@ class _PortalRuntime:
     async def execution_result(self, identifier: int, timeout: float | None) -> _ExecutionResult:
         return await self.execution(identifier).result(timeout)
 
-    async def execution_snapshot(self, identifier: int) -> _ExecutionSnapshot:
+    async def execution_snapshot(self, identifier: int) -> _ExecutionState:
         return await self.execution(identifier).snapshot()
 
     async def execution_cancel(self, identifier: int) -> None:
@@ -384,7 +379,7 @@ class _PortalRuntime:
         handle = self.execution(identifier)
         return handle.execution_id, handle.spec
 
-    async def next_execution_event(self, identifier: int, after_sequence: int) -> _CanonicalEvent | None:
+    async def next_execution_event(self, identifier: int, after_sequence: int) -> _Event | None:
         iterator = self.event_iters.get(identifier)
         if iterator is None:
             iterator = self.execution(identifier).events(after_sequence=after_sequence)
@@ -407,7 +402,7 @@ class _PortalRuntime:
 
 
 class _SyncPortal:
-    def __init__(self, config: SDKConfig, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None, run_id: _RunId | str | None = None) -> None:
+    def __init__(self, config: Config, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None, run_id: _RunId | str | None = None) -> None:
         self._lock = _RLock()
         self._context = _start_blocking_portal()
         try:
@@ -616,8 +611,8 @@ class DirectClient:
     def list_prompts(self, *, cursor: str | None = None) -> ListPromptsResult:
         return _cast(ListPromptsResult, self._invoke("list_prompts", cursor=cursor))
 
-    def list_all_prompts(self) -> tuple[DirectPrompt, ...]:
-        return _cast(tuple[DirectPrompt, ...], self._invoke("list_all_prompts"))
+    def list_all_prompts(self) -> tuple[PromptInfo, ...]:
+        return _cast(tuple[PromptInfo, ...], self._invoke("list_all_prompts"))
 
     def read_resource(self, uri: str, **kwargs: _Any) -> ResourceReadResult | InputRequiredResult:
         return _cast(ResourceReadResult | InputRequiredResult, self._invoke("read_resource", uri, **kwargs))
@@ -677,8 +672,8 @@ class ExecutionHandle:
     def submitted_spec(self) -> _ExecutionSpec:
         return self.spec
 
-    def snapshot(self) -> _ExecutionSnapshot:
-        return _cast(_ExecutionSnapshot, self._portal.call(self._portal._runtime.execution_snapshot, self._identifier))
+    def snapshot(self) -> _ExecutionState:
+        return _cast(_ExecutionState, self._portal.call(self._portal._runtime.execution_snapshot, self._identifier))
 
     def result(self, timeout: float | None = None) -> _ExecutionResult:
         try:
@@ -692,7 +687,7 @@ class ExecutionHandle:
     def cancel(self) -> None:
         self._portal.call(self._portal._runtime.execution_cancel, self._identifier)
 
-    def events(self, *, after_sequence: int = -1) -> _Iterator[_CanonicalEvent]:
+    def events(self, *, after_sequence: int = -1) -> _Iterator[_Event]:
         if after_sequence < -1:
             raise ValueError("after_sequence must be >= -1")
         cursor = after_sequence
@@ -705,7 +700,7 @@ class ExecutionHandle:
                 )
                 if event is None:
                     return
-                typed = _cast(_CanonicalEvent, event)
+                typed = _cast(_Event, event)
                 if typed.sequence <= cursor:
                     continue
                 cursor = typed.sequence
@@ -718,7 +713,7 @@ class ExecutionHandle:
             except (RuntimeError, _KitClosed):
                 pass
 
-    def on_event(self, callback: _Callable[[_CanonicalEvent], _Any]) -> _Callable[[], None]:
+    def on_event(self, callback: _Callable[[_Event], _Any]) -> _Callable[[], None]:
         return _cast(
             _Callable[[], None],
             self._portal.call(self._portal._runtime.execution_callback, self._identifier, callback),
@@ -731,7 +726,7 @@ class AgentSession:
     def __init__(
         self,
         portal: _SyncPortal,
-        spec: _AgentExecutionSpec,
+        spec: _AgentSpec,
         adapter: HarnessAdapter | None = None,
         runtime_servers: _Iterable[_Any] = (),
         interaction_handlers: InteractionHandlers | None = None,
@@ -779,22 +774,22 @@ class AgentSession:
         queued = self._invoke("enqueue_turn", message, timeout=timeout, metadata=metadata)
         return _SyncQueuedTurn(self._portal, queued)
 
-    def snapshot(self) -> _ExecutionSnapshot:
-        return _cast(_ExecutionSnapshot, self._invoke("snapshot"))
+    def snapshot(self) -> _ExecutionState:
+        return _cast(_ExecutionState, self._invoke("snapshot"))
 
     @property
-    def provenance(self) -> _SessionProvenance | None:
+    def provenance(self) -> _SessionSource | None:
         with self._state_lock:
             if self._closed and self._result is not None:
                 return self._result.provenance
-        return _cast(_SessionProvenance | None, self._invoke("provenance"))
+        return _cast(_SessionSource | None, self._invoke("provenance"))
 
     @property
-    def interactions(self) -> InteractionController:
+    def interactions(self) -> Interactions:
         """Policy-gated handlers owned by this session's portal task."""
 
         return _cast(
-            InteractionController,
+            Interactions,
             self._portal.call(self._portal._runtime.session_interactions, self._handle),
         )
 
@@ -812,7 +807,7 @@ class AgentSession:
         adapter_factory: _Callable[..., _Any],
     ) -> "AgentSession":
         handle, child_spec = _cast(
-            tuple[int, _AgentExecutionSpec],
+            tuple[int, _AgentSpec],
             self._portal.call(self._portal._runtime.fork_session, self._handle, request, adapter_factory),
         )
         return AgentSession(self._portal, child_spec, _handle=handle)
@@ -866,7 +861,7 @@ class _SyncQueuedTurn:
         return self.result()
 
 
-def _baseline_report(config: SDKConfig, probes: CapabilityProbeService) -> ProbeReport:
+def _baseline_report(config: Config, probes: Probes) -> ProbeReport:
     configuration = ProbeResult(
         capability=_Capability(
             name="configuration",
@@ -890,7 +885,7 @@ class MCPTestKit:
 
     def __init__(
         self,
-        config: SDKConfig | _Mapping[str, _Any] | None = None,
+        config: Config | _Mapping[str, _Any] | None = None,
         *,
         env: _Mapping[str, str] | None = None,
         cwd: str | _Path | None = None,
@@ -915,7 +910,7 @@ class MCPTestKit:
         self._evaluations = _EvaluationRunner()
         self._probe_timeout_seconds = probe_timeout_seconds
         self._probe_output_limit = probe_output_limit
-        self.config = config if isinstance(config, SDKConfig) else resolve_config(config, env=env, cwd=cwd)
+        self.config = config if isinstance(config, Config) else load_config(config, env=env, cwd=cwd)
         self._owns_store = False
         if store is None:
             scoped_store = _make_default_store()
@@ -929,7 +924,7 @@ class MCPTestKit:
         self._evaluations = _EvaluationRunner(durable_store=store)
         self._embedded_worker = embedded_worker
         self._adapter_registry = adapter_registry
-        self._probes = CapabilityProbeService(
+        self._probes = Probes(
             timeout_seconds=probe_timeout_seconds,
             output_limit=probe_output_limit,
         )
@@ -941,7 +936,7 @@ class MCPTestKit:
                 raise _KitClosed("MCPTestKit is closed")
 
     @property
-    def probes(self) -> CapabilityProbeService:
+    def probes(self) -> Probes:
         """Synchronous capability namespace owned by this kit."""
 
         self._ensure_open()
@@ -967,7 +962,7 @@ class MCPTestKit:
         return spec
 
     def get_trace(self, execution_id: _ExecutionId | str) -> _TraceResult:
-        """Return the finalized canonical trace for an execution."""
+        """Return the finalized stable trace for an execution."""
 
         self._ensure_open()
         if self._store is None:
@@ -989,7 +984,7 @@ class MCPTestKit:
         return view
 
     def read_raw_evidence(
-        self, reference: _RawEvidenceRef, *, max_bytes: int = 1_048_576
+        self, reference: _EvidenceRef, *, max_bytes: int = 1_048_576
     ) -> RawEvidence:
         """Read bounded, redacted raw evidence by its durable reference."""
 
@@ -1130,14 +1125,14 @@ class MCPTestKit:
         self._ensure_open()
         raise _UnsupportedFeature(f"{operation} is not implemented in the configuration milestone")
 
-    def run(self, spec: _DirectExecutionSpec | _AgentExecutionSpec) -> _ExecutionResult:
-        if not isinstance(spec, (_DirectExecutionSpec, _AgentExecutionSpec)):
+    def run(self, spec: _DirectSpec | _AgentSpec) -> _ExecutionResult:
+        if not isinstance(spec, (_DirectSpec, _AgentSpec)):
             self._unsupported("run")
         return self.submit(spec).result()
 
     def submit(self, spec: _ExecutionSpec) -> ExecutionHandle:
-        spec = _cast(_AgentExecutionSpec, self._with_run_id(spec))
-        if not isinstance(spec, (_DirectExecutionSpec, _AgentExecutionSpec)):
+        spec = _cast(_AgentSpec, self._with_run_id(spec))
+        if not isinstance(spec, (_DirectSpec, _AgentSpec)):
             self._unsupported("submit")
         self._ensure_open()
         with self._state_lock:
@@ -1260,7 +1255,7 @@ class MCPTestKit:
         actual_transport = {
             _InProcessServer: _TransportKind.IN_PROCESS,
             _StdioServer: _TransportKind.STDIO,
-            _StreamableHTTPServer: _TransportKind.STREAMABLE_HTTP,
+            _HTTPServer: _TransportKind.STREAMABLE_HTTP,
             _SSEServer: _TransportKind.SSE,
         }[type(selected)]
         if requested_transport is not None and requested_transport is not actual_transport:
@@ -1268,16 +1263,16 @@ class MCPTestKit:
 
     def agent_session(
         self,
-        spec: _AgentExecutionSpec,
+        spec: _AgentSpec,
         *,
         adapter: HarnessAdapter | None = None,
         runtime_servers: _Iterable[_Any] = (),
         interaction_handlers: InteractionHandlers | None = None,
     ) -> AgentSession:
         self._ensure_open()
-        if not isinstance(spec, _AgentExecutionSpec):
+        if not isinstance(spec, _AgentSpec):
             self._unsupported("agent_session")
-        spec = _cast(_AgentExecutionSpec, self._with_run_id(spec))
+        spec = _cast(_AgentSpec, self._with_run_id(spec))
         with self._state_lock:
             if self._closed:
                 raise _KitClosed("MCPTestKit is closed")
@@ -1299,19 +1294,19 @@ class MCPTestKit:
 __all__ = [
     "AgentSession",
     "HarnessAdapter",
-    "CapabilityProbeService",
+    "Probes",
     "CallToolResult",
     "CompletionResult",
     "ConfigOrigin",
     "ConfigSource",
-    "Configuration",
-    "ConfigurationError",
+    "Config",
+    "ConfigError",
     "DirectClient",
     "ExecutionHandle",
-    "DirectPrompt",
-    "DirectResource",
-    "DirectResourceTemplate",
-    "DirectTool",
+    "PromptInfo",
+    "ResourceInfo",
+    "TemplateInfo",
+    "ToolInfo",
     "EmptyResult",
     "GetPromptResult",
     "InitializationResult",
@@ -1320,16 +1315,12 @@ __all__ = [
     "ListResourcesResult",
     "ListResourceTemplatesResult",
     "ListToolsResult",
-    "MCPConfig",
     "MCPTestKit",
     "ProbeEvidence",
     "ProbeKind",
     "ProbeReport",
     "ProbeRequest",
     "ProbeResult",
-    "ProbeService",
-    "ReadinessProbeService",
-    "SDKConfig",
     "PromptResult",
     "ResourceReadResult",
     "ToolCallResult",
@@ -1337,15 +1328,14 @@ __all__ = [
     "Resource",
     "ResourceTemplate",
     "load_config",
-    "resolve_config",
-    "AllowlistedTerminalHandler",
+    "AllowedCommands",
     "ElicitationRequest",
     "ElicitationResult",
     "ElicitationHandler",
     "FilesystemHandler",
     "FilesystemRequest",
     "FilesystemResult",
-    "InteractionController",
+    "Interactions",
     "InteractionHandlers",
     "InteractionReceipt",
     "PermissionRequest",
@@ -1357,7 +1347,7 @@ __all__ = [
     "TerminalHandler",
     "TerminalRequest",
     "TerminalResult",
-    "WorkspaceFilesystemHandler",
+    "WorkspaceFiles",
 ]
 
 __all__ = [*__all__, *_OBSERVABILITY_EXPORTS]

@@ -11,7 +11,7 @@ from mcp_pal.harness import DeterministicHarnessAdapter, HarnessAdapterRegistry,
 from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     ClaudeCode,
     EventKind,
     EventOrigin,
@@ -26,8 +26,8 @@ from mcp_pal.types import (
 )
 
 
-def _spec() -> AgentExecutionSpec:
-    return AgentExecutionSpec(
+def _spec() -> AgentSpec:
+    return AgentSpec(
         harness=ACPAgent(model="test-model"),
         servers=(
             ServerBinding(

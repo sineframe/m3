@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from mcp_pal.server_group import HarnessServerConfiguration
+from mcp_pal.server_group import HarnessServerConfig
 from mcp_pal.trace.capture import CaptureWriter
 from mcp_pal.transport.capture_proxy import McpCaptureManager
 from mcp_pal.types import SecretReference, TransportKind
@@ -28,8 +28,8 @@ def _configuration(
     args: tuple[str, ...] = (),
     environment: dict[str, object] | None = None,
     headers: dict[str, object] | None = None,
-) -> HarnessServerConfiguration:
-    return HarnessServerConfiguration(
+) -> HarnessServerConfig:
+    return HarnessServerConfig(
         key=connection_id,
         transport=transport,
         required=True,

@@ -26,6 +26,6 @@ def test_examples_docs_are_goal_oriented_and_not_a_synthetic_catalog() -> None:
     assert "source of truth" not in text.lower()
     assert not (_EXAMPLES / "tests" / "test_tool_usage_assertions.py").exists()
     assert all(
-        "CanonicalEvent" not in path.read_text(encoding="utf-8")
+        "Event" not in path.read_text(encoding="utf-8")
         for path in (_EXAMPLES / "tests").glob("*.py")
     )

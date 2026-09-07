@@ -13,7 +13,7 @@ from mcp_pal.services.acp_probes import (
     ACPProbeResult,
     ACPProbeStatus,
     JsonValue,
-    redacted_probe,
+    redact_probe,
     run_acp_probe,
 )
 from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore, StorageConflict
@@ -24,14 +24,14 @@ def _result(dimension: ACPProbeDimension, *, probe_id: str, status: ACPProbeStat
     return ACPProbeResult.model_validate({**dimension.model_dump(mode="python"), "id": probe_id, "status": status, "created_at": created_at, "finished_at": created_at})
 
 
-def test_protocol_dimension_is_neutral_and_config_is_canonical() -> None:
+def test_protocol_dimension_is_neutral_and_config_is_normalize() -> None:
     first = ACPProbeDimension(profile_id="p", revision_id="r", probe_type=ACPProbeKind.PROTOCOL, transport="STDIO", agent_mode_id="mode", session_config={"b": 2, "a": 1})
     second = ACPProbeDimension(profile_id="p", revision_id="r", probe_type=ACPProbeKind.PROTOCOL, transport="stdio")
     assert first.agent_mode_id is None and dict(first.session_config) == {}
-    assert first.canonical_key == second.canonical_key
+    assert first.stable_key == second.stable_key
     full_a = ACPProbeDimension(profile_id="p", revision_id="r", probe_type=ACPProbeKind.FULL, agent_mode_id="m", session_config={"b": 2, "a": 1})
     full_b = full_a.model_copy(update={"session_config": {"a": 1, "b": 2}})
-    assert full_a.canonical_key == full_b.canonical_key
+    assert full_a.stable_key == full_b.stable_key
 
 
 @pytest.mark.parametrize("store_factory", [InMemoryExecutionStore, SQLiteExecutionStore])
@@ -85,7 +85,7 @@ def test_runner_timeout_and_redaction() -> None:
     result = asyncio.run(run_acp_probe(request, slow))
     assert result.status is ACPProbeStatus.TIMED_OUT and result.finished_at is not None
     dimension = ACPProbeDimension(profile_id="p", revision_id="r", probe_type=ACPProbeKind.PROTOCOL)
-    safe = redacted_probe(_result(dimension, probe_id="safe", status=ACPProbeStatus.VERIFIED, created_at=datetime.now(timezone.utc)).model_copy(update={"evidence": {"token": "secret"}}), RedactionConfig(secrets=frozenset({"secret"}), include_environment=False))
+    safe = redact_probe(_result(dimension, probe_id="safe", status=ACPProbeStatus.VERIFIED, created_at=datetime.now(timezone.utc)).model_copy(update={"evidence": {"token": "secret"}}), RedactionConfig(secrets=frozenset({"secret"}), include_environment=False))
     dumped = safe.model_dump(mode="json")
     assert "secret" not in repr(dumped) and dumped["evidence"]["token"] == "[REDACTED]"
 
@@ -105,7 +105,7 @@ def test_hostile_config_options_are_bounded_to_typed_empty_options() -> None:
     result = _result(dimension, probe_id="options", status=ACPProbeStatus.VERIFIED, created_at=datetime.now(timezone.utc)).model_copy(
         update={"config_options": ({"id": "quality", "description": "x" * 100_000},)}
     )
-    safe = redacted_probe(result, RedactionConfig(secrets=frozenset(), include_environment=False))
+    safe = redact_probe(result, RedactionConfig(secrets=frozenset(), include_environment=False))
     assert safe.config_options == ()
     assert "truncation" in safe.evidence
 

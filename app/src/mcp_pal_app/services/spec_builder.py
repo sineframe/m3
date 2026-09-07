@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from mcp_pal import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     ClaudeCode,
     OpenCode,
     RevisionSelection,
@@ -17,7 +17,7 @@ from mcp_pal import (
     ServerBinding,
     SSEServer,
     StdioServer,
-    StreamableHTTPServer,
+    HTTPServer,
     TextContent,
     TrustLevel,
     UserMessage,
@@ -93,7 +93,7 @@ def _secret_or_literal(value: Any) -> SecretReference | str:
     raise ProfileServiceError("MCP credential values must be strings or references")
 
 
-def _server(name: str, raw: Mapping[str, Any]) -> StdioServer | StreamableHTTPServer | SSEServer:
+def _server(name: str, raw: Mapping[str, Any]) -> StdioServer | HTTPServer | SSEServer:
     typ = str(raw.get("type", "stdio")).lower()
     trust = TrustLevel(str(raw.get("trust", TrustLevel.UNTRUSTED.value)))
     if typ == "stdio":
@@ -107,7 +107,7 @@ def _server(name: str, raw: Mapping[str, Any]) -> StdioServer | StreamableHTTPSe
         )
     headers = {str(key): _secret_or_literal(item) for key, item in (raw.get("headers") or {}).items()}
     if typ == "http":
-        return StreamableHTTPServer(name=name, trust=trust, url=str(raw.get("url", "")), headers=headers)
+        return HTTPServer(name=name, trust=trust, url=str(raw.get("url", "")), headers=headers)
     if typ == "sse":
         return SSEServer(name=name, trust=trust, url=str(raw.get("url", "")), headers=headers)
     raise ProfileServiceError(f"unsupported MCP transport: {typ}")
@@ -120,7 +120,7 @@ class ExecutionSpecBuilder:
         self.store = store
         self.settings = settings
 
-    def build(self, draft: OneTurnRunDraft) -> AgentExecutionSpec:
+    def build(self, draft: OneTurnRunDraft) -> AgentSpec:
         profile = self.store.get_profile(draft.profile_id)
         if profile is None or profile.kind != "server":
             raise ProfileServiceError("MCP profile does not exist")
@@ -221,7 +221,7 @@ class ExecutionSpecBuilder:
         )
         if harness_profile_revision is not None:
             metadata.update({"harness_profile_id": draft.harness_profile_id, "harness_revision_id": harness_profile_revision.id.root})
-        return AgentExecutionSpec(
+        return AgentSpec(
             servers=(ServerBinding(server=selected, alias=draft.enabled_server),),
             harness=harness,
             message=UserMessage(content=(TextContent(text=draft.prompt),)),

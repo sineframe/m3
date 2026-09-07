@@ -28,7 +28,7 @@ from .types import (
     ServerBinding,
     ServerValue,
     StdioServer,
-    StreamableHTTPServer,
+    HTTPServer,
     TransportKind,
     TrustLevel,
     ToolPolicy,
@@ -68,7 +68,7 @@ class ServerLifecycleEvidence:
 
 
 @dataclass(frozen=True, slots=True)
-class HarnessServerConfiguration:
+class HarnessServerConfig:
     """Non-secret server configuration supplied to an agent adapter."""
 
     key: str
@@ -142,7 +142,7 @@ def _transport(server: ServerValue) -> TransportKind:
         return TransportKind.IN_PROCESS
     if isinstance(server, StdioServer):
         return TransportKind.STDIO
-    if isinstance(server, StreamableHTTPServer):
+    if isinstance(server, HTTPServer):
         return TransportKind.STREAMABLE_HTTP
     return TransportKind.SSE
 
@@ -161,7 +161,7 @@ def _validate_binding(binding: ServerBinding, key: str) -> None:
     server = binding.server
     if server is None:
         raise ServerStartupError("server profile resolution is unavailable in this runtime")
-    if isinstance(server, (StreamableHTTPServer, SSEServer)):
+    if isinstance(server, (HTTPServer, SSEServer)):
         parsed = urlsplit(server.url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ServerStartupError("MCP server endpoint is invalid")
@@ -484,13 +484,13 @@ class ServerGroupManager:
     def snapshot(self) -> ServerGroupSnapshot:
         return ServerGroupSnapshot(tuple(self._records.values()), self._evidence)
 
-    def _raw_configurations(self) -> tuple[HarnessServerConfiguration, ...]:
-        configurations: list[HarnessServerConfiguration] = []
+    def _raw_configurations(self) -> tuple[HarnessServerConfig, ...]:
+        configurations: list[HarnessServerConfig] = []
         for record in self._records.values():
             server = record.server
             if server is None or record.transport is None:
                 configurations.append(
-                    HarnessServerConfiguration(
+                    HarnessServerConfig(
                         key=record.key,
                         transport=record.transport or TransportKind.STDIO,
                         required=record.required,
@@ -503,7 +503,7 @@ class ServerGroupManager:
                 continue
             if isinstance(server, StdioServer):
                 configurations.append(
-                    HarnessServerConfiguration(
+                    HarnessServerConfig(
                         key=record.key,
                         transport=record.transport,
                         required=record.required,
@@ -517,9 +517,9 @@ class ServerGroupManager:
                         tools=record.tools,
                     )
                 )
-            elif isinstance(server, (StreamableHTTPServer, SSEServer)):
+            elif isinstance(server, (HTTPServer, SSEServer)):
                 configurations.append(
-                    HarnessServerConfiguration(
+                    HarnessServerConfig(
                         key=record.key,
                         transport=record.transport,
                         required=record.required,
@@ -533,7 +533,7 @@ class ServerGroupManager:
                 )
             else:
                 configurations.append(
-                    HarnessServerConfiguration(
+                    HarnessServerConfig(
                         key=record.key,
                         transport=record.transport,
                         required=record.required,
@@ -546,7 +546,7 @@ class ServerGroupManager:
                 )
         return tuple(configurations)
 
-    def configurations(self) -> tuple[HarnessServerConfiguration, ...]:
+    def configurations(self) -> tuple[HarnessServerConfig, ...]:
         configurations = self._raw_configurations()
         if self._capture is None or not self._started:
             return configurations
@@ -608,7 +608,7 @@ class ServerGroupManager:
 
 __all__ = [
     "AmbiguousToolError",
-    "HarnessServerConfiguration",
+    "HarnessServerConfig",
     "ServerCleanupError",
     "ServerGroupError",
     "ServerGroupManager",

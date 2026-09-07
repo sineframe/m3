@@ -17,28 +17,28 @@ from mcp_pal.observability import (
 )
 from mcp_pal.trace.redaction import RedactionConfig
 from mcp_pal.types import (
-    CanonicalEvent,
+    Event,
     CapabilityStatus,
     ConnectionId,
-    DirectTool,
+    ToolInfo,
     EventDirection,
     EventId,
     EventKind,
     EventOrigin,
-    EventProvenance,
+    EventSource,
     ExecutionId,
     ExecutionOutcome,
     ExecutionResult,
-    ExecutionSnapshot,
-    LifecycleState,
-    RequestCorrelation,
+    ExecutionState,
+    ExecutionStatus,
+    RequestLink,
     TraceId,
     TraceResult,
     TurnId,
-    TurnLifecycle,
+    TurnStatus,
     TurnOutcome,
     TurnResult,
-    TurnSnapshot,
+    TurnState,
 )
 
 _REDACTION = RedactionConfig(
@@ -59,16 +59,16 @@ def _trace(
     execution = ExecutionId("execution-1")
     connection = ConnectionId("connection-1")
     events = [
-        CanonicalEvent(
+        Event(
             event_id=EventId("event-created"),
             execution_id=execution,
             sequence=0,
             kind=EventKind.EXECUTION_CREATED,
             monotonic_offset_ms=0,
             payload={"trace_id": "trace-1", "lifecycle": "startup"},
-            provenance=EventProvenance(origin=origin, source="fixture"),
+            provenance=EventSource(origin=origin, source="fixture"),
         ),
-        CanonicalEvent(
+        Event(
             event_id=EventId("event-request"),
             execution_id=execution,
             sequence=1,
@@ -76,7 +76,7 @@ def _trace(
             monotonic_offset_ms=1,
             server_binding=server,
             connection_id=connection,
-            correlation=RequestCorrelation(
+            correlation=RequestLink(
                 jsonrpc_id=1,
                 direction=EventDirection.CLIENT_TO_SERVER,
                 request_sequence=1,
@@ -87,12 +87,12 @@ def _trace(
                     "arguments": arguments or {"query": "top-secret"},
                 }
             },
-            provenance=EventProvenance(origin=origin, source="fixture"),
+            provenance=EventSource(origin=origin, source="fixture"),
         ),
     ]
     if include_result:
         events.append(
-            CanonicalEvent(
+            Event(
                 event_id=EventId("event-result"),
                 execution_id=execution,
                 sequence=2,
@@ -100,7 +100,7 @@ def _trace(
                 monotonic_offset_ms=2,
                 server_binding=server,
                 connection_id=connection,
-                correlation=RequestCorrelation(
+                correlation=RequestLink(
                     jsonrpc_id=1,
                     direction=EventDirection.SERVER_TO_CLIENT,
                     request_sequence=1,
@@ -111,12 +111,12 @@ def _trace(
                     if result_kind is EventKind.MCP_ERROR
                     else {"result": {"content": [{"type": "text", "text": "ok"}]}}
                 ),
-                provenance=EventProvenance(origin=origin, source="fixture"),
+                provenance=EventSource(origin=origin, source="fixture"),
             )
         )
     if second_server is not None:
         events.append(
-            CanonicalEvent(
+            Event(
                 event_id=EventId("event-request-2"),
                 execution_id=execution,
                 sequence=3,
@@ -124,17 +124,17 @@ def _trace(
                 monotonic_offset_ms=3,
                 server_binding=second_server,
                 connection_id=connection,
-                correlation=RequestCorrelation(
+                correlation=RequestLink(
                     jsonrpc_id=2,
                     direction=EventDirection.CLIENT_TO_SERVER,
                     request_sequence=2,
                 ),
                 payload={"params": {"name": "lookup", "arguments": {}}},
-                provenance=EventProvenance(origin=origin, source="fixture"),
+                provenance=EventSource(origin=origin, source="fixture"),
             )
         )
     events.append(
-        CanonicalEvent(
+        Event(
             event_id=EventId("event-finished"),
             execution_id=execution,
             sequence=len(events),
@@ -145,7 +145,7 @@ def _trace(
                 "completeness": "complete",
                 "limitations": [],
             },
-            provenance=EventProvenance(origin=origin, source="fixture"),
+            provenance=EventSource(origin=origin, source="fixture"),
         )
     )
     return TraceResult(
@@ -353,8 +353,8 @@ def test_every_typed_tool_status_is_matchable(status: ToolCallStatus) -> None:
 
 
 def test_direct_snapshot_is_a_supported_subject() -> None:
-    snapshot = ExecutionSnapshot(execution_id=ExecutionId("execution-1")).transition(
-        LifecycleState.FINISHED, ExecutionOutcome.COMPLETED
+    snapshot = ExecutionState(execution_id=ExecutionId("execution-1")).transition(
+        ExecutionStatus.FINISHED, ExecutionOutcome.COMPLETED
     )
     expect(snapshot).to_be_completed()
 
@@ -374,8 +374,8 @@ def test_trace_aware_matchers_accept_typed_view_result_and_session_objects() -> 
     view = trace.view()
     expect(view).to_have_tool_call("lookup")
     result = ExecutionResult(
-        snapshot=ExecutionSnapshot(execution_id=trace.execution_id).transition(
-            LifecycleState.FINISHED, ExecutionOutcome.COMPLETED
+        snapshot=ExecutionState(execution_id=trace.execution_id).transition(
+            ExecutionStatus.FINISHED, ExecutionOutcome.COMPLETED
         ),
         trace=trace,
     )
@@ -395,9 +395,9 @@ def test_tool_matcher_normalizes_turn_result_snapshot_id_and_rejects_invalid() -
             )
         }
     )
-    snapshot = TurnSnapshot(
+    snapshot = TurnState(
         turn_id="turn-1", session_id="session-1", number=1
-    ).transition(TurnLifecycle.FINISHED, TurnOutcome.COMPLETED)
+    ).transition(TurnStatus.FINISHED, TurnOutcome.COMPLETED)
     result = TurnResult(snapshot=snapshot)
     for selector in ("turn-1", TurnId("turn-1"), snapshot, result):
         expect(view).to_have_tool_call("lookup", turn=selector)
@@ -565,11 +565,11 @@ def test_discovery_ambiguity_isolated_by_requested_evidence() -> None:
         sequence_start=4,
         sequence_end=4,
         provenance=(
-            EventProvenance(origin=EventOrigin.HARNESS_REPORTED, source="test"),
+            EventSource(origin=EventOrigin.HARNESS_REPORTED, source="test"),
         ),
         tools=Observation(
             state=ObservationState.OBSERVED,
-            value=(DirectTool(name="lookup"),),
+            value=(ToolInfo(name="lookup"),),
         ),
     )
     wire_init = harness_init.model_copy(
@@ -579,7 +579,7 @@ def test_discovery_ambiguity_isolated_by_requested_evidence() -> None:
             "sequence_start": 5,
             "sequence_end": 5,
             "provenance": (
-                EventProvenance(origin=EventOrigin.WIRE_OBSERVED, source="test"),
+                EventSource(origin=EventOrigin.WIRE_OBSERVED, source="test"),
             ),
         }
     )
@@ -757,9 +757,9 @@ def test_observed_null_selector_is_distinct_from_omitted_and_unavailable() -> No
 def test_event_matcher_uses_explicit_public_kind_mapping() -> None:
     view = _trace().view()
     expect(view).to_have_event("tool_call", count=1)
-    with pytest.raises(AssertionError, match="canonical EventKind"):
+    with pytest.raises(AssertionError, match="stable EventKind"):
         expect(view).to_have_event(EventKind.TOOL_CALL_REQUESTED, count=1)
-    with pytest.raises(AssertionError, match="canonical EventKind"):
+    with pytest.raises(AssertionError, match="stable EventKind"):
         expect(view).to_have_event("mcp.response", count=0)
 
 

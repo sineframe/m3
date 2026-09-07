@@ -18,15 +18,15 @@ from mcp_pal import (
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
-    ExecutionSnapshot,
+    ExecutionState,
     ExecutionSpec,
-    LifecycleState,
-    PersistedExecutionReport,
+    ExecutionStatus,
+    ExecutionReport,
     RawEvidence,
-    RawEvidenceRef,
+    EvidenceRef,
     TraceView,
-    EvaluationAggregateQuery,
-    EvaluationAggregateReport,
+    EvaluationQuery,
+    EvaluationReport,
 )
 from mcp_pal_app.services.execution_service import AppExecutionError, AppExecutionService
 
@@ -52,11 +52,11 @@ class V2ErrorEnvelope(BaseModel):
 class V2ExecutionEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     execution_id: ExecutionId
-    snapshot: ExecutionSnapshot
+    snapshot: ExecutionState
     spec: ExecutionSpec
 
     @classmethod
-    def from_report(cls, report: PersistedExecutionReport, spec: ExecutionSpec) -> "V2ExecutionEnvelope":
+    def from_report(cls, report: ExecutionReport, spec: ExecutionSpec) -> "V2ExecutionEnvelope":
         return cls(execution_id=report.snapshot.execution_id, snapshot=report.snapshot, spec=spec)
 
 
@@ -64,11 +64,11 @@ class V2ExecutionReportEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     execution_id: ExecutionId
     spec: ExecutionSpec
-    report: PersistedExecutionReport
+    report: ExecutionReport
     trace: TraceView
 
     @classmethod
-    def from_values(cls, execution_id: ExecutionId, spec: ExecutionSpec, report: PersistedExecutionReport, trace: TraceView) -> "V2ExecutionReportEnvelope":
+    def from_values(cls, execution_id: ExecutionId, spec: ExecutionSpec, report: ExecutionReport, trace: TraceView) -> "V2ExecutionReportEnvelope":
         return cls(execution_id=execution_id, spec=spec, report=report, trace=trace)
 
 
@@ -83,7 +83,7 @@ class V2ExecutionPageEnvelope(BaseModel):
 
 class V2EvidenceRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    reference: RawEvidenceRef
+    reference: EvidenceRef
     max_bytes: int = Field(1_048_576, ge=1, le=1_048_576)
 
 
@@ -94,7 +94,7 @@ class V2EvidenceEnvelope(BaseModel):
 
 class V2EvaluationAggregateEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
-    aggregate: EvaluationAggregateReport
+    aggregate: EvaluationReport
 
 
 class V2DeletedEnvelope(BaseModel):
@@ -231,7 +231,7 @@ def install_v2(
         return V2ExecutionEnvelope.from_report(report, service.specification(report.snapshot.execution_id))
 
     @router.get("", response_model=V2ExecutionPageEnvelope)
-    def list_executions(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0), lifecycle: LifecycleState | None = None, outcome: ExecutionOutcome | None = None, service: AppExecutionService = Depends(get_service)) -> V2ExecutionPageEnvelope:
+    def list_executions(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0), lifecycle: ExecutionStatus | None = None, outcome: ExecutionOutcome | None = None, service: AppExecutionService = Depends(get_service)) -> V2ExecutionPageEnvelope:
         return V2ExecutionPageEnvelope.from_page(service.list(limit=limit, offset=offset, lifecycle=lifecycle, outcome=outcome))
 
     @router.get("/{execution_id}", response_model=V2ExecutionEnvelope)
@@ -259,7 +259,7 @@ def install_v2(
     aggregate_router = APIRouter(prefix="/api/v2/evaluations", tags=["evaluations-v2"])
 
     @aggregate_router.post("/aggregate", response_model=V2EvaluationAggregateEnvelope)
-    def aggregate_evaluations(body: EvaluationAggregateQuery, service: AppExecutionService = Depends(get_service)) -> V2EvaluationAggregateEnvelope:
+    def aggregate_evaluations(body: EvaluationQuery, service: AppExecutionService = Depends(get_service)) -> V2EvaluationAggregateEnvelope:
         return V2EvaluationAggregateEnvelope(aggregate=service.aggregate(body))
 
     application.include_router(aggregate_router)
@@ -289,16 +289,16 @@ def install_v2(
                 components[name] = _component_refs(definition)
             components[model.__name__] = _component_refs(model_schema)
 
-        for model in (TraceView, PersistedExecutionReport, RawEvidence, RawEvidenceRef):
+        for model in (TraceView, ExecutionReport, RawEvidence, EvidenceRef):
             add_model(model)
-        # Use the canonical public name for the evidence request reference;
+        # Use the stable public name for the evidence request reference;
         # FastAPI otherwise suffixes this input-only occurrence with
         # ``-Input`` even though it is the same SDK value model.
         evidence_request = components.get("V2EvidenceRead", {})
         if isinstance(evidence_request, dict):
             reference = evidence_request.get("properties", {}).get("reference")
             if isinstance(reference, dict) and "$ref" in reference:
-                reference["$ref"] = "#/components/schemas/RawEvidenceRef"
+                reference["$ref"] = "#/components/schemas/EvidenceRef"
         return schema
 
     application.openapi = openapi_with_sdk_models

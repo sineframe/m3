@@ -476,7 +476,7 @@ class ReadinessService:
             protocol_identity = protocol_evidence_value.get("agent_info")  # type: ignore[assignment]
         latest_by_dimension: dict[str, ACPProbeResult] = {}
         for item in full_values:
-            latest_by_dimension.setdefault(item.canonical_key, item)
+            latest_by_dimension.setdefault(item.stable_key, item)
         latest_full_values = tuple(
             sorted(latest_by_dimension.values(), key=lambda item: (item.created_at, item.id), reverse=True)
         )

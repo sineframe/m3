@@ -28,15 +28,15 @@
       ],
       [
         "mcp_pal.sync_api",
-        "Configuration",
+        "Config",
         "mcp_pal.async_api",
-        "Configuration"
+        "Config"
       ],
       [
         "mcp_pal.sync_api",
-        "ConfigurationError",
+        "ConfigError",
         "mcp_pal.async_api",
-        "ConfigurationError"
+        "ConfigError"
       ],
       [
         "mcp_pal.sync_api",
@@ -52,27 +52,27 @@
       ],
       [
         "mcp_pal.sync_api",
-        "DirectPrompt",
+        "PromptInfo",
         "mcp_pal.async_api",
-        "DirectPrompt"
+        "PromptInfo"
       ],
       [
         "mcp_pal.sync_api",
-        "DirectResource",
+        "ResourceInfo",
         "mcp_pal.async_api",
-        "DirectResource"
+        "ResourceInfo"
       ],
       [
         "mcp_pal.sync_api",
-        "DirectResourceTemplate",
+        "TemplateInfo",
         "mcp_pal.async_api",
-        "DirectResourceTemplate"
+        "TemplateInfo"
       ],
       [
         "mcp_pal.sync_api",
-        "DirectTool",
+        "ToolInfo",
         "mcp_pal.async_api",
-        "DirectTool"
+        "ToolInfo"
       ],
       [
         "mcp_pal.sync_api",
@@ -121,12 +121,6 @@
         "ListToolsResult",
         "mcp_pal.async_api",
         "ListToolsResult"
-      ],
-      [
-        "mcp_pal.sync_api",
-        "MCPConfig",
-        "mcp_pal.async_api",
-        "MCPConfig"
       ],
       [
         "mcp_pal.sync_api",
@@ -184,12 +178,6 @@
       ],
       [
         "mcp_pal.sync_api",
-        "SDKConfig",
-        "mcp_pal.async_api",
-        "SDKConfig"
-      ],
-      [
-        "mcp_pal.sync_api",
         "Tool",
         "mcp_pal.async_api",
         "Tool"
@@ -208,15 +196,9 @@
       ],
       [
         "mcp_pal.sync_api",
-        "resolve_config",
+        "AllowedCommands",
         "mcp_pal.async_api",
-        "resolve_config"
-      ],
-      [
-        "mcp_pal.sync_api",
-        "AllowlistedTerminalHandler",
-        "mcp_pal.async_api",
-        "AllowlistedTerminalHandler"
+        "AllowedCommands"
       ],
       [
         "mcp_pal.sync_api",
@@ -256,9 +238,9 @@
       ],
       [
         "mcp_pal.sync_api",
-        "InteractionController",
+        "Interactions",
         "mcp_pal.async_api",
-        "InteractionController"
+        "Interactions"
       ],
       [
         "mcp_pal.sync_api",
@@ -328,15 +310,15 @@
       ],
       [
         "mcp_pal.sync_api",
-        "WorkspaceFilesystemHandler",
+        "WorkspaceFiles",
         "mcp_pal.async_api",
-        "WorkspaceFilesystemHandler"
+        "WorkspaceFiles"
       ],
       [
         "mcp_pal.sync_api",
-        "ACPTraceInfo",
+        "ACPTrace",
         "mcp_pal.async_api",
-        "ACPTraceInfo"
+        "ACPTrace"
       ],
       [
         "mcp_pal.sync_api",
@@ -346,9 +328,9 @@
       ],
       [
         "mcp_pal.sync_api",
-        "ClaudeCodeTraceInfo",
+        "ClaudeCodeTrace",
         "mcp_pal.async_api",
-        "ClaudeCodeTraceInfo"
+        "ClaudeCodeTrace"
       ],
       [
         "mcp_pal.sync_api",
@@ -364,9 +346,9 @@
       ],
       [
         "mcp_pal.sync_api",
-        "DirectTraceInfo",
+        "DirectTrace",
         "mcp_pal.async_api",
-        "DirectTraceInfo"
+        "DirectTrace"
       ],
       [
         "mcp_pal.sync_api",
@@ -382,9 +364,9 @@
       ],
       [
         "mcp_pal.sync_api",
-        "HttpExchangeMetadata",
+        "HttpExchange",
         "mcp_pal.async_api",
-        "HttpExchangeMetadata"
+        "HttpExchange"
       ],
       [
         "mcp_pal.sync_api",
@@ -436,9 +418,9 @@
       ],
       [
         "mcp_pal.sync_api",
-        "OpenCodeTraceInfo",
+        "OpenCodeTrace",
         "mcp_pal.async_api",
-        "OpenCodeTraceInfo"
+        "OpenCodeTrace"
       ],
       [
         "mcp_pal.sync_api",
@@ -454,9 +436,9 @@
       ],
       [
         "mcp_pal.sync_api",
-        "ProtocolErrorDetails",
+        "ProtocolErrorInfo",
         "mcp_pal.async_api",
-        "ProtocolErrorDetails"
+        "ProtocolErrorInfo"
       ],
       [
         "mcp_pal.sync_api",
@@ -478,9 +460,9 @@
       ],
       [
         "mcp_pal.sync_api",
-        "RawEvidenceCapture",
+        "EvidenceCapture",
         "mcp_pal.async_api",
-        "RawEvidenceCapture"
+        "EvidenceCapture"
       ],
       [
         "mcp_pal.sync_api",
@@ -544,9 +526,9 @@
       ],
       [
         "mcp_pal.sync_api",
-        "TraceCaptureConfig",
+        "CaptureOptions",
         "mcp_pal.async_api",
-        "TraceCaptureConfig"
+        "CaptureOptions"
       ],
       [
         "mcp_pal.sync_api",
@@ -620,7 +602,7 @@
         "mcp_pal.sync_api",
         "Tool",
         "mcp_pal.async_api",
-        "DirectTool"
+        "ToolInfo"
       ],
       [
         "mcp_pal.sync_api",
@@ -630,7 +612,7 @@
       ],
       [
         "mcp_pal.sync_api",
-        "DirectPrompt",
+        "PromptInfo",
         "mcp_pal.async_api",
         "Prompt"
       ],
@@ -650,9 +632,9 @@
       ],
       [
         "mcp_pal.sync_api",
-        "CapabilityProbeService",
+        "Probes",
         "mcp_pal.async_api",
-        "AsyncCapabilityProbeService"
+        "AsyncProbes"
       ],
       [
         "mcp_pal.sync_api",
@@ -675,10 +657,6 @@
       "ResourcesPage",
       "ToolPage",
       "ToolsPage"
-    ],
-    "sync_only": [
-      "ProbeService",
-      "ReadinessProbeService"
     ]
   },
   "owner_members": {
@@ -723,7 +701,7 @@
       ],
       "async_pending": []
     },
-    "mcp_pal.sync_api.CapabilityProbeService:mcp_pal.async_api.AsyncCapabilityProbeService": {
+    "mcp_pal.sync_api.Probes:mcp_pal.async_api.AsyncProbes": {
       "paired": [
         [
           "probe_binary",

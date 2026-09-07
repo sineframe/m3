@@ -13,7 +13,7 @@ result or a normal Python assertion as an execution or evaluation result.
 
 | Source | How it is persisted | How API v2 reads it |
 |---|---|---|
-| API-created execution | `POST /api/v2/executions` sends a `DirectExecutionSpec` or `AgentExecutionSpec` through `MCPTestKit`. MCPTestKit saves/submits it using the API-selected SQLite file; the configured worker executes it and records results. The standard app configures an embedded worker. | The API can list, read, report, cancel, and delete it. |
+| API-created execution | `POST /api/v2/executions` sends a `DirectSpec` or `AgentSpec` through `MCPTestKit`. MCPTestKit saves/submits it using the API-selected SQLite file; the configured worker executes it and records results. The standard app configures an embedded worker. | The API can list, read, report, cancel, and delete it. |
 | SDK, CLI, or pytest execution | SDK code uses `SQLiteExecutionStore(path)`. `mcp-pal test` always supplies `--mcp-pal-results-db` (default `.mcp-pal/executions.sqlite`, or the CLI `--results-db` path). Direct pytest can opt in with the same plugin flag. | Point the API at that exact same SQLite file; it can then list, read, and report those MCP Pal executions. |
 | In-memory SDK execution | No SQLite store is selected, so data exists only in that SDK process. | Another API process cannot read it. |
 
@@ -56,9 +56,9 @@ provenance, then calculates summaries when asked.
 `/openapi.json` is the machine-readable request/response schema, including
 the `ExecutionSpec` and `TraceView` discriminators. This guide explains the
 behavior, persistence effect, and important fields clients use.
-The main public models are `DirectExecutionSpec`, `AgentExecutionSpec`,
-`ExecutionSnapshot`, `PersistedExecutionReport`, `RawEvidence`, and
-`EvaluationAggregateReport`.
+The main public models are `DirectSpec`, `AgentSpec`,
+`ExecutionState`, `ExecutionReport`, `RawEvidence`, and
+`EvaluationReport`.
 
 Every successful response has `version: "v2"`. Every error has this shape:
 
@@ -219,12 +219,12 @@ The persisted `report` contains:
 | Field | Meaning |
 |---|---|
 | `snapshot` | The terminal or current execution snapshot. |
-| `events` | Ordered canonical events for this page. Each event has `event_id`, `execution_id`, `sequence`, `kind`, `timestamp`, `monotonic_offset_ms`, optional session/turn/server/connection/correlation fields, `lifecycle_phase`, `payload`, optional payload/evidence references, and provenance. |
+| `events` | Ordered stable events for this page. Each event has `event_id`, `execution_id`, `sequence`, `kind`, `timestamp`, `monotonic_offset_ms`, optional session/turn/server/connection/correlation fields, `lifecycle_phase`, `payload`, optional payload/evidence references, and provenance. |
 | `event_count`, `events_truncated`, `next_after_sequence` | Total event count, whether the returned event page is truncated, and the cursor to pass as the next `after_sequence`. Events returned have `sequence > after_sequence`. |
 | `turns` | Finalized agent turn results. The snapshot has `turn_id`, `session_id`, `number`, `lifecycle` (`queued`, `running`, `finished`), `outcome` (`completed`, `failed`, `timed_out`, `cancelled`, `interrupted`), `created_at`, and optional `finished_at`. A turn can include `response:{content,metadata}`, `error`, `trace`, and redaction-safe `evidence`. Content blocks use `text`, `file`, `image`, `audio`, `resource_link`, or `opaque` kinds. |
 | `direct_result` | The direct operation result when the execution was direct; its `kind` discriminator selects tools/resources/prompts/list/ping result fields. Otherwise `null`. |
 | `artifacts`, `artifact_count`, `artifacts_truncated` | Redacted artifact references and bounded artifact paging metadata. Each reference has `artifact_id`, `execution_id`, `name`, optional `media_type`, `size_bytes`, `sha256`, and `redacted: true`. |
-| `evaluations` | Explicitly saved `PersistedEvaluationRecord` values: evaluation ID, name, status, `required`, optional message/score/rationale/metrics/provenance/goal, execution/turn/case/run IDs, subject kind/digest, metadata, and `created_at`. Provenance can contain `kind`, `provider`, `model`, `rubric_id`, `rubric_version`, and `config_digest`. |
+| `evaluations` | Explicitly saved `EvaluationRecord` values: evaluation ID, name, status, `required`, optional message/score/rationale/metrics/provenance/goal, execution/turn/case/run IDs, subject kind/digest, metadata, and `created_at`. Provenance can contain `kind`, `provider`, `model`, `rubric_id`, `rubric_version`, and `config_digest`. |
 | `error` | Optional typed execution error with `code`, `message`, `retryable`, and `details`. |
 | `evidence` | Optional `complete`/`partial` marker with limitations and a reason. |
 

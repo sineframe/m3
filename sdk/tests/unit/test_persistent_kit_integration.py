@@ -6,13 +6,13 @@ from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.testing import FaultInjector
-from mcp_pal.types import DirectExecutionSpec, ExecutionOutcome, PingOperation, PingOperationResult, ServerBinding
+from mcp_pal.types import DirectSpec, ExecutionOutcome, Ping, PingResult, ServerBinding
 
 
-def _spec() -> DirectExecutionSpec:
-    return DirectExecutionSpec(
+def _spec() -> DirectSpec:
+    return DirectSpec(
         servers=(ServerBinding(server=FaultInjector().stdio_server()),),
-        operation=PingOperation(),
+        operation=Ping(),
     )
 
 
@@ -24,7 +24,7 @@ def test_async_persistent_kit_submits_through_owned_worker(tmp_path):
             assert (await handle.snapshot()).lifecycle.value == "queued"
             result = await handle.result(timeout=10)
             assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
-            assert isinstance(result.direct_result, PingOperationResult)
+            assert isinstance(result.direct_result, PingResult)
             assert result.direct_result.raw is not None
             assert store.get_snapshot(handle.execution_id).outcome is ExecutionOutcome.COMPLETED
             reopened = SQLiteExecutionStore(tmp_path / "async.sqlite")

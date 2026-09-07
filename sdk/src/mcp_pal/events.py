@@ -1,8 +1,8 @@
-"""Canonical event factories and the public event contract re-export.
+"""Stable event factories and the public event contract re-export.
 
 The value models live in :mod:`mcp_pal.types`, the single public model
 boundary. This module owns construction helpers only; in particular,
-``mcp_pal.events.CanonicalEvent is mcp_pal.types.CanonicalEvent``.
+``mcp_pal.events.Event is mcp_pal.types.Event``.
 """
 
 from __future__ import annotations
@@ -14,31 +14,28 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from .types import (
-    CanonicalEvent,
+    Event,
     ConnectionId,
     EventDirection,
     EventId,
     EventKind,
     EventOrigin,
-    EventPayloadRef,
-    EventProvenance,
+    PayloadRef,
+    EventSource,
     EVENT_SCHEMA_ID,
     EVENT_SCHEMA_VERSION,
     ExecutionId,
     LifecyclePhase,
-    RawEvidenceRef,
+    EvidenceRef,
     ReasoningState,
     ReasoningVisibility,
-    RequestCorrelation,
+    RequestLink,
     SessionId,
     TurnId,
 )
 
 
-CanonicalEventEnvelope = CanonicalEvent
-
-
-class PerExecutionSequenceAllocator:
+class EventSequence:
     """Thread-safe monotonically increasing allocator for one execution."""
 
     def __init__(self, *, start: int = 0) -> None:
@@ -66,7 +63,7 @@ class PerExecutionSequenceAllocator:
             return self._next_sequence
 
 
-class PerConnectionRequestSequenceAllocator:
+class RequestSequence:
     """Thread-safe request sequence counters scoped per connection."""
 
     def __init__(self, *, start: int = 1) -> None:
@@ -103,15 +100,15 @@ class EventFactory:
         self,
         execution_id: ExecutionId | str,
         *,
-        allocator: PerExecutionSequenceAllocator | None = None,
-        request_allocator: PerConnectionRequestSequenceAllocator | None = None,
+        allocator: EventSequence | None = None,
+        request_allocator: RequestSequence | None = None,
         clock: Callable[[], datetime] | None = None,
         monotonic_clock_ns: Callable[[], int] | None = None,
         source: str = "mcp_pal",
     ) -> None:
         self.execution_id = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(execution_id)
-        self._allocator = allocator or PerExecutionSequenceAllocator()
-        self._request_allocator = request_allocator or PerConnectionRequestSequenceAllocator()
+        self._allocator = allocator or EventSequence()
+        self._request_allocator = request_allocator or RequestSequence()
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._monotonic_clock_ns = monotonic_clock_ns or time.perf_counter_ns
         self._baseline_ns = self._monotonic_clock_ns()
@@ -136,14 +133,14 @@ class EventFactory:
         turn_id: TurnId | str | None = None,
         server_binding: str | None = None,
         connection_id: ConnectionId | str | None = None,
-        correlation: RequestCorrelation | None = None,
+        correlation: RequestLink | None = None,
         lifecycle_phase: LifecyclePhase = LifecyclePhase.UNKNOWN,
         payload: Mapping[str, Any] | None = None,
-        payload_ref: EventPayloadRef | None = None,
-        provenance: EventProvenance | None = None,
-        raw_evidence_ref: RawEvidenceRef | None = None,
+        payload_ref: PayloadRef | None = None,
+        provenance: EventSource | None = None,
+        raw_evidence_ref: EvidenceRef | None = None,
         reasoning: ReasoningState | None = None,
-    ) -> CanonicalEvent:
+    ) -> Event:
         """Allocate a sequence and construct one immutable event atomically."""
 
         with self._lock:
@@ -167,12 +164,12 @@ class EventFactory:
                     allocated_connection = normalized_connection_id
                     allocated_sequence = self._request_allocator.next(allocated_connection)
                     allocated_request = (allocated_connection, allocated_sequence)
-                    correlation = RequestCorrelation(
+                    correlation = RequestLink(
                         jsonrpc_id=correlation.jsonrpc_id,
                         direction=correlation.direction,
                         request_sequence=allocated_sequence,
                     )
-                return CanonicalEvent(
+                return Event(
                     event_id=normalized_event_id,
                     execution_id=self.execution_id,
                     sequence=sequence,
@@ -187,7 +184,7 @@ class EventFactory:
                     lifecycle_phase=lifecycle_phase,
                     payload=payload or {},
                     payload_ref=payload_ref,
-                    provenance=provenance or EventProvenance(origin=EventOrigin.NORMALIZED, source=self._source),
+                    provenance=provenance or EventSource(origin=EventOrigin.NORMALIZED, source=self._source),
                     raw_evidence_ref=raw_evidence_ref,
                     reasoning=reasoning,
                 )
@@ -201,22 +198,21 @@ class EventFactory:
 __all__ = [
     "EVENT_SCHEMA_ID",
     "EVENT_SCHEMA_VERSION",
-    "CanonicalEvent",
-    "CanonicalEventEnvelope",
+    "Event",
     "ConnectionId",
     "EventDirection",
     "EventFactory",
     "EventId",
     "EventKind",
     "EventOrigin",
-    "EventPayloadRef",
-    "EventProvenance",
+    "PayloadRef",
+    "EventSource",
     "ExecutionId",
     "LifecyclePhase",
-    "PerConnectionRequestSequenceAllocator",
-    "PerExecutionSequenceAllocator",
-    "RawEvidenceRef",
+    "RequestSequence",
+    "EventSequence",
+    "EvidenceRef",
     "ReasoningState",
     "ReasoningVisibility",
-    "RequestCorrelation",
+    "RequestLink",
 ]

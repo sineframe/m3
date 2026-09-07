@@ -241,7 +241,7 @@ def _write_dummy_test(repo: Path) -> None:
     (tests / "test_public_sdk.py").write_text(
         '''from mcp_pal import MCPTestKit
 from mcp_pal.testing import FaultInjector
-from mcp_pal.types import DirectExecutionSpec, PingOperation, ServerBinding
+from mcp_pal.types import DirectSpec, Ping, ServerBinding
 
 
 def test_stored_public_sdk_run() -> None:
@@ -249,9 +249,9 @@ def test_stored_public_sdk_run() -> None:
     # specs. The public SDK's deterministic stdio fixture gives kit.run a
     # portable spec while still exercising a real MCP process boundary.
     server = FaultInjector().stdio_server(name="standalone-gate")
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(server=server),),
-        operation=PingOperation(),
+        operation=Ping(),
     )
     with MCPTestKit() as kit:
         result = kit.run(spec)

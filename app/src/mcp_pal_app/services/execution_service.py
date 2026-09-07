@@ -13,19 +13,19 @@ from typing import Protocol
 
 from mcp_pal.storage import StorageConflict, StorageError
 from mcp_pal import (
-    AgentExecutionSpec,
-    DirectExecutionSpec,
+    AgentSpec,
+    DirectSpec,
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
     ExecutionSpec,
-    LifecycleState,
-    PersistedExecutionReport,
+    ExecutionStatus,
+    ExecutionReport,
     RawEvidence,
-    RawEvidenceRef,
+    EvidenceRef,
     TraceView,
-    EvaluationAggregateQuery,
-    EvaluationAggregateReport,
+    EvaluationQuery,
+    EvaluationReport,
 )
 from mcp_pal import RawEvidenceIntegrityError, RawEvidenceUnavailable, TraceUnavailable
 
@@ -53,25 +53,25 @@ class AppExecutionStore(Protocol):
         after_sequence: int = -1,
         event_limit: int | None = None,
         artifact_limit: int | None = None,
-    ) -> PersistedExecutionReport | None: ...
+    ) -> ExecutionReport | None: ...
 
     def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None: ...
     def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None: ...
-    def read_raw_evidence(self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence: ...
+    def read_raw_evidence(self, reference: EvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence: ...
 
     def list_executions(
         self,
         *,
         limit: int = 50,
         offset: int = 0,
-        lifecycle: LifecycleState | str | None = None,
+        lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
     ) -> ExecutionPage: ...
 
     def request_cancel(self, execution_id: ExecutionId | str, reason: str | None = None) -> bool: ...
 
     def delete_execution(self, execution_id: ExecutionId | str) -> None: ...
-    def aggregate_evaluations(self, query: EvaluationAggregateQuery) -> EvaluationAggregateReport: ...
+    def aggregate_evaluations(self, query: EvaluationQuery) -> EvaluationReport: ...
 
 
 class AppExecutionKit(Protocol):
@@ -126,19 +126,19 @@ class AppExecutionService:
         except (TypeError, ValueError) as exc:
             raise AppExecutionError("invalid_execution_id", "execution_id is invalid") from exc
 
-    def _report(self, execution_id: ExecutionId) -> PersistedExecutionReport:
+    def _report(self, execution_id: ExecutionId) -> ExecutionReport:
         report = self.store.get_report(execution_id, event_limit=1)
         if report is None:
             raise AppExecutionError("execution_not_found", "execution was not found")
-        if report.snapshot.lifecycle is LifecycleState.FINISHED:
+        if report.snapshot.lifecycle is ExecutionStatus.FINISHED:
             self._active_handles.pop(execution_id.root, None)
         return report
 
-    def create(self, spec: ExecutionSpec) -> PersistedExecutionReport:
+    def create(self, spec: ExecutionSpec) -> ExecutionReport:
         """Submit an already-validated SDK execution specification."""
 
         self._ensure_open()
-        if not isinstance(spec, (DirectExecutionSpec, AgentExecutionSpec)):
+        if not isinstance(spec, (DirectSpec, AgentSpec)):
             raise AppExecutionError("invalid_execution_spec", "execution spec is invalid")
         try:
             handle = self.kit.submit(spec)
@@ -149,7 +149,7 @@ class AppExecutionService:
         self._active_handles[execution_id.root] = handle
         return self._report(execution_id)
 
-    def get(self, execution_id: ExecutionId | str) -> PersistedExecutionReport:
+    def get(self, execution_id: ExecutionId | str) -> ExecutionReport:
         self._ensure_open()
         return self._report(self._id(execution_id))
 
@@ -169,7 +169,7 @@ class AppExecutionService:
         self._ensure_open()
         identifier = self._id(execution_id)
         report = self._report(identifier)
-        if report.snapshot.lifecycle is not LifecycleState.FINISHED:
+        if report.snapshot.lifecycle is not ExecutionStatus.FINISHED:
             raise AppExecutionError("execution_not_terminal", "execution report is available only after termination")
         try:
             view = self.store.get_trace_view(identifier)
@@ -179,7 +179,7 @@ class AppExecutionService:
             raise AppExecutionError("trace_unavailable", "execution trace is unavailable")
         return view
 
-    def read_raw_evidence(self, reference: RawEvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence:
+    def read_raw_evidence(self, reference: EvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence:
         self._ensure_open()
         try:
             return self.store.read_raw_evidence(reference, max_bytes=max_bytes)
@@ -193,7 +193,7 @@ class AppExecutionService:
         *,
         limit: int = 50,
         offset: int = 0,
-        lifecycle: LifecycleState | str | None = None,
+        lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
     ) -> ExecutionPage:
         self._ensure_open()
@@ -214,7 +214,7 @@ class AppExecutionService:
         after_sequence: int = -1,
         event_limit: int = 100,
         artifact_limit: int = 100,
-    ) -> PersistedExecutionReport:
+    ) -> ExecutionReport:
         self._ensure_open()
         identifier = self._id(execution_id)
         try:
@@ -230,11 +230,11 @@ class AppExecutionService:
             raise AppExecutionError("execution_not_found", "execution was not found")
         return report
 
-    def cancel(self, execution_id: ExecutionId | str, reason: str | None = None) -> PersistedExecutionReport:
+    def cancel(self, execution_id: ExecutionId | str, reason: str | None = None) -> ExecutionReport:
         self._ensure_open()
         identifier = self._id(execution_id)
         current = self._report(identifier)
-        if current.snapshot.lifecycle is LifecycleState.FINISHED:
+        if current.snapshot.lifecycle is ExecutionStatus.FINISHED:
             raise AppExecutionError("execution_terminal", "terminal executions cannot be cancelled")
         handle = self._active_handles.get(identifier.root)
         try:
@@ -249,7 +249,7 @@ class AppExecutionService:
                 deadline = time.monotonic() + _CANCEL_SETTLE_TIMEOUT_SECONDS
                 while True:
                     settled = self._report(identifier)
-                    if settled.snapshot.lifecycle is LifecycleState.FINISHED:
+                    if settled.snapshot.lifecycle is ExecutionStatus.FINISHED:
                         return settled
                     if time.monotonic() >= deadline:
                         raise AppExecutionError(
@@ -283,7 +283,7 @@ class AppExecutionService:
         self._active_handles.pop(identifier.root, None)
         return identifier
 
-    def aggregate(self, query: EvaluationAggregateQuery) -> EvaluationAggregateReport:
+    def aggregate(self, query: EvaluationQuery) -> EvaluationReport:
         self._ensure_open()
         try:
             return self.store.aggregate_evaluations(query)

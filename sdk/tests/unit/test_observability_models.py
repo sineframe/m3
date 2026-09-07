@@ -6,14 +6,14 @@ import pytest
 from mcp_pal.observability import (
     CorrelationState,
     DiagnosticEntry,
-    DirectTraceInfo,
+    DirectTrace,
     InitializationValue,
     InteractionEntry,
     MessageEntry,
     Observation,
     ObservationReason,
     ObservationState,
-    OpenCodeTraceInfo,
+    OpenCodeTrace,
     ProcessEntry,
     ProtocolEntry,
     ProtocolKind,
@@ -30,11 +30,11 @@ from mcp_pal.observability import (
     UsageValue,
 )
 from mcp_pal.types import (
-    RawEvidenceRef,
-    TurnLifecycle,
+    EvidenceRef,
+    TurnStatus,
     TurnOutcome,
     TurnResult,
-    TurnSnapshot,
+    TurnState,
     TransportKind,
 )
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -142,7 +142,7 @@ def test_partial_observations_require_reason_but_may_keep_safe_value(
 
 
 def test_encrypted_observation_has_no_value_and_optional_evidence_reference() -> None:
-    ref = RawEvidenceRef(evidence_id="evidence-1")
+    ref = EvidenceRef(evidence_id="evidence-1")
     encrypted = Observation[str](
         state=ObservationState.ENCRYPTED,
         reason=ObservationReason.PROVIDER_ENCRYPTED,
@@ -340,7 +340,7 @@ def test_summary_and_runtime_usage_are_value_only_models() -> None:
         output_tokens=Observation(state="observed", value=2),
         total_tokens=Observation(state="observed", value=5),
     )
-    runtime = OpenCodeTraceInfo(usage=Observation(state="observed", value=usage))
+    runtime = OpenCodeTrace(usage=Observation(state="observed", value=usage))
     summary = TraceSummary(usage=Observation(state="observed", value=usage))
     assert runtime.usage.value == usage
     assert summary.usage.value == usage
@@ -362,7 +362,7 @@ def test_partial_value_aggregates_retain_subfield_reasons() -> None:
     assert usage.output_tokens.state is ObservationState.NOT_EMITTED
     assert usage.cost.reason is ObservationReason.CAPTURE_FAILED
 
-    direct = DirectTraceInfo(
+    direct = DirectTrace(
         initialization=Observation(
             state="observed",
             value=InitializationValue(
@@ -515,9 +515,9 @@ def test_trace_view_indexes_and_filters_use_one_timeline() -> None:
 
 
 def test_trace_view_for_turn_accepts_public_turn_selectors() -> None:
-    turn = TurnSnapshot(
+    turn = TurnState(
         turn_id="turn-1", session_id="session-1", number=1
-    ).transition(TurnLifecycle.FINISHED, TurnOutcome.COMPLETED)
+    ).transition(TurnStatus.FINISHED, TurnOutcome.COMPLETED)
     result = TurnResult(snapshot=turn)
     view = TraceView(
         trace_id="trace-1",

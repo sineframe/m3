@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
-from .types import FrozenModel, PersistedEvaluationRecord, EvaluationStatus
+from .types import FrozenModel, EvaluationRecord, EvaluationStatus
 
 
 Scalar = str | int | float | bool | None
@@ -24,7 +24,7 @@ _SYSTEM_LABELS = {
 }
 
 
-class EvaluationAggregateQuery(FrozenModel):
+class EvaluationQuery(FrozenModel):
     """A read-only query over persisted evaluations."""
 
     from_: datetime | None = Field(default=None, alias="from")
@@ -56,7 +56,7 @@ class EvaluationAggregateQuery(FrozenModel):
         return normalized
 
     @model_validator(mode="after")
-    def _valid_query(self) -> "EvaluationAggregateQuery":
+    def _valid_query(self) -> "EvaluationQuery":
         if self.from_ is not None and self.to is not None and self.from_ >= self.to:
             raise ValueError("aggregate from must be before to")
         if len(set(self.group_by)) != len(self.group_by):
@@ -79,30 +79,30 @@ class EvaluationAggregateQuery(FrozenModel):
         return self
 
 
-class EvaluationLatencySummary(FrozenModel):
+class LatencyStats(FrozenModel):
     count: int = Field(default=0, ge=0)
     p50: float | None = Field(default=None, ge=0)
     p95: float | None = Field(default=None, ge=0)
 
 
-class EvaluationToolCallSummary(FrozenModel):
+class ToolCallStats(FrozenModel):
     total: int = Field(default=0, ge=0)
     successful: int = Field(default=0, ge=0)
     failed: int = Field(default=0, ge=0)
 
 
-class EvaluationHealthSummary(FrozenModel):
+class HealthStats(FrozenModel):
     """Execution and tool health observed for a group."""
 
     execution_count: int = Field(default=0, ge=0)
-    tool_calls: EvaluationToolCallSummary = Field(default_factory=EvaluationToolCallSummary)
+    tool_calls: ToolCallStats = Field(default_factory=ToolCallStats)
     protocol_error_count: int = Field(default=0, ge=0)
     outcome_counts: Mapping[str, int] = Field(default_factory=dict)
-    execution_duration_ms: EvaluationLatencySummary = Field(default_factory=EvaluationLatencySummary)
-    server_latency_ms: EvaluationLatencySummary = Field(default_factory=EvaluationLatencySummary)
+    execution_duration_ms: LatencyStats = Field(default_factory=LatencyStats)
+    server_latency_ms: LatencyStats = Field(default_factory=LatencyStats)
 
 
-class EvaluationAggregateValues(FrozenModel):
+class EvaluationStats(FrozenModel):
     """Counts and health metrics for one aggregate group."""
 
     trial_count: int = Field(default=0, ge=0)
@@ -112,19 +112,19 @@ class EvaluationAggregateValues(FrozenModel):
     pass_rate: float | None = Field(default=None, ge=0, le=1)
     average_score: float | None = Field(default=None, ge=0, le=1)
     score_count: int = Field(default=0, ge=0)
-    health: EvaluationHealthSummary = Field(default_factory=EvaluationHealthSummary)
+    health: HealthStats = Field(default_factory=HealthStats)
 
 
-class EvaluationAggregateGroup(FrozenModel):
+class EvaluationGroup(FrozenModel):
     key: Mapping[str, Scalar] = Field(default_factory=dict)
-    values: EvaluationAggregateValues = Field(default_factory=EvaluationAggregateValues)
+    values: EvaluationStats = Field(default_factory=EvaluationStats)
 
 
-class EvaluationAggregateReport(FrozenModel):
+class EvaluationReport(FrozenModel):
     from_: datetime | None = Field(default=None, alias="from")
     to: datetime | None = None
-    totals: EvaluationAggregateValues = Field(default_factory=EvaluationAggregateValues)
-    groups: tuple[EvaluationAggregateGroup, ...] = ()
+    totals: EvaluationStats = Field(default_factory=EvaluationStats)
+    groups: tuple[EvaluationGroup, ...] = ()
     total_groups: int = 0
     limit: int = 200
     offset: int = 0
@@ -162,7 +162,7 @@ def _observed(observation: Any) -> Scalar:
     return getattr(observation, "value", None) if getattr(observation, "state", None) is not None else None
 
 
-def _labels(record: PersistedEvaluationRecord, snapshot: Any, spec: Any, trace: Any = None) -> dict[str, Scalar]:
+def _labels(record: EvaluationRecord, snapshot: Any, spec: Any, trace: Any = None) -> dict[str, Scalar]:
     labels: dict[str, Scalar] = {}
     metadata: dict[str, Scalar] = {}
     if spec is not None and isinstance(getattr(spec, "metadata", None), Mapping):
@@ -229,20 +229,20 @@ def _labels(record: PersistedEvaluationRecord, snapshot: Any, spec: Any, trace: 
 
 
 def aggregate_evaluations(
-    query: EvaluationAggregateQuery,
-    records: Iterable[PersistedEvaluationRecord],
+    query: EvaluationQuery,
+    records: Iterable[EvaluationRecord],
     *,
     snapshots: Mapping[str, Any] | None = None,
     specifications: Mapping[str, Any] | None = None,
     traces: Mapping[str, Any] | None = None,
-) -> EvaluationAggregateReport:
+) -> EvaluationReport:
     """Aggregate records using the same implementation for memory and SQLite."""
     snapshots = snapshots or {}
     specifications = specifications or {}
     traces = traces or {}
     start = _utc(query.start) if query.start else None
     end = _utc(query.to) if query.to else None
-    selected: list[tuple[PersistedEvaluationRecord, dict[str, Scalar], Any]] = []
+    selected: list[tuple[EvaluationRecord, dict[str, Scalar], Any]] = []
     for record in records:
         snapshot = snapshots.get(record.execution_id.root)
         created = _utc(getattr(snapshot, "created_at", record.created_at))
@@ -265,7 +265,7 @@ def aggregate_evaluations(
         selected.append((record, labels, traces.get(record.execution_id.root)))
 
     # Re-evaluation of the same execution/turn/subject is one trial.
-    latest: dict[tuple[str, str | None, str, str, str | None], tuple[PersistedEvaluationRecord, dict[str, Scalar], Any]] = {}
+    latest: dict[tuple[str, str | None, str, str, str | None], tuple[EvaluationRecord, dict[str, Scalar], Any]] = {}
     for record, labels, trace in selected:
         key = (record.execution_id.root, record.turn_id.root if record.turn_id else None, record.name, record.subject_kind, record.subject_digest)
         current = latest.get(key)
@@ -280,18 +280,18 @@ def aggregate_evaluations(
     group_names = tuple(query.group_by)
     evaluator_values = {record.name for record, _, _ in selected}
 
-    def key_for(item: tuple[PersistedEvaluationRecord, dict[str, Scalar], Any]) -> dict[str, Scalar]:
+    def key_for(item: tuple[EvaluationRecord, dict[str, Scalar], Any]) -> dict[str, Scalar]:
         record, labels, _ = item
         snapshot = snapshots.get(record.execution_id.root)
         created = getattr(snapshot, "created_at", record.created_at)
         return {name: (_bucket(created, name) if name.startswith("time.") else labels.get(name)) for name in group_names}
 
-    grouped: dict[tuple[tuple[str, Scalar], ...], list[tuple[PersistedEvaluationRecord, dict[str, Scalar], Any]]] = defaultdict(list)
+    grouped: dict[tuple[tuple[str, Scalar], ...], list[tuple[EvaluationRecord, dict[str, Scalar], Any]]] = defaultdict(list)
     for item in selected:
         key = key_for(item)
         grouped[tuple(key.items())].append(item)
 
-    def values(items: list[tuple[PersistedEvaluationRecord, dict[str, Scalar], Any]]) -> EvaluationAggregateValues:
+    def values(items: list[tuple[EvaluationRecord, dict[str, Scalar], Any]]) -> EvaluationStats:
         statuses = {status.value: 0 for status in EvaluationStatus}
         scores: list[float] = []
         durations: list[float] = []
@@ -327,14 +327,14 @@ def aggregate_evaluations(
             outcome = getattr(getattr(snapshots.get(execution_id), "outcome", None), "value", None)
             if outcome is not None:
                 outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
-        return EvaluationAggregateValues(
+        return EvaluationStats(
             trial_count=len(execution_ids), evaluation_count=len(items), measured_count=measured,
             status_counts=statuses, pass_rate=(statuses[EvaluationStatus.PASSED.value] / measured if measured else None),
             average_score=(sum(scores) / len(scores) if scores else None), score_count=len(scores),
-            health=EvaluationHealthSummary(execution_count=len(execution_ids), tool_calls=EvaluationToolCallSummary(total=tools, successful=success, failed=failed), protocol_error_count=protocol,
+            health=HealthStats(execution_count=len(execution_ids), tool_calls=ToolCallStats(total=tools, successful=success, failed=failed), protocol_error_count=protocol,
                 outcome_counts=outcome_counts,
-                execution_duration_ms=EvaluationLatencySummary(count=len(durations), p50=median(durations) if durations else None, p95=_percentile(durations, .95)),
-                server_latency_ms=EvaluationLatencySummary(count=len(latencies), p50=median(latencies) if latencies else None, p95=_percentile(latencies, .95))),
+                execution_duration_ms=LatencyStats(count=len(durations), p50=median(durations) if durations else None, p95=_percentile(durations, .95)),
+                server_latency_ms=LatencyStats(count=len(latencies), p50=median(latencies) if latencies else None, p95=_percentile(latencies, .95))),
         )
 
     group_values = [(dict(key), values(items)) for key, items in grouped.items()]
@@ -343,9 +343,9 @@ def aggregate_evaluations(
     if len(evaluator_values) > 1:
         total = total.model_copy(update={"pass_rate": None, "average_score": None})
     visible = group_values[query.offset : query.offset + query.limit]
-    return EvaluationAggregateReport(from_=query.start, to=query.to, totals=total,
-        groups=tuple(EvaluationAggregateGroup(key=key, values=item) for key, item in visible),
+    return EvaluationReport(from_=query.start, to=query.to, totals=total,
+        groups=tuple(EvaluationGroup(key=key, values=item) for key, item in visible),
         total_groups=len(group_values), limit=query.limit, offset=query.offset)
 
 
-__all__ = ["EvaluationAggregateQuery", "EvaluationAggregateReport", "EvaluationAggregateGroup", "EvaluationAggregateValues", "EvaluationHealthSummary", "EvaluationLatencySummary", "EvaluationToolCallSummary", "aggregate_evaluations"]
+__all__ = ["EvaluationQuery", "EvaluationReport", "EvaluationGroup", "EvaluationStats", "HealthStats", "LatencyStats", "ToolCallStats", "aggregate_evaluations"]

@@ -54,7 +54,7 @@ class WheelMetadata:
     entry_points: tuple[str, ...]
 
 
-def _canonical_name(value: str) -> str:
+def _package_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
 
 
@@ -182,7 +182,7 @@ def classify_wheels(paths: list[Path] | tuple[Path, ...], expected: dict[str, st
     """
 
     expected_tokens = {
-        (_canonical_name(name).replace("-", "_"), version): name
+        (_package_name(name).replace("-", "_"), version): name
         for name, version in expected.items()
     }
     found: dict[str, Path] = {}
@@ -205,7 +205,7 @@ def classify_wheels(paths: list[Path] | tuple[Path, ...], expected: dict[str, st
 
 def _requirement_name(value: str) -> str:
     match = re.match(r"\s*([A-Za-z0-9_.-]+)", value)
-    return _canonical_name(match.group(1)) if match else ""
+    return _package_name(match.group(1)) if match else ""
 
 
 def _mandatory_requirements(values: tuple[str, ...]) -> set[str]:
@@ -219,7 +219,7 @@ def _mandatory_requirements(values: tuple[str, ...]) -> set[str]:
 
 
 def _verify_wheel(metadata: WheelMetadata, expected_name: str, expected_version: str) -> None:
-    if _canonical_name(metadata.name) != _canonical_name(expected_name) or metadata.version != expected_version:
+    if _package_name(metadata.name) != _package_name(expected_name) or metadata.version != expected_version:
         raise ReleaseBuildError(f"wheel metadata does not match {expected_name} {expected_version}: {metadata.path.name}")
     mandatory_requires = {"streamlit", "requests"}
     if expected_name in {"mcp_pal", "mcp_pal_app", "mcp_pal_cli"}:

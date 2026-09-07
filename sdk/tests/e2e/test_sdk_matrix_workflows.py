@@ -13,7 +13,7 @@ from mcp_pal import MCPTestKit, expect
 from mcp_pal.sync_api import ToolCallResult
 from mcp_pal.types import (
     ACPAgent,
-    AgentExecutionSpec,
+    AgentSpec,
     FullToolPolicy,
     RestrictiveToolPolicy,
     ServerBinding,
@@ -115,7 +115,7 @@ def test_server_by_harness_search_matrix_calls_a_discovered_tool(
     binding = ServerBinding(
         server=_server(server_name, marker), alias=server_name
     )
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=_harness(harness_kind),
         servers=(binding,),
         tool_policy=_full_policy(harness_kind, server_name),
@@ -151,7 +151,7 @@ def test_each_harness_can_use_all_servers_in_one_multiturn_session(
         ServerBinding(server=_server(name, markers[name]), alias=name)
         for name in _SERVER_NAMES
     )
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=_harness(harness_kind),
         servers=bindings,
         tool_policy=_full_policy(harness_kind, _SERVER_NAMES[0]),
@@ -228,7 +228,7 @@ def test_server_by_tool_by_harness_matrix(
     """N×T×M: every harness is asked to invoke every server tool."""
 
     marker = tmp_path / f"full-{server_name}-{tool}-{harness_kind}.jsonl"
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=_harness(harness_kind),
         servers=(
             ServerBinding(

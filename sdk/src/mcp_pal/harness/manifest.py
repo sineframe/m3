@@ -120,7 +120,7 @@ def load_manifest(path: str | os.PathLike[str]) -> dict[str, Any]:
 
 
 def export_manifest(manifest: Any) -> str:
-    """Return canonical, secret-safe JSON suitable for sharing."""
+    """Return stable, secret-safe JSON suitable for sharing."""
 
     return json.dumps(validate_manifest(manifest)["manifest"], indent=2, sort_keys=True) + "\n"
 

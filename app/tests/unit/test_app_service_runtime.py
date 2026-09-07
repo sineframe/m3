@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from mcp_pal import AgentExecutionSpec, ExecutionId, ExecutionOutcome, ExecutionSnapshot, EventKind
+from mcp_pal import AgentSpec, ExecutionId, ExecutionOutcome, ExecutionState, EventKind
 from mcp_pal.services.acp_probes import ACPProbeKind, ACPProbeRequest
 from mcp_pal.harness import HarnessAdapterRegistry
 from mcp_pal.execution_trace import ExecutionTraceRecorder
@@ -156,7 +156,7 @@ def test_runtime_clone_preserves_pinned_one_turn_inputs(tmp_path: Path) -> None:
     assert cloned.profile_id == draft.profile_id
     assert cloned.profile_revision.mode == "pinned"
     specification = view.specification
-    assert isinstance(specification, AgentExecutionSpec)
+    assert isinstance(specification, AgentSpec)
     revision_id = cloned.profile_revision.revision_id
     assert revision_id is not None
     assert revision_id.root == specification.metadata["mcp_revision_id"]

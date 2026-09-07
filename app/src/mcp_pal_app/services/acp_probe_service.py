@@ -47,7 +47,7 @@ def _option_values(value: object) -> tuple[object, ...]:
     return ()
 
 
-class ACPProbeService:
+class ACPProbes:
     """Persist ACP probe lifecycle and expose exact-dimension history."""
 
     def __init__(self, store: ACPProbeStore, runner: Runner | None = None) -> None:
@@ -296,4 +296,4 @@ class ACPProbeService:
         return self.store.save_acp_probe(current.model_copy(update={"status": ACPProbeStatus.CANCELLED, "finished_at": finished, "duration_ms": duration, "error": "probe cancelled"}))
 
 
-__all__ = ["ACPProbeService"]
+__all__ = ["ACPProbes"]

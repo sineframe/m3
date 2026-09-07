@@ -14,19 +14,19 @@ import mcp_pal
 from mcp_pal._exports import PUBLIC_EXPORTS, _INTERNAL_MODULES
 from mcp_pal.errors import InvalidTransitionError, ModelValidationError
 from mcp_pal.types import (
-    AgentExecutionSpec,
+    AgentSpec,
     ACPAgent,
     ArtifactId,
     ArtifactRef,
     AudioContent,
     Capability,
     CapabilityStatus,
-    CanonicalEvent,
+    Event,
     ClaudeCode,
     ConnectionId,
     ContentBlock,
-    DirectExecutionSpec,
-    PingOperation,
+    DirectSpec,
+    Ping,
     ElicitationPolicy,
     ErrorCode,
     ErrorInfo,
@@ -39,7 +39,7 @@ from mcp_pal.types import (
     ExecutionId,
     ExecutionOutcome,
     ExecutionResult,
-    ExecutionSnapshot,
+    ExecutionState,
     ExecutionSpec,
     FileContent,
     FilesystemPolicy,
@@ -50,7 +50,7 @@ from mcp_pal.types import (
     HarnessSpec,
     ImageContent,
     InProcessServer,
-    LifecycleState,
+    ExecutionStatus,
     Metadata,
     NativeToolPolicy,
     OpaqueContent,
@@ -58,7 +58,7 @@ from mcp_pal.types import (
     PermissionPolicy,
     ProtocolConstraint,
     Readiness,
-    ResourceLinkContent,
+    ResourceLink,
     RestrictiveToolPolicy,
     RevisionId,
     RevisionSelection,
@@ -70,7 +70,7 @@ from mcp_pal.types import (
     SecretReference,
     SessionId,
     StdioServer,
-    StreamableHTTPServer,
+    HTTPServer,
     ServerId,
     ServerValue,
     TerminalPolicy,
@@ -78,11 +78,11 @@ from mcp_pal.types import (
     TraceId,
     TraceResult,
     TurnId,
-    TurnLifecycle,
+    TurnStatus,
     TurnOutcome,
     TurnResponse,
     TurnResult,
-    TurnSnapshot,
+    TurnState,
     ToolPolicy,
     UserMessage,
     WorkspaceKind,
@@ -154,15 +154,15 @@ def test_every_public_serializable_alias_has_json_schema(alias_name: str) -> Non
 
 
 def test_spec_and_content_json_round_trip() -> None:
-    spec = AgentExecutionSpec(
+    spec = AgentSpec(
         harness=ClaudeCode(name="claude", model="claude-test"),
         servers=(ServerBinding(server=StdioServer(name="echo", command="echo")),),
         message=UserMessage(content=(TextContent(text="hello"),)),
     )
-    restored = AgentExecutionSpec.model_validate(spec.model_dump(mode="json"))
+    restored = AgentSpec.model_validate(spec.model_dump(mode="json"))
     assert restored == spec
 
-    event = CanonicalEvent(
+    event = Event(
         event_id="event-1",
         execution_id="execution-1",
         sequence=0,
@@ -170,7 +170,7 @@ def test_spec_and_content_json_round_trip() -> None:
         monotonic_offset_ms=0,
         timestamp=datetime.now(timezone.utc),
     )
-    restored_event = CanonicalEvent.model_validate(event.model_dump(mode="json", by_alias=True))
+    restored_event = Event.model_validate(event.model_dump(mode="json", by_alias=True))
     assert restored_event == event
 
 
@@ -209,11 +209,11 @@ def test_all_serializable_model_representatives_round_trip() -> None:
         FileContent(path="input.txt"),
         ImageContent(media_type="image/png", data="aGVsbG8="),
         AudioContent(media_type="audio/wav", uri="https://example.test/audio"),
-        ResourceLinkContent(uri="https://example.test/resource"),
+        ResourceLink(uri="https://example.test/resource"),
         OpaqueContent(provider="example", payload={"value": 1}),
         UserMessage(content=(TextContent(text="hello"),)),
         server,
-        StreamableHTTPServer(name="http", url="https://example.test/mcp"),
+        HTTPServer(name="http", url="https://example.test/mcp"),
         SSEServer(name="sse", url="https://example.test/sse"),
         ServerBinding(server=server),
         ServerProfileRef(
@@ -237,15 +237,15 @@ def test_all_serializable_model_representatives_round_trip() -> None:
         FilesystemPolicy(),
         TerminalPolicy(),
         EvaluationRegistration(name="quality"),
-        DirectExecutionSpec(servers=(ServerBinding(server=server),), operation=PingOperation()),
-        AgentExecutionSpec(
+        DirectSpec(servers=(ServerBinding(server=server),), operation=Ping()),
+        AgentSpec(
             servers=(ServerBinding(profile=ServerProfileRef(profile_id=ServerProfileId("server-profile-3"), revision=RevisionSelection(mode="latest"))),),
             harness_profile=HarnessProfileRef(profile_id=HarnessProfileId("harness-profile-3"), revision=RevisionSelection(mode="pinned", revision_id=RevisionId("revision-4"), revision_number=2)),
             message=UserMessage(content="hello"),
         ),
-        ExecutionSnapshot(execution_id=execution),
-        TurnSnapshot(turn_id=turn_id, session_id=session, number=1),
-        CanonicalEvent(event_id=EventId("event-2"), execution_id=execution, sequence=0, kind="execution.created", monotonic_offset_ms=0),
+        ExecutionState(execution_id=execution),
+        TurnState(turn_id=turn_id, session_id=session, number=1),
+        Event(event_id=EventId("event-2"), execution_id=execution, sequence=0, kind="execution.created", monotonic_offset_ms=0),
         trace,
         artifact,
         EvaluationContext(execution_id=execution, trace=trace, artifacts=(artifact,)),
@@ -253,8 +253,8 @@ def test_all_serializable_model_representatives_round_trip() -> None:
         Capability(name="stdio", status=CapabilityStatus.READY),
         Readiness(ready=True),
         TurnResponse(content=(TextContent(text="done"),)),
-        TurnResult(snapshot=TurnSnapshot(turn_id=turn_id, session_id=session, number=1).transition(TurnLifecycle.FINISHED, TurnOutcome.COMPLETED)),
-        ExecutionResult(snapshot=ExecutionSnapshot(execution_id=execution).transition(LifecycleState.FINISHED, ExecutionOutcome.COMPLETED)),
+        TurnResult(snapshot=TurnState(turn_id=turn_id, session_id=session, number=1).transition(TurnStatus.FINISHED, TurnOutcome.COMPLETED)),
+        ExecutionResult(snapshot=ExecutionState(execution_id=execution).transition(ExecutionStatus.FINISHED, ExecutionOutcome.COMPLETED)),
     )
     for value in values:
         restored = type(value).model_validate(value.model_dump(mode="json", by_alias=True))
@@ -262,9 +262,9 @@ def test_all_serializable_model_representatives_round_trip() -> None:
 
 
 def test_turn_result_exposes_its_selector_id_without_a_trace_view() -> None:
-    turn = TurnSnapshot(turn_id="turn-selector", session_id="session-1", number=1)
+    turn = TurnState(turn_id="turn-selector", session_id="session-1", number=1)
     result = TurnResult(
-        snapshot=turn.transition(TurnLifecycle.FINISHED, TurnOutcome.COMPLETED)
+        snapshot=turn.transition(TurnStatus.FINISHED, TurnOutcome.COMPLETED)
     )
     assert result.turn_id == TurnId("turn-selector")
     assert not hasattr(result, "trace_view")
@@ -298,7 +298,7 @@ def test_discriminated_public_aliases_round_trip() -> None:
         (ServerValue, server),
         (HarnessSpec, ClaudeCode(model="claude-test")),
         (ToolPolicy, FullToolPolicy(acknowledge_risk=True)),
-        (ExecutionSpec, DirectExecutionSpec(servers=(ServerBinding(server=server),), operation=PingOperation())),
+        (ExecutionSpec, DirectSpec(servers=(ServerBinding(server=server),), operation=Ping())),
     )
     for annotation, value in cases:
         adapter = TypeAdapter(annotation)
@@ -354,7 +354,7 @@ def test_non_json_arbitrary_values_are_rejected_at_construction() -> None:
         lambda: ErrorInfo(code=ErrorCode.INVALID_ARGUMENT, message="bad", details={"bad": Mutable()}),
         lambda: UserMessage(content="hello", metadata={"bad": Mutable()}),
         lambda: TurnResponse(metadata={"bad": Mutable()}),
-        lambda: CanonicalEvent(event_id="event-1", execution_id="execution-1", sequence=0, kind="test", monotonic_offset_ms=0, payload={"bad": Mutable()}),
+        lambda: Event(event_id="event-1", execution_id="execution-1", sequence=0, kind="test", monotonic_offset_ms=0, payload={"bad": Mutable()}),
         lambda: ACPAgent(model="acp", manifest={"bad": Mutable()}),
         lambda: NativeToolPolicy(harness="example", policy={"bad": Mutable()}, nonportable_reason="test"),
         lambda: InProcessServer(name="local", factory=lambda: object(), descriptor={"bad": Mutable()}),
@@ -374,14 +374,14 @@ def test_revision_selection_and_profile_bindings_are_explicit_and_serializable()
     with pytest.raises(ValidationError):
         RevisionSelection(mode="latest", revision_id="revision-1", revision_number=1)
 
-    spec = DirectExecutionSpec(
+    spec = DirectSpec(
         servers=(ServerBinding(profile=ServerProfileRef(profile_id="server-profile", revision=pinned)),),
-        operation=PingOperation(),
+        operation=Ping(),
     )
-    assert DirectExecutionSpec.model_validate(spec.model_dump(mode="json")) == spec
-    effective = DirectExecutionSpec(
+    assert DirectSpec.model_validate(spec.model_dump(mode="json")) == spec
+    effective = DirectSpec(
         servers=(ServerBinding(profile=ServerProfileRef(profile_id="server-profile", revision=pinned)),),
-        operation=PingOperation(),
+        operation=Ping(),
     )
     assert effective.servers[0].profile is not None
     assert effective.servers[0].profile.revision.mode == "pinned"
@@ -389,48 +389,48 @@ def test_revision_selection_and_profile_bindings_are_explicit_and_serializable()
 
 def test_specs_reject_runtime_factories_and_missing_default_bindings() -> None:
     with pytest.raises(ValidationError):
-        DirectExecutionSpec()
+        DirectSpec()
     with pytest.raises(ValidationError):
-        DirectExecutionSpec(
+        DirectSpec(
             servers=(ServerBinding(server=InProcessServer(name="local", factory=lambda: object())),),
-            operation=PingOperation(),
+            operation=Ping(),
         )
-    optional = DirectExecutionSpec(servers=(ServerBinding(server=StdioServer(name="unused", command="echo"), required=False),), operation=PingOperation())
+    optional = DirectSpec(servers=(ServerBinding(server=StdioServer(name="unused", command="echo"), required=False),), operation=Ping())
     assert optional.servers[0].required is False
 
 
 def test_transitions_reject_nonterminal_outcomes_and_revalidate() -> None:
-    execution = ExecutionSnapshot(execution_id="execution-1")
+    execution = ExecutionState(execution_id="execution-1")
     with pytest.raises(ModelValidationError):
-        execution.transition(LifecycleState.QUEUED, ExecutionOutcome.FAILED)
-    queued = execution.transition(LifecycleState.QUEUED)
+        execution.transition(ExecutionStatus.QUEUED, ExecutionOutcome.FAILED)
+    queued = execution.transition(ExecutionStatus.QUEUED)
     with pytest.raises(ModelValidationError):
-        queued.transition(LifecycleState.STARTING, ExecutionOutcome.FAILED)
+        queued.transition(ExecutionStatus.STARTING, ExecutionOutcome.FAILED)
 
-    turn = TurnSnapshot(turn_id="turn-1", session_id="session-1", number=1)
+    turn = TurnState(turn_id="turn-1", session_id="session-1", number=1)
     with pytest.raises(ModelValidationError):
-        turn.transition(TurnLifecycle.RUNNING, TurnOutcome.FAILED)
-    running = turn.transition(TurnLifecycle.RUNNING)
+        turn.transition(TurnStatus.RUNNING, TurnOutcome.FAILED)
+    running = turn.transition(TurnStatus.RUNNING)
     with pytest.raises(ModelValidationError):
-        running.transition(TurnLifecycle.FINISHED)
+        running.transition(TurnStatus.FINISHED)
 
 
 def test_results_require_terminal_snapshots() -> None:
     with pytest.raises(ValidationError):
-        TurnResult(snapshot=TurnSnapshot(turn_id="turn-1", session_id="session-1", number=1))
+        TurnResult(snapshot=TurnState(turn_id="turn-1", session_id="session-1", number=1))
     with pytest.raises(ValidationError):
-        ExecutionResult(snapshot=ExecutionSnapshot(execution_id="execution-1"))
+        ExecutionResult(snapshot=ExecutionState(execution_id="execution-1"))
 
 
 def test_snapshot_finished_at_matches_lifecycle() -> None:
     with pytest.raises(ValidationError):
-        ExecutionSnapshot(lifecycle=LifecycleState.FINISHED, outcome=ExecutionOutcome.COMPLETED, execution_id="execution-1")
+        ExecutionState(lifecycle=ExecutionStatus.FINISHED, outcome=ExecutionOutcome.COMPLETED, execution_id="execution-1")
     with pytest.raises(ValidationError):
-        ExecutionSnapshot(execution_id="execution-1", finished_at=datetime.now(timezone.utc))
+        ExecutionState(execution_id="execution-1", finished_at=datetime.now(timezone.utc))
     with pytest.raises(ValidationError):
-        TurnSnapshot(lifecycle=TurnLifecycle.FINISHED, outcome=TurnOutcome.COMPLETED, turn_id="turn-1", session_id="session-1", number=1)
+        TurnState(lifecycle=TurnStatus.FINISHED, outcome=TurnOutcome.COMPLETED, turn_id="turn-1", session_id="session-1", number=1)
     with pytest.raises(ValidationError):
-        TurnSnapshot(turn_id="turn-1", session_id="session-1", number=1, finished_at=datetime.now(timezone.utc))
+        TurnState(turn_id="turn-1", session_id="session-1", number=1, finished_at=datetime.now(timezone.utc))
 
 
 def test_workspace_risk_and_execution_transitions_are_validated() -> None:
@@ -438,15 +438,15 @@ def test_workspace_risk_and_execution_transitions_are_validated() -> None:
         WorkspacePolicy(kind=WorkspaceKind.IN_PLACE)
     assert WorkspacePolicy(kind=WorkspaceKind.IN_PLACE, acknowledge_risk=True)
 
-    snapshot = ExecutionSnapshot(execution_id="execution-1")
+    snapshot = ExecutionState(execution_id="execution-1")
     queued = snapshot.transition("queued")
     finished = queued.transition("finished", ExecutionOutcome.CANCELLED)
     assert finished.outcome is ExecutionOutcome.CANCELLED
     with pytest.raises(InvalidTransitionError):
         finished.transition("queued")
 
-    turn = TurnSnapshot(turn_id="turn-1", session_id="session-1", number=1)
-    finished_turn = turn.transition(TurnLifecycle.RUNNING).transition(TurnLifecycle.FINISHED, TurnOutcome.COMPLETED)
+    turn = TurnState(turn_id="turn-1", session_id="session-1", number=1)
+    finished_turn = turn.transition(TurnStatus.RUNNING).transition(TurnStatus.FINISHED, TurnOutcome.COMPLETED)
     assert finished_turn.outcome is TurnOutcome.COMPLETED
 
 
