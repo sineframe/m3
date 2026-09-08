@@ -118,6 +118,19 @@ be queried after reopening SQLite; in-memory SDK storage remains ephemeral.
 
 Matrix cases expose stable matrix/cell/trial metadata. Use the same evaluator
 name across trials; aggregate statistics are derived later from raw records.
+For nondeterministic harness quality, use `HarnessMatrix(..., trials=N)` as
+independent measured attempts, not retry-until-success. Invoke the evaluator
+once per execution or turn, then aggregate its records. When logical prompts
+have different expectations, build a matrix per logical case so its trials
+share a stable case identity.
+
+Use `FullToolPolicy(acknowledge_risk=True)` only when unrestricted tool access
+is part of the claim and the bound servers/tools are safe. Otherwise use an
+explicit `RestrictiveToolPolicy`; its empty allowlist denies every tool. If an
+evaluator reads the final assistant answer, prefer `case.session()` and the
+completed `TurnResult`, then inspect tool usage on the finalized
+`session.result.trace_view`.
+
 Call `store.aggregate_evaluations(EvaluationQuery(...))` for pass rates,
 status counts, run/time trends, case labels, and execution/tool health. Filter
 to one evaluator or group by `evaluator`; deterministic and user-supplied LLM
@@ -139,3 +152,5 @@ their saved results and provenance. Summaries are calculated on request.
 | Passing pytest flags directly to `mcp-pal test` | Put them after `--` |
 | Assuming direct pytest writes run history | Pass `store=SQLiteExecutionStore(...)` or load the plugin with `--mcp-pal-results-db` |
 | Treating a completed persisted execution as a passed test | Record or inspect an explicit test/evaluation verdict |
+| Retrying a failed nondeterministic case until it passes | Keep every attempt as a scored matrix trial |
+| Assuming an empty restrictive allowlist exposes all tools | Use an explicit safe allowlist or an acknowledged full policy |

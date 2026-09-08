@@ -416,6 +416,22 @@ Provider choices can be nondeterministic, and these cases need the matching
 CLI and credentials. The complete executable, credential-free matrix
 examples are in [`test_matrix_usage.py`](../examples/tests/test_matrix_usage.py).
 
+### Score repeated harness trials
+
+When the goal is a pass rate rather than a single tool-call assertion, invoke
+an explicit evaluator for every matrix trial and aggregate its persisted
+decisions. The live math example combines ten logical cases,
+`HarnessMatrix.each_server`, `trials=2`, unrestricted access to one safe MCP
+server, turn-scoped evaluation, and per-harness score reporting:
+
+- [Evaluation walkthrough](evaluations.md#evaluate-a-harness-matrix-over-repeated-trials)
+- [Complete typed pytest example](../examples/nondeterministic/test_math_harness_matrix.py)
+- [Deterministic math MCP server](../examples/servers/math_mcp_server.py)
+
+The full example uses OpenCode and includes commented alternatives for Claude
+Code and a restrictive tool allowlist. Follow the evaluation walkthrough to
+run it.
+
 ### Deterministic tools across server-owned tools
 
 Use `ToolMatrix` when calls and arguments are known. Define every tool under

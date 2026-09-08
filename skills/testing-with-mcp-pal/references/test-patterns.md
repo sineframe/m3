@@ -249,6 +249,64 @@ async. Use `ToolMatrix` only for repeated known calls; it does not test agent
 selection. Use `HarnessMatrix` when the same prompt/selection claim must run
 against multiple harnesses or server configurations.
 
+## Score nondeterministic harness trials
+
+Treat repeated model attempts as data. Set `trials=N` on `HarnessMatrix` and
+retain every passed or failed evaluation; do not rerun only failures and report
+the best attempt. One hundred logical cases across two harnesses with two
+trials produce four hundred independently scored executions.
+
+When logical cases have different prompts or expectations, create one matrix
+per logical case. Its `cell_id` stays stable across trials while each trial has
+its own execution ID:
+
+```python
+for logical_case in cases:
+    matrix = HarnessMatrix.each_server(
+        id=f"quality-{logical_case.id}",
+        servers=(server_case,),
+        harnesses=harnesses,
+        trials=2,
+    )
+    for case in matrix.cases():
+        with case.session(
+            kit=kit,
+            tool_policy=FullToolPolicy(acknowledge_risk=True),
+        ) as session:
+            turn = session.send(logical_case.prompt, timeout=120)
+        execution = session.result
+        kit.evaluate(
+            {
+                "answer": turn.response.text if turn.response else "",
+                "expected": logical_case.expected,
+            },
+            "project.answer-quality.v1",
+            execution_id=execution.snapshot.execution_id,
+            turn_id=turn.turn_id,
+            trace=execution.trace,
+            metadata={"harness_config": case.harness.name},
+        )
+```
+
+This is one pytest orchestration item unless matrix cases are exposed through
+`@matrix.parametrize()`. Describe the inner rows as logical evaluation cases
+or trials rather than pytest items.
+
+`FullToolPolicy` removes the MCP tool allowlist and requires an explicit risk
+acknowledgement. Use it only when unrestricted selection is the behavior under
+test and every bound server/tool is safe. Prefer `RestrictiveToolPolicy` in a
+broader environment; an empty `allowed_tools` tuple denies every tool. When the
+test should avoid hard-coded names but remain restrictive, discover the
+server's advertised tools through a direct client and construct the allowlist
+from those reviewed results.
+
+Register a stable evaluator name once, invoke it for each execution or turn,
+and aggregate afterward with one evaluator and the current run ID selected.
+Pass rate is `passed / (passed + failed)`; error, inconclusive, and not-run
+statuses remain visible but are excluded from that denominator. A score is a
+measurement unless the user has also chosen an explicit pytest/release
+threshold.
+
 Run the narrow test first:
 
 ```bash

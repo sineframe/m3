@@ -29,3 +29,16 @@ def test_examples_docs_are_goal_oriented_and_not_a_synthetic_catalog() -> None:
         "Event" not in path.read_text(encoding="utf-8")
         for path in (_EXAMPLES / "tests").glob("*.py")
     )
+
+
+def test_live_math_matrix_example_remains_opt_in_and_outside_ci_catalog() -> None:
+    example = _EXAMPLES / "nondeterministic" / "test_math_harness_matrix.py"
+    assert example.exists()
+    text = example.read_text(encoding="utf-8")
+
+    assert (_EXAMPLES / "servers" / "math_mcp_server.py").exists()
+    assert "pytest.mark.live" in text
+    assert "MCP_PAL_RUN_LIVE_MATH_MATRIX" in text
+    assert "FullToolPolicy(acknowledge_risk=True)" in text
+    assert "_TRIALS_PER_CASE = 2" in text
+    assert not (_EXAMPLES / "tests" / example.name).exists()

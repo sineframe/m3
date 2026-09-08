@@ -14,8 +14,8 @@ to a project does not install the `mcp-pal` command or its bundled UI.
   schemas, chained workflows, traces, and isolation.
 - [Examples](examples.md) — choose the example matching a deployed endpoint,
   local stdio server, harness, ACP agent, or matrix workflow.
-- [Evaluations](evaluations.md) — define evaluators, save results, and query
-  pass-rate trends across trials.
+- [Evaluations](evaluations.md) — define evaluators, score repeated agent
+  trials across harnesses, save results, and query pass-rate trends.
 
 The copyable typed observability starting point is
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py); it is

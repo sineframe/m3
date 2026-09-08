@@ -35,7 +35,7 @@ machine-level CLI installation described in the
 - [Examples](docs/examples.md) — executable Streamable HTTP, local stdio,
   and evaluation examples.
 - [Evaluations](docs/evaluations.md) — explicit built-in and custom verdicts,
-  saved SQLite records, and turn-scoped evaluation patterns.
+  repeated harness trials, saved SQLite records, and aggregate pass rates.
 
 The examples use only public SDK APIs and run as ordinary pytest tests.
 
