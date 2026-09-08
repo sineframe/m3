@@ -16,6 +16,12 @@ through the standalone CLI to record executions and inspect them in a local UI.
 Most users should start with the CLI guide. SDK users who only need a library
 and pytest can use the SDK directly without installing the CLI or UI.
 
+Runs through the MCP Pal pytest plugin produce a deterministic JSON feedback
+bundle under `.mcp-pal/reports/<run-id>/`. A later `mcp-pal test
+--baseline RUN_ID` run compares the observed interface and saved results for a
+coding agent. Test `print()` and logging output remain diagnostics rather than
+an inferred score.
+
 ## The three packages
 
 This repository is a `uv` workspace with three Python distributions. They have

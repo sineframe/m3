@@ -40,9 +40,16 @@ Use `MCPTestKit(store=SQLiteExecutionStore(path))` to save attached
 evaluations, or run pytest with `--mcp-pal-results-db PATH` (the plugin's
 default store). Reopen the SQLite store and query
 `store.evaluations(execution_id, turn_id=...)`. Without an explicit SQLite
-store, SDK execution and evaluation data are in memory only. Pytest item
-verdicts and summary rows are not persisted; use the store query below to
-calculate trends from saved raw rows.
+store, SDK execution and evaluation data are in memory only. When the MCP Pal
+pytest plugin is active, pytest item verdicts are persisted in internal run
+records and MCP Pal matcher checks are persisted as execution evaluations;
+ordinary printed output remains diagnostics.
+Use the store query below to calculate trends from saved raw rows.
+
+`mcp-pal test` also writes `.mcp-pal/reports/<run-id>/feedback.json`. Pass
+`--baseline RUN_ID` on a later run to include a deterministic comparison of the
+observed interface, executions, and saved evaluations. The feedback endpoint
+and CLI consume the same SDK projection.
 
 The execution request accepts optional `run_id` and `case_id` through
 `ExecutionSpec`. A case is the logical thing being tested; each execution is

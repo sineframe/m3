@@ -210,7 +210,10 @@ and traces, sessions and turns, persisted artifacts/raw-evidence references,
 and evaluations explicitly attached to an execution. Use
 `MCPTestKit(store=SQLiteExecutionStore(path))` or pytest's
 `--mcp-pal-results-db PATH` to select it; no-store SDK use remains in memory.
-Pytest item outcomes and ordinary Python assertion results are not persisted.
+With the MCP Pal pytest plugin active, pytest item outcomes are persisted in
+internal run records and MCP Pal matcher checks are persisted as execution
+evaluations. Other Python assertion results and printed diagnostics keep their
+normal pytest meaning and are not inferred as MCP Pal evaluations.
 Use `store.aggregate_evaluations(...)` for matrix/trial trends; do not infer a
 pass from a merely completed execution.
 

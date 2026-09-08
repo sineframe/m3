@@ -36,6 +36,12 @@ request and response shape, persistence behavior, and example flow.
 That Streamlit surface is for maintaining the legacy app; it is not the
 production UI bundled with the standalone CLI.
 
+The app exposes the read-only route
+`GET /api/v2/feedback/{run_id}?baseline_run_id=...`. It reads the SDK's saved
+test manifest and execution history and returns the same `Feedback` projection
+used by CLI exports. No UI is implemented in this package; the production UI
+is bundled separately with the CLI.
+
 Copy [`.env.example`](../.env.example) to `.env` only for local development that
 needs configured harnesses. Credentials and live-provider tests are optional.
 The application does not implicitly load a working-directory `.env`; the

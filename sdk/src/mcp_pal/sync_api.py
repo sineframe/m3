@@ -120,6 +120,10 @@ from .execution_runtime import AsyncExecutionHandle as _AsyncExecutionHandle
 from .storage import ExecutionStore as _ExecutionStore
 from .harness.contracts import HarnessAdapterRegistry as _HarnessAdapterRegistry
 from ._default_store import make_default_run_id as _make_default_run_id, make_default_store as _make_default_store
+from ._check_recording import (
+    bind_subject as _bind_subject,
+    record_checks_enabled as _record_checks_enabled,
+)
 
 
 _CURRENT_MCP_PROTOCOL = "2025-11-25"
@@ -183,7 +187,7 @@ def _runtime_server_bindings(runtime_servers: _Iterable[_Any]) -> tuple[_ServerB
 class _PortalRuntime:
     """Async state owned exclusively by the AnyIO portal thread."""
 
-    def __init__(self, config: Config, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None, run_id: _RunId | str | None = None) -> None:
+    def __init__(self, config: Config, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None, run_id: _RunId | str | None = None, record_checks: bool = False) -> None:
         from .async_api import AsyncMCPTestKit
 
         self.kit = AsyncMCPTestKit(
@@ -194,6 +198,7 @@ class _PortalRuntime:
             embedded_worker=embedded_worker,
             adapter_registry=adapter_registry,
             run_id=run_id,
+            record_checks=record_checks,
         )
         self.clients: dict[int, _AsyncDirectClient] = {}
         self.sessions: dict[int, _AsyncAgentSession] = {}
@@ -253,8 +258,16 @@ class _PortalRuntime:
             self.closing.add(handle)
             try:
                 await client.aclose()
+                final_trace = client.final_trace
+                if self.kit._record_checks and final_trace is not None:
+                    _bind_subject(
+                        final_trace,
+                        final_trace.execution_id,
+                        getattr(client._trace_observer, "_store", None),
+                        getattr(client, "_redaction_config", None),
+                    )
                 return (
-                    client.final_trace,
+                    final_trace,
                     client.trace,
                     client.initialization,
                     getattr(client, "transport_evidence", None),
@@ -402,7 +415,7 @@ class _PortalRuntime:
 
 
 class _SyncPortal:
-    def __init__(self, config: Config, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None, run_id: _RunId | str | None = None) -> None:
+    def __init__(self, config: Config, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None, run_id: _RunId | str | None = None, record_checks: bool = False) -> None:
         self._lock = _RLock()
         self._context = _start_blocking_portal()
         try:
@@ -416,6 +429,7 @@ class _SyncPortal:
                 embedded_worker,
                 adapter_registry,
                 run_id,
+                record_checks,
             )
         except BaseException:
             self._context.__exit__(None, None, None)
@@ -895,11 +909,13 @@ class MCPTestKit:
         embedded_worker: bool = True,
         adapter_registry: _HarnessAdapterRegistry | None = None,
         run_id: _RunId | str | None = None,
+        record_checks: bool = False,
     ) -> None:
         self._state_lock = _RLock()
         self._closed = False
         scoped_run_id = run_id or _make_default_run_id()
         self._run_id = scoped_run_id if isinstance(scoped_run_id, _RunId) else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
+        self._record_checks = _record_checks_enabled(record_checks)
         self._context_depth = 0
         self._closing = False
         self._close_done = _ThreadEvent()
@@ -1141,7 +1157,7 @@ class MCPTestKit:
             portal = self._portal
             new_portal = portal is None
             if portal is None:
-                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry, self._run_id)
+                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry, self._run_id, self._record_checks)
                 self._portal = portal
             try:
                 identifier = _cast(int, portal.call(portal._runtime.create_execution, spec))
@@ -1221,7 +1237,7 @@ class MCPTestKit:
             portal = self._portal
             new_portal = portal is None
             if portal is None:
-                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry, self._run_id)
+                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry, self._run_id, self._record_checks)
                 self._portal = portal
             try:
                 binding = server if isinstance(server, _ServerBinding) else _ServerBinding(server=selected)
@@ -1278,7 +1294,7 @@ class MCPTestKit:
                 raise _KitClosed("MCPTestKit is closed")
             portal = self._portal
             if portal is None:
-                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry, self._run_id)
+                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry, self._run_id, self._record_checks)
                 self._portal = portal
             try:
                 session = AgentSession(portal, spec, adapter, runtime_servers, interaction_handlers)

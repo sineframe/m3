@@ -26,6 +26,8 @@ from mcp_pal import (
     TraceView,
     EvaluationQuery,
     EvaluationReport,
+    Feedback,
+    build_feedback,
 )
 from mcp_pal import RawEvidenceIntegrityError, RawEvidenceUnavailable, TraceUnavailable
 
@@ -66,6 +68,7 @@ class AppExecutionStore(Protocol):
         offset: int = 0,
         lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
+        run_id: str | None = None,
     ) -> ExecutionPage: ...
 
     def request_cancel(self, execution_id: ExecutionId | str, reason: str | None = None) -> bool: ...
@@ -291,6 +294,34 @@ class AppExecutionService:
             raise AppExecutionError("invalid_evaluation_aggregate_query", "evaluation aggregate query is invalid") from exc
         except StorageError as exc:
             raise AppExecutionError("evaluation_data_unavailable", "evaluation data is unavailable") from exc
+
+    def feedback(self, run_id: str, *, baseline_run_id: str | None = None) -> Feedback:
+        """Build read-only feedback for a recorded test run."""
+        self._ensure_open()
+        current = str(run_id)
+        if not current:
+            raise AppExecutionError("feedback_not_found", "feedback run was not found")
+
+        def has_run(identifier: str) -> bool:
+            get_manifest = getattr(self.store, "get_test_run", None)
+            if callable(get_manifest) and get_manifest(identifier) is not None:
+                return True
+            try:
+                page = self.store.list_executions(limit=1, offset=0, run_id=identifier)
+            except TypeError:
+                # Older injected stores may not expose run filtering.  They
+                # cannot prove that a requested run exists.
+                return False
+            return bool(page.items)
+
+        if not has_run(current):
+            raise AppExecutionError("feedback_not_found", "feedback run was not found")
+        if baseline_run_id is not None and not has_run(str(baseline_run_id)):
+            raise AppExecutionError("feedback_baseline_not_found", "feedback baseline run was not found")
+        try:
+            return build_feedback(self.store, current, baseline_run_id=baseline_run_id)
+        except (StorageError, TypeError, ValueError) as exc:
+            raise AppExecutionError("feedback_data_unavailable", "feedback data is unavailable") from exc
 
     def close(self) -> None:
         if self._closed:

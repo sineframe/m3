@@ -84,6 +84,7 @@ read-only viewer; they do not start work or mutate saved executions.
 | `GET /api/v2/executions/{execution_id}/report` | Read report, trace, turns, evidence, and evaluations. |
 | `POST /api/v2/evidence/read` | Read one bounded evidence value. |
 | `POST /api/v2/evaluations/aggregate` | Calculate pass-rate trends and health. |
+| `GET /api/v2/feedback/{run_id}` | Read saved test feedback, optionally compared with `baseline_run_id`. |
 
 ## API-created execution details
 

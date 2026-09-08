@@ -1266,6 +1266,10 @@ class EvaluationResult(FrozenModel):
     rationale: str | None = None
     metrics: _Mapping[str, float] = _Field(default_factory=dict)
     provenance: EvaluationSource | None = None
+    # Structured, redaction-safe details emitted by MCP Pal matchers or a
+    # user evaluator.  The mapping is intentionally open so old stores and
+    # framework-specific checks remain forward compatible.
+    details: _Mapping[str, _Any] = _Field(default_factory=dict)
 
     @_field_validator("score", mode="before")
     @classmethod
@@ -1292,6 +1296,7 @@ class EvaluationRecord(FrozenModel):
     rationale: str | None = None
     metrics: _Mapping[str, float] = _Field(default_factory=dict)
     provenance: EvaluationSource | None = None
+    details: _Mapping[str, _Any] = _Field(default_factory=dict)
     goal: str | None = None
     metadata: _Mapping[str, str | int | float | bool | None] = _Field(default_factory=dict)
     subject_kind: str = "unknown"

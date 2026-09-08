@@ -350,9 +350,10 @@ pytest -p mcp_pal.pytest_plugin \
 ```
 
 This saved history contains executions, traces, sessions/turns, stored
-artifacts/evidence, and explicitly attached `kit.evaluate()` records. It does
-not contain pytest verdicts, Python assertion outcomes, or matrix/trial
-aggregate trends.
+artifacts/evidence, and explicitly attached `kit.evaluate()` records. When the
+MCP Pal pytest plugin is active, it also contains pytest item outcomes and MCP
+Pal matcher evaluations. It does not turn arbitrary Python assertions into
+evaluations or persist matrix/trial aggregate trends.
 
 ## 15. Run a matrix across servers and harnesses
 
@@ -535,8 +536,9 @@ every matrix cell as independent `/trial-1` and `/trial-2` cases. The
 executable example also covers sync and async helpers, SQLite reopen, typed
 failure inspection, and this two-turn chain. Normal execution specifications,
 events, turns, traces, and explicitly attached evaluations persist through
-SQLite; pytest verdicts and matrix
-summary rows are not saved; use `store.aggregate_evaluations(...)` to calculate
+SQLite; plugin-enabled pytest verdicts are saved in internal run records and
+matcher checks as execution evaluations. Matrix summary rows are not saved;
+use `store.aggregate_evaluations(...)` to calculate
 pass rates from the saved evaluations.
 
 ### Aggregate trials

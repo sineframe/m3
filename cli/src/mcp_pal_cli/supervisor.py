@@ -280,11 +280,77 @@ def list_stored_runs(database: Path) -> StoredRuns:
             offset += len(items)
             if not items or offset >= int(page.total):
                 break
+        # UI direct-run URLs refer to execution IDs. Test-run manifest IDs are
+        # intentionally kept out of this projection because they are not
+        # executable history records.
         return StoredRuns(tuple(runs))
     except Exception:
         # The test process must remain useful even when an old, locked, or
         # unreadable history database cannot be inspected.
         return StoredRuns(warning="could not read stored run history")
+    finally:
+        if store is not None:
+            try:
+                store.close()
+            except Exception:
+                pass
+
+
+_BASELINE_SCRIPT = r'''
+import json
+import sys
+from mcp_pal.storage import SQLiteExecutionStore
+
+store = SQLiteExecutionStore(sys.argv[1])
+try:
+    run_id = sys.argv[2]
+    found = store.get_test_run(run_id) is not None
+    if not found:
+        found = bool(store.list_executions(limit=1, offset=0, run_id=run_id).items)
+finally:
+    close = getattr(store, "close", None)
+    if callable(close):
+        close()
+print(json.dumps({"found": bool(found)}))
+'''
+
+
+def baseline_exists(
+    database: Path,
+    run_id: str,
+    *,
+    python: Path | None = None,
+    project_root: Path | None = None,
+) -> bool:
+    """Validate an explicit baseline before starting project pytest.
+
+    When project Python is supplied, the check runs through that environment so
+    the CLI never interprets a project database using a different SDK build.
+    """
+    if python is not None:
+        try:
+            result = subprocess.run(
+                [str(python), "-c", _BASELINE_SCRIPT, str(database), str(run_id)],
+                cwd=str((project_root or Path.cwd()).resolve()),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            payload = json.loads(result.stdout.strip().splitlines()[-1])
+            return result.returncode == 0 and bool(payload.get("found"))
+        except (OSError, subprocess.TimeoutExpired, IndexError, json.JSONDecodeError, AttributeError):
+            return False
+    store: Any | None = None
+    try:
+        store = _execution_store_type()(database)
+        get_manifest = getattr(store, "get_test_run", None)
+        if callable(get_manifest) and get_manifest(run_id) is not None:
+            return True
+        page = store.list_executions(limit=1, offset=0, run_id=run_id)
+        return bool(page.items)
+    except Exception:
+        return False
     finally:
         if store is not None:
             try:
@@ -443,8 +509,15 @@ def _server_diagnostics(child: _ServerChild) -> tuple[str, ...]:
     return tuple(safe[-5:])
 
 
-def pytest_command(python: Path, database: Path, pytest_args: Sequence[str]) -> list[str]:
-    return [
+def pytest_command(
+    python: Path,
+    database: Path,
+    pytest_args: Sequence[str],
+    *,
+    baseline: str | None = None,
+    project_root: Path | None = None,
+) -> list[str]:
+    command = [
         str(python),
         "-m",
         "pytest",
@@ -452,8 +525,17 @@ def pytest_command(python: Path, database: Path, pytest_args: Sequence[str]) -> 
         "mcp_pal.pytest_plugin",
         "--mcp-pal-results-db",
         str(database),
-        *pytest_args,
     ]
+    if baseline:
+        command.extend(("--mcp-pal-baseline", baseline))
+    if project_root is not None and not _has_rootdir_option(pytest_args):
+        command.extend(("--rootdir", str(project_root)))
+    command.extend(pytest_args)
+    return command
+
+
+def _has_rootdir_option(args: Sequence[str]) -> bool:
+    return any(arg == "--rootdir" or arg.startswith("--rootdir=") for arg in args)
 
 
 # Keep the implementation name easy to discover for callers that used the old
@@ -486,7 +568,14 @@ def _terminate_process(process: Any) -> None:
             pass
 
 
-def _run_pytest_process(python: Path, database: Path, pytest_args: Sequence[str]) -> int:
+def _run_pytest_process(
+    python: Path,
+    database: Path,
+    pytest_args: Sequence[str],
+    *,
+    baseline: str | None = None,
+    project_root: Path | None = None,
+) -> int:
     """Run pytest with safe process-group cleanup and return its status."""
 
     process: subprocess.Popen[Any] | None = None
@@ -499,7 +588,18 @@ def _run_pytest_process(python: Path, database: Path, pytest_args: Sequence[str]
                 flags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
                 if flags:
                     kwargs["creationflags"] = flags
-            process = subprocess.Popen(pytest_command(python, database, pytest_args), **kwargs)
+            if project_root is not None:
+                kwargs["cwd"] = str(project_root)
+            process = subprocess.Popen(
+                pytest_command(
+                    python,
+                    database,
+                    pytest_args,
+                    baseline=baseline,
+                    project_root=project_root,
+                ),
+                **kwargs,
+            )
             try:
                 raw_code = int(process.wait())
             except KeyboardInterrupt:
@@ -600,6 +700,7 @@ def run_test_with_runs(
     port: int = 8000,
     ui_dir: str | os.PathLike[str] | None = None,
     project_root: Path | None = None,
+    baseline: str | None = None,
 ) -> TestRunResult:
     """Run pytest and retain newly stored runs for optional UI serving."""
 
@@ -625,8 +726,11 @@ def run_test_with_runs(
     if prepared is None:
         return TestRunResult(OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,))))
     selected, database_path = prepared
+    if baseline is not None and not baseline_exists(database_path, baseline, python=selected, project_root=root):
+        print(f"mcp-pal test: baseline run was not found: {baseline}", file=sys.stderr)
+        return TestRunResult(OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,))))
 
-    exit_code = _run_pytest_process(selected, database_path, pytest_args)
+    exit_code = _run_pytest_process(selected, database_path, pytest_args, baseline=baseline, project_root=root)
     after = list_stored_runs(database_path)
     warnings = tuple(dict.fromkeys(
         warning for warning in (before.warning, after.warning) if warning is not None
@@ -649,6 +753,7 @@ def run_test(
     port: int = 8000,
     ui_dir: str | os.PathLike[str] | None = None,
     project_root: Path | None = None,
+    baseline: str | None = None,
 ) -> int:
     """Run pytest and return its exact exit status."""
 
@@ -661,13 +766,17 @@ def run_test(
             port=port,
             ui_dir=ui_dir,
             project_root=project_root,
+            baseline=baseline,
         ).exit_code
     root = (project_root or Path.cwd()).resolve()
     prepared = _prepare_test(python, database, root)
     if prepared is None:
         return OPERATIONAL_ERROR
     selected, database_path = prepared
-    return _run_pytest_process(selected, database_path, pytest_args)
+    if baseline is not None and not baseline_exists(database_path, baseline, python=selected, project_root=root):
+        print(f"mcp-pal test: baseline run was not found: {baseline}", file=sys.stderr)
+        return OPERATIONAL_ERROR
+    return _run_pytest_process(selected, database_path, pytest_args, baseline=baseline, project_root=root)
 
 
 __all__ = [
@@ -681,6 +790,7 @@ __all__ = [
     "TestRunResult",
     "RunURLs",
     "list_stored_runs",
+    "baseline_exists",
     "find_new_runs",
     "build_run_urls",
     "run_test_with_runs",

@@ -96,11 +96,14 @@ finalization but does not start or stop a deployed service.
 - There is no hidden `mcp_test` fixture or scenario format. Define the server
   explicitly with `StdioServer`, `HTTPServer`, `SSEServer`, or an
   existing project fixture.
-- Persistence of an execution is not persistence of a test verdict. SQLite
-  retains execution specs/snapshots, recorded events/traces, sessions/turns,
-  artifacts/evidence, and explicit evaluations attached to an execution. It does
-  not retain pytest item outcomes or saved summary rows. Never infer a pass from
-  lifecycle `completed`; use an explicit evaluator result.
+- With the MCP Pal pytest plugin active, SQLite retains internal run records,
+  pytest item outcomes, phase diagnostics, and exact execution associations;
+  MCP Pal matcher checks are retained as execution evaluations. This is in
+  addition to execution specs/snapshots, events/traces,
+  sessions/turns, artifacts/evidence, and explicit evaluations. A plain
+  `print()` or log line remains diagnostic text and is never a score. Never
+  infer a pass from lifecycle `completed`; use an explicit evaluator or saved
+  pytest/check result.
 
 ## Evaluations and saved history
 
@@ -137,6 +140,15 @@ to one evaluator or group by `evaluator`; deterministic and user-supplied LLM
 evaluators must not be mixed into one pass rate. MCP Pal has no built-in LLM
 judge: SDK users may write callbacks that call an LLM, while API v2 only groups
 their saved results and provenance. Summaries are calculated on request.
+
+When improving tool descriptions, run a representative suite through
+`mcp-pal test`. The command prints a run ID and writes
+`.mcp-pal/reports/<run-id>/feedback.json`. After a focused server edit, run the
+same selection with `--baseline RUN_ID`; inspect interface changes, matched
+checks, execution references, and regressions before making another edit. The
+JSON bundle is the agent-facing format. Keep prompts, policies, expectations,
+and harness/model settings fixed while testing a description change, and treat
+missing or incomplete evidence as a limitation rather than an improvement.
 
 ## Common Mistakes
 

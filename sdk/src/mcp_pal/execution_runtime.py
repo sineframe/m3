@@ -31,6 +31,7 @@ from .storage import ArtifactStore, ExecutionStore, InMemoryExecutionStore
 from .trace.redaction import RedactionConfig
 from .transport.local import LocalTransportError
 from .workspace import WorkspaceError, WorkspaceManager
+from ._check_recording import bind_execution as _bind_execution, bind_subject as _bind_subject
 from .types import (
     ActivityHealth,
     AgentSpec,
@@ -244,6 +245,12 @@ class AsyncExecutionHandle:
             run_id=(spec.run_id.root if spec.run_id is not None else run_id),
             server_bindings=tuple(binding.model_dump(mode="json") for binding in spec.servers),
         )
+        if getattr(controller.kit, "_record_checks", False):
+            _bind_execution(
+                self._execution_id,
+                self._store,
+                controller.redaction_config,
+            )
         self._terminal = asyncio.Event()
         self._cancel_requested = False
         self._bridge: DirectTraceBridge | None = None
@@ -559,6 +566,27 @@ class AsyncExecutionHandle:
                     activity_health=_activity_health(trace),
                     error=result_error,
                 )
+                if getattr(self._controller.kit, "_record_checks", False):
+                    _bind_subject(
+                        self._result,
+                        self._execution_id,
+                        self._store,
+                        self._controller.redaction_config,
+                    )
+                    if trace is not None:
+                        _bind_subject(
+                            trace,
+                            self._execution_id,
+                            self._store,
+                            self._controller.redaction_config,
+                        )
+                    for turn in self._result.turns:
+                        _bind_subject(
+                            turn,
+                            self._execution_id,
+                            self._store,
+                            self._controller.redaction_config,
+                        )
             self._terminal.set()
             self._controller._finished(self)
             watcher = self._cancel_watcher

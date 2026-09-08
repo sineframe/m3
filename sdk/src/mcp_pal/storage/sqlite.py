@@ -389,6 +389,17 @@ CREATE TABLE IF NOT EXISTS v2_commands (
   payload_json TEXT NOT NULL, session_id TEXT, turn_id TEXT, created_at TEXT NOT NULL,
   claimed_at TEXT, owner_id TEXT
 );
+CREATE TABLE IF NOT EXISTS v2_test_runs (
+  run_id TEXT PRIMARY KEY, record_json TEXT NOT NULL,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS v2_test_results (
+  run_id TEXT NOT NULL REFERENCES v2_test_runs(run_id) ON DELETE CASCADE,
+  attempt_id TEXT NOT NULL, record_json TEXT NOT NULL,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY(run_id, attempt_id)
+);
+CREATE INDEX IF NOT EXISTS v2_test_results_run_node ON v2_test_results(run_id, attempt_id);
 CREATE INDEX IF NOT EXISTS v2_commands_fifo ON v2_commands(status, created_at, id);
 CREATE UNIQUE INDEX IF NOT EXISTS v2_commands_turn_unique
   ON v2_commands(execution_id, session_id, turn_id)
@@ -795,6 +806,12 @@ class SQLiteExecutionStore(_SqliteBase):
 
     def create(self, snapshot: ExecutionState, *, specification: Mapping[str, Any] | None = None, provenance: Mapping[str, Any] | None = None, server_bindings: Sequence[Mapping[str, Any]] = (), harness_binding: Mapping[str, Any] | None = None, parent_execution_id: ExecutionId | str | None = None, run_id: RunId | str | None = None) -> None:
         key = _execution_key(snapshot.execution_id)
+        try:
+            from .._test_runs import associate_execution
+            associate_execution(snapshot.execution_id, run_id=run_id or snapshot.run_id)
+        except Exception:
+            # Test recording is observational and must never break execution.
+            pass
         snapshot_run = snapshot.run_id.root if snapshot.run_id is not None else None
         fallback_run = run_id.root if isinstance(run_id, RunId) else run_id
         run_key = snapshot_run or fallback_run
@@ -831,6 +848,88 @@ class SQLiteExecutionStore(_SqliteBase):
             connection.close()
 
     create_execution = create
+
+    def save_test_run(self, run_id: str, value: Mapping[str, object]) -> None:
+        key = str(getattr(run_id, "root", run_id))
+        safe = redact_for_persistence(dict(value), config=self._redaction_config, path="$.test_run")
+        if not isinstance(safe, Mapping):
+            raise StorageError("test run manifest could not be redacted")
+        now = _iso(_utcnow())
+        connection = self._connect()
+        try:
+            self._begin(connection, immediate=True)
+            connection.execute(
+                "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at) VALUES(?,?,?,?) "
+                "ON CONFLICT(run_id) DO UPDATE SET record_json=excluded.record_json,updated_at=excluded.updated_at",
+                (key, _json(safe), now, now),
+            )
+            self._commit(connection)
+        except BaseException:
+            self._rollback(connection)
+            raise
+        finally:
+            connection.close()
+
+    def get_test_run(self, run_id: str) -> Mapping[str, object] | None:
+        key = str(getattr(run_id, "root", run_id))
+        with self._connect() as connection:
+            row = connection.execute("SELECT record_json FROM v2_test_runs WHERE run_id=?", (key,)).fetchone()
+        if row is None:
+            return None
+        value = _loads(row[0])
+        return dict(value) if isinstance(value, Mapping) else None
+
+    def list_test_runs(self) -> tuple[Mapping[str, object], ...]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT record_json FROM v2_test_runs ORDER BY created_at,run_id").fetchall()
+        values: list[Mapping[str, object]] = []
+        for row in rows:
+            value = _loads(row[0])
+            if isinstance(value, Mapping):
+                values.append(dict(value))
+        return tuple(values)
+
+    def save_test_result(self, run_id: str, attempt_id: str, value: Mapping[str, object]) -> None:
+        key = str(getattr(run_id, "root", run_id))
+        safe = redact_for_persistence(dict(value), config=self._redaction_config, path="$.test_result")
+        if not isinstance(safe, Mapping):
+            raise StorageError("test result could not be redacted")
+        now = _iso(_utcnow())
+        connection = self._connect()
+        try:
+            self._begin(connection, immediate=True)
+            # xdist workers can publish their first attempt before the
+            # controller's manifest update reaches the database.
+            if connection.execute("SELECT 1 FROM v2_test_runs WHERE run_id=?", (key,)).fetchone() is None:
+                connection.execute(
+                    "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at) VALUES(?,?,?,?)",
+                    (key, _json({"schema_version": 1, "run_id": key, "status": "running", "created_at": now, "finished_at": None}), now, now),
+                )
+            connection.execute(
+                "INSERT INTO v2_test_results(run_id,attempt_id,record_json,created_at,updated_at) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(run_id,attempt_id) DO UPDATE SET record_json=excluded.record_json,updated_at=excluded.updated_at",
+                (key, str(attempt_id), _json(safe), now, now),
+            )
+            self._commit(connection)
+        except BaseException:
+            self._rollback(connection)
+            raise
+        finally:
+            connection.close()
+
+    def list_test_results(self, run_id: str) -> tuple[Mapping[str, object], ...]:
+        key = str(getattr(run_id, "root", run_id))
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT record_json FROM v2_test_results WHERE run_id=? ORDER BY attempt_id",
+                (key,),
+            ).fetchall()
+        values: list[Mapping[str, object]] = []
+        for row in rows:
+            value = _loads(row[0])
+            if isinstance(value, Mapping):
+                values.append(dict(value))
+        return tuple(values)
 
     def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None:
         with self._connect() as connection:
@@ -1535,6 +1634,7 @@ class SQLiteExecutionStore(_SqliteBase):
             "rationale": value.get("rationale"),
             "metrics": value.get("metrics", {}),
             "provenance": value.get("provenance"),
+            "details": value.get("details", {}),
             "context": {
                 "execution_id": context.get("execution_id") or _execution_key(execution_id),
                 "turn_id": context.get("turn_id") or (str(turn_id.root if isinstance(turn_id, TurnId) else turn_id) if turn_id else None),

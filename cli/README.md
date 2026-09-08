@@ -141,7 +141,15 @@ root. Override it when needed:
 ```sh
 mcp-pal test --results-db /tmp/my-runs.sqlite -- -q tests
 mcp-pal test --python .venv/bin/python -- -q --maxfail=1
+mcp-pal test --baseline run-123 -- -q tests
 ```
+
+`--baseline RUN_ID` is the only feedback comparison option. It validates the
+explicit run ID in the selected results database before pytest starts. A run
+through the plugin writes `.mcp-pal/reports/<run-id>/feedback.json`; the bundle
+contains the saved test manifest and references to detailed executions and
+catalogs. Existing pytest output, including test prints and logs, remains
+diagnostic output and is not interpreted as a score.
 
 Everything after `--` is passed to pytest unchanged. The CLI adds its storage
 plugin and `--mcp-pal-results-db` option itself. In other words, SQLite
@@ -150,15 +158,22 @@ tests run directly with pytest use in-memory SDK storage unless they pass an
 explicit `SQLiteExecutionStore` or install the plugin and flag themselves.
 
 The database records SDK executions, specifications, recorded events and
-traces, sessions/turns, saved artifacts/evidence, and evaluations attached
-to those executions. Direct SDK evaluations are saved only with
+traces, sessions/turns, saved artifacts/evidence, evaluations attached to
+those executions, and internal pytest run records. Direct SDK evaluations are saved only with
 `store=SQLiteExecutionStore(path)`; `mcp-pal test` selects the equivalent
 store through `--mcp-pal-results-db`. In-memory SDK storage is temporary.
-Pytest item outcomes and ordinary assertion results are not saved. Aggregate
-matrix/trial trends are calculated from saved evaluations with the SDK store or
-the API v2 aggregate route; summary rows are not duplicated in SQLite. A
-completed execution is a saved run record, not by itself a saved test-pass
-result.
+When the MCP Pal pytest plugin is active, pytest item outcomes, phase
+diagnostics, and execution associations are saved in internal run records.
+MCP Pal matcher checks are saved as evaluation records on their associated
+executions. Ordinary `print()` and logging output remain diagnostic text; they
+are never parsed into a score. Aggregate matrix/trial trends are calculated from
+saved evaluations with the SDK store or the API v2 aggregate route. A
+completed execution is still not by itself a saved test-pass result.
+
+Each run also writes an agent-readable JSON bundle to
+`.mcp-pal/reports/<run-id>/feedback.json`. Pass `--baseline RUN_ID` to add a
+read-only comparison. The JSON is deterministic for the saved run, and normal
+pytest results remain visible alongside the MCP Pal run ID and feedback path.
 
 ### `--ui`
 

@@ -97,6 +97,11 @@ from .execution_runtime import AsyncExecutionController as _AsyncExecutionContro
 from .execution_trace import ExecutionTraceRecorder as _ExecutionTraceRecorder
 from .storage import ExecutionStore as _ExecutionStore
 from ._default_store import make_default_run_id as _make_default_run_id, make_default_store as _make_default_store
+from ._check_recording import (
+    bind_execution as _bind_execution,
+    bind_subject as _bind_subject,
+    record_checks_enabled as _record_checks_enabled,
+)
 from .storage import InMemoryExecutionStore as _InMemoryExecutionStore
 from .trace.redaction import RedactionConfig as _RedactionConfig
 from .types import ExecutionOutcome as _ExecutionOutcome
@@ -375,6 +380,12 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
             run_id=kit.run_id.root,
             redaction_config=self._redaction_config,
         )
+        if kit._record_checks:
+            _bind_execution(
+                self._trace_observer.execution_id,
+                getattr(self._trace_observer, "_store", None),
+                self._redaction_config,
+            )
         self._trace_owner = trace_owner
         self._workspace_root = workspace_root
         # The core facade owns this optional slot; initialize it before
@@ -668,6 +679,15 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
             except BaseException as exc:
                 if failure is None:
                     failure = exc
+        if self._kit._record_checks:
+            final_trace = self._trace_observer.final_trace
+            if final_trace is not None:
+                _bind_subject(
+                    final_trace,
+                    self._trace_observer.execution_id,
+                    getattr(self._trace_observer, "_store", None),
+                    self._redaction_config,
+                )
         try:
             self._trace_observer.clear_secret_values()
         except BaseException:
@@ -718,10 +738,12 @@ class AsyncMCPTestKit:
         store: _ExecutionStore | None = None,
         embedded_worker: bool = True,
         run_id: _RunId | str | None = None,
+        record_checks: bool = False,
     ) -> None:
         self._closed = False
         scoped_run_id = run_id or _make_default_run_id()
         self._run_id = scoped_run_id if isinstance(scoped_run_id, _RunId) else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
+        self._record_checks = _record_checks_enabled(record_checks)
         self.config = config if isinstance(config, Config) else load_config(config, env=env, cwd=cwd)
         self._owns_store = False
         if store is None:
@@ -960,6 +982,17 @@ class AsyncMCPTestKit:
 
     def _session_closed(self, session: AsyncAgentSession) -> None:
         self._active_sessions.discard(session)
+        if self._record_checks:
+            try:
+                result = session.result
+                recorder = getattr(session, "_trace_recorder", None)
+                store = getattr(recorder, "_store", None)
+                config = getattr(recorder, "_redaction_config", None)
+                _bind_subject(result, result.snapshot.execution_id, store, config)
+                for turn in result.turns:
+                    _bind_subject(turn, result.snapshot.execution_id, store, config)
+            except Exception:
+                pass
 
     def direct(
         self,
@@ -1120,6 +1153,12 @@ class AsyncMCPTestKit:
             trace_owner=_trace_owner,
             artifact_store=recorder_artifacts,
         )
+        if self._record_checks:
+            _bind_execution(
+                getattr(recorder, "execution_id", None),
+                getattr(recorder, "_store", None),
+                getattr(recorder, "_redaction_config", None),
+            )
         self._active_sessions.add(session)
         return session
 

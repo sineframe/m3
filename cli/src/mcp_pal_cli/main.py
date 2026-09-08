@@ -52,6 +52,7 @@ def _parser() -> argparse.ArgumentParser:
     test = subparsers.add_parser("test", help="run pytest")
     test.add_argument("--python", type=Path, metavar="PATH", help="Python used to run pytest")
     test.add_argument("--results-db", type=Path, metavar="PATH", help="SQLite history database")
+    test.add_argument("--baseline", metavar="RUN_ID", help="compare feedback with a previous run")
     test.add_argument("--ui", action="store_true", help="serve the bundled UI after pytest")
     test.add_argument("--port", type=int, default=8000, metavar="PORT", help="UI port")
     return parser
@@ -87,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
                 database=args.results_db,
                 ui=args.ui,
                 port=args.port,
+                baseline=args.baseline,
             )
         if args.command == "setup":
             try:

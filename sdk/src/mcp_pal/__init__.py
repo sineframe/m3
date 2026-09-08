@@ -37,6 +37,7 @@ from .aggregations import (
     LatencyStats,
     ToolCallStats,
 )
+from .feedback import Comparison, Feedback, build_feedback, export_feedback
 from .evaluations import (
     AsyncEvaluator,
     EvaluationDecision,

@@ -27,6 +27,7 @@ from mcp_pal import (
     TraceView,
     EvaluationQuery,
     EvaluationReport,
+    Feedback,
 )
 from mcp_pal_app.services.execution_service import AppExecutionError, AppExecutionService
 
@@ -97,6 +98,11 @@ class V2EvaluationAggregateEnvelope(BaseModel):
     aggregate: EvaluationReport
 
 
+class V2FeedbackEnvelope(BaseModel):
+    version: Literal["v2"] = "v2"
+    feedback: Feedback
+
+
 class V2DeletedEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     execution_id: ExecutionId
@@ -162,6 +168,9 @@ def _service_fault(error: AppExecutionError) -> V2Fault:
         "execution_conflict": 409,
         "invalid_evaluation_aggregate_query": 422,
         "evaluation_data_unavailable": 500,
+        "feedback_not_found": 404,
+        "feedback_baseline_not_found": 404,
+        "feedback_data_unavailable": 500,
     }
     return V2Fault(status_by_code.get(error.code, 500), error.code, error.message)
 
@@ -263,6 +272,19 @@ def install_v2(
         return V2EvaluationAggregateEnvelope(aggregate=service.aggregate(body))
 
     application.include_router(aggregate_router)
+    feedback_router = APIRouter(prefix="/api/v2/feedback", tags=["feedback-v2"])
+
+    @feedback_router.get("/{run_id}", response_model=V2FeedbackEnvelope)
+    def get_feedback(
+        run_id: str,
+        baseline_run_id: str | None = Query(None),
+        service: AppExecutionService = Depends(get_service),
+    ) -> V2FeedbackEnvelope:
+        return V2FeedbackEnvelope(
+            feedback=service.feedback(run_id, baseline_run_id=baseline_run_id)
+        )
+
+    application.include_router(feedback_router)
     evidence_router = APIRouter(prefix="/api/v2/evidence", tags=["evidence-v2"])
 
     @evidence_router.post("/read", response_model=V2EvidenceEnvelope)

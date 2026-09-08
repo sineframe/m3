@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import difflib as _difflib
+import functools as _functools
 import inspect as _inspect
 import json as _json
 import math as _math
+import os as _os
 import re as _re
+from contextvars import ContextVar as _ContextVar
 from collections.abc import (
     Callable as _Callable,
 )
@@ -63,6 +66,11 @@ from .observability import (
 from .trace.redaction import (
     RedactionConfig as _RedactionConfig,
 )
+from ._check_recording import (
+    has_recording_binding as _has_recording_binding,
+    record_matcher as _record_matcher,
+    suppress_recording as _suppress_recording,
+)
 from .trace.redaction import (
     redact_for_persistence as _redact_for_persistence,
 )
@@ -114,6 +122,8 @@ _TurnSelector = _TurnResult | _TurnState | _TurnId | str
 _SubjectT = _TypeVar("_SubjectT")
 _FailureSink = _Callable[[AssertionError], None]
 _UNAVAILABLE = object()
+_MATCHER_DEPTH = _ContextVar("mcp_pal_matcher_depth", default=0)
+_MATCHER_OCCURRENCES = _ContextVar("mcp_pal_matcher_occurrences", default={})
 
 
 def _plain(value: _Any) -> _Any:
@@ -604,7 +614,7 @@ def _negative_boundary(subject: _Any, *, current_snapshot: bool) -> bool:
 
 
 class Expectation(_Generic[_SubjectT]):
-    """One-shot assertion facade; matchers never persist evaluations."""
+    """One-shot assertion facade; optional pytest recording persists checks."""
 
     def __init__(
         self,
@@ -615,8 +625,10 @@ class Expectation(_Generic[_SubjectT]):
         self.subject = subject
         self._sink = sink
         self._redaction_config = redaction_config or _RedactionConfig.from_environment()
+        self._failure_count = 0
 
     def _fail(self, message: str) -> None:
+        self._failure_count += 1
         try:
             view = _as_view(self.subject)
         except (_TraceNotFinalized, _TraceUnavailable):
@@ -1301,12 +1313,111 @@ class Expectation(_Generic[_SubjectT]):
             )
 
 
-def _call_matches(matcher: _Callable[[_Any], None], value: _Any) -> bool:
+def _record_public_matcher(function: _Callable[..., _Any]) -> _Callable[..., _Any]:
+    """Record one outer matcher call while preserving its assertion behavior."""
+
+    name = function.__name__
     try:
-        matcher(value)
+        signature = _inspect.signature(function)
+    except (TypeError, ValueError):
+        signature = None
+
+    @_functools.wraps(function)
+    def wrapped(self: Expectation[_Any], *args: _Any, **kwargs: _Any) -> _Any:
+        if _MATCHER_DEPTH.get() > 0 or not _has_recording_binding(self.subject):
+            return function(self, *args, **kwargs)
+        token = _MATCHER_DEPTH.set(_MATCHER_DEPTH.get() + 1)
+        before = self._failure_count
+        status = "passed"
+        message: str | None = None
+        try:
+            return function(self, *args, **kwargs)
+        except AssertionError as error:
+            status = "failed"
+            message = str(error)
+            raise
+        except Exception as error:
+            status = "error"
+            message = f"{type(error).__name__}: {error}"
+            raise
+        finally:
+            if self._failure_count > before:
+                status = "failed"
+                if message is None:
+                    # CheckGroup captures failures in the sink and returns to
+                    # the caller, so retain the final assertion text here.
+                    message = "matcher assertion failed"
+            bound: dict[str, _Any] = {}
+            if signature is not None:
+                try:
+                    values = signature.bind(self, *args, **kwargs).arguments
+                    bound = {key: value for key, value in values.items() if key != "self"}
+                except (TypeError, ValueError):
+                    bound = {"args": args, "kwargs": kwargs}
+            try:
+                identity = _matcher_identity(name, self.subject)
+                _record_matcher(
+                    self.subject,
+                    name,
+                    arguments=bound,
+                    identity=identity,
+                    status=status,
+                    message=message,
+                    redaction_config=self._redaction_config,
+                )
+            finally:
+                _MATCHER_DEPTH.reset(token)
+
+    return wrapped
+
+
+def _matcher_identity(name: str, subject: _Any) -> dict[str, _Any]:
+    """Identify the callsite without relying on an absolute line number."""
+
+    frame = _inspect.currentframe()
+    caller = frame.f_back.f_back if frame is not None and frame.f_back is not None and frame.f_back.f_back is not None else None
+    if caller is None:
+        return {"matcher": name, "state": "unavailable"}
+    try:
+        filename = _os.path.relpath(caller.f_code.co_filename, _os.getcwd())
+        function = caller.f_code.co_name
+        line = caller.f_lineno
+        execution_id = getattr(subject, "execution_id", None)
+        if execution_id is None:
+            execution_id = getattr(getattr(subject, "trace", None), "execution_id", None)
+        key = (filename, function, name, line, str(getattr(execution_id, "root", execution_id)))
+        occurrences = dict(_MATCHER_OCCURRENCES.get())
+        occurrence = occurrences.get(key, 0) + 1
+        occurrences[key] = occurrence
+        _MATCHER_OCCURRENCES.set(occurrences)
+        return {
+            "file": filename,
+            "function": function,
+            "matcher": name,
+            "line": line,
+            "occurrence": occurrence,
+        }
     except Exception:
-        return False
-    return True
+        return {"matcher": name, "state": "unavailable"}
+
+
+# Keep aliases (for example to_not_have_tool_call) as one semantic check.  A
+# depth ContextVar prevents nested public matcher calls from being recorded a
+# second time while still preserving their existing implementation.
+for _matcher_name, _matcher_value in tuple(vars(Expectation).items()):
+    if _matcher_name.startswith("to_") and callable(_matcher_value):
+        setattr(Expectation, _matcher_name, _record_public_matcher(_matcher_value))
+
+
+def _call_matches(matcher: _Callable[[_Any], None], value: _Any) -> bool:
+    # Polling attempts are observations used to decide the final eventual
+    # verdict.  They are not separate matcher checks in the feedback store.
+    with _suppress_recording():
+        try:
+            matcher(value)
+        except Exception:
+            return False
+        return True
 
 
 class CheckGroup:

@@ -22,7 +22,7 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "ToolDescriptor", "ToolPolicyDecision", "ToolPolicyEvidence", "ToolPolicyEvaluator", "evaluate_tool_policy",
         "AsyncEvaluator", "EvaluationRunner", "EvaluationStore", "EvaluationVerdict", "Evaluator", "EvaluatorCallable", "EvaluatorRegistry", "EvaluatorRegistration", "InMemoryEvaluationStore", "RequiredEvaluationError", "SnapshotOptions", "snapshot",
         "AllowedCommands", "ElicitationRequest", "ElicitationResult", "ElicitationHandler", "FilesystemHandler", "FilesystemRequest", "FilesystemResult", "Interactions", "InteractionHandlers", "InteractionReceipt", "PermissionRequest", "PermissionResult", "PermissionHandler", "SamplingRequest", "SamplingResult", "SamplingHandler", "TerminalHandler", "TerminalRequest", "TerminalResult", "WorkspaceFiles",
-        "ToolCase", "ServerCase", "HarnessCase", "ToolMatrix", "HarnessMatrix", "ToolMatrixCase", "HarnessMatrixCase",
+        "ToolCase", "ServerCase", "HarnessCase", "ToolMatrix", "HarnessMatrix", "ToolMatrixCase", "HarnessMatrixCase", "Feedback", "Comparison", "build_feedback", "export_feedback",
     ),
         "mcp_pal.types": (
         "EVENT_SCHEMA_ID", "EVENT_SCHEMA_VERSION", "ACPAgent", "ActivityHealth", "AgentSpec", "ArtifactId", "ArtifactPolicy", "ArtifactRef",

@@ -45,7 +45,7 @@ def test_old_port_flags_are_rejected(capsys: pytest.CaptureFixture[str]) -> None
 
 def test_ui_preflight_rejects_busy_port_before_pytest(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(supervisor, "_validate_port", lambda _port: "port is already in use")
-    monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_args: pytest.fail("pytest started"))
+    monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_args, **_kwargs: pytest.fail("pytest started"))
     assert main(["test", "--ui", "--port", "8123"]) == 2
     assert "port is already in use" in capsys.readouterr().err
 
@@ -53,7 +53,7 @@ def test_ui_preflight_rejects_busy_port_before_pytest(monkeypatch: pytest.Monkey
 def test_ui_preflight_rejects_missing_bundle_before_pytest(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(supervisor, "_validate_port", lambda _port: None)
     monkeypatch.setattr(supervisor, "_ui_prerequisite_error", lambda _ui_dir: "bundled MCP Pal UI assets are unavailable")
-    monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_args: pytest.fail("pytest started"))
+    monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_args, **_kwargs: pytest.fail("pytest started"))
     assert supervisor.run_test(ui=True, port=8123) == 2
     assert "bundled MCP Pal UI assets are unavailable" in capsys.readouterr().err
 
@@ -105,7 +105,7 @@ def test_ui_is_not_started_for_interrupted_or_collection_status(
     monkeypatch.setattr(supervisor, "_ui_prerequisite_error", lambda _ui_dir: None)
     monkeypatch.setattr(supervisor, "_prepare_test", lambda *_args: (Path(sys.executable), tmp_path / "results.sqlite"))
     monkeypatch.setattr(supervisor, "list_stored_runs", lambda _db: supervisor.StoredRuns())
-    monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_args: exit_code)
+    monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_args, **_kwargs: exit_code)
     monkeypatch.setattr(supervisor, "_run_ui_server", lambda *_args: pytest.fail("UI server started"))
     result = supervisor.run_test_with_runs(ui=True, port=8123, ui_dir=tmp_path, project_root=tmp_path)
     assert result.exit_code == exit_code
@@ -118,7 +118,7 @@ def test_ui_launches_for_ordinary_pytest_failure_and_keeps_status(
     monkeypatch.setattr(supervisor, "_ui_prerequisite_error", lambda _ui_dir: None)
     monkeypatch.setattr(supervisor, "_prepare_test", lambda *_args: (Path(sys.executable), tmp_path / "results.sqlite"))
     monkeypatch.setattr(supervisor, "list_stored_runs", lambda _db: supervisor.StoredRuns())
-    monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_args: 1)
+    monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(supervisor, "_run_ui_server", lambda _db, _port, code, _runs, _warnings: code)
     result = supervisor.run_test_with_runs(ui=True, port=8123, ui_dir=tmp_path, project_root=tmp_path)
     assert result.exit_code == 1
@@ -375,6 +375,16 @@ def test_command_uses_selected_python_and_absolute_database(tmp_path: Path) -> N
     assert command == ["/project/.venv/bin/python", "-m", "pytest", "-p", "mcp_pal.pytest_plugin", "--mcp-pal-results-db", str((tmp_path / "results.sqlite").resolve()), "-q", "tests"]
 
 
+def test_command_pins_project_root_when_supervisor_runs_pytest(tmp_path: Path) -> None:
+    command = supervisor.pytest_command(
+        Path("/project/.venv/bin/python"),
+        (tmp_path / "results.sqlite").resolve(),
+        ["-q", "tests"],
+        project_root=tmp_path,
+    )
+    assert command[-4:] == ["--rootdir", str(tmp_path), "-q", "tests"]
+
+
 def test_default_database_parent_is_created(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     process = type("Process", (), {"pid": 1, "wait": lambda self, **_: 0, "poll": lambda self: 0})()
     monkeypatch.setattr(supervisor, "resolve_project_python", lambda *_args, **_kwargs: Path(sys.executable))
@@ -402,6 +412,37 @@ def test_real_subprocess_runs_plugin_and_keeps_pytest_summary(tmp_path: Path, ca
     ) == 0
     assert database.is_file()
     assert "1 passed" in capfd.readouterr().out
+
+
+def test_two_runs_keep_project_root_and_feedback_location_stable(tmp_path: Path, capfd: pytest.CaptureFixture[str]) -> None:
+    test_file = tmp_path / "test_one.py"
+    test_file.write_text("def test_one():\n    pass\n", encoding="utf-8")
+    database = tmp_path / "nested" / "history.sqlite"
+    assert supervisor.run_test(
+        python=sys.executable,
+        project_root=tmp_path,
+        database=database,
+        pytest_args=["-q", str(test_file)],
+    ) == 0
+    from mcp_pal.storage import SQLiteExecutionStore
+    history = SQLiteExecutionStore(database)
+    run_id = str(history.list_test_runs()[0]["run_id"])
+    history.close()
+    assert (tmp_path / ".mcp-pal" / "reports" / run_id / "feedback.json").is_file()
+    assert supervisor.run_test(
+        python=sys.executable,
+        project_root=tmp_path,
+        database=database,
+        baseline=run_id,
+        pytest_args=["-q", str(test_file)],
+    ) == 0
+    history = SQLiteExecutionStore(database)
+    run_ids = [str(item["run_id"]) for item in history.list_test_runs()]
+    history.close()
+    second_run = next(item for item in run_ids if item != run_id)
+    report = tmp_path / ".mcp-pal" / "reports" / second_run / "feedback.json"
+    assert report.is_file()
+    assert second_run != run_id
 
 
 def test_run_result_keeps_pytest_status_when_history_listing_fails(

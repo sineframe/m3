@@ -11,6 +11,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import copy
 import os
 import shutil
 import tempfile
@@ -375,6 +376,8 @@ class InMemoryExecutionStore:
         self._acp_probes: dict[str, ACPProbeResult] = {}
         self._evaluations: dict[str, list[EvaluationRecord]] = {}
         self._turns: dict[str, list[tuple[TurnState, TurnResult | None]]] = {}
+        self._test_runs: dict[str, dict[str, Any]] = {}
+        self._test_results: dict[str, dict[str, dict[str, Any]]] = {}
 
     # ACP probe persistence intentionally lives beside execution persistence,
     # but is kept as a small independent collection so tests and applications
@@ -426,6 +429,12 @@ class InMemoryExecutionStore:
         run_id: RunId | str | None = None,
     ) -> None:
         del provenance, server_bindings, harness_binding, parent_execution_id
+        try:
+            from .._test_runs import associate_execution
+            associate_execution(snapshot.execution_id, run_id=run_id or snapshot.run_id)
+        except Exception:
+            # Recording must never change execution behavior.
+            pass
         key = _execution_key(snapshot.execution_id)
         validated: ExecutionSpec | None = None
         if specification is not None:
@@ -446,6 +455,34 @@ class InMemoryExecutionStore:
     # Friendly aliases are intentionally kept on the concrete store while the
     # protocol stays small and framework-neutral.
     create_execution = create
+
+    def save_test_run(self, run_id: str, value: Mapping[str, object]) -> None:
+        key = str(run_id)
+        safe = redact_for_persistence(dict(value), config=self._redaction_config, path="$.test_run")
+        with self._lock:
+            self._test_runs[key] = copy.deepcopy(dict(safe)) if isinstance(safe, Mapping) else {}
+
+    def get_test_run(self, run_id: str) -> Mapping[str, object] | None:
+        with self._lock:
+            value = self._test_runs.get(str(run_id))
+            return copy.deepcopy(value) if value is not None else None
+
+    def list_test_runs(self) -> tuple[Mapping[str, object], ...]:
+        with self._lock:
+            values = copy.deepcopy(list(self._test_runs.values()))
+        values.sort(key=lambda item: (str(item.get("created_at", "")), str(item.get("run_id", ""))))
+        return tuple(dict(value) for value in values)
+
+    def save_test_result(self, run_id: str, attempt_id: str, value: Mapping[str, object]) -> None:
+        safe = redact_for_persistence(dict(value), config=self._redaction_config, path="$.test_result")
+        with self._lock:
+            self._test_results.setdefault(str(run_id), {})[str(attempt_id)] = copy.deepcopy(dict(safe)) if isinstance(safe, Mapping) else {}
+
+    def list_test_results(self, run_id: str) -> tuple[Mapping[str, object], ...]:
+        with self._lock:
+            values = copy.deepcopy(list(self._test_results.get(str(run_id), {}).values()))
+        values.sort(key=lambda item: (str(item.get("node_id", "")), str(item.get("attempt_id", ""))))
+        return tuple(dict(value) for value in values)
 
     def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None:
         key = _execution_key(execution_id)
@@ -532,7 +569,7 @@ class InMemoryExecutionStore:
                 required=bool(value.get("required", False)),
                 message=value.get("message"), score=value.get("score"),
                 rationale=value.get("rationale"), metrics=value.get("metrics", {}),
-                provenance=value.get("provenance"), goal=context.get("goal"),
+                provenance=value.get("provenance"), details=value.get("details", {}), goal=context.get("goal"),
                 metadata=context.get("metadata", {}),
                 subject_kind=str(context.get("subject_kind", "unknown")),
                 subject_digest=subject_digest,

@@ -40,8 +40,10 @@ storage saves execution specs/snapshots, recorded events/traces,
 sessions/turns, stored artifacts/evidence, and evaluations explicitly attached
 to executions. The explicit `store=SQLiteExecutionStore(path)` or
 `--mcp-pal-results-db PATH` selection is required; otherwise SDK storage is in
-memory. It does not persist pytest item outcomes, ordinary Python assertions,
-or matrix/trial summary rows. Use `store.aggregate_evaluations(...)` for
+memory. With the MCP Pal pytest plugin, pytest item outcomes are saved in
+internal run records and MCP Pal matcher checks as execution evaluations.
+Other Python assertions and matrix/trial summary rows are not persisted. Use
+`store.aggregate_evaluations(...)` for
 pass-rate summaries. Execution outcome, MCP activity health,
 and evaluation/test verdict are separate; `completed` alone does not mean
 passed.

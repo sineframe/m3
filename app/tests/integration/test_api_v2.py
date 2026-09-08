@@ -175,6 +175,28 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         reopened.close()
 
 
+def test_v2_feedback_reads_manifest_and_optional_baseline(tmp_path):
+    database = Path(tmp_path).resolve() / "feedback.sqlite"
+    store = SQLiteExecutionStore(database)
+    store.save_test_run("baseline-run", {"run_id": "baseline-run", "status": "finished"})
+    store.save_test_run("current-run", {"run_id": "current-run", "status": "finished"})
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        response = client.get("/api/v2/feedback/current-run", params={"baseline_run_id": "baseline-run"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["version"] == "v2"
+        assert body["feedback"]["run_id"] == "current-run"
+        assert body["feedback"]["comparison"]["baseline_run_id"] == "baseline-run"
+        missing = client.get("/api/v2/feedback/current-run", params={"baseline_run_id": "missing"})
+        assert missing.status_code == 404
+        assert missing.json()["error"]["code"] == "feedback_baseline_not_found"
+        unknown = client.get("/api/v2/feedback/missing")
+        assert unknown.status_code == 404
+        assert unknown.json()["error"]["code"] == "feedback_not_found"
+    store.close()
+
+
 def test_v2_errors_and_deletion_constraints(tmp_path):
     database = Path(tmp_path).resolve() / "errors.sqlite"
     with TestClient(create_app(Settings(database_path=str(database)))) as client:
