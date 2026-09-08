@@ -84,5 +84,11 @@ packaging checks. Live provider tests and the browser gate are opt-in because
 they require external credentials and may incur provider costs. Application
 configuration is documented in the [App guide](app/README.md).
 
+`just setup` also enables the repository's pre-push hook. The hook runs the
+complete non-live SDK, example, application, and CLI test suites before each
+push. Run `just install-hooks` to enable it in an existing checkout. In an
+urgent situation, `git push --no-verify` bypasses the hook, but doing so is not
+recommended.
+
 Maintainers preparing a tagged build should follow the
 [release guide](docs/releasing.md).

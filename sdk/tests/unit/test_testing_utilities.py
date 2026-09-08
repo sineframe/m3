@@ -449,14 +449,14 @@ async def test_stdio_fixture_emits_literal_faults_and_bounds_raw_payloads() -> N
         faults = FaultInjector()
         getattr(faults, configure)("tools/call")
         async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
-            async with kit.direct(faults.stdio_server(), timeout=2) as client:
+            async with kit.direct(faults.stdio_server()) as client:
                 with pytest.raises((OperationTimeout, TransportError)) as failure:
-                    await client.call_tool("echo", {"text": "wire-secret"})
+                    await client.call_tool("echo", {"text": "wire-secret"}, timeout=2)
                 assert "wire-secret" not in str(failure.value)
 
     faults = FaultInjector().oversized("tools/call", 256)
     async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
-        async with kit.direct(faults.stdio_server(), timeout=2) as client:
+        async with kit.direct(faults.stdio_server()) as client:
             result = await client.call_tool("echo", {"text": "ok"})
             assert isinstance(result, CallToolResult)
             assert len(result.content[-1]["text"]) == 256
@@ -465,11 +465,11 @@ async def test_stdio_fixture_emits_literal_faults_and_bounds_raw_payloads() -> N
 def test_stdio_fixture_is_usable_through_sync_client() -> None:
     faults = FaultInjector().partial_frame("tools/call")
     kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
-    client = kit.direct(faults.stdio_server(), timeout=2)
+    client = kit.direct(faults.stdio_server())
     try:
         with client:
             with pytest.raises((OperationTimeout, TransportError)):
-                client.call_tool("echo", {"text": "sync-wire-secret"})
+                client.call_tool("echo", {"text": "sync-wire-secret"}, timeout=2)
     finally:
         kit.close()
 

@@ -10,6 +10,10 @@ default:
 
 setup install:
     uv sync --all-packages --all-extras --all-groups
+    git config --local core.hooksPath .githooks
+
+install-hooks:
+    git config --local core.hooksPath .githooks
 
 prepare-release VERSION:
     uv run --no-project --with packaging python scripts/prepare_release.py {{VERSION}}
@@ -24,6 +28,10 @@ test:
     PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests
     PYTHONDONTWRITEBYTECODE=1 uv run --project app --extra legacy-ui --group test --group typecheck pytest -q app/tests
     PYTHONDONTWRITEBYTECODE=1 uv run --project cli pytest -q cli/tests
+
+# Complete non-live suite used by the pre-push hook.
+test-all:
+    bash scripts/run_full_tests.sh
 
 # Manual-only live OpenCode + browser merge gate. This performs one external
 # provider call and may incur provider usage/cost; it is never a CI job.

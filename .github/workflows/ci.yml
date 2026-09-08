@@ -6,7 +6,8 @@ on:
     branches:
       - main
   schedule:
-    - cron: "30 20 * * *"
+    # 02:00 and 14:00 Asia/Kolkata (GitHub schedules use UTC).
+    - cron: "30 8,20 * * *"
   workflow_dispatch:
 
 permissions:
@@ -25,12 +26,12 @@ env:
 
 jobs:
   test:
-    # Run the complete compatibility matrix after changes land. Pull requests
-    # retain the source, lock, package, installer, and standalone CLI gates
-    # below without paying for both full Python suites on every update.
+    # Compatibility is intentionally scheduled rather than attached to pushes.
+    # Developers run the same complete suite through the repository pre-push
+    # hook, while workflow_dispatch keeps an explicit remote escape hatch.
     needs: quality
-    if: github.event_name != 'pull_request' && needs.quality.outputs.any == 'true'
-    name: Post-merge tests (Python ${{ matrix.python-version }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Compatibility tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -60,7 +61,6 @@ jobs:
           --group test --group typecheck
 
       - name: Run SDK tests without live providers
-        if: needs.quality.outputs.sdk == 'true'
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/sdk-tests.log"
@@ -79,7 +79,6 @@ jobs:
           exit "$status"
 
       - name: Run SDK examples without live providers
-        if: needs.quality.outputs.sdk == 'true'
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/sdk-examples.log"
@@ -98,7 +97,6 @@ jobs:
           exit "$status"
 
       - name: Run application tests without live providers
-        if: needs.quality.outputs.app == 'true'
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/application-tests.log"
@@ -118,7 +116,6 @@ jobs:
           exit "$status"
 
       - name: Run standalone CLI tests
-        if: needs.quality.outputs.cli == 'true'
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/cli-tests.log"
@@ -137,11 +134,6 @@ jobs:
 
   quality:
     name: Source and lock checks
-    outputs:
-      sdk: ${{ steps.scope.outputs.sdk }}
-      app: ${{ steps.scope.outputs.app }}
-      cli: ${{ steps.scope.outputs.cli }}
-      any: ${{ steps.scope.outputs.any }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -150,7 +142,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 2
 
       - name: Install uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -161,21 +152,6 @@ jobs:
 
       - name: Install locked workspace base dependencies
         run: uv sync --locked --all-packages --no-dev
-
-      - name: Select affected compatibility suites
-        id: scope
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [[ "$EVENT_NAME" == schedule || "$EVENT_NAME" == workflow_dispatch ]]; then
-            python scripts/ci_scope.py --all >> "$GITHUB_OUTPUT"
-          else
-            python scripts/ci_scope.py --base "$BASE_SHA" --head "$HEAD_SHA" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Verify lockfile
         run: uv lock --check

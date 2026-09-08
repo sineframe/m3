@@ -52,3 +52,16 @@ def test_ci_concurrency_separates_scheduled_and_push_runs() -> None:
         "group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}"
         in workflow
     )
+
+
+def test_compatibility_matrix_is_twice_daily_and_never_runs_on_push() -> None:
+    workflow = _workflow()
+    test_start = workflow.index("  test:\n")
+    test_end = workflow.index("\n  quality:\n", test_start)
+    compatibility_job = workflow[test_start:test_end]
+
+    assert 'cron: "30 8,20 * * *"' in workflow
+    assert "github.event_name == 'schedule'" in compatibility_job
+    assert "github.event_name == 'workflow_dispatch'" in compatibility_job
+    assert "github.event_name != 'pull_request'" not in compatibility_job
+    assert "needs.quality.outputs" not in compatibility_job
