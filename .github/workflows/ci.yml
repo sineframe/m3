@@ -23,7 +23,11 @@ env:
 
 jobs:
   test:
-    name: Tests (Python ${{ matrix.python-version }})
+    # Run the complete compatibility matrix after changes land. Pull requests
+    # retain the source, lock, package, installer, and standalone CLI gates
+    # below without paying for both full Python suites on every update.
+    if: github.event_name != 'pull_request'
+    name: Post-merge tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
