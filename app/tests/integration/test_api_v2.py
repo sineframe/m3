@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import subprocess
 import sys
 import time
 
@@ -195,6 +197,183 @@ def test_v2_feedback_reads_manifest_and_optional_baseline(tmp_path):
         assert unknown.status_code == 404
         assert unknown.json()["error"]["code"] == "feedback_not_found"
     store.close()
+
+
+def test_v2_feedback_reads_real_two_run_interface_and_score_changes(tmp_path):
+    """Exercise pytest plugin -> SQLite -> HTTP feedback without fake rows."""
+
+    source = '''
+import os
+
+from mcp.server.lowlevel import Server
+from mcp.types import ListToolsResult, Tool
+from mcp_pal import (
+    EvaluationDecision,
+    EvaluationSource,
+    EvaluationStatus,
+    InProcessServer,
+    MCPTestKit,
+    expect,
+)
+
+
+def _server():
+    async def list_tools(_context, _params):
+        return ListToolsResult(tools=[Tool(
+            name="find_order",
+            description=os.environ["TEST_TOOL_DESCRIPTION"],
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "order_id": {
+                        "type": "string",
+                        "description": "Customer-visible order identifier",
+                    }
+                },
+                "required": ["order_id"],
+            },
+        )])
+    return Server("orders", on_list_tools=list_tools)
+
+
+def test_order_tool_catalog():
+    score = float(os.environ["TEST_EVAL_SCORE"])
+    with MCPTestKit() as kit:
+        kit.register_evaluator(
+            "project.tool-description-quality.v1",
+            lambda _context: EvaluationDecision(
+                status=(EvaluationStatus.PASSED if score >= 0.5 else EvaluationStatus.FAILED),
+                score=score,
+                rationale="deterministic fixture score",
+                provenance=EvaluationSource(
+                    kind="deterministic",
+                    rubric_id="tool-description-quality",
+                    rubric_version="1",
+                ),
+            ),
+        )
+        client = kit.direct(InProcessServer(name="orders", factory=_server))
+        with client:
+            tools = client.list_tools()
+            assert tools.tools[0].name == "find_order"
+        expect(client.final_trace).to_have_trace()
+        kit.evaluate(client.final_trace, "project.tool-description-quality.v1")
+'''
+    test_file = tmp_path / "test_tool_feedback.py"
+    test_file.write_text(source, encoding="utf-8")
+    database = tmp_path / "feedback-flow.sqlite"
+    sdk_source = str(Path(__file__).parents[3] / "sdk" / "src")
+
+    def run(description, score, baseline=None):
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = sdk_source + os.pathsep + environment.get("PYTHONPATH", "")
+        environment["TEST_TOOL_DESCRIPTION"] = description
+        environment["TEST_EVAL_SCORE"] = str(score)
+        command = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "mcp_pal.pytest_plugin",
+            "--mcp-pal-results-db",
+            str(database),
+            "--rootdir",
+            str(tmp_path),
+        ]
+        if baseline is not None:
+            command.extend(("--mcp-pal-baseline", baseline))
+        command.append(str(test_file))
+        return subprocess.run(
+            command,
+            cwd=tmp_path,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+
+    first = run("Find an order", 0.3)
+    assert first.returncode == 0, first.stdout + first.stderr
+    store = SQLiteExecutionStore(database)
+    try:
+        baseline_run_id = str(store.list_test_runs()[0]["run_id"])
+    finally:
+        store.close()
+
+    second = run(
+        "Find an order by its customer-visible order ID.",
+        0.9,
+        baseline_run_id,
+    )
+    assert second.returncode == 0, second.stdout + second.stderr
+
+    store = SQLiteExecutionStore(database)
+    run_ids = {str(item["run_id"]) for item in store.list_test_runs()}
+    current_run_id = (run_ids - {baseline_run_id}).pop()
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        current = client.get(f"/api/v2/feedback/{current_run_id}")
+        assert current.status_code == 200
+        assert current.json()["feedback"]["comparison"] is None
+
+        response = client.get(
+            f"/api/v2/feedback/{current_run_id}",
+            params={"baseline_run_id": baseline_run_id},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["version"] == "v2"
+        feedback = body["feedback"]
+    store.close()
+
+    assert feedback["run_id"] == current_run_id
+    assert feedback["summary"] == {
+        "executions": 1,
+        "tests": 1,
+        "failures": 0,
+        "terminal_executions": 1,
+        "run_status": "finished",
+    }
+    assert feedback["tests"][0]["execution_ids"] == [
+        feedback["executions"][0]["execution_id"]
+    ]
+    comparison = feedback["comparison"]
+    assert comparison["baseline_run_id"] == baseline_run_id
+    assert comparison["current_run_id"] == current_run_id
+    assert comparison["test_changes"] == []
+    assert comparison["coverage"] == {
+        "baseline_executions": 1,
+        "current_executions": 1,
+        "baseline_tests": 1,
+        "current_tests": 1,
+    }
+
+    interface_change = next(
+        item
+        for item in comparison["interface_changes"]
+        if item.get("tool") == "find_order"
+    )
+    assert interface_change["server"] == "orders"
+    assert interface_change["before"]["description"] == "Find an order"
+    assert interface_change["after"]["description"] == (
+        "Find an order by its customer-visible order ID."
+    )
+    assert interface_change["before"]["inputSchema"] == interface_change["after"]["inputSchema"]
+
+    evaluation_change = next(
+        item
+        for item in comparison["evaluation_changes"]
+        if item.get("evaluator") == "project.tool-description-quality.v1"
+    )
+    assert evaluation_change["configuration_label_before"] == ["direct"]
+    assert evaluation_change["configuration_label_after"] == ["direct"]
+    assert evaluation_change["comparable"] is True
+    assert evaluation_change["before"]["stats"]["average_score"] == 0.3
+    assert evaluation_change["after"]["stats"]["average_score"] == 0.9
+    assert evaluation_change["delta"]["average_score"] == 0.6
+    assert evaluation_change["delta"]["pass_rate"] == 1.0
 
 
 def test_v2_errors_and_deletion_constraints(tmp_path):
