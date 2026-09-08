@@ -465,7 +465,7 @@ async def test_stdio_fixture_emits_literal_faults_and_bounds_raw_payloads() -> N
 def test_stdio_fixture_is_usable_through_sync_client() -> None:
     faults = FaultInjector().partial_frame("tools/call")
     kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
-    client = kit.direct(faults.stdio_server())
+    client = kit.direct(faults.stdio_server(), timeout=2)
     try:
         with client:
             with pytest.raises((OperationTimeout, TransportError)):

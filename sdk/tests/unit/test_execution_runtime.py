@@ -151,6 +151,97 @@ async def test_async_cancel_is_terminal_and_idempotent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_interrupted_cancel_can_be_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+    controller = AsyncExecutionController(
+        _SlowKit(_SlowClient(started)),
+        worker=False,
+    )
+    handle = controller.submit(_spec())
+    await started.wait()
+
+    entered_cancel_sleep = asyncio.Event()
+    release_cancel_sleep = asyncio.Event()
+    cancel_task: asyncio.Task[None] | None = None
+    original_sleep = asyncio.sleep
+
+    async def hold_cancel_sleep(delay: float) -> None:
+        if delay == 0 and asyncio.current_task() is cancel_task:
+            entered_cancel_sleep.set()
+            await release_cancel_sleep.wait()
+        await original_sleep(delay)
+
+    try:
+        # Interrupt the first caller at the checkpoint immediately before the
+        # single-shot task.cancel transition.
+        monkeypatch.setattr(asyncio, "sleep", hold_cancel_sleep)
+        cancel_task = asyncio.create_task(handle.cancel())
+        await entered_cancel_sleep.wait()
+        cancel_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancel_task
+        release_cancel_sleep.set()
+        await handle.cancel()
+        result = await handle.result(timeout=2)
+    finally:
+        if cancel_task is not None and not cancel_task.done():
+            cancel_task.cancel()
+            await asyncio.gather(cancel_task, return_exceptions=True)
+
+    assert result.snapshot.outcome is ExecutionOutcome.CANCELLED
+    await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_persistent_cancel_retries_after_transient_request_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SQLiteExecutionStore(tmp_path / "cancel-retry.sqlite")
+    started = asyncio.Event()
+    controller = AsyncExecutionController(_SlowKit(_SlowClient(started)), store=store, worker=False)
+    handle = controller.submit(_spec())
+    claimed = store.claim_next("unit-owner")
+    assert claimed is not None
+    command, lease = claimed
+    original_request_cancel = store.request_cancel
+    request_count = 0
+
+    def flaky_request_cancel(execution_id: ExecutionId | str, reason: str | None = None) -> bool:
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            raise OSError("transient sqlite write failure")
+        return original_request_cancel(execution_id, reason)
+
+    monkeypatch.setattr(store, "request_cancel", flaky_request_cancel)
+    owner = asyncio.create_task(handle._start_from_worker())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        with pytest.raises(OSError, match="transient sqlite write failure"):
+            await handle.cancel()
+        assert not owner.done()
+        await handle.cancel()
+        result = await handle.result(timeout=2)
+        assert request_count == 2
+        assert result.snapshot.outcome is ExecutionOutcome.CANCELLED
+    finally:
+        if not owner.done():
+            owner.cancel()
+            await asyncio.gather(owner, return_exceptions=True)
+        store.complete_command(
+            command.id,
+            owner_id=lease.owner_id,
+            lease_token=lease.lease_token,
+            status="cancelled",
+        )
+        store.release_lease(lease)
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_persistent_cancel_watcher_interrupts_claimed_owner_and_cleans_up(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

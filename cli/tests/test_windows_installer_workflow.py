@@ -11,20 +11,18 @@ def _workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def _windows_job() -> str:
+def _quality_job() -> str:
     workflow = _workflow()
-    job_start = workflow.index("  windows-installer:\n")
-    job_end = workflow.index("\n  package:\n", job_start)
+    job_start = workflow.index("  quality:\n")
+    job_end = workflow.index("\n  cli-standalone:\n", job_start)
     return workflow[job_start:job_end]
 
 
-def test_windows_installer_job_is_self_contained_and_pinned() -> None:
-    job = _windows_job()
+def test_installer_parser_runs_in_consolidated_quality_job() -> None:
+    job = _quality_job()
 
-    assert "runs-on: windows-latest" in job
+    assert "runs-on: ubuntu-latest" in job
     assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in job
-    assert "setup-uv" not in job
-    assert "setup-python" not in job
     assert "MCPPAL_UI_TOKEN" not in job
     assert "mcppal-ui" not in job
     assert "pip install" not in job
@@ -34,8 +32,8 @@ def test_windows_installer_job_is_self_contained_and_pinned() -> None:
     assert "@MCP_PAL_VERSION@" in job
 
 
-def test_windows_installer_job_uses_native_powershell_parser_after_rendering() -> None:
-    job = _windows_job()
+def test_installer_parser_uses_native_powershell_parser_after_rendering() -> None:
+    job = _quality_job()
 
     render_position = job.index("$template.Replace('@MCP_PAL_VERSION@', $version)")
     parser_position = job.index("[System.Management.Automation.Language.Parser]::ParseFile")
@@ -46,3 +44,11 @@ def test_windows_installer_job_uses_native_powershell_parser_after_rendering() -
     assert "[ref] $parseErrors" in job
     assert "$parseErrors.Count -gt 0" in job
     assert "throw \"PowerShell parser found syntax errors" in job
+
+
+def test_ci_concurrency_separates_scheduled_and_push_runs() -> None:
+    workflow = _workflow()
+    assert (
+        "group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}"
+        in workflow
+    )

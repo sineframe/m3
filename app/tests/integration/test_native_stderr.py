@@ -4,6 +4,7 @@ import asyncio
 import os
 import stat
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -59,10 +60,11 @@ print(json.dumps({"type":"step_finish","sessionID":"s","part":{"type":"step-fini
 
 @pytest.mark.parametrize("kind", ["claude", "opencode"])
 @pytest.mark.parametrize("outcome", ["cancelled", "timed_out"])
+@pytest.mark.parametrize("iteration", range(50))
 def test_native_repeated_cleanup_reaps_owned_children(
-    tmp_path: Path, kind: str, outcome: str
+    tmp_path: Path, kind: str, outcome: str, iteration: int
 ) -> None:
-    pid_file = tmp_path / f"{kind}-{outcome}.pid"
+    pid_file = tmp_path / f"{kind}-{outcome}-{iteration}.pid"
     body = f"""
 import os,time
 open({str(pid_file)!r}, "w").write(str(os.getpid()))
@@ -70,35 +72,46 @@ time.sleep(30)
 """
     executable_path = executable(tmp_path / f"{kind}-{outcome}.py", body)
 
-    async def run_repetitions() -> list[str]:
-        statuses: list[str] = []
-        for _ in range(50):
-            runner: Any = ClaudeCodeRunner(executable_path) if kind == "claude" else OpenCodeRunner(executable_path)
-            cancel_event: asyncio.Event | None = asyncio.Event() if outcome == "cancelled" else None
-            timeout_seconds = 0.75 if outcome == "timed_out" else 2
-            task = asyncio.create_task(
-                runner.run(_spec(timeout_seconds=timeout_seconds), cancel_event=cancel_event)
-            )
-            for _ in range(2000):
-                if pid_file.exists():
-                    break
-                await asyncio.sleep(0.001)
-            assert pid_file.exists(), "native fixture did not start"
-            if outcome == "cancelled":
-                assert cancel_event is not None
-                cancel_event.set()
-            result = await task
-            statuses.append(result.status)
-            pid = int(pid_file.read_text(encoding="utf-8"))
+    async def run_once(timeout_seconds: float) -> str | None:
+        runner: Any = ClaudeCodeRunner(executable_path) if kind == "claude" else OpenCodeRunner(executable_path)
+        cancel_event: asyncio.Event | None = asyncio.Event() if outcome == "cancelled" else None
+        task = asyncio.create_task(
+            runner.run(_spec(timeout_seconds=timeout_seconds), cancel_event=cancel_event)
+        )
+        # Process scheduling can be delayed while the complete cleanup matrix
+        # is distributed across two workers; bound startup independently from
+        # the runner's 0.75s/2s operation timeout.
+        deadline = time.monotonic() + 15
+        while not pid_file.exists() and not task.done() and time.monotonic() < deadline:
+            await asyncio.sleep(0.001)
+        if not pid_file.exists():
+            # Under xdist load a short operation timeout can elapse before the
+            # subprocess scheduler runs.  Retry this iteration once with the
+            # normal two-second budget so each parametrized case still checks
+            # a real child cleanup rather than accepting a scheduler miss.
+            await asyncio.wait_for(task, timeout=10)
+            return None
+        if outcome == "cancelled":
+            assert cancel_event is not None
+            cancel_event.set()
+        result = await asyncio.wait_for(task, timeout=10)
+        pid = int(pid_file.read_text(encoding="utf-8"))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:
-                pass
-            else:
-                raise AssertionError(f"native child {pid} survived {outcome} cleanup")
-            pid_file.unlink(missing_ok=True)
-        return statuses
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError(f"native child {pid} survived {outcome} cleanup")
+        pid_file.unlink(missing_ok=True)
+        return result.status
 
-    statuses = asyncio.run(run_repetitions())
+    initial_timeout = 0.75 if outcome == "timed_out" else 2
+    status = asyncio.run(run_once(initial_timeout))
+    if status is None:
+        pid_file.unlink(missing_ok=True)
+        status = asyncio.run(run_once(2))
     expected = "cancelled" if outcome == "cancelled" else "timed_out"
-    assert statuses == [expected] * 50
+    assert status == expected

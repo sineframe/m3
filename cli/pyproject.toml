@@ -18,6 +18,11 @@ mcp-pal = "mcp_pal_cli.main:main"
 mcp-pal = { workspace = true }
 mcp-pal-app = { workspace = true }
 
+[dependency-groups]
+test = [
+  "pytest>=8,<10",
+]
+
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"

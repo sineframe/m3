@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from pathlib import Path
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -13,7 +16,7 @@ import pytest
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.errors import OperationCancelled
 from mcp_pal.transport.direct import TransportConnectionError
-from mcp_pal.types import SecretReference, SSEServer, HTTPServer, TrustLevel
+from mcp_pal.types import SecretReference, SSEServer, HTTPServer, StdioServer, TrustLevel
 
 
 _PROTOCOL = "2025-11-25"
@@ -359,3 +362,45 @@ async def test_remote_initialization_cancellation_closes_transport() -> None:
         await asyncio.wait_for(handler_done.wait(), timeout=2.0)
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process liveness assertion")
+async def test_stdio_initialization_cancellation_reaps_owned_process(tmp_path: Path) -> None:
+    """Cancellation during official stdio initialization leaves no child."""
+
+    marker = tmp_path / "stdio.pid"
+    fixture = Path(__file__).parents[1] / "fixtures" / "hanging_stdio_server.py"
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    client = kit.direct(
+        StdioServer(
+            name="hanging-stdio",
+            command=os.sys.executable,
+            args=("-u", str(fixture)),
+            environment={"MCP_PAL_E2E_PID_FILE": str(marker)},
+        ),
+        timeout=30,
+    )
+    entering = asyncio.create_task(client.__aenter__())
+    try:
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+        assert marker.exists(), "stdio fixture did not start"
+        entering.cancel()
+        with pytest.raises(OperationCancelled):
+            await asyncio.wait_for(entering, timeout=5)
+        assert client.final_trace is not None
+        assert client.final_trace.events[-1].payload["outcome"] == "cancelled"
+        pid = int(marker.read_text(encoding="utf-8"))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            await asyncio.sleep(0.02)
+        else:
+            raise AssertionError(f"stdio child {pid} survived cancellation cleanup")
+    finally:
+        await kit.aclose()

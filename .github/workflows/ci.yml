@@ -5,13 +5,15 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: "30 20 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -26,10 +28,11 @@ jobs:
     # Run the complete compatibility matrix after changes land. Pull requests
     # retain the source, lock, package, installer, and standalone CLI gates
     # below without paying for both full Python suites on every update.
-    if: github.event_name != 'pull_request'
+    needs: quality
+    if: github.event_name != 'pull_request' && needs.quality.outputs.any == 'true'
     name: Post-merge tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -50,112 +53,95 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
-      - name: Install locked workspace
-        run: uv sync --locked --all-packages --all-extras --all-groups
+      - name: Install locked test workspace
+        run: >-
+          uv sync --locked --all-packages
+          --extra pytest --extra storage --extra property --extra legacy-ui
+          --group test --group typecheck
 
       - name: Run SDK tests without live providers
-        run: >-
-          uv run --locked --project sdk --all-extras --all-groups
-          pytest -q -m "not live" sdk/tests
+        if: needs.quality.outputs.sdk == 'true'
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/sdk-tests.log"
+          set +e
+          timeout 8m uv run --locked --no-sync --project sdk \
+            pytest -q -n 2 --dist worksteal --durations=25 --durations-min=1 \
+            -m "not live" sdk/tests 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+          set -e
+          slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
+          [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
+          {
+            echo '### SDK tests (slowest tests over 1s)'
+            printf '%s\n' "$slowest"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Run SDK examples without live providers
-        run: >-
-          uv run --locked --project sdk --all-extras --all-groups
-          pytest -q -m "not live" sdk/examples/tests
+        if: needs.quality.outputs.sdk == 'true'
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/sdk-examples.log"
+          set +e
+          timeout 3m uv run --locked --no-sync --project sdk \
+            pytest -q -n 2 --dist worksteal --durations=25 --durations-min=1 \
+            -m "not live" sdk/examples/tests 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+          set -e
+          slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
+          [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
+          {
+            echo '### SDK examples (slowest tests over 1s)'
+            printf '%s\n' "$slowest"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Run application tests without live providers
-        run: >-
-          uv run --locked --project app --extra legacy-ui --group test --group typecheck
-          pytest -q -m "not live" app/tests
+        if: needs.quality.outputs.app == 'true'
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/application-tests.log"
+          set +e
+          timeout 6m uv run --locked --no-sync --project app \
+            pytest -q -n 2 --dist worksteal \
+            --durations=25 --durations-min=1 -m "not live" app/tests 2>&1 \
+            | tee "$log"
+          status=${PIPESTATUS[0]}
+          set -e
+          slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
+          [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
+          {
+            echo '### Application tests (slowest tests over 1s)'
+            printf '%s\n' "$slowest"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Run standalone CLI tests
-        run: uv run --locked --project cli pytest -q cli/tests
+        if: needs.quality.outputs.cli == 'true'
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/cli-tests.log"
+          set +e
+          timeout 2m uv run --locked --no-sync --project cli pytest -q \
+            --durations=25 --durations-min=1 cli/tests 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+          set -e
+          slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
+          [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
+          {
+            echo '### CLI tests (slowest tests over 1s)'
+            printf '%s\n' "$slowest"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
   quality:
     name: Source and lock checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install uv and Python
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          version: "0.12.7"
-          python-version: "3.13"
-          enable-cache: true
-
-      - name: Verify lockfile
-        run: uv lock --check
-
-      - name: Install locked workspace
-        run: uv sync --locked --all-packages --all-extras --all-groups
-
-      - name: Compile SDK
-        run: uv run --locked --project sdk python -m compileall -q sdk/src
-
-      - name: Compile application
-        run: uv run --locked --project app python -m compileall -q app/src
-
-      - name: Import application
-        run: uv run --locked --project app python -c "from mcp_pal_app.main import app; print(app.title)"
-
-      - name: Compile CLI
-        run: uv run --locked --project cli python -m compileall -q cli/src
-
-      - name: Import CLI
-        run: uv run --locked --project cli python -c "import mcp_pal_cli; print(mcp_pal_cli.__name__)"
-
-  windows-installer:
-    name: Windows installer syntax
-    runs-on: windows-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Render and parse PowerShell installer
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $project = Get-Content -Raw -LiteralPath 'cli/pyproject.toml'
-          $versionMatch = [regex]::Match($project, '(?m)^version = "([^"]+)"\r?$')
-          if (-not $versionMatch.Success) {
-            throw 'Could not read the CLI version'
-          }
-          $version = $versionMatch.Groups[1].Value
-          $outputDir = Join-Path $env:RUNNER_TEMP 'mcp-pal-installer'
-          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
-          $installer = Join-Path $outputDir 'install.ps1'
-          $template = Get-Content -Raw -LiteralPath 'scripts/install.ps1.in'
-          if (($template.Split('@MCP_PAL_VERSION@').Count - 1) -ne 1) {
-            throw 'PowerShell installer template must contain one version placeholder'
-          }
-          Set-Content -NoNewline -LiteralPath $installer -Value (
-            $template.Replace('@MCP_PAL_VERSION@', $version)
-          )
-
-          $tokens = $null
-          $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            $installer,
-            [ref] $tokens,
-            [ref] $parseErrors
-          ) | Out-Null
-          if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
-            $messages = $parseErrors | ForEach-Object { $_.Message }
-            throw "PowerShell parser found syntax errors in ${installer}: $($messages -join '; ')"
-          }
-
-  package:
-    name: Package smoke tests
+    outputs:
+      sdk: ${{ steps.scope.outputs.sdk }}
+      app: ${{ steps.scope.outputs.app }}
+      cli: ${{ steps.scope.outputs.cli }}
+      any: ${{ steps.scope.outputs.any }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -164,6 +150,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
 
       - name: Install uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -172,16 +159,79 @@ jobs:
           python-version: "3.13"
           enable-cache: true
 
+      - name: Install locked workspace base dependencies
+        run: uv sync --locked --all-packages --no-dev
+
+      - name: Select affected compatibility suites
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == schedule || "$EVENT_NAME" == workflow_dispatch ]]; then
+            python scripts/ci_scope.py --all >> "$GITHUB_OUTPUT"
+          else
+            python scripts/ci_scope.py --base "$BASE_SHA" --head "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify lockfile
+        run: uv lock --check
+
+      - name: Compile SDK
+        run: uv run --locked --no-sync --project sdk python -m compileall -q sdk/src
+
+      - name: Compile application
+        run: uv run --locked --no-sync --project app python -m compileall -q app/src
+
+      - name: Import application
+        run: uv run --locked --no-sync --project app python -c "from mcp_pal_app.main import app; print(app.title)"
+
+      - name: Compile CLI
+        run: uv run --locked --no-sync --project cli python -m compileall -q cli/src
+
+      - name: Import CLI
+        run: uv run --locked --no-sync --project cli python -c "import mcp_pal_cli; print(mcp_pal_cli.__name__)"
+
+      - name: Render and parse PowerShell installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $project = Get-Content -Raw -LiteralPath 'cli/pyproject.toml'
+          $versionMatch = [regex]::Match($project, '(?m)^version = "([^"]+)"\r?$')
+          if (-not $versionMatch.Success) { throw 'Could not read the CLI version' }
+          $version = $versionMatch.Groups[1].Value
+          $outputDir = Join-Path $env:RUNNER_TEMP 'mcp-pal-installer'
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+          $installer = Join-Path $outputDir 'install.ps1'
+          $template = Get-Content -Raw -LiteralPath 'scripts/install.ps1.in'
+          if (($template.Split('@MCP_PAL_VERSION@').Count - 1) -ne 1) {
+            throw 'PowerShell installer template must contain one version placeholder'
+          }
+          Set-Content -NoNewline -LiteralPath $installer -Value ($template.Replace('@MCP_PAL_VERSION@', $version))
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($installer, [ref] $tokens, [ref] $parseErrors) | Out-Null
+          if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+            $messages = $parseErrors | ForEach-Object { $_.Message }
+            throw "PowerShell parser found syntax errors in ${installer}: $($messages -join '; ')"
+          }
+
       - name: Build application distributions
+        if: github.event_name != 'schedule'
         run: uv build --project app
 
       - name: Build and smoke-test SDK distributions
-        run: uv run --locked --project sdk --all-extras python scripts/check_packaging.py
+        if: github.event_name != 'schedule'
+        run: uv run --locked --no-sync --project sdk python scripts/check_packaging.py
 
   cli-standalone:
     name: Standalone CLI gate
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    if: github.event_name != 'schedule'
+    timeout-minutes: 10
 
     steps:
       - name: Check out repository

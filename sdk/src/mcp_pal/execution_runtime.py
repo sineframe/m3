@@ -253,6 +253,11 @@ class AsyncExecutionHandle:
             )
         self._terminal = asyncio.Event()
         self._cancel_requested = False
+        # Cancellation may be requested concurrently by the public handle
+        # and the durable-store watcher.  Keep the transition atomic so the
+        # owner task receives one cancellation request and its finally path
+        # remains the sole cleanup authority.
+        self._task_cancel_issued = False
         self._bridge: DirectTraceBridge | None = None
         self._workspace: WorkspaceManager | None = None
         self._workspace_artifacts: tuple[Any, ...] = ()
@@ -334,8 +339,17 @@ class AsyncExecutionHandle:
         # Give the coroutine a chance to enter its guarded body before
         # cancelling it. This makes queued cancellation terminal and durable.
         await asyncio.sleep(0)
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
+        task = self._task
+        if task is not None and not task.done():
+            async with self._state_lock:
+                # The transition is recorded immediately beside the actual
+                # task cancellation. If the caller is interrupted above, or
+                # durable persistence fails, a later cancel() can retry.
+                issue_task_cancel = not self._task_cancel_issued
+                if issue_task_cancel:
+                    self._task_cancel_issued = True
+            if issue_task_cancel:
+                task.cancel()
         await self._terminal.wait()
 
     async def _hydrate_terminal(self) -> None:
@@ -412,8 +426,13 @@ class AsyncExecutionHandle:
             except Exception:
                 requested = False
             if requested:
-                self._cancel_requested = True
-                if not task.done():
+                async with self._state_lock:
+                    if self._terminal.is_set():
+                        return
+                    self._cancel_requested = True
+                    issue_task_cancel = not self._task_cancel_issued
+                    self._task_cancel_issued = True
+                if issue_task_cancel and not task.done():
                     task.cancel()
                 return
             await asyncio.sleep(0.02)
