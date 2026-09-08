@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $Version = '@MCP_PAL_VERSION@'
-$Repository = 'rishhavv/mcp-pal'
+$Repository = 'mcppal/mcp-pal'
 $ReleaseTag = "v$Version"
 $HasBaseUrl = [bool]$env:MCP_PAL_RELEASE_BASE_URL
 $BaseUrl = if ($env:MCP_PAL_RELEASE_BASE_URL) { $env:MCP_PAL_RELEASE_BASE_URL.TrimEnd('/') } else { "https://github.com/$Repository/releases/download/v$Version" }

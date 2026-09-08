@@ -26,7 +26,7 @@ Do not guess a version, and do not silently replace an existing CLI with a
 different release.
 
 ```bash
-gh release list --repo rishhavv/mcp-pal --limit 10
+gh release list --repo mcppal/mcp-pal --limit 10
 ```
 
 For a project that already pins MCP Pal, select the matching release. For a new
@@ -37,7 +37,7 @@ list; releases are currently prereleases, so do not rely on GitHub's implicit
 On macOS or Linux, replace `X.Y.Z` with that exact version:
 
 ```bash
-gh release download vX.Y.Z --repo rishhavv/mcp-pal \
+gh release download vX.Y.Z --repo mcppal/mcp-pal \
   --pattern install.sh --output install.sh
 sh install.sh
 rm install.sh
@@ -46,7 +46,7 @@ rm install.sh
 On Windows PowerShell:
 
 ```powershell
-gh release download vX.Y.Z --repo rishhavv/mcp-pal `
+gh release download vX.Y.Z --repo mcppal/mcp-pal `
   --pattern install.ps1 --output install.ps1
 .\install.ps1
 Remove-Item install.ps1

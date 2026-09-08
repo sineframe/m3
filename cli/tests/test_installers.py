@@ -155,7 +155,7 @@ pattern=
 output=
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --repo) [ "$2" = 'rishhavv/mcp-pal' ] || exit 21; shift 2 ;;
+    --repo) [ "$2" = 'mcppal/mcp-pal' ] || exit 21; shift 2 ;;
     --pattern) pattern=$2; shift 2 ;;
     --output) output=$2; shift 2 ;;
     *) exit 22 ;;
@@ -219,7 +219,7 @@ def test_private_install_docs_use_exact_authenticated_assets() -> None:
     contents = (ROOT / "cli" / "README.md").read_text(encoding="utf-8")
     assert "gh auth login" in contents
     assert (
-        "gh release download vX.Y.Z --repo rishhavv/mcp-pal "
+        "gh release download vX.Y.Z --repo mcppal/mcp-pal "
         "--pattern install.sh --output install.sh"
     ) in contents
     assert "--pattern install.sh --output install.sh" in contents

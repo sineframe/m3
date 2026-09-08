@@ -53,7 +53,7 @@ direct pytest execution, define SDK tests, and assert captured tool evidence.
 For Codex, ask the agent to install it from this repository:
 
 > Use `$skill-installer` to install the skill from GitHub repository
-> `rishhavv/mcp-pal`, path `skills/testing-with-mcp-pal`.
+> `mcppal/mcp-pal`, path `skills/testing-with-mcp-pal`.
 
 The repository is private, so the agent needs access through existing Git
 credentials or `GITHUB_TOKEN`/`GH_TOKEN`. The installed skill becomes available

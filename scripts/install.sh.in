@@ -5,7 +5,7 @@ set -eu
 # unique: scripts/render_cli_installers.py rejects templates that do not have
 # exactly one occurrence.
 VERSION='@MCP_PAL_VERSION@'
-REPOSITORY='rishhavv/mcp-pal'
+REPOSITORY='mcppal/mcp-pal'
 RELEASE_TAG="v${VERSION}"
 HAS_BASE_URL=0
 [ -n "${MCP_PAL_RELEASE_BASE_URL:-}" ] && HAS_BASE_URL=1

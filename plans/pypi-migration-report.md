@@ -180,7 +180,7 @@ organization if ownership should outlive one person's account.
 For `mcp-pal` and `mcp-pal-cli`, configure a pending GitHub Actions publisher
 with:
 
-- owner: `rishhavv`;
+- owner: `mcppal`;
 - repository: `mcp-pal`;
 - workflow filename: the final publishing workflow filename, recommended
   `.github/workflows/release-pypi.yml`;

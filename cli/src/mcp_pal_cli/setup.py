@@ -20,7 +20,7 @@ import tempfile
 from typing import Any, Mapping
 from urllib.request import Request, urlopen
 
-REPOSITORY = "rishhavv/mcp-pal"
+REPOSITORY = "mcppal/mcp-pal"
 _RELEASE_BASE_ENV = "MCP_PAL_RELEASE_BASE_URL"
 _CHECKSUMS = "SHA256SUMS"
 _VALIDATE_SCRIPT = r'''
