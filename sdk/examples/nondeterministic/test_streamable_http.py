@@ -6,8 +6,9 @@ Run this separately from the deterministic examples:
       pytest -q sdk/examples/nondeterministic/test_streamable_http.py
 
 The endpoint is external and may change independently of this repository.
-The two OpenCode harness tests are nondeterministic and may incur provider
-usage.
+The OpenCode and Codex ACP harness tests are nondeterministic and may incur
+provider usage. The Codex test also requires ``codex-acp`` on ``PATH``; install
+it with ``npm install -g @agentclientprotocol/codex-acp``.
 """
 
 from __future__ import annotations
@@ -15,24 +16,27 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
-from mcp_pal import MCPTestKit, expect
 from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
 from mcp_pal.sync_api import ToolCallResult
 from mcp_pal.types import (
+    ACPAgent,
     AgentSpec,
     ExecutionOutcome,
+    HTTPServer,
+    NativeToolPolicy,
     OpenCode,
     RestrictiveToolPolicy,
     SecretReference,
     ServerBinding,
-    HTTPServer,
     TransportKind,
     TrustLevel,
     TurnOutcome,
 )
 
+from mcp_pal import MCPTestKit, expect
 
 pytestmark = pytest.mark.e2e
 
@@ -103,9 +107,56 @@ def _opencode(executable: str, model: str) -> OpenCode:
 
 
 def _deepwiki_server() -> HTTPServer:
-    return HTTPServer(
-        name="deepwiki", url=_DEEPWIKI_URL, trust=TrustLevel.PUBLIC
+    return HTTPServer(name="deepwiki", url=_DEEPWIKI_URL, trust=TrustLevel.PUBLIC)
+
+
+def _codex_acp(codex_acp: str, codex: str, codex_home: Path) -> ACPAgent:
+    model = os.environ.get("MCP_PAL_CODEX_MODEL")
+    runtime_paths = {str(Path(codex_acp).parent), str(Path(codex).parent)}
+    if node := shutil.which("node"):
+        # The npm-distributed codex-acp executable has an env/node shebang.
+        runtime_paths.add(str(Path(node).parent))
+    environment = {
+        # codex-acp is the ACP bridge; CODEX_PATH makes it use the Codex binary
+        # under test instead of the version bundled with the bridge.
+        "CODEX_PATH": codex,
+        "CODEX_HOME": str(codex_home),
+        "NO_BROWSER": "1",
+        "PATH": os.pathsep.join((*sorted(runtime_paths), os.defpath)),
+    }
+    for name in ("CODEX_API_KEY", "OPENAI_API_KEY"):
+        if os.environ.get(name):
+            environment[name] = f"${{{name}}}"
+    return ACPAgent(
+        model=model or "codex-default",
+        manifest={
+            "command": codex_acp,
+            "protocol": "acp",
+            "protocol_version": 1,
+            "env": environment,
+        },
+        session_config={"model": model} if model else {},
     )
+
+
+def _require_codex_acp() -> tuple[str, str, Path]:
+    codex_acp = shutil.which(
+        os.environ.get("MCP_PAL_CODEX_ACP_EXECUTABLE", "codex-acp")
+    )
+    if codex_acp is None:
+        pytest.skip("codex-acp is not installed")
+    codex = shutil.which(os.environ.get("MCP_PAL_CODEX_EXECUTABLE", "codex"))
+    if codex is None:
+        pytest.skip("Codex is not installed")
+    codex_home = Path(
+        os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+    ).expanduser()
+    if (
+        not any(os.environ.get(name) for name in ("CODEX_API_KEY", "OPENAI_API_KEY"))
+        and not (codex_home / "auth.json").is_file()
+    ):
+        pytest.skip("Codex is not logged in and no API key is available")
+    return codex_acp, codex, codex_home
 
 
 def _require_opencode() -> tuple[str, str]:
@@ -114,9 +165,7 @@ def _require_opencode() -> tuple[str, str]:
         pytest.skip("OpenCode is not installed")
     if not os.environ.get("OPENCODE_API_KEY"):
         pytest.skip("OPENCODE_API_KEY is not available")
-    return executable, os.environ.get(
-        "MCP_PAL_OPENCODE_MODEL", "opencode/big-pickle"
-    )
+    return executable, os.environ.get("MCP_PAL_OPENCODE_MODEL", "opencode/big-pickle")
 
 
 def test_opencode_selects_read_wiki_structure() -> None:
@@ -153,6 +202,49 @@ def test_opencode_selects_read_wiki_structure() -> None:
         called = {
             call.tool.value
             for call in result.trace_view.tool_calls
+            if call.turn_id == turn.snapshot.turn_id
+        }
+        assert called.isdisjoint(
+            set(_DOCUMENTED_DEEPWIKI_TOOLS) - {"read_wiki_structure"}
+        )
+
+
+def test_codex_acp_selects_read_wiki_structure() -> None:
+    codex_acp, codex, codex_home = _require_codex_acp()
+    server = _deepwiki_server()
+    spec = AgentSpec(
+        harness=_codex_acp(codex_acp, codex, codex_home),
+        servers=(ServerBinding(server=server, alias="deepwiki"),),
+        tool_policy=NativeToolPolicy(
+            harness="acp",
+            policy={"mode": "agent_default", "server": "deepwiki"},
+            nonportable_reason="Codex ACP controls MCP tool selection",
+        ),
+    )
+    with MCPTestKit(env={}) as kit:
+        with kit.agent_session(spec) as session:
+            turn = session.send(
+                "Use only the deepwiki read_wiki_structure MCP tool to retrieve "
+                "the documentation topic hierarchy for "
+                "modelcontextprotocol/python-sdk. Report its top-level sections "
+                "without using shell commands or web search.",
+                timeout=120,
+            )
+
+        assert turn.snapshot.outcome is TurnOutcome.COMPLETED, (
+            turn.error.model_dump(mode="json") if turn.error is not None else None
+        )
+        expect(session.result).to_have_tool_call(
+            "read_wiki_structure",
+            turn=turn,
+            server="deepwiki",
+            arguments={"repoName": "modelcontextprotocol/python-sdk"},
+            status="success",
+            count=1,
+        )
+        called = {
+            call.tool.value
+            for call in session.result.trace_view.tool_calls
             if call.turn_id == turn.snapshot.turn_id
         }
         assert called.isdisjoint(
