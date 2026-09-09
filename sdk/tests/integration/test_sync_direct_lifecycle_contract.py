@@ -19,6 +19,9 @@ from mcp_pal.errors import OperationCancelled, OperationTimeout, UnsupportedFeat
 from mcp_pal.types import InProcessServer, ProtocolConstraint, StdioServer
 
 
+pytestmark = pytest.mark.process_lifecycle
+
+
 _ROOT = Path(__file__).parents[2]
 _STDIO_FIXTURE = Path(__file__).parents[1] / "fixtures" / "matrix_stdio_server.py"
 _SLOW_STARTED = threading.Event()

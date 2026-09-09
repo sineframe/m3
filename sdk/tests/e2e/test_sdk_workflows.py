@@ -14,12 +14,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import selectors
+import queue
 import signal
 import subprocess
 import sys
+import threading
 import time
-from typing import IO, Iterator
+from typing import IO, Iterator, Sequence
 
 import pytest
 from pydantic import TypeAdapter
@@ -74,7 +75,7 @@ from mcp_pal.types import (
 )
 
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.process_lifecycle]
 
 _SDK_ROOT = Path(__file__).parents[2]
 _REPOSITORY_ROOT = _SDK_ROOT.parent
@@ -83,6 +84,11 @@ _MATRIX_SERVER = _FIXTURES / "matrix_stdio_server.py"
 _OBSERVING_ACP_BRIDGE = _FIXTURES / "observing_acp_bridge.py"
 _PERSISTENT_WORKER = _FIXTURES / "persistent_sdk_worker.py"
 _HANGING_SERVER = _FIXTURES / "hanging_stdio_server.py"
+_WORKER_READY_TIMEOUT = 30.0
+_WORKER_SHUTDOWN_TIMEOUT = 15.0
+_WORKER_KILL_TIMEOUT = 5.0
+_WORKER_OUTPUT_LIMIT = 16_384
+_MCP_MARKER_TIMEOUT = 30.0
 
 
 def _stdio_server(path: Path = _MATRIX_SERVER, *, environment: dict[str, str] | None = None) -> StdioServer:
@@ -218,49 +224,187 @@ def _authenticated_acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentSpec:
     )
 
 
-def _wait_for_line(stream: IO[str], timeout: float) -> str:
-    selector = selectors.DefaultSelector()
-    selector.register(stream, selectors.EVENT_READ)
+def _capture_stream(
+    stream: IO[str], output: list[str], output_done: threading.Event, lines: queue.Queue[str] | None = None,
+) -> None:
+    """Drain a worker pipe continuously so a noisy child cannot block startup."""
+
+    captured = 0
     try:
-        if not selector.select(timeout):
-            raise AssertionError("persistent SDK worker did not become ready")
-        return stream.readline().strip()
+        for line in iter(stream.readline, ""):
+            if captured < _WORKER_OUTPUT_LIMIT:
+                remaining = _WORKER_OUTPUT_LIMIT - captured
+                chunk = line[:remaining]
+                output.append(chunk)
+                captured += len(chunk)
+            if lines is not None:
+                try:
+                    lines.put_nowait(line)
+                except queue.Full:
+                    # Readiness only needs the first handful of lines.  Keep
+                    # draining the OS pipe even if a broken worker is noisy.
+                    pass
+    except (OSError, ValueError):
+        # Cleanup may close a pipe while its reader is waking up.  The process
+        # status and the output captured before close remain useful diagnostics.
+        pass
     finally:
-        selector.close()
+        output_done.set()
+
+
+def _output_text(output: list[str]) -> str:
+    text = "".join(output).strip()
+    return text if text else "<empty>"
+
+
+def _wait_for_line(
+    process: subprocess.Popen[str], stdout_lines: queue.Queue[str], stdout_output: list[str], stderr_output: list[str],
+    stdout_done: threading.Event, stderr_done: threading.Event, timeout: float,
+) -> str:
+    """Wait for readiness while reporting early exits and bounded diagnostics."""
+
+    deadline = time.monotonic() + timeout
+    while True:
+        returncode = process.poll()
+        if returncode is not None:
+            # The reader threads usually observe EOF before poll() does, but
+            # allow a short handoff so the failure includes the final stderr.
+            stderr_done.wait(0.2)
+            raise AssertionError(
+                "persistent SDK worker exited before becoming ready "
+                f"(exit code {returncode}); stderr: {_output_text(stderr_output)}; "
+                f"stdout: {_output_text(stdout_output)}"
+            )
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            returncode = process.poll()
+            raise AssertionError(
+                "timed out waiting for persistent SDK worker readiness "
+                f"after {timeout:.1f}s (exit code {returncode!r}); "
+                f"stderr: {_output_text(stderr_output)}; stdout: {_output_text(stdout_output)}"
+            )
+        try:
+            line = stdout_lines.get(timeout=min(remaining, 0.05))
+        except queue.Empty:
+            continue
+        if line.strip() == "READY":
+            return line.strip()
 
 
 @contextmanager
-def _persistent_worker(database: Path) -> Iterator[subprocess.Popen[str]]:
+def _persistent_worker(
+    database: Path,
+    *,
+    command: Sequence[str] | None = None,
+    ready_timeout: float = _WORKER_READY_TIMEOUT,
+) -> Iterator[subprocess.Popen[str]]:
+    worker_command = list(command or (sys.executable, str(_PERSISTENT_WORKER), str(database.resolve())))
     process = subprocess.Popen(
-        [sys.executable, str(_PERSISTENT_WORKER), str(database.resolve())],
+        worker_command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=os.name != "nt",
     )
-    assert process.stdout is not None
+    assert process.stdout is not None and process.stderr is not None
+    stdout_output: list[str] = []
+    stderr_output: list[str] = []
+    stdout_lines: queue.Queue[str] = queue.Queue(maxsize=100)
+    stdout_done = threading.Event()
+    stderr_done = threading.Event()
+    stdout_reader = threading.Thread(
+        target=_capture_stream,
+        args=(process.stdout, stdout_output, stdout_done, stdout_lines),
+        name="mcp-pal-worker-stdout",
+        daemon=True,
+    )
+    stderr_reader = threading.Thread(
+        target=_capture_stream,
+        args=(process.stderr, stderr_output, stderr_done),
+        name="mcp-pal-worker-stderr",
+        daemon=True,
+    )
+    stdout_reader.start()
+    stderr_reader.start()
+    ready = False
     try:
-        assert _wait_for_line(process.stdout, 10) == "READY"
+        assert _wait_for_line(
+            process, stdout_lines, stdout_output, stderr_output,
+            stdout_done, stderr_done, ready_timeout,
+        ) == "READY"
+        ready = True
         yield process
     finally:
-        if process.stdin is not None and process.poll() is None:
+        if not ready and process.poll() is None:
+            # A readiness failure owns a worker that never entered its normal
+            # stdin-driven lifecycle.  Kill it promptly so diagnostics do not
+            # turn a bounded startup assertion into a shutdown timeout.
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        elif process.stdin is not None and process.poll() is None:
             try:
                 process.stdin.write("\n")
                 process.stdin.flush()
             except (BrokenPipeError, OSError):
                 pass
         try:
-            process.wait(timeout=10)
+            process.wait(timeout=_WORKER_SHUTDOWN_TIMEOUT)
         except subprocess.TimeoutExpired:
             if os.name != "nt":
                 os.killpg(process.pid, signal.SIGKILL)
             else:
                 process.kill()
-            process.wait(timeout=5)
+            process.wait(timeout=_WORKER_KILL_TIMEOUT)
+        finally:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+            stdout_reader.join(timeout=1)
+            stderr_reader.join(timeout=1)
 
 
-def _wait_for_file(path: Path, timeout: float = 10) -> None:
+def test_persistent_worker_early_exit_reports_exit_code_and_stderr(tmp_path: Path) -> None:
+    script = tmp_path / "early-exit-worker.py"
+    script.write_text(
+        "import sys\n"
+        "print('worker failed during startup', file=sys.stderr, flush=True)\n"
+        "raise SystemExit(23)\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError, match=r"exit code 23.*worker failed during startup"):
+        with _persistent_worker(
+            tmp_path / "worker.sqlite",
+            command=(sys.executable, str(script)),
+            ready_timeout=1,
+        ):
+            raise AssertionError("the worker unexpectedly became ready")
+
+
+def test_persistent_worker_timeout_includes_stderr_diagnostics_and_cleans_up(tmp_path: Path) -> None:
+    script = tmp_path / "stalled-worker.py"
+    script.write_text(
+        "import time\n"
+        "import sys\n"
+        "print('worker is stalled', file=sys.stderr, flush=True)\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError, match=r"timed out.*stderr: worker is stalled"):
+        with _persistent_worker(
+            tmp_path / "worker.sqlite",
+            command=(sys.executable, str(script)),
+            ready_timeout=0.05,
+        ):
+            raise AssertionError("the worker unexpectedly became ready")
+
+
+def _wait_for_file(path: Path, timeout: float = _MCP_MARKER_TIMEOUT) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if path.is_file():
@@ -994,8 +1138,12 @@ async def test_separate_worker_cancel_interrupts_owned_acp_and_mcp_processes(
         )
         try:
             handle = producer.submit(spec)
-            await asyncio.wait_for(asyncio.to_thread(_wait_for_file, acp_pid_file), timeout=8)
-            await asyncio.wait_for(asyncio.to_thread(_wait_for_file, mcp_pid_file), timeout=8)
+            await asyncio.wait_for(
+                asyncio.to_thread(_wait_for_file, acp_pid_file), timeout=_MCP_MARKER_TIMEOUT + 5
+            )
+            await asyncio.wait_for(
+                asyncio.to_thread(_wait_for_file, mcp_pid_file), timeout=_MCP_MARKER_TIMEOUT + 5
+            )
             acp_pid = int(acp_pid_file.read_text(encoding="utf-8"))
             mcp_pid = int(mcp_pid_file.read_text(encoding="utf-8"))
             cancel_started = time.monotonic()

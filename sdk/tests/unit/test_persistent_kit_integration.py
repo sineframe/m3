@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.testing import FaultInjector
 from mcp_pal.types import DirectSpec, ExecutionOutcome, Ping, PingResult, ServerBinding
+
+
+pytestmark = pytest.mark.process_lifecycle
 
 
 def _spec() -> DirectSpec:

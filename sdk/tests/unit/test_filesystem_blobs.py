@@ -122,6 +122,7 @@ def test_read_bound_rejects_gzip_bomb_without_allocating_unbounded_output(tmp_pa
         store.read(digest)
 
 
+@pytest.mark.process_lifecycle
 def test_concurrent_process_writes_publish_one_valid_shared_blob(tmp_path: Path) -> None:
     root = str(tmp_path / "blobs")
     script = (

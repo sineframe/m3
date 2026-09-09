@@ -34,7 +34,7 @@ from mcp_pal.types import (
 
 from mcp_pal import MCPTestKit, expect
 
-pytestmark = [pytest.mark.e2e, pytest.mark.live]
+pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.process_lifecycle]
 
 _SDK_ROOT = Path(__file__).parents[2]
 _REPOSITORY_ROOT = _SDK_ROOT.parent

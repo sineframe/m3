@@ -7,6 +7,11 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
+
+pytestmark = pytest.mark.process_lifecycle
+
 
 _SDK_ROOT = Path(__file__).parents[2]
 _SRC_ROOT = _SDK_ROOT / "src"

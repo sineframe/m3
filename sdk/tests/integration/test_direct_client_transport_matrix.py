@@ -18,6 +18,9 @@ from mcp_pal.async_api import AsyncDirectClient, AsyncMCPTestKit, CallToolResult
 from mcp_pal.types import InProcessServer, SSEServer, StdioServer, HTTPServer, TrustLevel
 
 
+pytestmark = pytest.mark.process_lifecycle
+
+
 _ROOT = Path(__file__).parents[2]
 _STDIO_FIXTURE = Path(__file__).parents[1] / "fixtures" / "matrix_stdio_server.py"
 TransportKind = Literal["inprocess", "stdio", "streamable_http", "sse"]

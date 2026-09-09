@@ -47,6 +47,9 @@ from mcp_pal.types import (
 from mcp_pal.observability import ACPTrace, ObservationReason, ObservationState
 
 
+pytestmark = pytest.mark.process_lifecycle
+
+
 def _agent(path: Path) -> str:
     path.write_text(
         """#!/usr/bin/env python3

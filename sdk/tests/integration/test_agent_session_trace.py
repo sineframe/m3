@@ -35,6 +35,9 @@ from mcp_pal.types import (
 )
 
 
+pytestmark = pytest.mark.process_lifecycle
+
+
 def _spec(*, message: str | None = None) -> AgentSpec:
     return AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),

@@ -62,8 +62,10 @@ from mcp_pal.types import (
     TransportKind,
     TurnId,
 )
-
 from mcp_pal.harness import default_adapters
+
+
+pytestmark = pytest.mark.process_lifecycle
 
 
 def _spec() -> AgentSpec:

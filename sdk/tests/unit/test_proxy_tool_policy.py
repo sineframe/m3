@@ -125,6 +125,7 @@ def test_unsafe_tool_identity_fails_closed_without_validation_error() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_policy_is_a_one_shot_handoff(tmp_path: Path) -> None:
     unrelated = tmp_path / "unrelated.policy.json"
     unrelated.write_text("keep", encoding="utf-8")
@@ -173,6 +174,7 @@ async def test_capture_reports_policy_proof_only_for_enforcing_transports(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_policy_handoff_refuses_a_preexisting_symlink(tmp_path: Path) -> None:
     target = tmp_path / "target.json"
     target.write_text("unchanged", encoding="utf-8")
@@ -204,6 +206,7 @@ async def test_stdio_policy_handoff_refuses_a_preexisting_symlink(tmp_path: Path
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_policy_blocks_child_before_side_effect_and_returns_jsonrpc_error(tmp_path: Path) -> None:
     marker = tmp_path / "called"
     child = tmp_path / "child.py"

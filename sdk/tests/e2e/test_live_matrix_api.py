@@ -14,7 +14,7 @@ from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
 from mcp_pal.types import ClaudeCode, OpenCode, SecretReference, StdioServer
 
 
-pytestmark = [pytest.mark.e2e, pytest.mark.live]
+pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.process_lifecycle]
 
 _SDK_ROOT = Path(__file__).parents[2]
 _REPOSITORY_ROOT = _SDK_ROOT.parent

@@ -67,13 +67,31 @@ jobs:
           set +e
           timeout 8m uv run --locked --no-sync --project sdk \
             pytest -q -n 2 --dist worksteal --durations=25 --durations-min=1 \
-            -m "not live" sdk/tests 2>&1 | tee "$log"
+            -m "not live and not process_lifecycle" sdk/tests 2>&1 | tee "$log"
           status=${PIPESTATUS[0]}
           set -e
           slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
           [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
           {
             echo '### SDK tests (slowest tests over 1s)'
+            printf '%s\n' "$slowest"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Run SDK process lifecycle tests serially
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/sdk-process-lifecycle-tests.log"
+          set +e
+          timeout 8m uv run --locked --no-sync --project sdk \
+            pytest -q --durations=25 --durations-min=1 \
+            -m "not live and process_lifecycle" sdk/tests 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+          set -e
+          slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
+          [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
+          {
+            echo '### SDK process lifecycle tests (slowest tests over 1s)'
             printf '%s\n' "$slowest"
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"

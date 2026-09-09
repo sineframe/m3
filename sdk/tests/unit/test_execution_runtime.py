@@ -43,6 +43,9 @@ from mcp_pal.types import (
 from mcp_pal.workspace import WorkspaceError, WorkspaceManager
 
 
+pytestmark = pytest.mark.process_lifecycle
+
+
 def _spec() -> DirectSpec:
     return DirectSpec(
         servers=(ServerBinding(server=FaultInjector().stdio_server()),),

@@ -25,7 +25,7 @@ from mcp_pal.types import (
 )
 
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.process_lifecycle]
 
 
 def _spec() -> DirectSpec:

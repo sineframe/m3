@@ -416,6 +416,7 @@ async def test_invalid_structured_result_is_model_validation_with_trace_evidence
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_literal_wire_invalid_structured_result_is_sanitized_and_finalized() -> None:
     faults = FaultInjector().invalid_result("tools/call")
     async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
@@ -428,6 +429,7 @@ async def test_literal_wire_invalid_structured_result_is_sanitized_and_finalized
         assert client.final_trace.highest_sequence >= 0
 
 
+@pytest.mark.process_lifecycle
 def test_sync_literal_wire_invalid_structured_result_has_same_contract() -> None:
     faults = FaultInjector().invalid_result("tools/call")
     kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
@@ -444,6 +446,7 @@ def test_sync_literal_wire_invalid_structured_result_has_same_contract() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_fixture_emits_literal_faults_and_bounds_raw_payloads() -> None:
     for configure in ("partial_frame", "malformed", "process_crash"):
         faults = FaultInjector()
@@ -462,6 +465,7 @@ async def test_stdio_fixture_emits_literal_faults_and_bounds_raw_payloads() -> N
             assert len(result.content[-1]["text"]) == 256
 
 
+@pytest.mark.process_lifecycle
 def test_stdio_fixture_is_usable_through_sync_client() -> None:
     faults = FaultInjector().partial_frame("tools/call")
     kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")

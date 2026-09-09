@@ -89,6 +89,7 @@ async def test_in_process_server_exception_can_be_observed_or_sanitized(
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_connection_uses_argv_only_and_owned_cleanup() -> None:
     server = StdioServer(
         name="echo",
@@ -104,6 +105,7 @@ async def test_stdio_connection_uses_argv_only_and_owned_cleanup() -> None:
     await connection.close()
 
 
+@pytest.mark.process_lifecycle
 def test_stdio_environment_secret_observer_classifies_api_keys_and_references(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -135,6 +137,7 @@ def test_stdio_environment_secret_observer_classifies_api_keys_and_references(
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_connection_accepts_an_existing_absolute_cwd(tmp_path: Path) -> None:
     server = StdioServer(
         name="echo",
@@ -149,6 +152,7 @@ async def test_stdio_connection_accepts_an_existing_absolute_cwd(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_cwd_requires_an_absolute_existing_directory(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         StdioServer(name="nul", command=sys.executable, cwd="/tmp/\x00cwd")
@@ -165,6 +169,7 @@ async def test_stdio_cwd_requires_an_absolute_existing_directory(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_cleanup_rejects_cross_task_scope_exit() -> None:
     server = StdioServer(
         name="echo",
@@ -181,6 +186,7 @@ async def test_stdio_cleanup_rejects_cross_task_scope_exit() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_startup_errors_are_sanitized() -> None:
     server = StdioServer(name="missing", command="mcp-pal-no-such-executable")
     with pytest.raises(TransportStartupError) as error:
@@ -192,6 +198,7 @@ async def test_stdio_startup_errors_are_sanitized() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_nul_arguments_are_rejected_before_spawn() -> None:
     server = StdioServer(name="invalid", command="python", args=("\x00",))
     with pytest.raises(TransportStartupError):
@@ -199,6 +206,7 @@ async def test_stdio_nul_arguments_are_rejected_before_spawn() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_nul_environment_is_rejected_before_spawn() -> None:
     server = StdioServer(
         name="invalid",
@@ -227,6 +235,7 @@ async def test_close_is_idempotent_and_survives_caller_cancellation() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_secret_resolution_failure_is_partial_and_sanitized() -> None:
     server = StdioServer(
         name="secret",

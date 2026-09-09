@@ -41,10 +41,14 @@ from mcp_pal.types import (
 )
 
 
+pytestmark = pytest.mark.process_lifecycle
+
+
 ROOT = Path(__file__).parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
 MATRIX_SERVER = FIXTURES / "matrix_stdio_server.py"
 HANGING_SERVER = FIXTURES / "hanging_stdio_server.py"
+_PROCESS_MARKER_TIMEOUT = 30.0
 
 
 def _server() -> ServerBinding:
@@ -551,7 +555,7 @@ async def test_r9_direct_cancelled_trace_persists_and_reopens(tmp_path: Path) ->
     kit = AsyncMCPTestKit(store=store, env={}, cwd=ROOT.parent)
     try:
         handle = kit.submit(spec)
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + _PROCESS_MARKER_TIMEOUT
         while not marker.exists() and time.monotonic() < deadline:
             await asyncio.sleep(0.02)
         await handle.cancel()

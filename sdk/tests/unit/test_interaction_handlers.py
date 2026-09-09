@@ -252,6 +252,7 @@ async def test_terminal_resolves_allowlisted_executables_and_does_not_inherit_en
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_terminal_timeout_kills_process_group_and_descendants(tmp_path: Path) -> None:
     script = (
         "import subprocess,sys,time; "

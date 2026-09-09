@@ -22,7 +22,7 @@ from mcp_pal.types import (
 )
 
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.process_lifecycle]
 
 _SDK_ROOT = Path(__file__).parents[2]
 _REPOSITORY_ROOT = _SDK_ROOT.parent

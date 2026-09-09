@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 from mcp_pal import MCPTestKit
 from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase, ToolMatrix
 from mcp_pal.storage import SQLiteExecutionStore
@@ -16,6 +18,9 @@ from mcp_pal.types import (
     StdioServer,
     TurnOutcome,
 )
+
+
+pytestmark = pytest.mark.process_lifecycle
 
 
 _SDK_ROOT = Path(__file__).parents[2]

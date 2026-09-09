@@ -86,6 +86,7 @@ addopts = "-p no:cacheprovider"
 markers = [
   "e2e: black-box SDK workflows that cross real process or persistence boundaries",
   "live: opt-in tests that call a live external provider and may incur cost",
+  "process_lifecycle: tests that launch or assert cleanup of real subprocesses; run serially in CI",
 ]
 
 [build-system]

@@ -318,6 +318,7 @@ async def test_kit_close_from_another_task_reaps_in_process_owner() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_kit_close_from_another_task_reaps_stdio_owner() -> None:
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
     client = kit.direct(

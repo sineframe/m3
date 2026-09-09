@@ -19,6 +19,11 @@ from mcp_pal.transport.direct import TransportConnectionError
 from mcp_pal.types import SecretReference, SSEServer, HTTPServer, StdioServer, TrustLevel
 
 
+pytestmark = pytest.mark.process_lifecycle
+
+_PROCESS_MARKER_TIMEOUT = 30.0
+
+
 _PROTOCOL = "2025-11-25"
 
 
@@ -383,17 +388,17 @@ async def test_stdio_initialization_cancellation_reaps_owned_process(tmp_path: P
     )
     entering = asyncio.create_task(client.__aenter__())
     try:
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + _PROCESS_MARKER_TIMEOUT
         while not marker.exists() and time.monotonic() < deadline:
             await asyncio.sleep(0.01)
         assert marker.exists(), "stdio fixture did not start"
         entering.cancel()
         with pytest.raises(OperationCancelled):
-            await asyncio.wait_for(entering, timeout=5)
+            await asyncio.wait_for(entering, timeout=_PROCESS_MARKER_TIMEOUT)
         assert client.final_trace is not None
         assert client.final_trace.events[-1].payload["outcome"] == "cancelled"
         pid = int(marker.read_text(encoding="utf-8"))
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + _PROCESS_MARKER_TIMEOUT
         while time.monotonic() < deadline:
             try:
                 os.kill(pid, 0)

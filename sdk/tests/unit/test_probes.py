@@ -138,6 +138,7 @@ def test_all_timeout_values_must_be_finite_and_positive(tmp_path: Path) -> None:
             raise AssertionError(f"accepted invalid probe timeout {invalid!r}")
 
 
+@pytest.mark.process_lifecycle
 def test_parent_exit_does_not_leave_grandchild_in_owned_process_group(tmp_path: Path) -> None:
     if os.name != "posix":
         return
@@ -166,6 +167,7 @@ def test_parent_exit_does_not_leave_grandchild_in_owned_process_group(tmp_path: 
         raise AssertionError(f"grandchild {pid} survived probe cleanup")
 
 
+@pytest.mark.process_lifecycle
 def test_normal_parent_exit_still_cleans_owned_grandchild(tmp_path: Path) -> None:
     if os.name != "posix":
         return

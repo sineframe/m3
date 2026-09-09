@@ -19,6 +19,9 @@ from mcp_pal.transport.capture_proxy import McpCaptureManager
 from mcp_pal.types import SecretReference, TransportKind
 
 
+pytestmark = pytest.mark.process_lifecycle
+
+
 def _configuration(
     *,
     connection_id: str,

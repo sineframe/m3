@@ -54,6 +54,7 @@ async def test_in_process_direct_factory_receives_scoped_workspace(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.process_lifecycle
 async def test_stdio_direct_defaults_process_cwd_to_scoped_workspace(tmp_path: Path) -> None:
     script = tmp_path / "workspace_stdio.py"
     script.write_text(
