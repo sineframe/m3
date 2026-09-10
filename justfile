@@ -58,6 +58,15 @@ package-check:
 typecheck:
     PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests/unit/test_typecheck_examples.py
 
+lint:
+    uv run --group lint ruff check .
+
+format:
+    uv run --group lint ruff format .
+
+format-check:
+    uv run --group lint ruff format --check .
+
 # Validate a local ACP manifest. Set MANIFEST to a JSON file (or - for stdin).
 harness-validate MANIFEST="harness.json":
     uv run --project sdk mcp-pal-harness validate {{MANIFEST}} --check-local
@@ -86,7 +95,7 @@ compile:
     uv run --project cli python -m compileall -q cli/src
     uv run --project cli python -c 'import mcp_pal_cli; print(mcp_pal_cli.__name__)'
 
-check: compile
+check: lint compile
 
 diff-check:
     git diff --check

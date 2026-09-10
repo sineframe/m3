@@ -169,10 +169,13 @@ jobs:
           enable-cache: true
 
       - name: Install locked workspace base dependencies
-        run: uv sync --locked --all-packages --no-dev
+        run: uv sync --locked --all-packages --no-dev --group lint
 
       - name: Verify lockfile
         run: uv lock --check
+
+      - name: Lint Python sources
+        run: uv run --locked --no-sync --group lint ruff check .
 
       - name: Compile SDK
         run: uv run --locked --no-sync --project sdk python -m compileall -q sdk/src

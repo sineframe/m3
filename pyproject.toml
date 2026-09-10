@@ -1,6 +1,21 @@
 [tool.uv.workspace]
 members = ["sdk", "app", "cli"]
 
+[dependency-groups]
+lint = [
+  "ruff>=0.16,<1",
+]
+
+[tool.ruff]
+target-version = "py310"
+include = ["*.py", "*.pyi"]
+
+[tool.ruff.lint]
+# Start with Ruff's high-confidence syntax and undefined-name checks. The
+# existing workspace predates Ruff and has a substantial style backlog that
+# can be enabled rule-by-rule without weakening this gate.
+select = ["E9", "F63", "F7", "F82"]
+
 [tool.pytest.ini_options]
 testpaths = ["sdk/tests", "app/tests", "cli/tests"]
 pythonpath = ["sdk/src", "app/src", "cli/src"]

@@ -4,5 +4,8 @@ set -eu
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
+printf '%s\n' 'pre-push: linting Python sources with Ruff'
+uv run --locked --group lint ruff check .
+
 printf '%s\n' 'pre-push: running the complete non-live test suite'
 bash scripts/run_full_tests.sh
