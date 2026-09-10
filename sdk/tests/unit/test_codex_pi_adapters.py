@@ -1,0 +1,1030 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10
+    import tomli as tomllib  # type: ignore[import-not-found, no-redef]
+from pathlib import Path
+
+import pytest
+
+from mcp_pal.agent_session import AsyncAgentSession
+from mcp_pal.harness.codex import (
+    CodexHarnessAdapter,
+    codex_configuration,
+    render_codex_config,
+)
+from mcp_pal.harness.contracts import HarnessLaunch, HarnessTurnRequest
+from mcp_pal.harness.pi import PiHarnessAdapter
+from mcp_pal.harness.pi_extension.bridge import MCPBridge, qualified_tool_name
+from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
+from mcp_pal.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
+from mcp_pal.types import (
+    AgentSpec,
+    Codex,
+    Pi,
+    RestrictiveToolPolicy,
+    SecretReference,
+    ServerBinding,
+    StdioServer,
+    TransportKind,
+)
+from mcp_pal.transport.capture_proxy import McpCaptureManager
+
+
+ROOT = Path(__file__).parents[1]
+CODEX_FIXTURE = ROOT / "fixtures" / "codex_app_server_fixture.py"
+PI_FIXTURE = ROOT / "fixtures" / "pi_rpc_fixture.py"
+
+
+def _launch(
+    harness: object, *, configurations: tuple[HarnessServerConfig, ...] = ()
+) -> HarnessLaunch:
+    spec = AgentSpec(
+        harness=harness,
+        servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
+    )
+    return HarnessLaunch(
+        spec, ServerGroupSnapshot(), configurations, RestrictiveToolPolicy()
+    )
+
+
+@pytest.mark.parametrize(
+    "server,tool",
+    [("orders", "shipping_quote"), ("服务/🚚", "报价 tool"), ("x" * 200, "y" * 200)],
+)
+def test_pi_qualified_names_are_readable_safe_and_bounded(
+    server: str, tool: str
+) -> None:
+    value = qualified_tool_name(server, tool)
+    assert len(value) <= 64
+    assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", value)
+    assert "shipping_quote" in qualified_tool_name("orders", "shipping_quote")
+    assert qualified_tool_name("a-b", "c") != qualified_tool_name("a_b", "c")
+
+
+def test_pi_rejects_tampered_dynamic_tool_map(tmp_path: Path) -> None:
+    adapter = PiHarnessAdapter()
+    adapter._tool_map_path = str(tmp_path / "mapping.json")
+    adapter._tool_servers = {"orders"}
+    (tmp_path / "mapping.json").write_text(
+        json.dumps({"forged": ["orders", "shipping_quote"]})
+    )
+    assert adapter._tool_identity("forged") == (None, "forged")
+    (tmp_path / "mapping.json").write_bytes(b"\xff")
+    assert adapter._tool_identity("forged") == (None, "forged")
+
+
+def test_pi_accepts_bridge_only_dynamic_tool_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server, tool = "remote", "shipping_quote"
+    path = tmp_path / "mapping.json"
+    monkeypatch.setenv("MCP_PAL_PI_TOOL_MAP", str(path))
+    MCPBridge({server: {tool: {"description": "quotes"}}}).list_tools()
+    adapter = PiHarnessAdapter()
+    adapter._tool_map_path = str(path)
+    adapter._tool_servers = {server}
+    assert adapter._tool_identity(qualified_tool_name(server, tool)) == (server, tool)
+
+
+@pytest.mark.asyncio
+async def test_instrumented_http_credentials_do_not_reach_harness_configs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canary = "Bearer harness-secret"
+    monkeypatch.setenv("MCP_PAL_HTTP_SECRET", canary)
+    manager = McpCaptureManager(tmp_path, trusted_private_keys={"remote"})
+    config = HarnessServerConfig(
+        key="remote",
+        transport=TransportKind.STREAMABLE_HTTP,
+        required=True,
+        available=True,
+        connection_id="remote",
+        endpoint="http://127.0.0.1:1/mcp",
+        headers={
+            "Authorization": SecretReference(
+                source="environment", name="MCP_PAL_HTTP_SECRET"
+            )
+        },
+    )
+    try:
+        instrumented = (await manager.instrument((config,)))[0]
+        codex_launch = _launch(
+            Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+            configurations=(instrumented,),
+        )
+        codex = CodexHarnessAdapter(executable=str(CODEX_FIXTURE), environment={})
+        assert canary not in render_codex_config(codex_launch)
+        assert canary not in "\n".join(
+            codex.environment_for_launch(codex_launch, tmp_path).values()
+        )
+        pi_launch = _launch(
+            Pi(model="fixture", executable=str(PI_FIXTURE)),
+            configurations=(instrumented,),
+        )
+        pi = PiHarnessAdapter(executable=str(PI_FIXTURE), environment={})
+        await pi.open(pi_launch)
+        assert canary not in json.dumps(pi._launch_environment or {})
+        await pi.close()
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_native_app_server_handshake_multiturn_and_usage() -> None:
+    launch = _launch(Codex(model="fixture", executable=str(CODEX_FIXTURE)))
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    session = await adapter.open(launch)
+    first = await session.send(HarnessTurnRequest.from_message("one"))
+    second = await session.send(HarnessTurnRequest.from_message("two"))
+    assert first.status == second.status == "completed"
+    assert first.response is not None and first.response.text == "fixture response"
+    assert second.response is not None and second.response.text == "fixture response"
+    assert first.turn_evidence is not None
+    assert any(
+        getattr(item, "name", "") == "turn_id"
+        for item in first.turn_evidence.observations
+    )
+    assert any(
+        getattr(item, "kind", "") == "usage_observed"
+        for item in first.turn_evidence.observations
+    )
+    assert session.snapshot().turns == 2
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_pi_native_rpc_handshake_multiturn_and_usage() -> None:
+    launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
+    adapter = PiHarnessAdapter(
+        executable=str(PI_FIXTURE),
+        environment={"MCP_PAL_PI_FIXTURE_STARTUP_EVENT": "1"},
+    )
+    session = await adapter.open(launch)
+    result = await session.send(HarnessTurnRequest.from_message("hello"))
+    assert result.status == "completed"
+    assert result.response is not None and result.response.text == "fixture response"
+    assert result.turn_evidence is not None
+    assert any(
+        getattr(item, "kind", "") == "usage_observed"
+        for item in result.turn_evidence.observations
+    )
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_pi_error_stop_reason_is_a_failed_turn() -> None:
+    launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
+    adapter = PiHarnessAdapter(
+        executable=str(PI_FIXTURE),
+        environment={"MCP_PAL_PI_FIXTURE_ERROR": "1"},
+    )
+    session = await adapter.open(launch)
+    result = await session.send(HarnessTurnRequest.from_message("hello"))
+    assert result.status == "failed"
+    assert result.response is None
+    assert result.error is not None
+    assert "fixture provider secret" not in result.error.message
+    await session.close()
+
+
+def test_codex_config_is_bounded_and_rejects_sse() -> None:
+    launch = _launch(Codex(model="fixture"))
+    assert "[mcp_servers]" in render_codex_config(launch)
+    assert "mcp_servers" in codex_configuration(launch)
+    sse = HarnessServerConfig(
+        "sse",
+        TransportKind.SSE,
+        True,
+        True,
+        "sse-1",
+        endpoint="https://example.test/events",
+    )
+    with pytest.raises(Exception, match="SSE"):
+        codex_configuration(_launch(Codex(model="fixture"), configurations=(sse,)))
+
+
+def test_codex_secret_references_are_not_rendered_as_secret_values() -> None:
+    config = HarnessServerConfig(
+        "secret",
+        TransportKind.STDIO,
+        True,
+        True,
+        "secret-1",
+        command="server",
+        environment={"TOKEN": SecretReference(source="environment", name="TOKEN")},
+    )
+    rendered = render_codex_config(
+        _launch(Codex(model="fixture"), configurations=(config,))
+    )
+    assert "TOKEN" in rendered
+    assert "secret-value" not in rendered
+
+
+def test_codex_config_preserves_quoted_server_alias() -> None:
+    config = HarnessServerConfig(
+        'a"b\\c\n', TransportKind.STDIO, True, True, "alias-1", command="server"
+    )
+    rendered = render_codex_config(
+        _launch(Codex(model="fixture"), configurations=(config,))
+    )
+    parsed = tomllib.loads(rendered)
+    assert parsed["mcp_servers"]['a"b\\c\n']["command"] == "server"
+
+
+@pytest.mark.asyncio
+async def test_native_cancel_sends_pi_abort_before_cleanup() -> None:
+    class FakeProcess:
+        owner = None
+
+        def __init__(self) -> None:
+            self.frames: list[dict[str, object]] = []
+            self.closed = False
+
+        async def write(self, frame: dict[str, object]) -> None:
+            self.frames.append(frame)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    process = FakeProcess()
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    await adapter._cancel(process)  # type: ignore[arg-type]
+    assert process.frames == [{"type": "abort"}]
+    assert process.closed is False
+
+
+@pytest.mark.asyncio
+async def test_pi_cancel_marks_inflight_turn_cancelled_and_keeps_process() -> None:
+    launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
+    adapter = PiHarnessAdapter(
+        executable=str(PI_FIXTURE), environment={"MCP_PAL_PI_FIXTURE_BLOCK": "1"}
+    )
+    session = await adapter.open(launch)
+    sending = asyncio.create_task(
+        session.send(HarnessTurnRequest.from_message("blocked"))
+    )
+    await asyncio.sleep(0.1)
+    await session.cancel()
+    result = await asyncio.wait_for(sending, timeout=3)
+    assert result.status == "cancelled"
+    assert adapter._process is not None
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_native_derived_observations_redact_runtime_secrets() -> None:
+    class FakeProcess:
+        owner = None
+
+        def __init__(self) -> None:
+            self.frames = [
+                {
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "text_delta",
+                        "delta": "secret-canary",
+                    },
+                    "usage": {},
+                },
+                {"type": "agent_settled"},
+            ]
+
+        async def write(self, frame: object) -> None:
+            del frame
+
+        async def next(self, timeout: float | None = None) -> object:
+            del timeout
+            return self.frames.pop(0)
+
+        async def close(self) -> None:
+            return None
+
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    adapter._runtime_secrets = {"secret-canary"}
+    result = await adapter._send(HarnessTurnRequest.from_message("x"), 1, FakeProcess())  # type: ignore[arg-type]
+    assert result.response is not None
+    assert "secret-canary" not in result.response.text
+    assert all(
+        "secret-canary" not in repr(item) for item in result.turn_evidence.observations
+    )  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_pi_streaming_tool_events_do_not_duplicate_execution_observations() -> (
+    None
+):
+    server, tool = "server / one", "tool.name/with spaces"
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    launch = _launch(
+        Pi(model="fixture", executable=str(PI_FIXTURE)),
+        configurations=(
+            HarnessServerConfig(
+                server,
+                TransportKind.STDIO,
+                True,
+                True,
+                "c",
+                command="fixture",
+                tools=(tool,),
+            ),
+        ),
+    )
+    await adapter.preflight(launch)
+    qualified = qualified_tool_name(server, tool)
+    from datetime import datetime, timezone
+
+    observations: list[object] = []
+    reported_calls: list[dict[str, object]] = []
+    for frame in (
+        {
+            "type": "message_update",
+            "assistantMessageEvent": {"type": "toolcall_start", "name": qualified},
+        },
+        {
+            "type": "message_update",
+            "assistantMessageEvent": {"type": "toolcall_end", "name": qualified},
+        },
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "call-1",
+            "toolName": qualified,
+            "args": {},
+        },
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "call-1",
+            "toolName": qualified,
+            "result": {"ok": True},
+            "isError": False,
+        },
+    ):
+        _, _, calls = adapter.consume_frame(  # type: ignore[arg-type]
+            frame, 1, datetime.now(timezone.utc), 0.0, observations
+        )
+        reported_calls.extend(calls)
+    assert reported_calls == [
+        {
+            "call_id": "call-1",
+            "server": server,
+            "tool": tool,
+            "qualified_name": qualified,
+            "arguments": {},
+        }
+    ]
+    assert (
+        sum(getattr(item, "kind", "") == "tool_call_observed" for item in observations)
+        == 1
+    )
+    assert (
+        sum(
+            getattr(item, "kind", "") == "tool_result_observed" for item in observations
+        )
+        == 1
+    )
+
+
+def test_provider_protocol_errors_are_not_successes() -> None:
+    from datetime import datetime, timezone
+    from mcp_pal.harness._rpc_native import JsonRpcProcess
+
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    with pytest.raises(Exception):
+        adapter.consume_frame(
+            {"error": {"code": -1}}, 1, datetime.now(timezone.utc), 0.0, []
+        )
+    assert JsonRpcProcess is not None
+
+
+@pytest.mark.asyncio
+async def test_codex_terminal_failure_is_not_projected_as_completed() -> None:
+    from datetime import datetime, timezone
+
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    observations: list[object] = []
+    terminal, _, _ = adapter.consume_frame(
+        {
+            "method": "turn/completed",
+            "params": {"turn": {"id": "t", "status": "failed"}},
+        },
+        1,
+        datetime.now(timezone.utc),
+        0.0,
+        observations,
+    )  # type: ignore[arg-type]
+    assert terminal is True
+    assert adapter._terminal_status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_codex_completed_mcp_item_without_started_event_reports_a_call() -> None:
+    from datetime import datetime, timezone
+
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    observations: list[object] = []
+    terminal, _, calls = adapter.consume_frame(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread",
+                "turnId": "turn",
+                "item": {
+                    "type": "mcpToolCall",
+                    "id": "call-1",
+                    "server": "deepwiki",
+                    "tool": "read_wiki_structure",
+                    "arguments": {"repoName": "modelcontextprotocol/python-sdk"},
+                    "status": "completed",
+                    "result": {"content": [{"type": "text", "text": "ok"}]},
+                },
+            },
+        },
+        1,
+        datetime.now(timezone.utc),
+        0.0,
+        observations,
+    )  # type: ignore[arg-type]
+    assert terminal is False
+    assert calls == [
+        {
+            "call_id": "call-1",
+            "server": "deepwiki",
+            "tool": "read_wiki_structure",
+            "arguments": {"repoName": "modelcontextprotocol/python-sdk"},
+        }
+    ]
+    assert (
+        sum(getattr(item, "kind", "") == "tool_call_observed" for item in observations)
+        == 1
+    )
+    assert (
+        sum(
+            getattr(item, "kind", "") == "tool_result_observed" for item in observations
+        )
+        == 1
+    )
+
+
+def test_codex_secret_source_is_mapped_to_target_environment_name(
+    tmp_path: Path,
+) -> None:
+    config = HarnessServerConfig(
+        "secret",
+        TransportKind.STDIO,
+        True,
+        True,
+        "secret-1",
+        command="server",
+        environment={
+            "TARGET_TOKEN": SecretReference(source="environment", name="SOURCE_TOKEN")
+        },
+    )
+    launch = _launch(Codex(model="fixture"), configurations=(config,))
+    adapter = CodexHarnessAdapter(
+        executable=str(CODEX_FIXTURE), environment={"SOURCE_TOKEN": "secret-value"}
+    )
+    environment = adapter.environment_for_launch(launch, tmp_path)
+    assert environment["TARGET_TOKEN"] == "secret-value"
+    assert (
+        "SOURCE_TOKEN" not in environment
+        or environment["SOURCE_TOKEN"] == "secret-value"
+    )
+
+
+def test_pi_bridge_catalog_names_are_stable_and_calls_are_routed() -> None:
+    async def call(arguments: object) -> object:
+        return {"echo": arguments}
+
+    bridge = MCPBridge(
+        {"server one": {"tool/name": {"description": "demo", "call": call}}}
+    )
+    descriptor = bridge.list_tools()[0]
+    assert descriptor["name"] == qualified_tool_name("server one", "tool/name")
+    assert asyncio.run(bridge.call_tool("server one", "tool/name", {"x": 1})) == {
+        "echo": {"x": 1}
+    }
+
+
+def test_pi_bridge_qualified_names_are_safe_bounded_and_metadata_cannot_override() -> None:
+    server = "服务/" + "s" * 300
+    tool = "工具." + "t" * 300
+    bridge = MCPBridge(
+        {
+            server: {
+                tool: {
+                    "name": "original",
+                    "label": "bad",
+                    "server": "wrong",
+                    "tool": "wrong",
+                    "description": "kept",
+                    "inputSchema": {"type": "object"},
+                }
+            },
+            "other": {tool: {}},
+        }
+    )
+    catalog = bridge.list_tools()
+    assert len({item["name"] for item in catalog}) == 2
+    for item in catalog:
+        assert len(item["name"]) <= 64
+        assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", item["name"])
+        assert item["name"] == qualified_tool_name(item["server"], item["tool"])
+        assert item["tool"] in item["label"]
+        assert item["server"] in {server, "other"}
+        assert item["tool"] == tool
+    first = next(item for item in catalog if item["server"] == server)
+    assert first["description"] == "kept"
+    assert first["inputSchema"] == {"type": "object"}
+
+
+def test_pi_extension_has_no_request_local_timeout() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src"
+        / "mcp_pal"
+        / "harness"
+        / "pi_extension"
+        / "extension.ts"
+    ).read_text()
+    assert "30000" not in source
+    assert "bridge timeout" not in source
+    assert "setTimeout" not in source
+
+
+@pytest.mark.skipif(shutil.which("pi") is None, reason="Pi is not installed")
+def test_bundled_pi_extension_loads_without_starting_a_model_turn() -> None:
+    bridge = (
+        Path(__file__).parents[2]
+        / "src"
+        / "mcp_pal"
+        / "harness"
+        / "pi_extension"
+        / "bridge.py"
+    )
+    extension = bridge.with_name("extension.ts")
+    environment = dict(os.environ)
+    sdk_root = ROOT.parent
+    server = sdk_root / "examples" / "servers" / "example_mcp_server.py"
+    environment["MCP_PAL_PI_BRIDGE_COMMAND"] = "uv"
+    environment["MCP_PAL_PI_BRIDGE_ARGV"] = json.dumps(
+        ["run", "--project", str(sdk_root), "python", str(bridge)]
+    )
+    environment["MCP_PAL_MCP_CONFIG"] = json.dumps(
+        {
+            "example": {
+                "transport": "stdio",
+                "command": "uv",
+                "args": ["run", "--project", str(sdk_root), "python", str(server)],
+                "cwd": str(sdk_root.parent),
+                "env": {},
+            }
+        }
+    )
+    result = subprocess.run(
+        [
+            "pi",
+            "--mode",
+            "rpc",
+            "--no-extensions",
+            "--no-session",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-themes",
+            "--no-context-files",
+            "--no-approve",
+            "--extension",
+            str(extension),
+        ],
+        input='{"type":"get_state"}\n',
+        text=True,
+        capture_output=True,
+        env=environment,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    messages = [
+        json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")
+    ]
+    assert any(
+        message.get("command") == "get_state" and message.get("success") is True
+        for message in messages
+    )
+
+
+def test_public_types_and_registry_are_native_peers() -> None:
+    from mcp_pal.harness import default_adapters
+    from mcp_pal.types import HarnessSpec
+
+    assert HarnessSpec.__metadata__
+    registry = default_adapters()
+    assert set(("codex", "pi")).issubset(registry._factories)
+    assert Codex(model="x").kind == "codex"
+    assert Pi(model="x").kind == "pi"
+
+
+def test_harness_matrix_accepts_codex_and_pi_cases() -> None:
+    server = ServerCase(
+        name="fixture",
+        server=StdioServer(name="fixture", command="fixture"),
+        tools=(ToolCase(name="echo"),),
+    )
+    matrix = HarnessMatrix(
+        mode="each_server",
+        servers=(server,),
+        harnesses=(
+            HarnessCase(name="codex", harness=Codex(model="fixture")),
+            HarnessCase(name="pi", harness=Pi(model="fixture")),
+        ),
+        trials=1,
+    )
+    assert [case.harness.name for case in matrix.cases()] == ["codex", "pi"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("harness", "adapter"),
+    [
+        (
+            Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+            CodexHarnessAdapter(executable=str(CODEX_FIXTURE)),
+        ),
+        (
+            Pi(model="fixture", executable=str(PI_FIXTURE)),
+            PiHarnessAdapter(executable=str(PI_FIXTURE)),
+        ),
+    ],
+)
+async def test_agent_session_preflight_accepts_portable_policy_with_capture_proof(
+    harness: object, adapter: object
+) -> None:
+    server = StdioServer(name="special server", command="fixture")
+    policy = RestrictiveToolPolicy(allowed_tools=("special server:tool/name",))
+    spec = AgentSpec(
+        harness=harness,  # type: ignore[arg-type]
+        servers=(ServerBinding(server=server, alias="special server"),),
+        tool_policy=policy,
+    )
+    record = ServerRecord(
+        "special server",
+        server,
+        True,
+        True,
+        "connection-1",
+        TransportKind.STDIO,
+        tools=("tool/name",),
+    )
+    configuration = HarnessServerConfig(
+        "special server",
+        TransportKind.STDIO,
+        True,
+        True,
+        "connection-1",
+        command="fixture",
+        tools=("tool/name",),
+    )
+
+    class CaptureProof:
+        def enforces_portable_policy(self, connection_ids: object) -> bool:
+            return tuple(connection_ids) == ("connection-1",)
+
+    launch = HarnessLaunch(
+        spec,
+        ServerGroupSnapshot((record,)),
+        (configuration,),
+        policy,
+        capture=CaptureProof(),
+    )
+    session = AsyncAgentSession(spec, adapter)  # type: ignore[arg-type]
+    effective = await session._preflight_launch(launch)
+    assert effective.tool_policy_evidence is not None
+    assert effective.tool_policy_evidence.enforced == "portable"
+    await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pi_tool_observation_recovers_special_character_identity() -> None:
+    server = "server / one"
+    tool = "tool.name/with spaces"
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    launch = _launch(
+        Pi(model="fixture", executable=str(PI_FIXTURE)),
+        configurations=(
+            HarnessServerConfig(
+                "server / one",
+                TransportKind.STDIO,
+                True,
+                True,
+                "c",
+                command="fixture",
+                tools=(tool,),
+            ),
+        ),
+    )
+    await adapter.preflight(launch)
+    from datetime import datetime, timezone
+
+    observations: list[object] = []
+    qualified = qualified_tool_name(server, tool)
+    terminal, _, _ = adapter.consume_frame(
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "call-1",
+            "toolName": qualified,
+            "args": {"x": 1},
+        },
+        1,
+        datetime.now(timezone.utc),
+        0.0,
+        observations,  # type: ignore[arg-type]
+    )
+    assert terminal is False
+    call = next(
+        item
+        for item in observations
+        if getattr(item, "kind", "") == "tool_call_observed"
+    )
+    assert getattr(call, "server") == server
+    assert getattr(call, "tool") == tool
+
+
+@pytest.mark.asyncio
+async def test_pi_tool_observation_recovers_duplicate_tool_names_per_server() -> None:
+    tool = "工具/" + "x" * 180
+    servers = ("alpha/服务", "beta/服务")
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    launch = _launch(
+        Pi(model="fixture", executable=str(PI_FIXTURE)),
+        configurations=tuple(
+            HarnessServerConfig(
+                server,
+                TransportKind.STDIO,
+                True,
+                True,
+                "c",
+                command="fixture",
+                tools=(tool,),
+            )
+            for server in servers
+        ),
+    )
+    await adapter.preflight(launch)
+    observations: list[object] = []
+    for index, server in enumerate(servers):
+        terminal, _, _ = adapter.consume_frame(
+            {
+                "type": "tool_execution_start",
+                "toolCallId": f"call-{index}",
+                "toolName": qualified_tool_name(server, tool),
+                "args": {},
+            },
+            index + 1,
+            datetime.now(timezone.utc),
+            0.0,
+            observations,  # type: ignore[arg-type]
+        )
+        assert terminal is False
+    calls = [item for item in observations if getattr(item, "kind", "") == "tool_call_observed"]
+    assert {(getattr(item, "server"), getattr(item, "tool")) for item in calls} == {
+        (server, tool) for server in servers
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("harness", "adapter", "kind"),
+    [
+        (
+            Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+            CodexHarnessAdapter(executable=str(CODEX_FIXTURE)),
+            "codex",
+        ),
+        (
+            Pi(model="fixture", executable=str(PI_FIXTURE)),
+            PiHarnessAdapter(executable=str(PI_FIXTURE)),
+            "pi",
+        ),
+    ],
+)
+async def test_native_runtime_trace_metadata_and_usage_round_trip(
+    harness: object, adapter: object, kind: str
+) -> None:
+    spec = AgentSpec(
+        harness=harness,
+        servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
+        tool_policy=RestrictiveToolPolicy(),
+    )  # type: ignore[arg-type]
+    session = AsyncAgentSession(spec, adapter)  # type: ignore[arg-type]
+    await session.__aenter__()
+    turn = await session.send("trace this")
+    assert turn.response is not None
+    await session.aclose()
+    trace = session.result.trace
+    assert trace is not None
+    runtime = trace.view().runtime
+    assert runtime.kind == kind
+    assert runtime.usage.state.value == "observed"
+    assert runtime.model_id.state.value == "observed"
+    if kind == "codex":
+        assert runtime.thread_id.state.value == "observed"
+        assert runtime.sandbox.state.value == "observed"
+        assert runtime.usage.value.total_tokens.value == 3  # type: ignore[union-attr]
+    else:
+        assert runtime.session_id.state.value == "observed"
+        assert runtime.provider_id.value == "fixture-provider"  # type: ignore[union-attr]
+        assert runtime.model_id.value == "fixture-model"  # type: ignore[union-attr]
+        assert runtime.finish_reason.value == "stop"  # type: ignore[union-attr]
+        assert runtime.usage.value.total_tokens.value == 3  # type: ignore[union-attr]
+    assert runtime.model_dump(mode="json") == type(runtime).model_validate(
+        runtime.model_dump(mode="json")
+    ).model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_codex_completed_item_does_not_duplicate_streamed_text() -> None:
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    observations: list[object] = []
+    adapter.consume_frame(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {"itemId": "m1", "delta": "hello"},
+        },
+        1,
+        datetime.now(timezone.utc),
+        0.0,
+        observations,
+    )  # type: ignore[arg-type]
+    _, text, _ = adapter.consume_frame(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {"type": "agentMessage", "id": "m1", "text": "hello"}
+            },
+        },
+        1,
+        datetime.now(timezone.utc),
+        0.0,
+        observations,
+    )  # type: ignore[arg-type]
+    assert text == ""
+
+
+@pytest.mark.asyncio
+async def test_codex_completion_only_agent_message_returns_text() -> None:
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    observations: list[object] = []
+    _, text, _ = adapter.consume_frame(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {"type": "agentMessage", "id": "m1", "text": "hello"}
+            },
+        },
+        1,
+        datetime.now(timezone.utc),
+        0.0,
+        observations,
+    )  # type: ignore[arg-type]
+    assert text == "hello"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter_cls", [CodexHarnessAdapter, PiHarnessAdapter])
+async def test_native_timeout_closes_process_after_async_cancel(adapter_cls: object) -> None:
+    class FakeProcess:
+        owner = None
+
+        def __init__(self, stale_frames: list[object]) -> None:
+            self.closed = False
+            self.frames: list[object] = []
+            self.stale_frames = stale_frames
+            self.next_calls = 0
+
+        async def write(self, frame: object) -> None:
+            if self.closed:
+                raise RuntimeError("closed")
+            self.frames.append(frame)
+        async def next(self, timeout: float | None = None) -> object:
+            if self.closed:
+                raise RuntimeError("stale frames unavailable")
+            self.next_calls += 1
+            raise asyncio.TimeoutError
+
+        async def close(self) -> None:
+            self.closed = True
+
+    adapter = adapter_cls(executable="fixture")  # type: ignore[operator]
+    adapter.send_turn = lambda *args: asyncio.sleep(0)  # type: ignore[method-assign]
+    stale_frames = (
+        [{"method": "turn/interrupt/ack"}, {"method": "turn/completed"}]
+        if adapter_cls is CodexHarnessAdapter
+        else [{"type": "abort_ack"}, {"type": "agent_settled"}]
+    )
+    process = FakeProcess(stale_frames)
+    result = await adapter._send(  # type: ignore[attr-defined]
+        HarnessTurnRequest.from_message("blocked"), 1, process
+    )
+    assert result.status == "timed_out"
+    assert process.closed is True
+    followup = await adapter._send(  # type: ignore[attr-defined]
+        HarnessTurnRequest.from_message("next"), 2, process
+    )
+    assert followup.status != "completed"
+    assert process.stale_frames == stale_frames
+    assert process.next_calls == 1
+    if adapter_cls is PiHarnessAdapter:
+        assert process.frames == [{"type": "abort"}]
+
+
+@pytest.mark.asyncio
+async def test_native_timeout_survives_cleanup_failure() -> None:
+    class FailingCloseProcess:
+        owner = None
+
+        async def write(self, frame: object) -> None:
+            del frame
+
+        async def next(self, timeout: float | None = None) -> object:
+            del timeout
+            raise asyncio.TimeoutError
+
+        async def close(self) -> None:
+            raise RuntimeError("cleanup failed")
+
+    adapter = CodexHarnessAdapter(executable="fixture")
+    adapter.send_turn = lambda *args: asyncio.sleep(0)  # type: ignore[method-assign]
+    result = await adapter._send(  # type: ignore[attr-defined]
+        HarnessTurnRequest.from_message("blocked"), 1, FailingCloseProcess()
+    )
+    assert result.status == "timed_out"
+    assert result.turn_evidence is not None
+    assert "cleanup_failed" in result.turn_evidence.limitations
+
+
+@pytest.mark.asyncio
+async def test_codex_streamed_and_completed_message_returns_one_text() -> None:
+    class FakeProcess:
+        owner = None
+
+        def __init__(self) -> None:
+            self.frames = iter(
+                [
+                    {"id": 1, "result": {"turn": {"id": "turn-1"}}},
+                    {
+                        "method": "item/agentMessage/delta",
+                        "params": {"itemId": "m1", "delta": "hello"},
+                    },
+                    {
+                        "method": "item/completed",
+                        "params": {
+                            "item": {
+                                "type": "agentMessage",
+                                "id": "m1",
+                                "text": "hello",
+                            }
+                        },
+                    },
+                    {"method": "turn/completed", "params": {"turn": {}}},
+                ]
+            )
+
+        async def write(self, frame: object) -> None:
+            del frame
+
+        async def next(self, timeout: float | None = None) -> object:
+            del timeout
+            return next(self.frames)
+
+        async def close(self) -> None:
+            return None
+
+    adapter = CodexHarnessAdapter(executable="fixture")
+    adapter.send_turn = lambda *args: asyncio.sleep(0)  # type: ignore[method-assign]
+    result = await adapter._send(  # type: ignore[attr-defined]
+        HarnessTurnRequest.from_message("hello"), 1, FakeProcess()
+    )
+    assert result.status == "completed"
+    assert result.response is not None
+    assert result.response.content[0].text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_closed_json_rpc_process_does_not_consume_stale_frames() -> None:
+    from mcp_pal.harness._rpc_native import JsonRpcProcess
+
+    process = JsonRpcProcess("fixture")
+    await process._frames.put({"method": "turn/completed"})
+    await process.close()
+    assert await process.next() is None
+    with pytest.raises(Exception, match="closed"):
+        await process.write({"method": "turn/start"})

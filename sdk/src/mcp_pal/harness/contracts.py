@@ -267,13 +267,15 @@ def default_adapters() -> HarnessAdapterRegistry:
     """Return the production registry with explicit real adapters.
 
     Each registered kind resolves only to its own process-backed adapter. ACP,
-    Claude, and OpenCode never fall back to deterministic adapters or to one
+    Claude, OpenCode, Codex, and Pi never fall back to deterministic adapters or to one
     another when a selected executable is unavailable.
     """
 
     from .acp import AcpHarnessAdapter
     from .claude import ClaudeCodeHarnessAdapter
     from .opencode import OpenCodeHarnessAdapter
+    from .codex import CodexHarnessAdapter
+    from .pi import PiHarnessAdapter
 
     registry = HarnessAdapterRegistry()
 
@@ -295,9 +297,19 @@ def default_adapters() -> HarnessAdapterRegistry:
             raise HarnessStartupError("ACP harness manifest is unavailable")
         return AcpHarnessAdapter(manifest=manifest)
 
+    def codex_factory(harness: HarnessSpec) -> HarnessAdapter:
+        executable = harness.executable if hasattr(harness, "executable") else None
+        return CodexHarnessAdapter(executable=executable or "codex")
+
+    def pi_factory(harness: HarnessSpec) -> HarnessAdapter:
+        executable = harness.executable if hasattr(harness, "executable") else None
+        return PiHarnessAdapter(executable=executable or "pi")
+
     registry.register("claude_code", claude_factory)
     registry.register("opencode", opencode_factory)
     registry.register("acp", acp_factory)
+    registry.register("codex", codex_factory)
+    registry.register("pi", pi_factory)
     return registry
 
 

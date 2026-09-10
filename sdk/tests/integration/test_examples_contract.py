@@ -14,10 +14,10 @@ def test_examples_docs_are_goal_oriented_and_not_a_synthetic_catalog() -> None:
     headings = [line for line in text.splitlines() if line.startswith("## ")]
     assert headings[0] == "## 1. Test a deployed MCP endpoint with Streamable HTTP"
     assert headings[1] == "## 2. Discover a direct local server tool before calling it"
-    assert headings[2] == "## 3. Use Claude Code or OpenCode with the local stdio server"
+    assert headings[2] == "## 3. Use a native harness with the local stdio server"
     assert "client.list_all_tools()" in text
     assert "example_mcp_server.py" in text
-    assert "ClaudeCode" in text and "OpenCode" in text
+    assert all(name in text for name in ("ClaudeCode", "OpenCode", "Codex", "Pi"))
     assert "deterministic_acp_agent.py" in text
     assert "test_streamable_http.py" in text
     assert (_EXAMPLES / "nondeterministic" / "test_streamable_http.py").exists()

@@ -71,13 +71,29 @@ def characterize(harness: str, executable: str) -> int:
         print(f"opencode executable ready: {version}")
         print("serve/session capability: available")
         return 0
-    raise ValueError("harness must be claude or opencode")
+    if harness == "codex":
+        version = _probe(executable, ["--version"])
+        help_text = _probe(executable, ["app-server", "--help"])
+        if "app-server" not in help_text.lower():
+            raise RuntimeError("Codex App Server capability is unavailable")
+        print(f"codex executable ready: {version}")
+        print("App Server JSON-RPC capability: available")
+        return 0
+    if harness == "pi":
+        version = _probe(executable, ["--version"])
+        help_text = _probe(executable, ["--help"])
+        if "rpc" not in help_text.lower():
+            raise RuntimeError("Pi RPC capability is unavailable")
+        print(f"pi executable ready: {version}")
+        print("RPC capability: available")
+        return 0
+    raise ValueError("harness must be claude, opencode, codex, or pi")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Opt-in Claude/OpenCode live capability characterization")
+    parser = argparse.ArgumentParser(description="Opt-in native harness live capability characterization")
     parser.add_argument("--live", action="store_true", help="acknowledge live binary, credential, and privacy implications")
-    parser.add_argument("--harness", choices=("claude", "opencode"), required=True)
+    parser.add_argument("--harness", choices=("claude", "opencode", "codex", "pi"), required=True)
     parser.add_argument("--executable", default=None)
     args = parser.parse_args(argv)
     if not args.live:

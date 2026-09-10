@@ -662,6 +662,25 @@ class ClaudeCodeTrace(_FrozenModel):
     usage: Observation[UsageValue] = _Field(default_factory=_not_emitted)
 
 
+class CodexTrace(_FrozenModel):
+    kind: _Literal["codex"] = "codex"
+    thread_id: Observation[str] = _Field(default_factory=_not_emitted)
+    turn_id: Observation[str] = _Field(default_factory=_not_emitted)
+    model_id: Observation[str] = _Field(default_factory=_not_emitted)
+    finish_reason: Observation[str] = _Field(default_factory=_not_emitted)
+    sandbox: Observation[str] = _Field(default_factory=_not_emitted)
+    usage: Observation[UsageValue] = _Field(default_factory=_not_emitted)
+
+
+class PiTrace(_FrozenModel):
+    kind: _Literal["pi"] = "pi"
+    session_id: Observation[str] = _Field(default_factory=_not_emitted)
+    provider_id: Observation[str] = _Field(default_factory=_not_emitted)
+    model_id: Observation[str] = _Field(default_factory=_not_emitted)
+    finish_reason: Observation[str] = _Field(default_factory=_not_emitted)
+    usage: Observation[UsageValue] = _Field(default_factory=_not_emitted)
+
+
 class ACPTrace(_FrozenModel):
     kind: _Literal["acp"] = "acp"
     session_id: Observation[str] = _Field(default_factory=_not_emitted)
@@ -681,7 +700,7 @@ class ACPTrace(_FrozenModel):
 
 
 RuntimeTraceInfo: _TypeAlias = _Annotated[
-    DirectTrace | OpenCodeTrace | ClaudeCodeTrace | ACPTrace,
+    DirectTrace | OpenCodeTrace | ClaudeCodeTrace | CodexTrace | PiTrace | ACPTrace,
     _Field(discriminator="kind"),
 ]
 
@@ -882,6 +901,8 @@ for _model in (
     DirectTrace,
     OpenCodeTrace,
     ClaudeCodeTrace,
+    CodexTrace,
+    PiTrace,
     ACPTrace,
     TraceSummary,
     TraceView,
@@ -894,6 +915,7 @@ __all__ = [
     "ACPTrace",
     "ArtifactEntry",
     "ClaudeCodeTrace",
+    "CodexTrace",
     "CorrelationState",
     "DiagnosticEntry",
     "DirectTrace",
@@ -910,6 +932,7 @@ __all__ = [
     "ObservationReason",
     "ObservationState",
     "OpenCodeTrace",
+    "PiTrace",
     "ProcessEntry",
     "ProtocolEntry",
     "ProtocolErrorInfo",

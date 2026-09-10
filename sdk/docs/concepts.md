@@ -63,7 +63,7 @@ as:
 Each case runs through the normal SDK execution boundary and returns the usual
 `ExecutionResult`.
 
-`HarnessMatrix` sends prompts to Claude Code, OpenCode, or ACP and tests which
+`HarnessMatrix` sends prompts to Claude Code, OpenCode, Codex, Pi, or ACP and tests which
 tool the harness chooses and how it uses that tool. Choose the shape that
 matches the question:
 
@@ -82,7 +82,7 @@ construction and expansion perform no MCP, harness, subprocess, network, or
 persistence work. Work begins only when a case helper such as `run()` or
 `session()` is called. Sync and async cases use the matching kit helpers.
 
-The SDK derives restrictive tool policies from each case. OpenCode and ACP
+The SDK derives restrictive tool policies from each case. OpenCode, Codex, Pi, and ACP
 receive qualified `server:tool` allowlists; Claude Code uses its native
 server-scoped MCP policy, so exact tool restriction is not portable. Claude
 Code is therefore not supported for `all_servers` with multiple servers.
@@ -164,7 +164,7 @@ entry uses wire authority when the two correlate, while `conflicts` records
 disagreements instead of hiding them. Messages and reasoning are typed
 entries; encrypted or provider-hidden reasoning is represented by its state,
 not guessed plaintext. Runtime metadata is discriminated by `runtime.kind`:
-`direct`, `opencode`, `claude_code`, or `acp`, and each variant exposes only
+`direct`, `opencode`, `claude_code`, `codex`, `pi`, or `acp`, and each variant exposes only
 fields that source can truthfully provide.
 
 Raw provider/MCP/process evidence is bounded and redacted before persistence.

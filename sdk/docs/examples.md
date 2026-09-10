@@ -51,17 +51,24 @@ assert result.structured_content == {"amount": 9.0, "currency": "USD"}
 For pagination and the other direct operations, see
 [`test_direct_client_surface.py`](../examples/tests/test_direct_client_surface.py).
 
-## 3. Use Claude Code or OpenCode with the local stdio server
+## 3. Use a native harness with the local stdio server
 
 Write this test to assert that an agent chooses and successfully calls the
 intended MCP tool, rather than only checking its final prose. Choose a built-in
-harness to send the prompt to an installed Claude Code or OpenCode process:
+harness to send the prompt to an installed native process. Claude Code and
+OpenCode are shown below; Codex and Pi use the same `AgentSpec` shape with
+their persistent app-server/RPC adapters:
+
+Codex uses its App Server JSON-RPC process. Pi uses native RPC and a private
+MCP bridge extension because Pi does not expose MCP directly. Neither adapter
+is routed through ACP. Codex supports stdio and Streamable HTTP MCP; Pi's
+bridge supports stdio, SSE, and Streamable HTTP.
 
 ```python
 import os
 from mcp_pal import MCPTestKit, expect
 from mcp_pal.types import (
-    AgentSpec, ClaudeCode, OpenCode, SecretReference, ServerBinding, StdioServer,
+    AgentSpec, ClaudeCode, Codex, OpenCode, Pi, SecretReference, ServerBinding, StdioServer,
 )
 
 def env_secret(name: str) -> SecretReference:
@@ -78,6 +85,15 @@ def test_agent_uses_shipping_quote(example_server: StdioServer) -> None:
     #     model=os.environ["MCP_PAL_OPENCODE_MODEL"],
     #     credential_references={"OPENCODE_API_KEY": env_secret("OPENCODE_API_KEY")},
     # )
+    # Or use the native Codex app-server or Pi RPC adapters:
+    # harness = Codex(
+    #     model=os.environ["MCP_PAL_CODEX_MODEL"],
+    #     credential_references={"OPENAI_API_KEY": env_secret("OPENAI_API_KEY")},
+    # )
+    # harness = Pi(
+    #     model=os.environ["MCP_PAL_PI_MODEL"], provider="openai",
+    #     credential_references={"OPENAI_API_KEY": env_secret("OPENAI_API_KEY")},
+    # )
     spec = AgentSpec(
         harness=harness,
         servers=(ServerBinding(server=example_server, alias="example-mcp"),),
@@ -91,7 +107,7 @@ def test_agent_uses_shipping_quote(example_server: StdioServer) -> None:
     )
 ```
 
-`ClaudeCode(...)` and `OpenCode(...)` are the built-in choices. The test sends
+`ClaudeCode(...)`, `OpenCode(...)`, `Codex(...)`, and `Pi(...)` are the built-in native choices. The test sends
 one prompt to the selected installed process; that process may choose and call
 an available MCP tool. The nondeterministic OpenCode-over-HTTP example is
 [`test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py);
@@ -369,7 +385,7 @@ servers × two built-in harnesses—with stable IDs such as `catalog/claude` and
 import os
 from mcp_pal import expect
 from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
-from mcp_pal.types import ClaudeCode, OpenCode, SecretReference
+from mcp_pal.types import ClaudeCode, Codex, OpenCode, Pi, SecretReference
 
 def env_secret(name: str) -> SecretReference:
     return SecretReference(source="environment", name=name)
@@ -569,5 +585,13 @@ External-provider coverage is available in
 [`test_live_matrix_api.py`](../tests/e2e/test_live_matrix_api.py). These tests
 require `MCP_PAL_RUN_LIVE_OPENCODE=1` or
 `MCP_PAL_RUN_LIVE_CLAUDE=1` with the matching harness credential and may incur
-provider usage. Claude's multi-server limitation is respected by keeping its
-case to one server.
+provider usage. Native Codex and Pi coverage is in
+[`test_live_codex_pi.py`](../tests/e2e/test_live_codex_pi.py); it requires
+`MCP_PAL_RUN_LIVE_CODEX=1` or `MCP_PAL_RUN_LIVE_PI=1`, the corresponding model
+variable (`MCP_PAL_LIVE_CODEX_MODEL` or `MCP_PAL_LIVE_PI_MODEL`), and an
+explicit credential route. Codex uses `OPENAI_API_KEY`; Pi accepts the generic
+`MCP_PAL_LIVE_PI_PROVIDER`/`MCP_PAL_LIVE_PI_CREDENTIAL_ENV` route or its
+`OPENAI_API_KEY`/`PI_CODING_AGENT_DIR` routes. Set `MCP_PAL_CODEX_EXECUTABLE` or
+`MCP_PAL_PI_EXECUTABLE` when needed.  All live tests are skipped unless their
+flag and prerequisites are present, and may incur provider usage. Claude's
+multi-server limitation is respected by keeping its case to one server.

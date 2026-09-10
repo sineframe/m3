@@ -10,7 +10,7 @@ import os
 import re
 import socket
 from typing import Any, AsyncIterator
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 import uvicorn
@@ -111,6 +111,7 @@ class McpHttpProxy:
         self.server: uvicorn.Server | None = None
         self.task: asyncio.Task[Any] | None = None
         self.socket: socket.socket | None = None
+        self.proxy_origin: str | None = None
         self.client: httpx.AsyncClient | None = None
         upstream = urlsplit(self.upstream_url)
         self.origin = urlunsplit((upstream.scheme, upstream.netloc, "", "", ""))
@@ -127,6 +128,7 @@ class McpHttpProxy:
         self.socket.bind(("127.0.0.1", 0))
         self.socket.listen(128)
         port = self.socket.getsockname()[1]
+        self.proxy_origin = f"http://127.0.0.1:{port}"
         config = uvicorn.Config(app, log_level="error", lifespan="off", access_log=False)
         self.server = uvicorn.Server(config)
         self.task = asyncio.create_task(self.server.serve(sockets=[self.socket]))
@@ -137,7 +139,7 @@ class McpHttpProxy:
                 await self.task
             await asyncio.sleep(0.01)
         query = f"?{self.initial_query}" if self.initial_query else ""
-        return f"http://127.0.0.1:{port}{self.initial_path}{query}"
+        return f"{self.proxy_origin}{self.initial_path}{query}"
 
     async def stop(self) -> None:
         if self.server:
@@ -162,8 +164,30 @@ class McpHttpProxy:
         headers.update({key: value for key, value in self.configured_headers.items() if key.lower() not in HOP_BY_HOP})
         return headers
 
-    def _response_headers(self, response: httpx.Response) -> dict[str, str]:
-        return {key: value for key, value in response.headers.items() if key.lower() not in HOP_BY_HOP}
+    def _response_headers(self, response: httpx.Response, *, base_url: str | None = None) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        for key, value in response.headers.items():
+            if key.lower() in HOP_BY_HOP:
+                continue
+            if key.lower() == "location":
+                # Never hand the upstream origin to the harness: following
+                # it would bypass this proxy (and its capture/policy gate).
+                try:
+                    target = urlsplit(urljoin(base_url or self.upstream_url, value))
+                    upstream = urlsplit(self.upstream_url)
+                    target_port = target.port or (443 if target.scheme == "https" else 80)
+                    upstream_port = upstream.port or (443 if upstream.scheme == "https" else 80)
+                except ValueError:
+                    continue
+                if (target.scheme.lower(), (target.hostname or "").lower(), target_port) != (upstream.scheme.lower(), (upstream.hostname or "").lower(), upstream_port):
+                    continue
+                if self.proxy_origin is None:
+                    continue
+                proxy = urlsplit(self.proxy_origin)
+                headers[key] = urlunsplit((proxy.scheme, proxy.netloc, target.path or "/", target.query, target.fragment))
+                continue
+            headers[key] = value
+        return headers
 
     async def _forward(self, request: Request) -> Response:
         assert self.client is not None
@@ -270,7 +294,7 @@ class McpHttpProxy:
             return StreamingResponse(
                 self._stream_sse(response),
                 status_code=response.status_code,
-                headers=self._response_headers(response),
+                headers=self._response_headers(response, base_url=target),
                 media_type="text/event-stream",
             )
         data = await response.aread()
@@ -285,7 +309,7 @@ class McpHttpProxy:
                 payload=response_payload,
                 metadata={"status_code": response.status_code, "content_type": content_type},
             )
-        return Response(data, status_code=response.status_code, headers=self._response_headers(response), media_type=None)
+        return Response(data, status_code=response.status_code, headers=self._response_headers(response, base_url=target), media_type=None)
 
     async def _stream_sse(self, response: httpx.Response) -> AsyncIterator[bytes]:
         buffer = ""

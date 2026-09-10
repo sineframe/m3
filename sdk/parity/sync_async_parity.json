@@ -334,6 +334,12 @@
       ],
       [
         "mcp_pal.sync_api",
+        "CodexTrace",
+        "mcp_pal.async_api",
+        "CodexTrace"
+      ],
+      [
+        "mcp_pal.sync_api",
         "CorrelationState",
         "mcp_pal.async_api",
         "CorrelationState"
@@ -421,6 +427,12 @@
         "OpenCodeTrace",
         "mcp_pal.async_api",
         "OpenCodeTrace"
+      ],
+      [
+        "mcp_pal.sync_api",
+        "PiTrace",
+        "mcp_pal.async_api",
+        "PiTrace"
       ],
       [
         "mcp_pal.sync_api",

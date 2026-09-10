@@ -33,3 +33,45 @@ MCP_PAL_RUN_LIVE_OPENCODE=1 \
 ```
 
 Set `MCP_PAL_LIVE_OPENCODE_MODEL=provider/model` to characterize another model.
+
+Codex and Pi have separate opt-in live tests. Each command requires the
+corresponding native executable, a matching model variable, and an explicit
+credential route; credentials are passed through the public
+`credential_references` API into the isolated child environment. The tests
+call the documented DeepWiki Streamable HTTP endpoint
+(`https://mcp.deepwiki.com/mcp`) and invoke `read_wiki_structure` across two
+turns, asserting both tool-call and projected trace evidence:
+
+```bash
+MCP_PAL_RUN_LIVE_CODEX=1 MCP_PAL_LIVE_CODEX_MODEL=gpt-5-codex \
+  uv run --project sdk --all-extras \
+  pytest -q sdk/tests/e2e/test_live_codex_pi.py -k codex
+
+MCP_PAL_RUN_LIVE_PI=1 MCP_PAL_LIVE_PI_MODEL=gpt-4o \
+  uv run --project sdk --all-extras \
+  pytest -q sdk/tests/e2e/test_live_codex_pi.py -k pi
+```
+
+The Codex test requires an explicit `OPENAI_API_KEY` and uses
+`MCP_PAL_LIVE_CODEX_MODEL`.
+The Pi test first accepts the fully explicit generic route
+`MCP_PAL_LIVE_PI_PROVIDER`, `MCP_PAL_LIVE_PI_CREDENTIAL_ENV`, and
+`MCP_PAL_LIVE_PI_MODEL` together. This supports, for example:
+
+```bash
+MCP_PAL_RUN_LIVE_PI=1 \
+  MCP_PAL_LIVE_PI_PROVIDER=opencode \
+  MCP_PAL_LIVE_PI_CREDENTIAL_ENV=OPENCODE_API_KEY \
+  MCP_PAL_LIVE_PI_MODEL=opencode/big-pickle \
+  uv run --project sdk --all-extras \
+  pytest -q sdk/tests/e2e/test_live_codex_pi.py -k pi
+```
+
+Without the generic route, Pi selects `OPENAI_API_KEY` with provider `openai`
+and `MCP_PAL_LIVE_PI_MODEL`, or `PI_CODING_AGENT_DIR` with provider
+`openai-codex` and `MCP_PAL_LIVE_PI_CODEX_MODEL` (the common Pi model variable
+is accepted as a fallback). Use `MCP_PAL_CODEX_EXECUTABLE` or
+`MCP_PAL_PI_EXECUTABLE` when the executable is not on `PATH`. The live flags
+and an explicit credential route are mandatory; tests are skipped during
+normal CI and no provider turn is made by collection or by a default test
+run.

@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from .acp import ACPAdapter, ACPAgentAdapter, AcpHarnessAdapter
     from .base import AcpRunSpec, HarnessResult, HarnessRunner, RunSpec
     from .claude import ClaudeCodeHarnessAdapter, ClaudeCodeSession
+    from .codex import CodexHarnessAdapter
     from .contracts import (
         DeterministicHarnessAdapter,
         HarnessAdapter,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         validate_manifest,
     )
     from .opencode import OpenCodeHarnessAdapter, OpenCodeSession
+    from .pi import PiHarnessAdapter
 
 if TYPE_CHECKING:
     from .observation_sink import HarnessObservationSink
@@ -90,6 +92,7 @@ _LAZY_MODULES = {
         for name in ("AcpRunSpec", "HarnessResult", "HarnessRunner", "RunSpec")
     },
     **{name: ".claude" for name in ("ClaudeCodeHarnessAdapter", "ClaudeCodeSession")},
+    **{name: ".codex" for name in ("CodexHarnessAdapter",)},
     **{
         name: ".fakes"
         for name in (
@@ -109,6 +112,7 @@ _LAZY_MODULES = {
         )
     },
     **{name: ".opencode" for name in ("OpenCodeHarnessAdapter", "OpenCodeSession")},
+    **{name: ".pi" for name in ("PiHarnessAdapter",)},
     **{
         name: ".observations"
         for name in (
@@ -145,7 +149,7 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "AcpRunSpec", "HarnessResult", "HarnessRunner",
-    "ClaudeCodeHarnessAdapter", "ClaudeCodeSession", "OpenCodeHarnessAdapter", "OpenCodeSession",
+    "ClaudeCodeHarnessAdapter", "ClaudeCodeSession", "CodexHarnessAdapter", "OpenCodeHarnessAdapter", "OpenCodeSession", "PiHarnessAdapter",
     "HarnessManifest", "ManifestValidationError", "RunSpec", "export_manifest", "load_manifest",
     "validate_manifest", "DeterministicHarnessAdapter", "HarnessAdapter", "HarnessAdapterContract", "HarnessAdapterCapabilities",
     "HarnessAdapterError", "HarnessCleanupError", "HarnessLaunch", "HarnessSession",

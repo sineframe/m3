@@ -27,12 +27,14 @@ from .types import (
     AgentSpec as _AgentSpec,
     CallTool as _CallTool,
     ClaudeCode as _ClaudeCode,
+    Codex as _Codex,
     DirectSpec as _DirectSpec,
     ExecutionResult as _ExecutionResult,
     FrozenModel as _FrozenModel,
     InProcessServer as _InProcessServer,
     NativeToolPolicy as _NativeToolPolicy,
     OpenCode as _OpenCode,
+    Pi as _Pi,
     RestrictiveToolPolicy as _RestrictiveToolPolicy,
     ServerBinding as _ServerBinding,
     ServerValue as _ServerValue,
@@ -157,7 +159,7 @@ class HarnessCase(_FrozenModel):
     """One named harness configuration in a harness matrix."""
 
     name: str = _Field(min_length=1, max_length=256)
-    harness: _ClaudeCode | _OpenCode | _ACPAgent
+    harness: _ClaudeCode | _OpenCode | _Codex | _Pi | _ACPAgent
 
 
 class ToolMatrixCase(_FrozenModel):

@@ -241,13 +241,17 @@ def test_catalog_tool(case):
 `@matrix.parametrize()` uses pytest's normal collection and filtering. Call
 `matrix.cases()` when you want the same expansion without pytest.
 
-## Use Claude Code or OpenCode
+## Use a native agent harness
 
-MCP Pal supports the built-in `ClaudeCode` and `OpenCode` harness choices.
+MCP Pal supports the built-in `ClaudeCode`, `OpenCode`, `Codex`, and `Pi`
+harness choices. Codex uses its native App Server JSON-RPC process; Pi uses
+native RPC with a private MCP bridge. Neither is routed through ACP. Codex
+supports stdio and Streamable HTTP MCP; Pi's bridge supports stdio, SSE, and
+Streamable HTTP.
 They use the same `agent_session` flow with their normal tool access. Tool
 restrictions can be added later when a test needs tighter control. The complete
 server and harness definitions are in the
-[`built-in harness example`](examples.md#3-use-claude-code-or-opencode-with-the-local-stdio-server).
+[`built-in harness example`](examples.md#3-use-a-native-harness-with-the-local-stdio-server).
 OpenCode needs its provider credential; the repository's external endpoint
 example shows the explicit command and credential reference.
 

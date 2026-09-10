@@ -68,7 +68,7 @@ The complete executable external example is
 [`test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py).
 It uses the fixed public DeepWiki endpoint. The endpoint and documented tool
 contract are described in the [DeepWiki MCP documentation](https://docs.devin.ai/work-with-devin/deepwiki-mcp).
-The OpenCode portions are nondeterministic and may incur provider usage. Invoke
+The OpenCode, Codex, and Pi portions are nondeterministic and may incur provider usage. Invoke
 that exact file when you want to run it:
 
 ```bash

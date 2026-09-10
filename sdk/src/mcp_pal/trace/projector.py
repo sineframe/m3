@@ -15,6 +15,7 @@ from ..observability import (
     ACPTrace,
     ArtifactEntry,
     ClaudeCodeTrace,
+    CodexTrace,
     CorrelationState,
     DiagnosticEntry,
     DirectTrace,
@@ -30,6 +31,7 @@ from ..observability import (
     ObservationReason,
     ObservationState,
     OpenCodeTrace,
+    PiTrace,
     ProcessEntry,
     ProtocolEntry,
     ProtocolErrorInfo,
@@ -213,6 +215,24 @@ def _float_observation(value: Any, *, present: bool = True) -> Observation[float
     if not isfinite(value) or value < 0:
         return _unavailable(ObservationReason.MALFORMED_SOURCE)
     return _observed(float(value))
+
+
+def _native_usage(payload: Mapping[str, Any] | None) -> Observation[Any]:
+    if payload is None:
+        return _not_emitted()
+    def integer(name: str) -> Observation[Any]:
+        value = payload.get(name)
+        return _int_observation(value, present=name in payload)
+    return _observed(UsageValue(
+        input_tokens=integer("input_tokens"),
+        output_tokens=integer("output_tokens"),
+        reasoning_tokens=integer("reasoning_tokens"),
+        cache_creation_tokens=integer("cache_creation_tokens"),
+        cache_read_tokens=integer("cache_read_tokens"),
+        cache_write_tokens=integer("cache_write_tokens"),
+        total_tokens=integer("total_tokens"),
+        cost=_not_emitted(), currency=_not_emitted(),
+    ))
 
 
 def _stderr_observation(payload: Mapping[str, Any]) -> Observation[str]:
@@ -2142,6 +2162,36 @@ class TraceProjector:
                 if isinstance(claude_metadata.get("encrypted_reasoning"), bool)
                 else _not_emitted(),
                 usage=claude_usage,
+            )
+        native_events = tuple(
+            event for event in events
+            if event.provenance.origin is EventOrigin.HARNESS_REPORTED
+            and event.provenance.source in {"codex", "pi"}
+        )
+        if native_events:
+            source = native_events[0].provenance.source
+            native_metadata: dict[str, Any] = {}
+            native_usage_payload: Mapping[str, Any] | None = None
+            for event in native_events:
+                if event.kind is EventKind.PROVIDER_EVENT:
+                    category = event.payload.get("category")
+                    if category == "usage":
+                        native_usage_payload = event.payload
+                    if isinstance(category, str) and "data" in event.payload:
+                        native_metadata[category] = event.payload["data"]
+            def native_value(name: str) -> Observation[Any]:
+                value = native_metadata.get(name)
+                return _identifier_observation(value) if isinstance(value, str) and value else _not_emitted()
+            if source == "codex":
+                return CodexTrace(
+                    thread_id=native_value("thread_id"), turn_id=native_value("turn_id"),
+                    model_id=native_value("model"), finish_reason=native_value("finish_reason"),
+                    sandbox=native_value("sandbox"), usage=_native_usage(native_usage_payload),
+                )
+            return PiTrace(
+                session_id=native_value("session_id"), provider_id=native_value("provider"),
+                model_id=native_value("model"), finish_reason=native_value("finish_reason"),
+                usage=_native_usage(native_usage_payload),
             )
         acp_events = tuple(
             event

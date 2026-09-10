@@ -3,6 +3,8 @@
 Use these pages to start writing tests for MCP servers and agent harnesses.
 Tests are ordinary executable pytest tests; run them through the MCP Pal CLI
 for persisted results and an optional local UI, or invoke pytest directly.
+Native harness choices include Claude Code, OpenCode, Codex App Server, and Pi
+RPC; ACP remains the bring-your-own protocol path.
 The project SDK and standalone CLI are separate installations; adding the SDK
 to a project does not install the `mcp-pal` command or its bundled UI.
 

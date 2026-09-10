@@ -5,7 +5,7 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "__version__", "MCPTestKit", "AgentSession", "ExecutionHandle", "HarnessAdapter", "Probes", "ConfigOrigin", "ConfigSource", "Config", "ConfigError", "ProbeEvidence", "ProbeKind", "ProbeReport", "ProbeRequest", "ProbeResult", "ACPAgentIdentity", "ACPAgentMode", "ACPProbeDimension", "ACPProbeHistory", "ACPProbeKind", "ACPProbeRequest", "ACPProbeResult", "ACPProbeStatus", "ACPProbeStore", "redact_probe", "run_acp_probe", "load_config",
         "EVENT_SCHEMA_ID", "EVENT_SCHEMA_VERSION", "Event", "EventDirection", "EventKind", "EventOrigin", "PayloadRef", "EventSource", "JsonRpcId", "LifecyclePhase", "EvidenceRef", "ReasoningState", "ReasoningVisibility", "RequestLink", "EvaluationGroup", "EvaluationQuery", "EvaluationReport", "EvaluationStats", "HealthStats", "LatencyStats", "ToolCallStats",
         "ACPAgent", "ActivityHealth", "AgentSpec", "ArtifactId", "ArtifactPolicy",
-        "ArtifactRef", "AudioContent", "Capability", "CapabilityStatus", "ClaudeCode",
+        "ArtifactRef", "AudioContent", "Capability", "CapabilityStatus", "ClaudeCode", "Codex", "Pi",
         "ConnectionId", "ContentBlock", "DirectSpec", "DirectOperation", "ToolInfo", "ResourceInfo", "TemplateInfo", "PromptInfo", "ErrorCode", "ErrorInfo", "EvaluationContext", "EvaluationDecision", "EvaluationSource", "EvaluationRecord", "RunId",
         "ElicitationPolicy", "EvaluationId", "EvaluationRegistration", "EvaluationResult", "EvaluationStatus", "EventId", "ExecutionEvidence", "ExecutionId",
         "ExecutionOutcome", "ExecutionPage", "ExecutionResult", "ExecutionState", "ExecutionSpec", "FullToolPolicy", "HarnessId",
@@ -26,7 +26,7 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
     ),
         "mcp_pal.types": (
         "EVENT_SCHEMA_ID", "EVENT_SCHEMA_VERSION", "ACPAgent", "ActivityHealth", "AgentSpec", "ArtifactId", "ArtifactPolicy", "ArtifactRef",
-        "AudioContent", "Event", "Capability", "CapabilityStatus", "ClaudeCode",
+        "AudioContent", "Event", "Capability", "CapabilityStatus", "ClaudeCode", "Codex", "Pi",
         "ConnectionId", "ContentBlock", "DirectSpec", "DirectOperation", "ToolInfo", "ResourceInfo", "TemplateInfo", "PromptInfo", "ElicitationPolicy", "ErrorCode", "ErrorInfo",
         "EventDirection", "EventKind", "EventOrigin", "PayloadRef", "EventSource", "EvaluationContext", "EvaluationDecision", "EvaluationId", "EvaluationSource", "EvaluationRegistration", "EvaluationResult", "EvaluationStatus", "EvaluationRecord", "RunId",
         "EventId", "ExecutionId", "ExecutionEvidence", "ExecutionOutcome", "ExecutionPage", "ExecutionResult", "ExecutionState", "ExecutionSpec", "FileContent",

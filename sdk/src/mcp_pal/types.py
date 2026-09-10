@@ -569,6 +569,39 @@ class OpenCode(HarnessValue):
         return values
 
 
+class Codex(HarnessValue):
+    """Native OpenAI Codex App Server harness profile."""
+
+    kind: _Literal["codex"] = "codex"
+    name: str = "codex"
+    credential_references: _Mapping[str, SecretReference] = _Field(default_factory=dict)
+
+    @_field_validator("credential_references")
+    @classmethod
+    def _valid_credential_names(cls, values: _Mapping[str, SecretReference]) -> _Mapping[str, SecretReference]:
+        import re
+        if any(not isinstance(key, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None for key in values):
+            raise ValueError("Codex credential target is invalid")
+        return values
+
+
+class Pi(HarnessValue):
+    """Native Pi RPC harness profile."""
+
+    kind: _Literal["pi"] = "pi"
+    name: str = "pi"
+    provider: str | None = None
+    credential_references: _Mapping[str, SecretReference] = _Field(default_factory=dict)
+
+    @_field_validator("credential_references")
+    @classmethod
+    def _valid_credential_names(cls, values: _Mapping[str, SecretReference]) -> _Mapping[str, SecretReference]:
+        import re
+        if any(not isinstance(key, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None for key in values):
+            raise ValueError("Pi credential target is invalid")
+        return values
+
+
 class ACPAgent(HarnessValue):
     kind: _Literal["acp"] = "acp"
     name: str = "acp"
@@ -586,7 +619,7 @@ class ACPAgent(HarnessValue):
         return values
 
 
-HarnessSpec = _Annotated[_Union[ClaudeCode, OpenCode, ACPAgent], _Field(discriminator="kind")]
+HarnessSpec = _Annotated[_Union[ClaudeCode, OpenCode, Codex, Pi, ACPAgent], _Field(discriminator="kind")]
 
 
 class HarnessProfileRef(FrozenModel):
@@ -1536,7 +1569,7 @@ class ExecutionReport(FrozenModel):
 
 __all__ = [
     "EVENT_SCHEMA_ID", "EVENT_SCHEMA_VERSION", "ACPAgent", "ActivityHealth", "AgentSpec", "ArtifactId", "ArtifactPolicy", "ArtifactRef",
-    "AudioContent", "Event", "Capability", "CapabilityStatus", "ClaudeCode",
+    "AudioContent", "Event", "Capability", "CapabilityStatus", "ClaudeCode", "Codex", "Pi",
     "ConnectionId", "ContentBlock", "DirectSpec", "DirectOperation", "ToolInfo", "ResourceInfo", "TemplateInfo", "PromptInfo", "ElicitationPolicy", "ErrorCode", "ErrorInfo",
     "EventDirection", "EventKind", "EventOrigin", "PayloadRef", "EventSource",
     "EvaluationContext", "EvaluationDecision", "EvaluationId", "EvaluationSource", "EvaluationRegistration", "EvaluationResult", "EvaluationStatus", "EvaluationRecord", "RunId",

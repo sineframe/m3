@@ -86,6 +86,26 @@ async def test_stdio_configuration_is_rewritten_to_transparent_capture_proxy(tmp
 
 
 @pytest.mark.asyncio
+async def test_http_instrumentation_keeps_credentials_only_in_proxy(tmp_path: Path) -> None:
+    manager = McpCaptureManager(tmp_path, trusted_private_keys={"remote"})
+    config = HarnessServerConfig(
+        key="remote",
+        transport=TransportKind.STREAMABLE_HTTP,
+        required=True,
+        available=True,
+        connection_id="remote",
+        endpoint="http://127.0.0.1:1/mcp",
+        headers={"Authorization": "Bearer canary"},
+    )
+    instrumented = (await manager.instrument((config,)))[0]
+    assert instrumented.headers == {}
+    target = manager._targets[config.connection_id]
+    assert target.proxy is not None
+    assert target.proxy.configured_headers["Authorization"] == "Bearer canary"
+    await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_PAL_CAPTURE_SECRET", "capture-secret-value")
     manager = McpCaptureManager(tmp_path)

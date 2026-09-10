@@ -427,7 +427,11 @@ class McpCaptureManager:
                 except Exception:
                     self._limitations[key] = ("capture_proxy_start_failed",)
                     raise
-                self._instrumented[key] = replace(configuration, endpoint=target.instrumented_endpoint)
+                # Credentials are resolved and owned by the proxy. Never pass
+                # them onward to a model-controlled harness process.
+                self._instrumented[key] = replace(
+                    configuration, endpoint=target.instrumented_endpoint, headers={}
+                )
             else:
                 self._instrumented[key] = configuration
             output.append(self._instrumented[key])
