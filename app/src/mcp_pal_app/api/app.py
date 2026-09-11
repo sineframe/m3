@@ -1289,7 +1289,12 @@ def create_app(
             out["transport"] = transport_for_server(server)
         return _api_projection(out, path="$.run")
 
-    @router.post("/runs", status_code=202)
+    @router.post(
+        "/runs",
+        status_code=202,
+        deprecated=True,
+        description="Deprecated. Use POST /api/v2/executions.",
+    )
     def create_run(body: RunCreate, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
         if body.model not in settings.models_for(body.harness):
             raise HTTPException(422, "Model is not configured for this harness")
@@ -1369,7 +1374,14 @@ def create_app(
         manager.submit(r.id)
         return run_json(r, d)
 
-    @router.get("/runs")
+    @router.get(
+        "/runs",
+        deprecated=True,
+        description=(
+            "Deprecated for new executions; use GET /api/v2/executions; legacy v1 "
+            "history and the full legacy filter set are not exposed through v2."
+        ),
+    )
     def runs(
         status_filter: str | None = Query(None, alias="status"),
         profile_id: str | None = None,
@@ -1433,7 +1445,11 @@ def create_app(
             for r in q.order_by(desc(Run.created_at)).offset(offset).limit(limit).all()
         ]
 
-    @router.get("/runs/{run_id}")
+    @router.get(
+        "/runs/{run_id}",
+        deprecated=True,
+        description="Deprecated. Use GET /api/v2/executions/{execution_id}.",
+    )
     def get_run(run_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
         r = d.get(Run, run_id)
         if not r:
@@ -1658,7 +1674,11 @@ def create_app(
         manager.submit(r.id)
         return run_json(r, d)
 
-    @router.post("/runs/{run_id}/cancel")
+    @router.post(
+        "/runs/{run_id}/cancel",
+        deprecated=True,
+        description="Deprecated. Use POST /api/v2/executions/{execution_id}/cancel.",
+    )
     def cancel(run_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
         r = d.get(Run, run_id)
         if not r:
@@ -1667,7 +1687,12 @@ def create_app(
         d.refresh(r)
         return run_json(r, d)
 
-    @router.delete("/runs/{run_id}", status_code=204)
+    @router.delete(
+        "/runs/{run_id}",
+        status_code=204,
+        deprecated=True,
+        description="Deprecated. Use DELETE /api/v2/executions/{execution_id}.",
+    )
     def delete_run(run_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
         r = d.get(Run, run_id)
         if not r:
@@ -1710,7 +1735,11 @@ def create_app(
         d.commit()
         return Response(status_code=204)
 
-    @router.get("/runs/{run_id}/report")
+    @router.get(
+        "/runs/{run_id}/report",
+        deprecated=True,
+        description="Deprecated. Use GET /api/v2/executions/{execution_id}/report.",
+    )
     def report(run_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
         r = d.get(Run, run_id)
         if not r:
