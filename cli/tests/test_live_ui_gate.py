@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 import pytest
-
 
 _SCRIPT = Path(__file__).parents[2] / "scripts" / "live_ui_gate.py"
 _SPEC = importlib.util.spec_from_file_location("live_ui_gate", _SCRIPT)
@@ -94,7 +94,9 @@ def test_execution_report_url_quotes_run_id_path_syntax() -> None:
         ),
     ],
 )
-def test_parse_ui_links_rejects_wrong_origin_or_query(output: str, message: str) -> None:
+def test_parse_ui_links_rejects_wrong_origin_or_query(
+    output: str, message: str
+) -> None:
     with pytest.raises(_GATE.GateFailure, match=message):
         _GATE.parse_ui_links(output, "http://127.0.0.1:8123")
 
@@ -160,9 +162,9 @@ def test_assert_report_validates_shipping_quote_contract() -> None:
             "shipping_quote",
         ),
         (
-            lambda report: report["trace"]["timeline"][0]["arguments"][
-                "value"
-            ].update(zone="remote"),
+            lambda report: report["trace"]["timeline"][0]["arguments"]["value"].update(
+                zone="remote"
+            ),
             "shipping_quote",
         ),
         (

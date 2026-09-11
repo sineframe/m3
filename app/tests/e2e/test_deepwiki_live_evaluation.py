@@ -12,19 +12,20 @@ from fastapi.testclient import TestClient
 from mcp_pal import (
     CallTool,
     DirectSpec,
+    HTTPServer,
     MCPTestKit,
     ServerBinding,
-    HTTPServer,
 )
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal_app.api.app import create_app
 from mcp_pal_app.settings import Settings
 
-
 pytestmark = [pytest.mark.e2e, pytest.mark.live]
 
 
-def test_deepwiki_v2_execution_reopen_and_builtin_evaluation(tmp_path, monkeypatch) -> None:
+def test_deepwiki_v2_execution_reopen_and_builtin_evaluation(
+    tmp_path, monkeypatch
+) -> None:
     if os.environ.get("MCP_PAL_RUN_DEEPWIKI_LIVE") != "1":
         pytest.skip("set MCP_PAL_RUN_DEEPWIKI_LIVE=1 to run the external DeepWiki test")
     url = os.environ.get("MCP_PAL_DEEPWIKI_URL", "https://mcp.deepwiki.com/mcp")
@@ -43,14 +44,22 @@ def test_deepwiki_v2_execution_reopen_and_builtin_evaluation(tmp_path, monkeypat
         ),
     )
     specs = tuple(
-        base_spec.model_copy(update={"run_id": run_id, "case_id": "deepwiki/read-structure"})
-        for run_id in ("deepwiki-live-run-a", "deepwiki-live-run-a", "deepwiki-live-run-b")
+        base_spec.model_copy(
+            update={"run_id": run_id, "case_id": "deepwiki/read-structure"}
+        )
+        for run_id in (
+            "deepwiki-live-run-a",
+            "deepwiki-live-run-a",
+            "deepwiki-live-run-b",
+        )
     )
     application = create_app(Settings(database_path=str(database)))
     execution_ids: list[str] = []
     with TestClient(application) as client:
         for spec in specs:
-            created = client.post("/api/v2/executions", json={"spec": spec.model_dump(mode="json")})
+            created = client.post(
+                "/api/v2/executions", json={"spec": spec.model_dump(mode="json")}
+            )
             assert created.status_code == 202
             execution_ids.append(created.json()["execution_id"])
         for execution_id in execution_ids:
@@ -69,11 +78,16 @@ def test_deepwiki_v2_execution_reopen_and_builtin_evaluation(tmp_path, monkeypat
             assert report["direct_result"].get("is_error") is False
             assert any(
                 event.get("kind") == "transport.connected"
-                and event.get("payload", {}).get("configured_transport") == "streamable_http"
+                and event.get("payload", {}).get("configured_transport")
+                == "streamable_http"
                 for event in report["events"]
             ), "expected Streamable HTTP transport evidence in the saved trace"
             blocks = report["direct_result"].get("content", ())
-            text = "".join(str(block.get("text", "")) for block in blocks if isinstance(block, dict) and block.get("type") == "text")
+            text = "".join(
+                str(block.get("text", ""))
+                for block in blocks
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
             assert text.strip(), "DeepWiki returned no text content"
 
     reopened = SQLiteExecutionStore(database)
@@ -88,28 +102,46 @@ def test_deepwiki_v2_execution_reopen_and_builtin_evaluation(tmp_path, monkeypat
         reopened.close()
     with TestClient(create_app(Settings(database_path=str(database)))) as report_client:
         for execution_id in execution_ids:
-            evaluated_report = report_client.get(f"/api/v2/executions/{execution_id}/report")
+            evaluated_report = report_client.get(
+                f"/api/v2/executions/{execution_id}/report"
+            )
             assert evaluated_report.status_code == 200
             evaluations = evaluated_report.json()["report"]["evaluations"]
-            assert any(evaluation["name"] == "mcp_pal.output.has_text.v1" and evaluation["status"] == "passed" for evaluation in evaluations)
+            assert any(
+                evaluation["name"] == "mcp_pal.output.has_text.v1"
+                and evaluation["status"] == "passed"
+                for evaluation in evaluations
+            )
         now = datetime.now(timezone.utc)
         aggregate_payload = {
-            "from": (now - timedelta(days=1)).isoformat(), "to": (now + timedelta(days=1)).isoformat(),
+            "from": (now - timedelta(days=1)).isoformat(),
+            "to": (now + timedelta(days=1)).isoformat(),
             "group_by": ["run_id", "evaluator"],
             "filters": {"evaluator": "mcp_pal.output.has_text.v1"},
         }
-        aggregate = report_client.post("/api/v2/evaluations/aggregate", json=aggregate_payload)
+        aggregate = report_client.post(
+            "/api/v2/evaluations/aggregate", json=aggregate_payload
+        )
         assert aggregate.status_code == 200
         body = aggregate.json()["aggregate"]
         assert body["totals"]["trial_count"] == 3
         assert body["totals"]["pass_rate"] == 1.0
         assert body["totals"]["health"]["execution_duration_ms"]["count"] == 3
         assert body["totals"]["health"]["server_latency_ms"]["count"] > 0
-        assert {group["key"]["run_id"] for group in body["groups"]} == {"deepwiki-live-run-a", "deepwiki-live-run-b"}
-        calendar = report_client.post("/api/v2/evaluations/aggregate", json={**aggregate_payload, "group_by": ["time.day", "evaluator"]})
+        assert {group["key"]["run_id"] for group in body["groups"]} == {
+            "deepwiki-live-run-a",
+            "deepwiki-live-run-b",
+        }
+        calendar = report_client.post(
+            "/api/v2/evaluations/aggregate",
+            json={**aggregate_payload, "group_by": ["time.day", "evaluator"]},
+        )
         assert calendar.status_code == 200
         assert calendar.json()["aggregate"]["groups"]
-        trial = report_client.post("/api/v2/evaluations/aggregate", json={**aggregate_payload, "group_by": ["trial_id", "evaluator"]})
+        trial = report_client.post(
+            "/api/v2/evaluations/aggregate",
+            json={**aggregate_payload, "group_by": ["trial_id", "evaluator"]},
+        )
         assert trial.status_code == 200
         returned_trial = trial.json()["aggregate"]["groups"][0]["key"]["trial_id"]
         drilldown = report_client.get(f"/api/v2/executions/{returned_trial}/report")

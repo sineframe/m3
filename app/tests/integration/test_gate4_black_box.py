@@ -3,6 +3,7 @@
 This deliberately does not use FastAPI's TestClient.  It catches import,
 environment, subprocess, and shutdown regressions at the public boundary.
 """
+
 from __future__ import annotations
 
 import json
@@ -57,10 +58,27 @@ def test_gate4_real_uvicorn_protocol_full_run_and_cleanup(tmp_path):
     env = os.environ.copy()
     env["DATABASE_PATH"] = str(db)
     env["ANTHROPIC_API_KEY"] = ""
-    env["PYTHONPATH"] = str(Path(__file__).parents[2] / "src") + os.pathsep + str(Path(__file__).parents[3] / "sdk" / "src") + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        str(Path(__file__).parents[2] / "src")
+        + os.pathsep
+        + str(Path(__file__).parents[3] / "sdk" / "src")
+        + os.pathsep
+        + env.get("PYTHONPATH", "")
+    )
     before = {str(path) for path in Path(tempfile.gettempdir()).glob("mcp-pal-acp-*")}
     process = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "mcp_pal_app.main:app", "--host", "127.0.0.1", "--port", str(port), "--log-level", "error"],
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "mcp_pal_app.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "error",
+        ],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -69,53 +87,137 @@ def test_gate4_real_uvicorn_protocol_full_run_and_cleanup(tmp_path):
     base = f"http://127.0.0.1:{port}/api/v1"
     try:
         _wait(base, "/health", lambda value: "status" in value)
-        harness = _http(base, "/harness-profiles", "POST", {
-            "name": "reference",
-            "description": "keyless Gate 4 fixture",
-            "trusted_unsandboxed": True,
-            "manifest": {
-                "command": sys.executable,
-                "args": ["-m", "mcp_pal.bridge.reference", "--target", sys.executable, "--target-args-json", "[\"-m\",\"mcp_pal.fixtures.structured_cli\"]"],
-                "env": {},
+        harness = _http(
+            base,
+            "/harness-profiles",
+            "POST",
+            {
+                "name": "reference",
+                "description": "keyless Gate 4 fixture",
+                "trusted_unsandboxed": True,
+                "manifest": {
+                    "command": sys.executable,
+                    "args": [
+                        "-m",
+                        "mcp_pal.bridge.reference",
+                        "--target",
+                        sys.executable,
+                        "--target-args-json",
+                        '["-m","mcp_pal.fixtures.structured_cli"]',
+                    ],
+                    "env": {},
+                },
             },
-        })
-        echo = _http(base, "/profiles", "POST", {
-            "name": "echo",
-            "mcp_json": {"mcpServers": {"echo": {"command": sys.executable, "args": ["-m", "mcp_pal.fixtures.echo_server"]}}},
-        })
+        )
+        echo = _http(
+            base,
+            "/profiles",
+            "POST",
+            {
+                "name": "echo",
+                "mcp_json": {
+                    "mcpServers": {
+                        "echo": {
+                            "command": sys.executable,
+                            "args": ["-m", "mcp_pal.fixtures.echo_server"],
+                        }
+                    }
+                },
+            },
+        )
         profile_id = harness["id"]
-        protocol_job = _http(base, f"/harness-profiles/{profile_id}/probe?kind=protocol", "POST")
-        protocol = _wait(base, f"/harness-profiles/{profile_id}/probes", lambda value: value and value[0]["id"] == protocol_job["id"] and value[0]["status"] not in {"queued", "running"})[0]
+        protocol_job = _http(
+            base, f"/harness-profiles/{profile_id}/probe?kind=protocol", "POST"
+        )
+        protocol = _wait(
+            base,
+            f"/harness-profiles/{profile_id}/probes",
+            lambda value: (
+                value
+                and value[0]["id"] == protocol_job["id"]
+                and value[0]["status"] not in {"queued", "running"}
+            ),
+        )[0]
         assert protocol["status"] == "verified"
-        full_job = _http(base, f"/harness-profiles/{profile_id}/probe?kind=full&transport=stdio", "POST")
-        full = _wait(base, f"/harness-profiles/{profile_id}/probes", lambda value: value and value[0]["id"] == full_job["id"] and value[0]["status"] not in {"queued", "running"})[0]
+        full_job = _http(
+            base,
+            f"/harness-profiles/{profile_id}/probe?kind=full&transport=stdio",
+            "POST",
+        )
+        full = _wait(
+            base,
+            f"/harness-profiles/{profile_id}/probes",
+            lambda value: (
+                value
+                and value[0]["id"] == full_job["id"]
+                and value[0]["status"] not in {"queued", "running"}
+            ),
+        )[0]
         assert full["status"] == "verified"
-        nonce = full["evidence"]["nonce"]
+        full["evidence"]["nonce"]
         probe_mode = full["mode_id"]
         probe_config = full["session_config"]
-        run = _http(base, "/runs", "POST", {
-            "harness": "acp", "harness_revision_id": harness["current_revision_id"], "model": "agent-default", "tool_mode": "agent_default",
-            "prompt": "Call echo with nonce-123", "expected_output": "nonce-123", "profile_revision_id": echo["current_revision_id"], "enabled_server": "echo",
-            "agent_mode_id": probe_mode, "session_config": probe_config,
-        })
-        state = _wait(base, f"/runs/{run['id']}", lambda value: value["status"] not in {"queued", "running"})
+        run = _http(
+            base,
+            "/runs",
+            "POST",
+            {
+                "harness": "acp",
+                "harness_revision_id": harness["current_revision_id"],
+                "model": "agent-default",
+                "tool_mode": "agent_default",
+                "prompt": "Call echo with nonce-123",
+                "expected_output": "nonce-123",
+                "profile_revision_id": echo["current_revision_id"],
+                "enabled_server": "echo",
+                "agent_mode_id": probe_mode,
+                "session_config": probe_config,
+            },
+        )
+        state = _wait(
+            base,
+            f"/runs/{run['id']}",
+            lambda value: value["status"] not in {"queued", "running"},
+        )
         report = _http(base, f"/runs/{run['id']}/report")
         assert state["status"] == "completed"
         assert state["harness"] == "acp" and state["model"] == "agent-default"
         assert state["final_output"] == "nonce-123"
         assert report["assertions"]["mcp"]["status"] == "passed"
         assert report["trace"]["schema"] == "acp.v2"
-        methods = {frame.get("payload", {}).get("method") for frame in report["trace"]["acp_protocol_events"]}
-        assert {"initialize", "session/new", "session/prompt", "session/update"} <= methods
-        assert any(frame.get("payload", {}).get("result", {}).get("stopReason") == "end_turn" for frame in report["trace"]["acp_protocol_events"])
-        assert any(frame.get("payload", {}).get("method") == "session/set_config_option" for frame in report["trace"]["acp_protocol_events"])
+        methods = {
+            frame.get("payload", {}).get("method")
+            for frame in report["trace"]["acp_protocol_events"]
+        }
+        assert {
+            "initialize",
+            "session/new",
+            "session/prompt",
+            "session/update",
+        } <= methods
+        assert any(
+            frame.get("payload", {}).get("result", {}).get("stopReason") == "end_turn"
+            for frame in report["trace"]["acp_protocol_events"]
+        )
+        assert any(
+            frame.get("payload", {}).get("method") == "session/set_config_option"
+            for frame in report["trace"]["acp_protocol_events"]
+        )
         call = report["trace"]["mcp_calls"][0]
         assert call["arguments"] == {"text": "nonce-123"}
         assert call["result"]["content"] == [{"type": "text", "text": "nonce-123"}]
         assert call["server_latency_ms"] >= 0
-        assert not {"thought", "message"} & {span.get("type") for span in report["trace"]["spans"]}
-        turn = next(span for span in report["trace"]["spans"] if span.get("kind") == "model_turn")
-        assert {"thinking", "tool_call", "text"} <= {step.get("kind") for step in turn["steps"]}
+        assert not {"thought", "message"} & {
+            span.get("type") for span in report["trace"]["spans"]
+        }
+        turn = next(
+            span
+            for span in report["trace"]["spans"]
+            if span.get("kind") == "model_turn"
+        )
+        assert {"thinking", "tool_call", "text"} <= {
+            step.get("kind") for step in turn["steps"]
+        }
         persisted = json.dumps(report, sort_keys=True)
         assert "TEAM_OPENAI_KEY" not in persisted and "sk-test" not in persisted
         snapshot = report["run"]["harness_snapshot"]
@@ -123,7 +225,11 @@ def test_gate4_real_uvicorn_protocol_full_run_and_cleanup(tmp_path):
         assert snapshot["manifest"]["command"] == sys.executable
         assert report["profile_revision"]["id"] == echo["current_revision_id"]
         assert snapshot["verification"]["full_probe_id"] == full["id"]
-        assert snapshot["verification"]["full_probe_dimensions"] == {"transport": "stdio", "mode_id": probe_mode, "session_config": probe_config}
+        assert snapshot["verification"]["full_probe_dimensions"] == {
+            "transport": "stdio",
+            "mode_id": probe_mode,
+            "session_config": probe_config,
+        }
         assert report["trace"]["result_metadata"]["full_probe_id"] == full["id"]
         assert state["effective_model"] == probe_config["model"]
     finally:
@@ -138,7 +244,9 @@ def test_gate4_real_uvicorn_protocol_full_run_and_cleanup(tmp_path):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group assertions")
-def test_gate4_uvicorn_cancellation_kills_agent_and_mcp_child_then_worker_recovers(tmp_path):
+def test_gate4_uvicorn_cancellation_kills_agent_and_mcp_child_then_worker_recovers(
+    tmp_path,
+):
     port = _port()
     db = tmp_path / "cancel.sqlite"
     child_pid = tmp_path / "mcp.pid"
@@ -167,10 +275,30 @@ def test_gate4_uvicorn_cancellation_kills_agent_and_mcp_child_then_worker_recove
     agent.chmod(0o755)
     env = os.environ.copy()
     env["DATABASE_PATH"] = str(db)
-    env["PYTHONPATH"] = str(Path(__file__).parents[2] / "src") + os.pathsep + str(Path(__file__).parents[3] / "sdk" / "src") + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        str(Path(__file__).parents[2] / "src")
+        + os.pathsep
+        + str(Path(__file__).parents[3] / "sdk" / "src")
+        + os.pathsep
+        + env.get("PYTHONPATH", "")
+    )
     process = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "mcp_pal_app.main:app", "--host", "127.0.0.1", "--port", str(port), "--log-level", "error"],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "mcp_pal_app.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "error",
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     base = f"http://127.0.0.1:{port}/api/v1"
 
@@ -182,7 +310,12 @@ def test_gate4_uvicorn_cancellation_kills_agent_and_mcp_child_then_worker_recove
             os.kill(pid, 0)
             # A killed child can remain as a short-lived zombie until its
             # parent is reaped; it is no longer an alive worker process.
-            state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False).stdout.strip()
+            state = subprocess.run(
+                ["ps", "-o", "stat=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
             if state.startswith("Z") or not state:
                 return True
         except (ProcessLookupError, PermissionError):
@@ -191,28 +324,115 @@ def test_gate4_uvicorn_cancellation_kills_agent_and_mcp_child_then_worker_recove
 
     try:
         _wait(base, "/health", lambda value: "status" in value)
-        hanging = _http(base, "/harness-profiles", "POST", {"name": "hanging", "trusted_unsandboxed": True, "manifest": {"command": str(agent), "args": [str(child)], "env": {}}})
-        healthy = _http(base, "/harness-profiles", "POST", {"name": "healthy", "trusted_unsandboxed": True, "manifest": {"command": sys.executable, "args": ["-m", "mcp_pal.bridge.reference", "--target", sys.executable, "--target-args-json", "[\"-m\",\"mcp_pal.fixtures.structured_cli\"]"], "env": {}}})
-        echo = _http(base, "/profiles", "POST", {"name": "hang-echo", "mcp_json": {"mcpServers": {"echo": {"command": str(child)}}}})
-        healthy_echo = _http(base, "/profiles", "POST", {"name": "healthy-echo", "mcp_json": {"mcpServers": {"echo": {"command": sys.executable, "args": ["-m", "mcp_pal.fixtures.echo_server"]}}}})
-        body = {"harness": "acp", "harness_revision_id": hanging["current_revision_id"], "model": "agent-default", "tool_mode": "agent_default", "prompt": "hang", "expected_output": "never", "profile_revision_id": echo["current_revision_id"], "enabled_server": "echo"}
+        hanging = _http(
+            base,
+            "/harness-profiles",
+            "POST",
+            {
+                "name": "hanging",
+                "trusted_unsandboxed": True,
+                "manifest": {"command": str(agent), "args": [str(child)], "env": {}},
+            },
+        )
+        healthy = _http(
+            base,
+            "/harness-profiles",
+            "POST",
+            {
+                "name": "healthy",
+                "trusted_unsandboxed": True,
+                "manifest": {
+                    "command": sys.executable,
+                    "args": [
+                        "-m",
+                        "mcp_pal.bridge.reference",
+                        "--target",
+                        sys.executable,
+                        "--target-args-json",
+                        '["-m","mcp_pal.fixtures.structured_cli"]',
+                    ],
+                    "env": {},
+                },
+            },
+        )
+        echo = _http(
+            base,
+            "/profiles",
+            "POST",
+            {
+                "name": "hang-echo",
+                "mcp_json": {"mcpServers": {"echo": {"command": str(child)}}},
+            },
+        )
+        healthy_echo = _http(
+            base,
+            "/profiles",
+            "POST",
+            {
+                "name": "healthy-echo",
+                "mcp_json": {
+                    "mcpServers": {
+                        "echo": {
+                            "command": sys.executable,
+                            "args": ["-m", "mcp_pal.fixtures.echo_server"],
+                        }
+                    }
+                },
+            },
+        )
+        body = {
+            "harness": "acp",
+            "harness_revision_id": hanging["current_revision_id"],
+            "model": "agent-default",
+            "tool_mode": "agent_default",
+            "prompt": "hang",
+            "expected_output": "never",
+            "profile_revision_id": echo["current_revision_id"],
+            "enabled_server": "echo",
+        }
         run = _http(base, "/runs", "POST", body)
         _wait(base, f"/runs/{run['id']}", lambda value: value["status"] == "running")
-        _wait(base, f"/runs/{run['id']}", lambda value: agent_pid.exists() and child_pid.exists())
+        _wait(
+            base,
+            f"/runs/{run['id']}",
+            lambda value: agent_pid.exists() and child_pid.exists(),
+        )
         cancelled = _http(base, f"/runs/{run['id']}/cancel", "POST")
         assert cancelled["status"] in {"cancelled", "running"}
-        state = _wait(base, f"/runs/{run['id']}", lambda value: value["status"] not in {"queued", "running"}, timeout=10)
+        state = _wait(
+            base,
+            f"/runs/{run['id']}",
+            lambda value: value["status"] not in {"queued", "running"},
+            timeout=10,
+        )
         assert state["status"] == "cancelled"
         report = _http(base, f"/runs/{run['id']}/report")
-        assert report["trace"]["schema"] == "acp.v2" and report["trace"]["capture_status"] == "partial"
-        assert any(event.get("payload", {}).get("method") == "session/cancel" for event in report["trace"]["protocol_events"])
+        assert (
+            report["trace"]["schema"] == "acp.v2"
+            and report["trace"]["capture_status"] == "partial"
+        )
+        assert any(
+            event.get("payload", {}).get("method") == "session/cancel"
+            for event in report["trace"]["protocol_events"]
+        )
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and not (dead(agent_pid) and dead(child_pid)):
             time.sleep(0.05)
         assert dead(agent_pid) and dead(child_pid)
-        healthy_body = {**body, "harness_revision_id": healthy["current_revision_id"], "profile_revision_id": healthy_echo["current_revision_id"], "prompt": "Call echo with nonce-123", "expected_output": "nonce-123"}
+        healthy_body = {
+            **body,
+            "harness_revision_id": healthy["current_revision_id"],
+            "profile_revision_id": healthy_echo["current_revision_id"],
+            "prompt": "Call echo with nonce-123",
+            "expected_output": "nonce-123",
+        }
         good = _http(base, "/runs", "POST", healthy_body)
-        final = _wait(base, f"/runs/{good['id']}", lambda value: value["status"] not in {"queued", "running"}, timeout=15)
+        final = _wait(
+            base,
+            f"/runs/{good['id']}",
+            lambda value: value["status"] not in {"queued", "running"},
+            timeout=15,
+        )
         assert final["status"] == "completed" and final["final_output"] == "nonce-123"
     finally:
         process.terminate()

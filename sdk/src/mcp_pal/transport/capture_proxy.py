@@ -25,8 +25,7 @@ from mcp.client.stdio import get_default_environment
 
 from ..trace.capture import CaptureWriter, read_capture
 from ..trace.redaction import is_sensitive_key
-from ..types import SecretReference, TransportKind
-from ..types import NativeToolPolicy, ToolPolicy
+from ..types import NativeToolPolicy, SecretReference, ToolPolicy, TransportKind
 from .http_proxy import McpHttpProxy
 
 
@@ -65,7 +64,11 @@ def _resolve_runtime_value(value: Any, *, secrets: set[str]) -> str:
         if end < 0:
             break
         name = output[begin + 2 : end]
-        if not name or any(character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_" for character in name):
+        if not name or any(
+            character
+            not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+            for character in name
+        ):
             raise ValueError("MCP configuration reference is invalid")
         resolved = os.environ.get(name)
         if not resolved:
@@ -118,10 +121,15 @@ def write_stdio_handoff(
         descriptor = os.open(handoff, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         created = True
         with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
-            output_file.write(json.dumps(
-                {"environment": resolved_environment, "canaries": sorted(resolved_secrets)},
-                separators=(",", ":"),
-            ))
+            output_file.write(
+                json.dumps(
+                    {
+                        "environment": resolved_environment,
+                        "canaries": sorted(resolved_secrets),
+                    },
+                    separators=(",", ":"),
+                )
+            )
     except BaseException:
         if created:
             try:
@@ -206,7 +214,9 @@ def _event_kind(payload: Mapping[str, Any], direction: str) -> str:
 def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
     records = read_capture(str(target.path))
     sequence = 0
-    pending: dict[tuple[type[Any], Any, str], tuple[int, float, Mapping[str, Any], str | None]] = {}
+    pending: dict[
+        tuple[type[Any], Any, str], tuple[int, float, Mapping[str, Any], str | None]
+    ] = {}
     output: list[McpWireEvent] = []
     for index, record in enumerate(records, 1):
         payload = _safe_payload(record.get("payload")) or {}
@@ -216,11 +226,17 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
         offset_ms = float(offset) if isinstance(offset, (int, float)) else 0.0
         kind = _event_kind(payload, direction)
         ident = _json_id(payload)
-        method = payload.get("method") if isinstance(payload.get("method"), str) else None
+        method = (
+            payload.get("method") if isinstance(payload.get("method"), str) else None
+        )
         params = _safe_payload(payload.get("params")) or {}
         tool = params.get("name") if isinstance(params.get("name"), str) else None
         raw_ref = f"{target.path.name}#{index}"
-        provenance = "policy_denied" if record.get("kind") == "policy_denied" else "wire_observed"
+        provenance = (
+            "policy_denied"
+            if record.get("kind") == "policy_denied"
+            else "wire_observed"
+        )
         request_sequence: int | None = None
         response_to: int | None = None
         latency: float | None = None
@@ -228,9 +244,18 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
             sequence += 1
             request_sequence = sequence
             # Requests in the opposite direction are separate protocol roles.
-            pending[(type(ident), ident, direction)] = (sequence, offset_ms, payload, raw_ref)
+            pending[(type(ident), ident, direction)] = (
+                sequence,
+                offset_ms,
+                payload,
+                raw_ref,
+            )
         elif kind in {"response", "error"} and ident is not None:
-            opposite = "server_to_client" if direction == "client_to_server" else "client_to_server"
+            opposite = (
+                "server_to_client"
+                if direction == "client_to_server"
+                else "client_to_server"
+            )
             pending_item = pending.pop((type(ident), ident, opposite), None)
             if pending_item is not None:
                 response_to, started, request, _ = pending_item
@@ -250,7 +275,9 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
                 direction=direction,
                 kind=kind,
                 offset_ms=offset_ms,
-                request_sequence=request_sequence if request_sequence is not None else response_to,
+                request_sequence=request_sequence
+                if request_sequence is not None
+                else response_to,
                 jsonrpc_id=ident,
                 method=method,
                 tool=tool,
@@ -280,9 +307,15 @@ class McpCaptureManager:
         tools_by_server: Mapping[str, Iterable[str]] | None = None,
     ) -> None:
         self._owns_root = root is None
-        self.root = Path(root) if root is not None else Path(tempfile.mkdtemp(prefix="mcp-pal-capture-"))
+        self.root = (
+            Path(root)
+            if root is not None
+            else Path(tempfile.mkdtemp(prefix="mcp-pal-capture-"))
+        )
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.baseline_ns = baseline_ns if baseline_ns is not None else time.perf_counter_ns()
+        self.baseline_ns = (
+            baseline_ns if baseline_ns is not None else time.perf_counter_ns()
+        )
         self._trusted_private = frozenset(trusted_private_keys)
         # Restrictive policy is deny-by-default, including an empty policy.
         # Native policy remains provider-owned and is deliberately not handed
@@ -290,7 +323,9 @@ class McpCaptureManager:
         self._tool_policy = (
             None if isinstance(tool_policy, NativeToolPolicy) else tool_policy
         )
-        self._server_aliases = tuple(dict.fromkeys(str(value) for value in server_aliases))
+        self._server_aliases = tuple(
+            dict.fromkeys(str(value) for value in server_aliases)
+        )
         self._tools_by_server = {
             str(key): tuple(str(tool) for tool in values if isinstance(tool, str))
             for key, values in (tools_by_server or {}).items()
@@ -307,9 +342,14 @@ class McpCaptureManager:
         target = self._targets.get(connection_id)
         if target is not None:
             return target
-        safe_name = "".join(character if character.isalnum() or character in "-_" else "_" for character in connection_id)
+        safe_name = "".join(
+            character if character.isalnum() or character in "-_" else "_"
+            for character in connection_id
+        )
         path = self.root / f"{safe_name or uuid4().hex}.jsonl"
-        target = _CaptureTarget(connection_id, transport, path, CaptureWriter(str(path), self.baseline_ns))
+        target = _CaptureTarget(
+            connection_id, transport, path, CaptureWriter(str(path), self.baseline_ns)
+        )
         self._targets[connection_id] = target
         return target
 
@@ -327,7 +367,9 @@ class McpCaptureManager:
                 continue
             key = str(configuration.connection_id)
             alias = str(getattr(configuration, "key", key))
-            transport = str(getattr(configuration.transport, "value", configuration.transport))
+            transport = str(
+                getattr(configuration.transport, "value", configuration.transport)
+            )
             target = self._target(key, transport)
             resolved_secrets: set[str] = set()
             if transport == TransportKind.STDIO.value:
@@ -337,7 +379,9 @@ class McpCaptureManager:
                     continue
                 env_path = self.root / f"{key}.env.json"
                 environment = getattr(configuration, "environment", {})
-                configured_keys = frozenset(getattr(configuration, "sensitive_keys", ()))
+                configured_keys = frozenset(
+                    getattr(configuration, "sensitive_keys", ())
+                )
                 resolved_secrets.update(
                     write_stdio_handoff(
                         env_path,
@@ -348,24 +392,35 @@ class McpCaptureManager:
                 if resolved_secrets:
                     target.writer.add_secrets(resolved_secrets)
                 args: tuple[str, ...] = (
-                    "-m", "mcp_pal.transport.stdio_proxy",
-                    "--capture", str(target.path),
-                    "--baseline", str(self.baseline_ns),
-                    "--env-file", str(env_path),
+                    "-m",
+                    "mcp_pal.transport.stdio_proxy",
+                    "--capture",
+                    str(target.path),
+                    "--baseline",
+                    str(self.baseline_ns),
+                    "--env-file",
+                    str(env_path),
                 )
                 if self._tool_policy is not None:
                     policy_path = self.root / f"{key}.policy.json"
-                    policy_payload = json.dumps({
+                    policy_payload = json.dumps(
+                        {
                             "policy": self._tool_policy.model_dump(mode="json"),
                             "server": alias,
                             "known_servers": self._server_aliases,
                             "known_tools": tuple(getattr(configuration, "tools", ())),
                             "known_tools_by_server": self._tools_by_server,
-                        }, separators=(",", ":"))
-                    descriptor = os.open(policy_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                        },
+                        separators=(",", ":"),
+                    )
+                    descriptor = os.open(
+                        policy_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                    )
                     self._policy_paths.add(policy_path)
                     try:
-                        with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
+                        with os.fdopen(
+                            descriptor, "w", encoding="utf-8"
+                        ) as output_file:
                             descriptor = -1
                             output_file.write(policy_payload)
                     finally:
@@ -383,17 +438,24 @@ class McpCaptureManager:
                     args=args,
                     environment={},
                 )
-            elif transport in {TransportKind.STREAMABLE_HTTP.value, TransportKind.SSE.value}:
+            elif transport in {
+                TransportKind.STREAMABLE_HTTP.value,
+                TransportKind.SSE.value,
+            }:
                 endpoint = getattr(configuration, "endpoint", None)
                 if not isinstance(endpoint, str) or not endpoint:
                     output.append(configuration)
                     continue
                 headers = getattr(configuration, "headers", {})
-                configured_keys = frozenset(getattr(configuration, "sensitive_keys", ()))
+                configured_keys = frozenset(
+                    getattr(configuration, "sensitive_keys", ())
+                )
                 safe_headers: dict[str, str] = {}
                 for name, value in dict(headers).items():
                     if isinstance(name, str):
-                        resolved = _resolve_runtime_value(value, secrets=resolved_secrets)
+                        resolved = _resolve_runtime_value(
+                            value, secrets=resolved_secrets
+                        )
                         safe_headers[name] = resolved
                         _classify_runtime_value(
                             name,
@@ -401,7 +463,9 @@ class McpCaptureManager:
                             secrets=resolved_secrets,
                             configured=configured_keys,
                         )
-                resolved_endpoint = _resolve_runtime_value(endpoint, secrets=resolved_secrets)
+                resolved_endpoint = _resolve_runtime_value(
+                    endpoint, secrets=resolved_secrets
+                )
                 if resolved_secrets:
                     target.writer.add_secrets(resolved_secrets)
                 proxy = McpHttpProxy(
@@ -450,7 +514,9 @@ class McpCaptureManager:
             value in self._policy_enforced for value in selected
         )
 
-    def attach_loopback(self, connection_id: str, endpoint: Any, transport: str = "in_process") -> None:
+    def attach_loopback(
+        self, connection_id: str, endpoint: Any, transport: str = "in_process"
+    ) -> None:
         """Attach an existing loopback ASGI endpoint to a capture writer."""
 
         target = self._target(connection_id, transport)
@@ -464,7 +530,9 @@ class McpCaptureManager:
             return cached
         target = self._targets.get(connection_id)
         if target is None:
-            return McpCaptureSnapshot(connection_id, "unknown", limitations=("capture_not_started",))
+            return McpCaptureSnapshot(
+                connection_id, "unknown", limitations=("capture_not_started",)
+            )
         return McpCaptureSnapshot(
             connection_id,
             target.transport,
@@ -527,4 +595,9 @@ class McpCaptureManager:
             raise RuntimeError("MCP capture proxy cleanup failed") from None
 
 
-__all__ = ["McpCaptureManager", "McpCaptureSnapshot", "McpWireEvent", "write_stdio_handoff"]
+__all__ = [
+    "McpCaptureManager",
+    "McpCaptureSnapshot",
+    "McpWireEvent",
+    "write_stdio_handoff",
+]

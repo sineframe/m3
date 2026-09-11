@@ -13,7 +13,14 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Protocol, TypeAlias, cast
 
-from pydantic import Field, JsonValue as PydanticJsonValue, field_validator, model_validator
+from pydantic import (
+    Field,
+    field_validator,
+    model_validator,
+)
+from pydantic import (
+    JsonValue as PydanticJsonValue,
+)
 
 from ..trace.redaction import RedactionConfig, redact_for_persistence
 from ..types import FrozenModel
@@ -134,11 +141,25 @@ class ACPProbeDimension(FrozenModel):
 
     @property
     def stable_session_config(self) -> str:
-        return json.dumps(_normalize(self.session_config), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return json.dumps(
+            _normalize(self.session_config),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     @property
     def stable_key(self) -> str:
-        value = "|".join((self.profile_id, self.revision_id, self.probe_type.value, self.transport, self.agent_mode_id or "", self.stable_session_config))
+        value = "|".join(
+            (
+                self.profile_id,
+                self.revision_id,
+                self.probe_type.value,
+                self.transport,
+                self.agent_mode_id or "",
+                self.stable_session_config,
+            )
+        )
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
@@ -160,7 +181,11 @@ class ACPAgentIdentity(FrozenModel):
             return {
                 "name": value.get("name"),
                 "version": value.get("version"),
-                "metadata": {str(key): item for key, item in value.items() if key not in {"name", "version"}},
+                "metadata": {
+                    str(key): item
+                    for key, item in value.items()
+                    if key not in {"name", "version"}
+                },
             }
         return value
 
@@ -173,7 +198,11 @@ class ACPAgentMode(FrozenModel):
 class ACPProbeResult(ACPProbeDimension):
     """One terminal or in-flight probe observation."""
 
-    id: str = Field(default_factory=lambda: "acp-probe-" + uuid.uuid4().hex, min_length=1, max_length=256)
+    id: str = Field(
+        default_factory=lambda: "acp-probe-" + uuid.uuid4().hex,
+        min_length=1,
+        max_length=256,
+    )
     status: ACPProbeStatus
     agent_capabilities: JsonObject = Field(default_factory=dict)
     config_options: tuple[JsonObject, ...] = ()
@@ -191,13 +220,15 @@ class ACPProbeResult(ACPProbeDimension):
 
     @field_validator("agent_modes")
     @classmethod
-    def _bounded_modes(cls, value: tuple[ACPAgentMode, ...]) -> tuple[ACPAgentMode, ...]:
+    def _bounded_modes(
+        cls, value: tuple[ACPAgentMode, ...]
+    ) -> tuple[ACPAgentMode, ...]:
         if len(value) > 256:
             raise ValueError("ACP agent modes exceed the safe bound")
         return value
 
     @model_validator(mode="after")
-    def _terminal_times(self) -> "ACPProbeResult":
+    def _terminal_times(self) -> ACPProbeResult:
         if self.status.value in _TERMINAL and self.finished_at is None:
             raise ValueError("terminal ACP probe requires finished_at")
         if self.started_at and self.finished_at and self.finished_at < self.started_at:
@@ -216,8 +247,15 @@ class ACPProbeHistory(FrozenModel):
 class ACPProbeStore(Protocol):
     def save_acp_probe(self, result: ACPProbeResult) -> ACPProbeResult: ...
     def get_acp_probe(self, probe_id: str) -> ACPProbeResult | None: ...
-    def list_acp_probes(self, dimension: ACPProbeDimension | None = None, *, include_inflight: bool = True) -> tuple[ACPProbeResult, ...]: ...
-    def latest_acp_probe(self, dimension: ACPProbeDimension) -> ACPProbeResult | None: ...
+    def list_acp_probes(
+        self,
+        dimension: ACPProbeDimension | None = None,
+        *,
+        include_inflight: bool = True,
+    ) -> tuple[ACPProbeResult, ...]: ...
+    def latest_acp_probe(
+        self, dimension: ACPProbeDimension
+    ) -> ACPProbeResult | None: ...
 
 
 def _bounded(value: JsonValue) -> JsonValue:
@@ -233,13 +271,18 @@ def _contains_secret(value: object, secrets: frozenset[str]) -> bool:
     if isinstance(value, str):
         return any(secret and secret in value for secret in secrets)
     if isinstance(value, Mapping):
-        return any(_contains_secret(key, secrets) or _contains_secret(item, secrets) for key, item in value.items())
+        return any(
+            _contains_secret(key, secrets) or _contains_secret(item, secrets)
+            for key, item in value.items()
+        )
     if isinstance(value, (list, tuple)):
         return any(_contains_secret(item, secrets) for item in value)
     return False
 
 
-def redact_probe(result: ACPProbeResult, config: RedactionConfig | None = None) -> ACPProbeResult:
+def redact_probe(
+    result: ACPProbeResult, config: RedactionConfig | None = None
+) -> ACPProbeResult:
     """Project hostile runner output before it reaches durable storage."""
     cfg = config or RedactionConfig.from_environment()
     if _contains_secret(result.session_config, cfg.secrets):
@@ -249,7 +292,9 @@ def redact_probe(result: ACPProbeResult, config: RedactionConfig | None = None) 
     truncation: dict[str, JsonValue] = {}
     for field in ("agent_identity", "agent_capabilities", "evidence"):
         try:
-            projected = redact_for_persistence(value[field], config=cfg, path=f"$.acp_probe.{field}")
+            projected = redact_for_persistence(
+                value[field], config=cfg, path=f"$.acp_probe.{field}"
+            )
         except Exception:
             projected = {"truncated": True, "reason": "unsafe_evidence"}
         bounded = _bounded(cast(JsonValue, projected))
@@ -259,7 +304,9 @@ def redact_probe(result: ACPProbeResult, config: RedactionConfig | None = None) 
         else:
             value[field] = bounded
     try:
-        projected_options = redact_for_persistence(value["config_options"], config=cfg, path="$.acp_probe.config_options")
+        projected_options = redact_for_persistence(
+            value["config_options"], config=cfg, path="$.acp_probe.config_options"
+        )
     except Exception:
         projected_options = []
         truncation["config_options"] = {"truncated": True, "reason": "unsafe_evidence"}
@@ -271,20 +318,28 @@ def redact_probe(result: ACPProbeResult, config: RedactionConfig | None = None) 
         value["config_options"] = bounded_options
     if truncation:
         evidence_value = value.get("evidence")
-        evidence_map = dict(evidence_value) if isinstance(evidence_value, Mapping) else {}
+        evidence_map = (
+            dict(evidence_value) if isinstance(evidence_value, Mapping) else {}
+        )
         evidence_map["truncation"] = truncation
         value["evidence"] = _bounded(cast(JsonValue, evidence_map))
     for field, limit in (("diagnostics", 65536), ("error", 2048)):
         if value[field] is not None:
             try:
-                projected = redact_for_persistence(value[field], config=cfg, path=f"$.acp_probe.{field}")
+                projected = redact_for_persistence(
+                    value[field], config=cfg, path=f"$.acp_probe.{field}"
+                )
             except Exception:
                 projected = "probe diagnostic was not safely representable"
-            value[field] = projected[:limit] if isinstance(projected, str) else projected
+            value[field] = (
+                projected[:limit] if isinstance(projected, str) else projected
+            )
     return ACPProbeResult.model_validate(value)
 
 
-Runner = Callable[[ACPProbeRequest], Mapping[str, JsonValue] | Awaitable[Mapping[str, JsonValue]]]
+Runner = Callable[
+    [ACPProbeRequest], Mapping[str, JsonValue] | Awaitable[Mapping[str, JsonValue]]
+]
 
 
 async def run_acp_probe(
@@ -299,30 +354,82 @@ async def run_acp_probe(
     started = datetime.now(timezone.utc)
     monotonic = time.monotonic()
     base = request.model_dump(mode="python", exclude={"timeout_seconds"})
-    base.update(id=probe_id or "acp-probe-" + uuid.uuid4().hex, status=ACPProbeStatus.RUNNING, started_at=started, created_at=created_at or started)
+    base.update(
+        id=probe_id or "acp-probe-" + uuid.uuid4().hex,
+        status=ACPProbeStatus.RUNNING,
+        started_at=started,
+        created_at=created_at or started,
+    )
     try:
-        is_async = inspect.iscoroutinefunction(runner) or inspect.iscoroutinefunction(getattr(runner, "__call__", None))
+        is_async = inspect.iscoroutinefunction(runner) or inspect.iscoroutinefunction(
+            runner.__call__
+        )
         if is_async:
-            value = await asyncio.wait_for(cast(Awaitable[Mapping[str, JsonValue]], runner(request)), timeout=request.timeout_seconds)
+            value = await asyncio.wait_for(
+                cast(Awaitable[Mapping[str, JsonValue]], runner(request)),
+                timeout=request.timeout_seconds,
+            )
         else:
-            sync_runner = cast(Callable[[ACPProbeRequest], Mapping[str, JsonValue]], runner)
-            value = await asyncio.wait_for(asyncio.to_thread(sync_runner, request), timeout=request.timeout_seconds)
+            sync_runner = cast(
+                Callable[[ACPProbeRequest], Mapping[str, JsonValue]], runner
+            )
+            value = await asyncio.wait_for(
+                asyncio.to_thread(sync_runner, request), timeout=request.timeout_seconds
+            )
             if inspect.isawaitable(value):
-                value = await asyncio.wait_for(cast(Awaitable[Mapping[str, JsonValue]], value), timeout=request.timeout_seconds)
+                value = await asyncio.wait_for(
+                    cast(Awaitable[Mapping[str, JsonValue]], value),
+                    timeout=request.timeout_seconds,
+                )
         if not isinstance(value, Mapping):
             raise ValueError("probe runner returned an invalid result")
-        allowed = ("status", "agent_identity", "agent_capabilities", "agent_modes", "current_agent_mode_id", "config_options", "evidence", "diagnostics", "error")
+        allowed = (
+            "status",
+            "agent_identity",
+            "agent_capabilities",
+            "agent_modes",
+            "current_agent_mode_id",
+            "config_options",
+            "evidence",
+            "diagnostics",
+            "error",
+        )
         payload = {key: value[key] for key in allowed if key in value}
         raw_status = payload.pop("status", "failed")
-        status = raw_status if isinstance(raw_status, ACPProbeStatus) else (ACPProbeStatus(str(raw_status)) if str(raw_status) in _TERMINAL else ACPProbeStatus.FAILED)
-        if status is ACPProbeStatus.FAILED and str(payload.get("error", "")).lower() in {"timed_out", "timeout", "timed out"}:
+        status = (
+            raw_status
+            if isinstance(raw_status, ACPProbeStatus)
+            else (
+                ACPProbeStatus(str(raw_status))
+                if str(raw_status) in _TERMINAL
+                else ACPProbeStatus.FAILED
+            )
+        )
+        if status is ACPProbeStatus.FAILED and str(
+            payload.get("error", "")
+        ).lower() in {"timed_out", "timeout", "timed out"}:
             status = ACPProbeStatus.TIMED_OUT
         finished = datetime.now(timezone.utc)
-        base.update(payload, status=status, finished_at=finished, duration_ms=(time.monotonic() - monotonic) * 1000)
+        base.update(
+            payload,
+            status=status,
+            finished_at=finished,
+            duration_ms=(time.monotonic() - monotonic) * 1000,
+        )
     except asyncio.TimeoutError:
-        base.update(status=ACPProbeStatus.TIMED_OUT, error="probe timed out", finished_at=datetime.now(timezone.utc), duration_ms=(time.monotonic() - monotonic) * 1000)
+        base.update(
+            status=ACPProbeStatus.TIMED_OUT,
+            error="probe timed out",
+            finished_at=datetime.now(timezone.utc),
+            duration_ms=(time.monotonic() - monotonic) * 1000,
+        )
     except Exception:
-        base.update(status=ACPProbeStatus.FAILED, error="probe failed", finished_at=datetime.now(timezone.utc), duration_ms=(time.monotonic() - monotonic) * 1000)
+        base.update(
+            status=ACPProbeStatus.FAILED,
+            error="probe failed",
+            finished_at=datetime.now(timezone.utc),
+            duration_ms=(time.monotonic() - monotonic) * 1000,
+        )
     try:
         candidate = ACPProbeResult.model_validate(base)
     except Exception:
@@ -330,16 +437,31 @@ async def run_acp_probe(
         # not escape the lifecycle boundary or reach persistence raw.
         safe_base = request.model_dump(mode="python", exclude={"timeout_seconds"})
         safe_base.update(
-            id=base["id"], created_at=base["created_at"], started_at=base["started_at"],
-            status=ACPProbeStatus.FAILED, finished_at=datetime.now(timezone.utc),
-            duration_ms=(time.monotonic() - monotonic) * 1000, error="probe result was invalid",
+            id=base["id"],
+            created_at=base["created_at"],
+            started_at=base["started_at"],
+            status=ACPProbeStatus.FAILED,
+            finished_at=datetime.now(timezone.utc),
+            duration_ms=(time.monotonic() - monotonic) * 1000,
+            error="probe result was invalid",
         )
         candidate = ACPProbeResult.model_validate(safe_base)
     return redact_probe(candidate, config)
 
 
 __all__ = [
-    "ACPAgentIdentity", "ACPAgentMode", "ACPProbeDimension", "ACPProbeHistory", "ACPProbeKind",
-    "ACPProbeRequest", "ACPProbeResult", "ACPProbeStatus", "ACPProbeStore",
-    "JsonObject", "JsonValue", "Runner", "redact_probe", "run_acp_probe",
+    "ACPAgentIdentity",
+    "ACPAgentMode",
+    "ACPProbeDimension",
+    "ACPProbeHistory",
+    "ACPProbeKind",
+    "ACPProbeRequest",
+    "ACPProbeResult",
+    "ACPProbeStatus",
+    "ACPProbeStore",
+    "JsonObject",
+    "JsonValue",
+    "Runner",
+    "redact_probe",
+    "run_acp_probe",
 ]

@@ -7,24 +7,44 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from mcp.server.lowlevel import Server
 from mcp import types
+from mcp.server.lowlevel import Server
 
 from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.server_group import HarnessServerConfig, ServerGroupManager
-from mcp_pal.transport.capture_proxy import McpCaptureManager
-from mcp_pal.trace.capture import CaptureWriter
-from mcp_pal.harness.contracts import DeterministicHarnessAdapter, HarnessLaunch, HarnessSession, HarnessTurnRequest
 from mcp_pal.harness import HarnessAdapterRegistry
-from mcp_pal.types import AgentSpec, ClaudeCode, SecretReference, TextContent, UserMessage
-from mcp_pal.types import InProcessServer, ServerBinding, SSEServer, StdioServer, HTTPServer, TransportKind, TrustLevel
+from mcp_pal.harness.contracts import (
+    DeterministicHarnessAdapter,
+    HarnessLaunch,
+    HarnessSession,
+    HarnessTurnRequest,
+)
+from mcp_pal.server_group import HarnessServerConfig, ServerGroupManager
+from mcp_pal.trace.capture import CaptureWriter
+from mcp_pal.transport.capture_proxy import McpCaptureManager
+from mcp_pal.types import (
+    AgentSpec,
+    ClaudeCode,
+    HTTPServer,
+    InProcessServer,
+    SecretReference,
+    ServerBinding,
+    StdioServer,
+    TextContent,
+    TransportKind,
+    TrustLevel,
+    UserMessage,
+)
 
 
 def _server() -> Server:
     async def list_tools(_context: object, _params: object) -> types.ListToolsResult:
-        return types.ListToolsResult(tools=[types.Tool(name="draw", input_schema={"type": "object"})])
+        return types.ListToolsResult(
+            tools=[types.Tool(name="draw", input_schema={"type": "object"})]
+        )
 
-    async def call_tool(_context: object, params: types.CallToolRequestParams) -> types.CallToolResult:
+    async def call_tool(
+        _context: object, params: types.CallToolRequestParams
+    ) -> types.CallToolResult:
         return types.CallToolResult(content=[types.TextContent(text=params.name)])
 
     return Server("capture-fixture", on_list_tools=list_tools, on_call_tool=call_tool)
@@ -36,7 +56,12 @@ def test_capture_correlates_typed_ids_and_tool_latency(tmp_path: Path) -> None:
     writer.write(
         transport="stdio",
         direction="client_to_server",
-        payload={"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "draw", "arguments": {"x": 1}}},
+        payload={
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {"name": "draw", "arguments": {"x": 1}},
+        },
     )
     writer.write(
         transport="stdio",
@@ -46,12 +71,21 @@ def test_capture_correlates_typed_ids_and_tool_latency(tmp_path: Path) -> None:
     writer.write(
         transport="stdio",
         direction="client_to_server",
-        payload={"jsonrpc": "2.0", "id": "7", "method": "tools/call", "params": {"name": "draw", "arguments": {}}},
+        payload={
+            "jsonrpc": "2.0",
+            "id": "7",
+            "method": "tools/call",
+            "params": {"name": "draw", "arguments": {}},
+        },
     )
     writer.write(
         transport="stdio",
         direction="server_to_client",
-        payload={"jsonrpc": "2.0", "id": "7", "error": {"code": -1, "message": "failed"}},
+        payload={
+            "jsonrpc": "2.0",
+            "id": "7",
+            "error": {"code": -1, "message": "failed"},
+        },
     )
     snapshot = manager.snapshot("connection-a")
     assert [event.jsonrpc_id for event in snapshot.events] == [7, 7, "7", "7"]
@@ -65,7 +99,9 @@ def test_capture_correlates_typed_ids_and_tool_latency(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stdio_configuration_is_rewritten_to_transparent_capture_proxy(tmp_path: Path) -> None:
+async def test_stdio_configuration_is_rewritten_to_transparent_capture_proxy(
+    tmp_path: Path,
+) -> None:
     manager = McpCaptureManager(tmp_path)
     config = HarnessServerConfig(
         key="echo",
@@ -86,7 +122,9 @@ async def test_stdio_configuration_is_rewritten_to_transparent_capture_proxy(tmp
 
 
 @pytest.mark.asyncio
-async def test_http_instrumentation_keeps_credentials_only_in_proxy(tmp_path: Path) -> None:
+async def test_http_instrumentation_keeps_credentials_only_in_proxy(
+    tmp_path: Path,
+) -> None:
     manager = McpCaptureManager(tmp_path, trusted_private_keys={"remote"})
     config = HarnessServerConfig(
         key="remote",
@@ -106,7 +144,9 @@ async def test_http_instrumentation_keeps_credentials_only_in_proxy(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("MCP_PAL_CAPTURE_SECRET", "capture-secret-value")
     manager = McpCaptureManager(tmp_path)
     config = HarnessServerConfig(
@@ -116,7 +156,11 @@ async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(
         available=True,
         connection_id="connection-secret",
         command="echo-server",
-        environment={"TOKEN": SecretReference(source="environment", name="MCP_PAL_CAPTURE_SECRET")},
+        environment={
+            "TOKEN": SecretReference(
+                source="environment", name="MCP_PAL_CAPTURE_SECRET"
+            )
+        },
     )
     instrumented = (await manager.instrument((config,)))[0]
     env_file = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
@@ -126,14 +170,22 @@ async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(
     assert handoff["environment"]["PATH"]
     assert handoff["canaries"] == ["capture-secret-value"]
     writer = manager.writer_for("connection-secret")
-    writer.write(transport="stdio", direction="server_to_client", payload={"result": "capture-secret-value"})
-    assert "capture-secret-value" not in str(manager.snapshot("connection-secret").events)
+    writer.write(
+        transport="stdio",
+        direction="server_to_client",
+        payload={"result": "capture-secret-value"},
+    )
+    assert "capture-secret-value" not in str(
+        manager.snapshot("connection-secret").events
+    )
     await manager.close()
     assert not env_file.exists()
 
 
 @pytest.mark.asyncio
-async def test_server_group_exposes_capture_context_and_preserves_connection_identity() -> None:
+async def test_server_group_exposes_capture_context_and_preserves_connection_identity() -> (
+    None
+):
     manager = ServerGroupManager(
         (ServerBinding(server=StdioServer(name="echo", command="echo-server")),)
     )
@@ -150,7 +202,9 @@ async def test_server_group_exposes_capture_context_and_preserves_connection_ide
 
 @pytest.mark.asyncio
 async def test_in_process_loopback_is_observed_without_rewriting_endpoint() -> None:
-    manager = ServerGroupManager((ServerBinding(server=InProcessServer(name="fixture", factory=_server)),))
+    manager = ServerGroupManager(
+        (ServerBinding(server=InProcessServer(name="fixture", factory=_server)),)
+    )
     await manager.start()
     endpoint = manager.configurations()[0].endpoint
     assert endpoint is not None
@@ -174,17 +228,28 @@ async def test_in_process_loopback_is_observed_without_rewriting_endpoint() -> N
 async def test_agent_execution_projects_wire_capture_into_stable_trace() -> None:
     writer_holder: dict[str, CaptureWriter] = {}
 
-    async def handler(_request: HarnessTurnRequest, _state: MutableMapping[str, Any]) -> str:
+    async def handler(
+        _request: HarnessTurnRequest, _state: MutableMapping[str, Any]
+    ) -> str:
         writer = writer_holder["writer"]
         writer.write(
             transport="stdio",
             direction="client_to_server",
-            payload={"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "draw", "arguments": {"token": "secret-canary"}}},
+            payload={
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {"name": "draw", "arguments": {"token": "secret-canary"}},
+            },
         )
         writer.write(
             transport="stdio",
             direction="server_to_client",
-            payload={"jsonrpc": "2.0", "id": 7, "result": {"content": [{"text": "ok"}]}},
+            payload={
+                "jsonrpc": "2.0",
+                "id": 7,
+                "result": {"content": [{"text": "ok"}]},
+            },
         )
         return "done"
 
@@ -193,7 +258,9 @@ async def test_agent_execution_projects_wire_capture_into_stable_trace() -> None
             configurations = launch.configurations
             capture = launch.capture
             assert capture is not None
-            writer_holder["writer"] = capture.writer_for(configurations[0].connection_id)
+            writer_holder["writer"] = capture.writer_for(
+                configurations[0].connection_id
+            )
             return await super().open(launch)
 
     adapter = WireAdapter(handler=handler)
@@ -203,10 +270,16 @@ async def test_agent_execution_projects_wire_capture_into_stable_trace() -> None
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
         message=UserMessage(content=(TextContent(text="draw"),)),
     )
-    async with AsyncMCPTestKit(adapter_registry=registry, env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(
+        adapter_registry=registry, env={}, cwd="/tmp/mcp-pal-no-project"
+    ) as kit:
         result = await kit.run(spec)
     assert result.trace is not None
-    wire = [event for event in result.trace.events if event.provenance.origin.value == "wire_observed"]
+    wire = [
+        event
+        for event in result.trace.events
+        if event.provenance.origin.value == "wire_observed"
+    ]
     assert any(event.kind.value == "tool.call_requested" for event in wire)
     assert any(event.kind.value == "tool.result_received" for event in wire)
     request = next(event for event in wire if event.kind.value == "tool.call_requested")

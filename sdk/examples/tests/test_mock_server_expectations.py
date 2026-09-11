@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from mcp_pal import MCPTestKit
 from mcp_pal.sync_api import ToolCallResult
 from mcp_pal.testing import MockMCPServer
-
-from mcp_pal import MCPTestKit
 
 
 def test_script_a_mock_server_and_verify_tool_usage() -> None:

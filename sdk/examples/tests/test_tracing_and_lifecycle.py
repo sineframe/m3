@@ -6,9 +6,9 @@ import os
 import time
 
 import pytest
-from mcp_pal.sync_api import ToolCallResult
 
 from mcp_pal import MCPTestKit, StdioServer
+from mcp_pal.sync_api import ToolCallResult
 
 
 def _process_has_exited(pid: int, timeout: float = 5) -> bool:

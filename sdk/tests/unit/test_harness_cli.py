@@ -14,7 +14,9 @@ def test_manifest_cli_validate(capsys, tmp_path):
 
 def test_live_characterization_is_explicit_and_reports_missing_binary(capsys, tmp_path):
     path = tmp_path / "manifest.json"
-    path.write_text(json.dumps({"command": "mcp-pal-no-such-agent", "args": [], "env": {}}))
+    path.write_text(
+        json.dumps({"command": "mcp-pal-no-such-agent", "args": [], "env": {}})
+    )
     assert main(["characterize", str(path), "--confirm-live"]) == 1
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "failed"

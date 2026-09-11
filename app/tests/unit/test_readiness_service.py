@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.storage import ProfileRecord, ProfileRevisionRecord, SQLiteExecutionStore, StorageError
+from mcp_pal.storage import (
+    ProfileRecord,
+    ProfileRevisionRecord,
+    SQLiteExecutionStore,
+    StorageError,
+)
 from mcp_pal_app.services.app_service import AppRuntimeService
 from mcp_pal_app.services.readiness_service import (
     REQUIRED_CLAUDE_FLAGS,
@@ -46,8 +51,16 @@ def _store(tmp_path: Path) -> SQLiteExecutionStore:
 
 def test_builtins_use_settings_snapshot_and_expose_typed_limits(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    settings = _settings(tmp_path / "unused.sqlite", openrouter_api_key="settings-only-key")
-    service = ReadinessService(settings, store, environment={}, help_probe=_help, executable_resolver=lambda _: "/fixture")
+    settings = _settings(
+        tmp_path / "unused.sqlite", openrouter_api_key="settings-only-key"
+    )
+    service = ReadinessService(
+        settings,
+        store,
+        environment={},
+        help_probe=_help,
+        executable_resolver=lambda _: "/fixture",
+    )
 
     snapshot = service.capabilities()
     claude, opencode = snapshot.builtins
@@ -55,7 +68,11 @@ def test_builtins_use_settings_snapshot_and_expose_typed_limits(tmp_path: Path) 
     assert opencode.ready is True
     assert claude.models == ("claude/one",)
     assert opencode.models == ("openrouter/model", "anthropic/model")
-    assert claude.tool_modes == opencode.tool_modes == ("mcp_only", "mcp_read_only", "full")
+    assert (
+        claude.tool_modes
+        == opencode.tool_modes
+        == ("mcp_only", "mcp_read_only", "full")
+    )
     assert claude.limits.timeout_seconds == 9
     assert claude.limits.max_turns == 4
     assert claude.limits.max_budget_usd == 1.25
@@ -67,21 +84,37 @@ def test_builtins_use_settings_snapshot_and_expose_typed_limits(tmp_path: Path) 
 def test_missing_executable_and_required_flags_are_explicit(tmp_path: Path) -> None:
     store = _store(tmp_path)
     settings = _settings(tmp_path / "unused.sqlite", anthropic_api_key="key")
-    service = ReadinessService(settings, store, environment={}, help_probe=lambda *_: "--print", executable_resolver=lambda _: None)
+    service = ReadinessService(
+        settings,
+        store,
+        environment={},
+        help_probe=lambda *_: "--print",
+        executable_resolver=lambda _: None,
+    )
     descriptor = service.capabilities().builtins[0]
     assert descriptor.executable is False
     assert descriptor.ready is False
     assert descriptor.missing_flags == REQUIRED_CLAUDE_FLAGS
 
-    partial = ReadinessService(settings, store, environment={}, help_probe=lambda *_: "--print", executable_resolver=lambda _: "/fixture")
+    partial = ReadinessService(
+        settings,
+        store,
+        environment={},
+        help_probe=lambda *_: "--print",
+        executable_resolver=lambda _: "/fixture",
+    )
     descriptor = partial.capabilities().builtins[0]
     assert descriptor.executable is True
     assert descriptor.required_flags_ok is False
-    assert descriptor.missing_flags == tuple(flag for flag in REQUIRED_CLAUDE_FLAGS if flag != "--print")
+    assert descriptor.missing_flags == tuple(
+        flag for flag in REQUIRED_CLAUDE_FLAGS if flag != "--print"
+    )
     store.close()
 
 
-def test_opencode_saved_auth_is_independent_of_environment_credentials(tmp_path: Path) -> None:
+def test_opencode_saved_auth_is_independent_of_environment_credentials(
+    tmp_path: Path,
+) -> None:
     store = _store(tmp_path)
     settings = _settings(tmp_path / "unused.sqlite")
     calls: list[tuple[str, tuple[str, ...]]] = []
@@ -90,7 +123,14 @@ def test_opencode_saved_auth_is_independent_of_environment_credentials(tmp_path:
         calls.append((executable, providers))
         return True
 
-    service = ReadinessService(settings, store, environment={}, help_probe=_help, auth_probe=auth, executable_resolver=lambda _: "/fixture")
+    service = ReadinessService(
+        settings,
+        store,
+        environment={},
+        help_probe=_help,
+        auth_probe=auth,
+        executable_resolver=lambda _: "/fixture",
+    )
     descriptor = service.capabilities().builtins[1]
     assert descriptor.ready is True
     assert descriptor.credential_available is True
@@ -98,7 +138,9 @@ def test_opencode_saved_auth_is_independent_of_environment_credentials(tmp_path:
     store.close()
 
 
-def test_opencode_default_saved_auth_probe_uses_allowlisted_user_paths(tmp_path: Path) -> None:
+def test_opencode_default_saved_auth_probe_uses_allowlisted_user_paths(
+    tmp_path: Path,
+) -> None:
     executable = tmp_path / "opencode"
     observed = tmp_path / "observed-env"
     executable.write_text(
@@ -107,10 +149,17 @@ def test_opencode_default_saved_auth_probe_uses_allowlisted_user_paths(tmp_path:
     )
     executable.chmod(0o700)
     store = _store(tmp_path)
-    settings = _settings(tmp_path / "unused.sqlite", opencode_executable=str(executable))
+    settings = _settings(
+        tmp_path / "unused.sqlite", opencode_executable=str(executable)
+    )
     # The executable is a bounded fixture; no network or real provider auth is
     # involved. The explicit HOME proves the probe does not use a temp HOME.
-    service = ReadinessService(settings, store, environment={"PATH": "/bin", "HOME": str(tmp_path / "home")}, help_probe=_help)
+    service = ReadinessService(
+        settings,
+        store,
+        environment={"PATH": "/bin", "HOME": str(tmp_path / "home")},
+        help_probe=_help,
+    )
     descriptor = service.capabilities().builtins[1]
     assert descriptor.ready is True
     assert observed.read_text(encoding="utf-8").strip() == "absent"
@@ -122,11 +171,24 @@ def test_local_acp_can_run_when_global_builtins_fail(tmp_path: Path) -> None:
     settings = _settings(tmp_path / "unused.sqlite")
     profile = store.create_harness_profile(
         "local-acp",
-        {"manifest": {"command": "acp-fixture", "env": {"TOKEN": "${ACP_TOKEN}"}}, "trusted_unsandboxed": True},
+        {
+            "manifest": {"command": "acp-fixture", "env": {"TOKEN": "${ACP_TOKEN}"}},
+            "trusted_unsandboxed": True,
+        },
     )
-    service = ReadinessService(settings, store, environment={"ACP_TOKEN": "present"}, help_probe=lambda *_: None, executable_resolver=lambda value: "/fixture" if value == "acp-fixture" else None)
+    service = ReadinessService(
+        settings,
+        store,
+        environment={"ACP_TOKEN": "present"},
+        help_probe=lambda *_: None,
+        executable_resolver=lambda value: (
+            "/fixture" if value == "acp-fixture" else None
+        ),
+    )
     snapshot = service.capabilities()
-    descriptor = next(item for item in snapshot.acp_profiles if item.profile_id == profile.id)
+    descriptor = next(
+        item for item in snapshot.acp_profiles if item.profile_id == profile.id
+    )
     assert snapshot.ready is True
     assert descriptor.selection_id == f"profile:{profile.id}"
     assert descriptor.revision_id is not None
@@ -142,32 +204,62 @@ def test_local_acp_uses_settings_only_provider_reference(tmp_path: Path) -> None
     canary = "settings-only-acp-canary"
     profile = store.create_harness_profile(
         "settings-acp",
-        {"manifest": {"command": "acp-fixture", "env": {"TOKEN": "${ANTHROPIC_API_KEY}"}}, "trusted_unsandboxed": True},
+        {
+            "manifest": {
+                "command": "acp-fixture",
+                "env": {"TOKEN": "${ANTHROPIC_API_KEY}"},
+            },
+            "trusted_unsandboxed": True,
+        },
     )
     service = ReadinessService(
         _settings(tmp_path / "unused.sqlite", anthropic_api_key=canary),
         store,
         environment={},
         help_probe=lambda *_: None,
-        executable_resolver=lambda value: "/fixture" if value == "acp-fixture" else None,
+        executable_resolver=lambda value: (
+            "/fixture" if value == "acp-fixture" else None
+        ),
     )
-    descriptor = next(item for item in service.capabilities().acp_profiles if item.profile_id == profile.id)
+    descriptor = next(
+        item
+        for item in service.capabilities().acp_profiles
+        if item.profile_id == profile.id
+    )
     assert descriptor.ready is True
     assert canary not in repr(descriptor)
     assert canary not in repr(service)
     store.close()
 
 
-def test_acp_missing_environment_untrusted_and_archived_are_not_ready(tmp_path: Path) -> None:
+def test_acp_missing_environment_untrusted_and_archived_are_not_ready(
+    tmp_path: Path,
+) -> None:
     store = _store(tmp_path)
     trusted_missing = store.create_harness_profile(
-        "missing-env", {"manifest": {"command": "fixture", "env": {"TOKEN": "${NEEDED}"}}, "trusted_unsandboxed": True}
+        "missing-env",
+        {
+            "manifest": {"command": "fixture", "env": {"TOKEN": "${NEEDED}"}},
+            "trusted_unsandboxed": True,
+        },
     )
-    untrusted = store.create_harness_profile("untrusted", {"manifest": {"command": "fixture"}, "trusted_unsandboxed": False})
-    archived = store.create_harness_profile("archived", {"manifest": {"command": "fixture"}, "trusted_unsandboxed": True})
+    untrusted = store.create_harness_profile(
+        "untrusted", {"manifest": {"command": "fixture"}, "trusted_unsandboxed": False}
+    )
+    archived = store.create_harness_profile(
+        "archived", {"manifest": {"command": "fixture"}, "trusted_unsandboxed": True}
+    )
     store.archive_profile(archived.id)
-    service = ReadinessService(_settings(tmp_path / "unused.sqlite"), store, environment={}, help_probe=lambda *_: None, executable_resolver=lambda _: "/fixture")
-    descriptors = {item.profile_id: item for item in service.capabilities().acp_profiles}
+    service = ReadinessService(
+        _settings(tmp_path / "unused.sqlite"),
+        store,
+        environment={},
+        help_probe=lambda *_: None,
+        executable_resolver=lambda _: "/fixture",
+    )
+    descriptors = {
+        item.profile_id: item for item in service.capabilities().acp_profiles
+    }
     assert descriptors[trusted_missing.id].ready is False
     assert "NEEDED" in descriptors[trusted_missing.id].missing_environment
     assert descriptors[trusted_missing.id].local_ready is False
@@ -199,7 +291,11 @@ def test_acp_executable_probe_failure_is_safe(tmp_path: Path) -> None:
         help_probe=lambda *_: None,
         executable_resolver=throwing_resolver,
     )
-    descriptor = next(item for item in service.capabilities().acp_profiles if item.profile_id == profile.id)
+    descriptor = next(
+        item
+        for item in service.capabilities().acp_profiles
+        if item.profile_id == profile.id
+    )
     assert descriptor.executable is False
     assert descriptor.local_ready is False
     assert "secret probe detail" not in repr(descriptor)
@@ -208,13 +304,23 @@ def test_acp_executable_probe_failure_is_safe(tmp_path: Path) -> None:
 
 def test_storage_failure_is_safe_and_does_not_claim_readiness(tmp_path: Path) -> None:
     class BrokenStore:
-        def list_profiles(self, kind: str, *, include_archived: bool = False) -> tuple[ProfileRecord, ...]:
+        def list_profiles(
+            self, kind: str, *, include_archived: bool = False
+        ) -> tuple[ProfileRecord, ...]:
             raise StorageError("secret database path should not escape")
 
-        def list_profile_revisions(self, profile_id: str) -> tuple[ProfileRevisionRecord, ...]:
+        def list_profile_revisions(
+            self, profile_id: str
+        ) -> tuple[ProfileRevisionRecord, ...]:
             raise StorageError("secret revision should not escape")
 
-    service = ReadinessService(_settings(tmp_path / "unused.sqlite", anthropic_api_key="credential-canary"), BrokenStore(), environment={}, help_probe=lambda *_: None, executable_resolver=lambda _: None)
+    service = ReadinessService(
+        _settings(tmp_path / "unused.sqlite", anthropic_api_key="credential-canary"),
+        BrokenStore(),
+        environment={},
+        help_probe=lambda *_: None,
+        executable_resolver=lambda _: None,
+    )
     snapshot = service.capabilities()
     assert snapshot.storage.available is False
     assert snapshot.storage.reason == "storage is unavailable"

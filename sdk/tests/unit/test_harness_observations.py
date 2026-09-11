@@ -5,28 +5,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+
+from mcp_pal import expect
 from mcp_pal.agent_session import HarnessAdapter as AgentHarnessAdapter
 from mcp_pal.errors import RawEvidenceIntegrityError
 from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.harness.contracts import HarnessAdapter as ContractHarnessAdapter
-from mcp_pal.observability import CaptureOptions
-from mcp_pal.storage import (
-    InMemoryExecutionStore,
-    SQLiteExecutionStore,
-    StorageConflict,
-)
-from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import (
-    EventDirection,
-    EventId,
-    EventKind,
-    EventOrigin,
-    EventSource,
-    ExecutionOutcome,
-    RequestLink,
-)
-
-from mcp_pal import expect
 from mcp_pal.harness import (
     HARNESS_OBSERVATION_ADAPTER,
     HarnessObservationSink,
@@ -46,6 +29,23 @@ from mcp_pal.harness import (
     ToolResultObservedObservation,
     TurnEvidence,
     UsageObservedObservation,
+)
+from mcp_pal.harness.contracts import HarnessAdapter as ContractHarnessAdapter
+from mcp_pal.observability import CaptureOptions
+from mcp_pal.storage import (
+    InMemoryExecutionStore,
+    SQLiteExecutionStore,
+    StorageConflict,
+)
+from mcp_pal.trace.redaction import RedactionConfig
+from mcp_pal.types import (
+    EventDirection,
+    EventId,
+    EventKind,
+    EventOrigin,
+    EventSource,
+    ExecutionOutcome,
+    RequestLink,
 )
 
 NOW = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
@@ -505,9 +505,7 @@ def test_sink_respects_provider_and_stderr_switches() -> None:
 
 
 def test_provider_filter_does_not_drop_raw_frames_or_structured_observations() -> None:
-    config = CaptureOptions(
-        capture_provider_messages=False, capture_raw_evidence=False
-    )
+    config = CaptureOptions(capture_provider_messages=False, capture_raw_evidence=False)
     _, recorder, sink = _sink(config=config)
     sink.emit(RawFrameObservation(**_common(observation_id="raw-wire", text="wire")))
     sink.emit(
@@ -731,9 +729,7 @@ def test_stderr_states_are_lossless_without_trusting_claims(
 
 
 def test_sink_limitations_are_merged_into_terminal_trace() -> None:
-    _, recorder, sink = _sink(
-        config=CaptureOptions(capture_provider_messages=False)
-    )
+    _, recorder, sink = _sink(config=CaptureOptions(capture_provider_messages=False))
     sink.emit(MessageChunkObservation(**_common(text="not captured")))
     trace = recorder.finalize(ExecutionOutcome.COMPLETED)
     assert trace.completeness == "partial"
@@ -888,9 +884,7 @@ def test_memory_duplicate_raw_event_preserves_existing_reference() -> None:
         update={"sequence": committed.sequence + 1, "raw_evidence_ref": None}
     )
     with pytest.raises(StorageConflict):
-        store.append_event(
-            duplicate, b"replacement", media_type="text/plain"
-        )
+        store.append_event(duplicate, b"replacement", media_type="text/plain")
     assert store.read_raw_evidence(reference).content == "original"
     sink.emit(
         MetadataObservedObservation(
@@ -931,23 +925,19 @@ def test_sqlite_atomic_raw_metadata_failure_is_transactional(tmp_path: Path) -> 
         }
     )
     with pytest.raises(RawEvidenceIntegrityError):
-        store.append_event(
-            replacement, b"original", media_type="text/plain"
-        )
+        store.append_event(replacement, b"original", media_type="text/plain")
     assert len(recorder.events()) == first.sequence + 1
     with sqlite3.connect(database) as connection:
         connection.execute(
             "UPDATE v2_blobs SET size_bytes=? WHERE sha256=?",
             (reference.size_bytes, reference.sha256),
         )
-    store.append_event(
-        replacement, b"original", media_type="text/plain"
-    )
+    store.append_event(replacement, b"original", media_type="text/plain")
     assert recorder.events()[-1].sequence == replacement.sequence
 
 
 def test_atomic_raw_callbacks_observe_complete_committed_reference() -> None:
-    store, recorder, sink = _sink()
+    store, _recorder, sink = _sink()
     observed: list[object] = []
     store.subscribe("r5-test", observed.append)
     sink.emit(
@@ -958,8 +948,8 @@ def test_atomic_raw_callbacks_observe_complete_committed_reference() -> None:
         )
     )
     event = observed[-1]
-    assert getattr(event, "raw_evidence_ref") is not None
-    reference = getattr(event, "raw_evidence_ref")
+    assert event.raw_evidence_ref is not None
+    reference = event.raw_evidence_ref
     assert reference.sha256 and reference.size_bytes == 5 and reference.storage_key
     assert store.read_raw_evidence(reference).content == "frame"
 

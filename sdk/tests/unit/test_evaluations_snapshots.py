@@ -9,13 +9,28 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from mcp_pal import MCPTestKit, snapshot, snapshot
+from mcp_pal import MCPTestKit, snapshot
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.errors import ModelValidationError, UnsupportedFeature
-from mcp_pal.evaluations import EvaluationRunner, InMemoryEvaluationStore, RequiredEvaluationError
+from mcp_pal.evaluations import (
+    EvaluationRunner,
+    InMemoryEvaluationStore,
+    RequiredEvaluationError,
+)
 from mcp_pal.snapshots import SnapshotOptions
-from mcp_pal.trace.redaction import RedactionConfig, REDACTED
-from mcp_pal.types import ArtifactId, ArtifactRef, EvaluationStatus, ExecutionId, ExecutionOutcome, ExecutionResult, ExecutionState, ExecutionStatus, TraceId, TraceResult
+from mcp_pal.trace.redaction import REDACTED, RedactionConfig
+from mcp_pal.types import (
+    ArtifactId,
+    ArtifactRef,
+    EvaluationStatus,
+    ExecutionId,
+    ExecutionOutcome,
+    ExecutionResult,
+    ExecutionState,
+    ExecutionStatus,
+    TraceId,
+    TraceResult,
+)
 
 
 class _SnapshotModel(BaseModel):
@@ -34,28 +49,45 @@ def test_stable_snapshot_is_json_compatible_sorted_redacted_and_stable() -> None
     }
     projected = snapshot(
         value,
-        config=RedactionConfig(secrets=frozenset({"api-secret"}), include_environment=False),
+        config=RedactionConfig(
+            secrets=frozenset({"api-secret"}), include_environment=False
+        ),
     )
     assert isinstance(projected, dict)
     assert list(projected) == ["a", "nested", "z"]
     assert projected["nested"] == {"message": REDACTED}
     assert "run_id" not in repr(projected)
-    assert snapshot(value, config=RedactionConfig(secrets=frozenset({"api-secret"}), include_environment=False)) == projected
+    assert (
+        snapshot(
+            value,
+            config=RedactionConfig(
+                secrets=frozenset({"api-secret"}), include_environment=False
+            ),
+        )
+        == projected
+    )
 
 
 def test_snapshot_field_opt_in_restores_only_selected_unstable_fields() -> None:
     value = {"duration_ms": 4, "nested": {"trace_id": "trace-1", "duration_ms": 9}}
     projected = snapshot(
         value,
-        options=SnapshotOptions(include_fields=frozenset({"duration_ms", "$.nested.trace_id"})),
+        options=SnapshotOptions(
+            include_fields=frozenset({"duration_ms", "$.nested.trace_id"})
+        ),
         config=RedactionConfig(include_environment=False),
     )
-    assert projected == {"duration_ms": 4, "nested": {"duration_ms": 9, "trace_id": "trace-1"}}
+    assert projected == {
+        "duration_ms": 4,
+        "nested": {"duration_ms": 9, "trace_id": "trace-1"},
+    }
 
 
 def test_snapshot_accepts_pydantic_models_without_leaking_omitted_fields() -> None:
     projected = snapshot(
-        _SnapshotModel(z=2, timestamp="unstable", nested={"path": "/private", "value": 1}),
+        _SnapshotModel(
+            z=2, timestamp="unstable", nested={"path": "/private", "value": 1}
+        ),
         config=RedactionConfig(include_environment=False),
     )
     assert projected == {"nested": {"value": 1}, "z": 2}
@@ -72,11 +104,13 @@ def test_snapshot_removes_url_ports_by_default_and_restores_explicit_opt_in() ->
 def test_snapshot_cycles_and_opaque_values_fail_closed() -> None:
     cyclic: dict[str, object] = {}
     cyclic["self"] = cyclic
-    with pytest.raises(Exception) as cycle_error:
+    with pytest.raises((RuntimeError, ValueError, TypeError)) as cycle_error:
         snapshot(cyclic, config=RedactionConfig(include_environment=False))
     assert "self" not in str(cycle_error.value)
-    with pytest.raises(Exception):
-        snapshot({"stable": object()}, config=RedactionConfig(include_environment=False))
+    with pytest.raises((RuntimeError, ValueError, TypeError)):
+        snapshot(
+            {"stable": object()}, config=RedactionConfig(include_environment=False)
+        )
 
 
 def test_evaluation_runner_persists_statuses_and_sanitizes_failures() -> None:
@@ -107,7 +141,9 @@ def test_evaluation_runner_persists_statuses_and_sanitizes_failures() -> None:
 
 def test_evaluation_infers_execution_id_from_execution_result_snapshot() -> None:
     execution_id = ExecutionId("execution-evaluation-link")
-    trace = TraceResult(trace_id=TraceId("trace-evaluation-link"), execution_id=execution_id)
+    trace = TraceResult(
+        trace_id=TraceId("trace-evaluation-link"), execution_id=execution_id
+    )
     result = ExecutionResult(
         snapshot=ExecutionState(
             execution_id=execution_id,
@@ -126,7 +162,9 @@ def test_evaluation_infers_execution_id_from_execution_result_snapshot() -> None
         sha256="0" * 64,
     )
     runner = EvaluationRunner()
-    runner.register("same-execution", lambda context: context.execution_id == execution_id)
+    runner.register(
+        "same-execution", lambda context: context.execution_id == execution_id
+    )
     evaluation = runner.evaluate(
         result,
         "same-execution",
@@ -175,7 +213,9 @@ def test_evaluation_rejects_conflicting_explicit_and_trace_ids() -> None:
         runner.evaluate(
             {},
             "always",
-            trace=TraceResult(trace_id=TraceId("trace-conflict"), execution_id=execution_id),
+            trace=TraceResult(
+                trace_id=TraceId("trace-conflict"), execution_id=execution_id
+            ),
             execution_id="execution-explicit",
         )
     assert str(error.value) == "evaluation execution IDs do not match"
@@ -230,9 +270,13 @@ def test_async_evaluation_rejects_conflicting_result_and_artifact_ids() -> None:
     asyncio.run(run())
 
 
-def test_evaluator_receives_immutable_redacted_context_and_unregistered_callable_is_rejected() -> None:
+def test_evaluator_receives_immutable_redacted_context_and_unregistered_callable_is_rejected() -> (
+    None
+):
     runner = EvaluationRunner(
-        redaction_config=RedactionConfig(secrets=frozenset({"raw-secret"}), include_environment=False)
+        redaction_config=RedactionConfig(
+            secrets=frozenset({"raw-secret"}), include_environment=False
+        )
     )
     captured: list[object] = []
 
@@ -256,7 +300,9 @@ def test_required_failed_or_error_persists_before_outer_failure() -> None:
     runner = EvaluationRunner(store=store)
     runner.register("failed", lambda _context: False)
     with pytest.raises(RequiredEvaluationError) as failure:
-        runner.evaluate({}, "failed", required=True, evaluation_id="evaluation-required-failed")
+        runner.evaluate(
+            {}, "failed", required=True, evaluation_id="evaluation-required-failed"
+        )
     assert failure.value.result.status is EvaluationStatus.FAILED
     assert store.get("evaluation-required-failed") is not None
 
@@ -265,13 +311,17 @@ def test_required_failed_or_error_persists_before_outer_failure() -> None:
 
     runner.register("broken", broken)
     with pytest.raises(RequiredEvaluationError) as error:
-        runner.evaluate({}, "broken", required=True, evaluation_id="evaluation-required-error")
+        runner.evaluate(
+            {}, "broken", required=True, evaluation_id="evaluation-required-error"
+        )
     assert error.value.result.status is EvaluationStatus.ERROR
     assert "evaluator-secret" not in str(error.value)
     assert store.get("evaluation-required-error") is not None
 
     runner.register("not-run", lambda _context: EvaluationStatus.NOT_RUN)
-    not_run = runner.evaluate({}, "not-run", required=True, evaluation_id="evaluation-required-not-run")
+    not_run = runner.evaluate(
+        {}, "not-run", required=True, evaluation_id="evaluation-required-not-run"
+    )
     assert not_run.status is EvaluationStatus.NOT_RUN
 
 
@@ -283,7 +333,9 @@ def test_sync_and_async_kits_expose_separate_persisted_evaluation_results() -> N
 
     async def run() -> None:
         async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
-            kit.register_evaluator("async", lambda context: EvaluationStatus.INCONCLUSIVE)
+            kit.register_evaluator(
+                "async", lambda context: EvaluationStatus.INCONCLUSIVE
+            )
             result = await kit.evaluate({"answer": "ok"}, "async", required=True)
             assert result.status is EvaluationStatus.INCONCLUSIVE
             assert kit.evaluation_results() == (result,)
@@ -291,7 +343,10 @@ def test_sync_and_async_kits_expose_separate_persisted_evaluation_results() -> N
             kit.register_evaluator("required-failure", lambda context: False)
             with pytest.raises(RequiredEvaluationError):
                 await kit.evaluate({"answer": "bad"}, "required-failure", required=True)
-            assert any(item.status is EvaluationStatus.FAILED for item in kit.evaluation_results())
+            assert any(
+                item.status is EvaluationStatus.FAILED
+                for item in kit.evaluation_results()
+            )
 
     asyncio.run(run())
 
@@ -299,6 +354,7 @@ def test_sync_and_async_kits_expose_separate_persisted_evaluation_results() -> N
 def test_async_evaluator_is_awaited_and_persisted() -> None:
     async def run() -> None:
         async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+
             async def evaluate(context: object) -> bool:
                 return True
 

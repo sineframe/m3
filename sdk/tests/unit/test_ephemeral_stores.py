@@ -15,8 +15,16 @@ from mcp_pal.storage import (
     StorageConflict,
     TemporaryArtifactStore,
 )
-from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import ArtifactRef, Event, EventId, EventKind, ExecutionId, ExecutionState, SessionId
+from mcp_pal.trace.redaction import RedactionConfig, RedactionError
+from mcp_pal.types import (
+    ArtifactRef,
+    Event,
+    EventId,
+    EventKind,
+    ExecutionId,
+    ExecutionState,
+    SessionId,
+)
 
 
 def _snapshot() -> ExecutionState:
@@ -46,11 +54,15 @@ def test_append_is_contiguous_and_rejects_duplicate_or_out_of_order_sequences() 
 
 
 def test_direct_store_writes_are_redacted_before_commit_and_callback_delivery() -> None:
-    config = RedactionConfig(secrets=frozenset({"raw-secret"}), include_environment=False)
+    config = RedactionConfig(
+        secrets=frozenset({"raw-secret"}), include_environment=False
+    )
     store = InMemoryExecutionStore(config=config)
     store.create(_snapshot())
     observed: list[str] = []
-    store.subscribe("execution-1", lambda event: observed.append(str(event.payload["message"])))
+    store.subscribe(
+        "execution-1", lambda event: observed.append(str(event.payload["message"]))
+    )
     store.append_events((_event(0, payload={"message": "raw-secret"}),))
     with store.transaction("execution-1") as transaction:
         transaction.append((_event(1, payload={"message": "raw-secret-2"}),))
@@ -60,7 +72,9 @@ def test_direct_store_writes_are_redacted_before_commit_and_callback_delivery() 
 
 
 def test_direct_store_redaction_failure_has_zero_visibility() -> None:
-    config = RedactionConfig(secrets=frozenset({"raw-secret"}), include_environment=False)
+    config = RedactionConfig(
+        secrets=frozenset({"raw-secret"}), include_environment=False
+    )
     store = InMemoryExecutionStore(config=config)
     store.create(_snapshot())
     callbacks: list[Event] = []
@@ -73,7 +87,7 @@ def test_direct_store_redaction_failure_has_zero_visibility() -> None:
         monotonic_offset_ms=0.0,
         payload={"unsupported": object()},
     )
-    with pytest.raises(Exception):
+    with pytest.raises(RedactionError):
         store.append_events((malformed,))
     assert store.events("execution-1") == ()
     assert callbacks == []
@@ -99,7 +113,9 @@ def test_store_snapshot_is_atomically_derived_from_terminal_events() -> None:
     assert snapshot.finished_at == store.events("execution-1")[0].timestamp
 
 
-def test_failed_append_releases_only_its_reservation_and_preserves_other_reservations() -> None:
+def test_failed_append_releases_only_its_reservation_and_preserves_other_reservations() -> (
+    None
+):
     store = InMemoryExecutionStore()
     store.create(_snapshot())
     reserved = store.allocate("execution-1", count=2)
@@ -130,7 +146,7 @@ def test_redaction_failure_releases_reservation_without_visibility() -> None:
         monotonic_offset_ms=0.0,
         payload={"unsupported": object()},
     )
-    with pytest.raises(Exception):
+    with pytest.raises(RedactionError):
         store.append_events((malformed,))
     assert store.events("execution-1") == ()
     assert store.allocate_sequence("execution-1") == sequence
@@ -165,7 +181,9 @@ def _session_event(sequence: int, kind: EventKind, session: str = "session-1") -
     )
 
 
-def test_session_create_then_state_in_one_atomic_batch_is_visible_after_commit() -> None:
+def test_session_create_then_state_in_one_atomic_batch_is_visible_after_commit() -> (
+    None
+):
     store = InMemoryExecutionStore()
     store.create(_snapshot())
     store.append_events(
@@ -183,9 +201,18 @@ def test_session_create_then_state_in_one_atomic_batch_is_visible_after_commit()
 @pytest.mark.parametrize(
     "events",
     (
-        (_session_event(0, EventKind.SESSION_STATE_CHANGED), _session_event(1, EventKind.SESSION_CREATED)),
-        (_session_event(0, EventKind.SESSION_CREATED), _session_event(1, EventKind.SESSION_STATE_CHANGED, "missing")),
-        (_session_event(0, EventKind.SESSION_CREATED), _session_event(1, EventKind.SESSION_CREATED)),
+        (
+            _session_event(0, EventKind.SESSION_STATE_CHANGED),
+            _session_event(1, EventKind.SESSION_CREATED),
+        ),
+        (
+            _session_event(0, EventKind.SESSION_CREATED),
+            _session_event(1, EventKind.SESSION_STATE_CHANGED, "missing"),
+        ),
+        (
+            _session_event(0, EventKind.SESSION_CREATED),
+            _session_event(1, EventKind.SESSION_CREATED),
+        ),
     ),
 )
 def test_invalid_session_batch_has_no_visibility(events: tuple[Event, Event]) -> None:
@@ -196,13 +223,20 @@ def test_invalid_session_batch_has_no_visibility(events: tuple[Event, Event]) ->
     assert store.events("execution-1") == ()
 
 
-def test_transaction_rollback_has_no_visibility_and_callbacks_are_after_commit() -> None:
+def test_transaction_rollback_has_no_visibility_and_callbacks_are_after_commit() -> (
+    None
+):
     store = InMemoryExecutionStore()
     store.create(_snapshot())
     observed: list[tuple[int, tuple[int, ...]]] = []
 
     def callback(event: Event) -> None:
-        observed.append((event.sequence, tuple(item.sequence for item in store.events("execution-1"))))
+        observed.append(
+            (
+                event.sequence,
+                tuple(item.sequence for item in store.events("execution-1")),
+            )
+        )
 
     store.subscribe("execution-1", callback)
     with pytest.raises(RuntimeError):
@@ -321,9 +355,13 @@ def test_artifact_stores_redact_before_persistence(
 def test_artifact_redacts_metadata_and_cannot_accept_per_write_policy_override(
     factory: type[InMemoryArtifactStore] | type[TemporaryArtifactStore],
 ) -> None:
-    config = RedactionConfig(secrets=frozenset({"private-secret"}), include_environment=False)
+    config = RedactionConfig(
+        secrets=frozenset({"private-secret"}), include_environment=False
+    )
     store = factory(config=config)
-    ref = store.put("execution-1", "private-secret.txt", b"safe", media_type="private-secret/type")
+    ref = store.put(
+        "execution-1", "private-secret.txt", b"safe", media_type="private-secret/type"
+    )
     assert ref.name == "[REDACTED].txt"
     assert ref.media_type == "[REDACTED]/type"
     with pytest.raises(TypeError):
@@ -331,7 +369,9 @@ def test_artifact_redacts_metadata_and_cannot_accept_per_write_policy_override(
     store.cleanup()
 
 
-def test_temporary_store_concurrent_same_content_puts_share_one_blob(tmp_path: Path) -> None:
+def test_temporary_store_concurrent_same_content_puts_share_one_blob(
+    tmp_path: Path,
+) -> None:
     store = TemporaryArtifactStore(tmp_path / "artifacts")
     refs = []
     failures: list[BaseException] = []
@@ -364,7 +404,9 @@ def test_large_blob_roundtrip_is_content_addressed_and_validated(
 ) -> None:
     store = factory()
     content = (b"mcp-pal-large-blob-" * 200_000) + b"!"
-    ref = store.put("execution-1", "large.bin", content, media_type="application/octet-stream")
+    ref = store.put(
+        "execution-1", "large.bin", content, media_type="application/octet-stream"
+    )
     assert ref.size_bytes == len(content)
     assert ref.sha256 == hashlib.sha256(content).hexdigest()
     assert store.get(ref) == content
@@ -392,7 +434,9 @@ def test_temporary_store_uses_contained_atomic_paths_and_cleans_owned_root() -> 
     store.cleanup()
 
 
-def test_temporary_store_detects_tampering_and_does_not_follow_metadata_path(tmp_path: Path) -> None:
+def test_temporary_store_detects_tampering_and_does_not_follow_metadata_path(
+    tmp_path: Path,
+) -> None:
     store = TemporaryArtifactStore(tmp_path / "owned")
     content = b"stable"
     ref = store.put("execution-1", "trace", content)

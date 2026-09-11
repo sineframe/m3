@@ -25,7 +25,6 @@ from pathlib import Path
 
 from .ephemeral import ArtifactNotFound, BlobIntegrityError, StorageError
 
-
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -41,7 +40,9 @@ class BlobRecord:
 
 def _validate_digest(value: str) -> str:
     if not isinstance(value, str) or _DIGEST.fullmatch(value) is None:
-        raise ValueError("blob digest must be a 64-character lowercase SHA-256 hex value")
+        raise ValueError(
+            "blob digest must be a 64-character lowercase SHA-256 hex value"
+        )
     return value
 
 
@@ -83,7 +84,9 @@ class FilesystemBlobStore:
 
     suffix = ".gz"
 
-    def __init__(self, root: str | os.PathLike[str], *, max_read_bytes: int = 512 * 1024 * 1024) -> None:
+    def __init__(
+        self, root: str | os.PathLike[str], *, max_read_bytes: int = 512 * 1024 * 1024
+    ) -> None:
         if max_read_bytes < 0:
             raise ValueError("max_read_bytes must be non-negative")
         supplied_root = Path(root).expanduser()
@@ -159,12 +162,16 @@ class FilesystemBlobStore:
         os.chmod(path.parent, 0o700)
         if path.exists():
             compressed = self._read_compressed(path)
-            _verify_compressed(compressed, digest, len(content), max_size_bytes=self._max_read_bytes)
+            _verify_compressed(
+                compressed, digest, len(content), max_size_bytes=self._max_read_bytes
+            )
             return BlobRecord(digest, len(content), len(compressed), path)
 
         compressed = gzip.compress(content, mtime=0)
         temporary: Path | None = None
-        fd, temporary_name = tempfile.mkstemp(prefix=".mcp-pal-blob-", suffix=".tmp", dir=str(path.parent))
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=".mcp-pal-blob-", suffix=".tmp", dir=str(path.parent)
+        )
         temporary = Path(temporary_name)
         try:
             with os.fdopen(fd, "wb") as handle:
@@ -173,7 +180,12 @@ class FilesystemBlobStore:
                 os.fsync(handle.fileno())
             # Verify the exact bytes that are about to become visible.  This
             # catches an interrupted/short write before os.replace.
-            _verify_compressed(temporary.read_bytes(), digest, len(content), max_size_bytes=self._max_read_bytes)
+            _verify_compressed(
+                temporary.read_bytes(),
+                digest,
+                len(content),
+                max_size_bytes=self._max_read_bytes,
+            )
             try:
                 # A hard-link publish is atomic and O_EXCL-like: unlike
                 # os.replace it cannot overwrite a valid blob another worker
@@ -183,7 +195,10 @@ class FilesystemBlobStore:
                 # Another process won the race.  Never replace a valid blob
                 # and never hide a corrupt winner.
                 _verify_compressed(
-                    self._read_compressed(path), digest, len(content), max_size_bytes=self._max_read_bytes
+                    self._read_compressed(path),
+                    digest,
+                    len(content),
+                    max_size_bytes=self._max_read_bytes,
                 )
             else:
                 temporary.unlink(missing_ok=True)
@@ -195,7 +210,9 @@ class FilesystemBlobStore:
         # Read back the published file.  Metadata must not point at a partial
         # file even on unusual filesystems or after an inter-process race.
         published = self._read_compressed(path)
-        _verify_compressed(published, digest, len(content), max_size_bytes=self._max_read_bytes)
+        _verify_compressed(
+            published, digest, len(content), max_size_bytes=self._max_read_bytes
+        )
         return BlobRecord(digest, len(content), len(published), path)
 
     put_blob = put
@@ -212,7 +229,9 @@ class FilesystemBlobStore:
             # could otherwise allocate unbounded memory.  Determine its size
             # with the same bounded streaming reader used for verification.
             size_bytes = self._bounded_uncompressed_length(compressed)
-        return _verify_compressed(compressed, digest, size_bytes, max_size_bytes=self._max_read_bytes)
+        return _verify_compressed(
+            compressed, digest, size_bytes, max_size_bytes=self._max_read_bytes
+        )
 
     get = read
     read_blob = read
@@ -224,7 +243,9 @@ class FilesystemBlobStore:
             compressed = self._read_compressed(path)
         except FileNotFoundError as exc:
             raise ArtifactNotFound("blob is missing") from exc
-        _verify_compressed(compressed, digest, size_bytes, max_size_bytes=self._max_read_bytes)
+        _verify_compressed(
+            compressed, digest, size_bytes, max_size_bytes=self._max_read_bytes
+        )
         return BlobRecord(digest, size_bytes, len(compressed), path)
 
     def iter_records(self) -> tuple[BlobRecord, ...]:
@@ -244,7 +265,9 @@ class FilesystemBlobStore:
                 continue
         return tuple(sorted(records, key=lambda item: item.sha256))
 
-    def garbage_collect(self, references: Mapping[str, int] | Iterable[str]) -> tuple[str, ...]:
+    def garbage_collect(
+        self, references: Mapping[str, int] | Iterable[str]
+    ) -> tuple[str, ...]:
         """Delete only explicitly unreferenced, valid blobs.
 
         Invalid files are retained and reported by the next verification pass;
@@ -255,7 +278,9 @@ class FilesystemBlobStore:
         """
 
         if isinstance(references, Mapping):
-            live = {_validate_digest(key) for key, count in references.items() if count > 0}
+            live = {
+                _validate_digest(key) for key, count in references.items() if count > 0
+            }
         else:
             live = {_validate_digest(key) for key in references}
         deleted: list[str] = []
@@ -288,12 +313,16 @@ class FilesystemBlobStore:
         try:
             with gzip.GzipFile(fileobj=io.BytesIO(compressed), mode="rb") as stream:
                 while True:
-                    chunk = stream.read(min(1024 * 1024, self._max_read_bytes - len(output) + 1))
+                    chunk = stream.read(
+                        min(1024 * 1024, self._max_read_bytes - len(output) + 1)
+                    )
                     if not chunk:
                         break
                     output.extend(chunk)
                     if len(output) > self._max_read_bytes:
-                        raise BlobIntegrityError("blob expands beyond configured read limit")
+                        raise BlobIntegrityError(
+                            "blob expands beyond configured read limit"
+                        )
         except (EOFError, OSError) as exc:
             raise BlobIntegrityError("compressed blob cannot be decompressed") from exc
         return bytes(output)

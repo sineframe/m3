@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -20,7 +19,9 @@ _SRC_ROOT = _SDK_ROOT / "src"
 def _pytest_env() -> dict[str, str]:
     env = os.environ.copy()
     existing = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = str(_SRC_ROOT) if not existing else f"{_SRC_ROOT}{os.pathsep}{existing}"
+    env["PYTHONPATH"] = (
+        str(_SRC_ROOT) if not existing else f"{_SRC_ROOT}{os.pathsep}{existing}"
+    )
     return env
 
 
@@ -30,8 +31,7 @@ def test_matrix_collection_has_exact_ids_custom_argname_marks_fixtures_and_k_fil
     sentinel = tmp_path / "server-ran"
     server_script = tmp_path / "sentinel_server.py"
     server_script.write_text(
-        "from pathlib import Path\n"
-        f"Path({str(sentinel)!r}).write_text('executed')\n",
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('executed')\n",
         encoding="utf-8",
     )
     test_file = tmp_path / "test_matrix_collection.py"
@@ -145,7 +145,15 @@ def test_harness(case):
     assert not sentinel.exists()
 
     filtered = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-k", "catalog and beta", test_file.name],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-k",
+            "catalog and beta",
+            test_file.name,
+        ],
         cwd=tmp_path,
         env=_pytest_env(),
         check=False,
@@ -158,7 +166,9 @@ def test_harness(case):
     assert not sentinel.exists()
 
 
-def test_matrix_import_and_cases_work_when_pytest_is_unavailable(tmp_path: Path) -> None:
+def test_matrix_import_and_cases_work_when_pytest_is_unavailable(
+    tmp_path: Path,
+) -> None:
     smoke = tmp_path / "matrix_import_smoke.py"
     smoke.write_text(
         """

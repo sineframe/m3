@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import json
+from collections.abc import Mapping
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Body, Depends, Query, Request, status
@@ -12,24 +12,27 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from mcp_pal import MCPTestKit
-from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal import (
+    EvaluationQuery,
+    EvaluationReport,
+    EvidenceRef,
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
-    ExecutionState,
-    ExecutionSpec,
-    ExecutionStatus,
     ExecutionReport,
-    RawEvidence,
-    EvidenceRef,
-    TraceView,
-    EvaluationQuery,
-    EvaluationReport,
+    ExecutionSpec,
+    ExecutionState,
+    ExecutionStatus,
     Feedback,
+    MCPTestKit,
+    RawEvidence,
+    TraceView,
 )
-from mcp_pal_app.services.execution_service import AppExecutionError, AppExecutionService
+from mcp_pal.storage import SQLiteExecutionStore
+from mcp_pal_app.services.execution_service import (
+    AppExecutionError,
+    AppExecutionService,
+)
 
 
 class V2ExecutionCreate(BaseModel):
@@ -57,8 +60,14 @@ class V2ExecutionEnvelope(BaseModel):
     spec: ExecutionSpec
 
     @classmethod
-    def from_report(cls, report: ExecutionReport, spec: ExecutionSpec) -> "V2ExecutionEnvelope":
-        return cls(execution_id=report.snapshot.execution_id, snapshot=report.snapshot, spec=spec)
+    def from_report(
+        cls, report: ExecutionReport, spec: ExecutionSpec
+    ) -> V2ExecutionEnvelope:
+        return cls(
+            execution_id=report.snapshot.execution_id,
+            snapshot=report.snapshot,
+            spec=spec,
+        )
 
 
 class V2ExecutionReportEnvelope(BaseModel):
@@ -69,7 +78,13 @@ class V2ExecutionReportEnvelope(BaseModel):
     trace: TraceView
 
     @classmethod
-    def from_values(cls, execution_id: ExecutionId, spec: ExecutionSpec, report: ExecutionReport, trace: TraceView) -> "V2ExecutionReportEnvelope":
+    def from_values(
+        cls,
+        execution_id: ExecutionId,
+        spec: ExecutionSpec,
+        report: ExecutionReport,
+        trace: TraceView,
+    ) -> V2ExecutionReportEnvelope:
         return cls(execution_id=execution_id, spec=spec, report=report, trace=trace)
 
 
@@ -78,7 +93,7 @@ class V2ExecutionPageEnvelope(BaseModel):
     page: ExecutionPage
 
     @classmethod
-    def from_page(cls, page: ExecutionPage) -> "V2ExecutionPageEnvelope":
+    def from_page(cls, page: ExecutionPage) -> V2ExecutionPageEnvelope:
         return cls(page=page)
 
 
@@ -110,7 +125,13 @@ class V2DeletedEnvelope(BaseModel):
 
 
 class V2Fault(Exception):
-    def __init__(self, status_code: int, code: str, message: str, details: Mapping[str, JsonValue] | None = None) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        details: Mapping[str, JsonValue] | None = None,
+    ) -> None:
         self.status_code = status_code
         self.code = code
         self.message = message
@@ -120,14 +141,58 @@ class V2Fault(Exception):
 
 _SAFE_VALIDATION_LOCATIONS = frozenset(
     {
-        "body", "query", "path", "spec", "run_id", "kind", "direct", "agent",
-        "servers", "server", "profile", "alias", "required", "operation",
-        "harness", "harness_profile", "message", "protocol", "timeout_seconds",
-        "goal", "evaluations", "artifact_policy", "declared_artifacts", "workspace",
-        "tool_policy", "permission_policy", "elicitation_policy", "sampling_policy",
-        "filesystem_policy", "terminal_policy", "metadata", "validate_schemas",
-        "reference", "max_bytes", "limit", "offset", "lifecycle", "outcome",
-        "after_sequence", "event_limit", "artifact_limit", "execution_id", "from", "to", "group_by", "filters", "evaluator", "trial_id", "case_id", "transport", "model", "time",
+        "body",
+        "query",
+        "path",
+        "spec",
+        "run_id",
+        "kind",
+        "direct",
+        "agent",
+        "servers",
+        "server",
+        "profile",
+        "alias",
+        "required",
+        "operation",
+        "harness",
+        "harness_profile",
+        "message",
+        "protocol",
+        "timeout_seconds",
+        "goal",
+        "evaluations",
+        "artifact_policy",
+        "declared_artifacts",
+        "workspace",
+        "tool_policy",
+        "permission_policy",
+        "elicitation_policy",
+        "sampling_policy",
+        "filesystem_policy",
+        "terminal_policy",
+        "metadata",
+        "validate_schemas",
+        "reference",
+        "max_bytes",
+        "limit",
+        "offset",
+        "lifecycle",
+        "outcome",
+        "after_sequence",
+        "event_limit",
+        "artifact_limit",
+        "execution_id",
+        "from",
+        "to",
+        "group_by",
+        "filters",
+        "evaluator",
+        "trial_id",
+        "case_id",
+        "transport",
+        "model",
+        "time",
     }
 )
 
@@ -136,7 +201,11 @@ def _safe_validation_location(location: object) -> str:
     if not isinstance(location, (tuple, list)):
         return "body"
     parts = [
-        str(item) if isinstance(item, int) else str(item) if str(item) in _SAFE_VALIDATION_LOCATIONS else "field"
+        str(item)
+        if isinstance(item, int)
+        else str(item)
+        if str(item) in _SAFE_VALIDATION_LOCATIONS
+        else "field"
         for item in location
     ]
     return ".".join(parts) or "body"
@@ -145,7 +214,9 @@ def _safe_validation_location(location: object) -> str:
 def _error_response(fault: V2Fault) -> JSONResponse:
     return JSONResponse(
         status_code=fault.status_code,
-        content=V2ErrorEnvelope(error=V2Error(code=fault.code, message=fault.message, details=fault.details)).model_dump(mode="json"),
+        content=V2ErrorEnvelope(
+            error=V2Error(code=fault.code, message=fault.message, details=fault.details)
+        ).model_dump(mode="json"),
     )
 
 
@@ -189,10 +260,16 @@ def install_v2(
     application.state.v2_kit = execution_kit
     application.state.v2_service = service
     application.state.v2_kit_owned = owned_kit
-    application.add_exception_handler(V2Fault, lambda _request, exc: _error_response(exc))
-    application.add_exception_handler(AppExecutionError, lambda _request, exc: _error_response(_service_fault(exc)))
+    application.add_exception_handler(
+        V2Fault, lambda _request, exc: _error_response(exc)
+    )
+    application.add_exception_handler(
+        AppExecutionError, lambda _request, exc: _error_response(_service_fault(exc))
+    )
 
-    async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    async def validation_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
         if not request.url.path.startswith("/api/v2/"):
             return await request_validation_exception_handler(request, exc)
         # Validation diagnostics are deliberately value-free.  Pydantic's
@@ -204,7 +281,9 @@ def install_v2(
         for error in exc.errors():
             loc = _safe_validation_location(error.get("loc", ()))
             error_type = str(error.get("type", ""))
-            message = "field is required" if error_type == "missing" else "field is invalid"
+            message = (
+                "field is required" if error_type == "missing" else "field is invalid"
+            )
             if error_type == "extra_forbidden":
                 message = "extra fields are not permitted"
             fields.append({"loc": loc, "message": message})
@@ -219,14 +298,34 @@ def install_v2(
             payload = None
         spec_value = payload.get("spec") if isinstance(payload, Mapping) else None
         spec_is_object = isinstance(spec_value, Mapping)
-        has_spec_error = any(item["loc"] == "body.spec" or str(item["loc"]).startswith("body.spec.") for item in fields)
+        has_spec_error = any(
+            item["loc"] == "body.spec" or str(item["loc"]).startswith("body.spec.")
+            for item in fields
+        )
         if request.url.path == "/api/v2/evaluations/aggregate":
             code = "invalid_evaluation_aggregate_query"
             message = "evaluation aggregate query is invalid"
         else:
-            code = "invalid_execution_spec" if spec_is_object and has_spec_error else "invalid_request"
-            message = "execution spec is invalid" if code == "invalid_execution_spec" else "request validation failed"
-        return JSONResponse(status_code=422, content=V2ErrorEnvelope(error=V2Error(code=code, message=message, details={"fields": cast(JsonValue, fields)})).model_dump(mode="json"))
+            code = (
+                "invalid_execution_spec"
+                if spec_is_object and has_spec_error
+                else "invalid_request"
+            )
+            message = (
+                "execution spec is invalid"
+                if code == "invalid_execution_spec"
+                else "request validation failed"
+            )
+        return JSONResponse(
+            status_code=422,
+            content=V2ErrorEnvelope(
+                error=V2Error(
+                    code=code,
+                    message=message,
+                    details={"fields": cast(JsonValue, fields)},
+                )
+            ).model_dump(mode="json"),
+        )
 
     application.add_exception_handler(RequestValidationError, validation_handler)
     router = APIRouter(prefix="/api/v2/executions", tags=["executions-v2"])
@@ -234,41 +333,88 @@ def install_v2(
     def get_service(request: Request) -> AppExecutionService:
         return cast(AppExecutionService, request.app.state.v2_service)
 
-    @router.post("", response_model=V2ExecutionEnvelope, status_code=status.HTTP_202_ACCEPTED)
-    def create_execution(body: V2ExecutionCreate = Body(...), service: AppExecutionService = Depends(get_service)) -> V2ExecutionEnvelope:
+    @router.post(
+        "", response_model=V2ExecutionEnvelope, status_code=status.HTTP_202_ACCEPTED
+    )
+    def create_execution(
+        body: V2ExecutionCreate = Body(...),  # noqa: B008 - FastAPI request body marker
+        service: AppExecutionService = Depends(get_service),  # noqa: B008 - FastAPI dependency marker
+    ) -> V2ExecutionEnvelope:
         report = service.create(body.spec)
-        return V2ExecutionEnvelope.from_report(report, service.specification(report.snapshot.execution_id))
+        return V2ExecutionEnvelope.from_report(
+            report, service.specification(report.snapshot.execution_id)
+        )
 
     @router.get("", response_model=V2ExecutionPageEnvelope)
-    def list_executions(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0), lifecycle: ExecutionStatus | None = None, outcome: ExecutionOutcome | None = None, service: AppExecutionService = Depends(get_service)) -> V2ExecutionPageEnvelope:
-        return V2ExecutionPageEnvelope.from_page(service.list(limit=limit, offset=offset, lifecycle=lifecycle, outcome=outcome))
+    def list_executions(
+        limit: int = Query(50, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+        lifecycle: ExecutionStatus | None = None,
+        outcome: ExecutionOutcome | None = None,
+        service: AppExecutionService = Depends(get_service),  # noqa: B008 - FastAPI dependency marker
+    ) -> V2ExecutionPageEnvelope:
+        return V2ExecutionPageEnvelope.from_page(
+            service.list(
+                limit=limit, offset=offset, lifecycle=lifecycle, outcome=outcome
+            )
+        )
 
     @router.get("/{execution_id}", response_model=V2ExecutionEnvelope)
-    def get_execution(execution_id: str, service: AppExecutionService = Depends(get_service)) -> V2ExecutionEnvelope:
+    def get_execution(
+        execution_id: str,
+        service: AppExecutionService = Depends(get_service),  # noqa: B008 - FastAPI dependency marker
+    ) -> V2ExecutionEnvelope:
         report = service.get(execution_id)
-        return V2ExecutionEnvelope.from_report(report, service.specification(report.snapshot.execution_id))
+        return V2ExecutionEnvelope.from_report(
+            report, service.specification(report.snapshot.execution_id)
+        )
 
     @router.post("/{execution_id}/cancel", response_model=V2ExecutionEnvelope)
-    def cancel_execution(execution_id: str, reason: str | None = None, service: AppExecutionService = Depends(get_service)) -> V2ExecutionEnvelope:
+    def cancel_execution(
+        execution_id: str,
+        reason: str | None = None,
+        service: AppExecutionService = Depends(get_service),  # noqa: B008 - FastAPI dependency marker
+    ) -> V2ExecutionEnvelope:
         report = service.cancel(execution_id, reason)
-        return V2ExecutionEnvelope.from_report(report, service.specification(report.snapshot.execution_id))
+        return V2ExecutionEnvelope.from_report(
+            report, service.specification(report.snapshot.execution_id)
+        )
 
     @router.delete("/{execution_id}", response_model=V2DeletedEnvelope)
-    def delete_execution(execution_id: str, service: AppExecutionService = Depends(get_service)) -> V2DeletedEnvelope:
+    def delete_execution(
+        execution_id: str,
+        service: AppExecutionService = Depends(get_service),  # noqa: B008 - FastAPI dependency marker
+    ) -> V2DeletedEnvelope:
         return V2DeletedEnvelope(execution_id=service.delete(execution_id))
 
     @router.get("/{execution_id}/report", response_model=V2ExecutionReportEnvelope)
-    def execution_report(execution_id: str, after_sequence: int = Query(-1, ge=-1), event_limit: int = Query(100, ge=1, le=1000), artifact_limit: int = Query(100, ge=1, le=1000), service: AppExecutionService = Depends(get_service)) -> V2ExecutionReportEnvelope:
-        report = service.report(execution_id, after_sequence=after_sequence, event_limit=event_limit, artifact_limit=artifact_limit)
+    def execution_report(
+        execution_id: str,
+        after_sequence: int = Query(-1, ge=-1),
+        event_limit: int = Query(100, ge=1, le=1000),
+        artifact_limit: int = Query(100, ge=1, le=1000),
+        service: AppExecutionService = Depends(get_service),  # noqa: B008 - FastAPI dependency marker
+    ) -> V2ExecutionReportEnvelope:
+        report = service.report(
+            execution_id,
+            after_sequence=after_sequence,
+            event_limit=event_limit,
+            artifact_limit=artifact_limit,
+        )
         trace = service.trace_view(execution_id)
         spec = service.specification(execution_id)
-        return V2ExecutionReportEnvelope.from_values(report.snapshot.execution_id, spec, report, trace)
+        return V2ExecutionReportEnvelope.from_values(
+            report.snapshot.execution_id, spec, report, trace
+        )
 
     application.include_router(router)
     aggregate_router = APIRouter(prefix="/api/v2/evaluations", tags=["evaluations-v2"])
 
     @aggregate_router.post("/aggregate", response_model=V2EvaluationAggregateEnvelope)
-    def aggregate_evaluations(body: EvaluationQuery, service: AppExecutionService = Depends(get_service)) -> V2EvaluationAggregateEnvelope:
+    def aggregate_evaluations(
+        body: EvaluationQuery,
+        service: AppExecutionService = Depends(get_service),  # noqa: B008 - FastAPI dependency marker
+    ) -> V2EvaluationAggregateEnvelope:
         return V2EvaluationAggregateEnvelope(aggregate=service.aggregate(body))
 
     application.include_router(aggregate_router)
@@ -278,7 +424,7 @@ def install_v2(
     def get_feedback(
         run_id: str,
         baseline_run_id: str | None = Query(None),
-        service: AppExecutionService = Depends(get_service),
+        service: AppExecutionService = Depends(get_service),  # noqa: B008 - FastAPI dependency marker
     ) -> V2FeedbackEnvelope:
         return V2FeedbackEnvelope(
             feedback=service.feedback(run_id, baseline_run_id=baseline_run_id)
@@ -288,8 +434,13 @@ def install_v2(
     evidence_router = APIRouter(prefix="/api/v2/evidence", tags=["evidence-v2"])
 
     @evidence_router.post("/read", response_model=V2EvidenceEnvelope)
-    def read_evidence(body: V2EvidenceRead, service: AppExecutionService = Depends(get_service)) -> V2EvidenceEnvelope:
-        return V2EvidenceEnvelope(evidence=service.read_raw_evidence(body.reference, max_bytes=body.max_bytes))
+    def read_evidence(
+        body: V2EvidenceRead,
+        service: AppExecutionService = Depends(get_service),  # noqa: B008 - FastAPI dependency marker
+    ) -> V2EvidenceEnvelope:
+        return V2EvidenceEnvelope(
+            evidence=service.read_raw_evidence(body.reference, max_bytes=body.max_bytes)
+        )
 
     application.include_router(evidence_router)
 

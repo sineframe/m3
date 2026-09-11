@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -48,10 +48,15 @@ def _start_mcp(server: dict[str, Any]) -> subprocess.Popen[str]:
     )
 
 
-def _rpc(process: subprocess.Popen[str], number: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
+def _rpc(
+    process: subprocess.Popen[str], number: int, method: str, params: dict[str, Any]
+) -> dict[str, Any]:
     if process.stdin is None or process.stdout is None:
         raise RuntimeError("scenario MCP pipes are unavailable")
-    process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": number, "method": method, "params": params}) + "\n")
+    process.stdin.write(
+        json.dumps({"jsonrpc": "2.0", "id": number, "method": method, "params": params})
+        + "\n"
+    )
     process.stdin.flush()
     line = process.stdout.readline()
     if not line:
@@ -90,14 +95,29 @@ def run(mode: str) -> int:
                 if servers:
                     mcp = _start_mcp(servers[0])
                     request_id += 1
-                    _rpc(mcp, request_id, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "scenario", "version": "1"}})
+                    _rpc(
+                        mcp,
+                        request_id,
+                        "initialize",
+                        {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "clientInfo": {"name": "scenario", "version": "1"},
+                        },
+                    )
                     request_id += 1
                     listing = _rpc(mcp, request_id, "tools/list", {})
-                    cursor = (listing.get("result") or {}).get("nextCursor") if isinstance(listing, dict) else None
+                    cursor = (
+                        (listing.get("result") or {}).get("nextCursor")
+                        if isinstance(listing, dict)
+                        else None
+                    )
                     if isinstance(cursor, str) and cursor:
                         request_id += 1
                         _rpc(mcp, request_id, "tools/list", {"cursor": cursor})
-                _send({"jsonrpc": "2.0", "id": ident, "result": {"sessionId": session_id}})
+                _send(
+                    {"jsonrpc": "2.0", "id": ident, "result": {"sessionId": session_id}}
+                )
             elif method == "session/prompt":
                 turns += 1
                 prompt = " ".join(
@@ -107,13 +127,70 @@ def run(mode: str) -> int:
                 )
                 tool_name = "failure" if mode == "recover" and turns == 1 else "echo"
                 request_id += 1
-                result = _rpc(mcp, request_id, "tools/call", {"name": tool_name, "arguments": {"text": prompt}}).get("result") if mcp is not None else None
-                status = "failed" if isinstance(result, dict) and result.get("isError") else "completed"
-                _send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": session_id, "update": {"sessionUpdate": "tool_call_update", "toolCallId": "scenario-call", "title": server_name + ":" + tool_name, "status": status, "content": [{"type": "content", "content": {"type": "text", "text": str(result)}}]}}})
+                result = (
+                    _rpc(
+                        mcp,
+                        request_id,
+                        "tools/call",
+                        {"name": tool_name, "arguments": {"text": prompt}},
+                    ).get("result")
+                    if mcp is not None
+                    else None
+                )
+                status = (
+                    "failed"
+                    if isinstance(result, dict) and result.get("isError")
+                    else "completed"
+                )
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": session_id,
+                            "update": {
+                                "sessionUpdate": "tool_call_update",
+                                "toolCallId": "scenario-call",
+                                "title": server_name + ":" + tool_name,
+                                "status": status,
+                                "content": [
+                                    {
+                                        "type": "content",
+                                        "content": {
+                                            "type": "text",
+                                            "text": str(result),
+                                        },
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                )
                 if mode == "loss":
                     os._exit(17)
-                _send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": session_id, "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "recovered:" + prompt}}}})
-                _send({"jsonrpc": "2.0", "id": ident, "result": {"stopReason": "end_turn"}})
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": session_id,
+                            "update": {
+                                "sessionUpdate": "agent_message_chunk",
+                                "content": {
+                                    "type": "text",
+                                    "text": "recovered:" + prompt,
+                                },
+                            },
+                        },
+                    }
+                )
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": ident,
+                        "result": {"stopReason": "end_turn"},
+                    }
+                )
             elif method == "session/cancel":
                 continue
             elif ident is not None:

@@ -13,10 +13,10 @@ import pytest
 
 from mcp_pal.harness.acp import AcpHarnessRunner, _Client
 from mcp_pal.harness.base import AcpRunSpec, RunSpec
-from mcp_pal_app.harness_claude_cli import ClaudeCodeRunner
-from mcp_pal_app.harness_opencode_cli import OpenCodeRunner
 from mcp_pal.transport.capture_proxy import write_stdio_handoff
 from mcp_pal.transport.http_proxy import McpHttpProxy
+from mcp_pal_app.harness_claude_cli import ClaudeCodeRunner
+from mcp_pal_app.harness_opencode_cli import OpenCodeRunner
 
 
 def _executable(path: Path, body: str) -> str:
@@ -31,7 +31,11 @@ def test_handoff_has_safe_baseline_and_no_ambient_provider(tmp_path, monkeypatch
     path = tmp_path / "handoff.json"
     canaries = write_stdio_handoff(
         path,
-        {"ANTHROPIC_API_KEY": "literal-handoff-secret", "DEBUG": "1", "REF_VALUE": "${MCP_PAL_HANDOFF_REF}"},
+        {
+            "ANTHROPIC_API_KEY": "literal-handoff-secret",
+            "DEBUG": "1",
+            "REF_VALUE": "${MCP_PAL_HANDOFF_REF}",
+        },
     )
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["environment"]["PATH"]
@@ -51,12 +55,20 @@ def test_handoff_has_safe_baseline_and_no_ambient_provider(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_http_proxy_registers_reference_under_non_sensitive_header(tmp_path, monkeypatch):
+async def test_http_proxy_registers_reference_under_non_sensitive_header(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("NON_SENSITIVE_REF", "non-sensitive-resolved-secret")
 
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802
-            body = json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"message": self.headers.get("X-Vendor", "")}}).encode()
+        def do_POST(self):
+            body = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": {"message": self.headers.get("X-Vendor", "")},
+                }
+            ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -81,7 +93,11 @@ async def test_http_proxy_registers_reference_under_non_sensitive_header(tmp_pat
     )
     try:
         endpoint = await proxy.start()
-        request = Request(endpoint, data=b'{"jsonrpc":"2.0","id":1}', headers={"Content-Type": "application/json"})
+        request = Request(
+            endpoint,
+            data=b'{"jsonrpc":"2.0","id":1}',
+            headers={"Content-Type": "application/json"},
+        )
         with await asyncio.to_thread(urlopen, request) as response:
             assert "non-sensitive-resolved-secret" in response.read().decode()
     finally:
@@ -92,7 +108,7 @@ async def test_http_proxy_registers_reference_under_non_sensitive_header(tmp_pat
     assert b"non-sensitive-resolved-secret" not in capture.read_bytes()
     monkeypatch.delenv("MISSING_PROXY_REF", raising=False)
     missing_capture = tmp_path / "missing-capture.jsonl"
-    with pytest.raises(ValueError, match="^MCP environment reference unavailable$"):
+    with pytest.raises(ValueError, match=r"^MCP environment reference unavailable$"):
         McpHttpProxy(
             upstream_url="https://example.test/mcp",
             configured_headers={"X-Vendor": "Bearer ${MISSING_PROXY_REF}"},
@@ -123,7 +139,9 @@ async def test_acp_client_observes_canaries_added_after_construction():
 def test_claude_legacy_config_handoff_and_result_redaction(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_HANDOFF_REF", "claude-resolved-secret")
     marker = tmp_path / "claude-config.json"
-    claude = _executable(tmp_path / "claude.py", f'''\
+    claude = _executable(
+        tmp_path / "claude.py",
+        f"""\
 import json, os, sys
 config_path = sys.argv[sys.argv.index("--mcp-config") + 1]
 config = json.load(open(config_path))
@@ -134,25 +152,46 @@ assert "--env-file" in server["args"]
 assert os.path.exists(server["args"][server["args"].index("--env-file") + 1])
 print(json.dumps({{"type":"result","result":"literal-claude-secret claude-resolved-secret"}}), flush=True)
 sys.stderr.write("literal-claude-secret claude-resolved-secret\\n")
-''')
+""",
+    )
     spec = RunSpec(
-        "prompt", "model", {"mcpServers": {"x": {"command": "echo", "env": {"ANTHROPIC_API_KEY": "literal-claude-secret", "R": "${CLAUDE_HANDOFF_REF}"}}}}, "x", timeout_seconds=3
+        "prompt",
+        "model",
+        {
+            "mcpServers": {
+                "x": {
+                    "command": "echo",
+                    "env": {
+                        "ANTHROPIC_API_KEY": "literal-claude-secret",
+                        "R": "${CLAUDE_HANDOFF_REF}",
+                    },
+                }
+            }
+        },
+        "x",
+        timeout_seconds=3,
     )
     result = asyncio.run(ClaudeCodeRunner(claude).run(spec))
-    evidence = json.dumps((result.events, result.event_records, result.final_text, result.stderr))
+    evidence = json.dumps(
+        (result.events, result.event_records, result.final_text, result.stderr)
+    )
     assert result.status == "completed"
     assert "literal-claude-secret" not in evidence
     assert "claude-resolved-secret" not in evidence
     config = json.loads(marker.read_text())
     assert config["mcpServers"]["x"]["env"] == {}
-    handoff = config["mcpServers"]["x"]["args"][config["mcpServers"]["x"]["args"].index("--env-file") + 1]
+    handoff = config["mcpServers"]["x"]["args"][
+        config["mcpServers"]["x"]["args"].index("--env-file") + 1
+    ]
     assert not os.path.exists(handoff)
 
 
 def test_opencode_legacy_config_handoff_and_result_redaction(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENCODE_HANDOFF_REF", "opencode-resolved-secret")
     marker = tmp_path / "opencode-config.json"
-    opencode = _executable(tmp_path / "opencode.py", f'''\
+    opencode = _executable(
+        tmp_path / "opencode.py",
+        f"""\
 import json, os
 config = json.load(open(os.environ["OPENCODE_CONFIG"]))
 json.dump(config, open({str(marker)!r}, "w"))
@@ -163,25 +202,46 @@ assert os.path.exists(server["command"][server["command"].index("--env-file") + 
 print(json.dumps({{"type":"step_start","sessionID":"s","part":{{"type":"step-start"}}}}))
 print(json.dumps({{"type":"text","sessionID":"s","part":{{"type":"text","text":"literal-opencode-secret opencode-resolved-secret"}}}}))
 print(json.dumps({{"type":"step_finish","sessionID":"s","part":{{"type":"step-finish"}}}}))
-''')
+""",
+    )
     spec = RunSpec(
-        "prompt", "model", {"mcpServers": {"x": {"command": "echo", "env": {"ANTHROPIC_API_KEY": "literal-opencode-secret", "R": "${OPENCODE_HANDOFF_REF}"}}}}, "x", timeout_seconds=3
+        "prompt",
+        "model",
+        {
+            "mcpServers": {
+                "x": {
+                    "command": "echo",
+                    "env": {
+                        "ANTHROPIC_API_KEY": "literal-opencode-secret",
+                        "R": "${OPENCODE_HANDOFF_REF}",
+                    },
+                }
+            }
+        },
+        "x",
+        timeout_seconds=3,
     )
     result = asyncio.run(OpenCodeRunner(opencode).run(spec))
-    evidence = json.dumps((result.events, result.event_records, result.final_text, result.stderr))
+    evidence = json.dumps(
+        (result.events, result.event_records, result.final_text, result.stderr)
+    )
     assert result.status == "completed"
     assert "literal-opencode-secret" not in evidence
     assert "opencode-resolved-secret" not in evidence
     config = json.loads(marker.read_text())
     assert config["mcp"]["x"]["environment"] == {}
-    handoff = config["mcp"]["x"]["command"][config["mcp"]["x"]["command"].index("--env-file") + 1]
+    handoff = config["mcp"]["x"]["command"][
+        config["mcp"]["x"]["command"].index("--env-file") + 1
+    ]
     assert not os.path.exists(handoff)
 
 
 def test_acp_legacy_config_handoff_and_event_redaction(tmp_path, monkeypatch):
     monkeypatch.setenv("ACP_HANDOFF_REF", "acp-resolved-secret")
     marker = tmp_path / "acp-config.json"
-    agent = _executable(tmp_path / "agent.py", f'''\
+    agent = _executable(
+        tmp_path / "agent.py",
+        f"""\
 import json, os, sys
 for line in sys.stdin:
     request = json.loads(line)
@@ -197,12 +257,30 @@ for line in sys.stdin:
         print(json.dumps({{"jsonrpc":"2.0","id":request["id"],"result":{{"sessionId":"s"}}}}), flush=True)
     elif method == "session/prompt":
         print(json.dumps({{"jsonrpc":"2.0","id":request["id"],"result":{{"stopReason":"end_turn"}}}}), flush=True)
-''')
+""",
+    )
     spec = AcpRunSpec(
-        "prompt", "model", {"mcpServers": {"x": {"command": "echo", "env": {"ANTHROPIC_API_KEY": "literal-acp-secret", "R": "${ACP_HANDOFF_REF}"}}}}, "x", {"command": agent}, timeout_seconds=3
+        "prompt",
+        "model",
+        {
+            "mcpServers": {
+                "x": {
+                    "command": "echo",
+                    "env": {
+                        "ANTHROPIC_API_KEY": "literal-acp-secret",
+                        "R": "${ACP_HANDOFF_REF}",
+                    },
+                }
+            }
+        },
+        "x",
+        {"command": agent},
+        timeout_seconds=3,
     )
     result = asyncio.run(AcpHarnessRunner().run(spec))
-    evidence = json.dumps((result.event_records, result.protocol_events, result.final_text, result.stderr))
+    evidence = json.dumps(
+        (result.event_records, result.protocol_events, result.final_text, result.stderr)
+    )
     assert result.status == "completed"
     assert "literal-acp-secret" not in evidence
     assert "acp-resolved-secret" not in evidence

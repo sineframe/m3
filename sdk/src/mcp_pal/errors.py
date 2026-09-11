@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any as _Any, Mapping as _Mapping
+from collections.abc import Mapping as _Mapping
+from typing import Any as _Any
 
 
 class MCPError(Exception):
@@ -10,7 +11,9 @@ class MCPError(Exception):
 
     code = "mcp_error"
 
-    def __init__(self, message: str, *, details: _Mapping[str, _Any] | None = None) -> None:
+    def __init__(
+        self, message: str, *, details: _Mapping[str, _Any] | None = None
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.details = dict(details or {})
@@ -101,13 +104,13 @@ __all__ = [
     "ModelValidationError",
     "OperationCancelled",
     "OperationTimeout",
+    "ProtocolError",
     "RawEvidenceIntegrityError",
     "RawEvidenceUnavailable",
-    "ProtocolError",
     "SessionBusy",
     "SessionStillOpen",
-    "TransportError",
     "TraceNotFinalized",
     "TraceUnavailable",
+    "TransportError",
     "UnsupportedFeature",
 ]

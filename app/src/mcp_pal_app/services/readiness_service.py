@@ -15,17 +15,21 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Callable, Literal, Mapping, Protocol
+from typing import Literal, Protocol
 
 from mcp_pal.harness.manifest import ManifestValidationError, validate_manifest
 from mcp_pal.harness.native import probe_help as sdk_probe_help
+from mcp_pal.services.acp_probes import (
+    ACPAgentIdentity,
+    ACPProbeDimension,
+    ACPProbeKind,
+    ACPProbeResult,
+    ACPProbeStatus,
+)
 from mcp_pal.storage import ProfileRecord, ProfileRevisionRecord
-from mcp_pal.services.acp_probes import ACPAgentIdentity, ACPProbeDimension, ACPProbeKind, ACPProbeResult, ACPProbeStatus
-
 from mcp_pal_app.settings import Settings
-
 
 # Match the capabilities that the public adapters actually preflight. These
 # are intentionally not the obsolete v1 invocation flags.
@@ -37,9 +41,13 @@ StorageStatus = Literal["connected", "degraded"]
 
 
 class _ProbeStore(Protocol):
-    def list_profiles(self, kind: str, *, include_archived: bool = False) -> tuple[ProfileRecord, ...]: ...
+    def list_profiles(
+        self, kind: str, *, include_archived: bool = False
+    ) -> tuple[ProfileRecord, ...]: ...
 
-    def list_profile_revisions(self, profile_id: str) -> tuple[ProfileRevisionRecord, ...]: ...
+    def list_profile_revisions(
+        self, profile_id: str
+    ) -> tuple[ProfileRevisionRecord, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +145,9 @@ class ACPProfileReadinessView:
     session_config_options: tuple[ACPSessionOptionView, ...] = ()
     protocol_verified: bool = False
     full_verified: bool = False
-    verification_status: Literal["unverified", "verified", "identity_mismatch", "failed"] = "unverified"
+    verification_status: Literal[
+        "unverified", "verified", "identity_mismatch", "failed"
+    ] = "unverified"
     agent_identity: Mapping[str, object] | None = None
     protocol_verification: Mapping[str, object] | None = None
     full_verifications: tuple[Mapping[str, object], ...] = ()
@@ -231,14 +241,20 @@ def _minimal_auth_probe(
         aliases = {"opencode-go": "opencode go", "opencode": "opencode"}
         return any(
             re.search(
-                r"(?<![a-z])" + re.escape(aliases.get(provider, provider.replace("-", " ").replace("_", " "))) + r"(?![a-z])",
+                r"(?<![a-z])"
+                + re.escape(
+                    aliases.get(provider, provider.replace("-", " ").replace("_", " "))
+                )
+                + r"(?![a-z])",
                 output,
             )
             for provider in providers
         )
 
 
-def _provider_environment_available(provider: str, settings: Settings, environment: Mapping[str, str]) -> bool:
+def _provider_environment_available(
+    provider: str, settings: Settings, environment: Mapping[str, str]
+) -> bool:
     values = {
         "opencode": settings.opencode_api_key,
         "opencode-go": settings.opencode_api_key,
@@ -246,13 +262,26 @@ def _provider_environment_available(provider: str, settings: Settings, environme
         "openrouter": settings.openrouter_api_key,
     }
     normalized = provider.lower().replace("-", "_").upper()
-    return bool(values.get(provider.lower()) or environment.get(f"{normalized}_API_KEY") or environment.get(f"{normalized}_AUTH_TOKEN"))
+    return bool(
+        values.get(provider.lower())
+        or environment.get(f"{normalized}_API_KEY")
+        or environment.get(f"{normalized}_AUTH_TOKEN")
+    )
 
 
-def _current_revision(profile: ProfileRecord, revisions: tuple[ProfileRevisionRecord, ...]) -> ProfileRevisionRecord | None:
+def _current_revision(
+    profile: ProfileRecord, revisions: tuple[ProfileRevisionRecord, ...]
+) -> ProfileRevisionRecord | None:
     if profile.current_revision_id is None:
         return None
-    return next((revision for revision in revisions if revision.id == profile.current_revision_id), None)
+    return next(
+        (
+            revision
+            for revision in revisions
+            if revision.id == profile.current_revision_id
+        ),
+        None,
+    )
 
 
 def _identity_key(value: object) -> tuple[str, str] | None:
@@ -303,8 +332,18 @@ class ReadinessService:
             if value:
                 self._environment[name] = value
         self._help_probe = help_probe
-        self._auth_probe = auth_probe or (lambda executable, providers: _minimal_auth_probe(executable, providers, environment=self._environment))
-        self._resolve_executable = executable_resolver if executable_resolver is not _resolve_executable else lambda value: _resolve_executable(value, path=self._environment.get("PATH"))
+        self._auth_probe = auth_probe or (
+            lambda executable, providers: _minimal_auth_probe(
+                executable, providers, environment=self._environment
+            )
+        )
+        self._resolve_executable = (
+            executable_resolver
+            if executable_resolver is not _resolve_executable
+            else lambda value: _resolve_executable(
+                value, path=self._environment.get("PATH")
+            )
+        )
         self._lifecycle_guard = lifecycle_guard
 
     def _ensure_open(self) -> None:
@@ -333,7 +372,7 @@ class ReadinessService:
         if resolved is None:
             return False, tuple(missing), False
         try:
-            output = self._help_probe(resolved, command + ("--help",))
+            output = self._help_probe(resolved, (*command, "--help"))
         except Exception:
             output = None
         if output is not None:
@@ -341,7 +380,9 @@ class ReadinessService:
         return not missing, tuple(missing), True
 
     def _builtin_views(self) -> tuple[BuiltinHarnessView, ...]:
-        claude_ok, claude_missing, claude_exec = self._binary(self.settings.claude_executable, REQUIRED_CLAUDE_FLAGS, ())
+        claude_ok, claude_missing, claude_exec = self._binary(
+            self.settings.claude_executable, REQUIRED_CLAUDE_FLAGS, ()
+        )
         providers = tuple(self.settings.opencode_providers())
         _, open_missing, open_exec = self._binary(
             self.settings.opencode_executable,
@@ -358,15 +399,30 @@ class ReadinessService:
             except Exception:
                 version = None
             if version is None or not re.search(r"\b(?:1|2)\.\d+", version):
-                open_missing = tuple(dict.fromkeys((*open_missing, SUPPORTED_OPENCODE_VERSION)))
+                open_missing = tuple(
+                    dict.fromkeys((*open_missing, SUPPORTED_OPENCODE_VERSION))
+                )
         open_ok = not open_missing
         saved_auth = False
         if open_exec:
             try:
-                saved_auth = self._auth_probe(self.settings.opencode_executable, providers)
+                saved_auth = self._auth_probe(
+                    self.settings.opencode_executable, providers
+                )
             except Exception:
                 saved_auth = False
-        auth = bool(open_exec and (any(_provider_environment_available(provider, self.settings, self._environment) for provider in providers) or saved_auth))
+        auth = bool(
+            open_exec
+            and (
+                any(
+                    _provider_environment_available(
+                        provider, self.settings, self._environment
+                    )
+                    for provider in providers
+                )
+                or saved_auth
+            )
+        )
         modes = ("mcp_only", "mcp_read_only", "full")
         return (
             BuiltinHarnessView(
@@ -409,11 +465,17 @@ class ReadinessService:
         revision: ProfileRevisionRecord | None = None
         warnings: list[str] = []
         try:
-            revision = _current_revision(profile, self.store.list_profile_revisions(profile.id))
+            revision = _current_revision(
+                profile, self.store.list_profile_revisions(profile.id)
+            )
         except Exception:
             warnings.append("Harness revision is unavailable")
         value = dict(revision.value) if revision is not None else {}
-        raw_manifest = value.get("manifest") if isinstance(value.get("manifest"), Mapping) else value
+        raw_manifest = (
+            value.get("manifest")
+            if isinstance(value.get("manifest"), Mapping)
+            else value
+        )
         trusted = bool(value.get("trusted_unsandboxed", False))
         executable = False
         missing: tuple[str, ...] = ()
@@ -428,7 +490,15 @@ class ReadinessService:
                 except Exception:
                     resolved = None
                 executable = resolved is not None
-                refs = sorted({match.group(1) for item in manifest.get("env", {}).values() if isinstance(item, str) for match in [_ENV_REFERENCE.fullmatch(item)] if match})
+                refs = sorted(
+                    {
+                        match.group(1)
+                        for item in manifest.get("env", {}).values()
+                        if isinstance(item, str)
+                        for match in [_ENV_REFERENCE.fullmatch(item)]
+                        if match
+                    }
+                )
                 missing = tuple(name for name in refs if name not in self._environment)
             except (ManifestValidationError, KeyError, TypeError, ValueError):
                 warnings.append("Harness manifest is invalid")
@@ -449,11 +519,16 @@ class ReadinessService:
         latest_probe = getattr(self.store, "latest_acp_probe", None)
         if revision is not None and callable(list_probes) and callable(latest_probe):
             try:
-                protocol = latest_probe(ACPProbeDimension(
-                    profile_id=profile.id, revision_id=str(revision.id.root), probe_type=ACPProbeKind.PROTOCOL,
-                ))
+                protocol = latest_probe(
+                    ACPProbeDimension(
+                        profile_id=profile.id,
+                        revision_id=str(revision.id.root),
+                        probe_type=ACPProbeKind.PROTOCOL,
+                    )
+                )
                 full_values = tuple(
-                    item for item in list_probes(include_inflight=False)
+                    item
+                    for item in list_probes(include_inflight=False)
                     if isinstance(item, ACPProbeResult)
                     and item.profile_id == profile.id
                     and item.revision_id == str(revision.id.root)
@@ -461,24 +536,37 @@ class ReadinessService:
                 )
             except Exception:
                 protocol, full_values = None, ()
-        protocol_verified = bool(protocol is not None and protocol.status is ACPProbeStatus.VERIFIED)
+        protocol_verified = bool(
+            protocol is not None and protocol.status is ACPProbeStatus.VERIFIED
+        )
         protocol_failed = bool(
             protocol is not None
-            and protocol.status in {
+            and protocol.status
+            in {
                 ACPProbeStatus.FAILED,
                 ACPProbeStatus.TIMED_OUT,
                 ACPProbeStatus.CANCELLED,
             }
         )
-        protocol_evidence_value = protocol.evidence if protocol_verified and protocol is not None else {}
-        protocol_identity = protocol.agent_identity if protocol_verified and protocol is not None else None
+        protocol_evidence_value = (
+            protocol.evidence if protocol_verified and protocol is not None else {}
+        )
+        protocol_identity = (
+            protocol.agent_identity
+            if protocol_verified and protocol is not None
+            else None
+        )
         if protocol_identity is None and isinstance(protocol_evidence_value, Mapping):
             protocol_identity = protocol_evidence_value.get("agent_info")  # type: ignore[assignment]
         latest_by_dimension: dict[str, ACPProbeResult] = {}
         for item in full_values:
             latest_by_dimension.setdefault(item.stable_key, item)
         latest_full_values = tuple(
-            sorted(latest_by_dimension.values(), key=lambda item: (item.created_at, item.id), reverse=True)
+            sorted(
+                latest_by_dimension.values(),
+                key=lambda item: (item.created_at, item.id),
+                reverse=True,
+            )
         )
         compatible: list[ACPProbeResult] = []
         mismatched: list[ACPProbeResult] = []
@@ -496,11 +584,17 @@ class ReadinessService:
             full_identity = item.agent_identity
             protocol_key = _identity_key(protocol_identity)
             full_key = _identity_key(full_identity)
-            if protocol_key is not None and full_key is not None and protocol_key != full_key:
+            if (
+                protocol_key is not None
+                and full_key is not None
+                and protocol_key != full_key
+            ):
                 mismatched.append(item)
             else:
                 compatible.append(item)
-                missing_identity = missing_identity or protocol_key is None or full_key is None
+                missing_identity = (
+                    missing_identity or protocol_key is None or full_key is None
+                )
         # Legacy v1 kept a verified full probe usable when either side omitted
         # agent identity; retain that behavior but expose a warning.
         full_verified = bool(protocol_verified and compatible)
@@ -508,55 +602,97 @@ class ReadinessService:
         if mismatched and not compatible:
             warnings.append("Identity changed; full verification downgraded")
         elif mismatched:
-            warnings.append("Some full verification dimensions have an identity mismatch")
+            warnings.append(
+                "Some full verification dimensions have an identity mismatch"
+            )
         if missing_identity:
             warnings.append("Agent identity unavailable; verification limited")
         if not full_verified:
             warnings.append("Harness is not fully verified")
         protocol_evidence = protocol_evidence_value
         modes_value: object = (
-            {"availableModes": tuple(mode.model_dump(mode="json") for mode in protocol.agent_modes),
-             "currentModeId": protocol.current_agent_mode_id}
-            if protocol is not None and protocol.agent_modes else {}
+            {
+                "availableModes": tuple(
+                    mode.model_dump(mode="json") for mode in protocol.agent_modes
+                ),
+                "currentModeId": protocol.current_agent_mode_id,
+            }
+            if protocol is not None and protocol.agent_modes
+            else {}
         )
         if not modes_value and isinstance(protocol_evidence, Mapping):
             modes_value = protocol_evidence.get("modes", {})
-        if not modes_value and protocol is not None and isinstance(getattr(protocol, "agent_capabilities", {}), Mapping):
+        if (
+            not modes_value
+            and protocol is not None
+            and isinstance(getattr(protocol, "agent_capabilities", {}), Mapping)
+        ):
             modes_value = getattr(protocol, "agent_capabilities", {}).get("modes", {})
-        raw_modes = modes_value.get("availableModes", modes_value.get("available_modes", modes_value if isinstance(modes_value, list) else [])) if isinstance(modes_value, Mapping) else modes_value
+        raw_modes = (
+            modes_value.get(
+                "availableModes",
+                modes_value.get(
+                    "available_modes",
+                    modes_value if isinstance(modes_value, list) else [],
+                ),
+            )
+            if isinstance(modes_value, Mapping)
+            else modes_value
+        )
         agent_modes = tuple(
-            ACPAgentModeView(
-                str(item.get("id")), str(item.get("name", item.get("id")))
-            ) if isinstance(item, Mapping) and item.get("id") is not None
+            ACPAgentModeView(str(item.get("id")), str(item.get("name", item.get("id"))))
+            if isinstance(item, Mapping) and item.get("id") is not None
             else ACPAgentModeView(str(item), str(item))
             for item in (raw_modes if isinstance(raw_modes, (list, tuple)) else ())
             if isinstance(item, (Mapping, str, int, float))
         )
-        config_value = getattr(protocol, "config_options", ()) if protocol is not None else ()
+        config_value = (
+            getattr(protocol, "config_options", ()) if protocol is not None else ()
+        )
         if not config_value and isinstance(protocol_evidence, Mapping):
             config_value = protocol_evidence.get("config_options", ())
         options = tuple(
             ACPSessionOptionView(
-                id=str(item.get("id", item.get("configId"))), name=str(item.get("name", item.get("id", item.get("configId")))),
-                type=str(item.get("type", "string")), required=bool(item.get("required", False)),
-                values=tuple(str(option.get("value", option)) if isinstance(option, Mapping) else str(option) for option in item.get("options", ())),
+                id=str(item.get("id", item.get("configId"))),
+                name=str(item.get("name", item.get("id", item.get("configId")))),
+                type=str(item.get("type", "string")),
+                required=bool(item.get("required", False)),
+                values=tuple(
+                    str(option.get("value", option))
+                    if isinstance(option, Mapping)
+                    else str(option)
+                    for option in item.get("options", ())
+                ),
             )
-            for item in (config_value if isinstance(config_value, (list, tuple)) else ())
-            if isinstance(item, Mapping) and item.get("id", item.get("configId")) is not None
+            for item in (
+                config_value if isinstance(config_value, (list, tuple)) else ()
+            )
+            if isinstance(item, Mapping)
+            and item.get("id", item.get("configId")) is not None
         )
-        full_descriptors = tuple({
-            "probe_id": item.id, "transport": item.transport, "agent_mode_id": item.agent_mode_id,
-            "session_config": dict(item.session_config), "status": item.status.value,
-            "agent_identity": _identity_view(item.agent_identity),
-            "evidence": dict(item.evidence),
-            "identity_match": (
-                None if _identity_key(protocol_identity) is None or _identity_key(item.agent_identity) is None
-                else _identity_key(protocol_identity) == _identity_key(item.agent_identity)
-            ),
-        } for item in latest_full_values)
+        full_descriptors = tuple(
+            {
+                "probe_id": item.id,
+                "transport": item.transport,
+                "agent_mode_id": item.agent_mode_id,
+                "session_config": dict(item.session_config),
+                "status": item.status.value,
+                "agent_identity": _identity_view(item.agent_identity),
+                "evidence": dict(item.evidence),
+                "identity_match": (
+                    None
+                    if _identity_key(protocol_identity) is None
+                    or _identity_key(item.agent_identity) is None
+                    else _identity_key(protocol_identity)
+                    == _identity_key(item.agent_identity)
+                ),
+            }
+            for item in latest_full_values
+        )
         ready = bool(local_ready and trusted and not profile.archived)
         latest_full_failed = any(
-            item.status in {
+            item.status
+            in {
                 ACPProbeStatus.FAILED,
                 ACPProbeStatus.TIMED_OUT,
                 ACPProbeStatus.CANCELLED,
@@ -564,7 +700,9 @@ class ReadinessService:
             for item in latest_full_values
         )
         if full_verified:
-            verification_status: Literal["unverified", "verified", "identity_mismatch", "failed"] = "verified"
+            verification_status: Literal[
+                "unverified", "verified", "identity_mismatch", "failed"
+            ] = "verified"
         elif identity_mismatch:
             verification_status = "identity_mismatch"
         elif protocol_failed or (protocol_verified and latest_full_failed):
@@ -588,24 +726,43 @@ class ReadinessService:
             missing_environment=missing,
             agent_modes=agent_modes,
             current_agent_mode_id=(
-                str(modes_value.get("currentModeId", modes_value.get("current_mode_id")))
+                str(
+                    modes_value.get("currentModeId", modes_value.get("current_mode_id"))
+                )
                 if isinstance(modes_value, Mapping)
-                and isinstance(modes_value.get("currentModeId", modes_value.get("current_mode_id")), (str, int, float))
+                and isinstance(
+                    modes_value.get(
+                        "currentModeId", modes_value.get("current_mode_id")
+                    ),
+                    (str, int, float),
+                )
                 else None
             ),
             session_config_options=options,
             protocol_verified=protocol_verified,
             full_verified=full_verified,
             verification_status=verification_status,
-            agent_identity=(_identity_view(compatible[0].agent_identity) if compatible else _identity_view(protocol_identity)),
+            agent_identity=(
+                _identity_view(compatible[0].agent_identity)
+                if compatible
+                else _identity_view(protocol_identity)
+            ),
             protocol_verification=(
-                {"probe_id": protocol.id, "status": protocol.status.value,
-                 "agent_identity": _identity_view(protocol.agent_identity),
-                 "agent_modes": tuple(mode.model_dump(mode="json") for mode in protocol.agent_modes),
-                 "current_agent_mode_id": protocol.current_agent_mode_id,
-                 "config_options": tuple(dict(option) for option in protocol.config_options),
-                 "evidence": dict(protocol.evidence)}
-                if protocol is not None else None
+                {
+                    "probe_id": protocol.id,
+                    "status": protocol.status.value,
+                    "agent_identity": _identity_view(protocol.agent_identity),
+                    "agent_modes": tuple(
+                        mode.model_dump(mode="json") for mode in protocol.agent_modes
+                    ),
+                    "current_agent_mode_id": protocol.current_agent_mode_id,
+                    "config_options": tuple(
+                        dict(option) for option in protocol.config_options
+                    ),
+                    "evidence": dict(protocol.evidence),
+                }
+                if protocol is not None
+                else None
             ),
             full_verifications=full_descriptors,
             warnings=tuple(dict.fromkeys(warnings)),
@@ -615,7 +772,9 @@ class ReadinessService:
         self._ensure_open()
         storage = self.storage()
         try:
-            profiles = self.store.list_profiles("harness", include_archived=include_archived)
+            profiles = self.store.list_profiles(
+                "harness", include_archived=include_archived
+            )
         except Exception:
             profiles = ()
         acp = tuple(self._acp_view(profile) for profile in profiles)

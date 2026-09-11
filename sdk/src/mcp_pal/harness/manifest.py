@@ -4,6 +4,7 @@ This module is deliberately dependency-light so the bridge kit can be used
 from a terminal without constructing the web application. Values in ``env``
 are references, never resolved credentials.
 """
+
 from __future__ import annotations
 
 import json
@@ -60,7 +61,9 @@ def _local_readiness(value: dict[str, Any]) -> dict[str, Any]:
     missing = [name for name in env_refs if name not in os.environ]
     return {
         "executable": executable,
-        "local_ready": bool(executable and os.access(executable, os.X_OK) and not missing),
+        "local_ready": bool(
+            executable and os.access(executable, os.X_OK) and not missing
+        ),
         "missing_environment": missing,
     }
 
@@ -77,7 +80,10 @@ def validate_manifest(manifest: Any, *, check_local: bool = False) -> dict[str, 
 
     if not isinstance(manifest, dict):
         raise ManifestValidationError("manifest must be an object")
-    unknown = sorted(set(manifest) - {"schema_version", "protocol", "protocol_version", "command", "args", "env"})
+    unknown = sorted(
+        set(manifest)
+        - {"schema_version", "protocol", "protocol_version", "command", "args", "env"}
+    )
     if unknown:
         raise ManifestValidationError("unknown manifest fields: " + ", ".join(unknown))
     model = _model(manifest)
@@ -86,7 +92,9 @@ def validate_manifest(manifest: Any, *, check_local: bool = False) -> dict[str, 
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
             raise ManifestValidationError(f"env: invalid child variable name: {name}")
         if not re.fullmatch(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", reference):
-            raise ManifestValidationError(f"env.{name}: value must be an environment reference")
+            raise ManifestValidationError(
+                f"env.{name}: value must be an environment reference"
+            )
     result: dict[str, Any] = {
         "valid": True,
         "manifest": value,
@@ -111,7 +119,9 @@ def load_manifest(path: str | os.PathLike[str]) -> dict[str, Any]:
 
     import sys
 
-    source = sys.stdin.read() if str(path) == "-" else Path(path).read_text(encoding="utf-8")
+    source = (
+        sys.stdin.read() if str(path) == "-" else Path(path).read_text(encoding="utf-8")
+    )
     try:
         raw = json.loads(source)
     except (json.JSONDecodeError, OSError) as exc:
@@ -122,7 +132,15 @@ def load_manifest(path: str | os.PathLike[str]) -> dict[str, Any]:
 def export_manifest(manifest: Any) -> str:
     """Return stable, secret-safe JSON suitable for sharing."""
 
-    return json.dumps(validate_manifest(manifest)["manifest"], indent=2, sort_keys=True) + "\n"
+    return (
+        json.dumps(validate_manifest(manifest)["manifest"], indent=2, sort_keys=True)
+        + "\n"
+    )
 
 
-__all__ = ["ManifestValidationError", "export_manifest", "load_manifest", "validate_manifest"]
+__all__ = [
+    "ManifestValidationError",
+    "export_manifest",
+    "load_manifest",
+    "validate_manifest",
+]

@@ -122,10 +122,15 @@ def run() -> int:
                 servers = {
                     str(candidate["name"]): candidate
                     for candidate in candidates
-                    if isinstance(candidate, dict) and isinstance(candidate.get("name"), str)
+                    if isinstance(candidate, dict)
+                    and isinstance(candidate.get("name"), str)
                 }
                 active_server = next(iter(servers), None)
-                mcp = _start_server(servers[active_server]) if active_server is not None else None
+                mcp = (
+                    _start_server(servers[active_server])
+                    if active_server is not None
+                    else None
+                )
                 if mcp is not None:
                     _initialize_server(mcp)
                 _send(
@@ -168,22 +173,24 @@ def run() -> int:
                     tool = instruction.get("tool", "shipping_quote")
                     arguments = instruction.get("arguments", {})
                     if not isinstance(tool, str) or not isinstance(arguments, dict):
-                        raise ValueError("matrix instructions require tool and object arguments")
+                        raise ValueError(
+                            "matrix instructions require tool and object arguments"
+                        )
                 else:
                     weight = 2 if turn == 1 else 3
                     zone = "local" if turn == 1 else "regional"
                     tool = "shipping_quote"
                     arguments = {"weight_kg": weight, "zone": zone}
                 if mcp is None:
-                    raise RuntimeError("deterministic ACP MCP connection is unavailable")
-                result = (
-                    _rpc(
-                        mcp,
-                        turn + 2,
-                        "tools/call",
-                        {"name": tool, "arguments": arguments},
-                    ).get("result", {})
-                )
+                    raise RuntimeError(
+                        "deterministic ACP MCP connection is unavailable"
+                    )
+                result = _rpc(
+                    mcp,
+                    turn + 2,
+                    "tools/call",
+                    {"name": tool, "arguments": arguments},
+                ).get("result", {})
                 if not isinstance(result, dict):
                     raise TypeError("MCP tool result is not an object")
                 _send(

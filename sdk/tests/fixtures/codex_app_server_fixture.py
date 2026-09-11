@@ -2,6 +2,7 @@
 """Deterministic Codex App Server JSONL fixture for native adapter tests."""
 
 from __future__ import annotations
+
 import json
 import sys
 

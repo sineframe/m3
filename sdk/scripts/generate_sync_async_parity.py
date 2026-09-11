@@ -24,8 +24,12 @@ def stable_manifest(value: dict[str, object]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=MANIFEST)
-    parser.add_argument("--check", action="store_true", help="fail when the file is not stable")
-    parser.add_argument("--write", action="store_true", help="rewrite the file in stable form")
+    parser.add_argument(
+        "--check", action="store_true", help="fail when the file is not stable"
+    )
+    parser.add_argument(
+        "--write", action="store_true", help="rewrite the file in stable form"
+    )
     args = parser.parse_args()
     if args.check and args.write:
         parser.error("--check and --write are mutually exclusive")
@@ -36,7 +40,9 @@ def main() -> int:
         args.manifest.write_text(rendered, encoding="utf-8")
         return 0
     if args.check and current != rendered:
-        print(f"{args.manifest} is not stable; run generate_sync_async_parity.py --write")
+        print(
+            f"{args.manifest} is not stable; run generate_sync_async_parity.py --write"
+        )
         return 1
     if not args.check:
         print(rendered, end="")

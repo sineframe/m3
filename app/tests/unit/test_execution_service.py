@@ -3,26 +3,36 @@ from __future__ import annotations
 import hashlib
 import sys
 from typing import Any
+
 import pytest
 
+from mcp_pal import (
+    RawEvidence,
+    RawEvidenceIntegrityError,
+    RawEvidenceUnavailable,
+    TraceUnavailable,
+    TraceView,
+)
+from mcp_pal.storage import StorageConflict, StorageError
 from mcp_pal.types import (
     DirectSpec,
+    EvidenceRef,
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
-    ExecutionState,
+    ExecutionReport,
     ExecutionSpec,
+    ExecutionState,
     ExecutionStatus,
     ListTools,
-    ExecutionReport,
-    EvidenceRef,
     ServerBinding,
     StdioServer,
     TraceId,
 )
-from mcp_pal import RawEvidence, RawEvidenceIntegrityError, RawEvidenceUnavailable, TraceUnavailable, TraceView
-from mcp_pal.storage import StorageConflict, StorageError
-from mcp_pal_app.services.execution_service import AppExecutionError, AppExecutionService
+from mcp_pal_app.services.execution_service import (
+    AppExecutionError,
+    AppExecutionService,
+)
 
 
 def spec() -> ExecutionSpec:
@@ -48,18 +58,35 @@ class FakeStore:
         self.trace_error: Exception | None = None
         self.raw_max_bytes: int | None = None
 
-    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> ExecutionReport | None:
+    def get_report(
+        self,
+        execution_id: ExecutionId | str,
+        *,
+        after_sequence: int = -1,
+        event_limit: int | None = None,
+        artifact_limit: int | None = None,
+    ) -> ExecutionReport | None:
         if after_sequence < -1:
             raise ValueError("bad cursor")
-        identifier = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(execution_id)
+        identifier = (
+            execution_id
+            if isinstance(execution_id, ExecutionId)
+            else ExecutionId(execution_id)
+        )
         if self.report is None or self.report.snapshot.execution_id != identifier:
             return None
         return self.report
 
-    def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None:
+    def get_execution_spec(
+        self, execution_id: ExecutionId | str
+    ) -> ExecutionSpec | None:
         if self.spec_error:
             raise self.spec_error
-        identifier = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(execution_id)
+        identifier = (
+            execution_id
+            if isinstance(execution_id, ExecutionId)
+            else ExecutionId(execution_id)
+        )
         if self.report is None or self.report.snapshot.execution_id != identifier:
             return None
         return self.specification
@@ -67,12 +94,18 @@ class FakeStore:
     def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None:
         if self.trace_error:
             raise self.trace_error
-        identifier = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(execution_id)
+        identifier = (
+            execution_id
+            if isinstance(execution_id, ExecutionId)
+            else ExecutionId(execution_id)
+        )
         if self.report is None or self.report.snapshot.execution_id != identifier:
             return None
         return self.trace
 
-    def read_raw_evidence(self, reference: EvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence:
+    def read_raw_evidence(
+        self, reference: EvidenceRef, *, max_bytes: int = 1_048_576
+    ) -> RawEvidence:
         self.raw_max_bytes = max_bytes
         if self.raw_error:
             raise self.raw_error
@@ -92,17 +125,35 @@ class FakeStore:
             truncated=max_bytes < 3,
         )
 
-    def list_executions(self, *, limit: int = 50, offset: int = 0, lifecycle: Any = None, outcome: Any = None) -> ExecutionPage:
+    def list_executions(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        lifecycle: Any = None,
+        outcome: Any = None,
+    ) -> ExecutionPage:
         if lifecycle == "bad":
             raise ValueError("bad lifecycle")
-        return ExecutionPage(items=(self.report.snapshot,) if self.report else (), limit=limit, offset=offset, total=1 if self.report else 0)
+        return ExecutionPage(
+            items=(self.report.snapshot,) if self.report else (),
+            limit=limit,
+            offset=offset,
+            total=1 if self.report else 0,
+        )
 
-    def request_cancel(self, execution_id: ExecutionId | str, reason: str | None = None) -> bool:
+    def request_cancel(
+        self, execution_id: ExecutionId | str, reason: str | None = None
+    ) -> bool:
         if self.conflict:
             raise self.conflict
         self.cancelled = True
         assert self.report
-        self.report = ExecutionReport(snapshot=self.report.snapshot.transition(ExecutionStatus.FINISHED, ExecutionOutcome.CANCELLED))
+        self.report = ExecutionReport(
+            snapshot=self.report.snapshot.transition(
+                ExecutionStatus.FINISHED, ExecutionOutcome.CANCELLED
+            )
+        )
         return True
 
     def delete_execution(self, execution_id: ExecutionId | str) -> None:
@@ -134,7 +185,9 @@ class DelayedCancelStore(FakeStore):
         self.cancel_requested = False
         self.report_reads = 0
 
-    def get_report(self, execution_id: ExecutionId | str, **kwargs: Any) -> ExecutionReport | None:
+    def get_report(
+        self, execution_id: ExecutionId | str, **kwargs: Any
+    ) -> ExecutionReport | None:
         self.report_reads += 1
         if self.cancel_requested and self.report_reads >= 3 and self.report is not None:
             self.report = ExecutionReport(
@@ -171,7 +224,9 @@ class DelayedCancelKit(FakeKit):
         self.handle = DelayedCancelHandle(store, self.execution_id)
 
 
-def active_report(identifier: ExecutionId = ExecutionId("execution-1")) -> ExecutionReport:
+def active_report(
+    identifier: ExecutionId = ExecutionId("execution-1"),  # noqa: B008 - immutable test fixture default
+) -> ExecutionReport:
     return ExecutionReport(snapshot=ExecutionState(execution_id=identifier))
 
 
@@ -266,7 +321,9 @@ def test_service_specification_and_trace_availability() -> None:
     with pytest.raises(AppExecutionError) as error:
         service.trace_view("execution-1")
     assert error.value.code == "trace_unavailable"
-    store.trace = TraceView(trace_id=TraceId("trace-1"), execution_id=ExecutionId("execution-1"))
+    store.trace = TraceView(
+        trace_id=TraceId("trace-1"), execution_id=ExecutionId("execution-1")
+    )
     store.trace_error = TraceUnavailable("trace canary must not escape")
     with pytest.raises(AppExecutionError) as error:
         service.trace_view("execution-1")
@@ -280,7 +337,9 @@ def test_service_specification_missing_execution_and_raw_evidence_bound() -> Non
     with pytest.raises(AppExecutionError) as error:
         service.specification("missing")
     assert error.value.code == "execution_not_found"
-    result = service.read_raw_evidence(EvidenceRef(evidence_id="evidence-1"), max_bytes=2)
+    result = service.read_raw_evidence(
+        EvidenceRef(evidence_id="evidence-1"), max_bytes=2
+    )
     assert result.returned_size_bytes == 2 and result.truncated is True
     assert store.raw_max_bytes == 2
 

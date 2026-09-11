@@ -11,16 +11,15 @@ from __future__ import annotations
 
 import json
 import os
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import socket
 import subprocess
 import sys
 import threading
 import time
-from typing import cast
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-
+from typing import cast
 
 mode = os.environ.get("MCP_PAL_OPENCODE_MODE", "normal")
 if "--version" in sys.argv:
@@ -64,7 +63,9 @@ state: dict[str, object] = {
     "config_exists": False,
     "config_content": None,
     "api_hits": [],
-    "child_env_marker": str(marker.with_name(marker.name + ".child.json")) if marker else None,
+    "child_env_marker": str(marker.with_name(marker.name + ".child.json"))
+    if marker
+    else None,
 }
 
 
@@ -104,7 +105,9 @@ worker = subprocess.Popen(
 record(
     child_pid=worker.pid,
     child_pids=[worker.pid],
-    config_exists=bool(state["opencode_config"] and Path(str(state["opencode_config"])).is_file()),
+    config_exists=bool(
+        state["opencode_config"] and Path(str(state["opencode_config"])).is_file()
+    ),
     config_content=(
         json.loads(Path(str(state["opencode_config"])).read_text(encoding="utf-8"))
         if state["opencode_config"] and Path(str(state["opencode_config"])).is_file()
@@ -134,14 +137,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self.path == "/session":
-            record(api_hits=list(cast(list[str], state["api_hits"])) + ["POST /session"])
+            record(
+                api_hits=[*list(cast(list[str], state["api_hits"])), "POST /session"]
+            )
             with state_lock:
                 state["session_post_count"] = cast(int, state["session_post_count"]) + 1
-            record(directory=self.headers.get("x-opencode-directory"), session_id=session_id)
+            record(
+                directory=self.headers.get("x-opencode-directory"),
+                session_id=session_id,
+            )
             self._json(200, {"id": session_id})
             return
         if self.path == f"/session/{session_id}/message":
-            record(api_hits=list(cast(list[str], state["api_hits"])) + ["POST /session/message"])
+            record(
+                api_hits=[
+                    *list(cast(list[str], state["api_hits"])),
+                    "POST /session/message",
+                ]
+            )
             value = self._body()
             with state_lock:
                 urls = list(cast(list[str], state["message_urls"]))
@@ -156,7 +169,9 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     # Advertise a larger body, write only a prefix, then
                     # close the connection to model a truncated HTTP turn.
-                    partial = json.dumps({"parts": [{"type": "text", "text": "partial"}]}).encode()
+                    partial = json.dumps(
+                        {"parts": [{"type": "text", "text": "partial"}]}
+                    ).encode()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(partial) + 32))
@@ -170,7 +185,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             model = value.get("model")
             parts = value.get("parts")
-            text = parts[0].get("text", "") if isinstance(parts, list) and parts and isinstance(parts[0], dict) else ""
+            text = (
+                parts[0].get("text", "")
+                if isinstance(parts, list) and parts and isinstance(parts[0], dict)
+                else ""
+            )
             if text == "huge":
                 self._json(200, {"text": "x" * (1024 * 1024 + 1)})
                 return
@@ -178,19 +197,38 @@ class Handler(BaseHTTPRequestHandler):
                 canary = os.environ.get("OPENCODE_API_KEY", "")
                 print(canary, file=sys.stderr, flush=True)
                 if text == "provider-error":
-                    self._json(200, {"info": {"error": {"message": canary}, "finish": "error"}, "parts": []})
+                    self._json(
+                        200,
+                        {
+                            "info": {"error": {"message": canary}, "finish": "error"},
+                            "parts": [],
+                        },
+                    )
                     return
                 if text == "finish-error":
-                    self._json(200, {"info": {"error": canary, "finish": "failed"}, "parts": []})
+                    self._json(
+                        200,
+                        {"info": {"error": canary, "finish": "failed"}, "parts": []},
+                    )
                     return
-                self._json(200, {"info": {"finish": "stop", "diagnostic": canary}, "parts": [{"type": "text", "text": f"success {canary}"}]})
+                self._json(
+                    200,
+                    {
+                        "info": {"finish": "stop", "diagnostic": canary},
+                        "parts": [{"type": "text", "text": f"success {canary}"}],
+                    },
+                )
                 return
             self._json(
                 200,
                 {
                     "info": {
-                        "providerID": model.get("providerID") if isinstance(model, dict) else "opencode",
-                        "modelID": model.get("modelID") if isinstance(model, dict) else "fixture",
+                        "providerID": model.get("providerID")
+                        if isinstance(model, dict)
+                        else "opencode",
+                        "modelID": model.get("modelID")
+                        if isinstance(model, dict)
+                        else "fixture",
                         "finish": "stop",
                         "tokens": {"input": 1, "output": 1},
                         "cost": 0,
@@ -202,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {})
 
     def do_GET(self) -> None:
-        record(api_hits=list(cast(list[str], state["api_hits"])) + [f"GET {self.path}"])
+        record(api_hits=[*list(cast(list[str], state["api_hits"])), f"GET {self.path}"])
         self._json(404, {})
 
     def do_DELETE(self) -> None:

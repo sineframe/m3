@@ -3,18 +3,18 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from typing import Any
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from starlette.requests import Request
 
 from mcp_pal.server_group import HarnessServerConfig
 from mcp_pal.transport.capture_proxy import McpCaptureManager
+from mcp_pal.transport.http_proxy import McpHttpProxy
 from mcp_pal.transport.tool_policy import ProxyToolPolicy
 from mcp_pal.types import RestrictiveToolPolicy, TransportKind
-from mcp_pal.transport.http_proxy import McpHttpProxy
 
 
 def test_proxy_gate_qualifies_and_denies_without_arguments() -> None:
@@ -34,9 +34,9 @@ def test_proxy_gate_qualifies_and_denies_without_arguments() -> None:
 
 
 def test_empty_restrictive_policy_is_deny_all() -> None:
-    denied, reason = ProxyToolPolicy(
-        RestrictiveToolPolicy(), server="one"
-    ).decide("anything")
+    denied, reason = ProxyToolPolicy(RestrictiveToolPolicy(), server="one").decide(
+        "anything"
+    )
     assert denied is False
     assert reason == "tool denied by restrictive policy"
 
@@ -49,7 +49,9 @@ def test_full_and_native_policies_are_separate() -> None:
     ).decide("anything")
     assert allowed is True
     native = ProxyToolPolicy(
-        NativeToolPolicy(harness="acp", policy={"allow": "all"}, nonportable_reason="provider"),
+        NativeToolPolicy(
+            harness="acp", policy={"allow": "all"}, nonportable_reason="provider"
+        ),
         server="one",
     )
     assert native.decide("anything") == (False, "policy_unavailable")
@@ -65,7 +67,9 @@ def test_proxy_gate_rejects_ambiguous_unqualified_name() -> None:
     assert gate.decide("read") == (False, "ambiguous_tool")
 
 
-def test_independent_dynamic_inventories_fail_closed_and_ignore_unmatched_tools_list() -> None:
+def test_independent_dynamic_inventories_fail_closed_and_ignore_unmatched_tools_list() -> (
+    None
+):
     policy = RestrictiveToolPolicy(allowed_tools=("read",))
     one = ProxyToolPolicy(policy, server="one", known_servers=("one", "two"))
     two = ProxyToolPolicy(policy, server="two", known_servers=("one", "two"))
@@ -96,8 +100,12 @@ def test_qualified_allow_survives_paginated_tools_list_and_denies_other_tool() -
         known_servers=("e2e-mcp",),
     )
     gate.observe_request({"id": 1, "method": "tools/list"})
-    gate.observe({"id": 1, "result": {"tools": [{"name": "echo"}], "nextCursor": "page-2"}})
-    gate.observe_request({"id": 2, "method": "tools/list", "params": {"cursor": "page-2"}})
+    gate.observe(
+        {"id": 1, "result": {"tools": [{"name": "echo"}], "nextCursor": "page-2"}}
+    )
+    gate.observe_request(
+        {"id": 2, "method": "tools/list", "params": {"cursor": "page-2"}}
+    )
     gate.observe({"id": 2, "result": {"tools": [{"name": "failure"}]}})
     assert gate.decide("echo") == (True, "allowed")
     assert gate.decide("failure") == (False, "tool denied by restrictive policy")
@@ -153,7 +161,9 @@ async def test_stdio_policy_is_a_one_shot_handoff(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_capture_reports_policy_proof_only_for_enforcing_transports(tmp_path: Path) -> None:
+async def test_capture_reports_policy_proof_only_for_enforcing_transports(
+    tmp_path: Path,
+) -> None:
     manager = McpCaptureManager(
         tmp_path,
         tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:read",)),
@@ -175,7 +185,9 @@ async def test_capture_reports_policy_proof_only_for_enforcing_transports(tmp_pa
 
 @pytest.mark.asyncio
 @pytest.mark.process_lifecycle
-async def test_stdio_policy_handoff_refuses_a_preexisting_symlink(tmp_path: Path) -> None:
+async def test_stdio_policy_handoff_refuses_a_preexisting_symlink(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "target.json"
     target.write_text("unchanged", encoding="utf-8")
     root = tmp_path / "capture"
@@ -207,14 +219,18 @@ async def test_stdio_policy_handoff_refuses_a_preexisting_symlink(tmp_path: Path
 
 @pytest.mark.asyncio
 @pytest.mark.process_lifecycle
-async def test_stdio_policy_blocks_child_before_side_effect_and_returns_jsonrpc_error(tmp_path: Path) -> None:
+async def test_stdio_policy_blocks_child_before_side_effect_and_returns_jsonrpc_error(
+    tmp_path: Path,
+) -> None:
     marker = tmp_path / "called"
     child = tmp_path / "child.py"
     child.write_text(
         "import json,sys\n"
         "for line in sys.stdin:\n"
         " p=json.loads(line)\n"
-        " if p.get('method') == 'tools/call': open(" + repr(str(marker)) + ", 'w').write('called')\n"
+        " if p.get('method') == 'tools/call': open("
+        + repr(str(marker))
+        + ", 'w').write('called')\n"
         " print(json.dumps({'jsonrpc':'2.0','id':p.get('id'),'result':{}}), flush=True)\n",
         encoding="utf-8",
     )
@@ -224,33 +240,61 @@ async def test_stdio_policy_blocks_child_before_side_effect_and_returns_jsonrpc_
         server_aliases=("echo",),
     )
     config = HarnessServerConfig(
-        key="echo", transport=TransportKind.STDIO, required=True, available=True,
-        connection_id="connection-echo", command=sys.executable, args=(str(child),),
+        key="echo",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="connection-echo",
+        command=sys.executable,
+        args=(str(child),),
     )
     instrumented = (await manager.instrument((config,)))[0]
     env = os.environ.copy()
     process = subprocess.Popen(
-        (instrumented.command, *instrumented.args), stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        (instrumented.command, *instrumented.args),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
     )
     assert process.stdin is not None and process.stdout is not None
-    process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "blocked", "arguments": {"secret": "must-not-capture"}}}) + "\n")
+    process.stdin.write(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "tools/call",
+                "params": {
+                    "name": "blocked",
+                    "arguments": {"secret": "must-not-capture"},
+                },
+            }
+        )
+        + "\n"
+    )
     process.stdin.close()
     output = process.stdout.readline()
     process.wait(timeout=5)
     assert json.loads(output)["error"]["code"] == -32001
     assert not marker.exists()
-    capture = (tmp_path / "capture" / "connection-echo.jsonl").read_text(encoding="utf-8")
+    capture = (tmp_path / "capture" / "connection-echo.jsonl").read_text(
+        encoding="utf-8"
+    )
     assert "must-not-capture" not in capture
     await manager.close()
 
 
 @pytest.mark.asyncio
-async def test_http_policy_denies_before_upstream_and_preserves_id(tmp_path: Path) -> None:
+async def test_http_policy_denies_before_upstream_and_preserves_id(
+    tmp_path: Path,
+) -> None:
     proxy = McpHttpProxy(
         upstream_url="http://127.0.0.1:9/mcp",
-        configured_headers={}, transport="streamable_http",
-        capture_path=str(tmp_path / "capture.jsonl"), baseline_ns=0,
+        configured_headers={},
+        transport="streamable_http",
+        capture_path=str(tmp_path / "capture.jsonl"),
+        baseline_ns=0,
         allow_private=True,
         tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:allowed",)),
         server_alias="echo",
@@ -261,29 +305,52 @@ async def test_http_policy_denies_before_upstream_and_preserves_id(tmp_path: Pat
             raise AssertionError("denied request reached upstream")
 
     proxy.client = NeverClient()  # type: ignore[assignment]
-    body = json.dumps({
-        "jsonrpc": "2.0", "id": "request-7", "method": "tools/call",
-        "params": {"name": "blocked", "arguments": {"secret": "not-captured"}},
-    }).encode()
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "request-7",
+            "method": "tools/call",
+            "params": {"name": "blocked", "arguments": {"secret": "not-captured"}},
+        }
+    ).encode()
+
     async def receive() -> dict[str, Any]:
         return {"type": "http.request", "body": body, "more_body": False}
 
-    request = Request({"type": "http", "method": "POST", "path": "/mcp", "headers": [(b"content-type", b"application/json")], "query_string": b"", "scheme": "http", "server": ("127.0.0.1", 1), "client": ("127.0.0.1", 1)}, receive=receive)
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [(b"content-type", b"application/json")],
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("127.0.0.1", 1),
+            "client": ("127.0.0.1", 1),
+        },
+        receive=receive,
+    )
     response = await proxy._forward(request)
     assert response.status_code == 200
     response_payload = json.loads(bytes(response.body))
     assert response_payload["id"] == "request-7"
     assert response_payload["error"]["code"] == -32001
-    assert "not-captured" not in (tmp_path / "capture.jsonl").read_text(encoding="utf-8")
+    assert "not-captured" not in (tmp_path / "capture.jsonl").read_text(
+        encoding="utf-8"
+    )
 
 
 @pytest.mark.asyncio
 async def test_http_policy_batch_and_notification_fail_closed(tmp_path: Path) -> None:
     proxy = McpHttpProxy(
-        upstream_url="http://127.0.0.1:9/mcp", configured_headers={},
-        transport="streamable_http", capture_path=str(tmp_path / "batch.jsonl"),
-        baseline_ns=0, allow_private=True,
-        tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:allowed",)), server_alias="echo",
+        upstream_url="http://127.0.0.1:9/mcp",
+        configured_headers={},
+        transport="streamable_http",
+        capture_path=str(tmp_path / "batch.jsonl"),
+        baseline_ns=0,
+        allow_private=True,
+        tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:allowed",)),
+        server_alias="echo",
     )
 
     class NeverClient:
@@ -298,31 +365,84 @@ async def test_http_policy_batch_and_notification_fail_closed(tmp_path: Path) ->
         async def receive() -> dict[str, Any]:
             return {"type": "http.request", "body": body, "more_body": False}
 
-        request = Request({"type": "http", "method": "POST", "path": "/mcp", "headers": [], "query_string": b"", "scheme": "http", "server": ("127.0.0.1", 1), "client": ("127.0.0.1", 1)}, receive=receive)
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/mcp",
+                "headers": [],
+                "query_string": b"",
+                "scheme": "http",
+                "server": ("127.0.0.1", 1),
+                "client": ("127.0.0.1", 1),
+            },
+            receive=receive,
+        )
         return await proxy._forward(request)
 
-    batch = await run([
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "blocked", "arguments": {"secret": "batch-secret"}}},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "allowed", "arguments": {}}},
-    ])
+    batch = await run(
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "blocked", "arguments": {"secret": "batch-secret"}},
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "allowed", "arguments": {}},
+            },
+        ]
+    )
     assert [item["id"] for item in json.loads(bytes(batch.body))] == [1, 2]
-    notification = await run({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "blocked", "arguments": {"secret": "notification-secret"}}})
+    notification = await run(
+        {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": "blocked",
+                "arguments": {"secret": "notification-secret"},
+            },
+        }
+    )
     assert bytes(notification.body) == b""
     assert notification.status_code == 202
-    batch_notification = await run([{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "blocked", "arguments": {"secret": "batch-notification-secret"}}}])
+    batch_notification = await run(
+        [
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "blocked",
+                    "arguments": {"secret": "batch-notification-secret"},
+                },
+            }
+        ]
+    )
     assert bytes(batch_notification.body) == b""
     assert batch_notification.status_code == 202
     text = (tmp_path / "batch.jsonl").read_text(encoding="utf-8")
-    assert "batch-secret" not in text and "notification-secret" not in text and "batch-notification-secret" not in text
+    assert (
+        "batch-secret" not in text
+        and "notification-secret" not in text
+        and "batch-notification-secret" not in text
+    )
 
 
-def test_http_proxy_rewrites_same_origin_redirect_and_drops_cross_origin(tmp_path: Path) -> None:
+def test_http_proxy_rewrites_same_origin_redirect_and_drops_cross_origin(
+    tmp_path: Path,
+) -> None:
     from httpx import Response
 
     proxy = McpHttpProxy(
-        upstream_url="https://mcp.example.test/mcp", configured_headers={},
-        transport="streamable_http", capture_path=str(tmp_path / "redirect.jsonl"),
-        baseline_ns=0, allow_private=True,
+        upstream_url="https://mcp.example.test/mcp",
+        configured_headers={},
+        transport="streamable_http",
+        capture_path=str(tmp_path / "redirect.jsonl"),
+        baseline_ns=0,
+        allow_private=True,
     )
     proxy.proxy_origin = "http://127.0.0.1:43210"
     same = proxy._response_headers(
@@ -333,13 +453,18 @@ def test_http_proxy_rewrites_same_origin_redirect_and_drops_cross_origin(tmp_pat
         Response(307, headers={"location": "https://evil.example/mcp"})
     )
     assert "location" not in cross
-    malformed = proxy._response_headers(Response(307, headers={"location": "https://[bad"}))
+    malformed = proxy._response_headers(
+        Response(307, headers={"location": "https://[bad"})
+    )
     assert "location" not in malformed
 
 
 @pytest.mark.asyncio
-async def test_redirect_followup_stays_captured_and_policy_gated(tmp_path: Path) -> None:
+async def test_redirect_followup_stays_captured_and_policy_gated(
+    tmp_path: Path,
+) -> None:
     import httpx
+
     from mcp_pal.trace.capture import read_capture
 
     seen: list[str] = []
@@ -348,55 +473,99 @@ async def test_redirect_followup_stays_captured_and_policy_gated(tmp_path: Path)
         seen.append(request.url.path)
         if request.url.path == "/mcp":
             return httpx.Response(307, headers={"location": "/mcp/"})
-        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {"content": []}})
+        return httpx.Response(
+            200, json={"jsonrpc": "2.0", "id": 2, "result": {"content": []}}
+        )
 
     path = tmp_path / "redirect.jsonl"
     proxy = McpHttpProxy(
-        upstream_url="https://mcp.example.test/mcp", configured_headers={},
-        transport="streamable_http", capture_path=str(path), baseline_ns=0,
-        allow_private=True, tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:allowed",)),
+        upstream_url="https://mcp.example.test/mcp",
+        configured_headers={},
+        transport="streamable_http",
+        capture_path=str(path),
+        baseline_ns=0,
+        allow_private=True,
+        tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:allowed",)),
         server_alias="echo",
     )
     endpoint = await proxy.start()
     await proxy.client.aclose()  # type: ignore[union-attr]
-    proxy.client = httpx.AsyncClient(transport=httpx.MockTransport(upstream), follow_redirects=False)
+    proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream), follow_redirects=False
+    )
     try:
         async with httpx.AsyncClient(follow_redirects=False) as client:
-            first = await client.post(endpoint, json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+            first = await client.post(
+                endpoint,
+                json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            )
             assert first.status_code == 307
             assert first.headers["location"].startswith(endpoint.rsplit("/mcp", 1)[0])
-            allowed = await client.post(first.headers["location"], json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "allowed", "arguments": {}}})
+            allowed = await client.post(
+                first.headers["location"],
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "allowed", "arguments": {}},
+                },
+            )
             assert allowed.status_code == 200
         assert seen == ["/mcp", "/mcp/"]
         records = read_capture(str(path))
-        assert any(record["payload"].get("method") == "tools/call" for record in records)
+        assert any(
+            record["payload"].get("method") == "tools/call" for record in records
+        )
     finally:
         await proxy.stop()
 
     blocked_seen: list[str] = []
+
     def blocked_upstream(request: httpx.Request) -> httpx.Response:
         blocked_seen.append(request.url.path)
         if request.url.path == "/mcp":
             return httpx.Response(307, headers={"location": "/mcp/"})
         return httpx.Response(500)
+
     blocked_path = tmp_path / "blocked-redirect.jsonl"
     blocked_proxy = McpHttpProxy(
-        upstream_url="https://mcp.example.test/mcp", configured_headers={},
-        transport="streamable_http", capture_path=str(blocked_path), baseline_ns=0,
-        allow_private=True, tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:allowed",)),
+        upstream_url="https://mcp.example.test/mcp",
+        configured_headers={},
+        transport="streamable_http",
+        capture_path=str(blocked_path),
+        baseline_ns=0,
+        allow_private=True,
+        tool_policy=RestrictiveToolPolicy(allowed_tools=("echo:allowed",)),
         server_alias="echo",
     )
     blocked_endpoint = await blocked_proxy.start()
     await blocked_proxy.client.aclose()  # type: ignore[union-attr]
-    blocked_proxy.client = httpx.AsyncClient(transport=httpx.MockTransport(blocked_upstream), follow_redirects=False)
+    blocked_proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(blocked_upstream), follow_redirects=False
+    )
     try:
         async with httpx.AsyncClient(follow_redirects=False) as client:
-            first = await client.post(blocked_endpoint, json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-            denied = await client.post(first.headers["location"], json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "blocked", "arguments": {}}})
+            first = await client.post(
+                blocked_endpoint,
+                json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            )
+            denied = await client.post(
+                first.headers["location"],
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {"name": "blocked", "arguments": {}},
+                },
+            )
             assert denied.status_code == 200
             assert json.loads(denied.text)["error"]["code"] == -32001
         assert blocked_seen == ["/mcp"]
         records = read_capture(str(blocked_path))
-        assert any(record.get("kind") == "policy_denied" and record["payload"].get("method") == "tools/call" for record in records)
+        assert any(
+            record.get("kind") == "policy_denied"
+            and record["payload"].get("method") == "tools/call"
+            for record in records
+        )
     finally:
         await blocked_proxy.stop()

@@ -47,7 +47,9 @@ class SQLiteStoreWorker:
         if self._stopped:
             return False
         self.store.mark_stale_interrupted()
-        claimed = self.store.claim_next(self.worker_id, lease_seconds=self.lease_seconds)
+        claimed = self.store.claim_next(
+            self.worker_id, lease_seconds=self.lease_seconds
+        )
         if claimed is None:
             return False
         command, lease = claimed
@@ -58,7 +60,9 @@ class SQLiteStoreWorker:
             interval = max(self.lease_seconds / 3.0, 0.1)
             while not stop_heartbeat.wait(interval):
                 try:
-                    if not self.store.heartbeat(lease, lease_seconds=self.lease_seconds):
+                    if not self.store.heartbeat(
+                        lease, lease_seconds=self.lease_seconds
+                    ):
                         lease_lost.set()
                         return
                 except Exception:
@@ -89,7 +93,11 @@ class SQLiteStoreWorker:
                     lease, reason="worker heartbeat failed"
                 )
                 return True
-            status = "cancelled" if self.store.cancellation_requested(command.execution_id) else "done"
+            status = (
+                "cancelled"
+                if self.store.cancellation_requested(command.execution_id)
+                else "done"
+            )
             if status == "cancelled":
                 self.store.finalize_cancelled(command.execution_id)
             self.store.complete_command(

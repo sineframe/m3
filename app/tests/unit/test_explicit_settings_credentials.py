@@ -19,12 +19,23 @@ from mcp_pal import (
     UserMessage,
 )
 from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.harness.acp import AcpHarnessAdapter, _isolated_acp_env, _resolve_environment_secret
+from mcp_pal.harness.acp import (
+    AcpHarnessAdapter,
+    _isolated_acp_env,
+    _resolve_environment_secret,
+)
 from mcp_pal.harness.claude import ClaudeCodeHarnessAdapter
 from mcp_pal.harness.contracts import HarnessLaunch
-from mcp_pal.harness.opencode import OpenCodeHarnessAdapter
-from mcp_pal.harness.native import _isolated_environment, _resolve_runtime_value, write_config
-from mcp_pal.harness.opencode import _resolve_opencode_environment_value, opencode_configuration
+from mcp_pal.harness.native import (
+    _isolated_environment,
+    _resolve_runtime_value,
+    write_config,
+)
+from mcp_pal.harness.opencode import (
+    OpenCodeHarnessAdapter,
+    _resolve_opencode_environment_value,
+    opencode_configuration,
+)
 from mcp_pal.server_group import HarnessServerConfig, ServerGroupSnapshot
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.types import NativeToolPolicy, TransportKind
@@ -32,7 +43,9 @@ from mcp_pal_app.services.app_service import build_harness_adapter_registry
 from mcp_pal_app.settings import Settings
 
 
-def test_settings_credentials_are_explicit_and_not_serialized(monkeypatch, tmp_path: Path) -> None:
+def test_settings_credentials_are_explicit_and_not_serialized(
+    monkeypatch, tmp_path: Path
+) -> None:
     canary = "settings-only-credential-canary"
     for name in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY"):
         monkeypatch.delenv(name, raising=False)
@@ -94,10 +107,13 @@ def test_settings_credentials_are_explicit_and_not_serialized(monkeypatch, tmp_p
     assert claude.environment["ANTHROPIC_API_KEY"] == canary
     assert opencode.environment["OPENROUTER_API_KEY"] == canary
     assert acp._environment["ANTHROPIC_API_KEY"] == canary
-    assert _resolve_runtime_value(
-        SecretReference(source="environment", name="ANTHROPIC_API_KEY"),
-        environment=claude.environment,
-    ) == canary
+    assert (
+        _resolve_runtime_value(
+            SecretReference(source="environment", name="ANTHROPIC_API_KEY"),
+            environment=claude.environment,
+        )
+        == canary
+    )
     opencode_env = dict(opencode.environment)
     secrets: set[str] = set()
     _resolve_opencode_environment_value(
@@ -106,10 +122,13 @@ def test_settings_credentials_are_explicit_and_not_serialized(monkeypatch, tmp_p
         secrets,
     )
     assert opencode_env["OPENROUTER_API_KEY"] == canary
-    assert _resolve_environment_secret(
-        SecretReference(source="environment", name="ANTHROPIC_API_KEY"),
-        acp._environment,
-    ) == canary
+    assert (
+        _resolve_environment_secret(
+            SecretReference(source="environment", name="ANTHROPIC_API_KEY"),
+            acp._environment,
+        )
+        == canary
+    )
     child_env = _isolated_acp_env(
         {"command": "echo", "env": {"CHILD_TOKEN": "${ANTHROPIC_API_KEY}"}},
         "/bin/echo",
@@ -136,7 +155,9 @@ def test_named_reference_prefers_explicit_value_and_falls_back_to_ambient(
     _resolve_opencode_environment_value(reference, opencode_env, set())
     assert opencode_env["AMBIENT_CANARY"] == "ambient-value"
     strict_empty: dict[str, str] = {}
-    _resolve_opencode_environment_value(reference, strict_empty, set(), resolver_environment={})
+    _resolve_opencode_environment_value(
+        reference, strict_empty, set(), resolver_environment={}
+    )
     assert strict_empty["AMBIENT_CANARY"] == "ambient-value"
 
     assert _resolve_environment_secret(reference) == "ambient-value"
@@ -197,13 +218,19 @@ def test_settings_canary_stays_out_of_durable_spec_and_events(tmp_path: Path) ->
     )
     recorder.emit(
         EventKind.DIAGNOSTIC,
-        payload={"credential": SecretReference(source="environment", name="ANTHROPIC_API_KEY")},
+        payload={
+            "credential": SecretReference(
+                source="environment", name="ANTHROPIC_API_KEY"
+            )
+        },
     )
     recorder.finalize(ExecutionOutcome.COMPLETED)
     report = store.get_report("durable-settings-execution")
     assert report is not None
     assert canary not in json.dumps(report.model_dump(mode="json"))
-    assert canary not in json.dumps(store.get_execution_spec("durable-settings-execution").model_dump(mode="json"))  # type: ignore[union-attr]
+    assert canary not in json.dumps(
+        store.get_execution_spec("durable-settings-execution").model_dump(mode="json")
+    )  # type: ignore[union-attr]
     store.close()
     assert canary.encode() not in database.read_bytes()
 
@@ -211,11 +238,27 @@ def test_settings_canary_stays_out_of_durable_spec_and_events(tmp_path: Path) ->
 def test_native_launch_boundaries_use_selected_settings_only(tmp_path: Path) -> None:
     canary = "native-settings-canary"
     spec = AgentSpec(
-        servers=(ServerBinding(server=StdioServer(name="server", command="echo", environment={"TOKEN": SecretReference(source="environment", name="ANTHROPIC_API_KEY")})),),
+        servers=(
+            ServerBinding(
+                server=StdioServer(
+                    name="server",
+                    command="echo",
+                    environment={
+                        "TOKEN": SecretReference(
+                            source="environment", name="ANTHROPIC_API_KEY"
+                        )
+                    },
+                )
+            ),
+        ),
         message=UserMessage(content=(TextContent(text="hello"),)),
         harness=ClaudeCode(
             model="model",
-            credential_references={"ANTHROPIC_API_KEY": SecretReference(source="environment", name="ANTHROPIC_API_KEY")},
+            credential_references={
+                "ANTHROPIC_API_KEY": SecretReference(
+                    source="environment", name="ANTHROPIC_API_KEY"
+                )
+            },
         ),
         tool_policy=NativeToolPolicy(
             harness="claude-code",
@@ -224,15 +267,24 @@ def test_native_launch_boundaries_use_selected_settings_only(tmp_path: Path) -> 
         ),
     )
     configuration = HarnessServerConfig(
-        key="server", transport=TransportKind.STDIO, required=True, available=True,
-        connection_id="connection", command="echo", environment={
+        key="server",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="connection",
+        command="echo",
+        environment={
             "TOKEN": SecretReference(source="environment", name="ANTHROPIC_API_KEY")
         },
     )
-    launch = HarnessLaunch(spec, ServerGroupSnapshot(), (configuration,), spec.tool_policy)
+    launch = HarnessLaunch(
+        spec, ServerGroupSnapshot(), (configuration,), spec.tool_policy
+    )
     environment = _isolated_environment(tmp_path, {"ANTHROPIC_API_KEY": canary})
     config = write_config(tmp_path, launch, environment=environment)
-    assert json.loads(config.read_text())["mcpServers"]["server"]["env"]["TOKEN"] == canary
+    assert (
+        json.loads(config.read_text())["mcpServers"]["server"]["env"]["TOKEN"] == canary
+    )
     assert "OPENROUTER_API_KEY" not in environment
     assert "OPENCODE_API_KEY" not in environment
     config.unlink()
@@ -247,9 +299,13 @@ def test_native_launch_boundaries_use_selected_settings_only(tmp_path: Path) -> 
             ),
         }
     )
-    opencode_launch = HarnessLaunch(opencode, ServerGroupSnapshot(), (configuration,), opencode.tool_policy)
+    opencode_launch = HarnessLaunch(
+        opencode, ServerGroupSnapshot(), (configuration,), opencode.tool_policy
+    )
     rendered = opencode_configuration(opencode_launch, dialect="legacy")
-    assert rendered["mcp"]["server"]["environment"]["TOKEN"] == "{env:ANTHROPIC_API_KEY}"
+    assert (
+        rendered["mcp"]["server"]["environment"]["TOKEN"] == "{env:ANTHROPIC_API_KEY}"
+    )
     opencode_root = tmp_path / "opencode-child"
     opencode_root.mkdir()
     opencode_child = _isolated_environment(

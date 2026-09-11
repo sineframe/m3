@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from anyio import EndOfStream
 import pytest
+from anyio import EndOfStream
+from mcp import types
 from mcp.shared.message import SessionMessage
 from mcp_types import ErrorData, JSONRPCError, JSONRPCRequest, JSONRPCResponse
-from mcp import types
 
 from mcp_pal.direct_client import AsyncDirectClient
 from mcp_pal.direct_trace import DirectTraceBridge
+from mcp_pal.errors import TransportError
 from mcp_pal.events import EventFactory, EventSequence
 from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.errors import TransportError
 from mcp_pal.storage import InMemoryExecutionStore
 from mcp_pal.types import EventKind, ExecutionId, ExecutionOutcome
 
@@ -73,7 +73,9 @@ def _response(identifier: int | str) -> SessionMessage:
 
 @pytest.mark.asyncio
 async def test_stream_wrappers_preserve_values_and_correlate_typed_ids() -> None:
-    bridge = DirectTraceBridge(execution_id="execution-test", connection_id="connection-test")
+    bridge = DirectTraceBridge(
+        execution_id="execution-test", connection_id="connection-test"
+    )
     read = _Read([_response("7"), _response(7)])
     write = _Write()
     observed_read, observed_write = bridge.wrap_streams(read, write)
@@ -89,8 +91,12 @@ async def test_stream_wrappers_preserve_values_and_correlate_typed_ids() -> None
     assert first_response.message.id == "7"
     assert second_response.message.id == 7
     events = bridge.trace.events
-    requests = [event for event in events if event.kind is EventKind.TOOL_CALL_REQUESTED]
-    responses = [event for event in events if event.kind is EventKind.TOOL_RESULT_RECEIVED]
+    requests = [
+        event for event in events if event.kind is EventKind.TOOL_CALL_REQUESTED
+    ]
+    responses = [
+        event for event in events if event.kind is EventKind.TOOL_RESULT_RECEIVED
+    ]
     assert [_correlation(event).jsonrpc_id for event in requests] == [7, "7"]
     assert [_correlation(event).request_sequence for event in requests] == [1, 2]
     assert [_correlation(event).request_sequence for event in responses] == [2, 1]
@@ -100,8 +106,12 @@ async def test_stream_wrappers_preserve_values_and_correlate_typed_ids() -> None
 
 
 @pytest.mark.asyncio
-async def test_resolved_secret_canary_is_atomic_and_redacts_echo_and_error_trace() -> None:
-    bridge = DirectTraceBridge(execution_id="execution-secret", connection_id="connection-secret")
+async def test_resolved_secret_canary_is_atomic_and_redacts_echo_and_error_trace() -> (
+    None
+):
+    bridge = DirectTraceBridge(
+        execution_id="execution-secret", connection_id="connection-secret"
+    )
     bridge.bind_secret_values(("overlap", "overlap-secret"))
     _, write = bridge.wrap_streams(_Read([]), _Write())
 
@@ -131,11 +141,15 @@ async def test_resolved_secret_canary_is_atomic_and_redacts_echo_and_error_trace
 
 @pytest.mark.asyncio
 async def test_same_typed_id_correlates_by_request_role_and_direction() -> None:
-    bridge = DirectTraceBridge(execution_id="execution-duplex", connection_id="connection-duplex")
-    read = _Read([
-        _request(7, method="sampling/createMessage"),
-        _response(7),
-    ])
+    bridge = DirectTraceBridge(
+        execution_id="execution-duplex", connection_id="connection-duplex"
+    )
+    read = _Read(
+        [
+            _request(7, method="sampling/createMessage"),
+            _response(7),
+        ]
+    )
     write = _Write()
     observed_read, observed_write = bridge.wrap_streams(read, write)
 
@@ -143,7 +157,11 @@ async def test_same_typed_id_correlates_by_request_role_and_direction() -> None:
     await observed_write.send(_request(7, method="tools/call"))
     await observed_read.receive()
     events = bridge.trace.events
-    requests = [event for event in events if event.kind in {EventKind.TOOL_CALL_REQUESTED, EventKind.SAMPLING_REQUEST}]
+    requests = [
+        event
+        for event in events
+        if event.kind in {EventKind.TOOL_CALL_REQUESTED, EventKind.SAMPLING_REQUEST}
+    ]
     assert len(requests) == 2
     client_request, server_request = requests
     assert client_request.correlation is not None
@@ -163,15 +181,25 @@ async def test_same_typed_id_correlates_by_request_role_and_direction() -> None:
     assert len(responses) == 2
     assert responses[0].kind is EventKind.TOOL_RESULT_RECEIVED
     assert responses[0].correlation is not None
-    assert responses[0].correlation.request_sequence == client_request.correlation.request_sequence
+    assert (
+        responses[0].correlation.request_sequence
+        == client_request.correlation.request_sequence
+    )
     assert responses[1].kind is EventKind.SAMPLING_RESPONSE
     assert responses[1].correlation is not None
-    assert responses[1].correlation.request_sequence == server_request.correlation.request_sequence
+    assert (
+        responses[1].correlation.request_sequence
+        == server_request.correlation.request_sequence
+    )
 
 
 @pytest.mark.asyncio
-async def test_failed_recorder_commit_rolls_back_event_and_request_reservations() -> None:
-    bridge = DirectTraceBridge(execution_id="execution-rollback", connection_id="connection-rollback")
+async def test_failed_recorder_commit_rolls_back_event_and_request_reservations() -> (
+    None
+):
+    bridge = DirectTraceBridge(
+        execution_id="execution-rollback", connection_id="connection-rollback"
+    )
     _, write = bridge.wrap_streams(_Read([]), _Write())
     recorder = bridge._recorder
     original_record = recorder.record
@@ -187,7 +215,11 @@ async def test_failed_recorder_commit_rolls_back_event_and_request_reservations(
     recorder.record = reject_once  # type: ignore[method-assign]
     await write.send(_request(1))
     await write.send(_request(2))
-    requests = [event for event in bridge.trace.events if event.kind is EventKind.TOOL_CALL_REQUESTED]
+    requests = [
+        event
+        for event in bridge.trace.events
+        if event.kind is EventKind.TOOL_CALL_REQUESTED
+    ]
     assert len(requests) == 1
     assert requests[0].sequence == 1
     assert requests[0].correlation is not None
@@ -196,7 +228,9 @@ async def test_failed_recorder_commit_rolls_back_event_and_request_reservations(
 
 @pytest.mark.asyncio
 async def test_observation_after_finalization_does_not_reserve_or_append() -> None:
-    bridge = DirectTraceBridge(execution_id="execution-late", connection_id="connection-late")
+    bridge = DirectTraceBridge(
+        execution_id="execution-late", connection_id="connection-late"
+    )
     _, write = bridge.wrap_streams(_Read([]), _Write())
     final = bridge.finalize(ExecutionOutcome.COMPLETED)
     await write.send(_request(1))
@@ -232,24 +266,30 @@ async def test_request_sequences_are_scoped_by_connection() -> None:
 
     await first_write.send(_request(7))
     await second_write.send(_request(7))
-    first_event = [
+    first_event = next(
         event
         for event in first.trace.events
-        if event.kind is EventKind.TOOL_CALL_REQUESTED and event.connection_id == first.connection_id
-    ][0]
-    second_event = [
+        if event.kind is EventKind.TOOL_CALL_REQUESTED
+        and event.connection_id == first.connection_id
+    )
+    second_event = next(
         event
         for event in second.trace.events
-        if event.kind is EventKind.TOOL_CALL_REQUESTED and event.connection_id == second.connection_id
-    ][0]
+        if event.kind is EventKind.TOOL_CALL_REQUESTED
+        and event.connection_id == second.connection_id
+    )
     assert _correlation(first_event).request_sequence == 1
     assert _correlation(second_event).request_sequence == 1
     assert first_event.connection_id != second_event.connection_id
 
 
 @pytest.mark.asyncio
-async def test_finalize_is_partial_when_only_normalized_messages_are_available() -> None:
-    bridge = DirectTraceBridge(execution_id="execution-finalize", connection_id="connection-finalize")
+async def test_finalize_is_partial_when_only_normalized_messages_are_available() -> (
+    None
+):
+    bridge = DirectTraceBridge(
+        execution_id="execution-finalize", connection_id="connection-finalize"
+    )
     _, write = bridge.wrap_streams(_Read([]), _Write())
     await write.send(_request(1))
     result = bridge.finalize(ExecutionOutcome.COMPLETED)
@@ -262,10 +302,12 @@ async def test_finalize_is_partial_when_only_normalized_messages_are_available()
 @pytest.mark.asyncio
 async def test_direct_failure_contains_trace_identity_without_payloads() -> None:
     class BrokenSession:
-        async def __aenter__(self) -> "BrokenSession":
+        async def __aenter__(self) -> BrokenSession:
             return self
 
-        async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+        async def __aexit__(
+            self, exc_type: Any, exc_value: Any, traceback: Any
+        ) -> None:
             return None
 
         async def initialize(self) -> types.InitializeResult:
@@ -278,7 +320,9 @@ async def test_direct_failure_contains_trace_identity_without_payloads() -> None
         async def send_ping(self, **kwargs: Any) -> types.EmptyResult:
             raise OSError("secret socket details")
 
-    bridge = DirectTraceBridge(execution_id="execution-error", connection_id="connection-error")
+    bridge = DirectTraceBridge(
+        execution_id="execution-error", connection_id="connection-error"
+    )
     client = AsyncDirectClient(cast(Any, BrokenSession()), trace_bridge=bridge)
     async with client:
         with pytest.raises(TransportError) as error:
@@ -288,13 +332,19 @@ async def test_direct_failure_contains_trace_identity_without_payloads() -> None
 
 
 @pytest.mark.asyncio
-async def test_malformed_stream_values_become_safe_diagnostics_without_breaking_reads() -> None:
-    bridge = DirectTraceBridge(execution_id="execution-malformed", connection_id="connection-malformed")
+async def test_malformed_stream_values_become_safe_diagnostics_without_breaking_reads() -> (
+    None
+):
+    bridge = DirectTraceBridge(
+        execution_id="execution-malformed", connection_id="connection-malformed"
+    )
     malformed = object()
     read = _Read([malformed])
     observed_read, _ = bridge.wrap_streams(read, _Write())
     assert await observed_read.receive() is malformed
-    diagnostics = [event for event in bridge.trace.events if event.kind is EventKind.DIAGNOSTIC]
+    diagnostics = [
+        event for event in bridge.trace.events if event.kind is EventKind.DIAGNOSTIC
+    ]
     assert len(diagnostics) == 1
     assert diagnostics[0].payload == {
         "evidence_mode": "normalized_session_message",
@@ -310,7 +360,9 @@ async def test_observed_read_stream_maps_anyio_end_of_stream_to_iteration_end() 
         async def aclose(self) -> None:
             return None
 
-    bridge = DirectTraceBridge(execution_id="execution-end", connection_id="connection-end")
+    bridge = DirectTraceBridge(
+        execution_id="execution-end", connection_id="connection-end"
+    )
     observed_read, _ = bridge.wrap_streams(EndedRead(), _Write())
     with pytest.raises(StopAsyncIteration):
         await anext(observed_read)

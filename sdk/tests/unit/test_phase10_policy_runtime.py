@@ -37,7 +37,7 @@ class ReportingAdapter:
 
         return Readiness(ready=True)
 
-    async def open(self, _launch: object) -> "ReportingAdapter":
+    async def open(self, _launch: object) -> ReportingAdapter:
         self.opened = True
         return self
 
@@ -64,9 +64,13 @@ def _spec(policy: RestrictiveToolPolicy) -> AgentSpec:
 
 
 @pytest.mark.asyncio
-async def test_disallowed_reported_tool_fails_turn_and_emits_safe_policy_evidence() -> None:
+async def test_disallowed_reported_tool_fails_turn_and_emits_safe_policy_evidence() -> (
+    None
+):
     events: list[tuple[EventKind, Mapping[str, object]]] = []
-    adapter = ReportingAdapter({"server": "fixture", "tool": "blocked", "arguments": {"secret": "never"}})
+    adapter = ReportingAdapter(
+        {"server": "fixture", "tool": "blocked", "arguments": {"secret": "never"}}
+    )
 
     def sink(kind, payload, _session, _turn, _phase) -> None:
         events.append((kind, payload))
@@ -82,7 +86,8 @@ async def test_disallowed_reported_tool_fails_turn_and_emits_safe_policy_evidenc
     assert result.error.message == "tool policy violation"
     assert "never" not in repr(events)
     assert any(
-        kind is EventKind.TOOL_RESULT_RECEIVED and payload.get("policy_violation") is True
+        kind is EventKind.TOOL_RESULT_RECEIVED
+        and payload.get("policy_violation") is True
         for kind, payload in events
     )
     # Policy outcome is deliberately separate from adapter-reported MCP
@@ -131,9 +136,7 @@ def test_explicit_provider_native_tool_is_not_evaluated_as_mcp_traffic() -> None
     session._tool_policy_evidence = adapter.last_policy_evidence
     raw = AdapterTurn(
         response=TurnResponse(content=(TextContent(text="done"),)),
-        tool_calls=(
-            {"server": None, "tool": "provider_read", "call_id": "native-1"},
-        ),
+        tool_calls=({"server": None, "tool": "provider_read", "call_id": "native-1"},),
     )
 
     assert session._evaluate_reported_tool_calls(raw) == ()
@@ -207,11 +210,15 @@ async def test_duplicate_unqualified_tool_and_unknown_server_are_violations() ->
         tool_policy=RestrictiveToolPolicy(allowed_tools=("read",)),
     )
     adapter = ReportingAdapter({"name": "read"})
-    async with AsyncAgentSession(ambiguous_spec, adapter, server_manager=manager) as session:
+    async with AsyncAgentSession(
+        ambiguous_spec, adapter, server_manager=manager
+    ) as session:
         ambiguous = await session.send("run")
     assert ambiguous.error is not None and ambiguous.error.code is ErrorCode.UNSUPPORTED
 
-    manager2 = ServerGroupManager((ServerBinding(server=StdioServer(name="one", command="one")),))
+    manager2 = ServerGroupManager(
+        (ServerBinding(server=StdioServer(name="one", command="one")),)
+    )
     unknown_adapter = ReportingAdapter({"server": "missing", "tool": "read"})
     async with AsyncAgentSession(
         _spec(RestrictiveToolPolicy(allowed_tools=("missing:read",))),

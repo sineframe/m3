@@ -6,8 +6,14 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
+from mcp_pal import expect
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.execution_trace import ExecutionTraceRecorder
+from mcp_pal.harness import (
+    HarnessObservationSink,
+    RawEvidenceInput,
+    RawFrameObservation,
+)
 from mcp_pal.observability import (
     ACPTrace,
     Observation,
@@ -23,13 +29,6 @@ from mcp_pal.types import (
     ExecutionResult,
     ServerBinding,
     StdioServer,
-)
-
-from mcp_pal import expect
-from mcp_pal.harness import (
-    HarnessObservationSink,
-    RawEvidenceInput,
-    RawFrameObservation,
 )
 
 

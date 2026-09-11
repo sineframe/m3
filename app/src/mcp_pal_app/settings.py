@@ -1,7 +1,9 @@
 from functools import lru_cache
 from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     # Credentials remain available to the application process, but must not
@@ -50,11 +52,18 @@ class Settings(BaseSettings):
         return list(self.opencode_model_ids)
 
     def models_for(self, harness: str) -> list[str]:
-        if harness == "acp": return ["agent-default"]
+        if harness == "acp":
+            return ["agent-default"]
         return self.opencode_models() if harness == "opencode" else self.model_ids()
 
     def opencode_providers(self) -> list[str]:
-        return sorted({model.split("/", 1)[0].strip().lower() for model in self.opencode_models() if "/" in model})
+        return sorted(
+            {
+                model.split("/", 1)[0].strip().lower()
+                for model in self.opencode_models()
+                if "/" in model
+            }
+        )
 
     def opencode_provider_credentials(self) -> dict[str, str]:
         credentials = {
@@ -63,12 +72,13 @@ class Settings(BaseSettings):
             "anthropic": self.anthropic_api_key,
             "openrouter": self.openrouter_api_key,
         }
-        return {provider:key for provider,key in credentials.items() if key}
+        return {provider: key for provider, key in credentials.items() if key}
 
     @property
     def database_url(self) -> str:
         p = self.database_path
         return p if p.startswith("sqlite:") else f"sqlite:///{Path(p).expanduser()}"
+
 
 @lru_cache
 def get_settings() -> Settings:

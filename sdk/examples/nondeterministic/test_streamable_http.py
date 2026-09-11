@@ -19,6 +19,8 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+
+from mcp_pal import MCPTestKit, expect
 from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
 from mcp_pal.sync_api import ToolCallResult
 from mcp_pal.types import (
@@ -35,8 +37,6 @@ from mcp_pal.types import (
     TrustLevel,
     TurnOutcome,
 )
-
-from mcp_pal import MCPTestKit, expect
 
 pytestmark = pytest.mark.e2e
 

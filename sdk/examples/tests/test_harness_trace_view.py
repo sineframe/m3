@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from mcp_pal import MCPTestKit, StdioServer, expect
 from mcp_pal.types import (
     ACPAgent,
     AgentSpec,
@@ -12,8 +13,6 @@ from mcp_pal.types import (
     ServerBinding,
     TurnOutcome,
 )
-
-from mcp_pal import MCPTestKit, StdioServer, expect
 
 _EXAMPLES_ROOT = Path(__file__).parents[1]
 _AGENT = _EXAMPLES_ROOT / "servers" / "deterministic_acp_agent.py"

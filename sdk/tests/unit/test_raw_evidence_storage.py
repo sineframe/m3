@@ -7,14 +7,15 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+
 from mcp_pal.errors import RawEvidenceIntegrityError, RawEvidenceUnavailable
 from mcp_pal.events import EventFactory
 from mcp_pal.observability import (
+    CaptureOptions,
+    EvidenceCapture,
     Observation,
     ObservationState,
     RawEvidence,
-    EvidenceCapture,
-    CaptureOptions,
 )
 from mcp_pal.storage import (
     InMemoryExecutionStore,
@@ -29,9 +30,9 @@ from mcp_pal.trace.redaction import RedactionConfig
 from mcp_pal.types import (
     EventId,
     EventKind,
+    EvidenceRef,
     ExecutionId,
     ExecutionState,
-    EvidenceRef,
 )
 
 
@@ -85,9 +86,7 @@ def test_capture_config_defaults_and_positive_caps() -> None:
 def test_public_evidence_models_reject_inconsistent_bounds_and_capture_metadata() -> (
     None
 ):
-    reference = EvidenceRef(
-        evidence_id=evidence_id_for("evidence-model"), size_bytes=3
-    )
+    reference = EvidenceRef(evidence_id=evidence_id_for("evidence-model"), size_bytes=3)
     with pytest.raises(ValueError):
         RawEvidence(
             reference=reference,
@@ -356,9 +355,7 @@ def test_missing_malformed_tampered_and_wrong_role_references_are_typed(
     _, _, event_id = _execution(store)
     if kind == "sqlite":
         with pytest.raises(RawEvidenceUnavailable):
-            store.read_raw_evidence(
-                EvidenceRef(evidence_id=evidence_id_for(event_id))
-            )
+            store.read_raw_evidence(EvidenceRef(evidence_id=evidence_id_for(event_id)))
     capture = store.put_raw_evidence(event_id, b"safe", media_type="text/plain")
     ref = capture.reference
     assert (

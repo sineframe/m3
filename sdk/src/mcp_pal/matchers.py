@@ -9,7 +9,6 @@ import json as _json
 import math as _math
 import os as _os
 import re as _re
-from contextvars import ContextVar as _ContextVar
 from collections.abc import (
     Callable as _Callable,
 )
@@ -19,6 +18,7 @@ from collections.abc import (
 from collections.abc import (
     Sequence as _Sequence,
 )
+from contextvars import ContextVar as _ContextVar
 from numbers import Real as _Real
 from typing import (
     Any as _Any,
@@ -33,6 +33,15 @@ from typing import (
     TypeVar as _TypeVar,
 )
 
+from ._check_recording import (
+    has_recording_binding as _has_recording_binding,
+)
+from ._check_recording import (
+    record_matcher as _record_matcher,
+)
+from ._check_recording import (
+    suppress_recording as _suppress_recording,
+)
 from .errors import (
     TraceNotFinalized as _TraceNotFinalized,
 )
@@ -65,11 +74,6 @@ from .observability import (
 )
 from .trace.redaction import (
     RedactionConfig as _RedactionConfig,
-)
-from ._check_recording import (
-    has_recording_binding as _has_recording_binding,
-    record_matcher as _record_matcher,
-    suppress_recording as _suppress_recording,
 )
 from .trace.redaction import (
     redact_for_persistence as _redact_for_persistence,
@@ -105,9 +109,6 @@ from .types import (
     TurnId as _TurnId,
 )
 from .types import (
-    TurnStatus as _TurnStatus,
-)
-from .types import (
     TurnResponse as _TurnResponse,
 )
 from .types import (
@@ -116,6 +117,9 @@ from .types import (
 from .types import (
     TurnState as _TurnState,
 )
+from .types import (
+    TurnStatus as _TurnStatus,
+)
 
 _TurnSelector = _TurnResult | _TurnState | _TurnId | str
 
@@ -123,7 +127,7 @@ _SubjectT = _TypeVar("_SubjectT")
 _FailureSink = _Callable[[AssertionError], None]
 _UNAVAILABLE = object()
 _MATCHER_DEPTH = _ContextVar("mcp_pal_matcher_depth", default=0)
-_MATCHER_OCCURRENCES = _ContextVar("mcp_pal_matcher_occurrences", default={})
+_MATCHER_OCCURRENCES = _ContextVar("mcp_pal_matcher_occurrences", default=None)
 
 
 def _plain(value: _Any) -> _Any:
@@ -155,9 +159,7 @@ def _normalize_turn_selector(value: _Any) -> str:
         return value.root
     if isinstance(value, str):
         return value
-    raise TypeError(
-        "turn selector must be a TurnResult, TurnState, TurnId, or str"
-    )
+    raise TypeError("turn selector must be a TurnResult, TurnState, TurnId, or str")
 
 
 def _redact(value: _Any, depth: int = 0) -> _Any:
@@ -525,7 +527,7 @@ def _matches(
                 regex=regex,
                 numeric_tolerance=numeric_tolerance,
             )
-            for actual_value, expected_value in zip(actual, expected)
+            for actual_value, expected_value in zip(actual, expected, strict=False)
         )
     return bool(_plain(actual) == _plain(expected))
 
@@ -721,7 +723,8 @@ class Expectation(_Generic[_SubjectT]):
         actual_values = list(actual or ())
         if ordered:
             matched = len(actual_values) == len(expected_values) and all(
-                _matches(a, e) for a, e in zip(actual_values, expected_values)
+                _matches(a, e)
+                for a, e in zip(actual_values, expected_values, strict=False)
             )
         else:
             remaining = list(actual_values)
@@ -832,9 +835,7 @@ class Expectation(_Generic[_SubjectT]):
             return
         if evidence not in {"wire", "reported", "any"}:
             raise ValueError("tool-call evidence must be 'wire', 'reported', or 'any'")
-        requested_turn = (
-            _normalize_turn_selector(turn) if turn is not None else None
-        )
+        requested_turn = _normalize_turn_selector(turn) if turn is not None else None
         requested_tool = name or tool
         server = server or server_name
         views = self._typed_views()
@@ -1351,7 +1352,9 @@ def _record_public_matcher(function: _Callable[..., _Any]) -> _Callable[..., _An
             if signature is not None:
                 try:
                     values = signature.bind(self, *args, **kwargs).arguments
-                    bound = {key: value for key, value in values.items() if key != "self"}
+                    bound = {
+                        key: value for key, value in values.items() if key != "self"
+                    }
                 except (TypeError, ValueError):
                     bound = {"args": args, "kwargs": kwargs}
             try:
@@ -1375,7 +1378,13 @@ def _matcher_identity(name: str, subject: _Any) -> dict[str, _Any]:
     """Identify the callsite without relying on an absolute line number."""
 
     frame = _inspect.currentframe()
-    caller = frame.f_back.f_back if frame is not None and frame.f_back is not None and frame.f_back.f_back is not None else None
+    caller = (
+        frame.f_back.f_back
+        if frame is not None
+        and frame.f_back is not None
+        and frame.f_back.f_back is not None
+        else None
+    )
     if caller is None:
         return {"matcher": name, "state": "unavailable"}
     try:
@@ -1384,9 +1393,17 @@ def _matcher_identity(name: str, subject: _Any) -> dict[str, _Any]:
         line = caller.f_lineno
         execution_id = getattr(subject, "execution_id", None)
         if execution_id is None:
-            execution_id = getattr(getattr(subject, "trace", None), "execution_id", None)
-        key = (filename, function, name, line, str(getattr(execution_id, "root", execution_id)))
-        occurrences = dict(_MATCHER_OCCURRENCES.get())
+            execution_id = getattr(
+                getattr(subject, "trace", None), "execution_id", None
+            )
+        key = (
+            filename,
+            function,
+            name,
+            line,
+            str(getattr(execution_id, "root", execution_id)),
+        )
+        occurrences = dict(_MATCHER_OCCURRENCES.get() or {})
         occurrence = occurrences.get(key, 0) + 1
         occurrences[key] = occurrence
         _MATCHER_OCCURRENCES.set(occurrences)

@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.storage import ArtifactNotFound, BlobIntegrityError, FilesystemBlobStore, StorageError
+from mcp_pal.storage import (
+    ArtifactNotFound,
+    BlobIntegrityError,
+    FilesystemBlobStore,
+    StorageError,
+)
 
 
 def test_blob_write_is_content_addressed_and_verified(tmp_path: Path) -> None:
@@ -23,7 +28,9 @@ def test_blob_write_is_content_addressed_and_verified(tmp_path: Path) -> None:
     assert store.verify(digest, len(content)) == record
 
 
-def test_existing_shared_blob_is_reused_and_gc_preserves_live_reference(tmp_path: Path) -> None:
+def test_existing_shared_blob_is_reused_and_gc_preserves_live_reference(
+    tmp_path: Path,
+) -> None:
     store = FilesystemBlobStore(tmp_path / "blobs")
     content = b"shared"
     first = store.put(content)
@@ -37,7 +44,9 @@ def test_existing_shared_blob_is_reused_and_gc_preserves_live_reference(tmp_path
         store.read(first.sha256, size_bytes=first.size_bytes)
 
 
-def test_corrupt_and_missing_blobs_are_detected_and_not_gc_swept(tmp_path: Path) -> None:
+def test_corrupt_and_missing_blobs_are_detected_and_not_gc_swept(
+    tmp_path: Path,
+) -> None:
     store = FilesystemBlobStore(tmp_path / "blobs")
     record = store.put(b"integrity")
     record.path.write_bytes(b"not gzip")
@@ -66,11 +75,16 @@ def test_gc_has_no_implicit_retention_or_cleanup(tmp_path: Path) -> None:
     record = store.put(b"retained until explicit gc")
     # Re-instantiating the store does not silently delete an unreferenced file.
     reopened = FilesystemBlobStore(tmp_path / "blobs")
-    assert reopened.read(record.sha256, size_bytes=record.size_bytes) == b"retained until explicit gc"
+    assert (
+        reopened.read(record.sha256, size_bytes=record.size_bytes)
+        == b"retained until explicit gc"
+    )
     assert reopened.garbage_collect({}) == (record.sha256,)
 
 
-def test_blob_store_uses_private_modes_and_explicit_temp_cleanup(tmp_path: Path) -> None:
+def test_blob_store_uses_private_modes_and_explicit_temp_cleanup(
+    tmp_path: Path,
+) -> None:
     store = FilesystemBlobStore(tmp_path / "blobs")
     record = store.put(b"private")
     assert store.root.stat().st_mode & 0o777 == 0o700
@@ -109,7 +123,9 @@ def test_symlinked_blob_root_is_rejected(tmp_path: Path) -> None:
         FilesystemBlobStore(link)
 
 
-def test_read_bound_rejects_gzip_bomb_without_allocating_unbounded_output(tmp_path: Path) -> None:
+def test_read_bound_rejects_gzip_bomb_without_allocating_unbounded_output(
+    tmp_path: Path,
+) -> None:
     store = FilesystemBlobStore(tmp_path / "blobs", max_read_bytes=1024)
     content = b"A" * 100_000
     digest = hashlib.sha256(content).hexdigest()
@@ -123,7 +139,9 @@ def test_read_bound_rejects_gzip_bomb_without_allocating_unbounded_output(tmp_pa
 
 
 @pytest.mark.process_lifecycle
-def test_concurrent_process_writes_publish_one_valid_shared_blob(tmp_path: Path) -> None:
+def test_concurrent_process_writes_publish_one_valid_shared_blob(
+    tmp_path: Path,
+) -> None:
     root = str(tmp_path / "blobs")
     script = (
         "import sys; "
@@ -160,4 +178,7 @@ def test_concurrent_process_writes_publish_one_valid_shared_blob(tmp_path: Path)
     assert len(set(digests)) == 1
     store = FilesystemBlobStore(root)
     digest = digests[0]
-    assert store.read(digest, size_bytes=len(b"multiprocess-shared")) == b"multiprocess-shared"
+    assert (
+        store.read(digest, size_bytes=len(b"multiprocess-shared"))
+        == b"multiprocess-shared"
+    )

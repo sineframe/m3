@@ -3,11 +3,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "scripts" / "render_cli_installers.py"
@@ -31,9 +30,18 @@ def test_renderer_writes_versioned_executable_installers(tmp_path: Path) -> None
         contents = path.read_text(encoding="utf-8")
         assert "@MCP_PAL_VERSION@" not in contents
         assert "0.2.0a2" in contents
-        assert "mcp_pal-${VERSION}-py3-none-any.whl" in contents or "mcp_pal-$Version-py3-none-any.whl" in contents
-        assert "mcp_pal_app-${VERSION}-py3-none-any.whl" in contents or "mcp_pal_app-$Version-py3-none-any.whl" in contents
-        assert "mcp_pal_cli-${VERSION}-py3-none-any.whl" in contents or "mcp_pal_cli-$Version-py3-none-any.whl" in contents
+        assert (
+            "mcp_pal-${VERSION}-py3-none-any.whl" in contents
+            or "mcp_pal-$Version-py3-none-any.whl" in contents
+        )
+        assert (
+            "mcp_pal_app-${VERSION}-py3-none-any.whl" in contents
+            or "mcp_pal_app-$Version-py3-none-any.whl" in contents
+        )
+        assert (
+            "mcp_pal_cli-${VERSION}-py3-none-any.whl" in contents
+            or "mcp_pal_cli-$Version-py3-none-any.whl" in contents
+        )
 
 
 def test_renderer_rejects_unsafe_version(tmp_path: Path) -> None:
@@ -41,7 +49,9 @@ def test_renderer_rejects_unsafe_version(tmp_path: Path) -> None:
         renderer.render_installers("0.2.0; touch /tmp/pwned", tmp_path)
 
 
-def test_renderer_requires_one_placeholder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_renderer_requires_one_placeholder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     template = ROOT / "scripts" / "install.sh.in"
     monkeypatch.setattr(renderer, "PLACEHOLDER", "not-in-template")
     with pytest.raises(renderer.InstallerRenderError, match="exactly one"):
@@ -50,7 +60,9 @@ def test_renderer_requires_one_placeholder(tmp_path: Path, monkeypatch: pytest.M
 
 def test_rendered_posix_installer_has_valid_shell_syntax(tmp_path: Path) -> None:
     shell, _ = renderer.render_installers("0.2.0a2", tmp_path)
-    result = subprocess.run(["sh", "-n", str(shell)], check=False, capture_output=True, text=True)
+    result = subprocess.run(
+        ["sh", "-n", str(shell)], check=False, capture_output=True, text=True
+    )
     if result.returncode != 0:
         pytest.fail(result.stderr or result.stdout)
 
@@ -87,15 +99,20 @@ def test_installers_use_isolated_paths_and_local_wheels() -> None:
         assert "Command:" in contents
     assert "STAGE=" not in shell
     assert "$Stage" not in powershell
-    assert 'created_link=1' in shell
+    assert "created_link=1" in shell
     assert 'if [ "$created_link" -eq 1 ]' in shell
-    assert shell.index('"$COMMAND_PATH" --help') < shell.index('transaction_done=1')
+    assert shell.index('"$COMMAND_PATH" --help') < shell.index("transaction_done=1")
     assert "mcp-pal-bin" in powershell
     assert "if (-not (Test-Path -LiteralPath $Marker))" in powershell
-    assert "-and -not (Test-Path (Join-Path $InstallRoot 'Scripts/python.exe'))" not in powershell
+    assert (
+        "-and -not (Test-Path (Join-Path $InstallRoot 'Scripts/python.exe'))"
+        not in powershell
+    )
     assert "$CreatedCommand = $true" in powershell
     assert "$CreatedCommand -and" in powershell
-    assert powershell.index('& $CommandPath --help') < powershell.index('Remove-Item -Recurse -Force -LiteralPath $Backup')
+    assert powershell.index("& $CommandPath --help") < powershell.index(
+        "Remove-Item -Recurse -Force -LiteralPath $Backup"
+    )
 
 
 def test_installers_support_authenticated_private_release_downloads() -> None:
@@ -103,7 +120,7 @@ def test_installers_support_authenticated_private_release_downloads() -> None:
     powershell = (ROOT / "scripts" / "install.ps1.in").read_text(encoding="utf-8")
 
     assert 'RELEASE_TAG="v${VERSION}"' in shell
-    assert 'gh auth status --hostname github.com' in shell
+    assert "gh auth status --hostname github.com" in shell
     assert 'gh release download "$RELEASE_TAG"' in shell
     assert '--repo "$REPOSITORY"' in shell
     assert '--pattern "$artifact"' in shell
@@ -111,11 +128,14 @@ def test_installers_support_authenticated_private_release_downloads() -> None:
     assert 'download "$artifact"' in shell
 
     assert '$ReleaseTag = "v$Version"' in powershell
-    assert 'auth status --hostname github.com' in powershell
-    assert 'release download $ReleaseTag --repo $Repository --pattern $Name --output $Destination' in powershell
-    assert 'Download $Name (Join-Path $TempDir $Name)' in powershell
+    assert "auth status --hostname github.com" in powershell
+    assert (
+        "release download $ReleaseTag --repo $Repository --pattern $Name --output $Destination"
+        in powershell
+    )
+    assert "Download $Name (Join-Path $TempDir $Name)" in powershell
     # `exit` would terminate the caller when this script is invoked with `&`.
-    assert 'exit 0' not in powershell
+    assert "exit 0" not in powershell
 
 
 def test_posix_installer_fetches_exact_private_assets_into_isolated_uv_tool(
@@ -206,8 +226,7 @@ exit 30
     for name in (*assets, "SHA256SUMS"):
         assert any(f"--pattern {name} --output " in line for line in downloads)
     assert any(
-        line.startswith("uv tool install --force ")
-        and line.count(" --with ") == 2
+        line.startswith("uv tool install --force ") and line.count(" --with ") == 2
         for line in calls
     )
 
@@ -226,16 +245,21 @@ def test_private_install_docs_use_exact_authenticated_assets() -> None:
     assert "sh install.sh\nrm install.sh" in contents
     assert "--pattern install.ps1 --output install.ps1" in contents
     assert ".\\install.ps1\nRemove-Item install.ps1" in contents
-    assert 'mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SDK_WHEEL' in contents
+    assert "mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SDK_WHEEL" in contents
     assert "only downloads files" in contents
     assert "does not create or modify a" in contents
 
 
 def test_release_workflow_publishes_only_tag_runs() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "release-cli.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "release-cli.yml").read_text(
+        encoding="utf-8"
+    )
     assert 'tags:\n      - "v*"' in workflow
     assert "workflow_dispatch:" in workflow
-    assert "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')" in workflow
+    assert (
+        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+        in workflow
+    )
     assert "gh release create" in workflow
     assert "--verify-tag" in workflow
     assert "--generate-notes" in workflow

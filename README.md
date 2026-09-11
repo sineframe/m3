@@ -80,16 +80,16 @@ just check
 ```
 
 `just check` runs Ruff and the compile/import checks. Use `just lint` for Ruff
-alone, `just format` to format Python files, and `just format-check` to preview
-whether formatting is needed. Run `just --list` for focused tests, local API/UI
+alone, `just format` to format Python files in place, and `just format-check` to
+check whether files are already formatted without modifying them. Run `just --list` for focused tests, local API/UI
 commands, harness probes, and packaging checks. Live provider tests and the
 browser gate are opt-in because they require external credentials and may incur
 provider costs. Application configuration is documented in the
 [App guide](app/README.md).
 
-`just setup` also enables the repository's pre-push hook. The hook runs Ruff
-and the complete non-live SDK, example, application, and CLI test suites before
-each push. Run `just install-hooks` to enable it in an existing checkout. In an
+`just setup` and `just install-hooks` install the repository's pre-push hook. The
+hook runs Ruff linting, formatting checks, and the complete non-live SDK,
+example, application, and CLI test suites before each push. In an
 urgent situation, `git push --no-verify` bypasses the hook, but doing so is not
 recommended.
 

@@ -230,7 +230,7 @@ def _process_observation(
             raw = owner.stderr_task.result()
             stderr = raw.decode("utf-8", errors="replace")
             stderr_state = "observed"
-        except Exception:  # noqa: BLE001
+        except Exception:
             stderr_state = "unavailable"
     process_kwargs: dict[str, Any] = {}
     if stderr is not None:
@@ -380,9 +380,8 @@ class ClaudeCodeHarnessAdapter:
                 reason="stream-json unavailable",
             )
         policy = launch.tool_policy
-        if (
-            policy is None
-            or isinstance(policy, RestrictiveToolPolicy)
+        if policy is None or (
+            isinstance(policy, RestrictiveToolPolicy)
             and not policy.allowed_tools
             and not policy.denied_tools
         ):
@@ -541,11 +540,11 @@ class ClaudeCodeHarnessAdapter:
                             )
                             await owner.terminate()
                             break
-                except Exception:  # noqa: BLE001
+                except Exception:
                     await output.put({"__adapter_error__": "stream_frame_unavailable"})
                     try:
                         await owner.terminate()
-                    except Exception:  # noqa: BLE001,S110
+                    except Exception:
                         pass
                 finally:
                     await output.put(None)
@@ -568,7 +567,7 @@ class ClaudeCodeHarnessAdapter:
         except BaseException:
             try:
                 await owner.close()
-            except BaseException:  # noqa: BLE001,S110
+            except BaseException:
                 pass
             raise
 
@@ -736,10 +735,8 @@ class ClaudeCodeHarnessAdapter:
                 if isinstance(value, Mapping):
                     limit()
             elif (
-                isinstance(value, float)
-                and (not isfinite(value) or value < 0)
-                or isinstance(value, str)
-                and len(value) > 8_388_608
+                (isinstance(value, float) and (not isfinite(value) or value < 0))
+                or (isinstance(value, str) and len(value) > 8_388_608)
                 or not isinstance(
                     value, (str, int, float, bool, type(None), Mapping, list)
                 )
@@ -1026,14 +1023,14 @@ class ClaudeCodeHarnessAdapter:
         async def terminate_and_observe(phase: str = "exited") -> None:
             try:
                 await owner.terminate()
-            except Exception:  # noqa: BLE001,S110
+            except Exception:
                 pass
             if owner.stderr_task is not None and not owner.stderr_task.done():
                 try:
                     await asyncio.wait_for(
                         asyncio.shield(owner.stderr_task), timeout=0.5
                     )
-                except Exception:  # noqa: BLE001,S110
+                except Exception:
                     pass
             exited = _process_observation(
                 self, sequence, turn_wall_time, turn_started, phase, owner

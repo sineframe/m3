@@ -1,8 +1,7 @@
 """A multi-step test that passes each tool result into the next call."""
 
-from mcp_pal.sync_api import ToolCallResult
-
 from mcp_pal import MCPTestKit, StdioServer
+from mcp_pal.sync_api import ToolCallResult
 
 
 def test_create_then_retrieve_an_order(example_server: StdioServer) -> None:

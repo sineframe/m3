@@ -84,7 +84,9 @@ class HarnessTurnRequest:
 
     message: UserMessage
     timeout_seconds: float | None = None
-    metadata: Mapping[str, str | int | float | bool | None] = field(default_factory=dict)
+    metadata: Mapping[str, str | int | float | bool | None] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         if self.timeout_seconds is not None and (
@@ -100,7 +102,7 @@ class HarnessTurnRequest:
         *,
         timeout_seconds: float | None = None,
         metadata: Mapping[str, str | int | float | bool | None] | None = None,
-    ) -> "HarnessTurnRequest":
+    ) -> HarnessTurnRequest:
         user_message = (
             message
             if isinstance(message, UserMessage)
@@ -118,16 +120,28 @@ class HarnessTurnResult:
     response: TurnResponse | None = None
     error: ErrorInfo | None = None
     tool_calls: tuple[Mapping[str, Any], ...] = ()
-    evidence: Mapping[str, str | int | float | bool | None] = field(default_factory=dict)
+    evidence: Mapping[str, str | int | float | bool | None] = field(
+        default_factory=dict
+    )
     trace_limitations: tuple[str, ...] = ()
     # Typed evidence is the preferred shared boundary.  ``evidence`` remains
     # as a compatibility receipt for existing adapters until R6-R8 migrate.
     turn_evidence: TurnEvidence | None = None
 
     def __post_init__(self) -> None:
-        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence < 0:
+        if (
+            isinstance(self.sequence, bool)
+            or not isinstance(self.sequence, int)
+            or self.sequence < 0
+        ):
             raise TypeError("harness turn sequence must be a non-negative integer")
-        if self.status not in {"completed", "failed", "timed_out", "cancelled", "interrupted"}:
+        if self.status not in {
+            "completed",
+            "failed",
+            "timed_out",
+            "cancelled",
+            "interrupted",
+        }:
             raise ValueError("harness turn status is invalid")
         if self.turn_evidence is not None and (
             self.turn_evidence.sequence != self.sequence
@@ -140,7 +154,11 @@ class HarnessTurnResult:
             "tool_calls",
             tuple(MappingProxyType(dict(call)) for call in self.tool_calls),
         )
-        object.__setattr__(self, "trace_limitations", tuple(str(item) for item in self.trace_limitations))
+        object.__setattr__(
+            self,
+            "trace_limitations",
+            tuple(str(item) for item in self.trace_limitations),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +177,11 @@ class HarnessSessionSnapshot:
     def __post_init__(self) -> None:
         if not isinstance(self.session_id, str) or not self.session_id:
             raise ValueError("harness session ID must be non-empty")
-        if isinstance(self.turns, bool) or not isinstance(self.turns, int) or self.turns < 0:
+        if (
+            isinstance(self.turns, bool)
+            or not isinstance(self.turns, int)
+            or self.turns < 0
+        ):
             raise TypeError("harness session turn count must be a non-negative integer")
         if self.session_evidence is not None and (
             self.session_evidence.session_id != self.session_id
@@ -175,8 +197,8 @@ class HarnessLaunch:
     """Resolved, non-secret launch inputs supplied by a controller."""
 
     spec: AgentSpec
-    servers: "ServerGroupSnapshot"
-    configurations: tuple["HarnessServerConfig", ...]
+    servers: ServerGroupSnapshot
+    configurations: tuple[HarnessServerConfig, ...]
     tool_policy: ToolPolicy
     interactions: Interactions | None = None
     workspace_root: str | None = None
@@ -185,7 +207,7 @@ class HarnessLaunch:
     # structured snapshot but never owns transport framing or proxy cleanup.
     capture: Any | None = None
 
-    def with_tool_policy_evidence(self, evidence: ToolPolicyEvidence) -> "HarnessLaunch":
+    def with_tool_policy_evidence(self, evidence: ToolPolicyEvidence) -> HarnessLaunch:
         """Return this immutable launch with its preflight evidence attached."""
 
         return HarnessLaunch(
@@ -244,7 +266,9 @@ class HarnessAdapterRegistry:
     application, while the SDK default deliberately has no concrete fallback.
     """
 
-    def __init__(self, factories: Mapping[str, HarnessAdapterFactory] | None = None) -> None:
+    def __init__(
+        self, factories: Mapping[str, HarnessAdapterFactory] | None = None
+    ) -> None:
         self._factories: dict[str, HarnessAdapterFactory] = dict(factories or {})
 
     def register(self, kind: str, factory: HarnessAdapterFactory) -> None:
@@ -273,8 +297,8 @@ def default_adapters() -> HarnessAdapterRegistry:
 
     from .acp import AcpHarnessAdapter
     from .claude import ClaudeCodeHarnessAdapter
-    from .opencode import OpenCodeHarnessAdapter
     from .codex import CodexHarnessAdapter
+    from .opencode import OpenCodeHarnessAdapter
     from .pi import PiHarnessAdapter
 
     registry = HarnessAdapterRegistry()
@@ -315,7 +339,10 @@ def default_adapters() -> HarnessAdapterRegistry:
 
 TurnHandler: TypeAlias = Callable[
     [HarnessTurnRequest, MutableMapping[str, Any]],
-    HarnessTurnResult | TurnResponse | str | Awaitable[HarnessTurnResult | TurnResponse | str],
+    HarnessTurnResult
+    | TurnResponse
+    | str
+    | Awaitable[HarnessTurnResult | TurnResponse | str],
 ]
 
 
@@ -324,7 +351,9 @@ def _safe_error(code: ErrorCode, message: str) -> ErrorInfo:
 
 
 def _response_text(response: TurnResponse) -> str:
-    return "".join(block.text for block in response.content if isinstance(block, TextContent))
+    return "".join(
+        block.text for block in response.content if isinstance(block, TextContent)
+    )
 
 
 class DeterministicHarnessAdapter:
@@ -373,7 +402,9 @@ class DeterministicHarnessAdapter:
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
         if self._startup_error:
-            return self._capabilities.readiness(ready=False, reason="startup_unavailable")
+            return self._capabilities.readiness(
+                ready=False, reason="startup_unavailable"
+            )
         try:
             descriptors = tuple(
                 ToolDescriptor(server=record.key, name=tool)
@@ -388,14 +419,20 @@ class DeterministicHarnessAdapter:
             )
             self.last_policy_evidence = evidence
         except Exception:
-            return self._capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+            return self._capabilities.readiness(
+                ready=False, reason="tool_policy_unsupported"
+            )
         unsupported = {
             block.kind
-            for block in (launch.spec.message.content if launch.spec.message is not None else ())
+            for block in (
+                launch.spec.message.content if launch.spec.message is not None else ()
+            )
             if block.kind not in self._capabilities.supported_content_kinds
         }
         if unsupported:
-            return self._capabilities.readiness(ready=False, reason="attachment_unsupported")
+            return self._capabilities.readiness(
+                ready=False, reason="attachment_unsupported"
+            )
         return self._capabilities.readiness()
 
     async def open(self, launch: HarnessLaunch) -> HarnessSession:
@@ -404,8 +441,13 @@ class DeterministicHarnessAdapter:
             raise HarnessStartupError("harness preflight failed")
         self.open_count += 1
         effective_launch = launch
-        if launch.tool_policy_evidence is None and self.last_policy_evidence is not None:
-            effective_launch = launch.with_tool_policy_evidence(self.last_policy_evidence)
+        if (
+            launch.tool_policy_evidence is None
+            and self.last_policy_evidence is not None
+        ):
+            effective_launch = launch.with_tool_policy_evidence(
+                self.last_policy_evidence
+            )
         self.last_launch = effective_launch
         session = _DeterministicHarnessSession(self, effective_launch)
         self._active_session = session
@@ -432,7 +474,11 @@ class DeterministicHarnessAdapter:
         request = HarnessTurnRequest.from_message(
             message,
             timeout_seconds=timeout,
-            metadata={str(key): value for key, value in (metadata or {}).items() if isinstance(value, (str, int, float, bool)) or value is None},
+            metadata={
+                str(key): value
+                for key, value in (metadata or {}).items()
+                if isinstance(value, (str, int, float, bool)) or value is None
+            },
         )
         result = await session.send(request)
         if result.response is not None:
@@ -455,7 +501,9 @@ class DeterministicHarnessAdapter:
 
 
 class _DeterministicHarnessSession:
-    def __init__(self, adapter: DeterministicHarnessAdapter, launch: HarnessLaunch) -> None:
+    def __init__(
+        self, adapter: DeterministicHarnessAdapter, launch: HarnessLaunch
+    ) -> None:
         self._adapter = adapter
         self._launch = launch
         self._session_id = "fake-" + uuid.uuid4().hex
@@ -636,11 +684,11 @@ class _DeterministicHarnessSession:
 __all__ = [
     "DeterministicHarnessAdapter",
     "HarnessAdapter",
-    "HarnessAdapterContract",
     "HarnessAdapterCapabilities",
+    "HarnessAdapterContract",
+    "HarnessAdapterError",
     "HarnessAdapterFactory",
     "HarnessAdapterRegistry",
-    "HarnessAdapterError",
     "HarnessCleanupError",
     "HarnessLaunch",
     "HarnessSession",
@@ -648,6 +696,6 @@ __all__ = [
     "HarnessStartupError",
     "HarnessTurnRequest",
     "HarnessTurnResult",
-    "default_adapters",
     "UnsupportedHarnessFeature",
+    "default_adapters",
 ]

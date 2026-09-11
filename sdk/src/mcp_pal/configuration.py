@@ -10,9 +10,11 @@ from __future__ import annotations
 import os as _os
 import re as _re
 import sys as _sys
+from collections.abc import Mapping as _Mapping
 from enum import Enum as _Enum
 from pathlib import Path as _Path
-from typing import Any as _Any, Literal as _Literal, Mapping as _Mapping
+from typing import Any as _Any
+from typing import Literal as _Literal
 
 if _sys.version_info >= (3, 11):  # pragma: no cover - branch depends on runtime Python
     import tomllib as _tomllib  # type: ignore[import-not-found]
@@ -23,13 +25,22 @@ else:  # pragma: no cover
 
 from pydantic import (
     Field as _Field,
+)
+from pydantic import (
     StrictBool as _StrictBool,
+)
+from pydantic import (
     StrictStr as _StrictStr,
+)
+from pydantic import (
     field_validator as _field_validator,
+)
+from pydantic import (
     model_validator as _model_validator,
 )
 
-from .types import FrozenModel as _FrozenModel, _FrozenMapping as _FrozenMapping
+from .types import FrozenModel as _FrozenModel
+from .types import _FrozenMapping as _FrozenMapping
 
 
 class ConfigError(ValueError):
@@ -37,7 +48,9 @@ class ConfigError(ValueError):
 
     code = "configuration_error"
 
-    def __init__(self, *, field: str, origin: str, reason: str, code: str | None = None) -> None:
+    def __init__(
+        self, *, field: str, origin: str, reason: str, code: str | None = None
+    ) -> None:
         self.field = field
         self.origin = origin
         self.reason = reason
@@ -71,7 +84,10 @@ _REVISION_PATTERN = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 def _default_origins() -> dict[str, ConfigOrigin]:
-    return {field: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default") for field in _FIELDS}
+    return {
+        field: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
+        for field in _FIELDS
+    }
 
 
 class Config(_FrozenModel):
@@ -90,9 +106,11 @@ class Config(_FrozenModel):
         return value
 
     @_model_validator(mode="after")
-    def _validate_sources(self) -> "Config":
+    def _validate_sources(self) -> Config:
         if set(self.sources) != set(_FIELDS):
-            raise ValueError("sources must identify every supported configuration field")
+            raise ValueError(
+                "sources must identify every supported configuration field"
+            )
         if "sources" not in self.__pydantic_fields_set__:
             # Direct construction is an explicit source for supplied fields;
             # omitted fields retain the default origin.  The mapping is
@@ -100,18 +118,31 @@ class Config(_FrozenModel):
             # recursive-freeze hook.
             inferred = {
                 field: ConfigOrigin(
-                    source=ConfigSource.EXPLICIT if field in self.__pydantic_fields_set__ else ConfigSource.DEFAULT,
-                    origin=f"argument:{field}" if field in self.__pydantic_fields_set__ else "default",
+                    source=ConfigSource.EXPLICIT
+                    if field in self.__pydantic_fields_set__
+                    else ConfigSource.DEFAULT,
+                    origin=f"argument:{field}"
+                    if field in self.__pydantic_fields_set__
+                    else "default",
                 )
                 for field in _FIELDS
             }
             object.__setattr__(self, "sources", _FrozenMapping(inferred))
         else:
-            defaults = {"artifact_policy": "failed", "protocol_revision": "auto", "telemetry_enabled": False}
+            defaults = {
+                "artifact_policy": "failed",
+                "protocol_revision": "auto",
+                "telemetry_enabled": False,
+            }
             for field in _FIELDS:
                 source = self.sources[field]
-                if source.source is ConfigSource.DEFAULT and getattr(self, field) != defaults[field]:
-                    raise ValueError(f"{field} has a non-default value but default provenance")
+                if (
+                    source.source is ConfigSource.DEFAULT
+                    and getattr(self, field) != defaults[field]
+                ):
+                    raise ValueError(
+                        f"{field} has a non-default value but default provenance"
+                    )
         return self
 
     @property
@@ -122,25 +153,42 @@ class Config(_FrozenModel):
 
     def source_for(self, field: str) -> ConfigOrigin:
         if field not in _FIELDS:
-            raise ConfigError(field=field, origin="runtime", reason="unknown setting", code="unknown_setting")
+            raise ConfigError(
+                field=field,
+                origin="runtime",
+                reason="unknown setting",
+                code="unknown_setting",
+            )
         return self.sources[field]
 
 
 _UNSET = object()
 
 
-def _error(field: str, origin: str, reason: str, *, code: str = "invalid_configuration") -> ConfigError:
+def _error(
+    field: str, origin: str, reason: str, *, code: str = "invalid_configuration"
+) -> ConfigError:
     return ConfigError(field=field, origin=origin, reason=reason, code=code)
 
 
-def _validate(field: str, value: _Any, origin: str, *, environment: bool = False) -> _Any:
+def _validate(
+    field: str, value: _Any, origin: str, *, environment: bool = False
+) -> _Any:
     if field == "artifact_policy":
         if not isinstance(value, str) or value not in _ARTIFACT_POLICIES:
             raise _error(field, origin, "must be one of failed, always, or never")
         return value
     if field == "protocol_revision":
-        if not isinstance(value, str) or not value or _REVISION_PATTERN.fullmatch(value) is None:
-            raise _error(field, origin, "must be auto or a non-empty protocol revision identifier")
+        if (
+            not isinstance(value, str)
+            or not value
+            or _REVISION_PATTERN.fullmatch(value) is None
+        ):
+            raise _error(
+                field,
+                origin,
+                "must be auto or a non-empty protocol revision identifier",
+            )
         return value
     if field == "telemetry_enabled":
         if environment:
@@ -156,10 +204,14 @@ def _validate(field: str, value: _Any, origin: str, *, environment: bool = False
     raise _error(field, origin, "unknown setting", code="unknown_setting")
 
 
-def _validate_mapping(values: _Mapping[str, _Any], origin: str, *, environment: bool = False) -> dict[str, _Any]:
+def _validate_mapping(
+    values: _Mapping[str, _Any], origin: str, *, environment: bool = False
+) -> dict[str, _Any]:
     unknown = sorted(set(values) - set(_FIELDS))
     if unknown:
-        raise _error(", ".join(unknown), origin, "unknown setting", code="unknown_setting")
+        raise _error(
+            ", ".join(unknown), origin, "unknown setting", code="unknown_setting"
+        )
     return {
         field: _validate(
             field,
@@ -189,24 +241,38 @@ def _project_values(start: str | _Path | None) -> tuple[dict[str, _Any], str]:
     try:
         document = _tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):
-        raise _error("project", origin, "invalid TOML", code="invalid_project") from None
+        raise _error(
+            "project", origin, "invalid TOML", code="invalid_project"
+        ) from None
     tool = document.get("tool", {})
     if not isinstance(tool, dict):
-        raise _error("project", origin, "tool table must be a table", code="invalid_project")
+        raise _error(
+            "project", origin, "tool table must be a table", code="invalid_project"
+        )
     values = tool.get("mcp-pal", {})
     if not isinstance(values, dict):
-        raise _error("project", origin, "[tool.mcp-pal] must be a table", code="invalid_project")
+        raise _error(
+            "project", origin, "[tool.mcp-pal] must be a table", code="invalid_project"
+        )
     return _validate_mapping(values, origin), origin
 
 
 def _environment_values(environment: _Mapping[str, str]) -> dict[str, _Any]:
-    unknown = sorted(key for key in environment if key.startswith("MCP_PAL_") and key not in _ENV_FIELDS)
+    unknown = sorted(
+        key
+        for key in environment
+        if key.startswith("MCP_PAL_") and key not in _ENV_FIELDS
+    )
     if unknown:
-        raise _error(", ".join(unknown), "environment", "unknown setting", code="unknown_setting")
+        raise _error(
+            ", ".join(unknown), "environment", "unknown setting", code="unknown_setting"
+        )
     values: dict[str, _Any] = {}
     for name, field in _ENV_FIELDS.items():
         if name in environment:
-            values[field] = _validate(field, environment[name], f"env:{name}", environment=True)
+            values[field] = _validate(
+                field, environment[name], f"env:{name}", environment=True
+            )
     return values
 
 
@@ -238,15 +304,25 @@ def load_config(
     }
     duplicates = sorted(set(provided) & set(keyword_values))
     if duplicates:
-        raise _error(", ".join(duplicates), "explicit", "setting supplied more than once", code="duplicate_setting")
+        raise _error(
+            ", ".join(duplicates),
+            "explicit",
+            "setting supplied more than once",
+            code="duplicate_setting",
+        )
     provided.update(keyword_values)
     explicit_values = _validate_mapping(provided, "explicit")
     environment_values = _environment_values(env if env is not None else _os.environ)
     project_values, project_origin = _project_values(cwd)
 
-    values: dict[str, _Any] = {"artifact_policy": "failed", "protocol_revision": "auto", "telemetry_enabled": False}
+    values: dict[str, _Any] = {
+        "artifact_policy": "failed",
+        "protocol_revision": "auto",
+        "telemetry_enabled": False,
+    }
     origins: dict[str, ConfigOrigin] = {
-        field: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default") for field in _FIELDS
+        field: ConfigOrigin(source=ConfigSource.DEFAULT, origin="default")
+        for field in _FIELDS
     }
     for field, source_values, source, origin in (
         ("artifact_policy", project_values, ConfigSource.PROJECT, project_origin),
@@ -258,17 +334,21 @@ def load_config(
             origins[field] = ConfigOrigin(source=source, origin=origin)
     for field, value in environment_values.items():
         values[field] = value
-        origins[field] = ConfigOrigin(source=ConfigSource.ENVIRONMENT, origin=f"env:MCP_PAL_{field.upper()}")
+        origins[field] = ConfigOrigin(
+            source=ConfigSource.ENVIRONMENT, origin=f"env:MCP_PAL_{field.upper()}"
+        )
     for field, value in explicit_values.items():
         values[field] = value
-        origins[field] = ConfigOrigin(source=ConfigSource.EXPLICIT, origin=f"argument:{field}")
+        origins[field] = ConfigOrigin(
+            source=ConfigSource.EXPLICIT, origin=f"argument:{field}"
+        )
     return Config(**values, sources=origins)
 
 
 __all__ = [
-    "ConfigOrigin",
-    "ConfigSource",
     "Config",
     "ConfigError",
+    "ConfigOrigin",
+    "ConfigSource",
     "load_config",
 ]

@@ -3,6 +3,10 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import BaseModel, TypeAdapter, ValidationError
+
+import mcp_pal
+from mcp_pal import async_api, observability, sync_api
 from mcp_pal.observability import (
     CorrelationState,
     DiagnosticEntry,
@@ -22,25 +26,21 @@ from mcp_pal.observability import (
     RuntimeTraceInfo,
     ToolCallEntry,
     ToolCallStatus,
-    TransportEntry,
     TraceEntry,
     TraceSummary,
     TraceTiming,
     TraceView,
+    TransportEntry,
     UsageValue,
 )
 from mcp_pal.types import (
     EvidenceRef,
-    TurnStatus,
+    TransportKind,
     TurnOutcome,
     TurnResult,
     TurnState,
-    TransportKind,
+    TurnStatus,
 )
-from pydantic import BaseModel, TypeAdapter, ValidationError
-
-import mcp_pal
-from mcp_pal import async_api, observability, sync_api
 
 
 def test_observation_requires_explicit_availability() -> None:
@@ -219,7 +219,9 @@ def test_transport_entries_round_trip_and_are_indexed() -> None:
             entry.model_dump(mode="json")
         )
         assert restored == entry
-        view = TraceView(trace_id="trace-1", execution_id="execution-1", timeline=(entry,))
+        view = TraceView(
+            trace_id="trace-1", execution_id="execution-1", timeline=(entry,)
+        )
         assert view.schema_version == "1.1"
         assert view.transports == (entry,)
 
@@ -515,9 +517,9 @@ def test_trace_view_indexes_and_filters_use_one_timeline() -> None:
 
 
 def test_trace_view_for_turn_accepts_public_turn_selectors() -> None:
-    turn = TurnState(
-        turn_id="turn-1", session_id="session-1", number=1
-    ).transition(TurnStatus.FINISHED, TurnOutcome.COMPLETED)
+    turn = TurnState(turn_id="turn-1", session_id="session-1", number=1).transition(
+        TurnStatus.FINISHED, TurnOutcome.COMPLETED
+    )
     result = TurnResult(snapshot=turn)
     view = TraceView(
         trace_id="trace-1",

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+
 from mcp_pal.matchers import check, expect
 from mcp_pal.observability import (
     InitializationEntry,
@@ -17,10 +18,9 @@ from mcp_pal.observability import (
 )
 from mcp_pal.trace.redaction import RedactionConfig
 from mcp_pal.types import (
-    Event,
     CapabilityStatus,
     ConnectionId,
-    ToolInfo,
+    Event,
     EventDirection,
     EventId,
     EventKind,
@@ -32,13 +32,14 @@ from mcp_pal.types import (
     ExecutionState,
     ExecutionStatus,
     RequestLink,
+    ToolInfo,
     TraceId,
     TraceResult,
     TurnId,
-    TurnStatus,
     TurnOutcome,
     TurnResult,
     TurnState,
+    TurnStatus,
 )
 
 _REDACTION = RedactionConfig(
@@ -395,9 +396,9 @@ def test_tool_matcher_normalizes_turn_result_snapshot_id_and_rejects_invalid() -
             )
         }
     )
-    snapshot = TurnState(
-        turn_id="turn-1", session_id="session-1", number=1
-    ).transition(TurnStatus.FINISHED, TurnOutcome.COMPLETED)
+    snapshot = TurnState(turn_id="turn-1", session_id="session-1", number=1).transition(
+        TurnStatus.FINISHED, TurnOutcome.COMPLETED
+    )
     result = TurnResult(snapshot=snapshot)
     for selector in ("turn-1", TurnId("turn-1"), snapshot, result):
         expect(view).to_have_tool_call("lookup", turn=selector)
@@ -564,9 +565,7 @@ def test_discovery_ambiguity_isolated_by_requested_evidence() -> None:
         server_binding="other-server",
         sequence_start=4,
         sequence_end=4,
-        provenance=(
-            EventSource(origin=EventOrigin.HARNESS_REPORTED, source="test"),
-        ),
+        provenance=(EventSource(origin=EventOrigin.HARNESS_REPORTED, source="test"),),
         tools=Observation(
             state=ObservationState.OBSERVED,
             value=(ToolInfo(name="lookup"),),
@@ -585,8 +584,12 @@ def test_discovery_ambiguity_isolated_by_requested_evidence() -> None:
     )
     isolated = view.model_copy(
         update={
-            "timeline": view.timeline[:-1]
-            + (harness_init, wire_init, view.timeline[-1])
+            "timeline": (
+                *view.timeline[:-1],
+                harness_init,
+                wire_init,
+                view.timeline[-1],
+            )
         }
     )
     expect(isolated).to_have_tool_call("lookup", evidence="wire")
@@ -642,7 +645,7 @@ def test_result_matching_supports_typed_and_mapping_projections_and_null_state()
         update={"payload": {"result": {"structuredContent": None}}}
     )
     null_view = trace.model_copy(
-        update={"events": trace.events[:2] + (null_response,) + trace.events[3:]}
+        update={"events": (*trace.events[:2], null_response, *trace.events[3:])}
     ).view()
     expect(null_view).to_have_tool_call(
         "lookup", result={"structured_content": None}, result_partial=True

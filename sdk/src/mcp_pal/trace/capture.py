@@ -49,8 +49,12 @@ class CaptureWriter:
             safe_payload, payload_paths = redact(payload, path="$.payload")
             safe_metadata, metadata_paths = redact(metadata or {}, path="$.metadata")
         else:
-            safe_payload, payload_paths = redact(payload, secrets=secrets, path="$.payload")
-            safe_metadata, metadata_paths = redact(metadata or {}, secrets=secrets, path="$.metadata")
+            safe_payload, payload_paths = redact(
+                payload, secrets=secrets, path="$.payload"
+            )
+            safe_metadata, metadata_paths = redact(
+                metadata or {}, secrets=secrets, path="$.metadata"
+            )
         now_ns = time.perf_counter_ns()
         record = {
             "source": "mcp_transport",
@@ -65,7 +69,9 @@ class CaptureWriter:
         }
         with self.lock:
             with self.path.open("a", encoding="utf-8") as output:
-                output.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+                output.write(
+                    json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+                )
 
 
 def parse_json_payload(data: bytes | str) -> Any:

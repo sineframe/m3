@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import argparse
-from importlib import resources
 import os
-from pathlib import Path
 import re
 import sys
+from importlib import resources
+from pathlib import Path
 from typing import NoReturn
 from urllib.parse import urlsplit
 
@@ -16,7 +16,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import Headers
 from starlette.responses import PlainTextResponse
-
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -35,7 +34,9 @@ def _safe_startup_error(error: Exception) -> str:
         if (
             value
             and len(value) >= 4
-            and any(part in key.upper() for part in ("KEY", "TOKEN", "SECRET", "PASSWORD"))
+            and any(
+                part in key.upper() for part in ("KEY", "TOKEN", "SECRET", "PASSWORD")
+            )
         ):
             message = message.replace(value, "<redacted>")
     message = re.sub(
@@ -91,7 +92,11 @@ def _request_origin(request: Request) -> tuple[str, str, int] | None:
         hostname = request.url.hostname
         if scheme not in _DEFAULT_PORTS or not hostname:
             return None
-        return scheme, hostname.rstrip(".").lower(), request.url.port or _DEFAULT_PORTS[scheme]
+        return (
+            scheme,
+            hostname.rstrip(".").lower(),
+            request.url.port or _DEFAULT_PORTS[scheme],
+        )
     except ValueError:
         return None
 
@@ -152,7 +157,9 @@ class _LoopbackHostMiddleware:
             return
         host = _host_name(Headers(scope=scope).get("host", ""))
         if host not in _LOOPBACK_HOSTS:
-            await PlainTextResponse("Invalid host header", status_code=400)(scope, receive, send)
+            await PlainTextResponse("Invalid host header", status_code=400)(
+                scope, receive, send
+            )
             return
         await self.app(scope, receive, send)
 
@@ -166,10 +173,14 @@ def create_web_app(
     from mcp_pal_app.settings import Settings  # type: ignore[import-untyped]
 
     root = ui_directory(ui_dir)
-    application = create_app(Settings(database_path=str(Path(database).absolute())), v2_embedded_worker=True)
+    application = create_app(
+        Settings(database_path=str(Path(database).absolute())), v2_embedded_worker=True
+    )
     application.add_middleware(_LoopbackHostMiddleware)
     application.middleware("http")(_same_origin_mutations)
-    application.mount("/assets", StaticFiles(directory=str(root / "assets")), name="assets")
+    application.mount(
+        "/assets", StaticFiles(directory=str(root / "assets")), name="assets"
+    )
 
     @application.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def spa_fallback(request: Request, path: str):

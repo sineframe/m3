@@ -3,45 +3,44 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
-import threading
-import time
 from typing import Any, cast
 
 import pytest
 from mcp.shared.message import SessionMessage
 from mcp_types import JSONRPCRequest, JSONRPCResponse
 
-from mcp_pal.async_api import AsyncExecutionHandle, AsyncMCPTestKit
-from mcp_pal.execution_runtime import AsyncExecutionController, _activity_health
-from mcp_pal.errors import OperationTimeout
 from mcp_pal.agent_session import AdapterTurn
+from mcp_pal.async_api import AsyncExecutionHandle, AsyncMCPTestKit
+from mcp_pal.errors import OperationTimeout
+from mcp_pal.execution_runtime import AsyncExecutionController, _activity_health
 from mcp_pal.harness import HarnessAdapterRegistry
-from mcp_pal.sync_api import ExecutionHandle, MCPTestKit
 from mcp_pal.storage import SQLiteExecutionStore
+from mcp_pal.sync_api import ExecutionHandle, MCPTestKit
 from mcp_pal.testing import FaultInjector
 from mcp_pal.types import (
     AgentSpec,
     ClaudeCode,
     DirectSpec,
-    ExecutionId,
+    ErrorCode,
+    ErrorInfo,
     EventKind,
+    ExecutionId,
     ExecutionOutcome,
     ExecutionResult,
     Ping,
     ServerBinding,
     StdioServer,
-    ErrorInfo,
-    ErrorCode,
     TextContent,
-    TurnResponse,
     TurnOutcome,
+    TurnResponse,
     UserMessage,
 )
 from mcp_pal.workspace import WorkspaceError, WorkspaceManager
-
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -65,7 +64,7 @@ class _SlowClient:
         self.started = started
         self.release = asyncio.Event()
 
-    async def __aenter__(self) -> "_SlowClient":
+    async def __aenter__(self) -> _SlowClient:
         self.started.set()
         await self.release.wait()
         return self
@@ -204,7 +203,9 @@ async def test_persistent_cancel_retries_after_transient_request_failure(
 ) -> None:
     store = SQLiteExecutionStore(tmp_path / "cancel-retry.sqlite")
     started = asyncio.Event()
-    controller = AsyncExecutionController(_SlowKit(_SlowClient(started)), store=store, worker=False)
+    controller = AsyncExecutionController(
+        _SlowKit(_SlowClient(started)), store=store, worker=False
+    )
     handle = controller.submit(_spec())
     claimed = store.claim_next("unit-owner")
     assert claimed is not None
@@ -212,7 +213,9 @@ async def test_persistent_cancel_retries_after_transient_request_failure(
     original_request_cancel = store.request_cancel
     request_count = 0
 
-    def flaky_request_cancel(execution_id: ExecutionId | str, reason: str | None = None) -> bool:
+    def flaky_request_cancel(
+        execution_id: ExecutionId | str, reason: str | None = None
+    ) -> bool:
         nonlocal request_count
         request_count += 1
         if request_count == 1:
@@ -253,7 +256,9 @@ async def test_persistent_cancel_watcher_interrupts_claimed_owner_and_cleans_up(
 
     store = SQLiteExecutionStore(tmp_path / "watcher.sqlite")
     started = asyncio.Event()
-    controller = AsyncExecutionController(_SlowKit(_SlowClient(started)), store=store, worker=False)
+    controller = AsyncExecutionController(
+        _SlowKit(_SlowClient(started)), store=store, worker=False
+    )
     handle = controller.submit(_spec())
     claimed = store.claim_next("unit-owner")
     assert claimed is not None
@@ -286,7 +291,9 @@ async def test_persistent_cancel_watcher_interrupts_claimed_owner_and_cleans_up(
         heartbeat_task = asyncio.create_task(mark_heartbeat())
         await asyncio.wait_for(heartbeat.wait(), timeout=0.1)
         await heartbeat_task
-        assert await asyncio.to_thread(store.request_cancel, handle.execution_id, "cross-process")
+        assert await asyncio.to_thread(
+            store.request_cancel, handle.execution_id, "cross-process"
+        )
         await asyncio.wait_for(owner, timeout=3)
         result = await handle.result(timeout=2)
 
@@ -303,7 +310,13 @@ async def test_persistent_cancel_watcher_interrupts_claimed_owner_and_cleans_up(
         assert store.release_lease(lease)
         # A second cancellation must not append another terminal event.
         await handle.cancel()
-        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in store.events(handle.execution_id)) == 1
+        assert (
+            sum(
+                event.kind is EventKind.EXECUTION_FINISHED
+                for event in store.events(handle.execution_id)
+            )
+            == 1
+        )
     finally:
         if not owner.done():
             owner.cancel()
@@ -333,9 +346,20 @@ async def test_persistent_cancel_watcher_does_not_overwrite_natural_terminal_res
         result = await handle.result(timeout=2)
         assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
 
-        assert await asyncio.to_thread(store.request_cancel, handle.execution_id, "too-late")
-        assert store.get_snapshot(handle.execution_id).outcome is ExecutionOutcome.COMPLETED
-        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in store.events(handle.execution_id)) == 1
+        assert await asyncio.to_thread(
+            store.request_cancel, handle.execution_id, "too-late"
+        )
+        assert (
+            store.get_snapshot(handle.execution_id).outcome
+            is ExecutionOutcome.COMPLETED
+        )
+        assert (
+            sum(
+                event.kind is EventKind.EXECUTION_FINISHED
+                for event in store.events(handle.execution_id)
+            )
+            == 1
+        )
         assert store.complete_command(
             command.id,
             owner_id=lease.owner_id,
@@ -377,7 +401,9 @@ async def test_event_iterator_can_resume_after_sequence_and_abandon_cleanly() ->
         first = handle.events(after_sequence=-1)
         prefix = [await first.__anext__(), await first.__anext__()]
         await cast(Any, first).aclose()
-        suffix = [event async for event in handle.events(after_sequence=prefix[-1].sequence)]
+        suffix = [
+            event async for event in handle.events(after_sequence=prefix[-1].sequence)
+        ]
 
     assert prefix[-1].sequence < suffix[0].sequence
     assert [event.sequence for event in prefix + suffix] == list(
@@ -402,7 +428,9 @@ async def test_agent_without_registered_adapter_returns_typed_unavailable() -> N
 
 
 @pytest.mark.asyncio
-async def test_submitted_agent_execution_requires_message_and_is_terminal_invalid_argument() -> None:
+async def test_submitted_agent_execution_requires_message_and_is_terminal_invalid_argument() -> (
+    None
+):
     spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ClaudeCode(model="test-model", executable="mcp-pal-missing-claude"),
@@ -505,7 +533,10 @@ def test_direct_activity_health_is_independent_of_execution_outcome(
         bridge.observe(
             SessionMessage(
                 message=JSONRPCRequest(
-                    jsonrpc="2.0", id=identifier, method="tools/call", params={"name": "echo"}
+                    jsonrpc="2.0",
+                    id=identifier,
+                    method="tools/call",
+                    params={"name": "echo"},
                 )
             ),
             "outbound",

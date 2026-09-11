@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from collections import deque
-from dataclasses import dataclass
-from datetime import datetime
 import importlib.metadata
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import signal
@@ -18,9 +13,15 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, Mapping, Sequence
-from urllib.parse import quote
+from collections import deque
+from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 from urllib.error import URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 OPERATIONAL_ERROR = 2
@@ -81,7 +82,10 @@ def _termination_signal_handlers() -> Any:
         return
     handled = tuple(
         candidate
-        for candidate in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGHUP", None))
+        for candidate in (
+            getattr(signal, "SIGTERM", None),
+            getattr(signal, "SIGHUP", None),
+        )
         if candidate is not None
     )
     previous: dict[int, Any] = {}
@@ -111,8 +115,12 @@ def _python_in_environment(root: Path, environment: Mapping[str, str]) -> Path |
     conda = environment.get("CONDA_PREFIX")
     if conda:
         base = Path(conda).expanduser()
-        names = [(base / "python.exe")] if os.name == "nt" else [base / "bin" / "python"]
-        names.append(base / "bin" / "python.exe" if os.name == "nt" else base / "python")
+        names = (
+            [(base / "python.exe")] if os.name == "nt" else [base / "bin" / "python"]
+        )
+        names.append(
+            base / "bin" / "python.exe" if os.name == "nt" else base / "python"
+        )
         for executable in names:
             if executable.is_file():
                 return _absolute_path(executable)
@@ -152,13 +160,17 @@ def resolve_project_python(
             if active:
                 candidate = _python_in_environment(root, {variable: active})
                 if candidate is None:
-                    raise ProjectPythonError("the active project environment is unavailable")
+                    raise ProjectPythonError(
+                        "the active project environment is unavailable"
+                    )
                 return candidate
     selected = _python_in_environment(root, env)
     if selected is not None:
         return selected
     if not fallback_to_system:
-        raise ProjectPythonError("no project environment is configured; run mcp-pal setup")
+        raise ProjectPythonError(
+            "no project environment is configured; run mcp-pal setup"
+        )
     for name in ("python3", "python"):
         found = shutil.which(name, path=env.get("PATH"))
         if found:
@@ -166,7 +178,7 @@ def resolve_project_python(
     raise ProjectPythonError("no project Python was found; pass --python PATH")
 
 
-_VALIDATE_SCRIPT = r'''
+_VALIDATE_SCRIPT = r"""
 import importlib
 import importlib.metadata
 import json
@@ -190,14 +202,16 @@ try:
 except Exception:
     version = None
 print(json.dumps({"checks": checks, "version": version}, sort_keys=True))
-'''
+"""
 
 
 def _cli_sdk_version() -> str:
     try:
         return importlib.metadata.version("mcp-pal")
     except importlib.metadata.PackageNotFoundError as exc:
-        raise ProjectPythonError("the CLI SDK version is unavailable; reinstall mcp-pal-cli") from exc
+        raise ProjectPythonError(
+            "the CLI SDK version is unavailable; reinstall mcp-pal-cli"
+        ) from exc
 
 
 def validate_project_python(
@@ -218,24 +232,43 @@ def validate_project_python(
             timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired):
-        raise ProjectPythonError("the selected project Python could not be started") from None
+        raise ProjectPythonError(
+            "the selected project Python could not be started"
+        ) from None
     if result.returncode != 0:
         raise ProjectPythonError("the selected project Python could not be started")
     try:
         payload = json.loads(result.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError, TypeError):
-        raise ProjectPythonError("the selected project Python returned an invalid check result") from None
+        raise ProjectPythonError(
+            "the selected project Python returned an invalid check result"
+        ) from None
     checks = payload.get("checks")
     if not isinstance(checks, dict):
-        raise ProjectPythonError("the selected project Python returned an invalid check result")
-    missing = [name for name in ("pytest", "mcp_pal", "mcp_pal.pytest_plugin", "SQLiteExecutionStore") if not checks.get(name)]
+        raise ProjectPythonError(
+            "the selected project Python returned an invalid check result"
+        )
+    missing = [
+        name
+        for name in (
+            "pytest",
+            "mcp_pal",
+            "mcp_pal.pytest_plugin",
+            "SQLiteExecutionStore",
+        )
+        if not checks.get(name)
+    ]
     if missing:
         names = ", ".join(missing)
-        raise ProjectPythonError(f"the project Python is missing required MCP Pal packages: {names}; install mcp-pal[pytest,storage] in the project")
+        raise ProjectPythonError(
+            f"the project Python is missing required MCP Pal packages: {names}; install mcp-pal[pytest,storage] in the project"
+        )
     project_version = payload.get("version")
     expected = _cli_sdk_version() if cli_sdk_version is None else cli_sdk_version
     if not isinstance(project_version, str):
-        raise ProjectPythonError("the project mcp-pal distribution version could not be determined")
+        raise ProjectPythonError(
+            "the project mcp-pal distribution version could not be determined"
+        )
     if project_version != expected:
         raise ProjectPythonError(
             f"project mcp-pal version {project_version} does not match CLI SDK version {expected}; install matching versions"
@@ -243,9 +276,13 @@ def validate_project_python(
     return project_version
 
 
-def _absolute_database(value: str | os.PathLike[str] | None, *, project_root: Path | None = None) -> Path:
+def _absolute_database(
+    value: str | os.PathLike[str] | None, *, project_root: Path | None = None
+) -> Path:
     root = (project_root or Path.cwd()).resolve()
-    return (Path(value).expanduser() if value else root / ".mcp-pal" / "executions.sqlite").resolve()
+    return (
+        Path(value).expanduser() if value else root / ".mcp-pal" / "executions.sqlite"
+    ).resolve()
 
 
 _STORE_PAGE_SIZE = 100
@@ -272,7 +309,9 @@ def list_stored_runs(database: Path) -> StoredRuns:
             items = tuple(page.items)
             runs.extend(
                 StoredRun(
-                    run_id=str(getattr(snapshot.execution_id, "root", snapshot.execution_id)),
+                    run_id=str(
+                        getattr(snapshot.execution_id, "root", snapshot.execution_id)
+                    ),
                     created_at=snapshot.created_at,
                 )
                 for snapshot in items
@@ -296,7 +335,7 @@ def list_stored_runs(database: Path) -> StoredRuns:
                 pass
 
 
-_BASELINE_SCRIPT = r'''
+_BASELINE_SCRIPT = r"""
 import json
 import sys
 from mcp_pal.storage import SQLiteExecutionStore
@@ -312,7 +351,7 @@ finally:
     if callable(close):
         close()
 print(json.dumps({"found": bool(found)}))
-'''
+"""
 
 
 def baseline_exists(
@@ -339,7 +378,13 @@ def baseline_exists(
             )
             payload = json.loads(result.stdout.strip().splitlines()[-1])
             return result.returncode == 0 and bool(payload.get("found"))
-        except (OSError, subprocess.TimeoutExpired, IndexError, json.JSONDecodeError, AttributeError):
+        except (
+            OSError,
+            subprocess.TimeoutExpired,
+            IndexError,
+            json.JSONDecodeError,
+            AttributeError,
+        ):
             return False
     store: Any | None = None
     try:
@@ -473,7 +518,12 @@ def _server_environment(source: Mapping[str, str] | None = None) -> dict[str, st
     """Isolate the viewer from project test settings and credentials."""
 
     values = os.environ if source is None else source
-    environment_links = {"VIRTUAL_ENV", "CONDA_PREFIX", "PYTHONPATH", "UV_PROJECT_ENVIRONMENT"}
+    environment_links = {
+        "VIRTUAL_ENV",
+        "CONDA_PREFIX",
+        "PYTHONPATH",
+        "UV_PROJECT_ENVIRONMENT",
+    }
     return {
         key: value
         for key, value in values.items()
@@ -549,7 +599,9 @@ def _terminate_process(process: Any) -> None:
             os.killpg(process.pid, signal.SIGTERM)
         else:
             ctrl_break = getattr(signal, "CTRL_BREAK_EVENT", None)
-            process.send_signal(ctrl_break) if ctrl_break is not None else process.terminate()
+            process.send_signal(
+                ctrl_break
+            ) if ctrl_break is not None else process.terminate()
     except (OSError, ProcessLookupError):
         pass
     try:
@@ -645,7 +697,9 @@ def _stop_server(child: _ServerChild | None) -> None:
             pass
 
 
-def _print_ui_output(port: int, new_runs: Sequence[StoredRun], warnings: Sequence[str]) -> None:
+def _print_ui_output(
+    port: int, new_runs: Sequence[StoredRun], warnings: Sequence[str]
+) -> None:
     for warning in dict.fromkeys(warnings):
         print(f"Warning: {warning}", file=sys.stderr)
     history_url = build_run_urls("run", port).history
@@ -718,23 +772,38 @@ def run_test_with_runs(
     try:
         database_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
-        print("mcp-pal test: results database directory could not be created", file=sys.stderr)
+        print(
+            "mcp-pal test: results database directory could not be created",
+            file=sys.stderr,
+        )
         return TestRunResult(OPERATIONAL_ERROR)
 
     before = list_stored_runs(database_path)
     prepared = _prepare_test(python, database, root)
     if prepared is None:
-        return TestRunResult(OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,))))
+        return TestRunResult(
+            OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
+        )
     selected, database_path = prepared
-    if baseline is not None and not baseline_exists(database_path, baseline, python=selected, project_root=root):
+    if baseline is not None and not baseline_exists(
+        database_path, baseline, python=selected, project_root=root
+    ):
         print(f"mcp-pal test: baseline run was not found: {baseline}", file=sys.stderr)
-        return TestRunResult(OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,))))
+        return TestRunResult(
+            OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
+        )
 
-    exit_code = _run_pytest_process(selected, database_path, pytest_args, baseline=baseline, project_root=root)
+    exit_code = _run_pytest_process(
+        selected, database_path, pytest_args, baseline=baseline, project_root=root
+    )
     after = list_stored_runs(database_path)
-    warnings = tuple(dict.fromkeys(
-        warning for warning in (before.warning, after.warning) if warning is not None
-    ))
+    warnings = tuple(
+        dict.fromkeys(
+            warning
+            for warning in (before.warning, after.warning)
+            if warning is not None
+        )
+    )
     new_runs = find_new_runs(before, after)
     if not ui:
         return TestRunResult(exit_code, new_runs, warnings)
@@ -773,26 +842,30 @@ def run_test(
     if prepared is None:
         return OPERATIONAL_ERROR
     selected, database_path = prepared
-    if baseline is not None and not baseline_exists(database_path, baseline, python=selected, project_root=root):
+    if baseline is not None and not baseline_exists(
+        database_path, baseline, python=selected, project_root=root
+    ):
         print(f"mcp-pal test: baseline run was not found: {baseline}", file=sys.stderr)
         return OPERATIONAL_ERROR
-    return _run_pytest_process(selected, database_path, pytest_args, baseline=baseline, project_root=root)
+    return _run_pytest_process(
+        selected, database_path, pytest_args, baseline=baseline, project_root=root
+    )
 
 
 __all__ = [
     "OPERATIONAL_ERROR",
     "ProjectPythonError",
-    "resolve_project_python",
-    "validate_project_python",
-    "pytest_command",
+    "RunURLs",
     "StoredRun",
     "StoredRuns",
     "TestRunResult",
-    "RunURLs",
-    "list_stored_runs",
     "baseline_exists",
-    "find_new_runs",
     "build_run_urls",
-    "run_test_with_runs",
+    "find_new_runs",
+    "list_stored_runs",
+    "pytest_command",
+    "resolve_project_python",
     "run_test",
+    "run_test_with_runs",
+    "validate_project_python",
 ]

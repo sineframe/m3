@@ -2,9 +2,10 @@
 """Deterministic Pi RPC fixture for native adapter tests."""
 
 from __future__ import annotations
+
 import json
-import sys
 import os
+import sys
 import time
 
 if "--help" in sys.argv:

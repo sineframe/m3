@@ -11,6 +11,7 @@ Run directly, for example::
     python -m mcp_pal.bridge.reference \
       --target python --target-args-json '["-m", "mcp_pal.fixtures.structured_cli"]'
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,7 +29,12 @@ def _send(message: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
-def _rpc(process: subprocess.Popen[str], number: int, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+def _rpc(
+    process: subprocess.Popen[str],
+    number: int,
+    method: str,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     request: dict[str, Any] = {"jsonrpc": "2.0", "id": number, "method": method}
     if params is not None:
         request["params"] = params
@@ -49,7 +55,11 @@ def _env_from_mcp(server: dict[str, Any]) -> dict[str, str]:
     if isinstance(raw, dict):
         return {str(k): str(v) for k, v in raw.items()}
     # ACP SDK schema serializes stdio env as [{name, value}, ...].
-    return {str(item["name"]): str(item["value"]) for item in raw if isinstance(item, dict) and "name" in item}
+    return {
+        str(item["name"]): str(item["value"])
+        for item in raw
+        if isinstance(item, dict) and "name" in item
+    }
 
 
 def _selected_stdio(server: dict[str, Any]) -> subprocess.Popen[str]:
@@ -70,7 +80,9 @@ def _selected_stdio(server: dict[str, Any]) -> subprocess.Popen[str]:
     )
 
 
-def _target_result(command: str | None, args: list[str], request: dict[str, Any]) -> str:
+def _target_result(
+    command: str | None, args: list[str], request: dict[str, Any]
+) -> str:
     if not command:
         return str(request.get("nonce") or "")
     completed = subprocess.run(
@@ -84,7 +96,9 @@ def _target_result(command: str | None, args: list[str], request: dict[str, Any]
     )
     if completed.returncode != 0:
         raise RuntimeError("structured target exited unsuccessfully")
-    line = next((line.strip() for line in completed.stdout.splitlines() if line.strip()), "")
+    line = next(
+        (line.strip() for line in completed.stdout.splitlines() if line.strip()), ""
+    )
     try:
         value = json.loads(line)
     except json.JSONDecodeError as exc:
@@ -110,57 +124,226 @@ def run(*, target: str | None = None, target_args: list[str] | None = None) -> i
             except json.JSONDecodeError:
                 # ACP stdout is protocol-only.  A malformed incoming request
                 # is answered as an ordinary JSON-RPC error.
-                _send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "invalid JSON"}})
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": None,
+                        "error": {"code": -32700, "message": "invalid JSON"},
+                    }
+                )
                 continue
             method = message.get("method")
             ident = message.get("id")
             params = message.get("params") or {}
             if method == "initialize":
-                _send({
-                    "jsonrpc": "2.0", "id": ident,
-                    "result": {
-                        "protocolVersion": 1,
-                        "agentInfo": {"name": "mcp-pal-reference-bridge", "version": "1"},
-                        "agentCapabilities": {"mcpCapabilities": {"stdio": True, "http": False, "sse": False}},
-                    },
-                })
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": ident,
+                        "result": {
+                            "protocolVersion": 1,
+                            "agentInfo": {
+                                "name": "mcp-pal-reference-bridge",
+                                "version": "1",
+                            },
+                            "agentCapabilities": {
+                                "mcpCapabilities": {
+                                    "stdio": True,
+                                    "http": False,
+                                    "sse": False,
+                                }
+                            },
+                        },
+                    }
+                )
             elif method == "session/new":
                 servers = params.get("mcpServers") or []
                 if servers:
                     candidate = servers[0]
-                    if isinstance(candidate, dict) and candidate.get("type") in {"http", "sse"}:
-                        raise RuntimeError("reference bridge supports stdio MCP servers only")
+                    if isinstance(candidate, dict) and candidate.get("type") in {
+                        "http",
+                        "sse",
+                    }:
+                        raise RuntimeError(
+                            "reference bridge supports stdio MCP servers only"
+                        )
                     mcp = _selected_stdio(candidate)
                     request_counter += 1
-                    _rpc(mcp, request_counter, "initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "mcp-pal-reference", "version": "1"}})
+                    _rpc(
+                        mcp,
+                        request_counter,
+                        "initialize",
+                        {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {},
+                            "clientInfo": {"name": "mcp-pal-reference", "version": "1"},
+                        },
+                    )
                     request_counter += 1
                     _rpc(mcp, request_counter, "tools/list", {})
-                _send({"jsonrpc": "2.0", "id": ident, "result": {"sessionId": session_id, "modes": {"currentModeId": mode_id, "availableModes": [{"id": mode_id, "name": "Default"}]}, "configOptions": [{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "agent-default", "options": [{"value": "agent-default", "name": "Agent default"}]}]}})
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": ident,
+                        "result": {
+                            "sessionId": session_id,
+                            "modes": {
+                                "currentModeId": mode_id,
+                                "availableModes": [{"id": mode_id, "name": "Default"}],
+                            },
+                            "configOptions": [
+                                {
+                                    "id": "model",
+                                    "name": "Model",
+                                    "category": "model",
+                                    "type": "select",
+                                    "currentValue": "agent-default",
+                                    "options": [
+                                        {
+                                            "value": "agent-default",
+                                            "name": "Agent default",
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                )
             elif method == "session/set_mode":
                 mode_id = params.get("modeId", mode_id)
                 _send({"jsonrpc": "2.0", "id": ident, "result": {"modeId": mode_id}})
             elif method == "session/set_config_option":
                 config[params.get("configId", "")] = params.get("value")
-                _send({"jsonrpc": "2.0", "id": ident, "result": {"configOptions": [{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": config.get("model", "agent-default"), "options": [{"value": "agent-default", "name": "Agent default"}]}]}})
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": ident,
+                        "result": {
+                            "configOptions": [
+                                {
+                                    "id": "model",
+                                    "name": "Model",
+                                    "category": "model",
+                                    "type": "select",
+                                    "currentValue": config.get(
+                                        "model", "agent-default"
+                                    ),
+                                    "options": [
+                                        {
+                                            "value": "agent-default",
+                                            "name": "Agent default",
+                                        }
+                                    ],
+                                }
+                            ]
+                        },
+                    }
+                )
             elif method == "session/cancel":
                 # ACP cancellation is a notification and must not receive a
                 # JSON-RPC response. Parent process cleanup remains the hard
                 # cancellation boundary for synchronous target/MCP work.
                 continue
             elif method == "session/prompt":
-                text = " ".join(item.get("text", "") for item in params.get("prompt", []) if isinstance(item, dict))
-                match = re.search(r"mcp-pal-probe-[0-9a-f]+|nonce-[A-Za-z0-9_.:-]+", text)
+                text = " ".join(
+                    item.get("text", "")
+                    for item in params.get("prompt", [])
+                    if isinstance(item, dict)
+                )
+                match = re.search(
+                    r"mcp-pal-probe-[0-9a-f]+|nonce-[A-Za-z0-9_.:-]+", text
+                )
                 nonce = match.group(0) if match else text.strip() or "reference-echo"
                 wire_result = None
                 if mcp is not None:
                     request_counter += 1
-                    wire_result = _rpc(mcp, request_counter, "tools/call", {"name": "echo", "arguments": {"text": nonce}}).get("result")
-                _send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": session_id, "update": {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "Calling the deterministic echo tool"}}}})
-                _send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": session_id, "update": {"sessionUpdate": "tool_call", "toolCallId": "reference-call", "title": "echo"}}})
-                _send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": session_id, "update": {"sessionUpdate": "tool_call_update", "toolCallId": "reference-call", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": nonce}}]}}})
-                output = _target_result(target, target_args, {"prompt": text, "nonce": nonce, "tool_result": wire_result, "mode": mode_id, "config": config})
-                _send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": session_id, "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": output}}}})
-                _send({"jsonrpc": "2.0", "id": ident, "result": {"stopReason": "end_turn"}})
+                    wire_result = _rpc(
+                        mcp,
+                        request_counter,
+                        "tools/call",
+                        {"name": "echo", "arguments": {"text": nonce}},
+                    ).get("result")
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": session_id,
+                            "update": {
+                                "sessionUpdate": "agent_thought_chunk",
+                                "content": {
+                                    "type": "text",
+                                    "text": "Calling the deterministic echo tool",
+                                },
+                            },
+                        },
+                    }
+                )
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": session_id,
+                            "update": {
+                                "sessionUpdate": "tool_call",
+                                "toolCallId": "reference-call",
+                                "title": "echo",
+                            },
+                        },
+                    }
+                )
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": session_id,
+                            "update": {
+                                "sessionUpdate": "tool_call_update",
+                                "toolCallId": "reference-call",
+                                "status": "completed",
+                                "content": [
+                                    {
+                                        "type": "content",
+                                        "content": {"type": "text", "text": nonce},
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                )
+                output = _target_result(
+                    target,
+                    target_args,
+                    {
+                        "prompt": text,
+                        "nonce": nonce,
+                        "tool_result": wire_result,
+                        "mode": mode_id,
+                        "config": config,
+                    },
+                )
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": session_id,
+                            "update": {
+                                "sessionUpdate": "agent_message_chunk",
+                                "content": {"type": "text", "text": output},
+                            },
+                        },
+                    }
+                )
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": ident,
+                        "result": {"stopReason": "end_turn"},
+                    }
+                )
             elif ident is not None:
                 _send({"jsonrpc": "2.0", "id": ident, "result": {}})
     finally:
@@ -177,11 +360,15 @@ def run(*, target: str | None = None, target_args: list[str] | None = None) -> i
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mcp-pal-reference-bridge")
     parser.add_argument("--target", help="non-ACP structured CLI executable")
-    parser.add_argument("--target-args-json", default="[]", help="JSON array of target arguments")
+    parser.add_argument(
+        "--target-args-json", default="[]", help="JSON array of target arguments"
+    )
     args = parser.parse_args(argv)
     try:
         target_args = json.loads(args.target_args_json)
-        if not isinstance(target_args, list) or not all(isinstance(item, str) for item in target_args):
+        if not isinstance(target_args, list) or not all(
+            isinstance(item, str) for item in target_args
+        ):
             raise ValueError("--target-args-json must be a string array")
         return run(target=args.target, target_args=target_args)
     except (ValueError, RuntimeError, OSError) as exc:

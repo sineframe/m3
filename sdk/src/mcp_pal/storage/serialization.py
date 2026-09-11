@@ -15,27 +15,39 @@ accepted only as exactly ``${VAR}`` or ``Bearer ${VAR}``.
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Mapping
 from datetime import date, datetime, time
 from enum import Enum
-import json
-import re
 from pathlib import PurePath
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import BaseModel
 
-from ..trace.redaction import RedactionConfig, RedactionError, is_sensitive_key, is_sensitive_query_key, redact_for_persistence
+from ..trace.redaction import (
+    RedactionConfig,
+    RedactionError,
+    is_sensitive_key,
+    is_sensitive_query_key,
+    redact_for_persistence,
+)
 from ..types import SecretReference
-
 
 _ENVIRONMENT_REFERENCE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 _NAMED_VALUE_CONTAINERS = frozenset(
     {"mcpservers", "servers", "serverbindings", "configurations"}
 )
 _REFERENCE_VALUE_CONTAINERS = frozenset(
-    {"credentials", "credential", "credential_references", "secret_refs", "secret_references", "auth_credentials"}
+    {
+        "credentials",
+        "credential",
+        "credential_references",
+        "secret_refs",
+        "secret_references",
+        "auth_credentials",
+    }
 )
 _MAX_DEPTH = 64
 
@@ -99,17 +111,24 @@ def _walk(
         if _placeholder(value):
             return value
         if not isinstance(value, (Mapping, list, tuple)):
-            raise DurableSerializationError("credential-bearing field requires a SecretReference")
+            raise DurableSerializationError(
+                "credential-bearing field requires a SecretReference"
+            )
     if key_hint is not None and is_sensitive_key(key_hint, config.sensitive_keys):
         # The legacy profile format permits exactly an environment reference
         # or the documented case-sensitive HTTP form ``Bearer ${VAR}```.
         # Arbitrary prefixes/suffixes remain credential literals and fail.
         if _placeholder(value):
             return value
-        if isinstance(value, (Mapping, list, tuple)) and key_hint.casefold() in _REFERENCE_VALUE_CONTAINERS:
+        if (
+            isinstance(value, (Mapping, list, tuple))
+            and key_hint.casefold() in _REFERENCE_VALUE_CONTAINERS
+        ):
             credential_container = True
         else:
-            raise DurableSerializationError("credential-bearing field requires a SecretReference")
+            raise DurableSerializationError(
+                "credential-bearing field requires a SecretReference"
+            )
 
     tracked = isinstance(value, (BaseModel, Mapping, list, tuple, set, frozenset))
     active_values = active if active is not None else set()
@@ -147,11 +166,19 @@ def _walk_inner(
         if value.lower().startswith(("http://", "https://")):
             try:
                 parsed = urlsplit(value)
-                if parsed.username is not None or parsed.password is not None or any(
-                    is_sensitive_query_key(name, config.sensitive_keys)
-                    for name, _item in parse_qsl(parsed.query, keep_blank_values=True)
+                if (
+                    parsed.username is not None
+                    or parsed.password is not None
+                    or any(
+                        is_sensitive_query_key(name, config.sensitive_keys)
+                        for name, _item in parse_qsl(
+                            parsed.query, keep_blank_values=True
+                        )
+                    )
                 ):
-                    raise DurableSerializationError("durable URL cannot contain credentials")
+                    raise DurableSerializationError(
+                        "durable URL cannot contain credentials"
+                    )
             except DurableSerializationError:
                 raise
             except (TypeError, ValueError):
@@ -164,15 +191,23 @@ def _walk_inner(
             raise DurableSerializationError("durable value is invalid") from None
     if value is None or isinstance(value, (bool, int)):
         if credential_container:
-            raise DurableSerializationError("credential-bearing field requires a SecretReference")
+            raise DurableSerializationError(
+                "credential-bearing field requires a SecretReference"
+            )
         return value
     if isinstance(value, float):
-        if credential_container or not value == value or value in (float("inf"), float("-inf")):
+        if (
+            credential_container
+            or not value == value
+            or value in (float("inf"), float("-inf"))
+        ):
             raise DurableSerializationError("durable value is invalid")
         return value
     if isinstance(value, (datetime, date, time)):
         if credential_container:
-            raise DurableSerializationError("credential-bearing field requires a SecretReference")
+            raise DurableSerializationError(
+                "credential-bearing field requires a SecretReference"
+            )
         return value.isoformat()
     if isinstance(value, Enum):
         return _walk(
@@ -213,7 +248,8 @@ def _walk_inner(
             # mistaken for a credential-bearing field.
             child_hint = (
                 None
-                if key_hint is not None and key_hint.casefold() in _NAMED_VALUE_CONTAINERS
+                if key_hint is not None
+                and key_hint.casefold() in _NAMED_VALUE_CONTAINERS
                 else raw_key
             )
             result[raw_key] = _walk(
@@ -240,7 +276,9 @@ def _walk_inner(
         ]
     if isinstance(value, (set, frozenset)):
         if credential_container:
-            raise DurableSerializationError("credential-bearing field requires a SecretReference")
+            raise DurableSerializationError(
+                "credential-bearing field requires a SecretReference"
+            )
         try:
             return sorted(
                 (
@@ -253,21 +291,29 @@ def _walk_inner(
                     )
                     for item in value
                 ),
-                key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+                key=lambda item: json.dumps(
+                    item, sort_keys=True, separators=(",", ":")
+                ),
             )
         except (TypeError, ValueError):
             raise DurableSerializationError("durable value is invalid") from None
     if isinstance(value, PurePath):
         if credential_container:
-            raise DurableSerializationError("credential-bearing field requires a SecretReference")
+            raise DurableSerializationError(
+                "credential-bearing field requires a SecretReference"
+            )
         return str(value)
     raise DurableSerializationError("durable value is invalid")
 
 
-def serialize_durable(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> Any:
+def serialize_durable(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> Any:
     """Return strict JSON-compatible durable data while preserving references."""
 
-    durable_config = config if config is not None else RedactionConfig.from_environment()
+    durable_config = (
+        config if config is not None else RedactionConfig.from_environment()
+    )
     projected = _walk(value, config=durable_config, path=path)
     try:
         json.dumps(projected, ensure_ascii=False, allow_nan=False)

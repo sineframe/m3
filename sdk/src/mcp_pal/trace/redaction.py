@@ -32,11 +32,29 @@ REDACTED: Final[str] = "[REDACTED]"
 
 _DEFAULT_SENSITIVE_KEYS: Final[frozenset[str]] = frozenset(
     {
-        "authorization", "proxy_authorization", "cookie", "set_cookie",
-        "x_api_key", "api_key", "apikey", "access_token", "refresh_token",
-        "id_token", "auth_token", "bearer_token", "auth", "bearer", "token", "secret",
-        "password", "passwd", "credential", "credentials", "private_key",
-        "client_secret", "session_key",
+        "authorization",
+        "proxy_authorization",
+        "cookie",
+        "set_cookie",
+        "x_api_key",
+        "api_key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "auth_token",
+        "bearer_token",
+        "auth",
+        "bearer",
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "credential",
+        "credentials",
+        "private_key",
+        "client_secret",
+        "session_key",
     }
 )
 _SENSITIVE_KEY_PATTERN: Final[re.Pattern[str]] = re.compile(
@@ -55,7 +73,17 @@ _SENSITIVE_QUERY_PATTERN: Final[re.Pattern[str]] = re.compile(
 _URL_PREFIX: Final[tuple[str, ...]] = ("http://", "https://")
 _MAX_NESTING_DEPTH: Final[int] = 64
 _SAFE_PATH_COMPONENTS: Final[frozenset[str]] = frozenset(
-    {"payload", "metadata", "headers", "raw_event", "params", "url", "message", "args", "details"}
+    {
+        "payload",
+        "metadata",
+        "headers",
+        "raw_event",
+        "params",
+        "url",
+        "message",
+        "args",
+        "details",
+    }
 )
 _SAFE_ERROR_REASONS: Final[frozenset[str]] = frozenset(
     {
@@ -87,12 +115,18 @@ class RedactionError(RuntimeError):
     because a hostile mapping key could itself contain a secret.
     """
 
-    def __init__(self, path: str, reason: str = "value could not be safely redacted") -> None:
+    def __init__(
+        self, path: str, reason: str = "value could not be safely redacted"
+    ) -> None:
         self.path = _sanitize_error_path(path)
         # Reasons are part of the public exception and callers may pass an
         # arbitrary hostile value.  Keep only the implementation's stable,
         # value-free vocabulary; unknown reasons collapse to the generic one.
-        self.reason = reason if isinstance(reason, str) and reason in _SAFE_ERROR_REASONS else "value could not be safely redacted"
+        self.reason = (
+            reason
+            if isinstance(reason, str) and reason in _SAFE_ERROR_REASONS
+            else "value could not be safely redacted"
+        )
         # Keep the public exception message value-free even when a caller
         # supplied an unsafe path or a hostile mapping key.
         super().__init__(f"redaction failed: {self.reason}")
@@ -122,7 +156,9 @@ def _sanitize_error_path(path: Any) -> str:
             while end < len(path) and path[end] not in ".[":
                 end += 1
             component = path[index + 1 : end]
-            output += f".{component}" if component in _SAFE_PATH_COMPONENTS else ".[key]"
+            output += (
+                f".{component}" if component in _SAFE_PATH_COMPONENTS else ".[key]"
+            )
             index = end
             continue
         index += 1
@@ -161,8 +197,16 @@ class RedactionConfig:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "secrets", _clean_values(self.secrets))
-        object.__setattr__(self, "credential_file_contents", _clean_values(self.credential_file_contents))
-        object.__setattr__(self, "sensitive_keys", frozenset(_normalize_key(key) for key in self.sensitive_keys if key))
+        object.__setattr__(
+            self,
+            "credential_file_contents",
+            _clean_values(self.credential_file_contents),
+        )
+        object.__setattr__(
+            self,
+            "sensitive_keys",
+            frozenset(_normalize_key(key) for key in self.sensitive_keys if key),
+        )
         if not isinstance(self.include_environment, bool):
             raise TypeError("include_environment must be a bool")
 
@@ -173,11 +217,12 @@ class RedactionConfig:
         secrets: Iterable[str] = (),
         sensitive_keys: Iterable[str] = (),
         credential_file_contents: Iterable[str] = (),
-    ) -> "RedactionConfig":
+    ) -> RedactionConfig:
         """Build a config from explicit values and sensitive environment keys."""
 
         ambient = {
-            value for key, value in os.environ.items()
+            value
+            for key, value in os.environ.items()
             if value and _is_sensitive_key(key, frozenset())
         }
         return cls(
@@ -236,7 +281,7 @@ class ArtifactBytesResult:
 class InProcessAssertionView:
     """Explicit, non-serializable access to a value for an assertion only."""
 
-    __slots__ = ("_value", "__weakref__")
+    __slots__ = ("__weakref__", "_value")
     _value: Any
 
     def __init__(self, value: Any) -> None:
@@ -269,7 +314,11 @@ def assertion_view(value: Any) -> InProcessAssertionView:
 
 def _is_sensitive_key(key: str, configured: frozenset[str]) -> bool:
     normalized = _normalize_key(key)
-    return normalized in _DEFAULT_SENSITIVE_KEYS or normalized in configured or bool(_SENSITIVE_KEY_PATTERN.search(key))
+    return (
+        normalized in _DEFAULT_SENSITIVE_KEYS
+        or normalized in configured
+        or bool(_SENSITIVE_KEY_PATTERN.search(key))
+    )
 
 
 def is_sensitive_key(key: str, configured: frozenset[str] = frozenset()) -> bool:
@@ -295,22 +344,29 @@ def _is_header_pair_name(key: str, configured: frozenset[str]) -> bool:
     normalized = _normalize_key(key)
     if normalized in _DEFAULT_SENSITIVE_KEYS or normalized in configured:
         return True
-    return normalized.startswith("x_") and any(part in normalized for part in ("auth", "token", "key", "secret"))
+    return normalized.startswith("x_") and any(
+        part in normalized for part in ("auth", "token", "key", "secret")
+    )
 
 
 def known_secret_values() -> set[str]:
     """Return values from environment variables with credential-shaped names."""
 
     return {
-        value for key, value in os.environ.items()
+        value
+        for key, value in os.environ.items()
         if value and _is_sensitive_key(key, frozenset())
     }
 
 
-def _replace_secrets(value: str, config: RedactionConfig, path: str, paths: list[str]) -> str:
+def _replace_secrets(
+    value: str, config: RedactionConfig, path: str, paths: list[str]
+) -> str:
     result = value
     secret_values = set(config.secrets).union(config.credential_file_contents)
-    for secret in sorted((item for item in secret_values if item), key=lambda item: (-len(item), item)):
+    for secret in sorted(
+        (item for item in secret_values if item), key=lambda item: (-len(item), item)
+    ):
         if secret in result:
             result = result.replace(secret, REDACTED)
             if path not in paths:
@@ -318,7 +374,9 @@ def _replace_secrets(value: str, config: RedactionConfig, path: str, paths: list
     return result
 
 
-def _redact_url(value: str, config: RedactionConfig, path: str, paths: list[str]) -> str:
+def _redact_url(
+    value: str, config: RedactionConfig, path: str, paths: list[str]
+) -> str:
     if not value.lower().startswith(_URL_PREFIX):
         return value
     try:
@@ -335,7 +393,9 @@ def _redact_url(value: str, config: RedactionConfig, path: str, paths: list[str]
         query_items = []
         query_changed = False
         for key, item in parse_qsl(parts.query, keep_blank_values=True):
-            if _SENSITIVE_QUERY_PATTERN.search(key) or _is_sensitive_key(key, config.sensitive_keys):
+            if _SENSITIVE_QUERY_PATTERN.search(key) or _is_sensitive_key(
+                key, config.sensitive_keys
+            ):
                 query_items.append((key, REDACTED))
                 query_changed = True
             else:
@@ -356,7 +416,9 @@ def _safe_repr(value: Any, config: RedactionConfig, path: str, paths: list[str])
     return _redact_string(rendered, config, path, paths)
 
 
-def _redact_string(value: str, config: RedactionConfig, path: str, paths: list[str]) -> str:
+def _redact_string(
+    value: str, config: RedactionConfig, path: str, paths: list[str]
+) -> str:
     result = _redact_url(value, config, path, paths)
     return _replace_secrets(result, config, path, paths)
 
@@ -371,12 +433,16 @@ def _walk_value(
     depth: int,
 ) -> Any:
     if isinstance(item, InProcessAssertionView):
-        return _redact_value(item.value, config, path, paths, key_hint, active, depth + 1)
+        return _redact_value(
+            item.value, config, path, paths, key_hint, active, depth + 1
+        )
     if key_hint and _is_sensitive_key(key_hint, config.sensitive_keys):
         paths.append(path)
         return REDACTED
     if item is None or isinstance(item, (str, bool, int)):
-        return _redact_string(item, config, path, paths) if isinstance(item, str) else item
+        return (
+            _redact_string(item, config, path, paths) if isinstance(item, str) else item
+        )
     if isinstance(item, float):
         if item != item or item in (float("inf"), float("-inf")):
             raise RedactionError(path, "non-finite number")
@@ -384,10 +450,15 @@ def _walk_value(
     if isinstance(item, (datetime, date, time)):
         return _redact_string(item.isoformat(), config, path, paths)
     if isinstance(item, Enum):
-        return _redact_value(item.value, config, path, paths, key_hint, active, depth + 1)
+        return _redact_value(
+            item.value, config, path, paths, key_hint, active, depth + 1
+        )
     # Pydantic's SecretStr/SecretBytes retain their wrapped value in
     # model_dump(mode="python"). Keep it out regardless of the field name.
-    if type(item).__module__.startswith("pydantic") and type(item).__name__ in {"SecretStr", "SecretBytes"}:
+    if type(item).__module__.startswith("pydantic") and type(item).__name__ in {
+        "SecretStr",
+        "SecretBytes",
+    }:
         paths.append(path)
         return REDACTED
     if isinstance(item, BaseException):
@@ -398,11 +469,15 @@ def _walk_value(
         result: dict[str, Any] = {
             "type": type(item).__name__,
             "message": _redact_string(message, config, f"{path}.message", paths),
-            "args": _redact_value(tuple(item.args), config, f"{path}.args", paths, None, active, depth + 1),
+            "args": _redact_value(
+                tuple(item.args), config, f"{path}.args", paths, None, active, depth + 1
+            ),
         }
         details = getattr(item, "details", None)
         if details is not None:
-            result["details"] = _redact_value(details, config, f"{path}.details", paths, None, active, depth + 1)
+            result["details"] = _redact_value(
+                details, config, f"{path}.details", paths, None, active, depth + 1
+            )
         return result
     if isinstance(item, BaseModel):
         try:
@@ -422,22 +497,46 @@ def _walk_value(
                 raise RedactionError(path, "mapping key collision after redaction")
             projected_keys.add(key)
             child_path = f"{path}.{key}"
-            result_mapping[key] = _redact_value(raw_value, config, child_path, paths, key, active, depth + 1)
+            result_mapping[key] = _redact_value(
+                raw_value, config, child_path, paths, key, active, depth + 1
+            )
         return result_mapping
     if isinstance(item, list):
-        return [_redact_value(value, config, f"{path}[{index}]", paths, None, active, depth + 1) for index, value in enumerate(item)]
+        return [
+            _redact_value(
+                value, config, f"{path}[{index}]", paths, None, active, depth + 1
+            )
+            for index, value in enumerate(item)
+        ]
     if isinstance(item, tuple):
         # HTTP header collections are commonly represented as a sequence of
         # ``(name, value)`` pairs rather than a mapping.
-        if len(item) == 2 and isinstance(item[0], str) and _is_header_pair_name(item[0], config.sensitive_keys):
+        if (
+            len(item) == 2
+            and isinstance(item[0], str)
+            and _is_header_pair_name(item[0], config.sensitive_keys)
+        ):
             header_name = _redact_string(item[0], config, f"{path}[0]", paths)
             paths.append(f"{path}[1]")
             return (header_name, REDACTED)
-        return tuple(_redact_value(value, config, f"{path}[{index}]", paths, None, active, depth + 1) for index, value in enumerate(item))
+        return tuple(
+            _redact_value(
+                value, config, f"{path}[{index}]", paths, None, active, depth + 1
+            )
+            for index, value in enumerate(item)
+        )
     if isinstance(item, (set, frozenset)):
-        values = [_redact_value(value, config, f"{path}[]", paths, None, active, depth + 1) for value in item]
+        values = [
+            _redact_value(value, config, f"{path}[]", paths, None, active, depth + 1)
+            for value in item
+        ]
         try:
-            return sorted(values, key=lambda value: json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
+            return sorted(
+                values,
+                key=lambda value: json.dumps(
+                    value, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                ),
+            )
         except (TypeError, ValueError):
             raise RedactionError(path, "set projection is not deterministic") from None
     if isinstance(item, (bytes, bytearray, memoryview)):
@@ -447,7 +546,9 @@ def _walk_value(
         except UnicodeDecodeError:
             # Opaque bytes cannot be searched safely for configured byte
             # secrets and must never be base64-encoded into persisted output.
-            raise RedactionError(path, "opaque binary cannot be safely redacted") from None
+            raise RedactionError(
+                path, "opaque binary cannot be safely redacted"
+            ) from None
         return _redact_string(text, config, path, paths)
     if isinstance(item, PurePath):
         return _redact_string(str(item), config, path, paths)
@@ -471,7 +572,10 @@ def _redact_value(
         raise RedactionError(path, "maximum nesting depth exceeded")
     active_ids = active if active is not None else set()
     try:
-        track = isinstance(item, (InProcessAssertionView, BaseModel, Mapping, list, tuple, set, frozenset))
+        track = isinstance(
+            item,
+            (InProcessAssertionView, BaseModel, Mapping, list, tuple, set, frozenset),
+        )
         identity = id(item)
         if track:
             if identity in active_ids:
@@ -505,7 +609,9 @@ def redact_result(
         if secrets is None:
             config = RedactionConfig.from_environment()
         else:
-            config = RedactionConfig(secrets=_clean_values(secrets), include_environment=False)
+            config = RedactionConfig(
+                secrets=_clean_values(secrets), include_environment=False
+            )
     paths: list[str] = []
     redacted = _redact_value(value, config, path, paths)
     return RedactionResult(redacted, tuple(dict.fromkeys(paths)))
@@ -567,7 +673,13 @@ def redact_artifact_bytes(
 Projection = Literal["persistence", "export", "log", "api", "ui", "raw_evidence"]
 
 
-def project_redacted(value: Any, *, projection: Projection, config: RedactionConfig | None = None, path: str = "$") -> Any:
+def project_redacted(
+    value: Any,
+    *,
+    projection: Projection,
+    config: RedactionConfig | None = None,
+    path: str = "$",
+) -> Any:
     """Create any supported persisted/export/log/API/UI/raw-evidence view."""
 
     if projection not in {"persistence", "export", "log", "api", "ui", "raw_evidence"}:
@@ -575,33 +687,47 @@ def project_redacted(value: Any, *, projection: Projection, config: RedactionCon
     return redact_result(value, config=config, path=path).value
 
 
-def redact_raw_evidence(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> Any:
+def redact_raw_evidence(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> Any:
     """Redact raw protocol/harness evidence before it can be persisted."""
 
     return project_redacted(value, projection="raw_evidence", config=config, path=path)
 
 
-def redact_for_persistence(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> Any:
+def redact_for_persistence(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> Any:
     return project_redacted(value, projection="persistence", config=config, path=path)
 
 
-def redact_for_export(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> Any:
+def redact_for_export(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> Any:
     return project_redacted(value, projection="export", config=config, path=path)
 
 
-def redact_for_log(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> Any:
+def redact_for_log(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> Any:
     return project_redacted(value, projection="log", config=config, path=path)
 
 
-def redact_for_api(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> Any:
+def redact_for_api(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> Any:
     return project_redacted(value, projection="api", config=config, path=path)
 
 
-def redact_for_ui(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> Any:
+def redact_for_ui(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> Any:
     return project_redacted(value, projection="ui", config=config, path=path)
 
 
-def serialize_redacted(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> Any:
+def serialize_redacted(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> Any:
     """Return a JSON-compatible redacted projection, never the original value."""
 
     projected = project_redacted(value, projection="api", config=config, path=path)
@@ -612,7 +738,9 @@ def serialize_redacted(value: Any, *, config: RedactionConfig | None = None, pat
     return projected
 
 
-def redact_model_json(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> Any:
+def redact_model_json(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> Any:
     """Safely project a Pydantic model without JSON-serializing it first.
 
     ``model_dump(mode="python")`` preserves hostile/opaque values long enough
@@ -628,17 +756,23 @@ def redact_model_json(value: Any, *, config: RedactionConfig | None = None, path
     return serialize_redacted(value, config=config, path=path)
 
 
-def redacted_json(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> str:
+def redacted_json(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> str:
     """Serialize a redacted projection as strict JSON."""
 
     projected = serialize_redacted(value, config=config, path=path)
     try:
-        return json.dumps(projected, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        return json.dumps(
+            projected, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        )
     except (TypeError, ValueError):
         raise RedactionError(path, "projection is not JSON serializable") from None
 
 
-def redact_repr(value: Any, *, config: RedactionConfig | None = None, path: str = "$") -> str:
+def redact_repr(
+    value: Any, *, config: RedactionConfig | None = None, path: str = "$"
+) -> str:
     """Return a safe repr for diagnostics without returning an original repr."""
 
     if config is None:
@@ -648,11 +782,29 @@ def redact_repr(value: Any, *, config: RedactionConfig | None = None, path: str 
 
 
 __all__ = [
-    "ArtifactBytesResult", "InProcessAssertionView", "Projection", "REDACTED",
-    "RedactionConfig", "RedactionError", "RedactionResult", "assertion_view",
-    "known_secret_values", "redact", "redact_artifact_bytes", "redact_for_api",
-    "redact_for_export", "redact_for_log",
-    "redact_for_persistence", "redact_for_ui", "redact_raw_evidence",
-    "is_sensitive_key", "is_sensitive_query_key", "redact_model_json", "redact_repr", "redact_result", "redacted_json", "serialize_redacted",
+    "REDACTED",
+    "ArtifactBytesResult",
+    "InProcessAssertionView",
+    "Projection",
+    "RedactionConfig",
+    "RedactionError",
+    "RedactionResult",
+    "assertion_view",
+    "is_sensitive_key",
+    "is_sensitive_query_key",
+    "known_secret_values",
     "project_redacted",
+    "redact",
+    "redact_artifact_bytes",
+    "redact_for_api",
+    "redact_for_export",
+    "redact_for_log",
+    "redact_for_persistence",
+    "redact_for_ui",
+    "redact_model_json",
+    "redact_raw_evidence",
+    "redact_repr",
+    "redact_result",
+    "redacted_json",
+    "serialize_redacted",
 ]

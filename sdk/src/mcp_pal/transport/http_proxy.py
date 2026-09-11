@@ -9,7 +9,8 @@ import json
 import os
 import re
 import socket
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
@@ -22,11 +23,20 @@ from starlette.routing import Route
 from mcp_pal.trace.capture import CaptureWriter, parse_json_payload
 from mcp_pal.trace.redaction import is_sensitive_key
 from mcp_pal.types import ToolPolicy
+
 from .tool_policy import ProxyToolPolicy
 
 HOP_BY_HOP = {
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+    "content-length",
 }
 _ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -58,13 +68,21 @@ def validate_public_upstream(url: str) -> None:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise UnsafeUpstreamError("MCP upstream must be an HTTP(S) URL")
     try:
-        addresses = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+        addresses = socket.getaddrinfo(
+            parsed.hostname,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            type=socket.SOCK_STREAM,
+        )
     except socket.gaierror as exc:
-        raise UnsafeUpstreamError(f"MCP upstream host could not be resolved: {parsed.hostname}") from exc
+        raise UnsafeUpstreamError(
+            f"MCP upstream host could not be resolved: {parsed.hostname}"
+        ) from exc
     for address in addresses:
         ip = ipaddress.ip_address(address[4][0])
         if not ip.is_global:
-            raise UnsafeUpstreamError(f"MCP upstream resolves to a blocked non-public address: {ip}")
+            raise UnsafeUpstreamError(
+                f"MCP upstream resolves to a blocked non-public address: {ip}"
+            )
 
 
 class McpHttpProxy:
@@ -96,18 +114,24 @@ class McpHttpProxy:
             for key, value in self.configured_headers.items()
             if is_sensitive_key(key) and value
         )
-        writer_config = writer_secrets if secrets is not None or writer_secrets else None
+        writer_config = (
+            writer_secrets if secrets is not None or writer_secrets else None
+        )
         self.writer = CaptureWriter(capture_path, baseline_ns, secrets=writer_config)
         if secrets is not None:
             secrets.update(writer_secrets)
         self.allow_private = allow_private
-        self._tool_policy = ProxyToolPolicy(
-            tool_policy,
-            server=server_alias,
-            known_servers=known_servers,
-            known_tools=known_tools,
-            known_tools_by_server=known_tools_by_server,
-        ) if tool_policy is not None else None
+        self._tool_policy = (
+            ProxyToolPolicy(
+                tool_policy,
+                server=server_alias,
+                known_servers=known_servers,
+                known_tools=known_tools,
+                known_tools_by_server=known_tools_by_server,
+            )
+            if tool_policy is not None
+            else None
+        )
         self.server: uvicorn.Server | None = None
         self.task: asyncio.Task[Any] | None = None
         self.socket: socket.socket | None = None
@@ -122,14 +146,29 @@ class McpHttpProxy:
         if not self.allow_private:
             await asyncio.to_thread(validate_public_upstream, self.upstream_url)
         self.client = httpx.AsyncClient(follow_redirects=False, timeout=None)
-        app = Starlette(routes=[Route("/{path:path}", self._forward, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]), Route("/", self._forward, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])])
+        app = Starlette(
+            routes=[
+                Route(
+                    "/{path:path}",
+                    self._forward,
+                    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                ),
+                Route(
+                    "/",
+                    self._forward,
+                    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                ),
+            ]
+        )
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.bind(("127.0.0.1", 0))
         self.socket.listen(128)
         port = self.socket.getsockname()[1]
         self.proxy_origin = f"http://127.0.0.1:{port}"
-        config = uvicorn.Config(app, log_level="error", lifespan="off", access_log=False)
+        config = uvicorn.Config(
+            app, log_level="error", lifespan="off", access_log=False
+        )
         self.server = uvicorn.Server(config)
         self.task = asyncio.create_task(self.server.serve(sockets=[self.socket]))
         for _ in range(100):
@@ -160,11 +199,23 @@ class McpHttpProxy:
         return f"{self.origin}{path}" + (f"?{query}" if query else "")
 
     def _request_headers(self, request: Request) -> dict[str, str]:
-        headers = {key: value for key, value in request.headers.items() if key.lower() not in HOP_BY_HOP}
-        headers.update({key: value for key, value in self.configured_headers.items() if key.lower() not in HOP_BY_HOP})
+        headers = {
+            key: value
+            for key, value in request.headers.items()
+            if key.lower() not in HOP_BY_HOP
+        }
+        headers.update(
+            {
+                key: value
+                for key, value in self.configured_headers.items()
+                if key.lower() not in HOP_BY_HOP
+            }
+        )
         return headers
 
-    def _response_headers(self, response: httpx.Response, *, base_url: str | None = None) -> dict[str, str]:
+    def _response_headers(
+        self, response: httpx.Response, *, base_url: str | None = None
+    ) -> dict[str, str]:
         headers: dict[str, str] = {}
         for key, value in response.headers.items():
             if key.lower() in HOP_BY_HOP:
@@ -175,16 +226,36 @@ class McpHttpProxy:
                 try:
                     target = urlsplit(urljoin(base_url or self.upstream_url, value))
                     upstream = urlsplit(self.upstream_url)
-                    target_port = target.port or (443 if target.scheme == "https" else 80)
-                    upstream_port = upstream.port or (443 if upstream.scheme == "https" else 80)
+                    target_port = target.port or (
+                        443 if target.scheme == "https" else 80
+                    )
+                    upstream_port = upstream.port or (
+                        443 if upstream.scheme == "https" else 80
+                    )
                 except ValueError:
                     continue
-                if (target.scheme.lower(), (target.hostname or "").lower(), target_port) != (upstream.scheme.lower(), (upstream.hostname or "").lower(), upstream_port):
+                if (
+                    target.scheme.lower(),
+                    (target.hostname or "").lower(),
+                    target_port,
+                ) != (
+                    upstream.scheme.lower(),
+                    (upstream.hostname or "").lower(),
+                    upstream_port,
+                ):
                     continue
                 if self.proxy_origin is None:
                     continue
                 proxy = urlsplit(self.proxy_origin)
-                headers[key] = urlunsplit((proxy.scheme, proxy.netloc, target.path or "/", target.query, target.fragment))
+                headers[key] = urlunsplit(
+                    (
+                        proxy.scheme,
+                        proxy.netloc,
+                        target.path or "/",
+                        target.query,
+                        target.fragment,
+                    )
+                )
                 continue
             headers[key] = value
         return headers
@@ -237,9 +308,14 @@ class McpHttpProxy:
                     "jsonrpc": item.get("jsonrpc", "2.0"),
                     "id": item.get("id"),
                     "method": "tools/call",
-                    "params": {"name": item.get("params", {}).get("name") if isinstance(item.get("params"), dict) else None},
+                    "params": {
+                        "name": item.get("params", {}).get("name")
+                        if isinstance(item.get("params"), dict)
+                        else None
+                    },
                 }
-                if isinstance(item, dict) and item.get("method") == "tools/call" else {"policy_batch_item": "redacted"}
+                if isinstance(item, dict) and item.get("method") == "tools/call"
+                else {"policy_batch_item": "redacted"}
                 for item in payload
             ]
         if denied is not None:
@@ -249,14 +325,30 @@ class McpHttpProxy:
                 "jsonrpc": request_payload.get("jsonrpc", "2.0"),
                 "id": request_payload.get("id"),
                 "method": "tools/call",
-                "params": {"name": request_payload.get("params", {}).get("name") if isinstance(request_payload.get("params"), dict) else None},
+                "params": {
+                    "name": request_payload.get("params", {}).get("name")
+                    if isinstance(request_payload.get("params"), dict)
+                    else None
+                },
             }
         self.writer.write(
             transport=self.transport,
             direction="client_to_server",
             payload=capture_payload,
-            kind="policy_denied" if denied is not None or denied_batch is not None else "jsonrpc",
-            metadata={"method": request.method, "url": target, "content_type": request.headers.get("content-type"), **({"policy_denied": True} if denied is not None or denied_batch is not None else {}), **({"policy_reason": denied[1]} if denied is not None else {})},
+            kind="policy_denied"
+            if denied is not None or denied_batch is not None
+            else "jsonrpc",
+            metadata={
+                "method": request.method,
+                "url": target,
+                "content_type": request.headers.get("content-type"),
+                **(
+                    {"policy_denied": True}
+                    if denied is not None or denied_batch is not None
+                    else {}
+                ),
+                **({"policy_reason": denied[1]} if denied is not None else {}),
+            },
         )
         if denied is not None:
             if "id" not in request_payload:
@@ -272,21 +364,47 @@ class McpHttpProxy:
                 payload=response_payload,
                 kind="policy_denied",
             )
-            return Response(json.dumps(response_payload).encode("utf-8"), status_code=200, media_type="application/json")
+            return Response(
+                json.dumps(response_payload).encode("utf-8"),
+                status_code=200,
+                media_type="application/json",
+            )
         if denied_batch is not None:
             batch_response: Any = [
-                {"jsonrpc": "2.0", "id": item.get("id"), "error": {"code": -32001, "message": "MCP batch denied by policy"}}
-                for item in (payload if isinstance(payload, list) else ()) if isinstance(item, dict) and "id" in item
+                {
+                    "jsonrpc": "2.0",
+                    "id": item.get("id"),
+                    "error": {"code": -32001, "message": "MCP batch denied by policy"},
+                }
+                for item in (payload if isinstance(payload, list) else ())
+                if isinstance(item, dict) and "id" in item
             ]
             if not batch_response:
                 return Response(b"", status_code=202)
-            self.writer.write(transport=self.transport, direction="server_to_client", payload=batch_response, kind="policy_denied")
-            return Response(json.dumps(batch_response).encode("utf-8"), status_code=200, media_type="application/json")
-        outbound = self.client.build_request(request.method, target, headers=self._request_headers(request), content=body)
+            self.writer.write(
+                transport=self.transport,
+                direction="server_to_client",
+                payload=batch_response,
+                kind="policy_denied",
+            )
+            return Response(
+                json.dumps(batch_response).encode("utf-8"),
+                status_code=200,
+                media_type="application/json",
+            )
+        outbound = self.client.build_request(
+            request.method, target, headers=self._request_headers(request), content=body
+        )
         try:
             response = await self.client.send(outbound, stream=True)
         except httpx.HTTPError as exc:
-            self.writer.write(transport=self.transport, direction="proxy_error", payload={"error": type(exc).__name__}, kind="error", metadata={"url": target})
+            self.writer.write(
+                transport=self.transport,
+                direction="proxy_error",
+                payload={"error": type(exc).__name__},
+                kind="error",
+                metadata={"url": target},
+            )
             return Response("MCP upstream request failed", status_code=502)
 
         content_type = response.headers.get("content-type", "")
@@ -307,9 +425,17 @@ class McpHttpProxy:
                 transport=self.transport,
                 direction="server_to_client",
                 payload=response_payload,
-                metadata={"status_code": response.status_code, "content_type": content_type},
+                metadata={
+                    "status_code": response.status_code,
+                    "content_type": content_type,
+                },
             )
-        return Response(data, status_code=response.status_code, headers=self._response_headers(response, base_url=target), media_type=None)
+        return Response(
+            data,
+            status_code=response.status_code,
+            headers=self._response_headers(response, base_url=target),
+            media_type=None,
+        )
 
     async def _stream_sse(self, response: httpx.Response) -> AsyncIterator[bytes]:
         buffer = ""
@@ -321,8 +447,8 @@ class McpHttpProxy:
                     separator = re.search(r"\r\n\r\n|\n\n|\r\r", buffer)
                     if not separator:
                         break
-                    frame = buffer[:separator.start()]
-                    buffer = buffer[separator.end():]
+                    frame = buffer[: separator.start()]
+                    buffer = buffer[separator.end() :]
                     rewritten = self._capture_sse_frame(frame)
                     yield (rewritten + "\n\n").encode("utf-8")
             buffer += decoder.decode(b"", final=True)
@@ -340,10 +466,17 @@ class McpHttpProxy:
             data = line[5:].lstrip()
             if self._tool_policy is not None:
                 self._tool_policy.observe(parse_json_payload(data))
-            self.writer.write(transport=self.transport, direction="server_to_client", payload=parse_json_payload(data), kind="sse_data")
+            self.writer.write(
+                transport=self.transport,
+                direction="server_to_client",
+                payload=parse_json_payload(data),
+                kind="sse_data",
+            )
             if self.socket and (data.startswith(self.origin) or data.startswith("/")):
                 port = self.socket.getsockname()[1]
-                suffix = data[len(self.origin):] if data.startswith(self.origin) else data
+                suffix = (
+                    data[len(self.origin) :] if data.startswith(self.origin) else data
+                )
                 data = "http://127.0.0.1:" + str(port) + suffix
             output.append("data: " + data)
         return "\n".join(output)

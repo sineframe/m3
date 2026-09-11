@@ -8,11 +8,9 @@ installed as an editable package.
 
 from __future__ import annotations
 
-from collections import deque
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import signal
@@ -22,12 +20,14 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any, Mapping
+import zipfile
+from collections import deque
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlsplit
 from urllib.request import Request, urlopen
-import zipfile
-
 
 ROOT = Path(__file__).resolve().parents[1]
 UI_ROOT = ROOT.parent / "mcppal-ui"
@@ -83,7 +83,9 @@ def safe_diagnostics(value: str, env: Mapping[str, str]) -> str:
     return _tail(redact(value, env))
 
 
-def wheel_paths(release_dir: str | os.PathLike[str], version: str) -> tuple[Path, Path, Path]:
+def wheel_paths(
+    release_dir: str | os.PathLike[str], version: str
+) -> tuple[Path, Path, Path]:
     """Return the production CLI, SDK, and app wheels for one version."""
 
     release = Path(release_dir).expanduser().resolve()
@@ -94,7 +96,9 @@ def wheel_paths(release_dir: str | os.PathLike[str], version: str) -> tuple[Path
         for prefix in ("mcp_pal_cli", "mcp_pal", "mcp_pal_app")
     )
     if any(not path.is_file() for path in paths):
-        raise GateFailure("release directory is missing one of the three production wheels")
+        raise GateFailure(
+            "release directory is missing one of the three production wheels"
+        )
     return paths
 
 
@@ -146,7 +150,9 @@ def _run(
     if result.returncode != 0:
         detail = safe_diagnostics(result.stdout + "\n" + result.stderr, env)
         suffix = f"\n{detail}" if detail else ""
-        raise GateFailure(f"command failed with exit {result.returncode}: {command[0]}{suffix}")
+        raise GateFailure(
+            f"command failed with exit {result.returncode}: {command[0]}{suffix}"
+        )
     return result
 
 
@@ -174,8 +180,10 @@ def _tool_python(tool_dir: Path) -> Path:
     return path
 
 
-def _probe_tool(tool_python: Path, version: str, env: Mapping[str, str], cwd: Path) -> None:
-    code = r'''
+def _probe_tool(
+    tool_python: Path, version: str, env: Mapping[str, str], cwd: Path
+) -> None:
+    code = r"""
 import importlib.metadata as metadata
 import importlib.util
 import json
@@ -185,22 +193,36 @@ required = {name: importlib.util.find_spec(name) is not None for name in ("mcp_p
 forbidden = {name: importlib.util.find_spec(name) is None for name in ("pytest", "streamlit", "requests")}
 ui = resources.files("mcp_pal_cli").joinpath("ui")
 print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("mcp-pal-cli"), "ui": ui.joinpath("index.html").is_file() and any(item.is_file() for item in ui.joinpath("assets").iterdir())}, sort_keys=True))
-'''
+"""
     result = _run([str(tool_python), "-c", code], cwd=cwd, env=env)
     try:
         payload = json.loads(result.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as exc:
-        raise GateFailure("CLI tool environment returned an invalid package check") from exc
-    if payload.get("required") != {"mcp_pal_cli": True, "mcp_pal": True, "mcp_pal_app": True}:
-        raise GateFailure("CLI tool environment is missing a production MCP Pal package")
-    if payload.get("forbidden") != {"pytest": True, "streamlit": True, "requests": True}:
+        raise GateFailure(
+            "CLI tool environment returned an invalid package check"
+        ) from exc
+    if payload.get("required") != {
+        "mcp_pal_cli": True,
+        "mcp_pal": True,
+        "mcp_pal_app": True,
+    }:
+        raise GateFailure(
+            "CLI tool environment is missing a production MCP Pal package"
+        )
+    if payload.get("forbidden") != {
+        "pytest": True,
+        "streamlit": True,
+        "requests": True,
+    }:
         raise GateFailure("CLI tool environment contains project-only packages")
     if payload.get("version") != version or payload.get("ui") is not True:
         raise GateFailure("CLI tool environment has the wrong version or no bundled UI")
 
 
-def _probe_project(project_python: Path, version: str, env: Mapping[str, str], cwd: Path) -> None:
-    code = r'''
+def _probe_project(
+    project_python: Path, version: str, env: Mapping[str, str], cwd: Path
+) -> None:
+    code = r"""
 import importlib.metadata as metadata
 import importlib.util
 import json
@@ -214,16 +236,27 @@ else:
     required["SQLiteExecutionStore"] = True
 forbidden = {name: importlib.util.find_spec(name) is None for name in ("mcp_pal_cli", "mcp_pal_app")}
 print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("mcp-pal")}, sort_keys=True))
-'''
+"""
     result = _run([str(project_python), "-c", code], cwd=cwd, env=env)
     try:
         payload = json.loads(result.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as exc:
-        raise GateFailure("project environment returned an invalid package check") from exc
+        raise GateFailure(
+            "project environment returned an invalid package check"
+        ) from exc
     required = payload.get("required")
-    expected_required = ("pytest", "mcp_pal", "mcp_pal.pytest_plugin", "SQLiteExecutionStore")
-    if not isinstance(required, dict) or not all(required.get(name) for name in expected_required):
-        raise GateFailure("project environment is missing pytest, SDK, plugin, or SQLite storage")
+    expected_required = (
+        "pytest",
+        "mcp_pal",
+        "mcp_pal.pytest_plugin",
+        "SQLiteExecutionStore",
+    )
+    if not isinstance(required, dict) or not all(
+        required.get(name) for name in expected_required
+    ):
+        raise GateFailure(
+            "project environment is missing pytest, SDK, plugin, or SQLite storage"
+        )
     if payload.get("forbidden") != {"mcp_pal_cli": True, "mcp_pal_app": True}:
         raise GateFailure("project environment contains the standalone CLI or app")
     if payload.get("version") != version:
@@ -237,7 +270,10 @@ def _copy_live_target(repo: Path) -> None:
     destination = repo / "sdk" / "examples"
     (destination / "tests").mkdir(parents=True)
     (destination / "servers").mkdir()
-    for relative in (Path("tests/test_live_opencode.py"), Path("servers/example_mcp_server.py")):
+    for relative in (
+        Path("tests/test_live_opencode.py"),
+        Path("servers/example_mcp_server.py"),
+    ):
         shutil.copy2(source / relative, destination / relative)
     (repo / "pytest.ini").write_text(
         "[pytest]\nmarkers =\n    e2e: end-to-end tests\n    live: external provider tests\n",
@@ -259,7 +295,9 @@ def _free_port() -> int:
     raise GateFailure("no free loopback port is available for the live UI gate")
 
 
-def cli_test_command(executable: Path, project_python: Path, database: Path, port: int) -> list[str]:
+def cli_test_command(
+    executable: Path, project_python: Path, database: Path, port: int
+) -> list[str]:
     return [
         str(executable),
         "test",
@@ -291,7 +329,9 @@ class Child:
         if os.name == "posix":
             kwargs["start_new_session"] = True
         elif os.name == "nt":
-            kwargs["creationflags"] = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+            kwargs["creationflags"] = int(
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            )
         try:
             self.process = subprocess.Popen(command, **kwargs)
         except OSError as exc:
@@ -356,7 +396,9 @@ def interrupt(child: Child | None) -> None:
         if os.name == "posix":
             os.killpg(child.process.pid, signal.SIGINT)
         else:
-            child.process.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGINT))
+            child.process.send_signal(
+                getattr(signal, "CTRL_BREAK_EVENT", signal.SIGINT)
+            )
         child.process.wait(timeout=15)
     except (OSError, ProcessLookupError, subprocess.TimeoutExpired):
         terminate(child)
@@ -398,7 +440,11 @@ def parse_ui_links(output: str, origin: str) -> tuple[str, str, str]:
 def _http(url: str) -> tuple[int, str, bytes]:
     try:
         with urlopen(Request(url, method="GET"), timeout=5) as response:
-            return response.status, response.headers.get("Content-Type", ""), response.read(2_000_000)
+            return (
+                response.status,
+                response.headers.get("Content-Type", ""),
+                response.read(2_000_000),
+            )
     except HTTPError as exc:
         return exc.code, exc.headers.get("Content-Type", ""), exc.read(2_000_000)
     except (OSError, URLError) as exc:
@@ -439,7 +485,11 @@ def assert_report(envelope: Any, expected_model: str, expected_id: str) -> None:
     root = envelope if isinstance(envelope, dict) else {}
     report = root.get("report") if isinstance(root.get("report"), dict) else root
     snapshot = report.get("snapshot") if isinstance(report, dict) else None
-    if not isinstance(snapshot, dict) or snapshot.get("lifecycle") != "finished" or snapshot.get("outcome") != "completed":
+    if (
+        not isinstance(snapshot, dict)
+        or snapshot.get("lifecycle") != "finished"
+        or snapshot.get("outcome") != "completed"
+    ):
         raise GateFailure("live execution did not finish successfully")
     if snapshot.get("execution_id") != expected_id:
         raise GateFailure("report execution ID does not match the direct link")
@@ -449,19 +499,29 @@ def assert_report(envelope: Any, expected_model: str, expected_id: str) -> None:
         raise GateFailure("OpenCode runtime/model context is missing")
     spec = root.get("spec") if isinstance(root.get("spec"), dict) else {}
     harness = spec.get("harness") if isinstance(spec, dict) else {}
-    if (harness.get("model") if isinstance(harness, dict) else None) != expected_model and _unwrap(runtime.get("model_id")) != expected_model:
+    if (
+        harness.get("model") if isinstance(harness, dict) else None
+    ) != expected_model and _unwrap(runtime.get("model_id")) != expected_model:
         raise GateFailure("OpenCode model context is missing")
     timeline = trace.get("timeline") if isinstance(trace, dict) else []
-    calls = [item for item in timeline if isinstance(item, dict) and item.get("kind") == "tool_call"]
+    calls = [
+        item
+        for item in timeline
+        if isinstance(item, dict) and item.get("kind") == "tool_call"
+    ]
     if len(calls) != 1:
         raise GateFailure("expected exactly one tool-call entry")
     call = calls[0]
-    if _unwrap(call.get("tool")) != "shipping_quote" or _unwrap(call.get("arguments")) != {"weight_kg": 2, "zone": "local"}:
+    if _unwrap(call.get("tool")) != "shipping_quote" or _unwrap(
+        call.get("arguments")
+    ) != {"weight_kg": 2, "zone": "local"}:
         raise GateFailure("expected one shipping_quote call with required arguments")
     if _unwrap(call.get("tool_status")) != "success":
         raise GateFailure("shipping_quote call was not successful")
     result = _unwrap(call.get("result"))
-    structured = _unwrap(result.get("structured_content")) if isinstance(result, dict) else None
+    structured = (
+        _unwrap(result.get("structured_content")) if isinstance(result, dict) else None
+    )
     if not isinstance(structured, dict) or structured.get("currency") != "USD":
         raise GateFailure("shipping_quote result is not structured as USD")
     wire = call.get("wire")
@@ -469,7 +529,9 @@ def assert_report(envelope: Any, expected_model: str, expected_id: str) -> None:
         raise GateFailure("correlated wire evidence was not observed")
 
 
-def browser_environment(source: Mapping[str, str], origin: str, run_id: str, model: str) -> dict[str, str]:
+def browser_environment(
+    source: Mapping[str, str], origin: str, run_id: str, model: str
+) -> dict[str, str]:
     """Build Playwright's environment without provider credentials."""
 
     env = clean_environment(source)
@@ -510,14 +572,23 @@ def _check_browser_prerequisites(ui_dir: Path, env: Mapping[str, str]) -> Path:
     if node is None:
         raise GateFailure("Node.js 24 or newer is required for the live UI gate")
     if npm is None:
-        raise GateFailure("npm is required to build the production UI for the live gate")
+        raise GateFailure(
+            "npm is required to build the production UI for the live gate"
+        )
     node_version = _run([node, "--version"], cwd=ui_dir, env=env, timeout=15).stdout
     match = re.search(r"v(\d+)", node_version)
     if match is None or int(match.group(1)) < 24:
         raise GateFailure("Node.js 24 or newer is required for the live UI gate")
-    playwright = ui_dir / "node_modules" / ".bin" / ("playwright.cmd" if os.name == "nt" else "playwright")
+    playwright = (
+        ui_dir
+        / "node_modules"
+        / ".bin"
+        / ("playwright.cmd" if os.name == "nt" else "playwright")
+    )
     if not playwright.is_file():
-        raise GateFailure("UI Playwright dependency is unavailable; run npm ci in the UI checkout")
+        raise GateFailure(
+            "UI Playwright dependency is unavailable; run npm ci in the UI checkout"
+        )
     _run([str(playwright), "--version"], cwd=ui_dir, env=env, timeout=30)
     _run(
         [
@@ -576,7 +647,11 @@ def check(
         temp_path = Path(tempfile.mkdtemp(prefix="mcp-pal-live-ui-")).resolve()
         if release_dir is None:
             version_result = _run(
-                [sys.executable, str(ROOT / "scripts" / "build_cli_release.py"), "--print-version"],
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "build_cli_release.py"),
+                    "--print-version",
+                ],
                 cwd=ROOT,
                 env=install_env,
                 timeout=30,
@@ -626,14 +701,28 @@ def check(
             }
         )
         _run(
-            [uv, "tool", "install", "--force", str(cli_wheel), "--with", str(sdk_wheel), "--with", str(app_wheel)],
+            [
+                uv,
+                "tool",
+                "install",
+                "--force",
+                str(cli_wheel),
+                "--with",
+                str(sdk_wheel),
+                "--with",
+                str(app_wheel),
+            ],
             cwd=repo,
             env=isolated_env,
         )
         executable = _tool_command(tool_bin)
         _probe_tool(_tool_python(tool_dir), version, isolated_env, repo)
         project_venv = repo / ".venv"
-        _run([uv, "venv", "--python", sys.executable, str(project_venv)], cwd=repo, env=isolated_env)
+        _run(
+            [uv, "venv", "--python", sys.executable, str(project_venv)],
+            cwd=repo,
+            env=isolated_env,
+        )
         project_python = _python_path(project_venv)
         # Put extras on the package name in a PEP 508 direct reference so the
         # requirement remains portable across uv and pip.
@@ -658,7 +747,10 @@ def check(
             }
         )
         command = cli_test_command(executable, project_python, database, port)
-        print("live-ui-gate: launching exactly one live OpenCode pytest target", flush=True)
+        print(
+            "live-ui-gate: launching exactly one live OpenCode pytest target",
+            flush=True,
+        )
         child = Child(command, repo, live_env)
         origin = f"http://127.0.0.1:{port}"
         history_url, direct_url, run_id = _wait_for_links(child, origin)
@@ -666,12 +758,22 @@ def check(
         assert_report(_json_get(execution_report_url(origin, run_id)), model, run_id)
         for route in (history_url, direct_url):
             status, content_type, body = _http(route)
-            if status != 200 or "html" not in content_type.lower() or b"<html" not in body.lower():
+            if (
+                status != 200
+                or "html" not in content_type.lower()
+                or b"<html" not in body.lower()
+            ):
                 raise GateFailure("CLI UI route did not return the bundled SPA")
-        run_playwright(playwright, selected_ui, browser_environment(original_env, origin, run_id, model))
+        run_playwright(
+            playwright,
+            selected_ui,
+            browser_environment(original_env, origin, run_id, model),
+        )
         interrupt(child)
         if child.process.returncode != 0:
-            raise GateFailure(f"CLI did not preserve pytest success (exit {child.process.returncode})")
+            raise GateFailure(
+                f"CLI did not preserve pytest success (exit {child.process.returncode})"
+            )
         shutil.rmtree(temp_path)
         temp_path = None
         print("live OpenCode and bundled UI gate passed", flush=True)
@@ -681,7 +783,10 @@ def check(
         return_code = 2
     except (OSError, ValueError) as exc:
         failure = "operational failure"
-        print(f"live-ui-gate: {failure}: {redact(str(exc), original_env)}", file=sys.stderr)
+        print(
+            f"live-ui-gate: {failure}: {redact(str(exc), original_env)}",
+            file=sys.stderr,
+        )
         return_code = 2
     else:
         return_code = 0
@@ -693,7 +798,8 @@ def check(
                 if child is not None:
                     diagnostics.extend(f"[cli] {line}" for line in child.lines)
                 (temp_path / "gate-diagnostics.txt").write_text(
-                    safe_diagnostics("\n".join(diagnostics) + "\n", original_env), encoding="utf-8"
+                    safe_diagnostics("\n".join(diagnostics) + "\n", original_env),
+                    encoding="utf-8",
                 )
             print(f"live-ui-gate: diagnostics retained at {temp_path}", file=sys.stderr)
     return return_code

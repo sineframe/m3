@@ -8,8 +8,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-from . import doctor
-from . import setup
+from . import doctor, setup
 from .errors import CLIError
 
 
@@ -39,21 +38,42 @@ def _parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument(
         "--project-root", type=Path, help="project root used for pyproject discovery"
     )
-    doctor_parser.add_argument("--python", type=Path, metavar="PATH", help="Python used for project checks")
+    doctor_parser.add_argument(
+        "--python", type=Path, metavar="PATH", help="Python used for project checks"
+    )
     doctor_parser.add_argument(
         "--env-file", type=Path, help="explicit dotenv file; cwd .env is never searched"
     )
-    doctor_parser.add_argument("--json", action="store_true", help="emit a machine-readable report")
+    doctor_parser.add_argument(
+        "--json", action="store_true", help="emit a machine-readable report"
+    )
 
-    setup_parser = subparsers.add_parser("setup", help="install the SDK into a project environment")
-    setup_parser.add_argument("--project-root", type=Path, help="project root used for environment setup")
-    setup_parser.add_argument("--python", type=Path, metavar="PATH", help="isolated Python environment to update")
+    setup_parser = subparsers.add_parser(
+        "setup", help="install the SDK into a project environment"
+    )
+    setup_parser.add_argument(
+        "--project-root", type=Path, help="project root used for environment setup"
+    )
+    setup_parser.add_argument(
+        "--python",
+        type=Path,
+        metavar="PATH",
+        help="isolated Python environment to update",
+    )
 
     test = subparsers.add_parser("test", help="run pytest")
-    test.add_argument("--python", type=Path, metavar="PATH", help="Python used to run pytest")
-    test.add_argument("--results-db", type=Path, metavar="PATH", help="SQLite history database")
-    test.add_argument("--baseline", metavar="RUN_ID", help="compare feedback with a previous run")
-    test.add_argument("--ui", action="store_true", help="serve the bundled UI after pytest")
+    test.add_argument(
+        "--python", type=Path, metavar="PATH", help="Python used to run pytest"
+    )
+    test.add_argument(
+        "--results-db", type=Path, metavar="PATH", help="SQLite history database"
+    )
+    test.add_argument(
+        "--baseline", metavar="RUN_ID", help="compare feedback with a previous run"
+    )
+    test.add_argument(
+        "--ui", action="store_true", help="serve the bundled UI after pytest"
+    )
     test.add_argument("--port", type=int, default=8000, metavar="PORT", help="UI port")
     return parser
 
@@ -104,7 +124,16 @@ def main(argv: list[str] | None = None) -> int:
         return code
     except doctor.DoctorConfigurationError as exc:
         if "--json" in effective_argv:
-            print(json.dumps({"ready": False, "error": doctor._configuration_error_payload(exc.configuration_error)}))
+            print(
+                json.dumps(
+                    {
+                        "ready": False,
+                        "error": doctor._configuration_error_payload(
+                            exc.configuration_error
+                        ),
+                    }
+                )
+            )
         else:
             doctor.print_configuration_error(exc.configuration_error)
         return 2
@@ -116,7 +145,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except doctor.DoctorProjectPythonError as exc:
         if "--json" in effective_argv:
-            print(json.dumps({"ready": False, "error": {"code": "project_python_unavailable", "reason": str(exc)}}))
+            print(
+                json.dumps(
+                    {
+                        "ready": False,
+                        "error": {
+                            "code": "project_python_unavailable",
+                            "reason": str(exc),
+                        },
+                    }
+                )
+            )
         else:
             print(f"mcp-pal doctor: {exc}", file=sys.stderr)
         return 2
@@ -125,13 +164,21 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except CLIError:
         if "--json" in effective_argv:
-            print(json.dumps({"ready": False, "error": "invalid command or configuration"}))
+            print(
+                json.dumps(
+                    {"ready": False, "error": "invalid command or configuration"}
+                )
+            )
         else:
             print(_command_error_message(command_name), file=sys.stderr)
         return 2
     except Exception:
         if "--json" in effective_argv:
-            print(json.dumps({"ready": False, "error": "invalid command or configuration"}))
+            print(
+                json.dumps(
+                    {"ready": False, "error": "invalid command or configuration"}
+                )
+            )
         else:
             print(_command_error_message(command_name), file=sys.stderr)
         return 2

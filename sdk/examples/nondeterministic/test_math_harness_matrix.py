@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+
 from mcp_pal import (
     # ClaudeCode,
     EvaluationContext,
@@ -39,7 +40,6 @@ from mcp_pal import (
 )
 from mcp_pal.aggregations import EvaluationQuery
 from mcp_pal.storage import SQLiteExecutionStore
-
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live]
 
@@ -218,7 +218,9 @@ def test_ten_math_cases_across_harnesses_with_repeated_trials(
                     execution = session.result
                     kit.evaluate(
                         {
-                            "answer": turn.response.text if turn.response is not None else "",
+                            "answer": turn.response.text
+                            if turn.response is not None
+                            else "",
                             "expected_value": test_case.expected_value,
                             "expected_tool": test_case.expected_tool,
                             "used_tools": _observed_tools(execution),

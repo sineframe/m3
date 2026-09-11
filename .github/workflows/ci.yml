@@ -177,6 +177,9 @@ jobs:
       - name: Lint Python sources
         run: uv run --locked --no-sync --group lint ruff check .
 
+      - name: Check Python formatting
+        run: uv run --locked --group lint ruff format --check .
+
       - name: Compile SDK
         run: uv run --locked --no-sync --project sdk python -m compileall -q sdk/src
 

@@ -3,108 +3,161 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable as _Awaitable, Callable as _Callable
 import inspect as _inspect
+from collections.abc import Awaitable as _Awaitable
+from collections.abc import Callable as _Callable
+from collections.abc import Iterable as _Iterable
+from collections.abc import Mapping as _Mapping
 from pathlib import Path as _Path
+from typing import (
+    Any as _Any,
+)
+from typing import (
+    Literal as _Literal,
+)
+from typing import (
+    NoReturn as _NoReturn,
+)
+from typing import (
+    cast as _cast,
+)
 from uuid import uuid4 as _uuid4
-from typing import Any as _Any, Iterable as _Iterable, Literal as _Literal, Mapping as _Mapping, NoReturn as _NoReturn, Protocol as _Protocol, cast as _cast
 
 import httpx2
 from mcp import ClientSession as _ClientSession
 
-from .agent_session import AsyncAgentSession as _CoreAsyncAgentSession, HarnessAdapter
-from .harness.contracts import (
-    HarnessAdapterRegistry as _HarnessAdapterRegistry,
-    default_adapters as _default_adapters,
+from ._check_recording import (
+    bind_execution as _bind_execution,
 )
-from .interaction_handlers import (
-    AllowedCommands,
-    ElicitationRequest,
-    ElicitationResult,
-    ElicitationHandler,
-    FilesystemHandler,
-    FilesystemRequest,
-    FilesystemResult,
-    Interactions,
-    InteractionHandlers,
-    InteractionReceipt,
-    PermissionRequest,
-    PermissionResult,
-    PermissionHandler,
-    SamplingRequest,
-    SamplingResult,
-    SamplingHandler,
-    TerminalHandler,
-    TerminalRequest,
-    TerminalResult,
-    WorkspaceFiles,
+from ._check_recording import (
+    bind_subject as _bind_subject,
 )
-from .server_group import ServerGroupManager as _ServerGroupManager
-from .storage import ArtifactStore as _ArtifactStore
+from ._check_recording import (
+    record_checks_enabled as _record_checks_enabled,
+)
+from ._default_store import (
+    make_default_run_id as _make_default_run_id,
+)
+from ._default_store import (
+    make_default_store as _make_default_store,
+)
+from .agent_session import AsyncAgentSession as _CoreAsyncAgentSession
+from .agent_session import HarnessAdapter
 from .configuration import (
-    ConfigOrigin,
-    ConfigSource,
     Config,
     ConfigError,
+    ConfigOrigin,
+    ConfigSource,
     load_config,
 )
 from .direct_client import (
     AsyncDirectClient as _CoreAsyncDirectClient,
+)
+from .direct_client import (
     CallToolResult,
     CompletionResult,
-    PromptInfo,
-    ResourceInfo,
-    TemplateInfo,
-    ToolInfo,
     EmptyResult,
     GetPromptResult,
-    InitializeResult,
     InitializationResult,
+    InitializeResult,
     InputRequiredResult,
     ListPromptsResult,
     ListResourcesResult,
     ListResourceTemplatesResult,
     ListToolsResult,
     Prompt,
+    PromptInfo,
     PromptPage,
     PromptResult,
     ReadResourceResult,
     Resource,
+    ResourceInfo,
     ResourcePage,
     ResourceReadResult,
+    ResourcesPage,
     ResourceTemplate,
     ResourceTemplatePage,
     ResourceTemplatesPage,
-    ResourcesPage,
+    TemplateInfo,
     Tool,
     ToolCallResult,
+    ToolInfo,
     ToolPage,
     ToolsPage,
 )
-from .evaluations import AsyncEvaluator as _AsyncEvaluator, EvaluationRunner as _EvaluationRunner, EvaluatorCallable as _EvaluatorCallable
+from .direct_trace import DirectTraceBridge as _DirectTraceBridge
 from .errors import (
     ExecutionNotFound as _ExecutionNotFound,
+)
+from .errors import (
     KitClosed as _KitClosed,
+)
+from .errors import (
     ModelValidationError as _ModelValidationError,
+)
+from .errors import (
     OperationCancelled as _OperationCancelled,
+)
+from .errors import (
     OperationTimeout as _OperationTimeout,
+)
+from .errors import (
     ProtocolError as _ProtocolError,
-    UnsupportedFeature as _UnsupportedFeature,
+)
+from .errors import (
     TraceUnavailable as _TraceUnavailable,
 )
-from .direct_trace import DirectTraceBridge as _DirectTraceBridge
-from .execution_runtime import AsyncExecutionController as _AsyncExecutionController, AsyncExecutionHandle
-from .execution_trace import ExecutionTraceRecorder as _ExecutionTraceRecorder
-from .storage import ExecutionStore as _ExecutionStore
-from ._default_store import make_default_run_id as _make_default_run_id, make_default_store as _make_default_store
-from ._check_recording import (
-    bind_execution as _bind_execution,
-    bind_subject as _bind_subject,
-    record_checks_enabled as _record_checks_enabled,
+from .errors import (
+    UnsupportedFeature as _UnsupportedFeature,
 )
-from .storage import InMemoryExecutionStore as _InMemoryExecutionStore
-from .trace.redaction import RedactionConfig as _RedactionConfig
-from .types import ExecutionOutcome as _ExecutionOutcome
+from .evaluations import (
+    AsyncEvaluator as _AsyncEvaluator,
+)
+from .evaluations import (
+    EvaluationRunner as _EvaluationRunner,
+)
+from .evaluations import (
+    EvaluatorCallable as _EvaluatorCallable,
+)
+from .execution_runtime import (
+    AsyncExecutionController as _AsyncExecutionController,
+)
+from .execution_runtime import (
+    AsyncExecutionHandle,
+)
+from .execution_trace import ExecutionTraceRecorder as _ExecutionTraceRecorder
+from .harness.contracts import (
+    HarnessAdapterRegistry as _HarnessAdapterRegistry,
+)
+from .harness.contracts import (
+    default_adapters as _default_adapters,
+)
+from .interaction_handlers import (
+    AllowedCommands,
+    ElicitationHandler,
+    ElicitationRequest,
+    ElicitationResult,
+    FilesystemHandler,
+    FilesystemRequest,
+    FilesystemResult,
+    InteractionHandlers,
+    InteractionReceipt,
+    Interactions,
+    PermissionHandler,
+    PermissionRequest,
+    PermissionResult,
+    SamplingHandler,
+    SamplingRequest,
+    SamplingResult,
+    TerminalHandler,
+    TerminalRequest,
+    TerminalResult,
+    WorkspaceFiles,
+)
+from .observability import *  # noqa: F403 - re-exported by the public API
+from .observability import RawEvidence, TraceView
+from .observability import __all__ as _OBSERVABILITY_EXPORTS
+from .server_group import ServerGroupManager as _ServerGroupManager
 from .services.probes import (
     AsyncProbes,
     ProbeEvidence,
@@ -113,43 +166,95 @@ from .services.probes import (
     ProbeRequest,
     ProbeResult,
 )
-from .types import (
-    AgentSpec as _AgentSpec,
-    Capability as _Capability,
-    CapabilityStatus as _CapabilityStatus,
-    DirectSpec as _DirectSpec,
-    ExecutionResult as _ExecutionResult,
-    ExecutionSpec as _ExecutionSpec,
-    ExecutionState as _ExecutionState,
-    RunId as _RunId,
-    EvaluationResult as _EvaluationResult,
-    Readiness as _Readiness,
-    ServerBinding as _ServerBinding,
-    ServerValue as _ServerValue,
-    InProcessServer as _InProcessServer,
-    ProtocolConstraint as _ProtocolConstraint,
-    SecretReference as _SecretReference,
-    SSEServer as _SSEServer,
-    StdioServer as _StdioServer,
-    HTTPServer as _HTTPServer,
-    TransportKind as _TransportKind,
-    TurnResult as _TurnResult,
-    UserMessage as _UserMessage,
-    TraceResult as _TraceResult,
-    EvidenceRef as _EvidenceRef,
-    ExecutionId as _ExecutionId,
-)
-from .observability import *
-from .observability import __all__ as _OBSERVABILITY_EXPORTS
+from .storage import ArtifactStore as _ArtifactStore
+from .storage import ExecutionStore as _ExecutionStore
+from .storage import InMemoryExecutionStore as _InMemoryExecutionStore
+from .trace.redaction import RedactionConfig as _RedactionConfig
 from .transport.direct import (
     HostResolver as _HostResolver,
+)
+from .transport.direct import (
     SecretResolver as _SecretResolver,
+)
+from .transport.direct import (
     TransportEvidence as _RemoteTransportEvidence,
+)
+from .transport.direct import (
     TransportName as _TransportName,
+)
+from .transport.direct import (
     remote_connection as _remote_connection,
 )
-from .transport.local import InProcessMCPTransport as _InProcessMCPTransport, StdioMCPTransport as _StdioMCPTransport
-
+from .transport.local import (
+    InProcessMCPTransport as _InProcessMCPTransport,
+)
+from .transport.local import (
+    StdioMCPTransport as _StdioMCPTransport,
+)
+from .types import (
+    AgentSpec as _AgentSpec,
+)
+from .types import (
+    Capability as _Capability,
+)
+from .types import (
+    CapabilityStatus as _CapabilityStatus,
+)
+from .types import (
+    DirectSpec as _DirectSpec,
+)
+from .types import (
+    EvaluationResult as _EvaluationResult,
+)
+from .types import (
+    EvidenceRef as _EvidenceRef,
+)
+from .types import (
+    ExecutionId as _ExecutionId,
+)
+from .types import ExecutionOutcome as _ExecutionOutcome
+from .types import (
+    ExecutionResult as _ExecutionResult,
+)
+from .types import (
+    ExecutionSpec as _ExecutionSpec,
+)
+from .types import (
+    HTTPServer as _HTTPServer,
+)
+from .types import (
+    InProcessServer as _InProcessServer,
+)
+from .types import (
+    ProtocolConstraint as _ProtocolConstraint,
+)
+from .types import (
+    Readiness as _Readiness,
+)
+from .types import (
+    RunId as _RunId,
+)
+from .types import (
+    SecretReference as _SecretReference,
+)
+from .types import (
+    ServerBinding as _ServerBinding,
+)
+from .types import (
+    ServerValue as _ServerValue,
+)
+from .types import (
+    SSEServer as _SSEServer,
+)
+from .types import (
+    StdioServer as _StdioServer,
+)
+from .types import (
+    TraceResult as _TraceResult,
+)
+from .types import (
+    TransportKind as _TransportKind,
+)
 
 _CURRENT_MCP_PROTOCOL = "2025-11-25"
 _SERVER_FAILURE_SETTLE_TIMEOUT = 0.05
@@ -209,17 +314,23 @@ _DIRECT_OPERATION_NAMES = frozenset(
 )
 
 
-def _runtime_server_bindings(runtime_servers: _Iterable[_Any]) -> tuple[_ServerBinding, ...]:
+def _runtime_server_bindings(
+    runtime_servers: _Iterable[_Any],
+) -> tuple[_ServerBinding, ...]:
     """Normalize loopback registrations without changing the frozen spec."""
 
     bindings: list[_ServerBinding] = []
     for value in runtime_servers:
         if isinstance(value, _InProcessServer):
             bindings.append(_ServerBinding(server=value, alias=value.name))
-        elif isinstance(value, _ServerBinding) and isinstance(value.server, _InProcessServer):
+        elif isinstance(value, _ServerBinding) and isinstance(
+            value.server, _InProcessServer
+        ):
             bindings.append(value)
         else:
-            raise TypeError("runtime_servers accepts only InProcessServer or its ServerBinding")
+            raise TypeError(
+                "runtime_servers accepts only InProcessServer or its ServerBinding"
+            )
     return tuple(bindings)
 
 
@@ -234,11 +345,18 @@ class _OwnedLifecycle:
 
     def __init__(
         self,
-        open_resources: _Callable[[], _Awaitable[tuple[_Any, _Any, _Any, _Callable[[], _Awaitable[None]]]]],
+        open_resources: _Callable[
+            [], _Awaitable[tuple[_Any, _Any, _Any, _Callable[[], _Awaitable[None]]]]
+        ],
     ) -> None:
         self._open_resources = open_resources
-        self._commands: asyncio.Queue[tuple[str, asyncio.Future[_Any]]] = asyncio.Queue()
-        self._start_future: asyncio.Future[tuple[_Any, _Any, _Any, _Callable[[], _Awaitable[None]]]] | None = None
+        self._commands: asyncio.Queue[tuple[str, asyncio.Future[_Any]]] = (
+            asyncio.Queue()
+        )
+        self._start_future: (
+            asyncio.Future[tuple[_Any, _Any, _Any, _Callable[[], _Awaitable[None]]]]
+            | None
+        ) = None
         self._close_future: asyncio.Future[None] | None = None
         self._task = asyncio.create_task(self._run())
 
@@ -271,7 +389,9 @@ class _OwnedLifecycle:
         await asyncio.shield(self._close_future)
 
     async def _run(self) -> None:
-        resources: tuple[_Any, _Any, _Any, _Callable[[], _Awaitable[None]]] | None = None
+        resources: tuple[_Any, _Any, _Any, _Callable[[], _Awaitable[None]]] | None = (
+            None
+        )
         try:
             command, future = await self._commands.get()
             if command != "start":
@@ -309,7 +429,9 @@ class _OwnedLifecycle:
                 self._close_future.set_result(None)
 
     @staticmethod
-    def _set_future_exception(future: asyncio.Future[_Any], error: BaseException) -> None:
+    def _set_future_exception(
+        future: asyncio.Future[_Any], error: BaseException
+    ) -> None:
         """Publish an error while marking abandoned futures as retrieved."""
 
         future.set_exception(error)
@@ -342,7 +464,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
 
     def __init__(
         self,
-        kit: "AsyncMCPTestKit",
+        kit: AsyncMCPTestKit,
         server: _ServerValue,
         *,
         timeout: float,
@@ -428,12 +550,16 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
 
         return guarded
 
-    async def _raise_connection_failure(self, *, wait_for_failure: bool = False) -> None:
+    async def _raise_connection_failure(
+        self, *, wait_for_failure: bool = False
+    ) -> None:
         connection = self._connection
         if connection is None:
             return
         if wait_for_failure:
-            wait_for_publication = getattr(connection, "wait_for_failure_publication", None)
+            wait_for_publication = getattr(
+                connection, "wait_for_failure_publication", None
+            )
             if callable(wait_for_publication):
                 await wait_for_publication(_SERVER_FAILURE_SETTLE_TIMEOUT)
         raise_if_failed = getattr(connection, "raise_if_failed", None)
@@ -479,16 +605,24 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
             transport=_cast(_TransportName, transport),
             endpoint=f"<{transport}>",
             state=state,
-            protocol_version=initialization.protocol_version if initialization is not None else None,
+            protocol_version=initialization.protocol_version
+            if initialization is not None
+            else None,
             server_name=str(server_info["name"]) if "name" in server_info else None,
-            server_version=str(server_info["version"]) if "version" in server_info else None,
-            instructions=initialization.instructions is not None if initialization is not None else False,
+            server_version=str(server_info["version"])
+            if "version" in server_info
+            else None,
+            instructions=initialization.instructions is not None
+            if initialization is not None
+            else False,
             capabilities=capability_names,
             extensions=extensions,
             error_type=getattr(evidence, "error_kind", None),
         )
 
-    async def _open_resources(self) -> tuple[_Any, _Any, _Any, _Callable[[], _Awaitable[None]]]:
+    async def _open_resources(
+        self,
+    ) -> tuple[_Any, _Any, _Any, _Callable[[], _Awaitable[None]]]:
         owner: _Any
         connection: _Any
         session: _Any
@@ -523,7 +657,11 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
 
             return owner, connection, session, cleanup
         elif isinstance(server, _StdioServer):
-            resolver = self._secret_resolver.resolve if self._secret_resolver is not None else None
+            resolver = (
+                self._secret_resolver.resolve
+                if self._secret_resolver is not None
+                else None
+            )
             owner = _StdioMCPTransport(
                 server,
                 secret_resolver=resolver,
@@ -617,7 +755,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
         if hasattr(self._owner, "capture_session_metadata"):
             self._owner.capture_session_metadata()
 
-    async def __aenter__(self) -> "AsyncDirectClient":
+    async def __aenter__(self) -> AsyncDirectClient:
         if self._closed:
             raise RuntimeError("direct client is closed")
         if self._entered:
@@ -638,7 +776,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
                 await self.aclose()
             except BaseException:
                 pass
-            raise failure
+            raise failure from None
 
     def _mark_trace_failure(self, error: BaseException) -> None:
         if isinstance(error, (asyncio.CancelledError, _OperationCancelled)):
@@ -742,9 +880,17 @@ class AsyncMCPTestKit:
     ) -> None:
         self._closed = False
         scoped_run_id = run_id or _make_default_run_id()
-        self._run_id = scoped_run_id if isinstance(scoped_run_id, _RunId) else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
+        self._run_id = (
+            scoped_run_id
+            if isinstance(scoped_run_id, _RunId)
+            else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
+        )
         self._record_checks = _record_checks_enabled(record_checks)
-        self.config = config if isinstance(config, Config) else load_config(config, env=env, cwd=cwd)
+        self.config = (
+            config
+            if isinstance(config, Config)
+            else load_config(config, env=env, cwd=cwd)
+        )
         self._owns_store = False
         if store is None:
             scoped_store = _make_default_store()
@@ -755,9 +901,7 @@ class AsyncMCPTestKit:
         self._active_direct: set[AsyncDirectClient] = set()
         self._active_sessions: set[AsyncAgentSession] = set()
         self._adapter_registry = (
-            adapter_registry
-            if adapter_registry is not None
-            else _default_adapters()
+            adapter_registry if adapter_registry is not None else _default_adapters()
         )
         self._execution_controller = _AsyncExecutionController(
             self,
@@ -857,7 +1001,7 @@ class AsyncMCPTestKit:
             raise _TraceUnavailable("AsyncMCPTestKit has no execution store")
         return store.read_raw_evidence(reference, max_bytes=max_bytes)
 
-    async def __aenter__(self) -> "AsyncMCPTestKit":
+    async def __aenter__(self) -> AsyncMCPTestKit:
         self._ensure_open()
         # Construction is allowed outside an event loop. Bind a persistent
         # worker when the kit is actually entered so it can claim durable work
@@ -866,7 +1010,9 @@ class AsyncMCPTestKit:
             self._execution_controller.start_embedded_worker()
         return self
 
-    async def __aexit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+    async def __aexit__(
+        self, exc_type: object, exc_value: object, traceback: object
+    ) -> None:
         await self.aclose()
 
     async def aclose(self) -> None:
@@ -910,7 +1056,9 @@ class AsyncMCPTestKit:
             capability=_Capability(
                 name="configuration",
                 status=_CapabilityStatus.READY,
-                protocol_version=None if self.config.protocol_revision == "auto" else self.config.protocol_revision,
+                protocol_version=None
+                if self.config.protocol_revision == "auto"
+                else self.config.protocol_revision,
             ),
             evidence=ProbeEvidence(
                 kind=ProbeKind.CONFIGURATION,
@@ -921,9 +1069,13 @@ class AsyncMCPTestKit:
         memory = await self.probes.probe_storage("memory")
         results = (configuration, memory)
         capabilities = tuple(result.capability for result in results)
-        return ProbeReport(readiness=_Readiness(ready=True, capabilities=capabilities), results=results)
+        return ProbeReport(
+            readiness=_Readiness(ready=True, capabilities=capabilities), results=results
+        )
 
-    def register_evaluator(self, name: str, evaluator: _EvaluatorCallable | _AsyncEvaluator) -> None:
+    def register_evaluator(
+        self, name: str, evaluator: _EvaluatorCallable | _AsyncEvaluator
+    ) -> None:
         """Register an evaluator callback by its serializable name."""
 
         self._ensure_open()
@@ -965,7 +1117,9 @@ class AsyncMCPTestKit:
 
     def _unsupported(self, operation: str) -> _NoReturn:
         self._ensure_open()
-        raise _UnsupportedFeature(f"{operation} is not implemented in the configuration milestone")
+        raise _UnsupportedFeature(
+            f"{operation} is not implemented in the configuration milestone"
+        )
 
     async def run(self, spec: _DirectSpec | _AgentSpec) -> _ExecutionResult:
         self._ensure_open()
@@ -1025,9 +1179,17 @@ class AsyncMCPTestKit:
     ) -> AsyncDirectClient:
         self._ensure_open()
         selected = server.server if hasattr(server, "server") else server
-        binding = server if isinstance(server, _ServerBinding) else _ServerBinding(server=selected)
-        if selected is None or not isinstance(selected, (_InProcessServer, _StdioServer, _HTTPServer, _SSEServer)):
-            raise _UnsupportedFeature("direct server profiles require runtime resolution")
+        binding = (
+            server
+            if isinstance(server, _ServerBinding)
+            else _ServerBinding(server=selected)
+        )
+        if selected is None or not isinstance(
+            selected, (_InProcessServer, _StdioServer, _HTTPServer, _SSEServer)
+        ):
+            raise _UnsupportedFeature(
+                "direct server profiles require runtime resolution"
+            )
         if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be positive")
         requested_revision: str | None
@@ -1047,10 +1209,17 @@ class AsyncMCPTestKit:
             _HTTPServer: _TransportKind.STREAMABLE_HTTP,
             _SSEServer: _TransportKind.SSE,
         }[type(selected)]
-        if requested_transport is not None and requested_transport is not actual_transport:
-            raise _UnsupportedFeature("requested transport is not supported by this direct binding")
+        if (
+            requested_transport is not None
+            and requested_transport is not actual_transport
+        ):
+            raise _UnsupportedFeature(
+                "requested transport is not supported by this direct binding"
+            )
         if requested_revision not in {None, "", "auto", _CURRENT_MCP_PROTOCOL}:
-            raise _UnsupportedFeature("explicit MCP protocol revision is not supported by the official client")
+            raise _UnsupportedFeature(
+                "explicit MCP protocol revision is not supported by the official client"
+            )
         client = AsyncDirectClient(
             self,
             selected,
@@ -1129,11 +1298,15 @@ class AsyncMCPTestKit:
                 recorder_artifacts = getattr(store, "artifacts", None)
             recorder = _ExecutionTraceRecorder(
                 recorder_store,
-                _execution_id if _execution_id is not None else _ExecutionId(str(_uuid4())),
+                _execution_id
+                if _execution_id is not None
+                else _ExecutionId(str(_uuid4())),
                 redaction_config=self._execution_controller.redaction_config,
-                    specification=spec.model_dump(mode="json"),
-                    run_id=spec.run_id.root if spec.run_id is not None else self._run_id.root,
-                )
+                specification=spec.model_dump(mode="json"),
+                run_id=spec.run_id.root
+                if spec.run_id is not None
+                else self._run_id.root,
+            )
         elif _artifact_store is None:
             # Runtime-owned sessions already receive their artifact backend
             # through the execution handle.  Never replace the injected
@@ -1145,7 +1318,9 @@ class AsyncMCPTestKit:
             spec,
             resolved,
             server_manager=manager,
-            server_manager_factory=lambda: _ServerGroupManager(bindings, tool_policy=spec.tool_policy),
+            server_manager_factory=lambda: _ServerGroupManager(
+                bindings, tool_policy=spec.tool_policy
+            ),
             on_close=self._session_closed,
             event_sink=_event_sink,
             interaction_controller=interactions,
@@ -1163,7 +1338,7 @@ class AsyncMCPTestKit:
         return session
 
 
-__all__ = [
+__all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "AsyncAgentSession",
     "HarnessAdapter",
     "AsyncProbes",

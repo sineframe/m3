@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 import asyncio
+from pathlib import Path
 
 import pytest
 
-from mcp_pal import AgentSpec, ExecutionId, ExecutionOutcome, ExecutionState, EventKind
-from mcp_pal.services.acp_probes import ACPProbeKind, ACPProbeRequest
-from mcp_pal.harness import HarnessAdapterRegistry
+from mcp_pal import AgentSpec, EventKind, ExecutionId, ExecutionOutcome
 from mcp_pal.execution_trace import ExecutionTraceRecorder
+from mcp_pal.harness import HarnessAdapterRegistry
+from mcp_pal.services.acp_probes import ACPProbeKind, ACPProbeRequest
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal_app.services.app_service import AppRuntimeService
 from mcp_pal_app.services.execution_service import AppExecutionError
@@ -49,7 +49,7 @@ class _FalseyKit:
         ExecutionTraceRecorder(
             self.store,
             execution_id,
-            specification=getattr(spec, "model_dump")(mode="json"),
+            specification=spec.model_dump(mode="json"),
         )
         return _FalseyHandle(self.store, execution_id)
 
@@ -78,7 +78,9 @@ def _draft(profile_id: str, **updates: object) -> OneTurnRunDraft:
 def _runtime(tmp_path: Path) -> tuple[AppRuntimeService, _FalseyKit, str]:
     store = SQLiteExecutionStore(tmp_path / "runtime.sqlite")
     kit = _FalseyKit(store)
-    runtime = AppRuntimeService(_settings(tmp_path / "unused.sqlite"), store=store, kit=kit)
+    runtime = AppRuntimeService(
+        _settings(tmp_path / "unused.sqlite"), store=store, kit=kit
+    )
     profile = runtime.create_mcp(
         MCPProfileInput(
             name="test",
@@ -88,17 +90,27 @@ def _runtime(tmp_path: Path) -> tuple[AppRuntimeService, _FalseyKit, str]:
     return runtime, kit, profile.record.id
 
 
-def test_runtime_composes_injected_falsey_resources_and_typed_crud(tmp_path: Path) -> None:
+def test_runtime_composes_injected_falsey_resources_and_typed_crud(
+    tmp_path: Path,
+) -> None:
     runtime, kit, profile_id = _runtime(tmp_path)
     view = runtime.submit(_draft(profile_id))
     assert view.specification is not None
     assert view.snapshot.execution_id == ExecutionId("execution-test-1")
     assert runtime.get(view.snapshot.execution_id).report is not None
     assert runtime.list(limit=10).total == 1
-    assert runtime.report(view.snapshot.execution_id, event_limit=1).events_truncated is False
+    assert (
+        runtime.report(view.snapshot.execution_id, event_limit=1).events_truncated
+        is False
+    )
     runtime.cancel(view.snapshot.execution_id)
-    assert runtime.get(view.snapshot.execution_id).snapshot.outcome is ExecutionOutcome.CANCELLED
-    bounded = runtime.report(view.snapshot.execution_id, after_sequence=-1, event_limit=1)
+    assert (
+        runtime.get(view.snapshot.execution_id).snapshot.outcome
+        is ExecutionOutcome.CANCELLED
+    )
+    bounded = runtime.report(
+        view.snapshot.execution_id, after_sequence=-1, event_limit=1
+    )
     assert bounded.events_truncated is True
     assert bounded.next_after_sequence == bounded.events[-1].sequence
     runtime.delete(view.snapshot.execution_id)
@@ -111,7 +123,9 @@ def test_runtime_composes_injected_falsey_resources_and_typed_crud(tmp_path: Pat
     kit.store.close()
 
 
-def test_runtime_rejects_mismatched_injected_kit_and_registry_resources(tmp_path: Path) -> None:
+def test_runtime_rejects_mismatched_injected_kit_and_registry_resources(
+    tmp_path: Path,
+) -> None:
     store = SQLiteExecutionStore(tmp_path / "runtime.sqlite")
     other_store = SQLiteExecutionStore(tmp_path / "other.sqlite")
     kit = _FalseyKit(other_store)
@@ -173,7 +187,10 @@ def test_runtime_clear_terminal_history_and_seed_idempotency(tmp_path: Path) -> 
     runtime, _kit, _profile_id = _runtime(tmp_path)
     store = runtime.store
     runtime.profiles.ensure_builtins()
-    assert len([item for item in runtime.list_mcp() if item.record.name == "Excalidraw"]) == 1
+    assert (
+        len([item for item in runtime.list_mcp() if item.record.name == "Excalidraw"])
+        == 1
+    )
     execution_id = ExecutionId("finished-test")
     recorder = ExecutionTraceRecorder(store, execution_id)
     recorder.finalize(ExecutionOutcome.COMPLETED)
@@ -210,7 +227,10 @@ def test_terminal_trace_and_spec_reopen_in_a_second_runtime(tmp_path: Path) -> N
     )
     reopened_success = reopened.view(successful.snapshot.execution_id)
     assert reopened_success.specification is not None
-    assert reopened.report(successful.snapshot.execution_id).snapshot.outcome is ExecutionOutcome.COMPLETED
+    assert (
+        reopened.report(successful.snapshot.execution_id).snapshot.outcome
+        is ExecutionOutcome.COMPLETED
+    )
     reopened_failed = reopened.report(failed.snapshot.execution_id)
     assert reopened_failed.snapshot.outcome is ExecutionOutcome.FAILED
     assert reopened_success.report.events[-1].kind is EventKind.EXECUTION_FINISHED
@@ -221,14 +241,20 @@ def test_terminal_trace_and_spec_reopen_in_a_second_runtime(tmp_path: Path) -> N
 
 def test_builtin_fixed_id_wrong_kind_is_typed_failure(tmp_path: Path) -> None:
     store = SQLiteExecutionStore(tmp_path / "collision.sqlite")
-    store.create_harness_profile("collision", {"command": "echo"}, profile_id="00000000-0000-4000-8000-000000000001")
+    store.create_harness_profile(
+        "collision",
+        {"command": "echo"},
+        profile_id="00000000-0000-4000-8000-000000000001",
+    )
     runtime_settings = _settings(tmp_path / "unused.sqlite")
     with pytest.raises(BuiltinProfileError, match="reserved Excalidraw profile ID"):
         AppRuntimeService(runtime_settings, store=store, kit=_FalseyKit(store))
     store.close()
 
 
-def test_owned_runtime_rejects_settings_only_secret_in_acp_session_config(tmp_path: Path) -> None:
+def test_owned_runtime_rejects_settings_only_secret_in_acp_session_config(
+    tmp_path: Path,
+) -> None:
     canary = "settings-owned-acp-session-canary"
     settings = Settings(
         database_path=str(tmp_path / "owned.sqlite"),
@@ -238,13 +264,20 @@ def test_owned_runtime_rejects_settings_only_secret_in_acp_session_config(tmp_pa
     runtime = AppRuntimeService(
         settings,
         acp_probe_runner=lambda request: (
-            {"status": "verified", "config_options": [{"id": "credential", "type": "string", "default": "safe"}]}
+            {
+                "status": "verified",
+                "config_options": [
+                    {"id": "credential", "type": "string", "default": "safe"}
+                ],
+            }
             if request.probe_type is ACPProbeKind.PROTOCOL
             else {"status": "verified"}
         ),
     )
     profile = runtime.create_harness(
-        HarnessProfileInput(name="acp", manifest={"command": "echo"}, trusted_unsandboxed=True)
+        HarnessProfileInput(
+            name="acp", manifest={"command": "echo"}, trusted_unsandboxed=True
+        )
     )
     revision = runtime.store.resolve_revision(profile.record.id)
     protocol_request = ACPProbeRequest(
@@ -252,7 +285,9 @@ def test_owned_runtime_rejects_settings_only_secret_in_acp_session_config(tmp_pa
         revision_id=str(revision.id.root),
         probe_type=ACPProbeKind.PROTOCOL,
     )
-    assert asyncio.run(runtime.acp_probes.run(protocol_request)).status.value == "verified"
+    assert (
+        asyncio.run(runtime.acp_probes.run(protocol_request)).status.value == "verified"
+    )
     request = ACPProbeRequest(
         profile_id=profile.record.id,
         revision_id=str(revision.id.root),

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 import pytest
+
 from mcp_pal.observability import (
     ACPTrace,
     ClaudeCodeTrace,
@@ -39,11 +40,11 @@ from mcp_pal.observability import (
     ToolCallEntry,
     ToolCallStatus,
     ToolResult,
-    TransportEntry,
     TraceEntry,
     TraceSummary,
     TraceTiming,
     TraceView,
+    TransportEntry,
     UsageEntry,
     UsageValue,
     WireToolCall,
@@ -54,9 +55,9 @@ from mcp_pal.types import (
     EventDirection,
     EventOrigin,
     EventSource,
+    EvidenceRef,
     ExecutionId,
     ExecutionOutcome,
-    EvidenceRef,
     TextContent,
     TraceId,
     TransportKind,

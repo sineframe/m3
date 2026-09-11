@@ -7,49 +7,94 @@ called.  Pytest integration remains an optional boundary around ``cases()``.
 
 from __future__ import annotations
 
-import keyword as _keyword
 import hashlib as _hashlib
 import json as _json
-from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+import keyword as _keyword
+from collections.abc import Iterable as _Iterable
+from collections.abc import Mapping as _Mapping
+from contextlib import (
+    AbstractAsyncContextManager as _AsyncContextManager,
+)
+from contextlib import (
+    AbstractContextManager as _ContextManager,
+)
 from math import isfinite as _isfinite
 from typing import (
     TYPE_CHECKING as _TYPE_CHECKING,
+)
+from typing import (
     Any as _Any,
-    AsyncContextManager as _AsyncContextManager,
-    ContextManager as _ContextManager,
+)
+from typing import (
     Literal as _Literal,
 )
 
-from pydantic import Field as _Field, model_validator as _model_validator
+from pydantic import Field as _Field
+from pydantic import model_validator as _model_validator
 
+from .errors import UnsupportedFeature as _UnsupportedFeature
 from .types import (
     ACPAgent as _ACPAgent,
+)
+from .types import (
     AgentSpec as _AgentSpec,
+)
+from .types import (
     CallTool as _CallTool,
+)
+from .types import (
     ClaudeCode as _ClaudeCode,
+)
+from .types import (
     Codex as _Codex,
+)
+from .types import (
     DirectSpec as _DirectSpec,
+)
+from .types import (
     ExecutionResult as _ExecutionResult,
+)
+from .types import (
     FrozenModel as _FrozenModel,
+)
+from .types import (
     InProcessServer as _InProcessServer,
+)
+from .types import (
     NativeToolPolicy as _NativeToolPolicy,
+)
+from .types import (
     OpenCode as _OpenCode,
+)
+from .types import (
     Pi as _Pi,
+)
+from .types import (
     RestrictiveToolPolicy as _RestrictiveToolPolicy,
+)
+from .types import (
     ServerBinding as _ServerBinding,
+)
+from .types import (
     ServerValue as _ServerValue,
-    ToolPolicy as _ToolPolicy,
+)
+from .types import (
     TextContent as _TextContent,
+)
+from .types import (
+    ToolPolicy as _ToolPolicy,
+)
+from .types import (
     UserMessage as _UserMessage,
 )
-from .errors import UnsupportedFeature as _UnsupportedFeature
 
 if _TYPE_CHECKING:
     import pytest as _pytest
 
     from .agent_session import AsyncAgentSession as _AsyncAgentSession
     from .async_api import AsyncMCPTestKit as _AsyncMCPTestKit
-    from .sync_api import AgentSession as _AgentSession, MCPTestKit as _MCPTestKit
+    from .sync_api import AgentSession as _AgentSession
+    from .sync_api import MCPTestKit as _MCPTestKit
 
 
 _Scalar = str | int | float | bool | None
@@ -89,7 +134,7 @@ def _validate_parametrize_argname(argname: str) -> None:
 def _pytest_parametrize(
     argname: str,
     cases: tuple[_Any, ...],
-) -> "_pytest.MarkDecorator":
+) -> _pytest.MarkDecorator:
     _validate_parametrize_argname(argname)
     try:
         import pytest as _pytest_runtime
@@ -116,10 +161,11 @@ class ToolCase(_FrozenModel):
     prompt: str | _UserMessage | None = None
 
     @_model_validator(mode="after")
-    def _default_logical_id(self) -> "ToolCase":
+    def _default_logical_id(self) -> ToolCase:
         if self.id is None:
             object.__setattr__(self, "id", self.name)
         return self
+
 
 class ServerCase(_FrozenModel):
     """A serializable MCP server and its owned logical tool cases."""
@@ -129,9 +175,11 @@ class ServerCase(_FrozenModel):
     tools: tuple[ToolCase, ...]
 
     @_model_validator(mode="after")
-    def _validate_tools_and_server(self) -> "ServerCase":
+    def _validate_tools_and_server(self) -> ServerCase:
         if isinstance(self.server, _InProcessServer):
-            raise ValueError("ServerCase does not support InProcessServer; use a serializable server")
+            raise ValueError(
+                "ServerCase does not support InProcessServer; use a serializable server"
+            )
         if not self.tools:
             raise ValueError(f"ServerCase {self.name!r} must define at least one tool")
         seen: dict[str, int] = {}
@@ -214,7 +262,7 @@ class ToolMatrixCase(_FrozenModel):
     def run(
         self,
         *,
-        kit: "_MCPTestKit" | None = None,
+        kit: _MCPTestKit | None = None,
         timeout: float | None = None,
         validate_schemas: bool = False,
         metadata: _Mapping[str, _Scalar] | None = None,
@@ -241,7 +289,7 @@ class ToolMatrixCase(_FrozenModel):
     async def run_async(
         self,
         *,
-        kit: "_AsyncMCPTestKit" | None = None,
+        kit: _AsyncMCPTestKit | None = None,
         timeout: float | None = None,
         validate_schemas: bool = False,
         metadata: _Mapping[str, _Scalar] | None = None,
@@ -280,7 +328,7 @@ class HarnessMatrixCase(_FrozenModel):
     selected_tool_id: str | None = _Field(default=None, min_length=1, max_length=256)
 
     @_model_validator(mode="after")
-    def _validate_scope(self) -> "HarnessMatrixCase":
+    def _validate_scope(self) -> HarnessMatrixCase:
         if not self.servers:
             raise ValueError("harness matrix case requires at least one server")
         if self.mode in {"each_server", "each_tool"} and len(self.servers) != 1:
@@ -289,7 +337,9 @@ class HarnessMatrixCase(_FrozenModel):
             )
         if self.mode == "each_tool":
             if self.selected_tool_id is None:
-                raise ValueError("each_tool harness matrix cases require selected_tool_id")
+                raise ValueError(
+                    "each_tool harness matrix cases require selected_tool_id"
+                )
             try:
                 self.servers[0].tool(self.selected_tool_id)
             except KeyError as exc:
@@ -303,7 +353,9 @@ class HarnessMatrixCase(_FrozenModel):
     @property
     def server(self) -> ServerCase:
         if self.mode not in {"each_server", "each_tool"}:
-            raise ValueError("server is only available for each_server and each_tool matrix cases")
+            raise ValueError(
+                "server is only available for each_server and each_tool matrix cases"
+            )
         return self.servers[0]
 
     @property
@@ -325,7 +377,7 @@ class HarnessMatrixCase(_FrozenModel):
         matrix_id: str | None = None,
         cell_id: str | None = None,
         trial_count: int = 1,
-    ) -> "HarnessMatrixCase":
+    ) -> HarnessMatrixCase:
         return cls(
             id=id,
             mode=mode,
@@ -362,9 +414,7 @@ class HarnessMatrixCase(_FrozenModel):
             server = self.server
             return ((server.name, self.tool),)
         return tuple(
-            (server.name, tool)
-            for server in self.servers
-            for tool in server.tools
+            (server.name, tool) for server in self.servers for tool in server.tools
         )
 
     def _policy(self, explicit: _ToolPolicy | None) -> _ToolPolicy:
@@ -381,8 +431,7 @@ class HarnessMatrixCase(_FrozenModel):
                 ),
             )
         qualified = tuple(
-            f"{server_name}:{tool.name}"
-            for server_name, tool in self._selected_tools()
+            f"{server_name}:{tool.name}" for server_name, tool in self._selected_tools()
         )
         return _RestrictiveToolPolicy(allowed_tools=qualified)
 
@@ -407,9 +456,7 @@ class HarnessMatrixCase(_FrozenModel):
                     if isinstance(prompt, str)
                     else prompt
                 )
-        raise ValueError(
-            f"matrix case {self.id!r} requires an explicit message"
-        )
+        raise ValueError(f"matrix case {self.id!r} requires an explicit message")
 
     def _spec(
         self,
@@ -448,7 +495,7 @@ class HarnessMatrixCase(_FrozenModel):
         self,
         message: str | _UserMessage | None = None,
         *,
-        kit: "_MCPTestKit" | None = None,
+        kit: _MCPTestKit | None = None,
         timeout: float | None = None,
         tool_policy: _ToolPolicy | None = None,
         metadata: _Mapping[str, _Scalar] | None = None,
@@ -477,7 +524,7 @@ class HarnessMatrixCase(_FrozenModel):
         self,
         message: str | _UserMessage | None = None,
         *,
-        kit: "_AsyncMCPTestKit" | None = None,
+        kit: _AsyncMCPTestKit | None = None,
         timeout: float | None = None,
         tool_policy: _ToolPolicy | None = None,
         metadata: _Mapping[str, _Scalar] | None = None,
@@ -505,7 +552,7 @@ class HarnessMatrixCase(_FrozenModel):
     def session(
         self,
         *,
-        kit: "_MCPTestKit" | None = None,
+        kit: _MCPTestKit | None = None,
         tool_policy: _ToolPolicy | None = None,
         metadata: _Mapping[str, _Scalar] | None = None,
     ) -> _ContextManager[_AgentSession]:
@@ -518,7 +565,7 @@ class HarnessMatrixCase(_FrozenModel):
     def async_session(
         self,
         *,
-        kit: "_AsyncMCPTestKit" | None = None,
+        kit: _AsyncMCPTestKit | None = None,
         tool_policy: _ToolPolicy | None = None,
         metadata: _Mapping[str, _Scalar] | None = None,
     ) -> _AsyncContextManager[_AsyncAgentSession]:
@@ -576,7 +623,9 @@ def _ensure_unique_ids(ids: _Iterable[str]) -> None:
 
 def _derived_matrix_id(value: object) -> str:
     """Derive a stable identity from the logical matrix definition."""
-    encoded = _json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+    encoded = _json.dumps(
+        value, sort_keys=True, separators=(",", ":"), default=str
+    ).encode()
     return "matrix-" + _hashlib.sha256(encoded).hexdigest()[:24]
 
 
@@ -589,12 +638,22 @@ class ToolMatrix(_FrozenModel):
     trials: int = _Field(default=1, strict=True, ge=1)
 
     @_model_validator(mode="after")
-    def _validate_matrix(self) -> "ToolMatrix":
+    def _validate_matrix(self) -> ToolMatrix:
         _validate_servers(self.servers)
         _validate_trials(self.trials)
-        if self.id is not None and self.matrix_id is not None and self.id != self.matrix_id:
+        if (
+            self.id is not None
+            and self.matrix_id is not None
+            and self.id != self.matrix_id
+        ):
             raise ValueError("matrix id and matrix_id must match")
-        resolved_id = self.matrix_id or self.id or _derived_matrix_id(self.model_dump(mode="json", exclude={"id", "matrix_id", "trials"}))
+        resolved_id = (
+            self.matrix_id
+            or self.id
+            or _derived_matrix_id(
+                self.model_dump(mode="json", exclude={"id", "matrix_id", "trials"})
+            )
+        )
         object.__setattr__(self, "matrix_id", resolved_id)
         object.__setattr__(self, "id", resolved_id)
         _ensure_unique_ids(
@@ -607,7 +666,9 @@ class ToolMatrix(_FrozenModel):
     def cases(self) -> tuple[ToolMatrixCase, ...]:
         return tuple(
             ToolMatrixCase(
-                id=f"{server.name}/{_tool_id(tool)}" if self.trials == 1 else f"{server.name}/{_tool_id(tool)}/trial-{trial}",
+                id=f"{server.name}/{_tool_id(tool)}"
+                if self.trials == 1
+                else f"{server.name}/{_tool_id(tool)}/trial-{trial}",
                 server=server,
                 tool=tool,
                 matrix_id=self.matrix_id,
@@ -620,7 +681,7 @@ class ToolMatrix(_FrozenModel):
             for trial in range(1, self.trials + 1)
         )
 
-    def parametrize(self, argname: str = "case") -> "_pytest.MarkDecorator":
+    def parametrize(self, argname: str = "case") -> _pytest.MarkDecorator:
         """Return pytest's ordinary parametrization decorator for this matrix."""
 
         return _pytest_parametrize(argname, self.cases())
@@ -637,13 +698,23 @@ class HarnessMatrix(_FrozenModel):
     matrix_id: str | None = _Field(default=None, min_length=1, max_length=256)
 
     @_model_validator(mode="after")
-    def _validate_matrix(self) -> "HarnessMatrix":
+    def _validate_matrix(self) -> HarnessMatrix:
         _validate_servers(self.servers)
         _validate_harnesses(self.harnesses)
         _validate_trials(self.trials)
-        if self.id is not None and self.matrix_id is not None and self.id != self.matrix_id:
+        if (
+            self.id is not None
+            and self.matrix_id is not None
+            and self.id != self.matrix_id
+        ):
             raise ValueError("matrix id and matrix_id must match")
-        resolved_id = self.matrix_id or self.id or _derived_matrix_id(self.model_dump(mode="json", exclude={"id", "matrix_id", "trials"}))
+        resolved_id = (
+            self.matrix_id
+            or self.id
+            or _derived_matrix_id(
+                self.model_dump(mode="json", exclude={"id", "matrix_id", "trials"})
+            )
+        )
         object.__setattr__(self, "matrix_id", resolved_id)
         object.__setattr__(self, "id", resolved_id)
         if self.mode == "all_servers" and any(
@@ -685,7 +756,7 @@ class HarnessMatrix(_FrozenModel):
         harnesses: _Iterable[HarnessCase],
         trials: int = 1,
         id: str | None = None,
-    ) -> "HarnessMatrix":
+    ) -> HarnessMatrix:
         return cls(
             mode="each_server",
             servers=tuple(servers),
@@ -702,7 +773,7 @@ class HarnessMatrix(_FrozenModel):
         harnesses: _Iterable[HarnessCase],
         trials: int = 1,
         id: str | None = None,
-    ) -> "HarnessMatrix":
+    ) -> HarnessMatrix:
         return cls(
             mode="all_servers",
             servers=tuple(servers),
@@ -719,7 +790,7 @@ class HarnessMatrix(_FrozenModel):
         harnesses: _Iterable[HarnessCase],
         trials: int = 1,
         id: str | None = None,
-    ) -> "HarnessMatrix":
+    ) -> HarnessMatrix:
         return cls(
             mode="each_tool",
             servers=tuple(servers),
@@ -763,7 +834,9 @@ class HarnessMatrix(_FrozenModel):
             )
         return tuple(
             HarnessMatrixCase._build(
-                id=self._case_id(f"{server.name}/{_tool_id(tool)}", harness.name, trial),
+                id=self._case_id(
+                    f"{server.name}/{_tool_id(tool)}", harness.name, trial
+                ),
                 mode=self.mode,
                 harness=harness,
                 servers=(server,),
@@ -783,20 +856,20 @@ class HarnessMatrix(_FrozenModel):
         base = f"{scope}/{harness}"
         return f"{base}/trial-{trial}" if self.trials > 1 else base
 
-    def parametrize(self, argname: str = "case") -> "_pytest.MarkDecorator":
+    def parametrize(self, argname: str = "case") -> _pytest.MarkDecorator:
         """Return pytest's ordinary parametrization decorator for this matrix."""
 
         return _pytest_parametrize(argname, self.cases())
 
 
 class _MatrixSessionContext:
-    def __init__(self, spec: _AgentSpec, kit: "_MCPTestKit" | None) -> None:
+    def __init__(self, spec: _AgentSpec, kit: _MCPTestKit | None) -> None:
         self._spec = spec
         self._kit = kit
         self._owned = kit is None
-        self._session: "_AgentSession" | None = None
+        self._session: _AgentSession | None = None
 
-    def __enter__(self) -> "_AgentSession":
+    def __enter__(self) -> _AgentSession:
         selected = self._kit
         if selected is None:
             from .sync_api import MCPTestKit as _MCPTestKitRuntime
@@ -824,13 +897,13 @@ class _MatrixSessionContext:
 
 
 class _AsyncMatrixSessionContext:
-    def __init__(self, spec: _AgentSpec, kit: "_AsyncMCPTestKit" | None) -> None:
+    def __init__(self, spec: _AgentSpec, kit: _AsyncMCPTestKit | None) -> None:
         self._spec = spec
         self._kit = kit
         self._owned = kit is None
-        self._session: "_AsyncAgentSession | None" = None
+        self._session: _AsyncAgentSession | None = None
 
-    async def __aenter__(self) -> "_AsyncAgentSession":
+    async def __aenter__(self) -> _AsyncAgentSession:
         selected = self._kit
         if selected is None:
             from .async_api import AsyncMCPTestKit as _AsyncMCPTestKitRuntime
@@ -846,7 +919,9 @@ class _AsyncMatrixSessionContext:
                 await selected.aclose()
             raise
 
-    async def __aexit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+    async def __aexit__(
+        self, exc_type: object, exc_value: object, traceback: object
+    ) -> None:
         session = self._session
         if session is None:
             return

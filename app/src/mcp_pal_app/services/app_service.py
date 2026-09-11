@@ -15,29 +15,36 @@ from mcp_pal import (
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
+    ExecutionReport,
     ExecutionSpec,
     ExecutionState,
     MCPTestKit,
-    ExecutionReport,
     RevisionId,
     RevisionSelection,
 )
-from mcp_pal.harness import AcpHarnessAdapter, ClaudeCodeHarnessAdapter, HarnessAdapterRegistry, OpenCodeHarnessAdapter
+from mcp_pal.harness import (
+    AcpHarnessAdapter,
+    ClaudeCodeHarnessAdapter,
+    HarnessAdapterRegistry,
+    OpenCodeHarnessAdapter,
+)
 from mcp_pal.services.acp_probes import Runner
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.trace.redaction import RedactionConfig
 from mcp_pal.types import ExecutionStatus
-
-from mcp_pal_app.services.execution_service import AppExecutionError, AppExecutionService
 from mcp_pal_app.services.acp_probe_service import ACPProbes
+from mcp_pal_app.services.execution_service import (
+    AppExecutionError,
+    AppExecutionService,
+)
 from mcp_pal_app.services.profile_service import (
     HarnessProfileInput,
     MCPProfileInput,
     ProfileService,
     ProfileView,
 )
-from mcp_pal_app.services.spec_builder import ExecutionSpecBuilder, OneTurnRunDraft
 from mcp_pal_app.services.readiness_service import ReadinessService, ReadinessView
+from mcp_pal_app.services.spec_builder import ExecutionSpecBuilder, OneTurnRunDraft
 from mcp_pal_app.settings import Settings
 
 
@@ -66,14 +73,16 @@ def build_harness_adapter_registry(settings: Settings) -> HarnessAdapterRegistry
     registry.register(
         "claude_code",
         lambda harness: ClaudeCodeHarnessAdapter(
-            executable=getattr(harness, "executable", None) or settings.claude_executable,
+            executable=getattr(harness, "executable", None)
+            or settings.claude_executable,
             environment=selected_environment(harness),
         ),
     )
     registry.register(
         "opencode",
         lambda harness: OpenCodeHarnessAdapter(
-            executable=getattr(harness, "executable", None) or settings.opencode_executable,
+            executable=getattr(harness, "executable", None)
+            or settings.opencode_executable,
             environment=selected_environment(harness),
         ),
     )
@@ -140,9 +149,13 @@ class AppRuntimeService:
         if kit is not None:
             kit_store = getattr(kit, "store", None)
             if kit_store is not store:
-                raise ValueError("injected kit and store must be the same runtime resources")
+                raise ValueError(
+                    "injected kit and store must be the same runtime resources"
+                )
             if adapter_registry is not None:
-                raise ValueError("adapter_registry must be supplied when the kit is constructed")
+                raise ValueError(
+                    "adapter_registry must be supplied when the kit is constructed"
+                )
         self.settings = settings if settings is not None else Settings()
         if store is None:
             # Settings credentials are process-only values, but they must be
@@ -157,7 +170,9 @@ class AppRuntimeService:
             redaction = RedactionConfig.from_environment(
                 secrets=(value for value in credential_values if value)
             )
-            self.store = SQLiteExecutionStore(self.settings.database_path, config=redaction)
+            self.store = SQLiteExecutionStore(
+                self.settings.database_path, config=redaction
+            )
         else:
             self.store = store
         self._owns_store = store is None
@@ -170,18 +185,31 @@ class AppRuntimeService:
                 if adapter_registry is not None
                 else build_harness_adapter_registry(self.settings)
             )
-            self.kit = kit if kit is not None else MCPTestKit(
-                store=self.store,
-                adapter_registry=registry,
+            self.kit = (
+                kit
+                if kit is not None
+                else MCPTestKit(
+                    store=self.store,
+                    adapter_registry=registry,
+                )
             )
             self._owns_kit = kit is None
             self.specs = ExecutionSpecBuilder(self.store, self.settings)
             self.executions = AppExecutionService(self.store, self.kit)
             if acp_probe_service is not None and acp_probe_runner is not None:
-                raise ValueError("acp_probe_service and acp_probe_runner are mutually exclusive")
-            self._acp_probes = acp_probe_service or ACPProbes(self.store, acp_probe_runner)
-            if acp_probe_service is not None and acp_probe_service.store is not self.store:
-                raise ValueError("injected ACP probe service and store must be the same runtime resources")
+                raise ValueError(
+                    "acp_probe_service and acp_probe_runner are mutually exclusive"
+                )
+            self._acp_probes = acp_probe_service or ACPProbes(
+                self.store, acp_probe_runner
+            )
+            if (
+                acp_probe_service is not None
+                and acp_probe_service.store is not self.store
+            ):
+                raise ValueError(
+                    "injected ACP probe service and store must be the same runtime resources"
+                )
             # Readiness is an application-owned, transport-neutral snapshot
             # facade. It shares this runtime's settings/store/profile seam so
             # direct clients and the eventual UI cannot drift into separate
@@ -189,7 +217,9 @@ class AppRuntimeService:
             self._readiness = (
                 readiness_service
                 if readiness_service is not None
-                else ReadinessService(self.settings, self.store, lifecycle_guard=self._ensure_open)
+                else ReadinessService(
+                    self.settings, self.store, lifecycle_guard=self._ensure_open
+                )
             )
             self._closed = False
         except BaseException:
@@ -234,7 +264,9 @@ class AppRuntimeService:
 
     def view(self, execution_id: ExecutionId | str) -> ExecutionView:
         self._ensure_open()
-        report = self.executions.report(execution_id, event_limit=100, artifact_limit=100)
+        report = self.executions.report(
+            execution_id, event_limit=100, artifact_limit=100
+        )
         specification = self.store.get_execution_spec(execution_id)
         return ExecutionView(report.snapshot, specification, report)
 
@@ -249,13 +281,29 @@ class AppRuntimeService:
         outcome: ExecutionOutcome | str | None = None,
     ) -> ExecutionPage:
         self._ensure_open()
-        return self.executions.list(limit=limit, offset=offset, lifecycle=lifecycle, outcome=outcome)
+        return self.executions.list(
+            limit=limit, offset=offset, lifecycle=lifecycle, outcome=outcome
+        )
 
-    def report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int = 100, artifact_limit: int = 100) -> ExecutionReport:
+    def report(
+        self,
+        execution_id: ExecutionId | str,
+        *,
+        after_sequence: int = -1,
+        event_limit: int = 100,
+        artifact_limit: int = 100,
+    ) -> ExecutionReport:
         self._ensure_open()
-        return self.executions.report(execution_id, after_sequence=after_sequence, event_limit=event_limit, artifact_limit=artifact_limit)
+        return self.executions.report(
+            execution_id,
+            after_sequence=after_sequence,
+            event_limit=event_limit,
+            artifact_limit=artifact_limit,
+        )
 
-    def cancel(self, execution_id: ExecutionId | str, reason: str | None = None) -> ExecutionView:
+    def cancel(
+        self, execution_id: ExecutionId | str, reason: str | None = None
+    ) -> ExecutionView:
         self._ensure_open()
         self.executions.cancel(execution_id, reason)
         return self.view(execution_id)
@@ -277,7 +325,9 @@ class AppRuntimeService:
             offset += len(page.items)
             if not page.items or offset >= page.total:
                 break
-        if any(snapshot.lifecycle is not ExecutionStatus.FINISHED for snapshot in snapshots):
+        if any(
+            snapshot.lifecycle is not ExecutionStatus.FINISHED for snapshot in snapshots
+        ):
             raise AppExecutionError(
                 "execution_active",
                 "active executions must finish before history can be cleared",
@@ -291,7 +341,13 @@ class AppRuntimeService:
         if not isinstance(spec, AgentSpec):
             raise ValueError("execution does not contain an agent draft")
         metadata = dict(spec.metadata)
-        message = next((getattr(block, "text", "") for block in (spec.message.content if spec.message else ())), "")
+        message = next(
+            (
+                getattr(block, "text", "")
+                for block in (spec.message.content if spec.message else ())
+            ),
+            "",
+        )
         harness = spec.harness
         if harness is None:
             raise ValueError("execution harness is unavailable")
@@ -311,11 +367,25 @@ class AppRuntimeService:
         }
         return OneTurnRunDraft(
             profile_id=str(metadata["mcp_profile_id"]),
-            profile_revision=self._pinned(str(metadata["mcp_profile_id"]), str(metadata["mcp_revision_id"])),
+            profile_revision=self._pinned(
+                str(metadata["mcp_profile_id"]), str(metadata["mcp_revision_id"])
+            ),
             enabled_server=str(metadata["enabled_server"]),
-            harness={"claude_code": "claude-code", "opencode": "opencode", "acp": "acp"}[harness.kind],
-            harness_profile_id=str(metadata["harness_profile_id"]) if metadata.get("harness_profile_id") else None,
-            harness_revision=self._pinned(str(metadata["harness_profile_id"]), str(metadata["harness_revision_id"])) if metadata.get("harness_profile_id") and metadata.get("harness_revision_id") else RevisionSelection(mode="latest"),
+            harness={
+                "claude_code": "claude-code",
+                "opencode": "opencode",
+                "acp": "acp",
+            }[harness.kind],
+            harness_profile_id=str(metadata["harness_profile_id"])
+            if metadata.get("harness_profile_id")
+            else None,
+            harness_revision=self._pinned(
+                str(metadata["harness_profile_id"]),
+                str(metadata["harness_revision_id"]),
+            )
+            if metadata.get("harness_profile_id")
+            and metadata.get("harness_revision_id")
+            else RevisionSelection(mode="latest"),
             model=selected_model,
             prompt=message,
             expected_goal=str(metadata.get("expected_goal", spec.goal or "goal")),
@@ -328,10 +398,16 @@ class AppRuntimeService:
 
     def _pinned(self, profile_id: str, revision_id: str) -> RevisionSelection:
         revisions = self.profiles.store.list_profile_revisions(profile_id)
-        revision = next((item for item in revisions if str(item.id.root) == revision_id), None)
+        revision = next(
+            (item for item in revisions if str(item.id.root) == revision_id), None
+        )
         if revision is None:
             raise ValueError("execution profile revision is unavailable")
-        return RevisionSelection(mode="pinned", revision_id=RevisionId(revision_id), revision_number=revision.revision_number)
+        return RevisionSelection(
+            mode="pinned",
+            revision_id=RevisionId(revision_id),
+            revision_number=revision.revision_number,
+        )
 
     # Explicit profile operations keep the UI independent of the persistence
     # implementation and avoid exposing transport-shaped dictionaries.
@@ -347,14 +423,20 @@ class AppRuntimeService:
     def create_harness(self, value: HarnessProfileInput) -> ProfileView:
         return self.profiles.create_harness(value)
 
-    def list_harness(self, *, include_archived: bool = False) -> tuple[ProfileView, ...]:
+    def list_harness(
+        self, *, include_archived: bool = False
+    ) -> tuple[ProfileView, ...]:
         return self.profiles.list_harness(include_archived=include_archived)
 
     def get_harness(self, profile_id: str) -> ProfileView:
         return self.profiles.get_harness(profile_id)
 
     def update_mcp(
-        self, profile_id: str, *, name: str | None = None, description: str | None = None
+        self,
+        profile_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
     ) -> ProfileView:
         return self.profiles.update_mcp(profile_id, name=name, description=description)
 
@@ -368,9 +450,15 @@ class AppRuntimeService:
         return self.profiles.restore_mcp(profile_id)
 
     def update_harness(
-        self, profile_id: str, *, name: str | None = None, description: str | None = None
+        self,
+        profile_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
     ) -> ProfileView:
-        return self.profiles.update_harness(profile_id, name=name, description=description)
+        return self.profiles.update_harness(
+            profile_id, name=name, description=description
+        )
 
     def add_harness_revision(
         self,
@@ -415,7 +503,7 @@ class AppRuntimeService:
         if failure is not None:
             raise failure
 
-    def __enter__(self) -> "AppRuntimeService":
+    def __enter__(self) -> AppRuntimeService:
         self._ensure_open()
         return self
 
@@ -428,10 +516,10 @@ AppService = AppRuntimeService
 
 __all__ = [
     "AppRuntimeService",
-    "ApplicationService",
     "AppService",
+    "ApplicationService",
     "ExecutionView",
-    "RuntimeKit",
     "ReadinessProvider",
+    "RuntimeKit",
     "build_harness_adapter_registry",
 ]

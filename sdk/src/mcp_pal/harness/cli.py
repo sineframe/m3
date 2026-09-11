@@ -10,6 +10,7 @@ All output is JSON, making the commands convenient in shell scripts and CI.
 Probe commands are intentionally opt-in and launch the executable from the
 manifest on the local machine.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,15 +25,23 @@ from .manifest import ManifestValidationError, load_manifest, validate_manifest
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mcp-pal-harness")
     sub = parser.add_subparsers(dest="command", required=True)
-    validate = sub.add_parser("validate", help="validate a manifest without launching it")
+    validate = sub.add_parser(
+        "validate", help="validate a manifest without launching it"
+    )
     validate.add_argument("manifest", help="JSON path, or - for stdin")
-    validate.add_argument("--check-local", action="store_true", help="also report executable/environment readiness")
+    validate.add_argument(
+        "--check-local",
+        action="store_true",
+        help="also report executable/environment readiness",
+    )
     probe = sub.add_parser("probe", help="run an opt-in ACP protocol or full probe")
     probe.add_argument("manifest", help="JSON path, or - for stdin")
     probe.add_argument("--kind", choices=("protocol", "full"), default="protocol")
     probe.add_argument("--transport", choices=("stdio", "http", "sse"), default="stdio")
     probe.add_argument("--mode-id")
-    probe.add_argument("--session-config", default="{}", help="JSON object of ACP config options")
+    probe.add_argument(
+        "--session-config", default="{}", help="JSON object of ACP config options"
+    )
     characterize = sub.add_parser(
         "characterize",
         help="run an explicitly authorized live ACP characterization",
@@ -44,9 +53,13 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="allow launching the configured ACP executable",
     )
-    characterize.add_argument("--transport", choices=("stdio", "http", "sse"), default="stdio")
+    characterize.add_argument(
+        "--transport", choices=("stdio", "http", "sse"), default="stdio"
+    )
     characterize.add_argument("--mode-id")
-    characterize.add_argument("--session-config", default="{}", help="JSON object of ACP config options")
+    characterize.add_argument(
+        "--session-config", default="{}", help="JSON object of ACP config options"
+    )
     return parser
 
 
@@ -64,7 +77,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             config = json.loads(args.session_config)
         except json.JSONDecodeError as exc:
-            raise ManifestValidationError(f"--session-config must be JSON: {exc}") from exc
+            raise ManifestValidationError(
+                f"--session-config must be JSON: {exc}"
+            ) from exc
         if not isinstance(config, dict):
             raise ManifestValidationError("--session-config must be a JSON object")
         from .acp import full_probe, protocol_probe

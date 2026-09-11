@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from acp_fixture import probe_agent
+
 from mcp_pal.services.acp_probes import ACPProbeKind, ACPProbeRequest, ACPProbeStatus
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal_app.services.app_service import AppRuntimeService
@@ -98,9 +99,13 @@ def test_runtime_sdk_acp_protocol_full_persists_and_reopens(tmp_path: Path) -> N
     runtime.close()
 
     reopened_store = SQLiteExecutionStore(database)
-    reopened = AppRuntimeService(settings, store=reopened_store, kit=_ReopenedKit(reopened_store))
+    reopened = AppRuntimeService(
+        settings, store=reopened_store, kit=_ReopenedKit(reopened_store)
+    )
     reopened_descriptor = next(
-        item for item in reopened.capabilities().acp_profiles if item.profile_id == profile.record.id
+        item
+        for item in reopened.capabilities().acp_profiles
+        if item.profile_id == profile.record.id
     )
     assert reopened_descriptor.full_verified
     persisted = reopened.acp_probes.latest(full_request)

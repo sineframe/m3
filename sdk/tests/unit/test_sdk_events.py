@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 import importlib
 import json
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from importlib import resources
 
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from mcp_pal.execution_trace import ExecutionTraceRecorder
 from mcp_pal.events import (
     EVENT_SCHEMA_ID,
     EVENT_SCHEMA_VERSION,
@@ -20,16 +19,17 @@ from mcp_pal.events import (
     EventFactory,
     EventKind,
     EventOrigin,
-    PayloadRef,
-    EventSource,
-    LifecyclePhase,
     EventSequence,
-    RequestSequence,
+    EventSource,
     EvidenceRef,
+    LifecyclePhase,
+    PayloadRef,
     ReasoningState,
     ReasoningVisibility,
     RequestLink,
+    RequestSequence,
 )
+from mcp_pal.execution_trace import ExecutionTraceRecorder
 from mcp_pal.storage import InMemoryExecutionStore
 from mcp_pal.types import ExecutionId, ExecutionOutcome, TraceId, TraceResult
 
@@ -61,7 +61,9 @@ def test_event_public_types_have_runtime_schemas() -> None:
 
 
 def test_packaged_event_schema_matches_authoritative_model() -> None:
-    resource = resources.files("mcp_pal").joinpath("schemas/mcp-pal.event.v0.2.schema.json")
+    resource = resources.files("mcp_pal").joinpath(
+        "schemas/mcp-pal.event.v0.2.schema.json"
+    )
     with resource.open("r", encoding="utf-8") as handle:
         packaged = json.load(handle)
     expected = {
@@ -75,7 +77,9 @@ def test_packaged_event_schema_matches_authoritative_model() -> None:
     assert packaged["properties"]["schema_version"]["const"] == EVENT_SCHEMA_VERSION
     assert packaged["additionalProperties"] is False
     correlation = packaged["$defs"]["RequestLink"]
-    assert {item.get("type") for item in correlation["properties"]["jsonrpc_id"]["anyOf"]} == {
+    assert {
+        item.get("type") for item in correlation["properties"]["jsonrpc_id"]["anyOf"]
+    } == {
         "integer",
         "string",
         "null",
@@ -155,7 +159,11 @@ def test_request_sequence_requires_connection_identity() -> None:
 def test_reasoning_requires_honest_explicit_visibility() -> None:
     visible = ReasoningState(visibility=ReasoningVisibility.VISIBLE, explicit=True)
     assert _event(kind=EventKind.REASONING, reasoning=visible).reasoning == visible
-    for visibility in (ReasoningVisibility.UNAVAILABLE, ReasoningVisibility.ENCRYPTED, ReasoningVisibility.PROVIDER_HIDDEN):
+    for visibility in (
+        ReasoningVisibility.UNAVAILABLE,
+        ReasoningVisibility.ENCRYPTED,
+        ReasoningVisibility.PROVIDER_HIDDEN,
+    ):
         state = ReasoningState(visibility=visibility)
         assert _event(kind=EventKind.REASONING, reasoning=state).reasoning == state
     with pytest.raises(ValidationError):
@@ -167,11 +175,16 @@ def test_reasoning_requires_honest_explicit_visibility() -> None:
         payload_ref=PayloadRef(blob_id="reasoning-1", sha256="0" * 64, size_bytes=10),
     )
     assert "reasoning-1" in encrypted.model_dump_json()
-    for visibility in (ReasoningVisibility.UNAVAILABLE, ReasoningVisibility.PROVIDER_HIDDEN):
+    for visibility in (
+        ReasoningVisibility.UNAVAILABLE,
+        ReasoningVisibility.PROVIDER_HIDDEN,
+    ):
         with pytest.raises(ValidationError):
             ReasoningState(
                 visibility=visibility,
-                payload_ref=PayloadRef(blob_id="must-not-be-inferred", sha256="0" * 64, size_bytes=10),
+                payload_ref=PayloadRef(
+                    blob_id="must-not-be-inferred", sha256="0" * 64, size_bytes=10
+                ),
             )
         state = ReasoningState(visibility=visibility)
         assert "must-not-be-inferred" not in state.model_dump_json()
@@ -194,19 +207,25 @@ def test_factory_assigns_outbound_request_sequence_per_connection() -> None:
     first = factory.create(
         EventKind.MCP_REQUEST,
         connection_id="connection-a",
-        correlation=RequestLink(jsonrpc_id="7", direction=EventDirection.CLIENT_TO_SERVER),
+        correlation=RequestLink(
+            jsonrpc_id="7", direction=EventDirection.CLIENT_TO_SERVER
+        ),
         lifecycle_phase=LifecyclePhase.MCP_CALL,
     )
     second = factory.create(
         EventKind.MCP_REQUEST,
         connection_id="connection-a",
-        correlation=RequestLink(jsonrpc_id=8, direction=EventDirection.CLIENT_TO_SERVER),
+        correlation=RequestLink(
+            jsonrpc_id=8, direction=EventDirection.CLIENT_TO_SERVER
+        ),
         lifecycle_phase=LifecyclePhase.MCP_CALL,
     )
     other = factory.create(
         EventKind.MCP_REQUEST,
         connection_id="connection-b",
-        correlation=RequestLink(jsonrpc_id=9, direction=EventDirection.CLIENT_TO_SERVER),
+        correlation=RequestLink(
+            jsonrpc_id=9, direction=EventDirection.CLIENT_TO_SERVER
+        ),
         lifecycle_phase=LifecyclePhase.MCP_CALL,
     )
     assert first.correlation is not None and first.correlation.request_sequence == 1
@@ -222,7 +241,9 @@ def test_failed_factory_construction_does_not_consume_execution_sequence() -> No
             lifecycle_phase=LifecyclePhase.IDLE,
             monotonic_offset_ms=-1,
         )
-    successful = factory.create(EventKind.DIAGNOSTIC, lifecycle_phase=LifecyclePhase.IDLE)
+    successful = factory.create(
+        EventKind.DIAGNOSTIC, lifecycle_phase=LifecyclePhase.IDLE
+    )
     assert successful.sequence == 0
 
 
@@ -232,18 +253,25 @@ def test_failed_outbound_request_rolls_back_both_sequences() -> None:
         factory.create(
             EventKind.MCP_REQUEST,
             connection_id="connection-a",
-            correlation=RequestLink(jsonrpc_id=7, direction=EventDirection.CLIENT_TO_SERVER),
+            correlation=RequestLink(
+                jsonrpc_id=7, direction=EventDirection.CLIENT_TO_SERVER
+            ),
             lifecycle_phase=LifecyclePhase.MCP_CALL,
             monotonic_offset_ms=-1,
         )
     successful = factory.create(
         EventKind.MCP_REQUEST,
         connection_id="connection-a",
-        correlation=RequestLink(jsonrpc_id=7, direction=EventDirection.CLIENT_TO_SERVER),
+        correlation=RequestLink(
+            jsonrpc_id=7, direction=EventDirection.CLIENT_TO_SERVER
+        ),
         lifecycle_phase=LifecyclePhase.MCP_CALL,
     )
     assert successful.sequence == 0
-    assert successful.correlation is not None and successful.correlation.request_sequence == 1
+    assert (
+        successful.correlation is not None
+        and successful.correlation.request_sequence == 1
+    )
 
 
 def test_same_typed_request_id_can_correlate_on_different_connections() -> None:
@@ -304,7 +332,9 @@ def test_factory_assigns_unique_ordered_events_for_concurrent_callers() -> None:
 def test_factory_monotonic_offsets_are_local_to_execution() -> None:
     ticks = iter((1_000_000_000, 1_002_500_000))
     factory = EventFactory("execution-1", monotonic_clock_ns=lambda: next(ticks))
-    event = factory.create(EventKind.EXECUTION_CREATED, lifecycle_phase=LifecyclePhase.STARTUP)
+    event = factory.create(
+        EventKind.EXECUTION_CREATED, lifecycle_phase=LifecyclePhase.STARTUP
+    )
     assert event.monotonic_offset_ms == 2.5
 
 
@@ -366,7 +396,9 @@ def test_trace_completeness_requires_truthful_limitations() -> None:
 
 
 def test_recorder_produced_trace_round_trips_through_public_model() -> None:
-    recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-recorder-trace")
+    recorder = ExecutionTraceRecorder(
+        InMemoryExecutionStore(), "execution-recorder-trace"
+    )
     recorder.emit(EventKind.DIAGNOSTIC, payload={"source": "test"})
     trace = recorder.finalize(ExecutionOutcome.COMPLETED)
     restored = TraceResult.model_validate(trace.model_dump(mode="json"))

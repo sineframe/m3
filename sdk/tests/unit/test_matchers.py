@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+
 from mcp_pal.direct_client import ToolCallResult
 from mcp_pal.matchers import check, expect
 

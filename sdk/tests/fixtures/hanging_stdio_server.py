@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 
 def main() -> int:

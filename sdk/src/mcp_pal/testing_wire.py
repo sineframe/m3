@@ -18,7 +18,6 @@ from threading import Lock, Thread, Timer
 from typing import Any
 from urllib.parse import urlparse
 
-
 _MAX_CONFIG_BYTES = 64 * 1024
 _MAX_OVERSIZED_BYTES = 64 * 1024 * 1024
 _INVALID_RESULT_SCHEMA = {
@@ -52,7 +51,11 @@ def _method_fault(config: Mapping[str, Any], method: str, field: str) -> bool:
 
 
 def _error_frame(request_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": code, "message": message},
+    }
 
 
 class _WireServer:
@@ -71,7 +74,9 @@ class _WireServer:
             sys.stdout.buffer.flush()
 
     async def write_frame(self, method: str, frame: dict[str, Any]) -> None:
-        encoded = (json.dumps(frame, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
+        encoded = (
+            json.dumps(frame, separators=(",", ":"), allow_nan=False) + "\n"
+        ).encode("utf-8")
         if _method_fault(self.config, method, "partial_methods"):
             await self.write_bytes(encoded[: max(1, len(encoded) // 2)])
             raise SystemExit(0)
@@ -84,7 +89,11 @@ class _WireServer:
             raise SystemExit(17)
         if _method_fault(self.config, method, "protocol_errors"):
             configured = self.config["protocol_errors"].get(method, {})
-            code = int(configured.get("code", -32000)) if isinstance(configured, dict) else -32000
+            code = (
+                int(configured.get("code", -32000))
+                if isinstance(configured, dict)
+                else -32000
+            )
             frame = _error_frame(frame.get("id"), code, "injected protocol error")
             encoded = (json.dumps(frame, separators=(",", ":")) + "\n").encode("utf-8")
         if _method_fault(self.config, method, "oversized_methods"):
@@ -97,7 +106,9 @@ class _WireServer:
                 content = result.get("content")
                 if isinstance(content, list):
                     content.append({"type": "text", "text": "x" * size})
-                    encoded = (json.dumps(frame, separators=(",", ":")) + "\n").encode("utf-8")
+                    encoded = (json.dumps(frame, separators=(",", ":")) + "\n").encode(
+                        "utf-8"
+                    )
         if _method_fault(self.config, method, "reordered_methods"):
             async with self.reorder_lock:
                 if self.pending_frame is None:
@@ -153,22 +164,32 @@ class _WireServer:
                 "serverInfo": {"name": "mcp-pal-wire-fault", "version": "1"},
             }
         elif method == "tools/list":
-            tool: dict[str, Any] = {"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}
+            tool: dict[str, Any] = {
+                "name": "echo",
+                "description": "Echo",
+                "inputSchema": {"type": "object"},
+            }
             if _method_fault(self.config, "tools/call", "invalid_result_methods"):
                 tool["outputSchema"] = dict(_INVALID_RESULT_SCHEMA)
             result = {"tools": [tool]}
         elif method == "tools/call":
             params = request.get("params")
             arguments = params.get("arguments", {}) if isinstance(params, dict) else {}
-            result = {"content": [{"type": "text", "text": str(arguments.get("text", "ok"))}]}
+            result = {
+                "content": [{"type": "text", "text": str(arguments.get("text", "ok"))}]
+            }
             if _method_fault(self.config, "tools/call", "invalid_result_methods"):
                 result["structuredContent"] = {"value": "invalid structured result"}
         elif method == "ping":
             result = {}
         else:
-            await self.write_frame(method, _error_frame(request_id, -32601, "method not found"))
+            await self.write_frame(
+                method, _error_frame(request_id, -32601, "method not found")
+            )
             return
-        await self.write_frame(method, {"jsonrpc": "2.0", "id": request_id, "result": result})
+        await self.write_frame(
+            method, {"jsonrpc": "2.0", "id": request_id, "result": result}
+        )
 
     async def run(self) -> None:
         while True:
@@ -185,7 +206,9 @@ class _WireServer:
                 continue
             if request.get("method") == "notifications/cancelled":
                 params = request.get("params")
-                request_id = params.get("requestId") if isinstance(params, dict) else None
+                request_id = (
+                    params.get("requestId") if isinstance(params, dict) else None
+                )
                 key = json.dumps(request_id, sort_keys=True)
                 self.cancel_events.setdefault(key, asyncio.Event()).set()
                 task = self.request_tasks.get(key)
@@ -235,7 +258,9 @@ class _SSEFixture:
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("Connection", "keep-alive")
                 self.end_headers()
-                self.wfile.write(b"event: endpoint\ndata: /messages?session_id=fixture\n\n")
+                self.wfile.write(
+                    b"event: endpoint\ndata: /messages?session_id=fixture\n\n"
+                )
                 self.wfile.flush()
                 while True:
                     payload = fixture.messages.get()
@@ -260,7 +285,9 @@ class _SSEFixture:
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
-        self.thread = Thread(target=self.server.serve_forever, name="mcp-pal-sse-fixture", daemon=True)
+        self.thread = Thread(
+            target=self.server.serve_forever, name="mcp-pal-sse-fixture", daemon=True
+        )
         self.thread.start()
 
     def _fault(self, method: str, field: str) -> bool:
@@ -275,11 +302,13 @@ class _SSEFixture:
         request_id = request.get("id")
         if not isinstance(method, str) or "id" not in request:
             return
-        if self._fault(method, "disconnect_methods") or self._fault(method, "process_crash_methods"):
+        if self._fault(method, "disconnect_methods") or self._fault(
+            method, "process_crash_methods"
+        ):
             self.messages.put(None)
             return
         if self._fault(method, "partial_methods"):
-            self.messages.put(b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":")
+            self.messages.put(b'event: message\ndata: {"jsonrpc":"2.0","id":')
             self.messages.put(None)
             return
         if self._fault(method, "malformed_methods"):
@@ -287,32 +316,52 @@ class _SSEFixture:
             self.messages.put(None)
             return
         if method == "initialize":
-            result: dict[str, Any] = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}}, "serverInfo": {"name": "mcp-pal-sse-fault", "version": "1"}}
+            result: dict[str, Any] = {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mcp-pal-sse-fault", "version": "1"},
+            }
         elif method == "tools/list":
-            tool: dict[str, Any] = {"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}
+            tool: dict[str, Any] = {
+                "name": "echo",
+                "description": "Echo",
+                "inputSchema": {"type": "object"},
+            }
             if self._fault("tools/call", "invalid_result_methods"):
                 tool["outputSchema"] = dict(_INVALID_RESULT_SCHEMA)
             result = {"tools": [tool]}
         elif method == "tools/call":
             params = request.get("params")
             arguments = params.get("arguments", {}) if isinstance(params, dict) else {}
-            result = {"content": [{"type": "text", "text": str(arguments.get("text", "ok"))}]}
+            result = {
+                "content": [{"type": "text", "text": str(arguments.get("text", "ok"))}]
+            }
             if self._fault("tools/call", "invalid_result_methods"):
                 result["structuredContent"] = {"value": "invalid structured result"}
         else:
             result = {}
         if method == "initialize" or method in {"tools/list", "tools/call", "ping"}:
-            frame: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "result": result}
+            frame: dict[str, Any] = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": result,
+            }
         else:
             frame = _error_frame(request_id, -32601, "method not found")
         if self._fault(method, "protocol_errors"):
             configured = self.config.get("protocol_errors", {}).get(method, {})
-            code = int(configured.get("code", -32000)) if isinstance(configured, dict) else -32000
+            code = (
+                int(configured.get("code", -32000))
+                if isinstance(configured, dict)
+                else -32000
+            )
             frame = _error_frame(request_id, code, "injected protocol error")
         if self._fault(method, "oversized_methods"):
             size = self.config["oversized_methods"].get(method, 1)
             if isinstance(size, int) and 1 <= size <= _MAX_OVERSIZED_BYTES:
-                frame.setdefault("result", {}).setdefault("content", []).append({"type": "text", "text": "x" * size})
+                frame.setdefault("result", {}).setdefault("content", []).append(
+                    {"type": "text", "text": "x" * size}
+                )
         encoded = (json.dumps(frame, separators=(",", ":")) + "\n").encode("utf-8")
         event = self._event(encoded)
         with self.lock:

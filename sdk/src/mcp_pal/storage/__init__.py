@@ -2,6 +2,9 @@
 
 from typing import TYPE_CHECKING as _TYPE_CHECKING
 
+from ..services.acp_probes import ACPProbeDimension, ACPProbeResult, ACPProbeStore
+from ..services.persistent import SQLiteStoreWorker
+from .blobs import BlobRecord, FilesystemBlobStore
 from .ephemeral import (
     ArtifactNotFound,
     ArtifactStore,
@@ -15,40 +18,39 @@ from .ephemeral import (
     StorageError,
     TemporaryArtifactStore,
 )
-from .blobs import BlobRecord, FilesystemBlobStore
 from .serialization import DurableSerializationError, serialize_durable
-from ..services.persistent import SQLiteStoreWorker
-from ..services.acp_probes import ACPProbeDimension, ACPProbeResult, ACPProbeStore
 
 if _TYPE_CHECKING:
     from .sqlite import ProfileRecord, ProfileRevisionRecord
 
 __all__ = [
+    "ACPProbeDimension",
+    "ACPProbeResult",
+    "ACPProbeStore",
     "ArtifactNotFound",
     "ArtifactStore",
     "BlobIntegrityError",
+    "BlobRecord",
+    "Command",
+    "DurableSerializationError",
     "EventCallback",
     "ExecutionStore",
     "ExecutionTransaction",
+    "FilesystemBlobStore",
     "InMemoryArtifactStore",
     "InMemoryExecutionStore",
+    "Lease",
+    "PersistentExecutionStore",
+    "ProfileRecord",
+    "ProfileRevisionRecord",
+    "SQLiteArtifactStore",
+    "SQLiteExecutionStore",
+    "SQLiteStore",
+    "SQLiteStoreWorker",
     "StorageConflict",
     "StorageError",
     "TemporaryArtifactStore",
-    "BlobRecord",
-    "FilesystemBlobStore",
-    "DurableSerializationError",
     "serialize_durable",
-    "SQLiteStoreWorker",
-    "SQLiteArtifactStore",
-    "SQLiteExecutionStore",
-    "Command",
-    "Lease",
-    "ProfileRecord",
-    "ProfileRevisionRecord",
-    "SQLiteStore",
-    "PersistentExecutionStore",
-    "ACPProbeDimension", "ACPProbeResult", "ACPProbeStore",
 ]
 
 
@@ -67,9 +69,9 @@ def __getattr__(name: str):
         from .sqlite import (
             Command,
             Lease,
+            PersistentExecutionStore,
             ProfileRecord,
             ProfileRevisionRecord,
-            PersistentExecutionStore,
             SQLiteArtifactStore,
             SQLiteExecutionStore,
             SQLiteStore,

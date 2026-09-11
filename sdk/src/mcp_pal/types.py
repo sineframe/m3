@@ -7,37 +7,66 @@ any process/transport implementation.
 
 from __future__ import annotations
 
-from datetime import datetime as _datetime, timezone as _timezone
+from collections.abc import Iterator as _Iterator
+from collections.abc import Mapping as _Mapping
+from collections.abc import Sequence as _Sequence
+from datetime import datetime as _datetime
+from datetime import timezone as _timezone
 from enum import Enum as _Enum
 from math import isfinite as _isfinite
 from typing import (
-    Annotated as _Annotated,
-    Any as _Any,
-    Literal as _Literal,
-    Mapping as _Mapping,
-    Iterator as _Iterator,
-    Sequence as _Sequence,
     TYPE_CHECKING as _TYPE_CHECKING,
-    Union as _Union,
+)
+from typing import (
+    Annotated as _Annotated,
+)
+from typing import (
+    Any as _Any,
+)
+from typing import (
+    Literal as _Literal,
 )
 
 from pydantic import (
     AliasChoices as _AliasChoices,
+)
+from pydantic import (
     BaseModel as _BaseModel,
+)
+from pydantic import (
     ConfigDict as _ConfigDict,
+)
+from pydantic import (
     Field as _Field,
+)
+from pydantic import (
     RootModel as _RootModel,
+)
+from pydantic import (
     StrictInt as _StrictInt,
+)
+from pydantic import (
     StrictStr as _StrictStr,
+)
+from pydantic import (
     field_serializer as _field_serializer,
+)
+from pydantic import (
     field_validator as _field_validator,
+)
+from pydantic import (
     model_validator as _model_validator,
 )
 
 if _TYPE_CHECKING:
     from .observability import TraceView as _TraceView
 
-from .errors import InvalidTransitionError as _InvalidTransitionError, ModelValidationError as _ModelValidationError
+from .errors import (
+    InvalidTransitionError as _InvalidTransitionError,
+)
+from .errors import (
+    ModelValidationError as _ModelValidationError,
+)
 
 
 def _utc_now() -> _datetime:
@@ -105,7 +134,9 @@ def _json_safe(value: _Any) -> bool:
                 return False
         return True
     if isinstance(value, _Mapping):
-        return all(isinstance(key, str) and _json_safe(item) for key, item in value.items())
+        return all(
+            isinstance(key, str) and _json_safe(item) for key, item in value.items()
+        )
     if isinstance(value, (list, tuple, set, frozenset)):
         return all(_json_safe(item) for item in value)
     if isinstance(value, _Sequence) and not isinstance(value, (str, bytes, bytearray)):
@@ -119,7 +150,9 @@ def _deep_freeze(value: _Any) -> _Any:
     if isinstance(value, _BaseModel):
         return value
     if isinstance(value, _Mapping):
-        return _FrozenMapping({_deep_freeze(key): _deep_freeze(item) for key, item in value.items()})
+        return _FrozenMapping(
+            {_deep_freeze(key): _deep_freeze(item) for key, item in value.items()}
+        )
     if isinstance(value, (list, tuple)):
         return tuple(_deep_freeze(item) for item in value)
     if isinstance(value, _Sequence) and not isinstance(value, (str, bytes, bytearray)):
@@ -143,12 +176,14 @@ class FrozenModel(_BaseModel):
     )
 
     @_model_validator(mode="after")
-    def _freeze_nested_values(self) -> "FrozenModel":
+    def _freeze_nested_values(self) -> FrozenModel:
         for field_name, value in self.__dict__.items():
             field_info = type(self).model_fields.get(field_name)
             if field_info is None or not field_info.exclude:
                 if not _json_safe(value):
-                    raise ValueError(f"{field_name} contains a non-JSON-serializable value")
+                    raise ValueError(
+                        f"{field_name} contains a non-JSON-serializable value"
+                    )
             object.__setattr__(self, field_name, _deep_freeze(value))
         return self
 
@@ -166,7 +201,7 @@ class Identifier(_RootModel[str]):
     @classmethod
     def _valid_identifier(cls, value: str) -> str:
         if not value or len(value) > 256:
-            raise ValueError("identifier must contain 1–256 characters")
+            raise ValueError("identifier must contain 1-256 characters")
         return value
 
 
@@ -358,13 +393,17 @@ class RevisionSelection(FrozenModel):
     revision_number: int | None = _Field(default=None, ge=1)
 
     @_model_validator(mode="after")
-    def _validate_selection(self) -> "RevisionSelection":
+    def _validate_selection(self) -> RevisionSelection:
         has_id = self.revision_id is not None
         has_number = self.revision_number is not None
         if self.mode == "pinned" and not (has_id and has_number):
-            raise ValueError("pinned revision selection requires revision_id and revision_number")
+            raise ValueError(
+                "pinned revision selection requires revision_id and revision_number"
+            )
         if self.mode == "latest" and (has_id or has_number):
-            raise ValueError("latest revision selection cannot include an immutable revision")
+            raise ValueError(
+                "latest revision selection cannot include an immutable revision"
+            )
         return self
 
 
@@ -393,7 +432,7 @@ class ImageContent(FrozenModel):
     uri: str | None = None
 
     @_model_validator(mode="after")
-    def _one_source(self) -> "ImageContent":
+    def _one_source(self) -> ImageContent:
         if (self.data is None) == (self.uri is None):
             raise ValueError("image requires exactly one of data or uri")
         return self
@@ -406,7 +445,7 @@ class AudioContent(FrozenModel):
     uri: str | None = None
 
     @_model_validator(mode="after")
-    def _one_source(self) -> "AudioContent":
+    def _one_source(self) -> AudioContent:
         if (self.data is None) == (self.uri is None):
             raise ValueError("audio requires exactly one of data or uri")
         return self
@@ -427,7 +466,12 @@ class OpaqueContent(FrozenModel):
 
 
 ContentBlock = _Annotated[
-    _Union[TextContent, FileContent, ImageContent, AudioContent, ResourceLink, OpaqueContent],
+    TextContent
+    | FileContent
+    | ImageContent
+    | AudioContent
+    | ResourceLink
+    | OpaqueContent,
     _Field(discriminator="kind"),
 ]
 
@@ -445,8 +489,13 @@ class UserMessage(FrozenModel):
             return (TextContent(text=value),)
         if isinstance(value, _Mapping):
             return (value,)
-        if isinstance(value, _Sequence) and not isinstance(value, (str, bytes, bytearray)):
-            return tuple(TextContent(text=item) if isinstance(item, str) else item for item in value)
+        if isinstance(value, _Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            return tuple(
+                TextContent(text=item) if isinstance(item, str) else item
+                for item in value
+            )
         return value
 
 
@@ -499,11 +548,13 @@ class InProcessServer(ServerDefinition):
         return value
 
     def __getstate__(self) -> _Any:
-        raise TypeError("in-process server factories are runtime registrations and cannot be pickled")
+        raise TypeError(
+            "in-process server factories are runtime registrations and cannot be pickled"
+        )
 
 
 ServerValue = _Annotated[
-    _Union[StdioServer, HTTPServer, SSEServer, InProcessServer],
+    StdioServer | HTTPServer | SSEServer | InProcessServer,
     _Field(discriminator="kind"),
 ]
 
@@ -520,7 +571,7 @@ class ServerBinding(FrozenModel):
     required: bool = True
 
     @_model_validator(mode="after")
-    def _one_binding_source(self) -> "ServerBinding":
+    def _one_binding_source(self) -> ServerBinding:
         if (self.server is None) == (self.profile is None):
             raise ValueError("server binding requires exactly one of server or profile")
         return self
@@ -531,7 +582,7 @@ class HarnessValue(FrozenModel):
     model: str = _Field(min_length=1, max_length=512)
     executable: str | None = None
 
-    def with_model(self, model: str) -> "HarnessValue":
+    def with_model(self, model: str) -> HarnessValue:
         """Return an immutable copy with a different model identifier."""
 
         values = self.model_dump(mode="python")
@@ -546,9 +597,16 @@ class ClaudeCode(HarnessValue):
 
     @_field_validator("credential_references")
     @classmethod
-    def _valid_credential_names(cls, values: _Mapping[str, SecretReference]) -> _Mapping[str, SecretReference]:
+    def _valid_credential_names(
+        cls, values: _Mapping[str, SecretReference]
+    ) -> _Mapping[str, SecretReference]:
         import re
-        if any(not isinstance(key, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None for key in values):
+
+        if any(
+            not isinstance(key, str)
+            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None
+            for key in values
+        ):
             raise ValueError("Claude Code credential target is invalid")
         return values
 
@@ -562,9 +620,16 @@ class OpenCode(HarnessValue):
 
     @_field_validator("credential_references")
     @classmethod
-    def _valid_credential_names(cls, values: _Mapping[str, SecretReference]) -> _Mapping[str, SecretReference]:
+    def _valid_credential_names(
+        cls, values: _Mapping[str, SecretReference]
+    ) -> _Mapping[str, SecretReference]:
         import re
-        if any(not isinstance(key, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None for key in values):
+
+        if any(
+            not isinstance(key, str)
+            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None
+            for key in values
+        ):
             raise ValueError("OpenCode credential target is invalid")
         return values
 
@@ -578,9 +643,16 @@ class Codex(HarnessValue):
 
     @_field_validator("credential_references")
     @classmethod
-    def _valid_credential_names(cls, values: _Mapping[str, SecretReference]) -> _Mapping[str, SecretReference]:
+    def _valid_credential_names(
+        cls, values: _Mapping[str, SecretReference]
+    ) -> _Mapping[str, SecretReference]:
         import re
-        if any(not isinstance(key, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None for key in values):
+
+        if any(
+            not isinstance(key, str)
+            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None
+            for key in values
+        ):
             raise ValueError("Codex credential target is invalid")
         return values
 
@@ -595,9 +667,16 @@ class Pi(HarnessValue):
 
     @_field_validator("credential_references")
     @classmethod
-    def _valid_credential_names(cls, values: _Mapping[str, SecretReference]) -> _Mapping[str, SecretReference]:
+    def _valid_credential_names(
+        cls, values: _Mapping[str, SecretReference]
+    ) -> _Mapping[str, SecretReference]:
         import re
-        if any(not isinstance(key, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None for key in values):
+
+        if any(
+            not isinstance(key, str)
+            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None
+            for key in values
+        ):
             raise ValueError("Pi credential target is invalid")
         return values
 
@@ -619,7 +698,9 @@ class ACPAgent(HarnessValue):
         return values
 
 
-HarnessSpec = _Annotated[_Union[ClaudeCode, OpenCode, Codex, Pi, ACPAgent], _Field(discriminator="kind")]
+HarnessSpec = _Annotated[
+    ClaudeCode | OpenCode | Codex | Pi | ACPAgent, _Field(discriminator="kind")
+]
 
 
 class HarnessProfileRef(FrozenModel):
@@ -633,8 +714,12 @@ class WorkspacePolicy(FrozenModel):
     acknowledge_risk: bool = False
 
     @_model_validator(mode="after")
-    def _validate_workspace(self) -> "WorkspacePolicy":
-        if self.kind in {WorkspaceKind.COPY, WorkspaceKind.GIT_WORKTREE, WorkspaceKind.READ_ONLY} and not self.source:
+    def _validate_workspace(self) -> WorkspacePolicy:
+        if (
+            self.kind
+            in {WorkspaceKind.COPY, WorkspaceKind.GIT_WORKTREE, WorkspaceKind.READ_ONLY}
+            and not self.source
+        ):
             raise ValueError(f"{self.kind.value} workspace requires source")
         if self.kind is WorkspaceKind.IN_PLACE and not self.acknowledge_risk:
             raise ValueError("in-place workspace requires acknowledge_risk=True")
@@ -652,7 +737,7 @@ class FullToolPolicy(FrozenModel):
     acknowledge_risk: bool = False
 
     @_model_validator(mode="after")
-    def _risk_acknowledged(self) -> "FullToolPolicy":
+    def _risk_acknowledged(self) -> FullToolPolicy:
         if not self.acknowledge_risk:
             raise ValueError("FullToolPolicy requires acknowledge_risk=True")
         return self
@@ -665,7 +750,10 @@ class NativeToolPolicy(FrozenModel):
     nonportable_reason: str = _Field(min_length=1)
 
 
-ToolPolicy = _Annotated[_Union[RestrictiveToolPolicy, FullToolPolicy, NativeToolPolicy], _Field(discriminator="kind")]
+ToolPolicy = _Annotated[
+    RestrictiveToolPolicy | FullToolPolicy | NativeToolPolicy,
+    _Field(discriminator="kind"),
+]
 
 
 class PermissionPolicy(FrozenModel):
@@ -745,16 +833,14 @@ class Ping(_DirectOperation):
 
 
 DirectOperation = _Annotated[
-    _Union[
-        ListTools,
-        ListResources,
-        ListTemplates,
-        ListPrompts,
-        CallTool,
-        ReadResource,
-        GetPrompt,
-        Ping,
-    ],
+    ListTools
+    | ListResources
+    | ListTemplates
+    | ListPrompts
+    | CallTool
+    | ReadResource
+    | GetPrompt
+    | Ping,
     _Field(discriminator="kind"),
 ]
 
@@ -780,14 +866,20 @@ class _ExecutionSpecBase(FrozenModel):
     sampling_policy: SamplingPolicy = _Field(default_factory=SamplingPolicy)
     filesystem_policy: FilesystemPolicy = _Field(default_factory=FilesystemPolicy)
     terminal_policy: TerminalPolicy = _Field(default_factory=TerminalPolicy)
-    metadata: _Mapping[str, str | int | float | bool | None] = _Field(default_factory=dict)
+    metadata: _Mapping[str, str | int | float | bool | None] = _Field(
+        default_factory=dict
+    )
 
     @_model_validator(mode="after")
-    def _validate_serializable_bindings(self) -> "_ExecutionSpecBase":
+    def _validate_serializable_bindings(self) -> _ExecutionSpecBase:
         if not self.servers:
-            raise ValueError("execution spec requires at least one ordered server binding")
+            raise ValueError(
+                "execution spec requires at least one ordered server binding"
+            )
         if any(isinstance(binding.server, InProcessServer) for binding in self.servers):
-            raise ValueError("InProcessServer factories are runtime registrations, not serializable execution specs")
+            raise ValueError(
+                "InProcessServer factories are runtime registrations, not serializable execution specs"
+            )
         for artifact in self.declared_artifacts:
             if (
                 not artifact
@@ -805,7 +897,7 @@ class DirectSpec(_ExecutionSpecBase):
     validate_schemas: bool = False
 
     @_model_validator(mode="after")
-    def _validate_operation_server_selection(self) -> "DirectSpec":
+    def _validate_operation_server_selection(self) -> DirectSpec:
         # A direct server's name is its default selector; profile bindings do
         # not have a resolved server name yet, so their profile id is the
         # stable fallback unless the author supplies an alias.  Compare these
@@ -813,17 +905,29 @@ class DirectSpec(_ExecutionSpecBase):
         # such as ``alias='echo'`` next to a server named ``echo``.
         effective_selectors = tuple(
             binding.alias
-            or (binding.server.name if binding.server is not None else binding.profile.profile_id.root if binding.profile is not None else None)
+            or (
+                binding.server.name
+                if binding.server is not None
+                else binding.profile.profile_id.root
+                if binding.profile is not None
+                else None
+            )
             for binding in self.servers
         )
-        known_selectors = tuple(selector for selector in effective_selectors if selector is not None)
+        known_selectors = tuple(
+            selector for selector in effective_selectors if selector is not None
+        )
         if len(set(known_selectors)) != len(known_selectors):
             raise ValueError("direct execution servers must have unique aliases")
         selector = self.operation.server
         if len(self.servers) > 1 and selector is None:
-            raise ValueError("direct operation server selector is required when multiple servers are bound")
+            raise ValueError(
+                "direct operation server selector is required when multiple servers are bound"
+            )
         if selector is not None and selector not in known_selectors:
-            raise ValueError("direct operation server selector does not match a configured server")
+            raise ValueError(
+                "direct operation server selector does not match a configured server"
+            )
         return self
 
 
@@ -834,13 +938,15 @@ class AgentSpec(_ExecutionSpecBase):
     message: UserMessage | None = None
 
     @_model_validator(mode="after")
-    def _one_harness_source(self) -> "AgentSpec":
+    def _one_harness_source(self) -> AgentSpec:
         if (self.harness is None) == (self.harness_profile is None):
-            raise ValueError("agent execution spec requires exactly one of harness or harness_profile")
+            raise ValueError(
+                "agent execution spec requires exactly one of harness or harness_profile"
+            )
         return self
 
 
-ExecutionSpec = _Annotated[_Union[DirectSpec, AgentSpec], _Field(discriminator="kind")]
+ExecutionSpec = _Annotated[DirectSpec | AgentSpec, _Field(discriminator="kind")]
 
 
 class SessionForkRequest(FrozenModel):
@@ -849,10 +955,12 @@ class SessionForkRequest(FrozenModel):
     mode: _Literal["fork", "replay"] = "replay"
     replay_inputs: tuple[UserMessage, ...] = ()
     source_turn_id: TurnId | None = None
-    metadata: _Mapping[str, str | int | float | bool | None] = _Field(default_factory=dict)
+    metadata: _Mapping[str, str | int | float | bool | None] = _Field(
+        default_factory=dict
+    )
 
     @_model_validator(mode="after")
-    def _explicit_inputs(self) -> "SessionForkRequest":
+    def _explicit_inputs(self) -> SessionForkRequest:
         if not self.replay_inputs:
             raise ValueError("fork/replay requires explicit replay inputs")
         return self
@@ -878,31 +986,58 @@ class ExecutionState(FrozenModel):
     provenance: SessionSource | None = None
 
     @_model_validator(mode="after")
-    def _terminal_consistency(self) -> "ExecutionState":
+    def _terminal_consistency(self) -> ExecutionState:
         if self.lifecycle is ExecutionStatus.FINISHED and self.outcome is None:
             raise ValueError("finished execution requires an outcome")
         if self.lifecycle is ExecutionStatus.FINISHED and self.finished_at is None:
             raise ValueError("finished execution requires finished_at")
         if self.lifecycle is not ExecutionStatus.FINISHED and self.outcome is not None:
             raise ValueError("non-finished execution cannot have an outcome")
-        if self.lifecycle is not ExecutionStatus.FINISHED and self.finished_at is not None:
+        if (
+            self.lifecycle is not ExecutionStatus.FINISHED
+            and self.finished_at is not None
+        ):
             raise ValueError("non-finished execution cannot have finished_at")
         return self
 
-    def transition(self, lifecycle: ExecutionStatus, outcome: ExecutionOutcome | None = None) -> "ExecutionState":
+    def transition(
+        self, lifecycle: ExecutionStatus, outcome: ExecutionOutcome | None = None
+    ) -> ExecutionState:
         lifecycle = ExecutionStatus(lifecycle)
         outcome = ExecutionOutcome(outcome) if outcome is not None else None
         transitions = {
-            ExecutionStatus.CREATED: {ExecutionStatus.QUEUED, ExecutionStatus.STARTING, ExecutionStatus.FINISHED},
-            ExecutionStatus.QUEUED: {ExecutionStatus.STARTING, ExecutionStatus.FINISHED},
-            ExecutionStatus.STARTING: {ExecutionStatus.IDLE, ExecutionStatus.RUNNING_TURN, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED},
-            ExecutionStatus.IDLE: {ExecutionStatus.RUNNING_TURN, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED},
-            ExecutionStatus.RUNNING_TURN: {ExecutionStatus.IDLE, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED},
+            ExecutionStatus.CREATED: {
+                ExecutionStatus.QUEUED,
+                ExecutionStatus.STARTING,
+                ExecutionStatus.FINISHED,
+            },
+            ExecutionStatus.QUEUED: {
+                ExecutionStatus.STARTING,
+                ExecutionStatus.FINISHED,
+            },
+            ExecutionStatus.STARTING: {
+                ExecutionStatus.IDLE,
+                ExecutionStatus.RUNNING_TURN,
+                ExecutionStatus.CLOSING,
+                ExecutionStatus.FINISHED,
+            },
+            ExecutionStatus.IDLE: {
+                ExecutionStatus.RUNNING_TURN,
+                ExecutionStatus.CLOSING,
+                ExecutionStatus.FINISHED,
+            },
+            ExecutionStatus.RUNNING_TURN: {
+                ExecutionStatus.IDLE,
+                ExecutionStatus.CLOSING,
+                ExecutionStatus.FINISHED,
+            },
             ExecutionStatus.CLOSING: {ExecutionStatus.FINISHED},
             ExecutionStatus.FINISHED: set(),
         }
         if lifecycle not in transitions[self.lifecycle]:
-            raise _InvalidTransitionError(f"execution cannot transition {self.lifecycle.value} → {lifecycle.value}")
+            raise _InvalidTransitionError(
+                f"execution cannot transition {self.lifecycle.value} → {lifecycle.value}"
+            )
         if lifecycle is not ExecutionStatus.FINISHED and outcome is not None:
             raise _ModelValidationError("non-finished execution cannot have an outcome")
         if lifecycle is ExecutionStatus.FINISHED and outcome is None:
@@ -912,7 +1047,9 @@ class ExecutionState(FrozenModel):
             lifecycle=lifecycle,
             outcome=outcome,
             sequence=self.sequence + 1,
-            finished_at=_utc_now() if lifecycle is ExecutionStatus.FINISHED else self.finished_at,
+            finished_at=_utc_now()
+            if lifecycle is ExecutionStatus.FINISHED
+            else self.finished_at,
         )
         return type(self).model_validate(values)
 
@@ -936,7 +1073,7 @@ class TurnState(FrozenModel):
     finished_at: _datetime | None = None
 
     @_model_validator(mode="after")
-    def _terminal_consistency(self) -> "TurnState":
+    def _terminal_consistency(self) -> TurnState:
         if self.lifecycle is TurnStatus.FINISHED and self.outcome is None:
             raise ValueError("finished turn requires an outcome")
         if self.lifecycle is TurnStatus.FINISHED and self.finished_at is None:
@@ -947,7 +1084,9 @@ class TurnState(FrozenModel):
             raise ValueError("non-finished turn cannot have finished_at")
         return self
 
-    def transition(self, lifecycle: TurnStatus, outcome: TurnOutcome | None = None) -> "TurnState":
+    def transition(
+        self, lifecycle: TurnStatus, outcome: TurnOutcome | None = None
+    ) -> TurnState:
         lifecycle = TurnStatus(lifecycle)
         outcome = TurnOutcome(outcome) if outcome is not None else None
         transitions = {
@@ -956,7 +1095,9 @@ class TurnState(FrozenModel):
             TurnStatus.FINISHED: set(),
         }
         if lifecycle not in transitions[self.lifecycle]:
-            raise _InvalidTransitionError(f"turn cannot transition {self.lifecycle.value} → {lifecycle.value}")
+            raise _InvalidTransitionError(
+                f"turn cannot transition {self.lifecycle.value} → {lifecycle.value}"
+            )
         if lifecycle is not TurnStatus.FINISHED and outcome is not None:
             raise _ModelValidationError("non-finished turn cannot have an outcome")
         if lifecycle is TurnStatus.FINISHED and outcome is None:
@@ -965,7 +1106,9 @@ class TurnState(FrozenModel):
         values.update(
             lifecycle=lifecycle,
             outcome=outcome,
-            finished_at=_utc_now() if lifecycle is TurnStatus.FINISHED else self.finished_at,
+            finished_at=_utc_now()
+            if lifecycle is TurnStatus.FINISHED
+            else self.finished_at,
         )
         return type(self).model_validate(values)
 
@@ -1092,13 +1235,21 @@ class ReasoningState(FrozenModel):
     payload_ref: PayloadRef | None = None
 
     @_model_validator(mode="after")
-    def _validate_visibility(self) -> "ReasoningState":
+    def _validate_visibility(self) -> ReasoningState:
         if self.visibility is ReasoningVisibility.VISIBLE and not self.explicit:
             raise ValueError("visible reasoning must be explicitly emitted")
         if self.visibility is not ReasoningVisibility.VISIBLE and self.explicit:
-            raise ValueError("unavailable or hidden reasoning cannot be marked explicit")
-        if self.visibility in {ReasoningVisibility.UNAVAILABLE, ReasoningVisibility.PROVIDER_HIDDEN} and self.payload_ref is not None:
-            raise ValueError("unavailable or provider-hidden reasoning cannot carry a payload reference")
+            raise ValueError(
+                "unavailable or hidden reasoning cannot be marked explicit"
+            )
+        if (
+            self.visibility
+            in {ReasoningVisibility.UNAVAILABLE, ReasoningVisibility.PROVIDER_HIDDEN}
+            and self.payload_ref is not None
+        ):
+            raise ValueError(
+                "unavailable or provider-hidden reasoning cannot carry a payload reference"
+            )
         return self
 
 
@@ -1116,7 +1267,9 @@ class RequestLink(FrozenModel):
 
 
 class Event(FrozenModel):
-    schema_id: _Literal["mcp_pal.event"] = _Field(default="mcp_pal.event", alias="schema")
+    schema_id: _Literal["mcp_pal.event"] = _Field(
+        default="mcp_pal.event", alias="schema"
+    )
     schema_version: _Literal["0.2"] = "0.2"
     event_id: EventId
     execution_id: ExecutionId
@@ -1133,7 +1286,9 @@ class Event(FrozenModel):
     payload: _Mapping[str, _Any] = _Field(default_factory=dict)
     payload_ref: PayloadRef | None = None
     provenance: EventSource = _Field(
-        default_factory=lambda: EventSource(origin=EventOrigin.NORMALIZED, source="mcp_pal")
+        default_factory=lambda: EventSource(
+            origin=EventOrigin.NORMALIZED, source="mcp_pal"
+        )
     )
     raw_evidence_ref: EvidenceRef | None = _Field(
         default=None,
@@ -1170,8 +1325,12 @@ class Event(FrozenModel):
         return value
 
     @_model_validator(mode="after")
-    def _correlation_requires_connection(self) -> "Event":
-        if self.correlation is not None and self.correlation.request_sequence is not None and self.connection_id is None:
+    def _correlation_requires_connection(self) -> Event:
+        if (
+            self.correlation is not None
+            and self.correlation.request_sequence is not None
+            and self.connection_id is None
+        ):
             raise ValueError("request sequence requires a connection identity")
         if self.kind is EventKind.REASONING and self.reasoning is None:
             raise ValueError("reasoning events require an explicit visibility state")
@@ -1186,7 +1345,7 @@ class TraceResult(FrozenModel):
     events: tuple[Event, ...] = ()
     limitations: tuple[str, ...] = ()
 
-    def view(self) -> "_TraceView":
+    def view(self) -> _TraceView:
         """Project this finalized stable trace into the typed view."""
 
         from .trace.projector import TraceProjector
@@ -1194,7 +1353,7 @@ class TraceResult(FrozenModel):
         return TraceProjector.project(self)
 
     @_model_validator(mode="after")
-    def _validate_trace_invariants(self) -> "TraceResult":
+    def _validate_trace_invariants(self) -> TraceResult:
         if self.completeness == "complete" and self.limitations:
             raise ValueError("complete traces cannot declare limitations")
         if self.completeness == "partial" and not self.limitations:
@@ -1217,7 +1376,7 @@ class TraceResult(FrozenModel):
             raise ValueError("trace event IDs must be unique")
         if any(
             left.monotonic_offset_ms > right.monotonic_offset_ms
-            for left, right in zip(self.events, self.events[1:])
+            for left, right in zip(self.events, self.events[1:], strict=False)
         ):
             raise ValueError("trace monotonic offsets must be nondecreasing")
         if self.highest_sequence != self.events[-1].sequence:
@@ -1246,7 +1405,9 @@ class EvaluationContext(FrozenModel):
     goal: str | None = None
     trace: TraceResult | None = None
     artifacts: tuple[ArtifactRef, ...] = ()
-    metadata: _Mapping[str, str | int | float | bool | None] = _Field(default_factory=dict)
+    metadata: _Mapping[str, str | int | float | bool | None] = _Field(
+        default_factory=dict
+    )
 
 
 class EvaluationSource(FrozenModel):
@@ -1272,7 +1433,12 @@ class EvaluationDecision(FrozenModel):
     @_field_validator("score", mode="before")
     @classmethod
     def _finite_score(cls, value: _Any) -> float | None:
-        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not _isfinite(float(value)) or not 0 <= float(value) <= 1):
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not _isfinite(float(value))
+            or not 0 <= float(value) <= 1
+        ):
             raise ValueError("score must be finite and between 0 and 1")
         return float(value) if value is not None else None
 
@@ -1283,7 +1449,12 @@ class EvaluationDecision(FrozenModel):
             raise ValueError("metrics must be a mapping")
         if any(not key.strip() for key in value):
             raise ValueError("metric names must not be empty")
-        if any(isinstance(item, bool) or not isinstance(item, (int, float)) or not _isfinite(float(item)) for item in value.values()):
+        if any(
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not _isfinite(float(item))
+            for item in value.values()
+        ):
             raise ValueError("metric values must be finite")
         return {key: float(item) for key, item in value.items()}
 
@@ -1309,7 +1480,12 @@ class EvaluationResult(FrozenModel):
     def _strict_result_score(cls, value: _Any) -> float | None:
         if value is None:
             return None
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not _isfinite(float(value)) or not 0 <= float(value) <= 1:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not _isfinite(float(value))
+            or not 0 <= float(value) <= 1
+        ):
             raise ValueError("score must be finite and between 0 and 1")
         return float(value)
 
@@ -1331,7 +1507,9 @@ class EvaluationRecord(FrozenModel):
     provenance: EvaluationSource | None = None
     details: _Mapping[str, _Any] = _Field(default_factory=dict)
     goal: str | None = None
-    metadata: _Mapping[str, str | int | float | bool | None] = _Field(default_factory=dict)
+    metadata: _Mapping[str, str | int | float | bool | None] = _Field(
+        default_factory=dict
+    )
     subject_kind: str = "unknown"
     subject_digest: str | None = _Field(default=None, pattern=r"^[0-9a-f]{64}$")
     run_id: RunId | None = None
@@ -1359,7 +1537,9 @@ class TurnResponse(FrozenModel):
 
     @property
     def text(self) -> str:
-        return "".join(block.text for block in self.content if isinstance(block, TextContent))
+        return "".join(
+            block.text for block in self.content if isinstance(block, TextContent)
+        )
 
 
 class TurnResult(FrozenModel):
@@ -1378,7 +1558,7 @@ class TurnResult(FrozenModel):
         return self.snapshot.turn_id
 
     @_model_validator(mode="after")
-    def _requires_terminal_snapshot(self) -> "TurnResult":
+    def _requires_terminal_snapshot(self) -> TurnResult:
         if self.snapshot.lifecycle is not TurnStatus.FINISHED:
             raise ValueError("turn result requires a terminal turn snapshot")
         return self
@@ -1477,16 +1657,14 @@ class PingResult(_DirectResult):
 
 
 DirectResult = _Annotated[
-    _Union[
-        ListToolsResult,
-        ListResourcesResult,
-        ListTemplatesResult,
-        ListPromptsResult,
-        CallToolResult,
-        ReadResourceResult,
-        GetPromptResult,
-        PingResult,
-    ],
+    ListToolsResult
+    | ListResourcesResult
+    | ListTemplatesResult
+    | ListPromptsResult
+    | CallToolResult
+    | ReadResourceResult
+    | GetPromptResult
+    | PingResult,
     _Field(discriminator="kind"),
 ]
 
@@ -1503,7 +1681,7 @@ class ExecutionResult(FrozenModel):
     provenance: SessionSource | None = None
 
     @property
-    def trace_view(self) -> "_TraceView":
+    def trace_view(self) -> _TraceView:
         """Return the finalized typed view for this execution trace."""
 
         if self.trace is None:
@@ -1513,7 +1691,7 @@ class ExecutionResult(FrozenModel):
         return self.trace.view()
 
     @_model_validator(mode="after")
-    def _requires_terminal_snapshot(self) -> "ExecutionResult":
+    def _requires_terminal_snapshot(self) -> ExecutionResult:
         if self.snapshot.lifecycle is not ExecutionStatus.FINISHED:
             raise ValueError("execution result requires a terminal execution snapshot")
         return self
@@ -1527,7 +1705,7 @@ class ExecutionEvidence(FrozenModel):
     reason: str | None = None
 
     @_model_validator(mode="after")
-    def _validate_completeness(self) -> "ExecutionEvidence":
+    def _validate_completeness(self) -> ExecutionEvidence:
         if self.completeness == "complete" and self.limitations:
             raise ValueError("complete evidence cannot declare limitations")
         if self.completeness == "partial" and not self.limitations:
@@ -1553,33 +1731,159 @@ class ExecutionReport(FrozenModel):
     artifacts_truncated: bool = False
 
     @_model_validator(mode="after")
-    def _validate_projection(self) -> "ExecutionReport":
-        if any(event.execution_id != self.snapshot.execution_id for event in self.events):
+    def _validate_projection(self) -> ExecutionReport:
+        if any(
+            event.execution_id != self.snapshot.execution_id for event in self.events
+        ):
             raise ValueError("report events must belong to its execution")
-        if any(evaluation.execution_id != self.snapshot.execution_id for evaluation in self.evaluations):
+        if any(
+            evaluation.execution_id != self.snapshot.execution_id
+            for evaluation in self.evaluations
+        ):
             raise ValueError("report evaluations must belong to its execution")
-        if any(left.sequence >= right.sequence for left, right in zip(self.events, self.events[1:])):
+        if any(
+            left.sequence >= right.sequence
+            for left, right in zip(self.events, self.events[1:], strict=False)
+        ):
             raise ValueError("report events must be ordered")
-        if len(self.events) > self.event_count or (not self.events_truncated and len(self.events) != self.event_count):
+        if len(self.events) > self.event_count or (
+            not self.events_truncated and len(self.events) != self.event_count
+        ):
             raise ValueError("report event count is inconsistent with its projection")
-        if len(self.artifacts) > self.artifact_count or (not self.artifacts_truncated and len(self.artifacts) != self.artifact_count):
-            raise ValueError("report artifact count is inconsistent with its projection")
+        if len(self.artifacts) > self.artifact_count or (
+            not self.artifacts_truncated and len(self.artifacts) != self.artifact_count
+        ):
+            raise ValueError(
+                "report artifact count is inconsistent with its projection"
+            )
         return self
 
 
-__all__ = [
-    "EVENT_SCHEMA_ID", "EVENT_SCHEMA_VERSION", "ACPAgent", "ActivityHealth", "AgentSpec", "ArtifactId", "ArtifactPolicy", "ArtifactRef",
-    "AudioContent", "Event", "Capability", "CapabilityStatus", "ClaudeCode", "Codex", "Pi",
-    "ConnectionId", "ContentBlock", "DirectSpec", "DirectOperation", "ToolInfo", "ResourceInfo", "TemplateInfo", "PromptInfo", "ElicitationPolicy", "ErrorCode", "ErrorInfo",
-    "EventDirection", "EventKind", "EventOrigin", "PayloadRef", "EventSource",
-    "EvaluationContext", "EvaluationDecision", "EvaluationId", "EvaluationSource", "EvaluationRegistration", "EvaluationResult", "EvaluationStatus", "EvaluationRecord", "RunId",
-    "EventId", "ExecutionId", "ExecutionEvidence", "ExecutionOutcome", "ExecutionPage", "ExecutionResult", "ExecutionState", "ExecutionSpec", "FileContent",
-    "FilesystemPolicy", "FrozenModel", "FullToolPolicy", "HarnessId", "HarnessProfileId", "HarnessProfileRef",
-    "HarnessSpec", "HarnessValue", "Identifier", "ImageContent", "InProcessServer", "ExecutionStatus",
-    "JsonRpcId", "LifecyclePhase", "Metadata", "NativeToolPolicy", "OpaqueContent", "OpenCode", "PermissionPolicy", "ProtocolConstraint",
-    "Readiness", "ResourceLink", "RevisionId", "RevisionSelection", "RestrictiveToolPolicy", "SSEServer", "SamplingPolicy", "SecretReference",
-    "ServerBinding", "ServerDefinition", "ServerId", "ServerProfileId", "ServerProfileRef", "ServerValue", "SessionForkRequest", "SessionId", "SessionSource", "ExecutionReport",
-    "EvidenceRef", "ReasoningState", "ReasoningVisibility", "RequestLink", "StdioServer", "HTTPServer", "TerminalPolicy", "TextContent", "TraceId", "TraceResult",
-    "ToolPolicy", "TransportKind", "TrustLevel", "TurnId", "TurnStatus", "TurnOutcome", "TurnResponse", "TurnResult", "TurnState",
-    "UserMessage", "WorkspaceKind", "WorkspacePolicy", "ListTools", "ListResources", "ListTemplates", "ListPrompts", "CallTool", "ReadResource", "GetPrompt", "Ping", "DirectResult", "ListToolsResult", "ListResourcesResult", "ListTemplatesResult", "ListPromptsResult", "CallToolResult", "ReadResourceResult", "GetPromptResult", "PingResult",
+__all__ = [  # noqa: RUF022 - public API order is compatibility-checked
+    "EVENT_SCHEMA_ID",
+    "EVENT_SCHEMA_VERSION",
+    "ACPAgent",
+    "ActivityHealth",
+    "AgentSpec",
+    "ArtifactId",
+    "ArtifactPolicy",
+    "ArtifactRef",
+    "AudioContent",
+    "Event",
+    "Capability",
+    "CapabilityStatus",
+    "ClaudeCode",
+    "Codex",
+    "Pi",
+    "ConnectionId",
+    "ContentBlock",
+    "DirectSpec",
+    "DirectOperation",
+    "ToolInfo",
+    "ResourceInfo",
+    "TemplateInfo",
+    "PromptInfo",
+    "ElicitationPolicy",
+    "ErrorCode",
+    "ErrorInfo",
+    "EventDirection",
+    "EventKind",
+    "EventOrigin",
+    "PayloadRef",
+    "EventSource",
+    "EvaluationContext",
+    "EvaluationDecision",
+    "EvaluationId",
+    "EvaluationSource",
+    "EvaluationRegistration",
+    "EvaluationResult",
+    "EvaluationStatus",
+    "EvaluationRecord",
+    "RunId",
+    "EventId",
+    "ExecutionId",
+    "ExecutionEvidence",
+    "ExecutionOutcome",
+    "ExecutionPage",
+    "ExecutionResult",
+    "ExecutionState",
+    "ExecutionSpec",
+    "FileContent",
+    "FilesystemPolicy",
+    "FrozenModel",
+    "FullToolPolicy",
+    "HarnessId",
+    "HarnessProfileId",
+    "HarnessProfileRef",
+    "HarnessSpec",
+    "HarnessValue",
+    "Identifier",
+    "ImageContent",
+    "InProcessServer",
+    "ExecutionStatus",
+    "JsonRpcId",
+    "LifecyclePhase",
+    "Metadata",
+    "NativeToolPolicy",
+    "OpaqueContent",
+    "OpenCode",
+    "PermissionPolicy",
+    "ProtocolConstraint",
+    "Readiness",
+    "ResourceLink",
+    "RevisionId",
+    "RevisionSelection",
+    "RestrictiveToolPolicy",
+    "SSEServer",
+    "SamplingPolicy",
+    "SecretReference",
+    "ServerBinding",
+    "ServerDefinition",
+    "ServerId",
+    "ServerProfileId",
+    "ServerProfileRef",
+    "ServerValue",
+    "SessionForkRequest",
+    "SessionId",
+    "SessionSource",
+    "ExecutionReport",
+    "EvidenceRef",
+    "ReasoningState",
+    "ReasoningVisibility",
+    "RequestLink",
+    "StdioServer",
+    "HTTPServer",
+    "TerminalPolicy",
+    "TextContent",
+    "TraceId",
+    "TraceResult",
+    "ToolPolicy",
+    "TransportKind",
+    "TrustLevel",
+    "TurnId",
+    "TurnStatus",
+    "TurnOutcome",
+    "TurnResponse",
+    "TurnResult",
+    "TurnState",
+    "UserMessage",
+    "WorkspaceKind",
+    "WorkspacePolicy",
+    "ListTools",
+    "ListResources",
+    "ListTemplates",
+    "ListPrompts",
+    "CallTool",
+    "ReadResource",
+    "GetPrompt",
+    "Ping",
+    "DirectResult",
+    "ListToolsResult",
+    "ListResourcesResult",
+    "ListTemplatesResult",
+    "ListPromptsResult",
+    "CallToolResult",
+    "ReadResourceResult",
+    "GetPromptResult",
+    "PingResult",
 ]

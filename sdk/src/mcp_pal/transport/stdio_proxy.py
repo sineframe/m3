@@ -5,11 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
-import subprocess
 import stat
+import subprocess
 import sys
 import threading
+from pathlib import Path
 from typing import Any
 
 from mcp_pal.trace.capture import CaptureWriter, parse_json_payload
@@ -24,7 +24,10 @@ def _read_handoff(path: Path) -> Any:
     descriptor = os.open(path, flags | no_follow)
     try:
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
             raise ValueError
         with os.fdopen(descriptor, "r", encoding="utf-8") as input_file:
             descriptor = -1
@@ -41,7 +44,10 @@ def _read_policy(path: Path) -> Any:
     descriptor = os.open(path, flags)
     try:
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
             raise ValueError
         with os.fdopen(descriptor, "r", encoding="utf-8") as input_file:
             descriptor = -1
@@ -101,7 +107,11 @@ def _relay_policy(
                     policy.observe_request(payload)
             denied: tuple[bool, str] | None = None
             denied_batch: list[dict[str, Any]] | None = None
-            if policy is not None and isinstance(payload, dict) and payload.get("method") == "tools/call":
+            if (
+                policy is not None
+                and isinstance(payload, dict)
+                and payload.get("method") == "tools/call"
+            ):
                 params = payload.get("params")
                 name = params.get("name") if isinstance(params, dict) else None
                 allowed, reason = policy.decide(name)
@@ -122,16 +132,52 @@ def _relay_policy(
             if denied is None:
                 if denied_batch is not None:
                     safe_batch = [
-                        {"jsonrpc": item.get("jsonrpc", "2.0"), "id": item.get("id"), "method": "tools/call", "params": {"name": item.get("params", {}).get("name") if isinstance(item.get("params"), dict) else None}}
-                        if isinstance(item, dict) and item.get("method") == "tools/call" else {"policy_batch_item": "redacted"}
+                        {
+                            "jsonrpc": item.get("jsonrpc", "2.0"),
+                            "id": item.get("id"),
+                            "method": "tools/call",
+                            "params": {
+                                "name": item.get("params", {}).get("name")
+                                if isinstance(item.get("params"), dict)
+                                else None
+                            },
+                        }
+                        if isinstance(item, dict) and item.get("method") == "tools/call"
+                        else {"policy_batch_item": "redacted"}
                         for item in payload
                     ]
-                    writer.write(transport="stdio", direction=direction, payload=safe_batch, kind="policy_denied", metadata={"policy_denied": True})
-                    response_batch = [{"jsonrpc": "2.0", "id": item.get("id"), "error": {"code": -32001, "message": "MCP batch denied by policy"}} for item in payload if isinstance(item, dict) and "id" in item]
+                    writer.write(
+                        transport="stdio",
+                        direction=direction,
+                        payload=safe_batch,
+                        kind="policy_denied",
+                        metadata={"policy_denied": True},
+                    )
+                    response_batch = [
+                        {
+                            "jsonrpc": "2.0",
+                            "id": item.get("id"),
+                            "error": {
+                                "code": -32001,
+                                "message": "MCP batch denied by policy",
+                            },
+                        }
+                        for item in payload
+                        if isinstance(item, dict) and "id" in item
+                    ]
                     if response_batch:
-                        writer.write(transport="stdio", direction="server_to_client", payload=response_batch, kind="policy_denied")
+                        writer.write(
+                            transport="stdio",
+                            direction="server_to_client",
+                            payload=response_batch,
+                            kind="policy_denied",
+                        )
                         destination_out = sys.stdout.buffer
-                        destination_out.write((json.dumps(response_batch, separators=(",", ":")) + "\n").encode("utf-8"))
+                        destination_out.write(
+                            (
+                                json.dumps(response_batch, separators=(",", ":")) + "\n"
+                            ).encode("utf-8")
+                        )
                         destination_out.flush()
                     continue
                 writer.write(transport="stdio", direction=direction, payload=payload)
@@ -143,7 +189,9 @@ def _relay_policy(
                 "jsonrpc": payload.get("jsonrpc", "2.0"),
                 "id": payload.get("id"),
                 "method": "tools/call",
-                "params": {"name": params.get("name") if isinstance(params, dict) else None},
+                "params": {
+                    "name": params.get("name") if isinstance(params, dict) else None
+                },
             }
             writer.write(
                 transport="stdio",
@@ -159,9 +207,16 @@ def _relay_policy(
             }
             if "id" not in payload:
                 continue
-            writer.write(transport="stdio", direction="server_to_client", payload=response, kind="policy_denied")
+            writer.write(
+                transport="stdio",
+                direction="server_to_client",
+                payload=response,
+                kind="policy_denied",
+            )
             destination_out = sys.stdout.buffer
-            destination_out.write((json.dumps(response, separators=(",", ":")) + "\n").encode("utf-8"))
+            destination_out.write(
+                (json.dumps(response, separators=(",", ":")) + "\n").encode("utf-8")
+            )
             destination_out.flush()
     except (BrokenPipeError, OSError):
         pass
@@ -204,7 +259,10 @@ def main() -> int:
             if any(not isinstance(value, str) for value in raw_canaries):
                 raise ValueError
             canaries.update(raw_canaries)
-            if any(not isinstance(key, str) or not isinstance(value, str) for key, value in values.items()):
+            if any(
+                not isinstance(key, str) or not isinstance(value, str)
+                for key, value in values.items()
+            ):
                 raise ValueError
             environment.update(values)
         except (OSError, ValueError, TypeError, UnicodeError, json.JSONDecodeError):

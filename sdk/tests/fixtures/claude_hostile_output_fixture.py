@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import sys
 
-
 if "--help" in sys.argv:
     print("--input-format stream-json --output-format stream-json")
     raise SystemExit(0)

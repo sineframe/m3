@@ -8,17 +8,16 @@ never modified and no generated UI files are committed.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import email
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import zipfile
-
+from dataclasses import dataclass
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECTS = {
@@ -62,7 +61,9 @@ def _version(project: Path) -> str:
     try:
         contents = (project / "pyproject.toml").read_text(encoding="utf-8")
     except OSError as exc:
-        raise ReleaseBuildError(f"could not read project metadata: {project.name}") from exc
+        raise ReleaseBuildError(
+            f"could not read project metadata: {project.name}"
+        ) from exc
     match = _VERSION_RE.search(contents)
     if match is None:
         raise ReleaseBuildError(f"could not determine version for {project.name}")
@@ -73,7 +74,9 @@ def _resolved(path: str | os.PathLike[str]) -> Path:
     return Path(path).expanduser().resolve()
 
 
-def validate_ui_dist(ui_dist: str | os.PathLike[str], out_dir: str | os.PathLike[str]) -> Path:
+def validate_ui_dist(
+    ui_dist: str | os.PathLike[str], out_dir: str | os.PathLike[str]
+) -> Path:
     """Validate and return a production UI directory."""
 
     ui = _resolved(ui_dist)
@@ -132,8 +135,7 @@ def _run_build(project: Path, out_dir: Path) -> None:
             command,
             cwd=str(ROOT),
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
     except FileNotFoundError as exc:
@@ -141,22 +143,32 @@ def _run_build(project: Path, out_dir: Path) -> None:
     except OSError as exc:
         raise ReleaseBuildError(f"could not start uv for {project.name}") from exc
     if result.returncode != 0:
-        raise ReleaseBuildError(f"wheel build failed for {project.name} (exit {result.returncode})")
+        raise ReleaseBuildError(
+            f"wheel build failed for {project.name} (exit {result.returncode})"
+        )
 
 
 def _metadata_from_wheel(path: Path) -> WheelMetadata:
     try:
         with zipfile.ZipFile(path) as archive:
-            metadata_names = [name for name in archive.namelist() if _WHEEL_DIST_INFO_RE.match(name)]
+            metadata_names = [
+                name for name in archive.namelist() if _WHEEL_DIST_INFO_RE.match(name)
+            ]
             if len(metadata_names) != 1:
-                raise ReleaseBuildError(f"wheel has invalid METADATA layout: {path.name}")
+                raise ReleaseBuildError(
+                    f"wheel has invalid METADATA layout: {path.name}"
+                )
             metadata = email.message_from_bytes(archive.read(metadata_names[0]))
-            entry_points_name = metadata_names[0].removesuffix("METADATA") + "entry_points.txt"
+            entry_points_name = (
+                metadata_names[0].removesuffix("METADATA") + "entry_points.txt"
+            )
             entry_points = ()
             if entry_points_name in archive.namelist():
                 entry_points = tuple(
                     line.strip()
-                    for line in archive.read(entry_points_name).decode("utf-8").splitlines()
+                    for line in archive.read(entry_points_name)
+                    .decode("utf-8")
+                    .splitlines()
                     if line.strip() and not line.lstrip().startswith("[")
                 )
             name = metadata.get("Name")
@@ -174,7 +186,9 @@ def _metadata_from_wheel(path: Path) -> WheelMetadata:
         raise ReleaseBuildError(f"invalid wheel archive: {path.name}") from exc
 
 
-def classify_wheels(paths: list[Path] | tuple[Path, ...], expected: dict[str, str]) -> dict[str, Path]:
+def classify_wheels(
+    paths: list[Path] | tuple[Path, ...], expected: dict[str, str]
+) -> dict[str, Path]:
     """Classify wheels by exact normalized filename distribution/version.
 
     Exact token matching is intentional: ``mcp_pal`` must not accidentally
@@ -212,25 +226,41 @@ def _mandatory_requirements(values: tuple[str, ...]) -> set[str]:
     """Return dependency names that are installed without selecting an extra."""
 
     return {
-        _requirement_name(value)
-        for value in values
-        if "; extra" not in value.lower()
+        _requirement_name(value) for value in values if "; extra" not in value.lower()
     }
 
 
-def _verify_wheel(metadata: WheelMetadata, expected_name: str, expected_version: str) -> None:
-    if _package_name(metadata.name) != _package_name(expected_name) or metadata.version != expected_version:
-        raise ReleaseBuildError(f"wheel metadata does not match {expected_name} {expected_version}: {metadata.path.name}")
+def _verify_wheel(
+    metadata: WheelMetadata, expected_name: str, expected_version: str
+) -> None:
+    if (
+        _package_name(metadata.name) != _package_name(expected_name)
+        or metadata.version != expected_version
+    ):
+        raise ReleaseBuildError(
+            f"wheel metadata does not match {expected_name} {expected_version}: {metadata.path.name}"
+        )
     mandatory_requires = {"streamlit", "requests"}
     if expected_name in {"mcp_pal", "mcp_pal_app", "mcp_pal_cli"}:
-        forbidden = mandatory_requires.intersection(_mandatory_requirements(metadata.requires))
+        forbidden = mandatory_requires.intersection(
+            _mandatory_requirements(metadata.requires)
+        )
         if forbidden:
-            raise ReleaseBuildError(f"{expected_name} wheel has forbidden mandatory dependency")
+            raise ReleaseBuildError(
+                f"{expected_name} wheel has forbidden mandatory dependency"
+            )
     if expected_name == "mcp_pal_cli":
-        normalized_requires = {re.sub(r"\s+", "", value).lower() for value in metadata.requires}
-        required = {f"mcp-pal[storage]=={expected_version}", f"mcp-pal-app=={expected_version}"}
+        normalized_requires = {
+            re.sub(r"\s+", "", value).lower() for value in metadata.requires
+        }
+        required = {
+            f"mcp-pal[storage]=={expected_version}",
+            f"mcp-pal-app=={expected_version}",
+        }
         if not required.issubset(normalized_requires):
-            raise ReleaseBuildError("CLI wheel dependencies do not pin mcp-pal and mcp-pal-app")
+            raise ReleaseBuildError(
+                "CLI wheel dependencies do not pin mcp-pal and mcp-pal-app"
+            )
         if "mcp-pal = mcp_pal_cli.main:main" not in metadata.entry_points:
             raise ReleaseBuildError("CLI wheel does not own the mcp-pal entry point")
 
@@ -243,7 +273,9 @@ def verify_release(
 ) -> dict[str, Path]:
     wheels = tuple(sorted(out_dir.glob("*.whl")))
     if len(wheels) != len(expected):
-        raise ReleaseBuildError(f"expected exactly {len(expected)} wheels, found {len(wheels)}")
+        raise ReleaseBuildError(
+            f"expected exactly {len(expected)} wheels, found {len(wheels)}"
+        )
     classified = classify_wheels(wheels, expected)
     metadata = {name: _metadata_from_wheel(path) for name, path in classified.items()}
     for name, info in metadata.items():
@@ -257,13 +289,21 @@ def verify_release(
     )
     with zipfile.ZipFile(cli_path) as archive:
         names = set(archive.namelist())
-        ui_files = {name for name in names if name.startswith("mcp_pal_cli/ui/") and not name.endswith("/")}
+        ui_files = {
+            name
+            for name in names
+            if name.startswith("mcp_pal_cli/ui/") and not name.endswith("/")
+        }
         if "mcp_pal_cli/ui/index.html" not in ui_files:
             raise ReleaseBuildError("CLI wheel is missing ui/index.html")
         if not any(name.startswith("mcp_pal_cli/ui/assets/") for name in ui_files):
             raise ReleaseBuildError("CLI wheel is missing UI assets")
-        if source_maps_in_ui is False and any(name.lower().endswith(".map") for name in ui_files):
-            raise ReleaseBuildError("CLI wheel contains source maps absent from the production UI")
+        if source_maps_in_ui is False and any(
+            name.lower().endswith(".map") for name in ui_files
+        ):
+            raise ReleaseBuildError(
+                "CLI wheel contains source maps absent from the production UI"
+            )
     return classified
 
 
@@ -296,7 +336,10 @@ def build_release(
         raise ReleaseBuildError("output directory must be empty")
     output.mkdir(parents=True, exist_ok=True)
     expected = project_versions()
-    if expected_version is not None and next(iter(expected.values())) != expected_version:
+    if (
+        expected_version is not None
+        and next(iter(expected.values())) != expected_version
+    ):
         raise ReleaseBuildError(
             f"project version {next(iter(expected.values()))} does not match expected version {expected_version}"
         )
@@ -329,8 +372,12 @@ def main(argv: list[str] | None = None) -> int:
             print(version)
             return 0
         if args.ui_dist is None or args.out_dir is None:
-            parser.error("--ui-dist and --out-dir are required unless --print-version is used")
-        artifacts = build_release(args.ui_dist, args.out_dir, expected_version=args.expected_version)
+            parser.error(
+                "--ui-dist and --out-dir are required unless --print-version is used"
+            )
+        artifacts = build_release(
+            args.ui_dist, args.out_dir, expected_version=args.expected_version
+        )
     except ReleaseBuildError as exc:
         print(f"release build failed: {exc}", file=sys.stderr)
         return 2

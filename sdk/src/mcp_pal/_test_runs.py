@@ -7,11 +7,11 @@ it is not part of the public SDK model surface.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextvars import ContextVar
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any
 from uuid import uuid4
-
 
 _ACTIVE_TEST: ContextVar[dict[str, Any] | None] = ContextVar(
     "mcp_pal_active_pytest_test", default=None
@@ -93,8 +93,8 @@ def associate_execution(execution_id: Any, *, run_id: Any = None) -> None:
 
 
 __all__ = [
-    "active_test",
     "activate_test",
+    "active_test",
     "associate_execution",
     "now_iso",
     "reset_test",

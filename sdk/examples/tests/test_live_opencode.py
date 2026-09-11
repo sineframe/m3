@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from mcp_pal import MCPTestKit, expect
 from mcp_pal.types import (
     AgentSpec,
     OpenCode,
@@ -28,8 +30,6 @@ from mcp_pal.types import (
     StdioServer,
     TurnOutcome,
 )
-
-from mcp_pal import MCPTestKit, expect
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live]
 

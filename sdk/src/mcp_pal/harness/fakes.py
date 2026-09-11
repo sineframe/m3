@@ -15,8 +15,9 @@ from .contracts import (
     TurnHandler,
 )
 
-
-_CLAUDE_CONTENT = frozenset({"text", "file", "image", "audio", "resource_link", "opaque"})
+_CLAUDE_CONTENT = frozenset(
+    {"text", "file", "image", "audio", "resource_link", "opaque"}
+)
 _OPENCODE_CONTENT = frozenset({"text", "file", "image", "resource_link", "opaque"})
 _ACP_CONTENT = frozenset({"text", "file", "image", "audio", "resource_link", "opaque"})
 

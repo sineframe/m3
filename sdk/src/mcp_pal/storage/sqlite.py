@@ -14,8 +14,8 @@ unreferenced file which is safe for the explicit garbage collector to remove.
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import threading
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -28,6 +28,7 @@ from typing import Any, Literal, cast
 
 from pydantic import TypeAdapter, ValidationError
 
+from ..aggregations import EvaluationQuery, EvaluationReport, aggregate_evaluations
 from ..errors import (
     RawEvidenceIntegrityError,
     RawEvidenceUnavailable,
@@ -35,9 +36,9 @@ from ..errors import (
     TraceUnavailable,
 )
 from ..observability import (
-    RawEvidence,
-    EvidenceCapture,
     CaptureOptions,
+    EvidenceCapture,
+    RawEvidence,
     TraceView,
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
@@ -50,23 +51,23 @@ from ..trace.redaction import (
 from ..types import (
     ArtifactId,
     ArtifactRef,
+    EvaluationRecord,
+    EvaluationResult,
     Event,
     EventId,
     EventKind,
-    PayloadRef,
+    EvidenceRef,
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
-    ExecutionState,
-    ExecutionSpec,
-    EvaluationResult,
-    EvaluationRecord,
-    RunId,
-    ExecutionStatus,
     ExecutionReport,
-    EvidenceRef,
+    ExecutionSpec,
+    ExecutionState,
+    ExecutionStatus,
+    PayloadRef,
     RevisionId,
     RevisionSelection,
+    RunId,
     SessionId,
     TraceId,
     TraceResult,
@@ -74,7 +75,6 @@ from ..types import (
     TurnResult,
     TurnState,
 )
-from ..aggregations import EvaluationQuery, EvaluationReport, aggregate_evaluations
 from .blobs import FilesystemBlobStore
 from .ephemeral import (
     ArtifactNotFound,
@@ -124,7 +124,9 @@ def _sqlalchemy() -> Any:
 
 def _is_database_error(exc: BaseException) -> bool:
     """Recognize SQLAlchemy's DBAPI wrappers without importing it eagerly."""
-    return isinstance(exc, OSError) or exc.__class__.__module__.startswith("sqlalchemy.")
+    return isinstance(exc, OSError) or exc.__class__.__module__.startswith(
+        "sqlalchemy."
+    )
 
 
 def _is_integrity_error(exc: BaseException) -> bool:
@@ -169,7 +171,9 @@ class _CompatConnection:
         self._connection = connection
 
     def execute(self, statement: str, parameters: Sequence[Any] = ()) -> _CompatResult:
-        return _CompatResult(self._connection.exec_driver_sql(statement, tuple(parameters)))
+        return _CompatResult(
+            self._connection.exec_driver_sql(statement, tuple(parameters))
+        )
 
     def executescript(self, script: str) -> None:
         # The schema is a controlled, fresh-only script containing no string
@@ -186,10 +190,15 @@ class _CompatConnection:
     def close(self) -> None:
         self._connection.close()
 
-    def __enter__(self) -> "_CompatConnection":
+    def __enter__(self) -> _CompatConnection:
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.close()
 
 
@@ -440,7 +449,10 @@ class _SqliteBase:
         # write transactions still use SQLite's native BEGIN IMMEDIATE below.
         self._engine = create_engine(
             f"sqlite+pysqlite:///{self.database}",
-            connect_args={"timeout": max(self.busy_timeout_ms / 1000, 0.001), "check_same_thread": False},
+            connect_args={
+                "timeout": max(self.busy_timeout_ms / 1000, 0.001),
+                "check_same_thread": False,
+            },
             isolation_level="AUTOCOMMIT",
             pool_pre_ping=True,
             # Store connections are short-lived and the application may
@@ -474,12 +486,18 @@ class _SqliteBase:
             # Metadata and WAL/SHM files can contain sensitive redacted
             # evidence.  Tighten modes on every open, including files created
             # by SQLite after the connection was established.
-            for path in (self.database, Path(f"{self.database}-wal"), Path(f"{self.database}-shm")):
+            for path in (
+                self.database,
+                Path(f"{self.database}-wal"),
+                Path(f"{self.database}-shm"),
+            ):
                 if path.is_symlink():
                     raise StorageError("database or journal path must not be a symlink")
                 if path.exists():
                     if not path.is_file():
-                        raise StorageError("database or journal path must name a regular file")
+                        raise StorageError(
+                            "database or journal path must name a regular file"
+                        )
                     path.chmod(0o600)
             return connection
         except StorageError:
@@ -508,13 +526,25 @@ class _SqliteBase:
                     ("v2_evaluations", "score", "REAL"),
                     ("v2_evaluations", "run_id", "TEXT"),
                 ):
-                    columns = connection.execute(f"PRAGMA table_info({table})").fetchall()
+                    columns = connection.execute(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
                     if not any(str(row[1]) == column for row in columns):
-                        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-                connection.execute("CREATE INDEX IF NOT EXISTS v2_evaluations_execution_turn ON v2_evaluations(execution_id, turn_id, created_at, id)")
-                connection.execute("CREATE INDEX IF NOT EXISTS v2_evaluations_run_evaluator ON v2_evaluations(run_id, evaluator_name, created_at, id)")
-                connection.execute("CREATE INDEX IF NOT EXISTS v2_evaluations_evaluator ON v2_evaluations(evaluator_name, created_at, id)")
-                connection.execute("CREATE INDEX IF NOT EXISTS v2_executions_created_at ON v2_executions(created_at, id)")
+                        connection.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                        )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_evaluations_execution_turn ON v2_evaluations(execution_id, turn_id, created_at, id)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_evaluations_run_evaluator ON v2_evaluations(run_id, evaluator_name, created_at, id)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_evaluations_evaluator ON v2_evaluations(evaluator_name, created_at, id)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_executions_created_at ON v2_executions(created_at, id)"
+                )
                 migrate = getattr(self, "_migrate_legacy_evaluations", None)
                 if callable(migrate):
                     migrate(connection)
@@ -539,15 +569,27 @@ class _SqliteBase:
                 raw_context = value.get("context")
                 context = dict(raw_context) if isinstance(raw_context, Mapping) else {}
                 raw_metadata = context.get("metadata")
-                metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+                metadata = (
+                    dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+                )
                 execution = connection.execute(
-                    "SELECT run_id FROM v2_executions WHERE id=?", (str(row["execution_id"]),)
+                    "SELECT run_id FROM v2_executions WHERE id=?",
+                    (str(row["execution_id"]),),
                 ).fetchone()
                 execution_run = execution[0] if execution is not None else None
-                run_value = value.get("run_id") or metadata.get("mcp_pal.run_id") or row["run_id"] or execution_run
+                run_value = (
+                    value.get("run_id")
+                    or metadata.get("mcp_pal.run_id")
+                    or row["run_id"]
+                    or execution_run
+                )
                 subject = context.get("subject")
                 config = getattr(self, "_redaction_config", RedactionConfig())
-                subject_json = _json(redact_for_persistence(subject, config=config, path="$.evaluation.subject"))
+                subject_json = _json(
+                    redact_for_persistence(
+                        subject, config=config, path="$.evaluation.subject"
+                    )
+                )
                 digest = value.get("subject_digest")
                 if not isinstance(digest, str) or len(digest) != 64:
                     digest = hashlib.sha256(subject_json.encode()).hexdigest()
@@ -556,26 +598,40 @@ class _SqliteBase:
                     subject_kind = _evaluation_subject_kind(subject)
                 name = str(value.get("name") or row["evaluator_name"] or "")
                 status = str(value.get("status") or row["status"] or "error")
-                score = value.get("score") if value.get("score") is not None else row["score"]
+                score = (
+                    value.get("score")
+                    if value.get("score") is not None
+                    else row["score"]
+                )
                 compact = {
                     "evaluation_id": str(value.get("evaluation_id") or row["id"]),
-                    "name": name, "status": status, "required": bool(value.get("required", False)),
-                    "message": value.get("message"), "score": score,
-                    "rationale": value.get("rationale"), "metrics": value.get("metrics", {}),
+                    "name": name,
+                    "status": status,
+                    "required": bool(value.get("required", False)),
+                    "message": value.get("message"),
+                    "score": score,
+                    "rationale": value.get("rationale"),
+                    "metrics": value.get("metrics", {}),
                     "provenance": value.get("provenance"),
                     "context": {
-                        "execution_id": context.get("execution_id") or str(row["execution_id"]),
-                        "turn_id": context.get("turn_id"), "goal": context.get("goal"),
-                        "artifacts": context.get("artifacts", []), "metadata": metadata,
+                        "execution_id": context.get("execution_id")
+                        or str(row["execution_id"]),
+                        "turn_id": context.get("turn_id"),
+                        "goal": context.get("goal"),
+                        "artifacts": context.get("artifacts", []),
+                        "metadata": metadata,
                     },
-                    "subject_kind": subject_kind, "subject_digest": digest,
+                    "subject_kind": subject_kind,
+                    "subject_digest": digest,
                     "run_id": str(run_value) if run_value is not None else None,
                     "created_at": str(value.get("created_at") or row["created_at"]),
                 }
                 candidate = dict(compact)
                 candidate_context = candidate.pop("context")
                 candidate.update(
-                    execution_id=str(candidate_context.get("execution_id") or row["execution_id"]),
+                    execution_id=str(
+                        candidate_context.get("execution_id") or row["execution_id"]
+                    ),
                     turn_id=candidate_context.get("turn_id"),
                     goal=candidate_context.get("goal"),
                     metadata=candidate_context.get("metadata", {}),
@@ -583,7 +639,14 @@ class _SqliteBase:
                 EvaluationRecord.model_validate(candidate)
                 connection.execute(
                     "UPDATE v2_evaluations SET result_json=?, evaluator_name=?, status=?, score=?, run_id=? WHERE id=?",
-                    (_json(compact), name, status, score, str(run_value) if run_value is not None else None, str(row["id"])),
+                    (
+                        _json(compact),
+                        name,
+                        status,
+                        score,
+                        str(run_value) if run_value is not None else None,
+                        str(row["id"]),
+                    ),
                 )
             except Exception:
                 # Malformed legacy input must not make the database unusable.
@@ -610,22 +673,39 @@ class _SqliteBase:
 class SQLiteArtifactStore(_SqliteBase):
     """Filesystem-backed content-addressed artifact store with SQLite refs."""
 
-    def __init__(self, database: str | Path, blob_root: str | Path | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self, database: str | Path, blob_root: str | Path | None = None, **kwargs: Any
+    ) -> None:
         config = kwargs.pop("config", None)
         super().__init__(database, **kwargs)
         self._blob_store = FilesystemBlobStore(blob_root or f"{self.database}.blobs")
         self.blob_root = self._blob_store.root
         self._redaction_config = config or RedactionConfig.from_environment()
 
-    def put(self, execution_id: ExecutionId | str, name: str, content: bytes, *, media_type: str | None = None) -> ArtifactRef:
+    def put(
+        self,
+        execution_id: ExecutionId | str,
+        name: str,
+        content: bytes,
+        *,
+        media_type: str | None = None,
+    ) -> ArtifactRef:
         if not isinstance(content, bytes):
             raise TypeError("artifact content must be bytes")
         if not name:
             raise ValueError("artifact name must not be empty")
-        safe_content = redact_artifact_bytes(content, config=self._redaction_config).data
-        safe_name = redact_for_persistence(name, config=self._redaction_config, path="$.artifact.name")
-        safe_media_type = redact_for_persistence(media_type, config=self._redaction_config, path="$.artifact.media_type")
-        if not isinstance(safe_name, str) or (safe_media_type is not None and not isinstance(safe_media_type, str)):
+        safe_content = redact_artifact_bytes(
+            content, config=self._redaction_config
+        ).data
+        safe_name = redact_for_persistence(
+            name, config=self._redaction_config, path="$.artifact.name"
+        )
+        safe_media_type = redact_for_persistence(
+            media_type, config=self._redaction_config, path="$.artifact.media_type"
+        )
+        if not isinstance(safe_name, str) or (
+            safe_media_type is not None and not isinstance(safe_media_type, str)
+        ):
             raise StorageError("artifact metadata could not be redacted")
         execution_key = _execution_key(execution_id)
         blob = self._blob_store.put(safe_content)
@@ -635,18 +715,39 @@ class SQLiteArtifactStore(_SqliteBase):
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
-            if connection.execute("SELECT 1 FROM v2_executions WHERE id=?", (execution_key,)).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM v2_executions WHERE id=?", (execution_key,)
+                ).fetchone()
+                is None
+            ):
                 raise StorageConflict("execution does not exist")
             connection.execute(
                 "INSERT INTO v2_blobs(sha256,size_bytes,compressed_size,media_type,storage_key,ref_count,created_at) "
                 "VALUES(?,?,?,?,?,?,?) ON CONFLICT(sha256) DO UPDATE SET ref_count=ref_count+1",
-                (digest, len(safe_content), blob.compressed_size_bytes, safe_media_type, str(path.relative_to(self.blob_root)), 1, _iso(_utcnow())),
+                (
+                    digest,
+                    len(safe_content),
+                    blob.compressed_size_bytes,
+                    safe_media_type,
+                    str(path.relative_to(self.blob_root)),
+                    1,
+                    _iso(_utcnow()),
+                ),
             )
             # The upsert above increments existing rows but initializes a new
             # row with one reference.  New artifact rows are always one ref.
             connection.execute(
                 "INSERT INTO v2_artifacts(id,execution_id,name,media_type,size_bytes,sha256,redacted,created_at) VALUES(?,?,?,?,?,?,1,?)",
-                (str(artifact_id.root), execution_key, safe_name, safe_media_type, len(safe_content), digest, _iso(_utcnow())),
+                (
+                    str(artifact_id.root),
+                    execution_key,
+                    safe_name,
+                    safe_media_type,
+                    len(safe_content),
+                    digest,
+                    _iso(_utcnow()),
+                ),
             )
             self._commit(connection)
         except BaseException:
@@ -665,7 +766,13 @@ class SQLiteArtifactStore(_SqliteBase):
         )
 
     def _resolve(self, artifact: ArtifactRef | ArtifactId | str) -> _CompatRow:
-        key = str(artifact.artifact_id.root if isinstance(artifact, ArtifactRef) else artifact.root if isinstance(artifact, ArtifactId) else artifact)
+        key = str(
+            artifact.artifact_id.root
+            if isinstance(artifact, ArtifactRef)
+            else artifact.root
+            if isinstance(artifact, ArtifactId)
+            else artifact
+        )
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT a.*, b.storage_key, b.size_bytes AS blob_size, b.media_type AS blob_media_type "
@@ -679,41 +786,75 @@ class SQLiteArtifactStore(_SqliteBase):
     def get(self, artifact: ArtifactRef | ArtifactId | str) -> bytes:
         row = self._resolve(artifact)
         try:
-            return self._blob_store.read(str(row["sha256"]), size_bytes=int(row["blob_size"]))
+            return self._blob_store.read(
+                str(row["sha256"]), size_bytes=int(row["blob_size"])
+            )
         except (ArtifactNotFound, BlobIntegrityError):
             raise
 
     def get_ref(self, artifact_id: ArtifactId | str) -> ArtifactRef:
         row = self._resolve(artifact_id)
         return ArtifactRef(
-            artifact_id=ArtifactId(str(row["id"])), execution_id=ExecutionId(str(row["execution_id"])),
-            name=str(row["name"]), media_type=row["media_type"], size_bytes=int(row["size_bytes"]),
-            sha256=str(row["sha256"]), redacted=True,
+            artifact_id=ArtifactId(str(row["id"])),
+            execution_id=ExecutionId(str(row["execution_id"])),
+            name=str(row["name"]),
+            media_type=row["media_type"],
+            size_bytes=int(row["size_bytes"]),
+            sha256=str(row["sha256"]),
+            redacted=True,
         )
 
-    def iter_refs(self, execution_id: ExecutionId | str | None = None) -> Iterator[ArtifactRef]:
+    def iter_refs(
+        self, execution_id: ExecutionId | str | None = None
+    ) -> Iterator[ArtifactRef]:
         with self._connect() as connection:
             if execution_id is None:
-                rows = connection.execute("SELECT * FROM v2_artifacts ORDER BY created_at,id").fetchall()
+                rows = connection.execute(
+                    "SELECT * FROM v2_artifacts ORDER BY created_at,id"
+                ).fetchall()
             else:
-                rows = connection.execute("SELECT * FROM v2_artifacts WHERE execution_id=? ORDER BY created_at,id", (_execution_key(execution_id),)).fetchall()
+                rows = connection.execute(
+                    "SELECT * FROM v2_artifacts WHERE execution_id=? ORDER BY created_at,id",
+                    (_execution_key(execution_id),),
+                ).fetchall()
         return iter(
-            ArtifactRef(artifact_id=ArtifactId(str(row["id"])), execution_id=ExecutionId(str(row["execution_id"])), name=str(row["name"]), media_type=row["media_type"], size_bytes=int(row["size_bytes"]), sha256=str(row["sha256"]), redacted=True)
+            ArtifactRef(
+                artifact_id=ArtifactId(str(row["id"])),
+                execution_id=ExecutionId(str(row["execution_id"])),
+                name=str(row["name"]),
+                media_type=row["media_type"],
+                size_bytes=int(row["size_bytes"]),
+                sha256=str(row["sha256"]),
+                redacted=True,
+            )
             for row in rows
         )
 
     def delete(self, artifact: ArtifactRef | ArtifactId | str) -> None:
-        key = str(artifact.artifact_id.root if isinstance(artifact, ArtifactRef) else artifact.root if isinstance(artifact, ArtifactId) else artifact)
+        key = str(
+            artifact.artifact_id.root
+            if isinstance(artifact, ArtifactRef)
+            else artifact.root
+            if isinstance(artifact, ArtifactId)
+            else artifact
+        )
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
-            row = connection.execute("SELECT sha256 FROM v2_artifacts WHERE id=?", (key,)).fetchone()
+            row = connection.execute(
+                "SELECT sha256 FROM v2_artifacts WHERE id=?", (key,)
+            ).fetchone()
             if row is None:
                 raise ArtifactNotFound("artifact not found")
             digest = str(row["sha256"])
             connection.execute("DELETE FROM v2_artifacts WHERE id=?", (key,))
-            connection.execute("UPDATE v2_blobs SET ref_count=ref_count-1 WHERE sha256=?", (digest,))
-            blob = connection.execute("SELECT storage_key FROM v2_blobs WHERE sha256=? AND ref_count=0", (digest,)).fetchone()
+            connection.execute(
+                "UPDATE v2_blobs SET ref_count=ref_count-1 WHERE sha256=?", (digest,)
+            )
+            blob = connection.execute(
+                "SELECT storage_key FROM v2_blobs WHERE sha256=? AND ref_count=0",
+                (digest,),
+            ).fetchone()
             if blob is not None:
                 connection.execute("DELETE FROM v2_blobs WHERE sha256=?", (digest,))
             self._commit(connection)
@@ -726,7 +867,10 @@ class SQLiteArtifactStore(_SqliteBase):
 
     def cleanup(self) -> None:
         with self._connect() as connection:
-            referenced = {str(row[0]): int(row[1]) for row in connection.execute("SELECT sha256,ref_count FROM v2_blobs")}
+            referenced = {
+                str(row[0]): int(row[1])
+                for row in connection.execute("SELECT sha256,ref_count FROM v2_blobs")
+            }
         self._blob_store.garbage_collect(referenced)
 
     @property
@@ -736,7 +880,7 @@ class SQLiteArtifactStore(_SqliteBase):
 
 
 class _SqliteBatch(AbstractContextManager["_SqliteBatch"]):
-    def __init__(self, store: "SQLiteExecutionStore", execution_id: str) -> None:
+    def __init__(self, store: SQLiteExecutionStore, execution_id: str) -> None:
         self.store = store
         self.execution_id = execution_id
         self.events: list[Event] = []
@@ -745,8 +889,12 @@ class _SqliteBatch(AbstractContextManager["_SqliteBatch"]):
     def append(self, events: Sequence[Event]) -> None:
         if self.done:
             raise StorageConflict("transaction is already closed")
-        if any(_execution_key(event.execution_id) != self.execution_id for event in events):
-            raise StorageConflict("all events in a transaction must belong to its execution")
+        if any(
+            _execution_key(event.execution_id) != self.execution_id for event in events
+        ):
+            raise StorageConflict(
+                "all events in a transaction must belong to its execution"
+            )
         self.events.extend(events)
 
     def commit(self) -> None:
@@ -758,12 +906,17 @@ class _SqliteBatch(AbstractContextManager["_SqliteBatch"]):
         self.events.clear()
         self.done = True
 
-    def __enter__(self) -> "_SqliteBatch":
+    def __enter__(self) -> _SqliteBatch:
         if self.done:
             raise StorageConflict("transaction is already closed")
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> bool | None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
         if exc_type is None:
             self.commit()
         else:
@@ -799,15 +952,32 @@ class SQLiteExecutionStore(_SqliteBase):
         self._capture_config = (
             capture_config if capture_config is not None else CaptureOptions()
         )
-        self.artifacts = SQLiteArtifactStore(database, blob_root, config=self._redaction_config, busy_timeout_ms=self.busy_timeout_ms, wal=False)
+        self.artifacts = SQLiteArtifactStore(
+            database,
+            blob_root,
+            config=self._redaction_config,
+            busy_timeout_ms=self.busy_timeout_ms,
+            wal=False,
+        )
         self.payload_blob_threshold = payload_blob_threshold
         self._callbacks: dict[str, list[EventCallback]] = {}
         self._callback_lock = threading.RLock()
 
-    def create(self, snapshot: ExecutionState, *, specification: Mapping[str, Any] | None = None, provenance: Mapping[str, Any] | None = None, server_bindings: Sequence[Mapping[str, Any]] = (), harness_binding: Mapping[str, Any] | None = None, parent_execution_id: ExecutionId | str | None = None, run_id: RunId | str | None = None) -> None:
+    def create(
+        self,
+        snapshot: ExecutionState,
+        *,
+        specification: Mapping[str, Any] | None = None,
+        provenance: Mapping[str, Any] | None = None,
+        server_bindings: Sequence[Mapping[str, Any]] = (),
+        harness_binding: Mapping[str, Any] | None = None,
+        parent_execution_id: ExecutionId | str | None = None,
+        run_id: RunId | str | None = None,
+    ) -> None:
         key = _execution_key(snapshot.execution_id)
         try:
             from .._test_runs import associate_execution
+
             associate_execution(snapshot.execution_id, run_id=run_id or snapshot.run_id)
         except Exception:
             # Test recording is observational and must never break execution.
@@ -822,19 +992,77 @@ class SQLiteExecutionStore(_SqliteBase):
         # executed. Evidence redaction would turn a typed SecretReference
         # under (for example) ``Authorization`` into a runnable
         # ``[REDACTED]`` literal, so use the dedicated durable projection.
-        safe_spec = serialize_durable(specification, config=self._redaction_config, path="$.execution.specification") if specification is not None else None
-        safe_provenance = redact_for_persistence(provenance, config=self._redaction_config, path="$.execution.provenance") if provenance is not None else None
+        safe_spec = (
+            serialize_durable(
+                specification,
+                config=self._redaction_config,
+                path="$.execution.specification",
+            )
+            if specification is not None
+            else None
+        )
+        safe_provenance = (
+            redact_for_persistence(
+                provenance, config=self._redaction_config, path="$.execution.provenance"
+            )
+            if provenance is not None
+            else None
+        )
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
-            parent_key = _execution_key(parent_execution_id) if parent_execution_id is not None else None
-            connection.execute("INSERT INTO v2_executions(id,snapshot_json,specification_json,provenance_json,parent_execution_id,created_at,run_id) VALUES(?,?,?,?,?,?,?)", (key, _json(safe_snapshot), _json(safe_spec) if safe_spec is not None else None, _json(safe_provenance) if safe_provenance is not None else None, parent_key, _iso(snapshot.created_at), run_key))
+            parent_key = (
+                _execution_key(parent_execution_id)
+                if parent_execution_id is not None
+                else None
+            )
+            connection.execute(
+                "INSERT INTO v2_executions(id,snapshot_json,specification_json,provenance_json,parent_execution_id,created_at,run_id) VALUES(?,?,?,?,?,?,?)",
+                (
+                    key,
+                    _json(safe_snapshot),
+                    _json(safe_spec) if safe_spec is not None else None,
+                    _json(safe_provenance) if safe_provenance is not None else None,
+                    parent_key,
+                    _iso(snapshot.created_at),
+                    run_key,
+                ),
+            )
             for ordinal, binding in enumerate(server_bindings):
                 value = dict(binding)
-                connection.execute("INSERT INTO v2_execution_server_bindings(execution_id,ordinal,profile_id,revision_id,binding_json) VALUES(?,?,?,?,?)", (key, ordinal, value.get("profile_id"), value.get("revision_id"), _json(serialize_durable(value, config=self._redaction_config, path="$.execution.server_binding"))))
+                connection.execute(
+                    "INSERT INTO v2_execution_server_bindings(execution_id,ordinal,profile_id,revision_id,binding_json) VALUES(?,?,?,?,?)",
+                    (
+                        key,
+                        ordinal,
+                        value.get("profile_id"),
+                        value.get("revision_id"),
+                        _json(
+                            serialize_durable(
+                                value,
+                                config=self._redaction_config,
+                                path="$.execution.server_binding",
+                            )
+                        ),
+                    ),
+                )
             if harness_binding is not None:
                 value = dict(harness_binding)
-                connection.execute("INSERT INTO v2_execution_harness_bindings(execution_id,profile_id,revision_id,binding_json) VALUES(?,?,?,?)", (key, value.get("profile_id"), value.get("revision_id"), _json(serialize_durable(value, config=self._redaction_config, path="$.execution.harness_binding"))))
+                connection.execute(
+                    "INSERT INTO v2_execution_harness_bindings(execution_id,profile_id,revision_id,binding_json) VALUES(?,?,?,?)",
+                    (
+                        key,
+                        value.get("profile_id"),
+                        value.get("revision_id"),
+                        _json(
+                            serialize_durable(
+                                value,
+                                config=self._redaction_config,
+                                path="$.execution.harness_binding",
+                            )
+                        ),
+                    ),
+                )
             self._commit(connection)
         except Exception as exc:
             self._rollback(connection)
@@ -851,7 +1079,9 @@ class SQLiteExecutionStore(_SqliteBase):
 
     def save_test_run(self, run_id: str, value: Mapping[str, object]) -> None:
         key = str(getattr(run_id, "root", run_id))
-        safe = redact_for_persistence(dict(value), config=self._redaction_config, path="$.test_run")
+        safe = redact_for_persistence(
+            dict(value), config=self._redaction_config, path="$.test_run"
+        )
         if not isinstance(safe, Mapping):
             raise StorageError("test run manifest could not be redacted")
         now = _iso(_utcnow())
@@ -873,7 +1103,9 @@ class SQLiteExecutionStore(_SqliteBase):
     def get_test_run(self, run_id: str) -> Mapping[str, object] | None:
         key = str(getattr(run_id, "root", run_id))
         with self._connect() as connection:
-            row = connection.execute("SELECT record_json FROM v2_test_runs WHERE run_id=?", (key,)).fetchone()
+            row = connection.execute(
+                "SELECT record_json FROM v2_test_runs WHERE run_id=?", (key,)
+            ).fetchone()
         if row is None:
             return None
         value = _loads(row[0])
@@ -881,7 +1113,9 @@ class SQLiteExecutionStore(_SqliteBase):
 
     def list_test_runs(self) -> tuple[Mapping[str, object], ...]:
         with self._connect() as connection:
-            rows = connection.execute("SELECT record_json FROM v2_test_runs ORDER BY created_at,run_id").fetchall()
+            rows = connection.execute(
+                "SELECT record_json FROM v2_test_runs ORDER BY created_at,run_id"
+            ).fetchall()
         values: list[Mapping[str, object]] = []
         for row in rows:
             value = _loads(row[0])
@@ -889,9 +1123,13 @@ class SQLiteExecutionStore(_SqliteBase):
                 values.append(dict(value))
         return tuple(values)
 
-    def save_test_result(self, run_id: str, attempt_id: str, value: Mapping[str, object]) -> None:
+    def save_test_result(
+        self, run_id: str, attempt_id: str, value: Mapping[str, object]
+    ) -> None:
         key = str(getattr(run_id, "root", run_id))
-        safe = redact_for_persistence(dict(value), config=self._redaction_config, path="$.test_result")
+        safe = redact_for_persistence(
+            dict(value), config=self._redaction_config, path="$.test_result"
+        )
         if not isinstance(safe, Mapping):
             raise StorageError("test result could not be redacted")
         now = _iso(_utcnow())
@@ -900,10 +1138,28 @@ class SQLiteExecutionStore(_SqliteBase):
             self._begin(connection, immediate=True)
             # xdist workers can publish their first attempt before the
             # controller's manifest update reaches the database.
-            if connection.execute("SELECT 1 FROM v2_test_runs WHERE run_id=?", (key,)).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM v2_test_runs WHERE run_id=?", (key,)
+                ).fetchone()
+                is None
+            ):
                 connection.execute(
                     "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at) VALUES(?,?,?,?)",
-                    (key, _json({"schema_version": 1, "run_id": key, "status": "running", "created_at": now, "finished_at": None}), now, now),
+                    (
+                        key,
+                        _json(
+                            {
+                                "schema_version": 1,
+                                "run_id": key,
+                                "status": "running",
+                                "created_at": now,
+                                "finished_at": None,
+                            }
+                        ),
+                        now,
+                        now,
+                    ),
                 )
             connection.execute(
                 "INSERT INTO v2_test_results(run_id,attempt_id,record_json,created_at,updated_at) VALUES(?,?,?,?,?) "
@@ -933,10 +1189,15 @@ class SQLiteExecutionStore(_SqliteBase):
 
     def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None:
         with self._connect() as connection:
-            row = connection.execute("SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL", (_execution_key(execution_id),)).fetchone()
+            row = connection.execute(
+                "SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
+                (_execution_key(execution_id),),
+            ).fetchone()
         return ExecutionState.model_validate(_loads(row[0])) if row else None
 
-    def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None:
+    def get_execution_spec(
+        self, execution_id: ExecutionId | str
+    ) -> ExecutionSpec | None:
         """Return the immutable typed submission spec, if one was saved."""
         with self._connect() as connection:
             row = connection.execute(
@@ -978,25 +1239,47 @@ class SQLiteExecutionStore(_SqliteBase):
             parameters.append(str(getattr(run_id, "root", run_id)))
         where = " AND ".join(clauses)
         with self._connect() as connection:
-            total_row = connection.execute(f"SELECT COUNT(*) FROM v2_executions WHERE {where}", tuple(parameters)).fetchone()
+            total_row = connection.execute(
+                f"SELECT COUNT(*) FROM v2_executions WHERE {where}", tuple(parameters)
+            ).fetchone()
             rows = connection.execute(
                 f"SELECT snapshot_json FROM v2_executions WHERE {where} ORDER BY json_extract(snapshot_json, '$.created_at') DESC, id DESC LIMIT ? OFFSET ?",
-                tuple(parameters) + (limit, offset),
+                (*tuple(parameters), limit, offset),
             ).fetchall()
         snapshots = [ExecutionState.model_validate(_loads(row[0])) for row in rows]
-        return page.model_copy(update={"items": tuple(snapshots), "total": int(total_row[0]) if total_row else 0})
+        return page.model_copy(
+            update={
+                "items": tuple(snapshots),
+                "total": int(total_row[0]) if total_row else 0,
+            }
+        )
 
-    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> ExecutionReport | None:
+    def get_report(
+        self,
+        execution_id: ExecutionId | str,
+        *,
+        after_sequence: int = -1,
+        event_limit: int | None = None,
+        artifact_limit: int | None = None,
+    ) -> ExecutionReport | None:
         snapshot = self.get_snapshot(execution_id)
         if snapshot is None:
             return None
-        if after_sequence < -1 or (event_limit is not None and event_limit < 1) or (artifact_limit is not None and artifact_limit < 1):
+        if (
+            after_sequence < -1
+            or (event_limit is not None and event_limit < 1)
+            or (artifact_limit is not None and artifact_limit < 1)
+        ):
             raise ValueError("invalid report event cursor or limit")
         if event_limit is None:
             all_events = self.events(execution_id)
             events, event_count = all_events, len(all_events)
         else:
-            page, event_count = self._events_page(_execution_key(execution_id), after_sequence=after_sequence, event_limit=event_limit)
+            page, event_count = self._events_page(
+                _execution_key(execution_id),
+                after_sequence=after_sequence,
+                event_limit=event_limit,
+            )
             events = page[:event_limit]
         key = _execution_key(execution_id)
         with self._connect() as connection:
@@ -1004,10 +1287,14 @@ class SQLiteExecutionStore(_SqliteBase):
                 "SELECT event_json FROM v2_events WHERE execution_id=? AND json_extract(event_json, '$.kind')=? ORDER BY sequence DESC LIMIT 1",
                 (key, EventKind.EXECUTION_FINISHED.value),
             ).fetchone()
-        terminal_events = (self._restore_event(_loads(terminal_row[0])),) if terminal_row else events
+        terminal_events = (
+            (self._restore_event(_loads(terminal_row[0])),) if terminal_row else events
+        )
         direct_result, error, evidence = _report_fields(terminal_events)
         all_artifacts = tuple(self.artifacts.iter_refs(execution_id))
-        artifacts = all_artifacts if artifact_limit is None else all_artifacts[:artifact_limit]
+        artifacts = (
+            all_artifacts if artifact_limit is None else all_artifacts[:artifact_limit]
+        )
         return ExecutionReport(
             snapshot=snapshot,
             events=events,
@@ -1015,13 +1302,18 @@ class SQLiteExecutionStore(_SqliteBase):
             direct_result=direct_result,
             error=error,
             evidence=evidence,
-            turns=tuple(result for _snapshot, result in self.turns(execution_id) if result is not None),
+            turns=tuple(
+                result
+                for _snapshot, result in self.turns(execution_id)
+                if result is not None
+            ),
             evaluations=self.persisted_evaluations(execution_id),
             event_count=event_count,
             events_truncated=event_limit is not None and event_count > event_limit,
             next_after_sequence=events[-1].sequence if events else after_sequence,
             artifact_count=len(all_artifacts),
-            artifacts_truncated=artifact_limit is not None and len(all_artifacts) > artifact_limit,
+            artifacts_truncated=artifact_limit is not None
+            and len(all_artifacts) > artifact_limit,
         )
 
     def get_trace(self, execution_id: ExecutionId | str) -> TraceResult | None:
@@ -1029,7 +1321,9 @@ class SQLiteExecutionStore(_SqliteBase):
         if snapshot is None:
             return None
         events = self._events(_execution_key(execution_id))
-        created_events = [event for event in events if event.kind is EventKind.EXECUTION_CREATED]
+        created_events = [
+            event for event in events if event.kind is EventKind.EXECUTION_CREATED
+        ]
         if (
             not events
             or events[0].sequence != 0
@@ -1062,7 +1356,10 @@ class SQLiteExecutionStore(_SqliteBase):
             or outcome not in {item.value for item in ExecutionOutcome}
             or completeness not in {"complete", "partial"}
             or not isinstance(raw_limitations, (list, tuple))
-            or any(not isinstance(item, str) or not item.strip() for item in raw_limitations)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in raw_limitations
+            )
         ):
             raise TraceUnavailable("persisted execution.finished evidence is malformed")
         limitations = tuple(raw_limitations)
@@ -1070,8 +1367,13 @@ class SQLiteExecutionStore(_SqliteBase):
             typed_outcome = ExecutionOutcome(outcome)
         except ValueError:
             raise TraceUnavailable("persisted execution outcome is invalid") from None
-        if snapshot.lifecycle is not ExecutionStatus.FINISHED or snapshot.outcome != typed_outcome:
-            raise TraceUnavailable("persisted snapshot outcome conflicts with terminal evidence")
+        if (
+            snapshot.lifecycle is not ExecutionStatus.FINISHED
+            or snapshot.outcome != typed_outcome
+        ):
+            raise TraceUnavailable(
+                "persisted snapshot outcome conflicts with terminal evidence"
+            )
         try:
             return TraceResult(
                 trace_id=typed_trace_id,
@@ -1097,13 +1399,19 @@ class SQLiteExecutionStore(_SqliteBase):
         if snapshot != derived:
             raise StorageConflict("snapshot is derived from committed events")
         with self._connect() as connection:
-            connection.execute("UPDATE v2_executions SET snapshot_json=? WHERE id=?", (_json(snapshot.model_dump(mode="json")), key))
+            connection.execute(
+                "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
+                (_json(snapshot.model_dump(mode="json")), key),
+            )
 
     update_snapshot = save_snapshot
 
     def _events(self, execution_id: str) -> tuple[Event, ...]:
         with self._connect() as connection:
-            rows = connection.execute("SELECT event_json FROM v2_events WHERE execution_id=? ORDER BY sequence", (execution_id,)).fetchall()
+            rows = connection.execute(
+                "SELECT event_json FROM v2_events WHERE execution_id=? ORDER BY sequence",
+                (execution_id,),
+            ).fetchall()
         return tuple(self._restore_event(_loads(row[0])) for row in rows)
 
     def _restore_event(self, value: Mapping[str, Any]) -> Event:
@@ -1117,13 +1425,17 @@ class SQLiteExecutionStore(_SqliteBase):
             try:
                 decoded = json.loads(payload)
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise BlobIntegrityError("event payload blob is not valid JSON") from exc
+                raise BlobIntegrityError(
+                    "event payload blob is not valid JSON"
+                ) from exc
             if not isinstance(decoded, Mapping):
                 raise BlobIntegrityError("event payload blob is not a JSON object")
             event = event.model_copy(update={"payload": decoded})
         return event
 
-    def _events_page(self, execution_id: str, *, after_sequence: int, event_limit: int) -> tuple[tuple[Event, ...], int]:
+    def _events_page(
+        self, execution_id: str, *, after_sequence: int, event_limit: int
+    ) -> tuple[tuple[Event, ...], int]:
         with self._connect() as connection:
             count_row = connection.execute(
                 "SELECT COUNT(*) FROM v2_events WHERE execution_id=? AND sequence>?",
@@ -1133,9 +1445,13 @@ class SQLiteExecutionStore(_SqliteBase):
                 "SELECT event_json FROM v2_events WHERE execution_id=? AND sequence>? ORDER BY sequence LIMIT ?",
                 (execution_id, after_sequence, event_limit),
             ).fetchall()
-        return tuple(self._restore_event(_loads(row[0])) for row in rows), int(count_row[0]) if count_row else 0
+        return tuple(self._restore_event(_loads(row[0])) for row in rows), int(
+            count_row[0]
+        ) if count_row else 0
 
-    def _derive_snapshot(self, execution_id: str, events: Sequence[Event] | None = None) -> ExecutionState:
+    def _derive_snapshot(
+        self, execution_id: str, events: Sequence[Event] | None = None
+    ) -> ExecutionState:
         existing = self.get_snapshot(execution_id)
         if existing is None:
             raise StorageConflict("execution does not exist")
@@ -1145,41 +1461,87 @@ class SQLiteExecutionStore(_SqliteBase):
         for event in values:
             if event.kind is EventKind.EXECUTION_CREATED:
                 if lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict("terminal execution cannot receive more events")
-                created_at, lifecycle, outcome, finished_at = event.timestamp, ExecutionStatus.CREATED, None, None
+                    raise StorageConflict(
+                        "terminal execution cannot receive more events"
+                    )
+                created_at, lifecycle, outcome, finished_at = (
+                    event.timestamp,
+                    ExecutionStatus.CREATED,
+                    None,
+                    None,
+                )
             elif event.kind is EventKind.EXECUTION_STATE_CHANGED:
                 if lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict("terminal execution cannot receive more events")
+                    raise StorageConflict(
+                        "terminal execution cannot receive more events"
+                    )
                 try:
-                    next_lifecycle = ExecutionStatus(event.payload.get("lifecycle", event.payload.get("state")))
+                    next_lifecycle = ExecutionStatus(
+                        event.payload.get("lifecycle", event.payload.get("state"))
+                    )
                 except (TypeError, ValueError):
-                    raise StorageConflict("execution state payload is invalid") from None
+                    raise StorageConflict(
+                        "execution state payload is invalid"
+                    ) from None
                 if next_lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict("execution state event cannot finish an execution")
+                    raise StorageConflict(
+                        "execution state event cannot finish an execution"
+                    )
                 lifecycle = next_lifecycle
             elif event.kind is EventKind.EXECUTION_FINISHED:
                 if lifecycle is ExecutionStatus.FINISHED:
-                    raise StorageConflict("terminal execution cannot receive more events")
+                    raise StorageConflict(
+                        "terminal execution cannot receive more events"
+                    )
                 try:
                     outcome = ExecutionOutcome(event.payload["outcome"])
                 except (KeyError, TypeError, ValueError):
-                    raise StorageConflict("execution terminal payload is invalid") from None
+                    raise StorageConflict(
+                        "execution terminal payload is invalid"
+                    ) from None
                 lifecycle, finished_at = ExecutionStatus.FINISHED, event.timestamp
-        return ExecutionState(execution_id=ExecutionId(execution_id), run_id=existing.run_id, lifecycle=lifecycle, outcome=outcome, sequence=values[-1].sequence if values else existing.sequence, created_at=created_at, finished_at=finished_at, provenance=existing.provenance)
+        return ExecutionState(
+            execution_id=ExecutionId(execution_id),
+            run_id=existing.run_id,
+            lifecycle=lifecycle,
+            outcome=outcome,
+            sequence=values[-1].sequence if values else existing.sequence,
+            created_at=created_at,
+            finished_at=finished_at,
+            provenance=existing.provenance,
+        )
 
     def _safe_event(self, event: Event) -> Event:
-        projected = redact_model_json(event, config=self._redaction_config, path="$.event")
+        projected = redact_model_json(
+            event, config=self._redaction_config, path="$.event"
+        )
         try:
             safe = Event.model_validate(projected)
         except Exception:
             raise StorageError("event projection is invalid") from None
-        for field in ("event_id", "execution_id", "sequence", "kind", "session_id", "turn_id", "server_binding", "connection_id", "correlation", "lifecycle_phase", "payload_ref", "raw_evidence_ref", "reasoning"):
+        for field in (
+            "event_id",
+            "execution_id",
+            "sequence",
+            "kind",
+            "session_id",
+            "turn_id",
+            "server_binding",
+            "connection_id",
+            "correlation",
+            "lifecycle_phase",
+            "payload_ref",
+            "raw_evidence_ref",
+            "reasoning",
+        ):
             if getattr(safe, field) != getattr(event, field):
                 raise StorageError("event identity changed during redaction")
         return safe
 
     def _safe_reason(self, reason: str | None, *, path: str) -> str | None:
-        projected = redact_for_persistence(reason, config=self._redaction_config, path=path)
+        projected = redact_for_persistence(
+            reason, config=self._redaction_config, path=path
+        )
         if projected is not None and not isinstance(projected, str):
             raise StorageError("reason could not be redacted")
         return projected
@@ -1218,7 +1580,9 @@ class SQLiteExecutionStore(_SqliteBase):
         return payload
 
     @staticmethod
-    def _next_event_position(connection: _CompatConnection, execution_id: str) -> tuple[int, float]:
+    def _next_event_position(
+        connection: _CompatConnection, execution_id: str
+    ) -> tuple[int, float]:
         """Return the next sequence and a nondecreasing trace offset."""
         row = connection.execute(
             "SELECT sequence,event_json FROM v2_events WHERE execution_id=? ORDER BY sequence DESC LIMIT 1",
@@ -1229,7 +1593,9 @@ class SQLiteExecutionStore(_SqliteBase):
         latest = Event.model_validate(_loads(row["event_json"]))
         return int(row["sequence"]) + 1, latest.monotonic_offset_ms
 
-    def _ensure_created_event(self, connection: _CompatConnection, execution_id: str) -> None:
+    def _ensure_created_event(
+        self, connection: _CompatConnection, execution_id: str
+    ) -> None:
         """Ensure store-owned terminalization has stable trace identity.
 
         Worker-owned cancellation/lease paths can run before a provider has
@@ -1244,13 +1610,17 @@ class SQLiteExecutionStore(_SqliteBase):
         ).fetchall()
         if rows:
             events = tuple(Event.model_validate(_loads(row[0])) for row in rows)
-            created = tuple(event for event in events if event.kind is EventKind.EXECUTION_CREATED)
+            created = tuple(
+                event for event in events if event.kind is EventKind.EXECUTION_CREATED
+            )
             if (
                 events[0].sequence != 0
                 or events[0].kind is not EventKind.EXECUTION_CREATED
                 or len(created) != 1
             ):
-                raise StorageConflict("persisted execution.created evidence is malformed")
+                raise StorageConflict(
+                    "persisted execution.created evidence is malformed"
+                )
             trace_id = events[0].payload.get("trace_id")
             if not isinstance(trace_id, str) or not trace_id:
                 raise StorageConflict("persisted trace ID is unavailable")
@@ -1293,8 +1663,12 @@ class SQLiteExecutionStore(_SqliteBase):
         if not events:
             return
         safe_events = tuple(self._safe_event(event) for event in events)
-        if any(_execution_key(event.execution_id) != execution_id for event in safe_events):
-            raise StorageConflict("all events in an append must belong to one execution")
+        if any(
+            _execution_key(event.execution_id) != execution_id for event in safe_events
+        ):
+            raise StorageConflict(
+                "all events in an append must belong to one execution"
+            )
         # Keep the full semantic payload in a verified compressed blob once it
         # crosses the configured threshold.  SQLite retains a small searchable
         # marker and the typed reference; readers restore the original payload
@@ -1303,7 +1677,9 @@ class SQLiteExecutionStore(_SqliteBase):
         persisted_events: list[Event] = []
         payload_blobs: list[tuple[Event, Any]] = []
         for event in safe_events:
-            encoded_payload = _json(event.model_dump(mode="json")["payload"]).encode("utf-8")
+            encoded_payload = _json(event.model_dump(mode="json")["payload"]).encode(
+                "utf-8"
+            )
             if len(encoded_payload) <= self.payload_blob_threshold:
                 persisted_events.append(event)
                 continue
@@ -1315,16 +1691,35 @@ class SQLiteExecutionStore(_SqliteBase):
                 media_type="application/json",
                 compression="gzip",
             )
-            persisted = event.model_copy(update={"payload": {"__mcp_pal_blob__": {"sha256": blob.sha256, "size_bytes": blob.size_bytes}}, "payload_ref": reference})
+            persisted = event.model_copy(
+                update={
+                    "payload": {
+                        "__mcp_pal_blob__": {
+                            "sha256": blob.sha256,
+                            "size_bytes": blob.size_bytes,
+                        }
+                    },
+                    "payload_ref": reference,
+                }
+            )
             persisted_events.append(persisted)
             payload_blobs.append((persisted, blob))
         connection = self._connect()
         committed: tuple[Event, ...] = ()
         try:
             self._begin(connection, immediate=True)
-            if connection.execute("SELECT 1 FROM v2_executions WHERE id=? AND deleted_at IS NULL", (execution_id,)).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM v2_executions WHERE id=? AND deleted_at IS NULL",
+                    (execution_id,),
+                ).fetchone()
+                is None
+            ):
                 raise StorageConflict("execution does not exist")
-            row = connection.execute("SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?", (execution_id,)).fetchone()
+            row = connection.execute(
+                "SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
             expected = int(row[0]) + 1
             seen: set[str] = set()
             for event in safe_events:
@@ -1332,13 +1727,24 @@ class SQLiteExecutionStore(_SqliteBase):
                     raise StorageConflict("event sequence or id is invalid")
                 expected += 1
                 seen.add(str(event.event_id.root))
-            sessions = {str(row[0]) for row in connection.execute("SELECT id FROM v2_sessions WHERE execution_id=?", (execution_id,))}
+            sessions = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT id FROM v2_sessions WHERE execution_id=?", (execution_id,)
+                )
+            }
             for event in safe_events:
                 if event.kind is EventKind.SESSION_CREATED:
-                    if event.session_id is None or str(event.session_id.root) in sessions:
+                    if (
+                        event.session_id is None
+                        or str(event.session_id.root) in sessions
+                    ):
                         raise StorageConflict("session event is invalid")
                     sessions.add(str(event.session_id.root))
-                elif event.kind is EventKind.SESSION_STATE_CHANGED and (event.session_id is None or str(event.session_id.root) not in sessions):
+                elif event.kind is EventKind.SESSION_STATE_CHANGED and (
+                    event.session_id is None
+                    or str(event.session_id.root) not in sessions
+                ):
                     raise StorageConflict("session does not exist")
                 persisted = next(
                     item for item in persisted_events if item.event_id == event.event_id
@@ -1400,9 +1806,20 @@ class SQLiteExecutionStore(_SqliteBase):
                     if blob_event.event_id == event.event_id:
                         connection.execute(
                             "INSERT INTO v2_blobs(sha256,size_bytes,compressed_size,media_type,storage_key,ref_count,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(sha256) DO UPDATE SET ref_count=ref_count+1",
-                            (blob.sha256, blob.size_bytes, blob.compressed_size_bytes, "application/json", str(blob.path.relative_to(self.artifacts.blob_root)), 1, _iso(_utcnow())),
+                            (
+                                blob.sha256,
+                                blob.size_bytes,
+                                blob.compressed_size_bytes,
+                                "application/json",
+                                str(blob.path.relative_to(self.artifacts.blob_root)),
+                                1,
+                                _iso(_utcnow()),
+                            ),
                         )
-                        connection.execute("INSERT INTO v2_event_blobs(event_id,sha256,role) VALUES(?,?,?)", (str(event.event_id.root), blob.sha256, "payload"))
+                        connection.execute(
+                            "INSERT INTO v2_event_blobs(event_id,sha256,role) VALUES(?,?,?)",
+                            (str(event.event_id.root), blob.sha256, "payload"),
+                        )
                         break
                 # A reservation is only a claim on a sequence number.  It is
                 # consumed atomically with the event that uses it so stale
@@ -1411,17 +1828,41 @@ class SQLiteExecutionStore(_SqliteBase):
                     "DELETE FROM v2_sequence_reservations WHERE execution_id=? AND sequence=?",
                     (execution_id, event.sequence),
                 )
-                if event.kind is EventKind.SESSION_CREATED and event.session_id is not None:
+                if (
+                    event.kind is EventKind.SESSION_CREATED
+                    and event.session_id is not None
+                ):
                     connection.execute(
                         "INSERT INTO v2_sessions(id,execution_id,state,created_at) VALUES(?,?,?,?)",
-                        (str(event.session_id.root), execution_id, str(event.payload.get("state", "open")), _iso(event.timestamp)),
+                        (
+                            str(event.session_id.root),
+                            execution_id,
+                            str(event.payload.get("state", "open")),
+                            _iso(event.timestamp),
+                        ),
                     )
-                elif event.kind is EventKind.SESSION_STATE_CHANGED and event.session_id is not None:
+                elif (
+                    event.kind is EventKind.SESSION_STATE_CHANGED
+                    and event.session_id is not None
+                ):
                     state = event.payload.get("state", event.payload.get("lifecycle"))
                     if isinstance(state, str):
-                        connection.execute("UPDATE v2_sessions SET state=?,closed_at=CASE WHEN ? IN ('closed','finished') THEN ? ELSE closed_at END WHERE id=?", (state, state, _iso(event.timestamp), str(event.session_id.root)))
-            derived = self._derive_snapshot(execution_id, self._events(execution_id) + safe_events)
-            connection.execute("UPDATE v2_executions SET snapshot_json=? WHERE id=?", (_json(derived.model_dump(mode="json")), execution_id))
+                        connection.execute(
+                            "UPDATE v2_sessions SET state=?,closed_at=CASE WHEN ? IN ('closed','finished') THEN ? ELSE closed_at END WHERE id=?",
+                            (
+                                state,
+                                state,
+                                _iso(event.timestamp),
+                                str(event.session_id.root),
+                            ),
+                        )
+            derived = self._derive_snapshot(
+                execution_id, self._events(execution_id) + safe_events
+            )
+            connection.execute(
+                "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
+                (_json(derived.model_dump(mode="json")), execution_id),
+            )
             self._commit(connection)
             committed = safe_events
         except Exception as exc:
@@ -1450,9 +1891,7 @@ class SQLiteExecutionStore(_SqliteBase):
 
     append = append_events
 
-    def append_event(
-        self, event: Event, content: bytes, *, media_type: str
-    ) -> Event:
+    def append_event(self, event: Event, content: bytes, *, media_type: str) -> Event:
         """Commit an event and its raw blob in one SQLite transaction."""
         if event.raw_evidence_ref is not None:
             raise StorageConflict("raw evidence reference must be store-owned")
@@ -1488,9 +1927,7 @@ class SQLiteExecutionStore(_SqliteBase):
             storage_key = str(blob.path.relative_to(self.artifacts.blob_root))
             ref = _make_evidence_ref(
                 event.event_id, prepared.content, media_type=safe_media_type
-            ).model_copy(
-                update={"storage_key": storage_key}
-            )
+            ).model_copy(update={"storage_key": storage_key})
             capture = _make_evidence_capture(ref, prepared)
             event_payload = {
                 **dict(event.payload),
@@ -1524,29 +1961,49 @@ class SQLiteExecutionStore(_SqliteBase):
         events = self._events(_execution_key(execution_id))
         return iter(event for event in events if event.sequence > after_sequence)
 
-    def events(self, execution_id: ExecutionId | str, *, after_sequence: int = -1) -> tuple[Event, ...]:
+    def events(
+        self, execution_id: ExecutionId | str, *, after_sequence: int = -1
+    ) -> tuple[Event, ...]:
         return tuple(self.iter_events(execution_id, after_sequence=after_sequence))
 
     # -- sessions, turns, evaluations ------------------------------------
-    def create_session(self, execution_id: ExecutionId | str, session_id: SessionId | str, *, state: str = "open") -> SessionId:
-        execution_key, session_key = _execution_key(execution_id), str(session_id.root if isinstance(session_id, SessionId) else session_id)
+    def create_session(
+        self,
+        execution_id: ExecutionId | str,
+        session_id: SessionId | str,
+        *,
+        state: str = "open",
+    ) -> SessionId:
+        execution_key, session_key = (
+            _execution_key(execution_id),
+            str(session_id.root if isinstance(session_id, SessionId) else session_id),
+        )
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
-            existing = connection.execute("SELECT execution_id FROM v2_sessions WHERE id=?", (session_key,)).fetchone()
+            existing = connection.execute(
+                "SELECT execution_id FROM v2_sessions WHERE id=?", (session_key,)
+            ).fetchone()
             if existing is not None:
                 if str(existing[0]) != execution_key:
                     self._rollback(connection)
-                    raise StorageConflict("session identity belongs to another execution")
+                    raise StorageConflict(
+                        "session identity belongs to another execution"
+                    )
                 self._commit(connection)
                 return SessionId(session_key)
-            connection.execute("INSERT INTO v2_sessions(id,execution_id,state,created_at) VALUES(?,?,?,?)", (session_key, execution_key, state, _iso(_utcnow())))
+            connection.execute(
+                "INSERT INTO v2_sessions(id,execution_id,state,created_at) VALUES(?,?,?,?)",
+                (session_key, execution_key, state, _iso(_utcnow())),
+            )
             self._commit(connection)
         except Exception as exc:
             if not _is_integrity_error(exc):
                 raise
             self._rollback(connection)
-            raise StorageConflict("session already exists or execution does not exist") from exc
+            raise StorageConflict(
+                "session already exists or execution does not exist"
+            ) from exc
         finally:
             connection.close()
         return SessionId(session_key)
@@ -1559,7 +2016,9 @@ class SQLiteExecutionStore(_SqliteBase):
                 (_iso(_utcnow()), key),
             )
 
-    def save_turn(self, snapshot: TurnState, result: TurnResult | Mapping[str, Any] | None = None) -> None:
+    def save_turn(
+        self, snapshot: TurnState, result: TurnResult | Mapping[str, Any] | None = None
+    ) -> None:
         session_key = str(snapshot.session_id.root)
         if isinstance(result, TurnResult) and (
             result.snapshot.turn_id != snapshot.turn_id
@@ -1567,12 +2026,26 @@ class SQLiteExecutionStore(_SqliteBase):
             or result.snapshot.number != snapshot.number
         ):
             raise StorageConflict("turn result does not match turn snapshot")
-        raw_result = result.model_dump(mode="json") if isinstance(result, TurnResult) else dict(result) if result is not None else None
-        result_json = redact_for_persistence(raw_result, config=self._redaction_config, path="$.turn.result") if raw_result is not None else None
+        raw_result = (
+            result.model_dump(mode="json")
+            if isinstance(result, TurnResult)
+            else dict(result)
+            if result is not None
+            else None
+        )
+        result_json = (
+            redact_for_persistence(
+                raw_result, config=self._redaction_config, path="$.turn.result"
+            )
+            if raw_result is not None
+            else None
+        )
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
-            session = connection.execute("SELECT 1 FROM v2_sessions WHERE id=?", (session_key,)).fetchone()
+            session = connection.execute(
+                "SELECT 1 FROM v2_sessions WHERE id=?", (session_key,)
+            ).fetchone()
             if session is None:
                 raise StorageConflict("session does not exist")
             # A turn id is globally unique.  On an idempotent update, retain
@@ -1582,12 +2055,24 @@ class SQLiteExecutionStore(_SqliteBase):
                 "SELECT session_id,number FROM v2_turns WHERE id=?",
                 (str(snapshot.turn_id.root),),
             ).fetchone()
-            if existing is not None and (str(existing["session_id"]) != session_key or int(existing["number"]) != snapshot.number):
-                raise StorageConflict("turn identity cannot move between sessions or ordinals")
+            if existing is not None and (
+                str(existing["session_id"]) != session_key
+                or int(existing["number"]) != snapshot.number
+            ):
+                raise StorageConflict(
+                    "turn identity cannot move between sessions or ordinals"
+                )
             connection.execute(
                 "INSERT INTO v2_turns(id,session_id,number,snapshot_json,result_json,created_at) VALUES(?,?,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET snapshot_json=excluded.snapshot_json,result_json=excluded.result_json",
-                (str(snapshot.turn_id.root), session_key, snapshot.number, _json(snapshot.model_dump(mode="json")), _json(result_json) if result_json is not None else None, _iso(snapshot.created_at)),
+                (
+                    str(snapshot.turn_id.root),
+                    session_key,
+                    snapshot.number,
+                    _json(snapshot.model_dump(mode="json")),
+                    _json(result_json) if result_json is not None else None,
+                    _iso(snapshot.created_at),
+                ),
             )
             self._commit(connection)
         except Exception as exc:
@@ -1603,27 +2088,62 @@ class SQLiteExecutionStore(_SqliteBase):
 
     append_turn = save_turn
 
-    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnState, TurnResult | None], ...]:
+    def turns(
+        self, execution_id: ExecutionId | str
+    ) -> tuple[tuple[TurnState, TurnResult | None], ...]:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT t.snapshot_json,t.result_json FROM v2_turns t JOIN v2_sessions s ON s.id=t.session_id WHERE s.execution_id=? ORDER BY s.created_at,t.number",
                 (_execution_key(execution_id),),
             ).fetchall()
-        return tuple((TurnState.model_validate(_loads(row[0])), TurnResult.model_validate(_loads(row[1])) if row[1] else None) for row in rows)
+        return tuple(
+            (
+                TurnState.model_validate(_loads(row[0])),
+                TurnResult.model_validate(_loads(row[1])) if row[1] else None,
+            )
+            for row in rows
+        )
 
-    def save_evaluation(self, execution_id: ExecutionId | str, result: Mapping[str, Any] | Any, *, evaluation_id: str | None = None, turn_id: TurnId | str | None = None) -> str:
+    def save_evaluation(
+        self,
+        execution_id: ExecutionId | str,
+        result: Mapping[str, Any] | Any,
+        *,
+        evaluation_id: str | None = None,
+        turn_id: TurnId | str | None = None,
+    ) -> str:
         runtime_subject = getattr(getattr(result, "context", None), "subject", None)
-        value = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
-        identifier = evaluation_id or str(value.get("evaluation_id") or _new_id("evaluation"))
+        value = (
+            result.model_dump(mode="json")
+            if hasattr(result, "model_dump")
+            else dict(result)
+        )
+        identifier = evaluation_id or str(
+            value.get("evaluation_id") or _new_id("evaluation")
+        )
         raw_context = value.get("context")
-        context: Mapping[str, Any] = raw_context if isinstance(raw_context, Mapping) else {}
+        context: Mapping[str, Any] = (
+            raw_context if isinstance(raw_context, Mapping) else {}
+        )
         subject = context.get("subject")
-        subject_digest = hashlib.sha256(_json(redact_for_persistence(subject, config=self._redaction_config, path="$.evaluation.subject")).encode()).hexdigest()
+        subject_digest = hashlib.sha256(
+            _json(
+                redact_for_persistence(
+                    subject, config=self._redaction_config, path="$.evaluation.subject"
+                )
+            ).encode()
+        ).hexdigest()
         created_at = _utcnow()
-        run_id = value.get("run_id") or context.get("metadata", {}).get("mcp_pal.run_id")
+        run_id = value.get("run_id") or context.get("metadata", {}).get(
+            "mcp_pal.run_id"
+        )
         if run_id is None:
             snapshot = self.get_snapshot(execution_id)
-            run_id = snapshot.run_id.root if snapshot is not None and snapshot.run_id is not None else None
+            run_id = (
+                snapshot.run_id.root
+                if snapshot is not None and snapshot.run_id is not None
+                else None
+            )
         compact = {
             "evaluation_id": identifier,
             "name": value.get("name", ""),
@@ -1636,14 +2156,23 @@ class SQLiteExecutionStore(_SqliteBase):
             "provenance": value.get("provenance"),
             "details": value.get("details", {}),
             "context": {
-                "execution_id": context.get("execution_id") or _execution_key(execution_id),
-                "turn_id": context.get("turn_id") or (str(turn_id.root if isinstance(turn_id, TurnId) else turn_id) if turn_id else None),
+                "execution_id": context.get("execution_id")
+                or _execution_key(execution_id),
+                "turn_id": context.get("turn_id")
+                or (
+                    str(turn_id.root if isinstance(turn_id, TurnId) else turn_id)
+                    if turn_id
+                    else None
+                ),
                 "case_id": context.get("case_id") or value.get("case_id"),
                 "goal": context.get("goal"),
                 "artifacts": context.get("artifacts", []),
                 "metadata": context.get("metadata", {}),
             },
-            "subject_kind": context.get("subject_kind") or self._subject_kind(runtime_subject if runtime_subject is not None else subject),
+            "subject_kind": context.get("subject_kind")
+            or self._subject_kind(
+                runtime_subject if runtime_subject is not None else subject
+            ),
             "subject_digest": subject_digest,
             "run_id": str(run_id) if run_id is not None else None,
             "created_at": _iso(created_at),
@@ -1653,19 +2182,43 @@ class SQLiteExecutionStore(_SqliteBase):
             self._begin(connection, immediate=True)
             if turn_id is not None:
                 turn_key = str(turn_id.root if isinstance(turn_id, TurnId) else turn_id)
-                if connection.execute(
-                    "SELECT 1 FROM v2_turns t JOIN v2_sessions s ON s.id=t.session_id WHERE t.id=? AND s.execution_id=?",
-                    (turn_key, _execution_key(execution_id)),
-                ).fetchone() is None:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM v2_turns t JOIN v2_sessions s ON s.id=t.session_id WHERE t.id=? AND s.execution_id=?",
+                        (turn_key, _execution_key(execution_id)),
+                    ).fetchone()
+                    is None
+                ):
                     raise StorageConflict("turn does not belong to execution")
-            connection.execute("INSERT INTO v2_evaluations(id,execution_id,turn_id,result_json,created_at,evaluator_name,status,score,run_id) VALUES(?,?,?,?,?,?,?,?,?)", (identifier, _execution_key(execution_id), str(turn_id.root if isinstance(turn_id, TurnId) else turn_id) if turn_id else None, _json(redact_for_persistence(compact, config=self._redaction_config, path="$.evaluation")), _iso(created_at), str(value.get("name") or ""), str(value.get("status") or "error"), value.get("score"), str(run_id) if run_id is not None else None))
+            connection.execute(
+                "INSERT INTO v2_evaluations(id,execution_id,turn_id,result_json,created_at,evaluator_name,status,score,run_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    identifier,
+                    _execution_key(execution_id),
+                    str(turn_id.root if isinstance(turn_id, TurnId) else turn_id)
+                    if turn_id
+                    else None,
+                    _json(
+                        redact_for_persistence(
+                            compact, config=self._redaction_config, path="$.evaluation"
+                        )
+                    ),
+                    _iso(created_at),
+                    str(value.get("name") or ""),
+                    str(value.get("status") or "error"),
+                    value.get("score"),
+                    str(run_id) if run_id is not None else None,
+                ),
+            )
             self._commit(connection)
             return identifier
         except Exception as exc:
             if not _is_integrity_error(exc):
                 raise
             self._rollback(connection)
-            raise StorageConflict("evaluation already exists or execution does not exist") from exc
+            raise StorageConflict(
+                "evaluation already exists or execution does not exist"
+            ) from exc
         finally:
             connection.close()
 
@@ -1690,21 +2243,30 @@ class SQLiteExecutionStore(_SqliteBase):
 
     def get(self, evaluation_id: str) -> EvaluationResult | None:
         with self._connect() as connection:
-            row = connection.execute("SELECT result_json FROM v2_evaluations WHERE id=?", (str(evaluation_id),)).fetchone()
+            row = connection.execute(
+                "SELECT result_json FROM v2_evaluations WHERE id=?",
+                (str(evaluation_id),),
+            ).fetchone()
         return self._evaluation_model(_loads(row[0], {})) if row else None
 
     def all(self) -> tuple[EvaluationResult, ...]:
         with self._connect() as connection:
-            rows = connection.execute("SELECT result_json FROM v2_evaluations ORDER BY created_at,id").fetchall()
+            rows = connection.execute(
+                "SELECT result_json FROM v2_evaluations ORDER BY created_at,id"
+            ).fetchall()
         return tuple(self._evaluation_model(_loads(row[0], {})) for row in rows)
 
-    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[EvaluationRecord, ...]:
+    def evaluations(
+        self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None
+    ) -> tuple[EvaluationRecord, ...]:
         with self._connect() as connection:
             query = "SELECT result_json FROM v2_evaluations WHERE execution_id=?"
             params: list[Any] = [_execution_key(execution_id)]
             if turn_id is not None:
                 query += " AND turn_id=?"
-                params.append(str(turn_id.root if isinstance(turn_id, TurnId) else turn_id))
+                params.append(
+                    str(turn_id.root if isinstance(turn_id, TurnId) else turn_id)
+                )
             query += " ORDER BY created_at,id"
             rows = connection.execute(query, params).fetchall()
         records: list[EvaluationRecord] = []
@@ -1716,7 +2278,9 @@ class SQLiteExecutionStore(_SqliteBase):
             if not isinstance(value, Mapping):
                 continue
             raw_context = value.get("context")
-            context: Mapping[str, Any] = raw_context if isinstance(raw_context, Mapping) else {}
+            context: Mapping[str, Any] = (
+                raw_context if isinstance(raw_context, Mapping) else {}
+            )
             projected = dict(value)
             projected["execution_id"] = _execution_key(execution_id)
             projected["turn_id"] = context.get("turn_id")
@@ -1745,7 +2309,10 @@ class SQLiteExecutionStore(_SqliteBase):
         if query.to is not None:
             where.append("x.created_at < ?")
             params.append(_iso(query.to.astimezone(timezone.utc)))
-        for label, column in (("evaluator", "e.evaluator_name"), ("run_id", "COALESCE(e.run_id, x.run_id)")):
+        for label, column in (
+            ("evaluator", "e.evaluator_name"),
+            ("run_id", "COALESCE(e.run_id, x.run_id)"),
+        ):
             values = query.filters.get(label)
             if values:
                 placeholders = ",".join("?" for _ in values)
@@ -1754,7 +2321,9 @@ class SQLiteExecutionStore(_SqliteBase):
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT e.execution_id,e.result_json,x.snapshot_json,x.specification_json "
-                "FROM v2_evaluations e JOIN v2_executions x ON x.id=e.execution_id WHERE " + " AND ".join(where) + " ORDER BY x.created_at,e.created_at,e.id",
+                "FROM v2_evaluations e JOIN v2_executions x ON x.id=e.execution_id WHERE "
+                + " AND ".join(where)
+                + " ORDER BY x.created_at,e.created_at,e.id",
                 params,
             ).fetchall()
         records: list[EvaluationRecord] = []
@@ -1768,14 +2337,30 @@ class SQLiteExecutionStore(_SqliteBase):
             try:
                 if execution_id not in loaded_executions:
                     loaded_executions.add(execution_id)
-                    snapshots[execution_id] = ExecutionState.model_validate(_loads(row[2]))
+                    snapshots[execution_id] = ExecutionState.model_validate(
+                        _loads(row[2])
+                    )
                     if row[3] is not None:
-                        specifications[execution_id] = TypeAdapter(ExecutionSpec).validate_python(_loads(row[3]))
+                        specifications[execution_id] = TypeAdapter(
+                            ExecutionSpec
+                        ).validate_python(_loads(row[3]))
                 value = _loads(row[1], {})
-                raw_context = value.get("context") if isinstance(value, Mapping) else None
-                context: Mapping[str, Any] = raw_context if isinstance(raw_context, Mapping) else {}
+                raw_context = (
+                    value.get("context") if isinstance(value, Mapping) else None
+                )
+                context: Mapping[str, Any] = (
+                    raw_context if isinstance(raw_context, Mapping) else {}
+                )
                 projected = dict(value) if isinstance(value, Mapping) else {}
-                projected.update({"execution_id": execution_id, "turn_id": context.get("turn_id"), "case_id": context.get("case_id") or projected.get("case_id"), "goal": context.get("goal"), "metadata": context.get("metadata", {})})
+                projected.update(
+                    {
+                        "execution_id": execution_id,
+                        "turn_id": context.get("turn_id"),
+                        "case_id": context.get("case_id") or projected.get("case_id"),
+                        "goal": context.get("goal"),
+                        "metadata": context.get("metadata", {}),
+                    }
+                )
                 projected.pop("context", None)
                 records.append(EvaluationRecord.model_validate(projected))
             except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
@@ -1788,16 +2373,33 @@ class SQLiteExecutionStore(_SqliteBase):
                     trace = None
                 if trace is not None:
                     traces[execution_id] = trace
-        return aggregate_evaluations(query, records, snapshots=snapshots, specifications=specifications, traces=traces)
+        return aggregate_evaluations(
+            query,
+            records,
+            snapshots=snapshots,
+            specifications=specifications,
+            traces=traces,
+        )
 
     persisted_evaluations = evaluations
 
-    def evaluation_json(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[Mapping[str, Any], ...]:
+    def evaluation_json(
+        self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None
+    ) -> tuple[Mapping[str, Any], ...]:
         with self._connect() as connection:
             if turn_id is None:
-                rows = connection.execute("SELECT result_json FROM v2_evaluations WHERE execution_id=? ORDER BY created_at,id", (_execution_key(execution_id),)).fetchall()
+                rows = connection.execute(
+                    "SELECT result_json FROM v2_evaluations WHERE execution_id=? ORDER BY created_at,id",
+                    (_execution_key(execution_id),),
+                ).fetchall()
             else:
-                rows = connection.execute("SELECT result_json FROM v2_evaluations WHERE execution_id=? AND turn_id=? ORDER BY created_at,id", (_execution_key(execution_id), str(turn_id.root if isinstance(turn_id, TurnId) else turn_id))).fetchall()
+                rows = connection.execute(
+                    "SELECT result_json FROM v2_evaluations WHERE execution_id=? AND turn_id=? ORDER BY created_at,id",
+                    (
+                        _execution_key(execution_id),
+                        str(turn_id.root if isinstance(turn_id, TurnId) else turn_id),
+                    ),
+                ).fetchall()
         values: list[Mapping[str, Any]] = []
         for row in rows:
             try:
@@ -1813,21 +2415,34 @@ class SQLiteExecutionStore(_SqliteBase):
             raise StorageConflict("execution does not exist")
         return _SqliteBatch(self, _execution_key(execution_id))
 
-    def allocate(self, execution_id: ExecutionId | str, *, count: int = 1) -> tuple[int, ...]:
+    def allocate(
+        self, execution_id: ExecutionId | str, *, count: int = 1
+    ) -> tuple[int, ...]:
         if count < 1:
             raise ValueError("count must be positive")
         key = _execution_key(execution_id)
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
-            if connection.execute("SELECT 1 FROM v2_executions WHERE id=?", (key,)).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM v2_executions WHERE id=?", (key,)
+                ).fetchone()
+                is None
+            ):
                 raise StorageConflict("execution does not exist")
-            max_row = connection.execute("SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?", (key,)).fetchone()
+            max_row = connection.execute(
+                "SELECT COALESCE(MAX(sequence),-1) FROM v2_events WHERE execution_id=?",
+                (key,),
+            ).fetchone()
             candidate = int(max_row[0]) + 1
             reserved: list[int] = []
             while len(reserved) < count:
                 try:
-                    connection.execute("INSERT INTO v2_sequence_reservations(execution_id,sequence) VALUES(?,?)", (key, candidate))
+                    connection.execute(
+                        "INSERT INTO v2_sequence_reservations(execution_id,sequence) VALUES(?,?)",
+                        (key, candidate),
+                    )
                     reserved.append(candidate)
                 except Exception as exc:
                     if not _is_integrity_error(exc):
@@ -1841,16 +2456,23 @@ class SQLiteExecutionStore(_SqliteBase):
         finally:
             connection.close()
 
-    allocate_sequence = lambda self, execution_id: self.allocate(execution_id, count=1)[0]
+    allocate_sequence = lambda self, execution_id: self.allocate(execution_id, count=1)[
+        0
+    ]
     allocate_sequences = allocate
 
-    def release(self, execution_id: ExecutionId | str, sequences: Sequence[int]) -> None:
+    def release(
+        self, execution_id: ExecutionId | str, sequences: Sequence[int]
+    ) -> None:
         key = _execution_key(execution_id)
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
             for sequence in sequences:
-                connection.execute("DELETE FROM v2_sequence_reservations WHERE execution_id=? AND sequence=?", (key, sequence))
+                connection.execute(
+                    "DELETE FROM v2_sequence_reservations WHERE execution_id=? AND sequence=?",
+                    (key, sequence),
+                )
             self._commit(connection)
         except BaseException:
             self._rollback(connection)
@@ -1860,17 +2482,21 @@ class SQLiteExecutionStore(_SqliteBase):
 
     release_sequences = release
 
-    def subscribe(self, execution_id: ExecutionId | str, callback: EventCallback) -> Callable[[], None]:
+    def subscribe(
+        self, execution_id: ExecutionId | str, callback: EventCallback
+    ) -> Callable[[], None]:
         key = _execution_key(execution_id)
         if self.get_snapshot(key) is None:
             raise StorageConflict("execution does not exist")
         with self._callback_lock:
             self._callbacks.setdefault(key, []).append(callback)
+
         def unsubscribe() -> None:
             with self._callback_lock:
                 values = self._callbacks.get(key, [])
                 if callback in values:
                     values.remove(callback)
+
         return unsubscribe
 
     # -- Profiles ---------------------------------------------------------
@@ -1885,32 +2511,55 @@ class SQLiteExecutionStore(_SqliteBase):
         # from becoming selectable readiness evidence.
         profile = self.get_profile(safe.profile_id)
         revision = self.get_revision(safe.revision_id)
-        if profile is None or profile.kind != "harness" or revision is None or revision.profile_id != safe.profile_id:
+        if (
+            profile is None
+            or profile.kind != "harness"
+            or revision is None
+            or revision.profile_id != safe.profile_id
+        ):
             raise StorageConflict("ACP probe profile revision does not exist")
         value = safe.model_dump(mode="json")
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
             existing = connection.execute(
-                "SELECT dimension_key,created_at FROM v2_acp_probes WHERE id=?", (safe.id,)
+                "SELECT dimension_key,created_at FROM v2_acp_probes WHERE id=?",
+                (safe.id,),
             ).fetchone()
             if existing is not None and (
                 str(existing["dimension_key"]) != safe.stable_key
                 or str(existing["created_at"]) != str(value["created_at"])
             ):
-                raise StorageConflict("ACP probe id was already used for another dimension")
+                raise StorageConflict(
+                    "ACP probe id was already used for another dimension"
+                )
             connection.execute(
                 "INSERT INTO v2_acp_probes(id,profile_id,revision_id,probe_type,transport,agent_mode_id,session_config_json,dimension_key,status,agent_identity_json,agent_capabilities_json,agent_modes_json,current_agent_mode_id,config_options_json,evidence_json,diagnostics,error,created_at,started_at,finished_at,duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET status=excluded.status,agent_identity_json=excluded.agent_identity_json,agent_capabilities_json=excluded.agent_capabilities_json,agent_modes_json=excluded.agent_modes_json,current_agent_mode_id=excluded.current_agent_mode_id,config_options_json=excluded.config_options_json,evidence_json=excluded.evidence_json,diagnostics=excluded.diagnostics,error=excluded.error,started_at=excluded.started_at,finished_at=excluded.finished_at,duration_ms=excluded.duration_ms",
                 (
-                    safe.id, safe.profile_id, safe.revision_id, safe.probe_type.value,
-                    safe.transport, safe.agent_mode_id, _json(value["session_config"]),
-                    safe.stable_key, safe.status.value,
-                    _json(value["agent_identity"]) if safe.agent_identity is not None else None,
-                    _json(value["agent_capabilities"]), _json(value["agent_modes"]), safe.current_agent_mode_id,
+                    safe.id,
+                    safe.profile_id,
+                    safe.revision_id,
+                    safe.probe_type.value,
+                    safe.transport,
+                    safe.agent_mode_id,
+                    _json(value["session_config"]),
+                    safe.stable_key,
+                    safe.status.value,
+                    _json(value["agent_identity"])
+                    if safe.agent_identity is not None
+                    else None,
+                    _json(value["agent_capabilities"]),
+                    _json(value["agent_modes"]),
+                    safe.current_agent_mode_id,
                     _json(value["config_options"]),
-                    _json(value["evidence"]), safe.diagnostics, safe.error,
-                    value["created_at"], value.get("started_at"), value.get("finished_at"), safe.duration_ms,
+                    _json(value["evidence"]),
+                    safe.diagnostics,
+                    safe.error,
+                    value["created_at"],
+                    value.get("started_at"),
+                    value.get("finished_at"),
+                    safe.duration_ms,
                 ),
             )
             self._commit(connection)
@@ -1923,26 +2572,44 @@ class SQLiteExecutionStore(_SqliteBase):
 
     @staticmethod
     def _acp_probe_row(row: Any) -> ACPProbeResult:
-        return ACPProbeResult.model_validate({
-            "id": row["id"], "profile_id": row["profile_id"], "revision_id": row["revision_id"],
-            "probe_type": row["probe_type"], "transport": row["transport"],
-            "agent_mode_id": row["agent_mode_id"], "session_config": _loads(row["session_config_json"], {}),
-            "status": row["status"], "agent_identity": _loads(row["agent_identity_json"], None),
-            "agent_capabilities": _loads(row["agent_capabilities_json"], {}),
-            "agent_modes": tuple(_loads(row["agent_modes_json"], [])),
-            "current_agent_mode_id": row["current_agent_mode_id"],
-            "config_options": tuple(_loads(row["config_options_json"], [])),
-            "evidence": _loads(row["evidence_json"], {}), "diagnostics": row["diagnostics"], "error": row["error"],
-            "created_at": row["created_at"], "started_at": row["started_at"], "finished_at": row["finished_at"],
-            "duration_ms": row["duration_ms"],
-        })
+        return ACPProbeResult.model_validate(
+            {
+                "id": row["id"],
+                "profile_id": row["profile_id"],
+                "revision_id": row["revision_id"],
+                "probe_type": row["probe_type"],
+                "transport": row["transport"],
+                "agent_mode_id": row["agent_mode_id"],
+                "session_config": _loads(row["session_config_json"], {}),
+                "status": row["status"],
+                "agent_identity": _loads(row["agent_identity_json"], None),
+                "agent_capabilities": _loads(row["agent_capabilities_json"], {}),
+                "agent_modes": tuple(_loads(row["agent_modes_json"], [])),
+                "current_agent_mode_id": row["current_agent_mode_id"],
+                "config_options": tuple(_loads(row["config_options_json"], [])),
+                "evidence": _loads(row["evidence_json"], {}),
+                "diagnostics": row["diagnostics"],
+                "error": row["error"],
+                "created_at": row["created_at"],
+                "started_at": row["started_at"],
+                "finished_at": row["finished_at"],
+                "duration_ms": row["duration_ms"],
+            }
+        )
 
     def get_acp_probe(self, probe_id: str) -> ACPProbeResult | None:
         with self._connect() as connection:
-            row = connection.execute("SELECT * FROM v2_acp_probes WHERE id=?", (str(probe_id),)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM v2_acp_probes WHERE id=?", (str(probe_id),)
+            ).fetchone()
         return None if row is None else self._acp_probe_row(row)
 
-    def list_acp_probes(self, dimension: ACPProbeDimension | None = None, *, include_inflight: bool = True) -> tuple[ACPProbeResult, ...]:
+    def list_acp_probes(
+        self,
+        dimension: ACPProbeDimension | None = None,
+        *,
+        include_inflight: bool = True,
+    ) -> tuple[ACPProbeResult, ...]:
         parameters: list[Any] = []
         clauses: list[str] = []
         if dimension is not None:
@@ -1952,28 +2619,67 @@ class SQLiteExecutionStore(_SqliteBase):
             clauses.append("status NOT IN ('queued','running')")
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with self._connect() as connection:
-            rows = connection.execute(f"SELECT * FROM v2_acp_probes{where} ORDER BY created_at DESC,id DESC", tuple(parameters)).fetchall()
+            rows = connection.execute(
+                f"SELECT * FROM v2_acp_probes{where} ORDER BY created_at DESC,id DESC",
+                tuple(parameters),
+            ).fetchall()
         return tuple(self._acp_probe_row(row) for row in rows)
 
     def latest_acp_probe(self, dimension: ACPProbeDimension) -> ACPProbeResult | None:
         values = self.list_acp_probes(dimension, include_inflight=False)
         return values[0] if values else None
 
-    def create_profile(self, kind: str, name: str, value: Mapping[str, Any], *, description: str = "", profile_id: str | None = None, revision_id: str | None = None) -> ProfileRecord:
+    def create_profile(
+        self,
+        kind: str,
+        name: str,
+        value: Mapping[str, Any],
+        *,
+        description: str = "",
+        profile_id: str | None = None,
+        revision_id: str | None = None,
+    ) -> ProfileRecord:
         if kind not in {"server", "harness"}:
             raise ValueError("profile kind must be server or harness")
-        safe_name = redact_for_persistence(name, config=self._redaction_config, path="$.profile.name")
-        safe_description = redact_for_persistence(description, config=self._redaction_config, path="$.profile.description")
+        safe_name = redact_for_persistence(
+            name, config=self._redaction_config, path="$.profile.name"
+        )
+        safe_description = redact_for_persistence(
+            description, config=self._redaction_config, path="$.profile.description"
+        )
         if not isinstance(safe_name, str) or not isinstance(safe_description, str):
             raise StorageError("profile metadata could not be redacted")
         now = _iso(_utcnow())
-        pid, rid, table, revision_table = profile_id or _new_id(f"{kind}-profile"), revision_id or _new_id(f"{kind}-revision"), f"v2_{kind}_profiles", f"v2_{kind}_profile_revisions"
+        pid, rid, table, revision_table = (
+            profile_id or _new_id(f"{kind}-profile"),
+            revision_id or _new_id(f"{kind}-revision"),
+            f"v2_{kind}_profiles",
+            f"v2_{kind}_profile_revisions",
+        )
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
-            connection.execute(f"INSERT INTO {table}(id,name,description,archived,current_revision_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (pid, safe_name, safe_description, 0, None, now, now))
-            connection.execute(f"INSERT INTO {revision_table}(id,profile_id,revision_number,value_json,created_at) VALUES(?,?,?,?,?)", (rid, pid, 1, _json(serialize_durable(dict(value), config=self._redaction_config, path="$.profile")), now))
-            connection.execute(f"UPDATE {table} SET current_revision_id=? WHERE id=?", (rid, pid))
+            connection.execute(
+                f"INSERT INTO {table}(id,name,description,archived,current_revision_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (pid, safe_name, safe_description, 0, None, now, now),
+            )
+            connection.execute(
+                f"INSERT INTO {revision_table}(id,profile_id,revision_number,value_json,created_at) VALUES(?,?,?,?,?)",
+                (
+                    rid,
+                    pid,
+                    1,
+                    _json(
+                        serialize_durable(
+                            dict(value), config=self._redaction_config, path="$.profile"
+                        )
+                    ),
+                    now,
+                ),
+            )
+            connection.execute(
+                f"UPDATE {table} SET current_revision_id=? WHERE id=?", (rid, pid)
+            )
             self._commit(connection)
         except Exception as exc:
             self._rollback(connection)
@@ -1984,21 +2690,40 @@ class SQLiteExecutionStore(_SqliteBase):
             connection.close()
         return self.get_profile(pid)  # type: ignore[return-value]
 
-    def create_server_profile(self, name: str, value: Mapping[str, Any], **kwargs: Any) -> ProfileRecord:
+    def create_server_profile(
+        self, name: str, value: Mapping[str, Any], **kwargs: Any
+    ) -> ProfileRecord:
         return self.create_profile("server", name, value, **kwargs)
 
-    def create_harness_profile(self, name: str, value: Mapping[str, Any], **kwargs: Any) -> ProfileRecord:
+    def create_harness_profile(
+        self, name: str, value: Mapping[str, Any], **kwargs: Any
+    ) -> ProfileRecord:
         return self.create_profile("harness", name, value, **kwargs)
 
     def get_profile(self, profile_id: str) -> ProfileRecord | None:
         with self._connect() as connection:
             for kind in ("server", "harness"):
-                row = connection.execute(f"SELECT * FROM v2_{kind}_profiles WHERE id=?", (profile_id,)).fetchone()
+                row = connection.execute(
+                    f"SELECT * FROM v2_{kind}_profiles WHERE id=?", (profile_id,)
+                ).fetchone()
                 if row:
-                    return ProfileRecord(str(row["id"]), kind, str(row["name"]), str(row["description"]), bool(row["archived"]), RevisionId(str(row["current_revision_id"])) if row["current_revision_id"] else None, _parse_dt(row["created_at"]), _parse_dt(row["updated_at"]))
+                    return ProfileRecord(
+                        str(row["id"]),
+                        kind,
+                        str(row["name"]),
+                        str(row["description"]),
+                        bool(row["archived"]),
+                        RevisionId(str(row["current_revision_id"]))
+                        if row["current_revision_id"]
+                        else None,
+                        _parse_dt(row["created_at"]),
+                        _parse_dt(row["updated_at"]),
+                    )
         return None
 
-    def list_profiles(self, kind: str, *, include_archived: bool = False) -> tuple[ProfileRecord, ...]:
+    def list_profiles(
+        self, kind: str, *, include_archived: bool = False
+    ) -> tuple[ProfileRecord, ...]:
         """List one profile family in stable name/id order.
 
         Profile families are explicit so callers cannot accidentally combine
@@ -2014,15 +2739,23 @@ class SQLiteExecutionStore(_SqliteBase):
             ).fetchall()
         return tuple(
             ProfileRecord(
-                str(row["id"]), kind, str(row["name"]), str(row["description"]),
+                str(row["id"]),
+                kind,
+                str(row["name"]),
+                str(row["description"]),
                 bool(row["archived"]),
-                RevisionId(str(row["current_revision_id"])) if row["current_revision_id"] else None,
-                _parse_dt(row["created_at"]), _parse_dt(row["updated_at"]),
+                RevisionId(str(row["current_revision_id"]))
+                if row["current_revision_id"]
+                else None,
+                _parse_dt(row["created_at"]),
+                _parse_dt(row["updated_at"]),
             )
             for row in rows
         )
 
-    def list_profile_revisions(self, profile_id: str) -> tuple[ProfileRevisionRecord, ...]:
+    def list_profile_revisions(
+        self, profile_id: str
+    ) -> tuple[ProfileRevisionRecord, ...]:
         """Return every revision ordered by revision number then id."""
         profile = self.get_profile(profile_id)
         if profile is None:
@@ -2035,14 +2768,21 @@ class SQLiteExecutionStore(_SqliteBase):
             ).fetchall()
         return tuple(
             ProfileRevisionRecord(
-                RevisionId(str(row["id"])), profile_id, int(row["revision_number"]),
-                _loads(row["value_json"], {}), _parse_dt(row["created_at"]),
+                RevisionId(str(row["id"])),
+                profile_id,
+                int(row["revision_number"]),
+                _loads(row["value_json"], {}),
+                _parse_dt(row["created_at"]),
             )
             for row in rows
         )
 
     def update_profile(
-        self, profile_id: str, *, name: str | None = None, description: str | None = None
+        self,
+        profile_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
     ) -> ProfileRecord:
         """Update mutable metadata without changing the immutable revision."""
         if name is None and description is None:
@@ -2053,8 +2793,20 @@ class SQLiteExecutionStore(_SqliteBase):
         profile = self.get_profile(profile_id)
         if profile is None:
             raise StorageConflict("profile does not exist")
-        safe_name = redact_for_persistence(name, config=self._redaction_config, path="$.profile.name") if name is not None else profile.name
-        safe_description = redact_for_persistence(description, config=self._redaction_config, path="$.profile.description") if description is not None else profile.description
+        safe_name = (
+            redact_for_persistence(
+                name, config=self._redaction_config, path="$.profile.name"
+            )
+            if name is not None
+            else profile.name
+        )
+        safe_description = (
+            redact_for_persistence(
+                description, config=self._redaction_config, path="$.profile.description"
+            )
+            if description is not None
+            else profile.description
+        )
         if not isinstance(safe_name, str) or not isinstance(safe_description, str):
             raise StorageError("profile metadata could not be redacted")
         connection = self._connect()
@@ -2074,13 +2826,21 @@ class SQLiteExecutionStore(_SqliteBase):
             connection.close()
         return self.get_profile(profile_id)  # type: ignore[return-value]
 
-    def add_revision(self, profile_id: str, value: Mapping[str, Any], *, revision_id: str | None = None) -> ProfileRevisionRecord:
+    def add_revision(
+        self,
+        profile_id: str,
+        value: Mapping[str, Any],
+        *,
+        revision_id: str | None = None,
+    ) -> ProfileRevisionRecord:
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
             found: tuple[str, _CompatRow] | None = None
             for kind in ("server", "harness"):
-                row = connection.execute(f"SELECT * FROM v2_{kind}_profiles WHERE id=?", (profile_id,)).fetchone()
+                row = connection.execute(
+                    f"SELECT * FROM v2_{kind}_profiles WHERE id=?", (profile_id,)
+                ).fetchone()
                 if row:
                     found = (kind, row)
                     break
@@ -2090,14 +2850,33 @@ class SQLiteExecutionStore(_SqliteBase):
             if bool(found[1]["archived"]):
                 raise StorageConflict("profile is archived")
             table = f"v2_{kind}_profile_revisions"
-            number = int(connection.execute(f"SELECT COALESCE(MAX(revision_number),0)+1 FROM {table} WHERE profile_id=?", (profile_id,)).fetchone()[0])
+            number = int(
+                connection.execute(
+                    f"SELECT COALESCE(MAX(revision_number),0)+1 FROM {table} WHERE profile_id=?",
+                    (profile_id,),
+                ).fetchone()[0]
+            )
             rid = revision_id or _new_id(f"{kind}-revision")
             created = _iso(_utcnow())
-            safe = serialize_durable(dict(value), config=self._redaction_config, path="$.profile.revision")
-            connection.execute(f"INSERT INTO {table}(id,profile_id,revision_number,value_json,created_at) VALUES(?,?,?,?,?)", (rid, profile_id, number, _json(safe), created))
-            connection.execute(f"UPDATE v2_{kind}_profiles SET current_revision_id=?,updated_at=? WHERE id=?", (rid, created, profile_id))
+            safe = serialize_durable(
+                dict(value), config=self._redaction_config, path="$.profile.revision"
+            )
+            connection.execute(
+                f"INSERT INTO {table}(id,profile_id,revision_number,value_json,created_at) VALUES(?,?,?,?,?)",
+                (rid, profile_id, number, _json(safe), created),
+            )
+            connection.execute(
+                f"UPDATE v2_{kind}_profiles SET current_revision_id=?,updated_at=? WHERE id=?",
+                (rid, created, profile_id),
+            )
             self._commit(connection)
-            return ProfileRevisionRecord(RevisionId(rid), profile_id, number, safe if isinstance(safe, Mapping) else {}, _parse_dt(created))
+            return ProfileRevisionRecord(
+                RevisionId(rid),
+                profile_id,
+                number,
+                safe if isinstance(safe, Mapping) else {},
+                _parse_dt(created),
+            )
         except BaseException:
             self._rollback(connection)
             raise
@@ -2116,40 +2895,100 @@ class SQLiteExecutionStore(_SqliteBase):
             raise StorageConflict("profile does not exist")
         table = f"v2_{profile.kind}_profiles"
         with self._connect() as connection:
-            connection.execute(f"UPDATE {table} SET archived=?,updated_at=? WHERE id=?", (int(value), _iso(_utcnow()), profile_id))
+            connection.execute(
+                f"UPDATE {table} SET archived=?,updated_at=? WHERE id=?",
+                (int(value), _iso(_utcnow()), profile_id),
+            )
         return self.get_profile(profile_id)  # type: ignore[return-value]
 
-    def resolve_revision(self, profile_id: str, selection: RevisionSelection | str = "latest") -> ProfileRevisionRecord:
+    def resolve_revision(
+        self, profile_id: str, selection: RevisionSelection | str = "latest"
+    ) -> ProfileRevisionRecord:
         profile = self.get_profile(profile_id)
         if profile is None:
             raise StorageConflict("profile does not exist")
-        selected = selection if isinstance(selection, RevisionSelection) else RevisionSelection(mode=cast(Literal["latest", "pinned"], selection))
+        selected = (
+            selection
+            if isinstance(selection, RevisionSelection)
+            else RevisionSelection(mode=cast(Literal["latest", "pinned"], selection))
+        )
         table = f"v2_{profile.kind}_profile_revisions"
         with self._connect() as connection:
             if selected.mode == "latest":
-                row = connection.execute(f"SELECT * FROM {table} WHERE id=?", (profile.current_revision_id.root if profile.current_revision_id else "",)).fetchone()
+                row = connection.execute(
+                    f"SELECT * FROM {table} WHERE id=?",
+                    (
+                        profile.current_revision_id.root
+                        if profile.current_revision_id
+                        else "",
+                    ),
+                ).fetchone()
             else:
-                row = connection.execute(f"SELECT * FROM {table} WHERE id=? AND profile_id=? AND revision_number=?", (selected.revision_id.root if selected.revision_id else "", profile_id, selected.revision_number)).fetchone()
+                row = connection.execute(
+                    f"SELECT * FROM {table} WHERE id=? AND profile_id=? AND revision_number=?",
+                    (
+                        selected.revision_id.root if selected.revision_id else "",
+                        profile_id,
+                        selected.revision_number,
+                    ),
+                ).fetchone()
         if row is None:
             raise StorageConflict("profile revision does not exist")
-        return ProfileRevisionRecord(RevisionId(str(row["id"])), profile_id, int(row["revision_number"]), _loads(row["value_json"], {}), _parse_dt(row["created_at"]))
+        return ProfileRevisionRecord(
+            RevisionId(str(row["id"])),
+            profile_id,
+            int(row["revision_number"]),
+            _loads(row["value_json"], {}),
+            _parse_dt(row["created_at"]),
+        )
 
-    def get_revision(self, revision_id: RevisionId | str) -> ProfileRevisionRecord | None:
-        key = str(revision_id.root if isinstance(revision_id, RevisionId) else revision_id)
+    def get_revision(
+        self, revision_id: RevisionId | str
+    ) -> ProfileRevisionRecord | None:
+        key = str(
+            revision_id.root if isinstance(revision_id, RevisionId) else revision_id
+        )
         with self._connect() as connection:
             for kind in ("server", "harness"):
-                row = connection.execute(f"SELECT * FROM v2_{kind}_profile_revisions WHERE id=?", (key,)).fetchone()
+                row = connection.execute(
+                    f"SELECT * FROM v2_{kind}_profile_revisions WHERE id=?", (key,)
+                ).fetchone()
                 if row:
-                    return ProfileRevisionRecord(RevisionId(str(row["id"])), str(row["profile_id"]), int(row["revision_number"]), _loads(row["value_json"], {}), _parse_dt(row["created_at"]))
+                    return ProfileRevisionRecord(
+                        RevisionId(str(row["id"])),
+                        str(row["profile_id"]),
+                        int(row["revision_number"]),
+                        _loads(row["value_json"], {}),
+                        _parse_dt(row["created_at"]),
+                    )
         return None
 
     # -- leases, queue, cancellation -------------------------------------
-    def enqueue_command(self, execution_id: ExecutionId | str, kind: str = "execution", payload: Mapping[str, Any] | None = None, *, command_id: str | None = None, session_id: SessionId | str | None = None, turn_id: TurnId | str | None = None) -> Command:
+    def enqueue_command(
+        self,
+        execution_id: ExecutionId | str,
+        kind: str = "execution",
+        payload: Mapping[str, Any] | None = None,
+        *,
+        command_id: str | None = None,
+        session_id: SessionId | str | None = None,
+        turn_id: TurnId | str | None = None,
+    ) -> Command:
         command = command_id or _new_id("command")
         execution_key = _execution_key(execution_id)
-        session_key = str(session_id.root if isinstance(session_id, SessionId) else session_id) if session_id else None
-        turn_key = str(turn_id.root if isinstance(turn_id, TurnId) else turn_id) if turn_id else None
-        safe_payload = serialize_durable(dict(payload or {}), config=self._redaction_config, path="$.command.payload")
+        session_key = (
+            str(session_id.root if isinstance(session_id, SessionId) else session_id)
+            if session_id
+            else None
+        )
+        turn_key = (
+            str(turn_id.root if isinstance(turn_id, TurnId) else turn_id)
+            if turn_id
+            else None
+        )
+        safe_payload = serialize_durable(
+            dict(payload or {}), config=self._redaction_config, path="$.command.payload"
+        )
         payload_json = _json(safe_payload)
         connection = self._connect()
         try:
@@ -2157,7 +2996,9 @@ class SQLiteExecutionStore(_SqliteBase):
             # A caller may retry a submit after losing its response.  Stable
             # command IDs make that retry idempotent when the normalized
             # request is identical, while rejecting accidental key reuse.
-            existing = connection.execute("SELECT * FROM v2_commands WHERE id=?", (command,)).fetchone()
+            existing = connection.execute(
+                "SELECT * FROM v2_commands WHERE id=?", (command,)
+            ).fetchone()
             if existing is not None:
                 same = (
                     str(existing["execution_id"]) == execution_key
@@ -2167,16 +3008,32 @@ class SQLiteExecutionStore(_SqliteBase):
                     and existing["turn_id"] == turn_key
                 )
                 if not same:
-                    raise StorageConflict("command id was already used for a different request")
+                    raise StorageConflict(
+                        "command id was already used for a different request"
+                    )
                 self._rollback(connection)
                 return self.get_command(command)  # type: ignore[return-value]
-            connection.execute("INSERT INTO v2_commands(id,execution_id,kind,status,payload_json,session_id,turn_id,created_at) VALUES(?,?,?,?,?,?,?,?)", (command, execution_key, kind, "queued", payload_json, session_key, turn_key, _iso(_utcnow())))
+            connection.execute(
+                "INSERT INTO v2_commands(id,execution_id,kind,status,payload_json,session_id,turn_id,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    command,
+                    execution_key,
+                    kind,
+                    "queued",
+                    payload_json,
+                    session_key,
+                    turn_key,
+                    _iso(_utcnow()),
+                ),
+            )
             self._commit(connection)
         except Exception as exc:
             self._rollback(connection)
             if not _is_integrity_error(exc):
                 raise
-            raise StorageConflict("command already exists or execution does not exist") from exc
+            raise StorageConflict(
+                "command already exists or execution does not exist"
+            ) from exc
         finally:
             connection.close()
         return self.get_command(command)  # type: ignore[return-value]
@@ -2185,12 +3042,24 @@ class SQLiteExecutionStore(_SqliteBase):
 
     def get_command(self, command_id: str) -> Command | None:
         with self._connect() as connection:
-            row = connection.execute("SELECT * FROM v2_commands WHERE id=?", (command_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM v2_commands WHERE id=?", (command_id,)
+            ).fetchone()
         if row is None:
             return None
-        return Command(str(row["id"]), ExecutionId(str(row["execution_id"])), str(row["kind"]), str(row["status"]), _loads(row["payload_json"], {}), SessionId(str(row["session_id"])) if row["session_id"] else None, TurnId(str(row["turn_id"])) if row["turn_id"] else None)
+        return Command(
+            str(row["id"]),
+            ExecutionId(str(row["execution_id"])),
+            str(row["kind"]),
+            str(row["status"]),
+            _loads(row["payload_json"], {}),
+            SessionId(str(row["session_id"])) if row["session_id"] else None,
+            TurnId(str(row["turn_id"])) if row["turn_id"] else None,
+        )
 
-    def claim_next(self, owner_id: str, *, lease_seconds: float = 30.0) -> tuple[Command, Lease] | None:
+    def claim_next(
+        self, owner_id: str, *, lease_seconds: float = 30.0
+    ) -> tuple[Command, Lease] | None:
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
@@ -2207,20 +3076,32 @@ class SQLiteExecutionStore(_SqliteBase):
                 return None
             execution_id = str(row["execution_id"])
             now = _utcnow()
-            current = connection.execute("SELECT * FROM v2_leases WHERE execution_id=?", (execution_id,)).fetchone()
+            current = connection.execute(
+                "SELECT * FROM v2_leases WHERE execution_id=?", (execution_id,)
+            ).fetchone()
             if current and _parse_dt(current["expires_at"]) > now:
                 self._rollback(connection)
                 return None
-            if row["status"] == "claimed" and (current is None or _parse_dt(current["expires_at"]) <= now):
+            if row["status"] == "claimed" and (
+                current is None or _parse_dt(current["expires_at"]) <= now
+            ):
                 # A stale owner is never resumed.  Persist the interruption
                 # while the compare-and-set transaction still owns the
                 # database lock, then discard its lease and claimed command.
-                execution = connection.execute("SELECT snapshot_json FROM v2_executions WHERE id=?", (execution_id,)).fetchone()
+                execution = connection.execute(
+                    "SELECT snapshot_json FROM v2_executions WHERE id=?",
+                    (execution_id,),
+                ).fetchone()
                 self._ensure_created_event(connection, execution_id)
-                sequence, monotonic_offset_ms = self._next_event_position(connection, execution_id)
+                sequence, monotonic_offset_ms = self._next_event_position(
+                    connection, execution_id
+                )
                 event = Event(
-                    event_id=EventId(_new_id("event")), execution_id=ExecutionId(execution_id),
-                    sequence=sequence, kind=EventKind.EXECUTION_FINISHED, monotonic_offset_ms=monotonic_offset_ms,
+                    event_id=EventId(_new_id("event")),
+                    execution_id=ExecutionId(execution_id),
+                    sequence=sequence,
+                    kind=EventKind.EXECUTION_FINISHED,
+                    monotonic_offset_ms=monotonic_offset_ms,
                     payload=self._terminal_payload(
                         ExecutionOutcome.INTERRUPTED,
                         reason="worker lease expired",
@@ -2228,26 +3109,55 @@ class SQLiteExecutionStore(_SqliteBase):
                     ),
                 )
                 if execution is not None:
-                    snapshot = ExecutionState.model_validate(_loads(execution["snapshot_json"]))
-                    interrupted = snapshot.model_copy(update={
-                        "lifecycle": ExecutionStatus.FINISHED,
-                        "outcome": ExecutionOutcome.INTERRUPTED,
-                        "sequence": sequence,
-                        "finished_at": event.timestamp,
-                    })
-                    connection.execute("INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)", (str(event.event_id.root), execution_id, sequence, _json(event.model_dump(mode="json", by_alias=True)), _iso(event.timestamp)))
-                    connection.execute("UPDATE v2_executions SET snapshot_json=? WHERE id=?", (_json(interrupted.model_dump(mode="json")), execution_id))
-                connection.execute("UPDATE v2_commands SET status='interrupted' WHERE execution_id=? AND status IN ('queued','claimed')", (execution_id,))
-                connection.execute("DELETE FROM v2_leases WHERE execution_id=?", (execution_id,))
+                    snapshot = ExecutionState.model_validate(
+                        _loads(execution["snapshot_json"])
+                    )
+                    interrupted = snapshot.model_copy(
+                        update={
+                            "lifecycle": ExecutionStatus.FINISHED,
+                            "outcome": ExecutionOutcome.INTERRUPTED,
+                            "sequence": sequence,
+                            "finished_at": event.timestamp,
+                        }
+                    )
+                    connection.execute(
+                        "INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)",
+                        (
+                            str(event.event_id.root),
+                            execution_id,
+                            sequence,
+                            _json(event.model_dump(mode="json", by_alias=True)),
+                            _iso(event.timestamp),
+                        ),
+                    )
+                    connection.execute(
+                        "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
+                        (_json(interrupted.model_dump(mode="json")), execution_id),
+                    )
+                connection.execute(
+                    "UPDATE v2_commands SET status='interrupted' WHERE execution_id=? AND status IN ('queued','claimed')",
+                    (execution_id,),
+                )
+                connection.execute(
+                    "DELETE FROM v2_leases WHERE execution_id=?", (execution_id,)
+                )
                 self._commit(connection)
                 return None
             token, expires = _new_id("lease"), now + timedelta(seconds=lease_seconds)
-            connection.execute("INSERT INTO v2_leases(execution_id,owner_id,lease_token,acquired_at,heartbeat_at,expires_at) VALUES(?,?,?,?,?,?) ON CONFLICT(execution_id) DO UPDATE SET owner_id=excluded.owner_id,lease_token=excluded.lease_token,acquired_at=excluded.acquired_at,heartbeat_at=excluded.heartbeat_at,expires_at=excluded.expires_at", (execution_id, owner_id, token, _iso(now), _iso(now), _iso(expires)))
-            connection.execute("UPDATE v2_commands SET status='claimed',claimed_at=?,owner_id=? WHERE id=? AND status='queued'", (_iso(now), owner_id, str(row["id"])))
+            connection.execute(
+                "INSERT INTO v2_leases(execution_id,owner_id,lease_token,acquired_at,heartbeat_at,expires_at) VALUES(?,?,?,?,?,?) ON CONFLICT(execution_id) DO UPDATE SET owner_id=excluded.owner_id,lease_token=excluded.lease_token,acquired_at=excluded.acquired_at,heartbeat_at=excluded.heartbeat_at,expires_at=excluded.expires_at",
+                (execution_id, owner_id, token, _iso(now), _iso(now), _iso(expires)),
+            )
+            connection.execute(
+                "UPDATE v2_commands SET status='claimed',claimed_at=?,owner_id=? WHERE id=? AND status='queued'",
+                (_iso(now), owner_id, str(row["id"])),
+            )
             self._commit(connection)
             command = self.get_command(str(row["id"]))
             if command is None:
-                raise StorageError("claimed command disappeared before it could be returned")
+                raise StorageError(
+                    "claimed command disappeared before it could be returned"
+                )
             return command, Lease(ExecutionId(execution_id), owner_id, token, expires)
         except BaseException:
             self._rollback(connection)
@@ -2257,14 +3167,23 @@ class SQLiteExecutionStore(_SqliteBase):
 
     claim = claim_next
 
-    def heartbeat(self, lease: Lease | str, *, owner_id: str | None = None, lease_seconds: float = 30.0) -> bool:
+    def heartbeat(
+        self,
+        lease: Lease | str,
+        *,
+        owner_id: str | None = None,
+        lease_seconds: float = 30.0,
+    ) -> bool:
         token = lease.lease_token if isinstance(lease, Lease) else lease
         owner = lease.owner_id if isinstance(lease, Lease) else owner_id
         if not owner:
             raise ValueError("owner_id is required")
         now, expires = _utcnow(), _utcnow() + timedelta(seconds=lease_seconds)
         with self._connect() as connection:
-            cursor = connection.execute("UPDATE v2_leases SET heartbeat_at=?,expires_at=? WHERE lease_token=? AND owner_id=? AND expires_at>?", (_iso(now), _iso(expires), token, owner, _iso(now)))
+            cursor = connection.execute(
+                "UPDATE v2_leases SET heartbeat_at=?,expires_at=? WHERE lease_token=? AND owner_id=? AND expires_at>?",
+                (_iso(now), _iso(expires), token, owner, _iso(now)),
+            )
             return cursor.rowcount == 1
 
     renew_lease = heartbeat
@@ -2297,13 +3216,17 @@ class SQLiteExecutionStore(_SqliteBase):
                 (execution_id,),
             ).fetchone()
             if execution is None:
-                connection.execute("DELETE FROM v2_leases WHERE execution_id=?", (execution_id,))
+                connection.execute(
+                    "DELETE FROM v2_leases WHERE execution_id=?", (execution_id,)
+                )
                 self._commit(connection)
                 return False
             snapshot = ExecutionState.model_validate(_loads(execution["snapshot_json"]))
             if snapshot.lifecycle is not ExecutionStatus.FINISHED:
                 self._ensure_created_event(connection, execution_id)
-                sequence, monotonic_offset_ms = self._next_event_position(connection, execution_id)
+                sequence, monotonic_offset_ms = self._next_event_position(
+                    connection, execution_id
+                )
                 event = Event(
                     event_id=EventId(_new_id("event")),
                     execution_id=ExecutionId(execution_id),
@@ -2326,7 +3249,13 @@ class SQLiteExecutionStore(_SqliteBase):
                 )
                 connection.execute(
                     "INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)",
-                    (str(event.event_id.root), execution_id, sequence, _json(event.model_dump(mode="json", by_alias=True)), _iso(event.timestamp)),
+                    (
+                        str(event.event_id.root),
+                        execution_id,
+                        sequence,
+                        _json(event.model_dump(mode="json", by_alias=True)),
+                        _iso(event.timestamp),
+                    ),
                 )
                 connection.execute(
                     "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
@@ -2336,7 +3265,9 @@ class SQLiteExecutionStore(_SqliteBase):
                 "UPDATE v2_commands SET status='interrupted' WHERE execution_id=? AND status IN ('queued','claimed')",
                 (execution_id,),
             )
-            connection.execute("DELETE FROM v2_leases WHERE execution_id=?", (execution_id,))
+            connection.execute(
+                "DELETE FROM v2_leases WHERE execution_id=?", (execution_id,)
+            )
             self._commit(connection)
             return True
         except BaseException:
@@ -2351,10 +3282,15 @@ class SQLiteExecutionStore(_SqliteBase):
         if not owner:
             raise ValueError("owner_id is required")
         with self._connect() as connection:
-            cursor = connection.execute("DELETE FROM v2_leases WHERE lease_token=? AND owner_id=?", (token, owner))
+            cursor = connection.execute(
+                "DELETE FROM v2_leases WHERE lease_token=? AND owner_id=?",
+                (token, owner),
+            )
             return cursor.rowcount == 1
 
-    def complete_command(self, command_id: str, *, owner_id: str, lease_token: str, status: str = "done") -> bool:
+    def complete_command(
+        self, command_id: str, *, owner_id: str, lease_token: str, status: str = "done"
+    ) -> bool:
         """Mark one claimed command terminal under its current lease."""
         if status not in {"done", "cancelled", "failed"}:
             raise ValueError("command status must be done, cancelled, or failed")
@@ -2368,11 +3304,16 @@ class SQLiteExecutionStore(_SqliteBase):
             if row is None:
                 connection.execute("ROLLBACK")
                 raise StorageConflict("command is no longer owned")
-            connection.execute("UPDATE v2_commands SET status=? WHERE id=? AND status='claimed'", (status, str(command_id)))
+            connection.execute(
+                "UPDATE v2_commands SET status=? WHERE id=? AND status='claimed'",
+                (status, str(command_id)),
+            )
             connection.execute("COMMIT")
         return True
 
-    def request_cancel(self, execution_id: ExecutionId | str, reason: str | None = None) -> bool:
+    def request_cancel(
+        self, execution_id: ExecutionId | str, reason: str | None = None
+    ) -> bool:
         key = _execution_key(execution_id)
         safe_reason = self._safe_reason(reason, path="$.cancellation.reason")
         connection = self._connect()
@@ -2403,9 +3344,14 @@ class SQLiteExecutionStore(_SqliteBase):
                 (key,),
             ).fetchone()
             snapshot = ExecutionState.model_validate(_loads(execution["snapshot_json"]))
-            if active_lease is None and snapshot.lifecycle is not ExecutionStatus.FINISHED:
+            if (
+                active_lease is None
+                and snapshot.lifecycle is not ExecutionStatus.FINISHED
+            ):
                 self._ensure_created_event(connection, key)
-                sequence, monotonic_offset_ms = self._next_event_position(connection, key)
+                sequence, monotonic_offset_ms = self._next_event_position(
+                    connection, key
+                )
                 event = Event(
                     event_id=EventId(_new_id("event")),
                     execution_id=ExecutionId(key),
@@ -2428,7 +3374,13 @@ class SQLiteExecutionStore(_SqliteBase):
                 )
                 connection.execute(
                     "INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)",
-                    (str(event.event_id.root), key, sequence, _json(event.model_dump(mode="json", by_alias=True)), _iso(event.timestamp)),
+                    (
+                        str(event.event_id.root),
+                        key,
+                        sequence,
+                        _json(event.model_dump(mode="json", by_alias=True)),
+                        _iso(event.timestamp),
+                    ),
                 )
                 connection.execute(
                     "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
@@ -2444,14 +3396,18 @@ class SQLiteExecutionStore(_SqliteBase):
 
     cancel = request_cancel
 
-    def finalize_cancelled(self, execution_id: ExecutionId | str, *, reason: str = "cancelled") -> bool:
+    def finalize_cancelled(
+        self, execution_id: ExecutionId | str, *, reason: str = "cancelled"
+    ) -> bool:
         """Persist a cancellation terminal event when a worker observed it.
 
         Runtime runners may already have written their terminal event; in that
         case this operation is an idempotent no-op.
         """
         key = _execution_key(execution_id)
-        safe_reason = self._safe_reason(reason, path="$.cancellation.reason") or "cancelled"
+        safe_reason = (
+            self._safe_reason(reason, path="$.cancellation.reason") or "cancelled"
+        )
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
@@ -2490,7 +3446,13 @@ class SQLiteExecutionStore(_SqliteBase):
             )
             connection.execute(
                 "INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)",
-                (str(event.event_id.root), key, sequence, _json(event.model_dump(mode="json", by_alias=True)), _iso(event.timestamp)),
+                (
+                    str(event.event_id.root),
+                    key,
+                    sequence,
+                    _json(event.model_dump(mode="json", by_alias=True)),
+                    _iso(event.timestamp),
+                ),
             )
             connection.execute(
                 "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
@@ -2506,9 +3468,17 @@ class SQLiteExecutionStore(_SqliteBase):
 
     def cancellation_requested(self, execution_id: ExecutionId | str) -> bool:
         with self._connect() as connection:
-            return connection.execute("SELECT 1 FROM v2_cancellation WHERE execution_id=?", (_execution_key(execution_id),)).fetchone() is not None
+            return (
+                connection.execute(
+                    "SELECT 1 FROM v2_cancellation WHERE execution_id=?",
+                    (_execution_key(execution_id),),
+                ).fetchone()
+                is not None
+            )
 
-    def mark_stale_interrupted(self, *, now: datetime | None = None) -> tuple[ExecutionId, ...]:
+    def mark_stale_interrupted(
+        self, *, now: datetime | None = None
+    ) -> tuple[ExecutionId, ...]:
         moment = now or _utcnow()
         changed: list[ExecutionId] = []
         connection = self._connect()
@@ -2527,14 +3497,22 @@ class SQLiteExecutionStore(_SqliteBase):
                     (key,),
                 ).fetchone()
                 if execution is None:
-                    connection.execute("DELETE FROM v2_leases WHERE execution_id=?", (key,))
+                    connection.execute(
+                        "DELETE FROM v2_leases WHERE execution_id=?", (key,)
+                    )
                     continue
-                snapshot = ExecutionState.model_validate(_loads(execution["snapshot_json"]))
+                snapshot = ExecutionState.model_validate(
+                    _loads(execution["snapshot_json"])
+                )
                 if snapshot.lifecycle is ExecutionStatus.FINISHED:
-                    connection.execute("DELETE FROM v2_leases WHERE execution_id=?", (key,))
+                    connection.execute(
+                        "DELETE FROM v2_leases WHERE execution_id=?", (key,)
+                    )
                     continue
                 self._ensure_created_event(connection, key)
-                sequence, monotonic_offset_ms = self._next_event_position(connection, key)
+                sequence, monotonic_offset_ms = self._next_event_position(
+                    connection, key
+                )
                 event = Event(
                     event_id=EventId(_new_id("event")),
                     execution_id=ExecutionId(key),
@@ -2593,15 +3571,32 @@ class SQLiteExecutionStore(_SqliteBase):
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
-            digests = [str(row[0]) for row in connection.execute("SELECT sha256 FROM v2_artifacts WHERE execution_id=?", (key,)).fetchall()]
-            digests.extend(str(row[0]) for row in connection.execute("SELECT eb.sha256 FROM v2_event_blobs eb JOIN v2_events e ON e.id=eb.event_id WHERE e.execution_id=?", (key,)).fetchall())
+            digests = [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT sha256 FROM v2_artifacts WHERE execution_id=?", (key,)
+                ).fetchall()
+            ]
+            digests.extend(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT eb.sha256 FROM v2_event_blobs eb JOIN v2_events e ON e.id=eb.event_id WHERE e.execution_id=?",
+                    (key,),
+                ).fetchall()
+            )
             connection.execute("DELETE FROM v2_executions WHERE id=?", (key,))
             for digest in digests:
                 # Cascading artifact deletion removes metadata rows but does
                 # not know about content-addressed reference counts.  Apply
                 # each decrement in the same transaction as the deletion.
-                connection.execute("UPDATE v2_blobs SET ref_count=ref_count-1 WHERE sha256=?", (digest,))
-                row = connection.execute("SELECT ref_count,storage_key FROM v2_blobs WHERE sha256=?", (digest,)).fetchone()
+                connection.execute(
+                    "UPDATE v2_blobs SET ref_count=ref_count-1 WHERE sha256=?",
+                    (digest,),
+                )
+                row = connection.execute(
+                    "SELECT ref_count,storage_key FROM v2_blobs WHERE sha256=?",
+                    (digest,),
+                ).fetchone()
                 if row and int(row["ref_count"]) <= 0:
                     connection.execute("DELETE FROM v2_blobs WHERE sha256=?", (digest,))
             self._commit(connection)
@@ -2669,9 +3664,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 )
             ref = _make_evidence_ref(
                 event_key, prepared.content, media_type=safe_media_type
-            ).model_copy(
-                update={"storage_key": storage_key}
-            )
+            ).model_copy(update={"storage_key": storage_key})
             connection.execute(
                 "INSERT INTO v2_blobs(sha256,size_bytes,compressed_size,media_type,"
                 "storage_key,ref_count,created_at) "
@@ -2780,26 +3773,70 @@ class SQLiteExecutionStore(_SqliteBase):
             raise RawEvidenceUnavailable("raw evidence is unavailable") from None
         return _make_evidence_result(expected, content, max_bytes=max_bytes)
 
-    def clone_execution(self, execution_id: ExecutionId | str, *, use_latest: bool = False) -> ExecutionId:
+    def clone_execution(
+        self, execution_id: ExecutionId | str, *, use_latest: bool = False
+    ) -> ExecutionId:
         source = _execution_key(execution_id)
         original = self.get_snapshot(source)
         if original is None:
             raise StorageConflict("execution does not exist")
         new_id = ExecutionId(_new_id("execution"))
         with self._connect() as connection:
-            row = connection.execute("SELECT specification_json,provenance_json FROM v2_executions WHERE id=?", (source,)).fetchone()
-            bindings = connection.execute("SELECT ordinal,profile_id,revision_id,binding_json FROM v2_execution_server_bindings WHERE execution_id=? ORDER BY ordinal", (source,)).fetchall()
-            harness = connection.execute("SELECT profile_id,revision_id,binding_json FROM v2_execution_harness_bindings WHERE execution_id=?", (source,)).fetchone()
-        server_values = [{"profile_id": row[1], "revision_id": row[2], **_loads(row[3], {})} for row in bindings]
-        harness_value = ({"profile_id": harness[0], "revision_id": harness[1], **_loads(harness[2], {})} if harness else None)
+            row = connection.execute(
+                "SELECT specification_json,provenance_json FROM v2_executions WHERE id=?",
+                (source,),
+            ).fetchone()
+            bindings = connection.execute(
+                "SELECT ordinal,profile_id,revision_id,binding_json FROM v2_execution_server_bindings WHERE execution_id=? ORDER BY ordinal",
+                (source,),
+            ).fetchall()
+            harness = connection.execute(
+                "SELECT profile_id,revision_id,binding_json FROM v2_execution_harness_bindings WHERE execution_id=?",
+                (source,),
+            ).fetchone()
+        server_values = [
+            {"profile_id": row[1], "revision_id": row[2], **_loads(row[3], {})}
+            for row in bindings
+        ]
+        harness_value = (
+            {
+                "profile_id": harness[0],
+                "revision_id": harness[1],
+                **_loads(harness[2], {}),
+            }
+            if harness
+            else None
+        )
         if use_latest:
             for item in server_values:
                 if item.get("profile_id"):
-                    item["revision_id"] = str(self.resolve_revision(str(item["profile_id"])).id.root)
+                    item["revision_id"] = str(
+                        self.resolve_revision(str(item["profile_id"])).id.root
+                    )
             if harness_value and harness_value.get("profile_id"):
-                harness_value["revision_id"] = str(self.resolve_revision(str(harness_value["profile_id"])).id.root)
-        provenance = {"clone_of": source, "revision_selection": "latest" if use_latest else "original"}
-        self.create(original.model_copy(update={"execution_id": new_id, "lifecycle": ExecutionStatus.CREATED, "outcome": None, "sequence": 0, "finished_at": None}), specification=_loads(row[0]) if row and row[0] else None, provenance=provenance, server_bindings=server_values, harness_binding=harness_value, parent_execution_id=source)
+                harness_value["revision_id"] = str(
+                    self.resolve_revision(str(harness_value["profile_id"])).id.root
+                )
+        provenance = {
+            "clone_of": source,
+            "revision_selection": "latest" if use_latest else "original",
+        }
+        self.create(
+            original.model_copy(
+                update={
+                    "execution_id": new_id,
+                    "lifecycle": ExecutionStatus.CREATED,
+                    "outcome": None,
+                    "sequence": 0,
+                    "finished_at": None,
+                }
+            ),
+            specification=_loads(row[0]) if row and row[0] else None,
+            provenance=provenance,
+            server_bindings=server_values,
+            harness_binding=harness_value,
+            parent_execution_id=source,
+        )
         return new_id
 
     clone = clone_execution
@@ -2808,13 +3845,23 @@ class SQLiteExecutionStore(_SqliteBase):
         """Return the immutable, submission-time profile binding snapshot."""
         key = _execution_key(execution_id)
         with self._connect() as connection:
-            servers = connection.execute("SELECT ordinal,binding_json FROM v2_execution_server_bindings WHERE execution_id=? ORDER BY ordinal", (key,)).fetchall()
-            harness = connection.execute("SELECT binding_json FROM v2_execution_harness_bindings WHERE execution_id=?", (key,)).fetchone()
-            execution = connection.execute("SELECT provenance_json FROM v2_executions WHERE id=?", (key,)).fetchone()
+            servers = connection.execute(
+                "SELECT ordinal,binding_json FROM v2_execution_server_bindings WHERE execution_id=? ORDER BY ordinal",
+                (key,),
+            ).fetchall()
+            harness = connection.execute(
+                "SELECT binding_json FROM v2_execution_harness_bindings WHERE execution_id=?",
+                (key,),
+            ).fetchone()
+            execution = connection.execute(
+                "SELECT provenance_json FROM v2_executions WHERE id=?", (key,)
+            ).fetchone()
         return {
             "servers": tuple(_loads(row["binding_json"], {}) for row in servers),
             "harness": _loads(harness[0], {}) if harness else None,
-            "provenance": _loads(execution[0], {}) if execution and execution[0] else None,
+            "provenance": _loads(execution[0], {})
+            if execution and execution[0]
+            else None,
         }
 
     def close(self) -> None:
@@ -2828,7 +3875,12 @@ SQLiteStore = SQLiteExecutionStore
 PersistentExecutionStore = SQLiteExecutionStore
 
 __all__ = [
-    "Command", "Lease", "ProfileRecord", "ProfileRevisionRecord",
-    "SQLiteArtifactStore", "SQLiteExecutionStore", "SQLiteStore",
+    "Command",
+    "Lease",
     "PersistentExecutionStore",
+    "ProfileRecord",
+    "ProfileRevisionRecord",
+    "SQLiteArtifactStore",
+    "SQLiteExecutionStore",
+    "SQLiteStore",
 ]

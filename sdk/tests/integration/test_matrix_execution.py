@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -18,7 +18,6 @@ from mcp_pal.types import (
     StdioServer,
     TurnOutcome,
 )
-
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -82,8 +81,14 @@ def test_tool_matrix_case_run_persists_one_normal_execution(tmp_path: Path) -> N
         assert report is not None
         assert report.snapshot.outcome is ExecutionOutcome.COMPLETED
         assert report.evidence is not None
-        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in report.events) == 1
-        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in report.events) == 1
+        assert (
+            sum(event.kind is EventKind.EXECUTION_CREATED for event in report.events)
+            == 1
+        )
+        assert (
+            sum(event.kind is EventKind.EXECUTION_FINISHED for event in report.events)
+            == 1
+        )
         spec = store.get_execution_spec(result.snapshot.execution_id)
         assert spec is not None
         assert spec.metadata["mcp_pal.matrix.case_id"] == "catalog/echo"
@@ -110,7 +115,13 @@ def test_harness_matrix_case_run_persists_one_normal_execution(tmp_path: Path) -
         )
         with MCPTestKit(store=store, env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
             result = matrix.cases()[0].run(
-                json.dumps({"server": "catalog", "tool": "echo", "arguments": {"text": "matrix"}}),
+                json.dumps(
+                    {
+                        "server": "catalog",
+                        "tool": "echo",
+                        "arguments": {"text": "matrix"},
+                    }
+                ),
                 kit=kit,
             )
 
@@ -118,8 +129,14 @@ def test_harness_matrix_case_run_persists_one_normal_execution(tmp_path: Path) -
         assert result.trace is not None
         report = store.get_report(result.snapshot.execution_id)
         assert report is not None
-        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in report.events) == 1
-        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in report.events) == 1
+        assert (
+            sum(event.kind is EventKind.EXECUTION_CREATED for event in report.events)
+            == 1
+        )
+        assert (
+            sum(event.kind is EventKind.EXECUTION_FINISHED for event in report.events)
+            == 1
+        )
         spec = store.get_execution_spec(result.snapshot.execution_id)
         assert spec is not None
         assert spec.metadata["mcp_pal.matrix.case_id"] == "catalog/acp"
@@ -150,11 +167,23 @@ def test_harness_matrix_session_persists_two_ordered_turns(tmp_path: Path) -> No
             case = matrix.cases()[0]
             with case.session(kit=kit) as session:
                 first = session.send(
-                    json.dumps({"server": "catalog", "tool": "echo", "arguments": {"text": "first"}}),
+                    json.dumps(
+                        {
+                            "server": "catalog",
+                            "tool": "echo",
+                            "arguments": {"text": "first"},
+                        }
+                    ),
                     timeout=20,
                 )
                 second = session.send(
-                    json.dumps({"server": "warehouse", "tool": "echo", "arguments": {"text": "second"}}),
+                    json.dumps(
+                        {
+                            "server": "warehouse",
+                            "tool": "echo",
+                            "arguments": {"text": "second"},
+                        }
+                    ),
                     timeout=20,
                 )
             result = session.result
@@ -165,8 +194,14 @@ def test_harness_matrix_session_persists_two_ordered_turns(tmp_path: Path) -> No
         assert _turn_numbers(store, result.snapshot.execution_id) == [1, 2]
         report = store.get_report(result.snapshot.execution_id)
         assert report is not None
-        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in report.events) == 1
-        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in report.events) == 1
+        assert (
+            sum(event.kind is EventKind.EXECUTION_CREATED for event in report.events)
+            == 1
+        )
+        assert (
+            sum(event.kind is EventKind.EXECUTION_FINISHED for event in report.events)
+            == 1
+        )
         spec = store.get_execution_spec(result.snapshot.execution_id)
         assert spec is not None
         assert spec.metadata["mcp_pal.matrix.mode"] == "all_servers"

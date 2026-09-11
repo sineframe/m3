@@ -8,8 +8,8 @@ is the transport-level authority for arguments, results, errors, and latency.
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Any, Iterable
-
+from collections.abc import Iterable
+from typing import Any
 
 WIRE_LIMITATION = (
     "No correlated MCP transport capture was available for this call; wire "
@@ -72,7 +72,7 @@ def _protocol_record(frame: Any, sequence: int, *, source: str) -> dict[str, Any
     item.setdefault("sequence", sequence)
     item.setdefault("jsonrpc_id", payload_dict.get("id"))
     item.setdefault("method", payload_dict.get("method"))
-    direction = _direction(frame)
+    _direction(frame)
     if payload_dict.get("error") is not None:
         state = "error"
     elif _is_request(frame, payload_dict):
@@ -132,7 +132,9 @@ def _normalized_status(value: Any, *, error: Any = None) -> str:
     return status
 
 
-def _call_base(*, ident: Any, server: str, tool: str, transport: str, start: float) -> dict[str, Any]:
+def _call_base(
+    *, ident: Any, server: str, tool: str, transport: str, start: float
+) -> dict[str, Any]:
     return {
         "id": ident,
         "server": server,
@@ -195,23 +197,52 @@ def _acp_evidence(
                         "transport": transport,
                         "input": payload.get("params"),
                         "output": None,
-                        "metadata": {"harness": "acp", "unknown": True, "raw_notification": payload},
+                        "metadata": {
+                            "harness": "acp",
+                            "unknown": True,
+                            "raw_notification": payload,
+                        },
                     }
                 )
             continue
         update, update_type = _update_from_payload(payload)
         offset = _offset(raw_frame)
         update_count += 1
-        tool_id = update.get("toolCallId") or update.get("tool_call_id") or update.get("callId")
+        tool_id = (
+            update.get("toolCallId")
+            or update.get("tool_call_id")
+            or update.get("callId")
+        )
         lower_type = update_type.lower()
         if "message" in lower_type:
-            kind, name, output = "text", "Response", _content_text(update.get("content"))
-            metadata = {"harness": "acp", "update_type": update_type, "raw_update": update}
+            kind, name, output = (
+                "text",
+                "Response",
+                _content_text(update.get("content")),
+            )
+            metadata = {
+                "harness": "acp",
+                "update_type": update_type,
+                "raw_update": update,
+            }
         elif "thought" in lower_type or "reason" in lower_type:
-            kind, name, output = "thinking", "Thinking", _content_text(update.get("content"))
-            metadata = {"harness": "acp", "update_type": update_type, "raw_update": update}
+            kind, name, output = (
+                "thinking",
+                "Thinking",
+                _content_text(update.get("content")),
+            )
+            metadata = {
+                "harness": "acp",
+                "update_type": update_type,
+                "raw_update": update,
+            }
         elif lower_type == "tool_call" or lower_type.endswith("_tool_call"):
-            tool = update.get("title") or update.get("name") or update.get("tool") or "tool"
+            tool = (
+                update.get("title")
+                or update.get("name")
+                or update.get("tool")
+                or "tool"
+            )
             ident = str(tool_id) if tool_id is not None else f"acp-tool-{sequence}"
             call = _call_base(
                 ident=ident,
@@ -231,15 +262,23 @@ def _acp_evidence(
                 call["result"] = update["rawOutput"]
             elif "output" in update:
                 call["result"] = update["output"]
-            call["status"] = _normalized_status(update.get("status"), error=update.get("error"))
-            if "status" not in update and (call["result"] is not None or call["error"] is not None):
+            call["status"] = _normalized_status(
+                update.get("status"), error=update.get("error")
+            )
+            if "status" not in update and (
+                call["result"] is not None or call["error"] is not None
+            ):
                 call["status"] = "error" if call["error"] is not None else "completed"
             call["error"] = update.get("error")
             _set_end(call, offset)
             calls.append(call)
             if tool_id is not None:
                 calls_by_key[str(tool_id)] = call
-            kind, name, output = "tool_call", f"MCP tool · {call['tool']}", call["result"]
+            kind, name, output = (
+                "tool_call",
+                f"MCP tool · {call['tool']}",
+                call["result"],
+            )
             metadata = {
                 "harness": "acp",
                 "mcp_selected": True,
@@ -247,17 +286,28 @@ def _acp_evidence(
                 "tool_call_id": tool_id,
                 "raw_update": update,
             }
-        elif lower_type == "tool_call_update" or lower_type.endswith("_tool_call_update"):
+        elif lower_type == "tool_call_update" or lower_type.endswith(
+            "_tool_call_update"
+        ):
             call = calls_by_key.get(str(tool_id)) if tool_id is not None else None
             if call is None:
                 ident = str(tool_id) if tool_id is not None else f"acp-tool-{sequence}"
-                call = _call_base(ident=ident, server=selected_server, tool="tool", transport=transport, start=offset)
+                call = _call_base(
+                    ident=ident,
+                    server=selected_server,
+                    tool="tool",
+                    transport=transport,
+                    start=offset,
+                )
                 call["tool_call_id"] = tool_id
                 calls.append(call)
                 if tool_id is not None:
                     calls_by_key[str(tool_id)] = call
             if update.get("title") or update.get("name") or update.get("tool"):
-                call["tool"] = _tool_name(update.get("title") or update.get("name") or update.get("tool"), selected_server)
+                call["tool"] = _tool_name(
+                    update.get("title") or update.get("name") or update.get("tool"),
+                    selected_server,
+                )
             if "rawInput" in update:
                 call["arguments"] = update["rawInput"]
             elif "input" in update:
@@ -270,13 +320,21 @@ def _acp_evidence(
                 call["result"] = update["output"]
             if "error" in update:
                 call["error"] = update["error"]
-            call["status"] = _normalized_status(update.get("status"), error=call.get("error"))
-            if "status" not in update and (call["result"] is not None or call["error"] is not None):
+            call["status"] = _normalized_status(
+                update.get("status"), error=call.get("error")
+            )
+            if "status" not in update and (
+                call["result"] is not None or call["error"] is not None
+            ):
                 call["status"] = "error" if call["error"] is not None else "completed"
             _set_end(call, offset)
             # The lifecycle remains one normalized tool span; each update is
             # retained as a separate backend update child for the waterfall.
-            kind, name, output = "update", f"Tool update · {call['tool']}", call["result"]
+            kind, name, output = (
+                "update",
+                f"Tool update · {call['tool']}",
+                call["result"],
+            )
             metadata = {
                 "harness": "acp",
                 "mcp_selected": True,
@@ -286,20 +344,41 @@ def _acp_evidence(
                 "raw_update": update,
             }
         elif "plan" in lower_type:
-            kind, name, output = "plan", "Plan", update.get("entries") if "entries" in update else update
-            metadata = {"harness": "acp", "update_type": update_type, "raw_update": update}
-        elif any(token in lower_type for token in ("state", "mode", "config", "command")):
+            kind, name, output = (
+                "plan",
+                "Plan",
+                update.get("entries") if "entries" in update else update,
+            )
+            metadata = {
+                "harness": "acp",
+                "update_type": update_type,
+                "raw_update": update,
+            }
+        elif any(
+            token in lower_type for token in ("state", "mode", "config", "command")
+        ):
             kind, name, output = "state", update_type, update
-            metadata = {"harness": "acp", "update_type": update_type, "raw_update": update}
+            metadata = {
+                "harness": "acp",
+                "update_type": update_type,
+                "raw_update": update,
+            }
         else:
             kind, name, output = "update", update_type, update
-            metadata = {"harness": "acp", "update_type": update_type, "raw_update": update, "unknown": True}
+            metadata = {
+                "harness": "acp",
+                "update_type": update_type,
+                "raw_update": update,
+                "unknown": True,
+            }
         span = {
             "id": f"acp-update-{sequence}",
             "parent_id": "run",
             "kind": kind,
             "name": name,
-            "status": "completed" if kind not in {"tool_call"} or output is not None else "pending",
+            "status": "completed"
+            if kind not in {"tool_call"} or output is not None
+            else "pending",
             "start_ms": offset,
             "end_ms": offset,
             "duration_ms": 0.0,
@@ -332,12 +411,31 @@ def _acp_evidence(
                 "kind": "tool_call",
                 "name": f"MCP tool · {call['tool']}",
                 "status": call["status"],
-                "start_ms": call["start_ms"], "end_ms": call["end_ms"], "duration_ms": call["duration_ms"],
-                "transport": transport, "input": call["arguments"], "output": call["result"], "error": call["error"],
-                "metadata": {"harness": "acp", "mcp_selected": True, "tool_call_id": call.get("tool_call_id")},
+                "start_ms": call["start_ms"],
+                "end_ms": call["end_ms"],
+                "duration_ms": call["duration_ms"],
+                "transport": transport,
+                "input": call["arguments"],
+                "output": call["result"],
+                "error": call["error"],
+                "metadata": {
+                    "harness": "acp",
+                    "mcp_selected": True,
+                    "tool_call_id": call.get("tool_call_id"),
+                },
             }
         else:
-            existing.update({"status": call["status"], "start_ms": call["start_ms"], "end_ms": call["end_ms"], "duration_ms": call["duration_ms"], "input": call["arguments"], "output": call["result"], "error": call["error"]})
+            existing.update(
+                {
+                    "status": call["status"],
+                    "start_ms": call["start_ms"],
+                    "end_ms": call["end_ms"],
+                    "duration_ms": call["duration_ms"],
+                    "input": call["arguments"],
+                    "output": call["result"],
+                    "error": call["error"],
+                }
+            )
         lifecycle.append(existing)
     spans = [s for s in spans if s.get("kind") != "tool_call"] + lifecycle
     return protocol, spans, calls
@@ -349,11 +447,18 @@ def _wire_evidence(
     selected_server: str,
     configured_transport: str,
     instrumented_transport: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
     protocol: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
     mcp_spans: list[dict[str, Any]] = []
-    pending: defaultdict[tuple[str, str], deque[tuple[int, dict[str, Any], dict[str, Any]]]] = defaultdict(deque)
+    pending: defaultdict[
+        tuple[str, str], deque[tuple[int, dict[str, Any], dict[str, Any]]]
+    ] = defaultdict(deque)
     event_spans: list[dict[str, Any]] = []
     for sequence, pair in enumerate(
         sorted(enumerate(frames), key=lambda item: (_offset(item[1]), item[0])), 1
@@ -364,7 +469,11 @@ def _wire_evidence(
         raw_payload = _payload(frame)
         payload = _dict(raw_payload)
         offset = _offset(frame)
-        if _is_request(frame, payload) and payload.get("method") == "tools/call" and payload.get("id") is not None:
+        if (
+            _is_request(frame, payload)
+            and payload.get("method") == "tools/call"
+            and payload.get("id") is not None
+        ):
             params = _dict(payload.get("params"))
             ident = payload.get("id")
             call = {
@@ -391,14 +500,22 @@ def _wire_evidence(
             calls.append(call)
             pending[_id_key(ident)].append((len(calls) - 1, item, payload))
             continue
-        if _is_response(frame, payload) and _id_key(payload.get("id")) in pending and pending[_id_key(payload.get("id"))]:
-            call_index, request_item, request_payload = pending[_id_key(payload.get("id"))].popleft()
+        if (
+            _is_response(frame, payload)
+            and _id_key(payload.get("id")) in pending
+            and pending[_id_key(payload.get("id"))]
+        ):
+            call_index, _request_item, _request_payload = pending[
+                _id_key(payload.get("id"))
+            ].popleft()
             call = calls[call_index]
             call["wire_response"] = payload
             # Do not coerce a result or error: wire JSON is authoritative.
             call["result"] = payload.get("result")
             call["error"] = payload.get("error")
-            call["status"] = "error" if payload.get("error") is not None else "completed"
+            call["status"] = (
+                "error" if payload.get("error") is not None else "completed"
+            )
             call["end_ms"] = max(call["start_ms"], offset)
             call["duration_ms"] = call["end_ms"] - call["start_ms"]
             call["server_latency_ms"] = call["duration_ms"]
@@ -412,7 +529,10 @@ def _wire_evidence(
                 "id": f"wire-event-{sequence}",
                 "parent_id": "run-mcp",
                 "kind": "mcp_event",
-                "name": str(payload.get("method") or ("MCP response" if not is_req else "MCP request")),
+                "name": str(
+                    payload.get("method")
+                    or ("MCP response" if not is_req else "MCP request")
+                ),
                 "status": item.get("status", "unknown"),
                 "start_ms": offset,
                 "end_ms": offset,
@@ -420,7 +540,11 @@ def _wire_evidence(
                 "transport": configured_transport,
                 "input": raw_payload if is_req else None,
                 "output": raw_payload if not is_req else None,
-                "metadata": {"harness": "acp", "direction": _direction(frame), "jsonrpc_id": payload.get("id")},
+                "metadata": {
+                    "harness": "acp",
+                    "direction": _direction(frame),
+                    "jsonrpc_id": payload.get("id"),
+                },
             }
         )
     # A pending request is still evidence and must be rendered in a partial trace.
@@ -459,13 +583,18 @@ def _time_related(acp: dict[str, Any], wire: dict[str, Any]) -> bool:
     return gap <= 50.0
 
 
-def _infer_links(acp_calls: list[dict[str, Any]], wire_calls: list[dict[str, Any]], selected_server: str) -> dict[int, int]:
+def _infer_links(
+    acp_calls: list[dict[str, Any]],
+    wire_calls: list[dict[str, Any]],
+    selected_server: str,
+) -> dict[int, int]:
     candidates: dict[int, list[int]] = {}
     for wi, wire in enumerate(wire_calls):
         candidates[wi] = [
             ai
             for ai, acp in enumerate(acp_calls)
-            if _tool_name(acp.get("tool"), selected_server).lower() == _tool_name(wire.get("tool"), selected_server).lower()
+            if _tool_name(acp.get("tool"), selected_server).lower()
+            == _tool_name(wire.get("tool"), selected_server).lower()
             and _time_related(acp, wire)
         ]
     links: dict[int, int] = {}
@@ -512,8 +641,15 @@ def build_acp_trace(
         wire["acp_tool_call_id"] = acp_calls[ai].get("tool_call_id")
         wire["limitations"] = []
         for span in wire_spans:
-            if (span.get("metadata") or {}).get("request_sequence") == wire["request_sequence"]:
-                span["metadata"].update({"correlation": "inferred", "acp_tool_call_id": acp_calls[ai].get("tool_call_id")})
+            if (span.get("metadata") or {}).get("request_sequence") == wire[
+                "request_sequence"
+            ]:
+                span["metadata"].update(
+                    {
+                        "correlation": "inferred",
+                        "acp_tool_call_id": acp_calls[ai].get("tool_call_id"),
+                    }
+                )
                 span["parent_id"] = f"acp-tool-{acp_calls[ai]['id']}"
         # Reflect the relationship on the ACP lifecycle span without replacing
         # the authoritative wire values in the normalized call.
@@ -527,7 +663,12 @@ def build_acp_trace(
             # An ACP-only call remains visible, but cannot satisfy an MCP wire
             # assertion. Its limitation is intentionally precise.
             merged_calls.append(call)
-    merged_calls.sort(key=lambda call: (float(call.get("start_ms") or 0), int(call.get("request_sequence") or 10**9)))
+    merged_calls.sort(
+        key=lambda call: (
+            float(call.get("start_ms") or 0),
+            int(call.get("request_sequence") or 10**9),
+        )
+    )
 
     # Tool spans represent ACP intent or a wire-only authoritative call. Wire
     # spans are children of the matching tool span where an inferred link exists.
@@ -554,13 +695,26 @@ def build_acp_trace(
                 "input": call["arguments"],
                 "output": call["result"],
                 "error": call["error"],
-                "metadata": {"harness": "acp", "mcp_selected": True, "wire_authoritative": True, "request_sequence": call["request_sequence"]},
+                "metadata": {
+                    "harness": "acp",
+                    "mcp_selected": True,
+                    "wire_authoritative": True,
+                    "request_sequence": call["request_sequence"],
+                },
             }
         )
     for span in wire_spans:
         if span["parent_id"] == "run-mcp":
             request_sequence = (span.get("metadata") or {}).get("request_sequence")
-            target = next((s for s in tool_spans if request_sequence is not None and s["id"] == f"wire-tool-{request_sequence}"), None)
+            target = next(
+                (
+                    s
+                    for s in tool_spans
+                    if request_sequence is not None
+                    and s["id"] == f"wire-tool-{request_sequence}"
+                ),
+                None,
+            )
             if target:
                 span["parent_id"] = target["id"]
 
@@ -569,7 +723,9 @@ def build_acp_trace(
     # separate ``tool_spans`` list only for locating parents and wire-only
     # additions; adding both would duplicate ACP tool rows.
     acp_ids = {span.get("id") for span in acp_spans}
-    wire_only_tool_spans = [span for span in tool_spans if span.get("id") not in acp_ids]
+    wire_only_tool_spans = [
+        span for span in tool_spans if span.get("id") not in acp_ids
+    ]
     activity = [*acp_spans, *wire_only_tool_spans, *wire_spans]
     # One model span gives the UI a backend-normalized parent for all ACP
     # updates, while each update/tool span retains its own receipt timestamp.
@@ -590,13 +746,25 @@ def build_acp_trace(
             "metadata": {"harness": "acp", "update_count": len(acp_spans)},
         }
         activity.append(model)
+
     def span_order(span: dict[str, Any]) -> tuple[float, int]:
         kind = span.get("kind")
-        priority = {"model_turn": 0, "thinking": 1, "text": 1, "tool_call": 1, "update": 1, "plan": 1, "state": 1, "mcp": 2, "mcp_event": 3}.get(kind, 1)
+        priority = {
+            "model_turn": 0,
+            "thinking": 1,
+            "text": 1,
+            "tool_call": 1,
+            "update": 1,
+            "plan": 1,
+            "state": 1,
+            "mcp": 2,
+            "mcp_event": 3,
+        }.get(kind, 1)
         # ``activity`` is assembled in capture order.  Keep that stable for
         # equal timestamps; generated IDs are strings and would reorder
         # ``...-10`` before ``...-2`` in a long stream.
         return (float(span.get("start_ms") or 0), priority)
+
     activity.sort(key=span_order)
     run_span = {
         "id": "run",
@@ -621,19 +789,32 @@ def build_acp_trace(
         "end_ms": max(wire_offsets),
         "duration_ms": max(wire_offsets) - min(wire_offsets),
         "transport": configured,
-        "metadata": {"harness": "acp", "configured_transport": configured, "instrumented_transport": instrumented},
+        "metadata": {
+            "harness": "acp",
+            "configured_transport": configured,
+            "instrumented_transport": instrumented,
+        },
     }
     all_spans = [run_span, mcp_session, *activity]
     all_spans = [all_spans[0], all_spans[1], *sorted(all_spans[2:], key=span_order)]
     from .model_steps import attach_model_steps
+
     thinking_count = attach_model_steps(all_spans)
     # Keep the compact ``kind`` vocabulary used by the waterfall and expose a
     # compatibility ``type`` alias for older report consumers.
     type_aliases = {"thinking": "thought", "text": "message", "tool_call": "tool"}
     for span in all_spans:
         span.setdefault("type", type_aliases.get(span.get("kind"), span.get("kind")))
-    limitations = [WIRE_LIMITATION] if any(not c.get("provenance", {}).get("wire") for c in merged_calls) else []
-    capture_status = "complete" if status == "completed" and (acp_protocol or wire_protocol) else ("partial" if acp_protocol or wire_protocol else "empty")
+    limitations = (
+        [WIRE_LIMITATION]
+        if any(not c.get("provenance", {}).get("wire") for c in merged_calls)
+        else []
+    )
+    capture_status = (
+        "complete"
+        if status == "completed" and (acp_protocol or wire_protocol)
+        else ("partial" if acp_protocol or wire_protocol else "empty")
+    )
     return {
         "schema": "acp.v2",
         "harness": "acp",
@@ -645,7 +826,10 @@ def build_acp_trace(
             "duration_ms": end,
             "mcp_calls": len(merged_calls),
             "acp_updates": len(acp_spans),
-            "thinking": {"state": "visible" if thinking_count else "omitted", "count": thinking_count},
+            "thinking": {
+                "state": "visible" if thinking_count else "omitted",
+                "count": thinking_count,
+            },
         },
         "mcp_calls_schema": "mcp.v1",
         "mcp_calls": merged_calls,
@@ -655,7 +839,11 @@ def build_acp_trace(
         "protocol_events": acp_protocol,
         "acp_protocol_events": acp_protocol,
         "mcp_protocol_events": wire_protocol,
-        "result_metadata": {"session_id": session_id, "status": status, **(result_metadata or {})},
+        "result_metadata": {
+            "session_id": session_id,
+            "status": status,
+            **(result_metadata or {}),
+        },
         "limitations": limitations,
     }
 

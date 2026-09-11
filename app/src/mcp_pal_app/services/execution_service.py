@@ -11,26 +11,27 @@ from __future__ import annotations
 import time
 from typing import Protocol
 
-from mcp_pal.storage import StorageConflict, StorageError
 from mcp_pal import (
     AgentSpec,
     DirectSpec,
+    EvaluationQuery,
+    EvaluationReport,
+    EvidenceRef,
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
+    ExecutionReport,
     ExecutionSpec,
     ExecutionStatus,
-    ExecutionReport,
-    RawEvidence,
-    EvidenceRef,
-    TraceView,
-    EvaluationQuery,
-    EvaluationReport,
     Feedback,
+    RawEvidence,
+    RawEvidenceIntegrityError,
+    RawEvidenceUnavailable,
+    TraceUnavailable,
+    TraceView,
     build_feedback,
 )
-from mcp_pal import RawEvidenceIntegrityError, RawEvidenceUnavailable, TraceUnavailable
-
+from mcp_pal.storage import StorageConflict, StorageError
 
 _CANCEL_SETTLE_TIMEOUT_SECONDS = 2.0
 _CANCEL_SETTLE_POLL_SECONDS = 0.01
@@ -57,9 +58,13 @@ class AppExecutionStore(Protocol):
         artifact_limit: int | None = None,
     ) -> ExecutionReport | None: ...
 
-    def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None: ...
+    def get_execution_spec(
+        self, execution_id: ExecutionId | str
+    ) -> ExecutionSpec | None: ...
     def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None: ...
-    def read_raw_evidence(self, reference: EvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence: ...
+    def read_raw_evidence(
+        self, reference: EvidenceRef, *, max_bytes: int = 1_048_576
+    ) -> RawEvidence: ...
 
     def list_executions(
         self,
@@ -71,7 +76,9 @@ class AppExecutionStore(Protocol):
         run_id: str | None = None,
     ) -> ExecutionPage: ...
 
-    def request_cancel(self, execution_id: ExecutionId | str, reason: str | None = None) -> bool: ...
+    def request_cancel(
+        self, execution_id: ExecutionId | str, reason: str | None = None
+    ) -> bool: ...
 
     def delete_execution(self, execution_id: ExecutionId | str) -> None: ...
     def aggregate_evaluations(self, query: EvaluationQuery) -> EvaluationReport: ...
@@ -80,7 +87,7 @@ class AppExecutionStore(Protocol):
 class AppExecutionKit(Protocol):
     """Minimal public synchronous SDK toolkit surface required by the app."""
 
-    def submit(self, spec: ExecutionSpec) -> "AppExecutionHandle": ...
+    def submit(self, spec: ExecutionSpec) -> AppExecutionHandle: ...
 
     def close(self) -> None: ...
 
@@ -127,7 +134,9 @@ class AppExecutionService:
         try:
             return value if isinstance(value, ExecutionId) else ExecutionId(value)
         except (TypeError, ValueError) as exc:
-            raise AppExecutionError("invalid_execution_id", "execution_id is invalid") from exc
+            raise AppExecutionError(
+                "invalid_execution_id", "execution_id is invalid"
+            ) from exc
 
     def _report(self, execution_id: ExecutionId) -> ExecutionReport:
         report = self.store.get_report(execution_id, event_limit=1)
@@ -142,13 +151,21 @@ class AppExecutionService:
 
         self._ensure_open()
         if not isinstance(spec, (DirectSpec, AgentSpec)):
-            raise AppExecutionError("invalid_execution_spec", "execution spec is invalid")
+            raise AppExecutionError(
+                "invalid_execution_spec", "execution spec is invalid"
+            )
         try:
             handle = self.kit.submit(spec)
         except (StorageConflict, ValueError, RuntimeError) as exc:
-            raise AppExecutionError("execution_submission_failed", "execution could not be submitted") from exc
+            raise AppExecutionError(
+                "execution_submission_failed", "execution could not be submitted"
+            ) from exc
         raw_execution_id = handle.execution_id
-        execution_id = raw_execution_id if isinstance(raw_execution_id, ExecutionId) else ExecutionId(str(raw_execution_id))
+        execution_id = (
+            raw_execution_id
+            if isinstance(raw_execution_id, ExecutionId)
+            else ExecutionId(str(raw_execution_id))
+        )
         self._active_handles[execution_id.root] = handle
         return self._report(execution_id)
 
@@ -163,9 +180,13 @@ class AppExecutionService:
         try:
             spec = self.store.get_execution_spec(identifier)
         except (StorageError, TypeError, ValueError) as exc:
-            raise AppExecutionError("execution_data_unavailable", "execution data is unavailable") from exc
+            raise AppExecutionError(
+                "execution_data_unavailable", "execution data is unavailable"
+            ) from exc
         if spec is None:
-            raise AppExecutionError("execution_data_unavailable", "execution data is unavailable")
+            raise AppExecutionError(
+                "execution_data_unavailable", "execution data is unavailable"
+            )
         return spec
 
     def trace_view(self, execution_id: ExecutionId | str) -> TraceView:
@@ -173,23 +194,37 @@ class AppExecutionService:
         identifier = self._id(execution_id)
         report = self._report(identifier)
         if report.snapshot.lifecycle is not ExecutionStatus.FINISHED:
-            raise AppExecutionError("execution_not_terminal", "execution report is available only after termination")
+            raise AppExecutionError(
+                "execution_not_terminal",
+                "execution report is available only after termination",
+            )
         try:
             view = self.store.get_trace_view(identifier)
         except (TraceUnavailable, StorageError, TypeError, ValueError) as exc:
-            raise AppExecutionError("trace_unavailable", "execution trace is unavailable") from exc
+            raise AppExecutionError(
+                "trace_unavailable", "execution trace is unavailable"
+            ) from exc
         if view is None:
-            raise AppExecutionError("trace_unavailable", "execution trace is unavailable")
+            raise AppExecutionError(
+                "trace_unavailable", "execution trace is unavailable"
+            )
         return view
 
-    def read_raw_evidence(self, reference: EvidenceRef, *, max_bytes: int = 1_048_576) -> RawEvidence:
+    def read_raw_evidence(
+        self, reference: EvidenceRef, *, max_bytes: int = 1_048_576
+    ) -> RawEvidence:
         self._ensure_open()
         try:
             return self.store.read_raw_evidence(reference, max_bytes=max_bytes)
         except RawEvidenceUnavailable as exc:
-            raise AppExecutionError("raw_evidence_not_found", "raw evidence was not found") from exc
+            raise AppExecutionError(
+                "raw_evidence_not_found", "raw evidence was not found"
+            ) from exc
         except RawEvidenceIntegrityError as exc:
-            raise AppExecutionError("raw_evidence_integrity_error", "raw evidence integrity could not be verified") from exc
+            raise AppExecutionError(
+                "raw_evidence_integrity_error",
+                "raw evidence integrity could not be verified",
+            ) from exc
 
     def list(
         self,
@@ -208,7 +243,9 @@ class AppExecutionService:
                 outcome=outcome,
             )
         except (TypeError, ValueError) as exc:
-            raise AppExecutionError("invalid_execution_filter", "execution filter is invalid") from exc
+            raise AppExecutionError(
+                "invalid_execution_filter", "execution filter is invalid"
+            ) from exc
 
     def report(
         self,
@@ -228,17 +265,23 @@ class AppExecutionService:
                 artifact_limit=artifact_limit,
             )
         except ValueError as exc:
-            raise AppExecutionError("invalid_report_cursor", "report cursor or limit is invalid") from exc
+            raise AppExecutionError(
+                "invalid_report_cursor", "report cursor or limit is invalid"
+            ) from exc
         if report is None:
             raise AppExecutionError("execution_not_found", "execution was not found")
         return report
 
-    def cancel(self, execution_id: ExecutionId | str, reason: str | None = None) -> ExecutionReport:
+    def cancel(
+        self, execution_id: ExecutionId | str, reason: str | None = None
+    ) -> ExecutionReport:
         self._ensure_open()
         identifier = self._id(execution_id)
         current = self._report(identifier)
         if current.snapshot.lifecycle is ExecutionStatus.FINISHED:
-            raise AppExecutionError("execution_terminal", "terminal executions cannot be cancelled")
+            raise AppExecutionError(
+                "execution_terminal", "terminal executions cannot be cancelled"
+            )
         handle = self._active_handles.get(identifier.root)
         try:
             if handle is not None:
@@ -291,9 +334,14 @@ class AppExecutionService:
         try:
             return self.store.aggregate_evaluations(query)
         except (TypeError, ValueError) as exc:
-            raise AppExecutionError("invalid_evaluation_aggregate_query", "evaluation aggregate query is invalid") from exc
+            raise AppExecutionError(
+                "invalid_evaluation_aggregate_query",
+                "evaluation aggregate query is invalid",
+            ) from exc
         except StorageError as exc:
-            raise AppExecutionError("evaluation_data_unavailable", "evaluation data is unavailable") from exc
+            raise AppExecutionError(
+                "evaluation_data_unavailable", "evaluation data is unavailable"
+            ) from exc
 
     def feedback(self, run_id: str, *, baseline_run_id: str | None = None) -> Feedback:
         """Build read-only feedback for a recorded test run."""
@@ -317,11 +365,15 @@ class AppExecutionService:
         if not has_run(current):
             raise AppExecutionError("feedback_not_found", "feedback run was not found")
         if baseline_run_id is not None and not has_run(str(baseline_run_id)):
-            raise AppExecutionError("feedback_baseline_not_found", "feedback baseline run was not found")
+            raise AppExecutionError(
+                "feedback_baseline_not_found", "feedback baseline run was not found"
+            )
         try:
             return build_feedback(self.store, current, baseline_run_id=baseline_run_id)
         except (StorageError, TypeError, ValueError) as exc:
-            raise AppExecutionError("feedback_data_unavailable", "feedback data is unavailable") from exc
+            raise AppExecutionError(
+                "feedback_data_unavailable", "feedback data is unavailable"
+            ) from exc
 
     def close(self) -> None:
         if self._closed:
@@ -345,7 +397,7 @@ class AppExecutionService:
         if failure is not None:
             raise failure
 
-    def __enter__(self) -> "AppExecutionService":
+    def __enter__(self) -> AppExecutionService:
         self._ensure_open()
         return self
 

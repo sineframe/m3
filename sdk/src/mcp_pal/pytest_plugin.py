@@ -2,48 +2,77 @@
 
 from __future__ import annotations
 
-from pathlib import Path as _Path
-from contextvars import ContextVar as _ContextVar
 import time as _time
-from uuid import uuid4 as _uuid4
+from contextvars import ContextVar as _ContextVar
+from pathlib import Path as _Path
 from typing import Any as _Any
+from uuid import uuid4 as _uuid4
 
 import pytest as _pytest
 
+from ._check_recording import (
+    restore_default_record_checks as _restore_default_record_checks,
+)
+from ._check_recording import (
+    set_default_record_checks as _set_default_record_checks,
+)
 from ._default_store import (
     install_default_run_id_factory as _install_default_run_id_factory,
+)
+from ._default_store import (
     install_default_store_factory as _install_default_store_factory,
+)
+from ._default_store import (
     restore_default_run_id_factory as _restore_default_run_id_factory,
+)
+from ._default_store import (
     restore_default_store_factory as _restore_default_store_factory,
 )
 from ._test_runs import (
     activate_test as _activate_test,
-    active_test as _active_test,
-    now_iso as _now_iso,
-    reset_test as _reset_test,
-    run_record as _run_record,
-    test_attempt as _test_attempt,
 )
-from ._check_recording import (
-    restore_default_record_checks as _restore_default_record_checks,
-    set_default_record_checks as _set_default_record_checks,
+from ._test_runs import (
+    active_test as _active_test,
+)
+from ._test_runs import (
+    now_iso as _now_iso,
+)
+from ._test_runs import (
+    reset_test as _reset_test,
+)
+from ._test_runs import (
+    run_record as _run_record,
+)
+from ._test_runs import (
+    test_attempt as _test_attempt,
 )
 
 _NATIVE_PROGRESS_UNSET = object()
-_PLUGIN_CONFIG: _ContextVar[_Any] = _ContextVar("mcp_pal_pytest_plugin_config", default=None)
+_PLUGIN_CONFIG: _ContextVar[_Any] = _ContextVar(
+    "mcp_pal_pytest_plugin_config", default=None
+)
 
 
 def pytest_addoption(parser: _Any) -> None:
     parser.getgroup("mcp-pal").addoption(
-        "--mcp-pal-results-db", action="store", default=None, metavar="PATH",
+        "--mcp-pal-results-db",
+        action="store",
+        default=None,
+        metavar="PATH",
         help="internal: persist default MCPTestKit executions in PATH",
     )
     parser.getgroup("mcp-pal").addoption(
-        "--mcp-pal-baseline", action="store", default=None, metavar="RUN_ID",
+        "--mcp-pal-baseline",
+        action="store",
+        default=None,
+        metavar="RUN_ID",
         help="internal: compare the exported feedback with RUN_ID",
     )
     parser.getgroup("mcp-pal").addoption(
-        "--mcp-pal-project-root", action="store", default=None, metavar="PATH",
+        "--mcp-pal-project-root",
+        action="store",
+        default=None,
+        metavar="PATH",
         help="internal: project root used for feedback output",
     )
 
@@ -70,10 +99,15 @@ def pytest_configure(config: _Any) -> None:
     config._mcp_pal_baseline = config.getoption("--mcp-pal-baseline")
     config._mcp_pal_worker_id = worker_id
     config._mcp_pal_is_worker = isinstance(workerinput, dict)
-    config._mcp_pal_project_root = _Path(
-        config.getoption("--mcp-pal-project-root") or getattr(config, "rootpath", _Path.cwd())
-    ).expanduser().resolve()
-    from .storage import SQLiteExecutionStore
+    config._mcp_pal_project_root = (
+        _Path(
+            config.getoption("--mcp-pal-project-root")
+            or getattr(config, "rootpath", _Path.cwd())
+        )
+        .expanduser()
+        .resolve()
+    )
+
     config._mcp_pal_manifest_store = SQLiteExecutionStore(path)
     config._mcp_pal_checks_token = _set_default_record_checks(True)
     if not config._mcp_pal_is_worker:
@@ -82,7 +116,9 @@ def pytest_configure(config: _Any) -> None:
             _run_record(
                 run_id.root,
                 project_root=str(config._mcp_pal_project_root),
-                selection=tuple(str(value) for value in getattr(config, "args", ()) or ()),
+                selection=tuple(
+                    str(value) for value in getattr(config, "args", ()) or ()
+                ),
                 capture={
                     "mode": getattr(config.option, "capture", None),
                     "show_capture": bool(getattr(config.option, "showcapture", False)),
@@ -91,15 +127,23 @@ def pytest_configure(config: _Any) -> None:
             ),
         )
     config._mcp_pal_run_id_previous = _install_default_run_id_factory(lambda: run_id)
-    config._mcp_pal_store_token = _install_default_store_factory(lambda: SQLiteExecutionStore(path))
+    config._mcp_pal_store_token = _install_default_store_factory(
+        lambda: SQLiteExecutionStore(path)
+    )
     config._mcp_pal_progress = _Progress(config)
-    config._mcp_pal_progress.reporter = config.pluginmanager.getplugin("terminalreporter")
+    config._mcp_pal_progress.reporter = config.pluginmanager.getplugin(
+        "terminalreporter"
+    )
     if config._mcp_pal_progress.reporter is not None:
-        config._mcp_pal_progress.enabled = config._mcp_pal_progress.enabled and config._mcp_pal_progress._is_tty()
+        config._mcp_pal_progress.enabled = (
+            config._mcp_pal_progress.enabled and config._mcp_pal_progress._is_tty()
+        )
     config._mcp_pal_progress.disable_native_progress()
     config.pluginmanager.register(config._mcp_pal_progress, "mcp-pal-progress")
     config._mcp_pal_manifest_hooks = _ManifestHooks()
-    config.pluginmanager.register(config._mcp_pal_manifest_hooks, "mcp-pal-manifest-hooks")
+    config.pluginmanager.register(
+        config._mcp_pal_manifest_hooks, "mcp-pal-manifest-hooks"
+    )
 
 
 def pytest_unconfigure(config: _Any) -> None:
@@ -140,7 +184,9 @@ def _pytest_configure_node(node: _Any) -> None:
         workerinput["mcp_pal_run_id"] = run_id.root
 
 
-def _pytest_collection_modifyitems(session: _Any, config: _Any, items: list[_Any]) -> None:
+def _pytest_collection_modifyitems(
+    session: _Any, config: _Any, items: list[_Any]
+) -> None:
     if getattr(config, "_mcp_pal_is_worker", False):
         return
     store = getattr(config, "_mcp_pal_manifest_store", None)
@@ -153,7 +199,9 @@ def _pytest_collection_modifyitems(session: _Any, config: _Any, items: list[_Any
     store.save_test_run(run_id.root, record)
 
 
-def _record_collected(config: _Any, node_ids: list[str], *, worker_id: str | None = None) -> None:
+def _record_collected(
+    config: _Any, node_ids: list[str], *, worker_id: str | None = None
+) -> None:
     if getattr(config, "_mcp_pal_is_worker", False):
         return
     store = getattr(config, "_mcp_pal_manifest_store", None)
@@ -187,7 +235,9 @@ def _pytest_collection_finish(session: _Any) -> None:
 def _pytest_xdist_node_collection_finished(node: _Any, ids: list[str]) -> None:
     config = getattr(node, "config", None) or _PLUGIN_CONFIG.get()
     worker_id = getattr(node, "gateway", None)
-    worker_id = getattr(worker_id, "id", None) or getattr(node, "workerid", None) or "worker"
+    worker_id = (
+        getattr(worker_id, "id", None) or getattr(node, "workerid", None) or "worker"
+    )
     _record_collected(config, [str(item) for item in ids], worker_id=str(worker_id))
 
 
@@ -203,7 +253,14 @@ def _pytest_testnodedown(node: _Any, error: object | None = None) -> None:
         return
     record = dict(store.get_test_run(run_id.root) or {})
     errors = list(record.get("worker_errors", ()))
-    errors.append({"worker": str(getattr(node, "gateway", None) or getattr(node, "workerid", "worker")), "error": _diagnostic(error)})
+    errors.append(
+        {
+            "worker": str(
+                getattr(node, "gateway", None) or getattr(node, "workerid", "worker")
+            ),
+            "error": _diagnostic(error),
+        }
+    )
     record["worker_errors"] = errors
     store.save_test_run(run_id.root, record)
 
@@ -215,7 +272,11 @@ def _pytest_collectreport(report: _Any) -> None:
         return
     store = getattr(config, "_mcp_pal_manifest_store", None)
     run_id = getattr(config, "_mcp_pal_run_id", None)
-    if store is None or run_id is None or getattr(report, "outcome", "passed") == "passed":
+    if (
+        store is None
+        or run_id is None
+        or getattr(report, "outcome", "passed") == "passed"
+    ):
         return
     record = dict(store.get_test_run(run_id.root) or {})
     reports = list(record.get("collection_reports", ()))
@@ -279,7 +340,9 @@ def _attempt_outcome(state: dict[str, object]) -> str:
     phases = state.get("phases", {})
     if not isinstance(phases, dict) or not phases:
         return "not_run"
-    values = {str(key): value for key, value in phases.items() if isinstance(value, dict)}
+    values = {
+        str(key): value for key, value in phases.items() if isinstance(value, dict)
+    }
     if values.get("call", {}).get("outcome") == "failed":
         return "failed"
     if any(
@@ -317,7 +380,10 @@ def _pytest_runtest_logreport(report: _Any) -> None:
     if isinstance(diagnostics, dict):
         for name, content in sections:
             diagnostics[f"{report.when}:{name}"] = _diagnostic(content)
-        if getattr(report, "longrepr", None) is not None and report.outcome in {"failed", "skipped"}:
+        if getattr(report, "longrepr", None) is not None and report.outcome in {
+            "failed",
+            "skipped",
+        }:
             diagnostics[f"{report.when}:longrepr"] = _diagnostic(report.longrepr)
     _save_attempt(report.config, state) if hasattr(report, "config") else None
 
@@ -330,22 +396,34 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
     if path is None or run_id is None or getattr(config, "_mcp_pal_is_worker", False):
         return
     manifest_error = bool(getattr(config, "_mcp_pal_manifest_write_error", False))
-    effective_exitstatus = 2 if manifest_error and int(exitstatus) == 0 else int(exitstatus)
+    effective_exitstatus = (
+        2 if manifest_error and int(exitstatus) == 0 else int(exitstatus)
+    )
     store = getattr(config, "_mcp_pal_manifest_store", None)
     if store is not None:
         record = dict(store.get_test_run(run_id.root) or {})
         collected = {str(item) for item in record.get("collected_node_ids", ())}
-        recorded = {str(item.get("node_id")) for item in store.list_test_results(run_id.root)}
+        recorded = {
+            str(item.get("node_id")) for item in store.list_test_results(run_id.root)
+        }
         worker_errors = list(record.get("worker_errors", ()))
         incomplete_workers = bool(worker_errors)
         if incomplete_workers and effective_exitstatus == 0:
             effective_exitstatus = 2
         record.update(
             {
-                "status": "incomplete" if incomplete_workers else ("finished" if effective_exitstatus not in {2, 3, 4} else "interrupted"),
+                "status": "incomplete"
+                if incomplete_workers
+                else (
+                    "finished"
+                    if effective_exitstatus not in {2, 3, 4}
+                    else "interrupted"
+                ),
                 "exit_status": effective_exitstatus,
                 "finished_at": _now_iso(),
-                "persistence_error": bool(getattr(config, "_mcp_pal_manifest_write_error", False)),
+                "persistence_error": bool(
+                    getattr(config, "_mcp_pal_manifest_write_error", False)
+                ),
                 "not_run_node_ids": sorted(collected - recorded),
             }
         )
@@ -355,7 +433,9 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
             config._mcp_pal_manifest_write_error = True
             if effective_exitstatus == 0:
                 effective_exitstatus = 2
-    manifest_error = manifest_error or bool(getattr(config, "_mcp_pal_manifest_write_error", False))
+    manifest_error = manifest_error or bool(
+        getattr(config, "_mcp_pal_manifest_write_error", False)
+    )
     if effective_exitstatus != int(exitstatus):
         session.exitstatus = effective_exitstatus
     if manifest_error:
@@ -377,13 +457,16 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
             output = export_feedback(
                 feedback,
                 export_store,
-                getattr(config, "_mcp_pal_project_root", _Path.cwd()) / ".mcp-pal" / "reports" / run_id.root,
+                getattr(config, "_mcp_pal_project_root", _Path.cwd())
+                / ".mcp-pal"
+                / "reports"
+                / run_id.root,
             )
         finally:
             close = getattr(export_store, "close", None)
             if callable(close):
                 close()
-    except Exception as error:
+    except Exception:
         config._mcp_pal_feedback_error = "feedback export failed"
         if int(exitstatus) == 0:
             session.exitstatus = 2
@@ -398,7 +481,9 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         reporter.write_line(f"MCP Pal run {run_id.root}")
         reporter.write_line(f"MCP Pal feedback: {output}")
         if manifest_error:
-            reporter.write_line("MCP Pal test manifest persistence was incomplete", red=True)
+            reporter.write_line(
+                "MCP Pal test manifest persistence was incomplete", red=True
+            )
 
 
 class _ManifestHooks:
@@ -409,7 +494,9 @@ class _ManifestHooks:
         _pytest_configure_node(node)
 
     @_pytest.hookimpl
-    def pytest_collection_modifyitems(self, session: _Any, config: _Any, items: list[_Any]) -> None:
+    def pytest_collection_modifyitems(
+        self, session: _Any, config: _Any, items: list[_Any]
+    ) -> None:
         _pytest_collection_modifyitems(session, config, items)
 
     @_pytest.hookimpl
@@ -452,9 +539,8 @@ class _Progress:
         self._finished = False
         self._native_progress: object = _NATIVE_PROGRESS_UNSET
         option = config.option
-        self.enabled = (
-            int(getattr(option, "verbose", 0) or 0) <= 0
-            and not bool(getattr(option, "numprocesses", 0))
+        self.enabled = int(getattr(option, "verbose", 0) or 0) <= 0 and not bool(
+            getattr(option, "numprocesses", 0)
         )
 
     @_pytest.hookimpl(trylast=True)
@@ -470,7 +556,11 @@ class _Progress:
         if not self.enabled or report.when not in {"setup", "call", "teardown"}:
             return
         if report.when == "teardown":
-            if report.outcome == "failed" and report.nodeid in self._counted and self._outcomes.get(report.nodeid) != "failed":
+            if (
+                report.outcome == "failed"
+                and report.nodeid in self._counted
+                and self._outcomes.get(report.nodeid) != "failed"
+            ):
                 previous = self._outcomes[report.nodeid]
                 if previous == "passed":
                     self.passed -= 1
@@ -521,7 +611,10 @@ class _Progress:
             self.reporter._show_progress_info = False
 
     def restore_native_progress(self) -> None:
-        if self._native_progress is not _NATIVE_PROGRESS_UNSET and self.reporter is not None:
+        if (
+            self._native_progress is not _NATIVE_PROGRESS_UNSET
+            and self.reporter is not None
+        ):
             self.reporter._show_progress_info = self._native_progress
             self._native_progress = _NATIVE_PROGRESS_UNSET
 

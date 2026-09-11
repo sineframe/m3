@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from mcp import types
 from mcp.shared.exceptions import MCPDeprecationWarning
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.sync_api import PromptResult, ResourceReadResult, ToolCallResult
 
 from mcp_pal import MCPTestKit, StdioServer, UnsupportedFeature
+from mcp_pal.async_api import AsyncMCPTestKit
+from mcp_pal.sync_api import PromptResult, ResourceReadResult, ToolCallResult
 
 
 def _progress_notification() -> types.ProgressNotification:
@@ -165,7 +165,7 @@ async def test_every_async_direct_client_operation(example_server: StdioServer) 
 def test_post_construction_callback_registration_is_explicitly_unsupported(
     example_server: StdioServer,
 ) -> None:
-    with MCPTestKit(env={}) as kit, kit.direct(example_server) as client:  # noqa: SIM117
+    with MCPTestKit(env={}) as kit, kit.direct(example_server) as client:
         with pytest.raises(UnsupportedFeature, match="callbacks must be supplied"):
             client.register_callbacks(sampling_callback=lambda *_args: None)
 

@@ -7,12 +7,12 @@ JSON-RPC, and capability behavior remain in the official ``mcp`` package.
 from __future__ import annotations
 
 import asyncio
-from contextvars import ContextVar
 import inspect
 import logging
 import os
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, TypeAlias
@@ -20,14 +20,16 @@ from typing import Any, Protocol, TypeAlias
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.shared.memory import create_client_server_memory_streams
 
-from ..types import InProcessServer, SecretReference, StdioServer
 from ..trace.redaction import is_sensitive_key
+from ..types import InProcessServer, SecretReference, StdioServer
 
 
 class LocalTransportError(Exception):
     """Base class for sanitized local transport failures."""
 
-    def __init__(self, message: str, *, evidence: TransportEvidence | None = None) -> None:
+    def __init__(
+        self, message: str, *, evidence: TransportEvidence | None = None
+    ) -> None:
         super().__init__(message)
         self.evidence = evidence
 
@@ -142,7 +144,9 @@ class _InProcessConnection(_Connection):
         server_task: asyncio.Task[Any],
         raise_server_exceptions: bool,
     ) -> None:
-        super().__init__(read_stream=read_stream, write_stream=write_stream, transport="in_process")
+        super().__init__(
+            read_stream=read_stream, write_stream=write_stream, transport="in_process"
+        )
         self._memory_context = memory_context
         self._server_task = server_task
         self._raise_server_exceptions = raise_server_exceptions
@@ -158,7 +162,9 @@ class _InProcessConnection(_Connection):
         else:
             try:
                 failure = task.exception()
-                self._server_failure = _leaf_server_failure(failure) if failure is not None else None
+                self._server_failure = (
+                    _leaf_server_failure(failure) if failure is not None else None
+                )
             except BaseException:
                 self._server_failure = RuntimeError("server task failed")
         if self._server_failure is not None:
@@ -212,10 +218,14 @@ class _InProcessConnection(_Connection):
             # still propagates to the caller; a later close() can await the
             # same task and observe its final state.
             await asyncio.shield(close_task)
-        except asyncio.TimeoutError as exc:
+        except asyncio.TimeoutError:
             self.evidence = TransportEvidence(
-                transport="in_process", started=True, closed=False, partial=True,
-                error_kind="cleanup_timeout", limitations=("server_task_not_reaped",),
+                transport="in_process",
+                started=True,
+                closed=False,
+                partial=True,
+                error_kind="cleanup_timeout",
+                limitations=("server_task_not_reaped",),
             )
             raise TransportProcessError(
                 "in-process MCP cleanup timed out", evidence=self.evidence
@@ -252,7 +262,9 @@ class _InProcessConnection(_Connection):
 
 
 class _StdioConnection(_Connection):
-    def __init__(self, *, stack: AsyncExitStack, owner_task: asyncio.Task[Any] | None) -> None:
+    def __init__(
+        self, *, stack: AsyncExitStack, owner_task: asyncio.Task[Any] | None
+    ) -> None:
         self._stack = stack
         self._owner_task = owner_task
         # stdio_client owns its AnyIO streams and process.  The context manager
@@ -270,7 +282,10 @@ class _StdioConnection(_Connection):
         owner = self._owner_task
         if owner is not None and owner is not asyncio.current_task():
             self.evidence = TransportEvidence(
-                transport="stdio", started=True, closed=False, partial=True,
+                transport="stdio",
+                started=True,
+                closed=False,
+                partial=True,
                 error_kind="cleanup_owner",
                 limitations=("cleanup_must_run_in_owner_task",),
             )
@@ -289,10 +304,14 @@ class _StdioConnection(_Connection):
             # caller that was cancelled during cleanup to retry close() in a
             # finally block rather than permanently marking it closed.
             raise
-        except Exception as exc:
+        except Exception:
             self.evidence = TransportEvidence(
-                transport="stdio", started=True, closed=False, partial=True,
-                error_kind="cleanup_failed", limitations=("owned_process_not_reaped",),
+                transport="stdio",
+                started=True,
+                closed=False,
+                partial=True,
+                error_kind="cleanup_failed",
+                limitations=("owned_process_not_reaped",),
             )
             raise TransportProcessError(
                 "stdio MCP cleanup failed", evidence=self.evidence
@@ -311,7 +330,9 @@ class InProcessMCPTransport:
         raise_server_exceptions: bool = True,
         workspace_root: str | None = None,
     ) -> None:
-        self._factory: Factory = server.factory if isinstance(server, InProcessServer) else server
+        self._factory: Factory = (
+            server.factory if isinstance(server, InProcessServer) else server
+        )
         self._raise_server_exceptions = raise_server_exceptions
         self._workspace_root = workspace_root
         self._connection: _InProcessConnection | None = None
@@ -333,7 +354,11 @@ class InProcessMCPTransport:
             if not callable(run) or not callable(options_factory):
                 raise TransportStartupError(
                     "in-process MCP server is not an official server",
-                    evidence=TransportEvidence(transport="in_process", partial=True, error_kind="startup_failure"),
+                    evidence=TransportEvidence(
+                        transport="in_process",
+                        partial=True,
+                        error_kind="startup_failure",
+                    ),
                 )
             token = _CURRENT_WORKSPACE_ROOT.set(self._workspace_root)
             try:
@@ -346,10 +371,15 @@ class InProcessMCPTransport:
                     raise error
                 raise TransportStartupError(
                     "in-process MCP server startup failed",
-                    evidence=TransportEvidence(transport="in_process", partial=True, error_kind="startup_failure"),
+                    evidence=TransportEvidence(
+                        transport="in_process",
+                        partial=True,
+                        error_kind="startup_failure",
+                    ),
                 ) from None
             finally:
                 _CURRENT_WORKSPACE_ROOT.reset(token)
+
             async def serve() -> Any:
                 global _IN_PROCESS_SERVER_ACTIVE
                 _IN_PROCESS_SERVER_ACTIVE += 1
@@ -387,7 +417,9 @@ class InProcessMCPTransport:
                 raise error
             raise TransportStartupError(
                 "in-process MCP server startup failed",
-                evidence=TransportEvidence(transport="in_process", partial=True, error_kind="startup_failure"),
+                evidence=TransportEvidence(
+                    transport="in_process", partial=True, error_kind="startup_failure"
+                ),
             ) from None
 
     async def __aenter__(self) -> _InProcessConnection:
@@ -438,7 +470,9 @@ class StdioMCPTransport:
                     raise TransportStartupError(
                         "stdio secret resolution is unavailable",
                         evidence=TransportEvidence(
-                            transport="stdio", partial=True, error_kind="startup_failure"
+                            transport="stdio",
+                            partial=True,
+                            error_kind="startup_failure",
                         ),
                     )
             else:
@@ -451,8 +485,7 @@ class StdioMCPTransport:
                     ),
                 )
             if self._secret_observer is not None and (
-                isinstance(value, SecretReference)
-                or is_sensitive_key(key)
+                isinstance(value, SecretReference) or is_sensitive_key(key)
             ):
                 try:
                     self._secret_observer(values[key])
@@ -460,7 +493,9 @@ class StdioMCPTransport:
                     raise TransportStartupError(
                         "stdio secret redaction setup failed",
                         evidence=TransportEvidence(
-                            transport="stdio", partial=True, error_kind="startup_failure"
+                            transport="stdio",
+                            partial=True,
+                            error_kind="startup_failure",
                         ),
                     ) from None
         return values
@@ -486,10 +521,14 @@ class StdioMCPTransport:
         return str(resolved)
 
     async def open(self) -> _StdioConnection:
-        if "\x00" in self._server.command or any("\x00" in arg for arg in self._server.args):
+        if "\x00" in self._server.command or any(
+            "\x00" in arg for arg in self._server.args
+        ):
             raise TransportStartupError(
                 "stdio command contains an invalid argument",
-                evidence=TransportEvidence(transport="stdio", partial=True, error_kind="startup_failure"),
+                evidence=TransportEvidence(
+                    transport="stdio", partial=True, error_kind="startup_failure"
+                ),
             )
         try:
             environment = self._environment()
@@ -514,14 +553,18 @@ class StdioMCPTransport:
             errlog = open(os.devnull, "w", encoding="utf-8")
             stack.callback(errlog.close)
             try:
-                streams = await stack.enter_async_context(stdio_client(parameters, errlog=errlog))
+                streams = await stack.enter_async_context(
+                    stdio_client(parameters, errlog=errlog)
+                )
             except asyncio.CancelledError:
                 await stack.aclose()
                 raise
             except Exception:
                 await stack.aclose()
                 raise
-            connection = _StdioConnection(stack=stack, owner_task=asyncio.current_task())
+            connection = _StdioConnection(
+                stack=stack, owner_task=asyncio.current_task()
+            )
             connection.set_streams(streams)
             return connection
         except LocalTransportError:
@@ -529,7 +572,9 @@ class StdioMCPTransport:
         except Exception:
             raise TransportStartupError(
                 "stdio MCP server startup failed",
-                evidence=TransportEvidence(transport="stdio", partial=True, error_kind="startup_failure"),
+                evidence=TransportEvidence(
+                    transport="stdio", partial=True, error_kind="startup_failure"
+                ),
             ) from None
 
     async def __aenter__(self) -> _StdioConnection:
@@ -543,7 +588,6 @@ class StdioMCPTransport:
 
 
 __all__ = [
-    "current_workspace_root",
     "InProcessMCPTransport",
     "LocalTransportError",
     "StdioMCPTransport",
@@ -552,4 +596,5 @@ __all__ = [
     "TransportEvidence",
     "TransportProcessError",
     "TransportStartupError",
+    "current_workspace_root",
 ]

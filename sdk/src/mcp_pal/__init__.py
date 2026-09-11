@@ -6,160 +6,308 @@ settings, databases, transports, workers, or event loops.
 """
 
 from importlib.metadata import version as _distribution_version
-from typing import TYPE_CHECKING as _TYPE_CHECKING
 
-from .errors import (
-    CleanupError,
-    ExecutionNotFound,
-    InvalidTransitionError,
-    KitClosed,
-    MCPError,
-    ModelValidationError,
-    OperationCancelled,
-    OperationTimeout,
-    RawEvidenceIntegrityError,
-    RawEvidenceUnavailable,
-    ProtocolError,
-    SessionBusy,
-    SessionStillOpen,
-    TransportError,
-    TraceNotFinalized,
-    TraceUnavailable,
-    UnsupportedFeature,
-)
-from .matchers import check, expect
 from .aggregations import (
-    EvaluationGroup,
-    EvaluationQuery,
-    EvaluationReport,
-    EvaluationStats,
-    HealthStats,
-    LatencyStats,
-    ToolCallStats,
+    EvaluationGroup as EvaluationGroup,
 )
-from .feedback import Comparison, Feedback, build_feedback, export_feedback
+from .aggregations import (
+    EvaluationQuery as EvaluationQuery,
+)
+from .aggregations import (
+    EvaluationReport as EvaluationReport,
+)
+from .aggregations import (
+    EvaluationStats as EvaluationStats,
+)
+from .aggregations import (
+    HealthStats as HealthStats,
+)
+from .aggregations import (
+    LatencyStats as LatencyStats,
+)
+from .aggregations import (
+    ToolCallStats as ToolCallStats,
+)
+from .errors import (
+    CleanupError as CleanupError,
+)
+from .errors import (
+    ExecutionNotFound as ExecutionNotFound,
+)
+from .errors import (
+    InvalidTransitionError as InvalidTransitionError,
+)
+from .errors import (
+    KitClosed as KitClosed,
+)
+from .errors import (
+    MCPError as MCPError,
+)
+from .errors import (
+    ModelValidationError as ModelValidationError,
+)
+from .errors import (
+    OperationCancelled as OperationCancelled,
+)
+from .errors import (
+    OperationTimeout as OperationTimeout,
+)
+from .errors import (
+    ProtocolError as ProtocolError,
+)
+from .errors import (
+    RawEvidenceIntegrityError as RawEvidenceIntegrityError,
+)
+from .errors import (
+    RawEvidenceUnavailable as RawEvidenceUnavailable,
+)
+from .errors import (
+    SessionBusy as SessionBusy,
+)
+from .errors import (
+    SessionStillOpen as SessionStillOpen,
+)
+from .errors import (
+    TraceNotFinalized as TraceNotFinalized,
+)
+from .errors import (
+    TraceUnavailable as TraceUnavailable,
+)
+from .errors import (
+    TransportError as TransportError,
+)
+from .errors import (
+    UnsupportedFeature as UnsupportedFeature,
+)
 from .evaluations import (
-    AsyncEvaluator,
-    EvaluationDecision,
-    EvaluationRunner,
-    EvaluationStore,
-    EvaluationVerdict,
-    Evaluator,
-    EvaluatorCallable,
-    EvaluatorRegistry,
-    EvaluatorRegistration,
-    InMemoryEvaluationStore,
-    RequiredEvaluationError,
+    AsyncEvaluator as AsyncEvaluator,
 )
-from .snapshots import SnapshotOptions, snapshot, snapshot
-from .policy import (
-    ToolDescriptor,
-    ToolPolicyDecision,
-    ToolPolicyEvidence,
-    ToolPolicyEvaluator,
-    evaluate_tool_policy,
+from .evaluations import (
+    EvaluationDecision as EvaluationDecision,
+)
+from .evaluations import (
+    EvaluationRunner as EvaluationRunner,
+)
+from .evaluations import (
+    EvaluationStore as EvaluationStore,
+)
+from .evaluations import (
+    EvaluationVerdict as EvaluationVerdict,
+)
+from .evaluations import (
+    Evaluator as Evaluator,
+)
+from .evaluations import (
+    EvaluatorCallable as EvaluatorCallable,
+)
+from .evaluations import (
+    EvaluatorRegistration as EvaluatorRegistration,
+)
+from .evaluations import (
+    EvaluatorRegistry as EvaluatorRegistry,
+)
+from .evaluations import (
+    InMemoryEvaluationStore as InMemoryEvaluationStore,
+)
+from .evaluations import (
+    RequiredEvaluationError as RequiredEvaluationError,
+)
+from .feedback import (
+    Comparison as Comparison,
+)
+from .feedback import (
+    Feedback as Feedback,
+)
+from .feedback import (
+    build_feedback as build_feedback,
+)
+from .feedback import (
+    export_feedback as export_feedback,
 )
 from .interaction_handlers import (
-    AllowedCommands,
-    ElicitationRequest,
-    ElicitationResult,
-    ElicitationHandler,
-    FilesystemHandler,
-    FilesystemRequest,
-    FilesystemResult,
-    Interactions,
-    InteractionHandlers,
-    InteractionReceipt,
-    PermissionRequest,
-    PermissionResult,
-    PermissionHandler,
-    SamplingRequest,
-    SamplingResult,
-    SamplingHandler,
-    TerminalHandler,
-    TerminalRequest,
-    TerminalResult,
-    WorkspaceFiles,
+    AllowedCommands as AllowedCommands,
 )
-from .sync_api import (
-    AgentSession,
-    ExecutionHandle,
-    Probes,
-    ConfigOrigin,
-    ConfigSource,
-    Config,
-    ConfigError,
-    MCPTestKit,
-    HarnessAdapter,
-    ProbeEvidence,
-    ProbeKind,
-    ProbeReport,
-    ProbeRequest,
-    ProbeResult,
-    load_config,
+from .interaction_handlers import (
+    ElicitationHandler as ElicitationHandler,
 )
-from .types import *
-from .observability import *
-from .services.acp_probes import (
-    ACPAgentIdentity, ACPAgentMode, ACPProbeDimension, ACPProbeHistory, ACPProbeKind,
-    ACPProbeRequest, ACPProbeResult, ACPProbeStatus, ACPProbeStore,
-    redact_probe, run_acp_probe,
+from .interaction_handlers import (
+    ElicitationRequest as ElicitationRequest,
+)
+from .interaction_handlers import (
+    ElicitationResult as ElicitationResult,
+)
+from .interaction_handlers import (
+    FilesystemHandler as FilesystemHandler,
+)
+from .interaction_handlers import (
+    FilesystemRequest as FilesystemRequest,
+)
+from .interaction_handlers import (
+    FilesystemResult as FilesystemResult,
+)
+from .interaction_handlers import (
+    InteractionHandlers as InteractionHandlers,
+)
+from .interaction_handlers import (
+    InteractionReceipt as InteractionReceipt,
+)
+from .interaction_handlers import (
+    Interactions as Interactions,
+)
+from .interaction_handlers import (
+    PermissionHandler as PermissionHandler,
+)
+from .interaction_handlers import (
+    PermissionRequest as PermissionRequest,
+)
+from .interaction_handlers import (
+    PermissionResult as PermissionResult,
+)
+from .interaction_handlers import (
+    SamplingHandler as SamplingHandler,
+)
+from .interaction_handlers import (
+    SamplingRequest as SamplingRequest,
+)
+from .interaction_handlers import (
+    SamplingResult as SamplingResult,
+)
+from .interaction_handlers import (
+    TerminalHandler as TerminalHandler,
+)
+from .interaction_handlers import (
+    TerminalRequest as TerminalRequest,
+)
+from .interaction_handlers import (
+    TerminalResult as TerminalResult,
+)
+from .interaction_handlers import (
+    WorkspaceFiles as WorkspaceFiles,
+)
+from .matchers import check as check
+from .matchers import expect as expect
+from .matrix import (
+    HarnessCase as HarnessCase,
 )
 from .matrix import (
-    HarnessCase,
-    HarnessMatrix,
-    HarnessMatrixCase,
-    ServerCase,
-    ToolCase,
-    ToolMatrix,
-    ToolMatrixCase,
+    HarnessMatrix as HarnessMatrix,
 )
+from .matrix import (
+    HarnessMatrixCase as HarnessMatrixCase,
+)
+from .matrix import (
+    ServerCase as ServerCase,
+)
+from .matrix import (
+    ToolCase as ToolCase,
+)
+from .matrix import (
+    ToolMatrix as ToolMatrix,
+)
+from .matrix import (
+    ToolMatrixCase as ToolMatrixCase,
+)
+from .observability import *  # noqa: F403 - module declares its public exports
+from .policy import (
+    ToolDescriptor as ToolDescriptor,
+)
+from .policy import (
+    ToolPolicyDecision as ToolPolicyDecision,
+)
+from .policy import (
+    ToolPolicyEvaluator as ToolPolicyEvaluator,
+)
+from .policy import (
+    ToolPolicyEvidence as ToolPolicyEvidence,
+)
+from .policy import (
+    evaluate_tool_policy as evaluate_tool_policy,
+)
+from .services.acp_probes import (
+    ACPAgentIdentity as ACPAgentIdentity,
+)
+from .services.acp_probes import (
+    ACPAgentMode as ACPAgentMode,
+)
+from .services.acp_probes import (
+    ACPProbeDimension as ACPProbeDimension,
+)
+from .services.acp_probes import (
+    ACPProbeHistory as ACPProbeHistory,
+)
+from .services.acp_probes import (
+    ACPProbeKind as ACPProbeKind,
+)
+from .services.acp_probes import (
+    ACPProbeRequest as ACPProbeRequest,
+)
+from .services.acp_probes import (
+    ACPProbeResult as ACPProbeResult,
+)
+from .services.acp_probes import (
+    ACPProbeStatus as ACPProbeStatus,
+)
+from .services.acp_probes import (
+    ACPProbeStore as ACPProbeStore,
+)
+from .services.acp_probes import (
+    redact_probe as redact_probe,
+)
+from .services.acp_probes import (
+    run_acp_probe as run_acp_probe,
+)
+from .snapshots import SnapshotOptions as SnapshotOptions
+from .snapshots import snapshot as snapshot
+from .sync_api import (
+    AgentSession as AgentSession,
+)
+from .sync_api import (
+    Config as Config,
+)
+from .sync_api import (
+    ConfigError as ConfigError,
+)
+from .sync_api import (
+    ConfigOrigin as ConfigOrigin,
+)
+from .sync_api import (
+    ConfigSource as ConfigSource,
+)
+from .sync_api import (
+    ExecutionHandle as ExecutionHandle,
+)
+from .sync_api import (
+    HarnessAdapter as HarnessAdapter,
+)
+from .sync_api import (
+    MCPTestKit as MCPTestKit,
+)
+from .sync_api import (
+    ProbeEvidence as ProbeEvidence,
+)
+from .sync_api import (
+    ProbeKind as ProbeKind,
+)
+from .sync_api import (
+    ProbeReport as ProbeReport,
+)
+from .sync_api import (
+    ProbeRequest as ProbeRequest,
+)
+from .sync_api import (
+    ProbeResult as ProbeResult,
+)
+from .sync_api import (
+    Probes as Probes,
+)
+from .sync_api import (
+    load_config as load_config,
+)
+from .types import *  # noqa: F403 - module declares its public exports
 
 __version__ = _distribution_version("mcp-pal")
 
+# Explicit manifest keeps the public re-exports intentional.
 from ._exports import PUBLIC_EXPORTS as _PUBLIC_EXPORTS
 
-# Keep the runtime manifest authoritative while exposing the two stable
-# examples to static analyzers that do not evaluate dynamic ``__all__`` values.
-if _TYPE_CHECKING:
-    __all__: list[str] = [
-        "MCPTestKit",
-        "AgentSession",
-        "ExecutionHandle",
-        "HarnessAdapter",
-        "expect",
-        "Probes",
-        "ConfigOrigin",
-        "ConfigSource",
-        "Config",
-        "ConfigError",
-        "ProbeEvidence",
-        "ProbeKind",
-        "ProbeReport",
-        "ProbeRequest",
-        "ProbeResult",
-        "AsyncEvaluator",
-        "EvaluationDecision",
-        "EvaluationRunner",
-        "EvaluationStore",
-        "EvaluationVerdict",
-        "Evaluator",
-        "EvaluatorCallable",
-        "EvaluatorRegistry",
-        "EvaluatorRegistration",
-        "InMemoryEvaluationStore",
-        "RequiredEvaluationError",
-        "SnapshotOptions",
-        "snapshot",
-        "KitClosed",
-        "load_config",
-        "ToolCase",
-        "ServerCase",
-        "HarnessCase",
-        "ToolMatrix",
-        "HarnessMatrix",
-        "ToolMatrixCase",
-        "HarnessMatrixCase",
-    ]
-else:
-    __all__ = list(_PUBLIC_EXPORTS["mcp_pal"])
+__all__ = list(_PUBLIC_EXPORTS["mcp_pal"])

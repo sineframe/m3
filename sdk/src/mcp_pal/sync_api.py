@@ -7,61 +7,68 @@ idempotent lifecycle.
 
 from __future__ import annotations
 
-from collections.abc import Callable as _Callable, Iterable as _Iterable, Iterator as _Iterator, Mapping as _Mapping
 import inspect as _inspect
 import math as _math
-from pathlib import Path as _Path
-from uuid import uuid4 as _uuid4
-from threading import Event as _ThreadEvent, RLock as _RLock
-from typing import Any as _Any, NoReturn as _NoReturn, Protocol as _Protocol, cast as _cast
-
-from anyio.from_thread import BlockingPortal as _BlockingPortal, start_blocking_portal as _start_blocking_portal
-
-from .agent_session import AsyncAgentSession as _AsyncAgentSession, HarnessAdapter
-from .interaction_handlers import (
-    AllowedCommands,
-    ElicitationRequest,
-    ElicitationResult,
-    ElicitationHandler,
-    FilesystemHandler,
-    FilesystemRequest,
-    FilesystemResult,
-    Interactions,
-    InteractionHandlers,
-    InteractionReceipt,
-    PermissionRequest,
-    PermissionResult,
-    PermissionHandler,
-    SamplingRequest,
-    SamplingResult,
-    SamplingHandler,
-    TerminalHandler,
-    TerminalRequest,
-    TerminalResult,
-    WorkspaceFiles,
+from collections.abc import (
+    Callable as _Callable,
 )
+from collections.abc import (
+    Iterable as _Iterable,
+)
+from collections.abc import (
+    Iterator as _Iterator,
+)
+from collections.abc import (
+    Mapping as _Mapping,
+)
+from pathlib import Path as _Path
+from threading import Event as _ThreadEvent
+from threading import RLock as _RLock
+from typing import (
+    Any as _Any,
+)
+from typing import (
+    NoReturn as _NoReturn,
+)
+from typing import (
+    cast as _cast,
+)
+from uuid import uuid4 as _uuid4
+
+from anyio.from_thread import (
+    BlockingPortal as _BlockingPortal,
+)
+from anyio.from_thread import (
+    start_blocking_portal as _start_blocking_portal,
+)
+
+from ._check_recording import (
+    bind_subject as _bind_subject,
+)
+from ._check_recording import (
+    record_checks_enabled as _record_checks_enabled,
+)
+from ._default_store import (
+    make_default_run_id as _make_default_run_id,
+)
+from ._default_store import (
+    make_default_store as _make_default_store,
+)
+from .agent_session import AsyncAgentSession as _AsyncAgentSession
+from .agent_session import HarnessAdapter
 from .configuration import (
-    ConfigOrigin,
-    ConfigSource,
     Config,
     ConfigError,
+    ConfigOrigin,
+    ConfigSource,
     load_config,
-)
-from .errors import (
-    ExecutionNotFound as _ExecutionNotFound,
-    KitClosed as _KitClosed,
-    OperationCancelled as _OperationCancelled,
-    UnsupportedFeature as _UnsupportedFeature,
-    TraceUnavailable as _TraceUnavailable,
 )
 from .direct_client import (
     AsyncDirectClient as _AsyncDirectClient,
+)
+from .direct_client import (
     CallToolResult,
     CompletionResult,
-    PromptInfo,
-    ResourceInfo,
-    TemplateInfo,
-    ToolInfo,
     EmptyResult,
     GetPromptResult,
     InitializationResult,
@@ -70,61 +77,152 @@ from .direct_client import (
     ListResourcesResult,
     ListResourceTemplatesResult,
     ListToolsResult,
+    PromptInfo,
     PromptResult,
-    ResourceReadResult,
-    ToolCallResult,
-    Tool,
     Resource,
+    ResourceInfo,
+    ResourceReadResult,
     ResourceTemplate,
+    TemplateInfo,
+    Tool,
+    ToolCallResult,
+    ToolInfo,
 )
-from .evaluations import EvaluationRunner as _EvaluationRunner, EvaluatorCallable as _EvaluatorCallable
+from .errors import (
+    ExecutionNotFound as _ExecutionNotFound,
+)
+from .errors import (
+    KitClosed as _KitClosed,
+)
+from .errors import (
+    OperationCancelled as _OperationCancelled,
+)
+from .errors import (
+    TraceUnavailable as _TraceUnavailable,
+)
+from .errors import (
+    UnsupportedFeature as _UnsupportedFeature,
+)
+from .evaluations import (
+    EvaluationRunner as _EvaluationRunner,
+)
+from .evaluations import (
+    EvaluatorCallable as _EvaluatorCallable,
+)
+from .execution_runtime import AsyncExecutionHandle as _AsyncExecutionHandle
+from .harness.contracts import HarnessAdapterRegistry as _HarnessAdapterRegistry
+from .interaction_handlers import (
+    AllowedCommands,
+    ElicitationHandler,
+    ElicitationRequest,
+    ElicitationResult,
+    FilesystemHandler,
+    FilesystemRequest,
+    FilesystemResult,
+    InteractionHandlers,
+    InteractionReceipt,
+    Interactions,
+    PermissionHandler,
+    PermissionRequest,
+    PermissionResult,
+    SamplingHandler,
+    SamplingRequest,
+    SamplingResult,
+    TerminalHandler,
+    TerminalRequest,
+    TerminalResult,
+    WorkspaceFiles,
+)
+from .observability import *  # noqa: F403 - re-exported by the public API
+from .observability import RawEvidence, TraceView
+from .observability import __all__ as _OBSERVABILITY_EXPORTS
 from .services.probes import (
-    Probes,
     ProbeEvidence,
     ProbeKind,
     ProbeReport,
     ProbeRequest,
     ProbeResult,
+    Probes,
 )
+from .storage import ExecutionStore as _ExecutionStore
 from .types import (
     AgentSpec as _AgentSpec,
+)
+from .types import (
     Capability as _Capability,
+)
+from .types import (
     CapabilityStatus as _CapabilityStatus,
+)
+from .types import (
     DirectSpec as _DirectSpec,
-    ExecutionResult as _ExecutionResult,
-    ExecutionSpec as _ExecutionSpec,
-    ExecutionState as _ExecutionState,
-    RunId as _RunId,
+)
+from .types import (
     EvaluationResult as _EvaluationResult,
-    Readiness as _Readiness,
-    ServerBinding as _ServerBinding,
-    InProcessServer as _InProcessServer,
-    StdioServer as _StdioServer,
-    HTTPServer as _HTTPServer,
-    SSEServer as _SSEServer,
-    ProtocolConstraint as _ProtocolConstraint,
-    TransportKind as _TransportKind,
-    ServerValue as _ServerValue,
-    TurnResult as _TurnResult,
-    UserMessage as _UserMessage,
+)
+from .types import (
     Event as _Event,
-    SessionForkRequest as _SessionForkRequest,
-    SessionSource as _SessionSource,
-    TraceResult as _TraceResult,
+)
+from .types import (
     EvidenceRef as _EvidenceRef,
+)
+from .types import (
     ExecutionId as _ExecutionId,
 )
-from .observability import *
-from .observability import __all__ as _OBSERVABILITY_EXPORTS
-from .execution_runtime import AsyncExecutionHandle as _AsyncExecutionHandle
-from .storage import ExecutionStore as _ExecutionStore
-from .harness.contracts import HarnessAdapterRegistry as _HarnessAdapterRegistry
-from ._default_store import make_default_run_id as _make_default_run_id, make_default_store as _make_default_store
-from ._check_recording import (
-    bind_subject as _bind_subject,
-    record_checks_enabled as _record_checks_enabled,
+from .types import (
+    ExecutionResult as _ExecutionResult,
 )
-
+from .types import (
+    ExecutionSpec as _ExecutionSpec,
+)
+from .types import (
+    ExecutionState as _ExecutionState,
+)
+from .types import (
+    HTTPServer as _HTTPServer,
+)
+from .types import (
+    InProcessServer as _InProcessServer,
+)
+from .types import (
+    ProtocolConstraint as _ProtocolConstraint,
+)
+from .types import (
+    Readiness as _Readiness,
+)
+from .types import (
+    RunId as _RunId,
+)
+from .types import (
+    ServerBinding as _ServerBinding,
+)
+from .types import (
+    ServerValue as _ServerValue,
+)
+from .types import (
+    SessionForkRequest as _SessionForkRequest,
+)
+from .types import (
+    SessionSource as _SessionSource,
+)
+from .types import (
+    SSEServer as _SSEServer,
+)
+from .types import (
+    StdioServer as _StdioServer,
+)
+from .types import (
+    TraceResult as _TraceResult,
+)
+from .types import (
+    TransportKind as _TransportKind,
+)
+from .types import (
+    TurnResult as _TurnResult,
+)
+from .types import (
+    UserMessage as _UserMessage,
+)
 
 _CURRENT_MCP_PROTOCOL = "2025-11-25"
 _DIRECT_SERVER_TYPES = (_InProcessServer, _StdioServer, _HTTPServer, _SSEServer)
@@ -161,33 +259,65 @@ def _adapt_callback(callback: _Any) -> _Any:
 
 _DIRECT_METHODS = frozenset(
     {
-        "initialize", "list_tools", "list_all_tools", "list_resources", "list_all_resources",
-        "list_resource_templates", "list_all_resource_templates", "list_prompts", "list_all_prompts",
-        "read_resource", "get_prompt", "call_tool", "complete", "subscribe_resource",
-        "unsubscribe_resource", "ping", "set_logging_level", "send_progress_notification",
-        "send_notification", "send_roots_list_changed", "register_callbacks",
+        "initialize",
+        "list_tools",
+        "list_all_tools",
+        "list_resources",
+        "list_all_resources",
+        "list_resource_templates",
+        "list_all_resource_templates",
+        "list_prompts",
+        "list_all_prompts",
+        "read_resource",
+        "get_prompt",
+        "call_tool",
+        "complete",
+        "subscribe_resource",
+        "unsubscribe_resource",
+        "ping",
+        "set_logging_level",
+        "send_progress_notification",
+        "send_notification",
+        "send_roots_list_changed",
+        "register_callbacks",
     }
 )
 
 
-def _runtime_server_bindings(runtime_servers: _Iterable[_Any]) -> tuple[_ServerBinding, ...]:
+def _runtime_server_bindings(
+    runtime_servers: _Iterable[_Any],
+) -> tuple[_ServerBinding, ...]:
     """Normalize loopback registrations without changing the frozen spec."""
 
     bindings: list[_ServerBinding] = []
     for value in runtime_servers:
         if isinstance(value, _InProcessServer):
             bindings.append(_ServerBinding(server=value, alias=value.name))
-        elif isinstance(value, _ServerBinding) and isinstance(value.server, _InProcessServer):
+        elif isinstance(value, _ServerBinding) and isinstance(
+            value.server, _InProcessServer
+        ):
             bindings.append(value)
         else:
-            raise TypeError("runtime_servers accepts only InProcessServer or its ServerBinding")
+            raise TypeError(
+                "runtime_servers accepts only InProcessServer or its ServerBinding"
+            )
     return tuple(bindings)
 
 
 class _PortalRuntime:
     """Async state owned exclusively by the AnyIO portal thread."""
 
-    def __init__(self, config: Config, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None, run_id: _RunId | str | None = None, record_checks: bool = False) -> None:
+    def __init__(
+        self,
+        config: Config,
+        probe_timeout_seconds: float,
+        probe_output_limit: int,
+        store: _ExecutionStore | None = None,
+        embedded_worker: bool = True,
+        adapter_registry: _HarnessAdapterRegistry | None = None,
+        run_id: _RunId | str | None = None,
+        record_checks: bool = False,
+    ) -> None:
         from .async_api import AsyncMCPTestKit
 
         self.kit = AsyncMCPTestKit(
@@ -211,7 +341,9 @@ class _PortalRuntime:
         self._next_execution = 0
         self._closed_results: dict[int, _ExecutionResult] = {}
 
-    def create_direct(self, server: _ServerValue | _ServerBinding, options: _Mapping[str, _Any]) -> int:
+    def create_direct(
+        self, server: _ServerValue | _ServerBinding, options: _Mapping[str, _Any]
+    ) -> int:
         client = self.kit.direct(server, **dict(options))
         handle = self._next_client
         self._next_client += 1
@@ -227,7 +359,9 @@ class _PortalRuntime:
     async def enter(self, handle: int) -> None:
         await self.client(handle).__aenter__()
 
-    async def invoke(self, handle: int, name: str, args: tuple[_Any, ...], kwargs: dict[str, _Any]) -> _Any:
+    async def invoke(
+        self, handle: int, name: str, args: tuple[_Any, ...], kwargs: dict[str, _Any]
+    ) -> _Any:
         if handle in self.closing:
             raise _OperationCancelled(
                 "synchronous direct operation cancelled by client close",
@@ -301,7 +435,9 @@ class _PortalRuntime:
         request: _SessionForkRequest,
         adapter_factory: _Callable[..., _Any],
     ) -> tuple[int, _AgentSpec]:
-        child = await self.session(handle).fork(request, adapter_factory=adapter_factory)
+        child = await self.session(handle).fork(
+            request, adapter_factory=adapter_factory
+        )
         child_handle = self._next_session
         self._next_session += 1
         self.sessions[child_handle] = child
@@ -324,7 +460,9 @@ class _PortalRuntime:
     async def enter_session(self, handle: int) -> None:
         await self.session(handle).__aenter__()
 
-    async def invoke_session(self, handle: int, name: str, args: tuple[_Any, ...], kwargs: dict[str, _Any]) -> _Any:
+    async def invoke_session(
+        self, handle: int, name: str, args: tuple[_Any, ...], kwargs: dict[str, _Any]
+    ) -> _Any:
         value = getattr(self.session(handle), name)
         result = value(*args, **kwargs) if callable(value) else value
         if hasattr(result, "__await__"):
@@ -379,7 +517,9 @@ class _PortalRuntime:
         except KeyError:
             raise RuntimeError("execution handle is closed") from None
 
-    async def execution_result(self, identifier: int, timeout: float | None) -> _ExecutionResult:
+    async def execution_result(
+        self, identifier: int, timeout: float | None
+    ) -> _ExecutionResult:
         return await self.execution(identifier).result(timeout)
 
     async def execution_snapshot(self, identifier: int) -> _ExecutionState:
@@ -392,7 +532,9 @@ class _PortalRuntime:
         handle = self.execution(identifier)
         return handle.execution_id, handle.spec
 
-    async def next_execution_event(self, identifier: int, after_sequence: int) -> _Event | None:
+    async def next_execution_event(
+        self, identifier: int, after_sequence: int
+    ) -> _Event | None:
         iterator = self.event_iters.get(identifier)
         if iterator is None:
             iterator = self.execution(identifier).events(after_sequence=after_sequence)
@@ -410,12 +552,24 @@ class _PortalRuntime:
             if callable(close):
                 await close()
 
-    def execution_callback(self, identifier: int, callback: _Callable[[_Any], _Any]) -> _Callable[[], None]:
+    def execution_callback(
+        self, identifier: int, callback: _Callable[[_Any], _Any]
+    ) -> _Callable[[], None]:
         return self.execution(identifier).on_event(callback)
 
 
 class _SyncPortal:
-    def __init__(self, config: Config, probe_timeout_seconds: float, probe_output_limit: int, store: _ExecutionStore | None = None, embedded_worker: bool = True, adapter_registry: _HarnessAdapterRegistry | None = None, run_id: _RunId | str | None = None, record_checks: bool = False) -> None:
+    def __init__(
+        self,
+        config: Config,
+        probe_timeout_seconds: float,
+        probe_output_limit: int,
+        store: _ExecutionStore | None = None,
+        embedded_worker: bool = True,
+        adapter_registry: _HarnessAdapterRegistry | None = None,
+        run_id: _RunId | str | None = None,
+        record_checks: bool = False,
+    ) -> None:
         self._lock = _RLock()
         self._context = _start_blocking_portal()
         try:
@@ -475,8 +629,7 @@ class _SyncPortal:
             results = self._portal.call(self._runtime.close)
             if isinstance(results, dict):
                 self._closed_results = {
-                    int(identifier): result
-                    for identifier, result in results.items()
+                    int(identifier): result for identifier, result in results.items()
                 }
         except BaseException as exc:
             with self._lock:
@@ -502,9 +655,16 @@ class _SyncPortal:
 class DirectClient:
     """Synchronous proxy whose async protocol state remains in a portal thread."""
 
-    def __init__(self, portal: _SyncPortal, server: _ServerValue | _ServerBinding, options: _Mapping[str, _Any]) -> None:
+    def __init__(
+        self,
+        portal: _SyncPortal,
+        server: _ServerValue | _ServerBinding,
+        options: _Mapping[str, _Any],
+    ) -> None:
         self._portal = portal
-        self._handle = _cast(int, portal.call(portal._runtime.create_direct, server, options))
+        self._handle = _cast(
+            int, portal.call(portal._runtime.create_direct, server, options)
+        )
         self._closed = False
         self._closing = False
         self._state_lock = _RLock()
@@ -523,9 +683,11 @@ class DirectClient:
                     "synchronous direct operation cancelled by client close",
                     details={"operation": name, "cause": "client_close"},
                 )
-        return self._portal.call(self._portal._runtime.invoke, self._handle, name, args, kwargs)
+        return self._portal.call(
+            self._portal._runtime.invoke, self._handle, name, args, kwargs
+        )
 
-    def __enter__(self) -> "DirectClient":
+    def __enter__(self) -> DirectClient:
         with self._state_lock:
             if self._closed or self._closing:
                 raise RuntimeError("direct client is closed")
@@ -616,11 +778,18 @@ class DirectClient:
     def list_all_resources(self) -> tuple[Resource, ...]:
         return _cast(tuple[Resource, ...], self._invoke("list_all_resources"))
 
-    def list_resource_templates(self, *, cursor: str | None = None) -> ListResourceTemplatesResult:
-        return _cast(ListResourceTemplatesResult, self._invoke("list_resource_templates", cursor=cursor))
+    def list_resource_templates(
+        self, *, cursor: str | None = None
+    ) -> ListResourceTemplatesResult:
+        return _cast(
+            ListResourceTemplatesResult,
+            self._invoke("list_resource_templates", cursor=cursor),
+        )
 
     def list_all_resource_templates(self) -> tuple[ResourceTemplate, ...]:
-        return _cast(tuple[ResourceTemplate, ...], self._invoke("list_all_resource_templates"))
+        return _cast(
+            tuple[ResourceTemplate, ...], self._invoke("list_all_resource_templates")
+        )
 
     def list_prompts(self, *, cursor: str | None = None) -> ListPromptsResult:
         return _cast(ListPromptsResult, self._invoke("list_prompts", cursor=cursor))
@@ -628,17 +797,40 @@ class DirectClient:
     def list_all_prompts(self) -> tuple[PromptInfo, ...]:
         return _cast(tuple[PromptInfo, ...], self._invoke("list_all_prompts"))
 
-    def read_resource(self, uri: str, **kwargs: _Any) -> ResourceReadResult | InputRequiredResult:
-        return _cast(ResourceReadResult | InputRequiredResult, self._invoke("read_resource", uri, **kwargs))
+    def read_resource(
+        self, uri: str, **kwargs: _Any
+    ) -> ResourceReadResult | InputRequiredResult:
+        return _cast(
+            ResourceReadResult | InputRequiredResult,
+            self._invoke("read_resource", uri, **kwargs),
+        )
 
-    def get_prompt(self, name: str, arguments: _Mapping[str, str] | None = None, **kwargs: _Any) -> PromptResult | InputRequiredResult:
-        return _cast(PromptResult | InputRequiredResult, self._invoke("get_prompt", name, arguments, **kwargs))
+    def get_prompt(
+        self, name: str, arguments: _Mapping[str, str] | None = None, **kwargs: _Any
+    ) -> PromptResult | InputRequiredResult:
+        return _cast(
+            PromptResult | InputRequiredResult,
+            self._invoke("get_prompt", name, arguments, **kwargs),
+        )
 
-    def call_tool(self, name: str, arguments: _Mapping[str, _Any] | None = None, **kwargs: _Any) -> ToolCallResult | InputRequiredResult:
-        return _cast(ToolCallResult | InputRequiredResult, self._invoke("call_tool", name, arguments, **kwargs))
+    def call_tool(
+        self, name: str, arguments: _Mapping[str, _Any] | None = None, **kwargs: _Any
+    ) -> ToolCallResult | InputRequiredResult:
+        return _cast(
+            ToolCallResult | InputRequiredResult,
+            self._invoke("call_tool", name, arguments, **kwargs),
+        )
 
-    def complete(self, reference: _Any, argument: _Mapping[str, str], context_arguments: _Mapping[str, str] | None = None) -> CompletionResult:
-        return _cast(CompletionResult, self._invoke("complete", reference, argument, context_arguments))
+    def complete(
+        self,
+        reference: _Any,
+        argument: _Mapping[str, str],
+        context_arguments: _Mapping[str, str] | None = None,
+    ) -> CompletionResult:
+        return _cast(
+            CompletionResult,
+            self._invoke("complete", reference, argument, context_arguments),
+        )
 
     def subscribe_resource(self, uri: str, *, meta: _Any = None) -> EmptyResult:
         return _cast(EmptyResult, self._invoke("subscribe_resource", uri, meta=meta))
@@ -652,8 +844,23 @@ class DirectClient:
     def set_logging_level(self, level: str, *, meta: _Any = None) -> EmptyResult:
         return _cast(EmptyResult, self._invoke("set_logging_level", level, meta=meta))
 
-    def send_progress_notification(self, progress_token: str | int, progress: float, total: float | None = None, message: str | None = None, *, meta: _Any = None) -> None:
-        self._invoke("send_progress_notification", progress_token, progress, total, message, meta=meta)
+    def send_progress_notification(
+        self,
+        progress_token: str | int,
+        progress: float,
+        total: float | None = None,
+        message: str | None = None,
+        *,
+        meta: _Any = None,
+    ) -> None:
+        self._invoke(
+            "send_progress_notification",
+            progress_token,
+            progress,
+            total,
+            message,
+            meta=meta,
+        )
 
     def send_notification(self, notification: _Any) -> None:
         self._invoke("send_notification", notification)
@@ -676,22 +883,39 @@ class ExecutionHandle:
 
     @property
     def execution_id(self) -> _Any:
-        return self._portal.call(self._portal._runtime.execution_info, self._identifier)[0]
+        return self._portal.call(
+            self._portal._runtime.execution_info, self._identifier
+        )[0]
 
     @property
     def spec(self) -> _ExecutionSpec:
-        return _cast(_ExecutionSpec, self._portal.call(self._portal._runtime.execution_info, self._identifier)[1])
+        return _cast(
+            _ExecutionSpec,
+            self._portal.call(self._portal._runtime.execution_info, self._identifier)[
+                1
+            ],
+        )
 
     @property
     def submitted_spec(self) -> _ExecutionSpec:
         return self.spec
 
     def snapshot(self) -> _ExecutionState:
-        return _cast(_ExecutionState, self._portal.call(self._portal._runtime.execution_snapshot, self._identifier))
+        return _cast(
+            _ExecutionState,
+            self._portal.call(
+                self._portal._runtime.execution_snapshot, self._identifier
+            ),
+        )
 
     def result(self, timeout: float | None = None) -> _ExecutionResult:
         try:
-            return _cast(_ExecutionResult, self._portal.call(self._portal._runtime.execution_result, self._identifier, timeout))
+            return _cast(
+                _ExecutionResult,
+                self._portal.call(
+                    self._portal._runtime.execution_result, self._identifier, timeout
+                ),
+            )
         except RuntimeError:
             result = self._portal.cached_execution_result(self._identifier)
             if result is None:
@@ -723,14 +947,18 @@ class ExecutionHandle:
                     return
         finally:
             try:
-                self._portal.call(self._portal._runtime.close_execution_events, self._identifier)
+                self._portal.call(
+                    self._portal._runtime.close_execution_events, self._identifier
+                )
             except (RuntimeError, _KitClosed):
                 pass
 
     def on_event(self, callback: _Callable[[_Event], _Any]) -> _Callable[[], None]:
         return _cast(
             _Callable[[], None],
-            self._portal.call(self._portal._runtime.execution_callback, self._identifier, callback),
+            self._portal.call(
+                self._portal._runtime.execution_callback, self._identifier, callback
+            ),
         )
 
 
@@ -747,15 +975,19 @@ class AgentSession:
         _handle: int | None = None,
     ) -> None:
         self._portal = portal
-        self._handle = _handle if _handle is not None else _cast(
-            int,
-            portal.call(
-                portal._runtime.create_session,
-                spec,
-                adapter,
-                tuple(runtime_servers),
-                interaction_handlers,
-            ),
+        self._handle = (
+            _handle
+            if _handle is not None
+            else _cast(
+                int,
+                portal.call(
+                    portal._runtime.create_session,
+                    spec,
+                    adapter,
+                    tuple(runtime_servers),
+                    interaction_handlers,
+                ),
+            )
         )
         self._closed = False
         self._closing = False
@@ -772,20 +1004,39 @@ class AgentSession:
                 raise _KitClosed("agent session is closed")
             if self._closing:
                 raise _OperationCancelled("agent session is closing")
-        return self._portal.call(self._portal._runtime.invoke_session, self._handle, name, args, kwargs)
+        return self._portal.call(
+            self._portal._runtime.invoke_session, self._handle, name, args, kwargs
+        )
 
-    def __enter__(self) -> "AgentSession":
+    def __enter__(self) -> AgentSession:
         self._invoke("__aenter__")
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         self.close()
 
-    def send(self, message: str | _UserMessage, *, timeout: float | None = None, metadata: dict[str, object] | None = None) -> _TurnResult:
-        return _cast(_TurnResult, self._invoke("send", message, timeout=timeout, metadata=metadata))
+    def send(
+        self,
+        message: str | _UserMessage,
+        *,
+        timeout: float | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> _TurnResult:
+        return _cast(
+            _TurnResult,
+            self._invoke("send", message, timeout=timeout, metadata=metadata),
+        )
 
-    def enqueue_turn(self, message: str | _UserMessage, *, timeout: float | None = None, metadata: dict[str, object] | None = None) -> _Any:
-        queued = self._invoke("enqueue_turn", message, timeout=timeout, metadata=metadata)
+    def enqueue_turn(
+        self,
+        message: str | _UserMessage,
+        *,
+        timeout: float | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> _Any:
+        queued = self._invoke(
+            "enqueue_turn", message, timeout=timeout, metadata=metadata
+        )
         return _SyncQueuedTurn(self._portal, queued)
 
     def snapshot(self) -> _ExecutionState:
@@ -819,10 +1070,15 @@ class AgentSession:
         request: _SessionForkRequest,
         *,
         adapter_factory: _Callable[..., _Any],
-    ) -> "AgentSession":
+    ) -> AgentSession:
         handle, child_spec = _cast(
             tuple[int, _AgentSpec],
-            self._portal.call(self._portal._runtime.fork_session, self._handle, request, adapter_factory),
+            self._portal.call(
+                self._portal._runtime.fork_session,
+                self._handle,
+                request,
+                adapter_factory,
+            ),
         )
         return AgentSession(self._portal, child_spec, _handle=handle)
 
@@ -846,7 +1102,10 @@ class AgentSession:
                 raise self._close_error
             return
         try:
-            self._result = _cast(_ExecutionResult, self._portal.call(self._portal._runtime.close_session, self._handle))
+            self._result = _cast(
+                _ExecutionResult,
+                self._portal.call(self._portal._runtime.close_session, self._handle),
+            )
         except BaseException as exc:
             with self._state_lock:
                 self._close_error = exc
@@ -869,7 +1128,10 @@ class _SyncQueuedTurn:
         self.turn_id = queued.turn_id
 
     def result(self) -> _TurnResult:
-        return _cast(_TurnResult, self._portal.call(self._portal._runtime.queued_result, self._queued))
+        return _cast(
+            _TurnResult,
+            self._portal.call(self._portal._runtime.queued_result, self._queued),
+        )
 
     def wait(self) -> _TurnResult:
         return self.result()
@@ -880,7 +1142,9 @@ def _baseline_report(config: Config, probes: Probes) -> ProbeReport:
         capability=_Capability(
             name="configuration",
             status=_CapabilityStatus.READY,
-            protocol_version=None if config.protocol_revision == "auto" else config.protocol_revision,
+            protocol_version=None
+            if config.protocol_revision == "auto"
+            else config.protocol_revision,
         ),
         evidence=ProbeEvidence(
             kind=ProbeKind.CONFIGURATION,
@@ -891,7 +1155,9 @@ def _baseline_report(config: Config, probes: Probes) -> ProbeReport:
     memory = probes.probe_storage("memory")
     results = (configuration, memory)
     capabilities = tuple(result.capability for result in results)
-    return ProbeReport(readiness=_Readiness(ready=True, capabilities=capabilities), results=results)
+    return ProbeReport(
+        readiness=_Readiness(ready=True, capabilities=capabilities), results=results
+    )
 
 
 class MCPTestKit:
@@ -914,7 +1180,11 @@ class MCPTestKit:
         self._state_lock = _RLock()
         self._closed = False
         scoped_run_id = run_id or _make_default_run_id()
-        self._run_id = scoped_run_id if isinstance(scoped_run_id, _RunId) else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
+        self._run_id = (
+            scoped_run_id
+            if isinstance(scoped_run_id, _RunId)
+            else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
+        )
         self._record_checks = _record_checks_enabled(record_checks)
         self._context_depth = 0
         self._closing = False
@@ -926,7 +1196,11 @@ class MCPTestKit:
         self._evaluations = _EvaluationRunner()
         self._probe_timeout_seconds = probe_timeout_seconds
         self._probe_output_limit = probe_output_limit
-        self.config = config if isinstance(config, Config) else load_config(config, env=env, cwd=cwd)
+        self.config = (
+            config
+            if isinstance(config, Config)
+            else load_config(config, env=env, cwd=cwd)
+        )
         self._owns_store = False
         if store is None:
             scoped_store = _make_default_store()
@@ -1009,7 +1283,7 @@ class MCPTestKit:
             raise _TraceUnavailable("MCPTestKit has no execution store")
         return self._store.read_raw_evidence(reference, max_bytes=max_bytes)
 
-    def __enter__(self) -> "MCPTestKit":
+    def __enter__(self) -> MCPTestKit:
         with self._state_lock:
             if self._closed:
                 raise _KitClosed("MCPTestKit is closed")
@@ -1027,7 +1301,12 @@ class MCPTestKit:
         """Close the shell; repeated calls are intentionally harmless."""
 
         with self._state_lock:
-            if self._closed and not self._active_direct and not self._active_sessions and self._portal is None:
+            if (
+                self._closed
+                and not self._active_direct
+                and not self._active_sessions
+                and self._portal is None
+            ):
                 return
             if self._closing:
                 done = self._close_done
@@ -1139,7 +1418,9 @@ class MCPTestKit:
 
     def _unsupported(self, operation: str) -> _NoReturn:
         self._ensure_open()
-        raise _UnsupportedFeature(f"{operation} is not implemented in the configuration milestone")
+        raise _UnsupportedFeature(
+            f"{operation} is not implemented in the configuration milestone"
+        )
 
     def run(self, spec: _DirectSpec | _AgentSpec) -> _ExecutionResult:
         if not isinstance(spec, (_DirectSpec, _AgentSpec)):
@@ -1157,10 +1438,21 @@ class MCPTestKit:
             portal = self._portal
             new_portal = portal is None
             if portal is None:
-                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry, self._run_id, self._record_checks)
+                portal = _SyncPortal(
+                    self.config,
+                    self._probe_timeout_seconds,
+                    self._probe_output_limit,
+                    self._store,
+                    self._embedded_worker,
+                    self._adapter_registry,
+                    self._run_id,
+                    self._record_checks,
+                )
                 self._portal = portal
             try:
-                identifier = _cast(int, portal.call(portal._runtime.create_execution, spec))
+                identifier = _cast(
+                    int, portal.call(portal._runtime.create_execution, spec)
+                )
             except BaseException:
                 if new_portal and self._portal is portal:
                     self._portal = None
@@ -1237,10 +1529,23 @@ class MCPTestKit:
             portal = self._portal
             new_portal = portal is None
             if portal is None:
-                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry, self._run_id, self._record_checks)
+                portal = _SyncPortal(
+                    self.config,
+                    self._probe_timeout_seconds,
+                    self._probe_output_limit,
+                    self._store,
+                    self._embedded_worker,
+                    self._adapter_registry,
+                    self._run_id,
+                    self._record_checks,
+                )
                 self._portal = portal
             try:
-                binding = server if isinstance(server, _ServerBinding) else _ServerBinding(server=selected)
+                binding = (
+                    server
+                    if isinstance(server, _ServerBinding)
+                    else _ServerBinding(server=selected)
+                )
                 client = DirectClient(portal, binding, options)
             except BaseException:
                 if new_portal:
@@ -1250,9 +1555,13 @@ class MCPTestKit:
             self._active_direct.add(client)
             return client
 
-    def _validate_direct_preflight(self, selected: _Any, protocol: object | None, timeout: float | None) -> None:
+    def _validate_direct_preflight(
+        self, selected: _Any, protocol: object | None, timeout: float | None
+    ) -> None:
         if not isinstance(selected, _DIRECT_SERVER_TYPES):
-            raise _UnsupportedFeature("direct server profiles require runtime resolution")
+            raise _UnsupportedFeature(
+                "direct server profiles require runtime resolution"
+            )
         if timeout is not None and (not _math.isfinite(timeout) or timeout <= 0):
             raise ValueError("timeout must be positive and finite")
         requested_revision: str | None = self.config.protocol_revision
@@ -1267,15 +1576,22 @@ class MCPTestKit:
         else:
             raise ValueError("protocol must be a revision string or ProtocolConstraint")
         if requested_revision not in {None, "", "auto", _CURRENT_MCP_PROTOCOL}:
-            raise _UnsupportedFeature("explicit MCP protocol revision is not supported by the official client")
+            raise _UnsupportedFeature(
+                "explicit MCP protocol revision is not supported by the official client"
+            )
         actual_transport = {
             _InProcessServer: _TransportKind.IN_PROCESS,
             _StdioServer: _TransportKind.STDIO,
             _HTTPServer: _TransportKind.STREAMABLE_HTTP,
             _SSEServer: _TransportKind.SSE,
         }[type(selected)]
-        if requested_transport is not None and requested_transport is not actual_transport:
-            raise _UnsupportedFeature("requested transport is not supported by this direct binding")
+        if (
+            requested_transport is not None
+            and requested_transport is not actual_transport
+        ):
+            raise _UnsupportedFeature(
+                "requested transport is not supported by this direct binding"
+            )
 
     def agent_session(
         self,
@@ -1294,10 +1610,21 @@ class MCPTestKit:
                 raise _KitClosed("MCPTestKit is closed")
             portal = self._portal
             if portal is None:
-                portal = _SyncPortal(self.config, self._probe_timeout_seconds, self._probe_output_limit, self._store, self._embedded_worker, self._adapter_registry, self._run_id, self._record_checks)
+                portal = _SyncPortal(
+                    self.config,
+                    self._probe_timeout_seconds,
+                    self._probe_output_limit,
+                    self._store,
+                    self._embedded_worker,
+                    self._adapter_registry,
+                    self._run_id,
+                    self._record_checks,
+                )
                 self._portal = portal
             try:
-                session = AgentSession(portal, spec, adapter, runtime_servers, interaction_handlers)
+                session = AgentSession(
+                    portal, spec, adapter, runtime_servers, interaction_handlers
+                )
             except BaseException:
                 if self._portal is portal and not self._active_direct:
                     self._portal = None
@@ -1307,7 +1634,7 @@ class MCPTestKit:
             return session
 
 
-__all__ = [
+__all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "AgentSession",
     "HarnessAdapter",
     "Probes",

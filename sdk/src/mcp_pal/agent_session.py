@@ -51,9 +51,9 @@ from .types import (
     ExecutionOutcome,
     ExecutionResult,
     ExecutionState,
+    ExecutionStatus,
     FullToolPolicy,
     LifecyclePhase,
-    ExecutionStatus,
     NativeToolPolicy,
     OpaqueContent,
     RestrictiveToolPolicy,
@@ -61,10 +61,10 @@ from .types import (
     SessionId,
     SessionSource,
     TurnId,
-    TurnStatus,
     TurnOutcome,
     TurnResponse,
     TurnResult,
+    TurnStatus,
     UserMessage,
 )
 from .workspace import WorkspaceCapture, WorkspaceError, WorkspaceManager
@@ -90,7 +90,7 @@ class HarnessAdapter(Protocol):
         *,
         timeout: float | None = None,
         metadata: Mapping[str, object] | None = None,
-    ) -> TurnResponse | "AdapterTurn": ...
+    ) -> TurnResponse | AdapterTurn: ...
 
     async def close(self) -> None: ...
 
@@ -104,7 +104,9 @@ class AdapterTurn:
     terminal: bool = False
     outcome: TurnOutcome = TurnOutcome.COMPLETED
     tool_calls: tuple[Mapping[str, Any], ...] = ()
-    evidence: Mapping[str, str | int | float | bool | None] = field(default_factory=dict)
+    evidence: Mapping[str, str | int | float | bool | None] = field(
+        default_factory=dict
+    )
     trace_limitations: tuple[str, ...] = ()
     # Provider adapters may carry the closed R5 typed observation envelope
     # without making this core state machine import provider modules.
@@ -112,7 +114,11 @@ class AdapterTurn:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
-        object.__setattr__(self, "trace_limitations", tuple(str(item) for item in self.trace_limitations))
+        object.__setattr__(
+            self,
+            "trace_limitations",
+            tuple(str(item) for item in self.trace_limitations),
+        )
 
 
 class HarnessTurnError(MCPError):
@@ -120,7 +126,9 @@ class HarnessTurnError(MCPError):
 
     code = "harness_turn_error"
 
-    def __init__(self, message: str = "harness turn failed", *, terminal: bool = False) -> None:
+    def __init__(
+        self, message: str = "harness turn failed", *, terminal: bool = False
+    ) -> None:
         super().__init__(message)
         self.terminal = terminal
 
@@ -167,7 +175,7 @@ class AsyncAgentSession:
         server_manager_factory: Callable[[], Any] | None = None,
         interaction_controller: Interactions | None = None,
         provenance: SessionSource | None = None,
-        on_close: Callable[["AsyncAgentSession"], None] | None = None,
+        on_close: Callable[[AsyncAgentSession], None] | None = None,
         event_sink: _EventSink | None = None,
         trace_recorder: ExecutionTraceRecorder | None = None,
         trace_owner: bool = True,
@@ -198,7 +206,9 @@ class AsyncAgentSession:
         self._execution_id = self._trace_recorder.execution_id
         self._session_id = SessionId(str(uuid4()))
         self._session_created_emitted = False
-        self._snapshot = ExecutionState(execution_id=self._execution_id, provenance=provenance)
+        self._snapshot = ExecutionState(
+            execution_id=self._execution_id, provenance=provenance
+        )
         self._turns: list[TurnResult] = []
         self._tool_outcomes: list[bool] = []
         # Keep wire-derived tool outcomes after the server manager releases
@@ -288,7 +298,9 @@ class AsyncAgentSession:
         if isinstance(raw_ref, str) and raw_ref:
             from .types import EvidenceRef
 
-            raw_evidence = EvidenceRef(evidence_id=raw_ref, media_type="application/json")
+            raw_evidence = EvidenceRef(
+                evidence_id=raw_ref, media_type="application/json"
+            )
         origin = (
             EventOrigin.NORMALIZED
             if kind in {EventKind.TRANSPORT_CONNECTED, EventKind.TRANSPORT_DISCONNECTED}
@@ -312,7 +324,8 @@ class AsyncAgentSession:
                 origin=origin,
                 source=(
                     "mcp_pal.server_group"
-                    if kind in {EventKind.TRANSPORT_CONNECTED, EventKind.TRANSPORT_DISCONNECTED}
+                    if kind
+                    in {EventKind.TRANSPORT_CONNECTED, EventKind.TRANSPORT_DISCONNECTED}
                     else "mcp_pal.capture"
                     if origin is EventOrigin.WIRE_OBSERVED
                     else "mcp_pal.workspace"
@@ -333,7 +346,7 @@ class AsyncAgentSession:
             raise AttributeError(f"{name} is immutable for an open agent session")
         object.__setattr__(self, name, value)
 
-    async def __aenter__(self) -> "AsyncAgentSession":
+    async def __aenter__(self) -> AsyncAgentSession:
         async with self._state_lock:
             if self._closed:
                 raise KitClosed("agent session is closed")
@@ -378,7 +391,11 @@ class AsyncAgentSession:
             # short-circuit here or the later close cannot retry them.
             cleanup_failure = await self._collect_workspace(
                 self._close_requested_outcome
-                or (ExecutionOutcome.CANCELLED if isinstance(exc, asyncio.CancelledError) else ExecutionOutcome.FAILED),
+                or (
+                    ExecutionOutcome.CANCELLED
+                    if isinstance(exc, asyncio.CancelledError)
+                    else ExecutionOutcome.FAILED
+                ),
                 cleanup=False,
             )
             try:
@@ -386,14 +403,26 @@ class AsyncAgentSession:
             except BaseException:
                 cleanup_failure = True
             outcome = self._close_requested_outcome or (
-                ExecutionOutcome.CANCELLED if isinstance(exc, asyncio.CancelledError) else ExecutionOutcome.FAILED
+                ExecutionOutcome.CANCELLED
+                if isinstance(exc, asyncio.CancelledError)
+                else ExecutionOutcome.FAILED
             )
             try:
                 await asyncio.to_thread(self._workspace.cleanup)
             except Exception:
                 cleanup_failure = True
-            code = ErrorCode.CANCELLED if outcome is ExecutionOutcome.CANCELLED else ErrorCode.TRANSPORT_ERROR
-            await self._finish(outcome, code, "session startup cancelled" if outcome is ExecutionOutcome.CANCELLED else "session startup failed")
+            code = (
+                ErrorCode.CANCELLED
+                if outcome is ExecutionOutcome.CANCELLED
+                else ErrorCode.TRANSPORT_ERROR
+            )
+            await self._finish(
+                outcome,
+                code,
+                "session startup cancelled"
+                if outcome is ExecutionOutcome.CANCELLED
+                else "session startup failed",
+            )
             if cleanup_failure:
                 # Keep the terminal result and all unfinished owners visible
                 # for a later aclose()/kit close retry.  _record_cleanup_failure
@@ -424,7 +453,9 @@ class AsyncAgentSession:
                     self._startup_task = None
         return self
 
-    async def __aexit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+    async def __aexit__(
+        self, exc_type: object, exc_value: object, traceback: object
+    ) -> None:
         await self.aclose()
 
     async def _preflight_launch(self, launch: Any) -> Any:
@@ -443,7 +474,9 @@ class AsyncAgentSession:
         evidence = getattr(self.adapter, "last_policy_evidence", None)
         if not isinstance(evidence, ToolPolicyEvidence):
             evidence = getattr(launch, "tool_policy_evidence", None)
-        if self._requires_policy_preflight() and not isinstance(evidence, ToolPolicyEvidence):
+        if self._requires_policy_preflight() and not isinstance(
+            evidence, ToolPolicyEvidence
+        ):
             raise UnsupportedFeature("harness cannot prove tool policy enforcement")
         if isinstance(evidence, ToolPolicyEvidence):
             expected = (
@@ -454,7 +487,9 @@ class AsyncAgentSession:
                 else "restrictive"
             )
             if evidence.requested != expected:
-                raise UnsupportedFeature("harness policy evidence does not match the requested policy")
+                raise UnsupportedFeature(
+                    "harness policy evidence does not match the requested policy"
+                )
             if expected == "native":
                 valid_evidence = evidence.enforced == "native" and not evidence.portable
             else:
@@ -482,21 +517,20 @@ class AsyncAgentSession:
                 snapshot = snapshotter() if callable(snapshotter) else None
             configuration_reader = getattr(self._server_manager, "configurations", None)
             configurations = (
-                tuple(configuration_reader())
-                if callable(configuration_reader)
-                else ()
+                tuple(configuration_reader()) if callable(configuration_reader) else ()
             )
             by_connection = {
                 connection: config
                 for config in configurations
-                if isinstance(
-                    connection := getattr(config, "connection_id", None), str
-                )
+                if isinstance(connection := getattr(config, "connection_id", None), str)
                 and connection
             }
             for record in tuple(getattr(snapshot, "records", ())):
                 configured_transport = getattr(record, "transport", None)
-                if not getattr(record, "available", False) or configured_transport is None:
+                if (
+                    not getattr(record, "available", False)
+                    or configured_transport is None
+                ):
                     continue
                 binding = getattr(record, "key", None)
                 connection_id = getattr(record, "connection_id", None)
@@ -515,7 +549,9 @@ class AsyncAgentSession:
                     continue
                 instrumented = by_connection.get(connection_id)
                 instrumented_transport = getattr(instrumented, "transport", None)
-                configured_value = getattr(configured_transport, "value", configured_transport)
+                configured_value = getattr(
+                    configured_transport, "value", configured_transport
+                )
                 instrumented_value = (
                     getattr(instrumented_transport, "value", instrumented_transport)
                     if instrumented_transport is not None
@@ -568,7 +604,9 @@ class AsyncAgentSession:
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
-                    raise UnsupportedFeature("harness cannot prove tool policy enforcement")
+                    raise UnsupportedFeature(
+                        "harness cannot prove tool policy enforcement"
+                    )
                 result = None
                 starter = getattr(self.adapter, "start", None)
                 if callable(starter):
@@ -605,7 +643,9 @@ class AsyncAgentSession:
                     )
                     await self._preflight_launch(launch)
                 elif self._requires_policy_preflight():
-                    raise UnsupportedFeature("harness cannot prove tool policy enforcement")
+                    raise UnsupportedFeature(
+                        "harness cannot prove tool policy enforcement"
+                    )
                 starter = getattr(self.adapter, "start", None)
                 if callable(starter):
                     result = starter(self.spec)
@@ -634,7 +674,9 @@ class AsyncAgentSession:
         failure: BaseException | None = None
         if not self._adapter_closed:
             try:
-                close = getattr(self.adapter, "close", None) or getattr(self.adapter, "aclose", None)
+                close = getattr(self.adapter, "close", None) or getattr(
+                    self.adapter, "aclose", None
+                )
                 if close is not None:
                     result = close()
                     if inspect.isawaitable(result):
@@ -674,7 +716,9 @@ class AsyncAgentSession:
         try:
             records = tuple(getattr(manager.snapshot(), "records", ()))
             by_connection = {
-                str(getattr(record, "connection_id", "")): str(getattr(record, "key", ""))
+                str(getattr(record, "connection_id", "")): str(
+                    getattr(record, "key", "")
+                )
                 for record in records
             }
             observed_snapshots = tuple(snapshots())
@@ -692,7 +736,11 @@ class AsyncAgentSession:
                 event_kind = str(getattr(event, "kind", ""))
                 error = getattr(event, "error", None)
                 if event_kind == "request":
-                    kind = EventKind.TOOL_CALL_REQUESTED if method == "tools/call" else EventKind.MCP_REQUEST
+                    kind = (
+                        EventKind.TOOL_CALL_REQUESTED
+                        if method == "tools/call"
+                        else EventKind.MCP_REQUEST
+                    )
                 elif event_kind == "notification":
                     kind = EventKind.MCP_NOTIFICATION
                 elif event_kind == "error":
@@ -715,11 +763,14 @@ class AsyncAgentSession:
                     "method": method,
                     "tool": tool,
                     "request_sequence": getattr(event, "request_sequence", None),
-                    "response_to_sequence": getattr(event, "response_to_sequence", None),
+                    "response_to_sequence": getattr(
+                        event, "response_to_sequence", None
+                    ),
                     "jsonrpc_id": getattr(event, "jsonrpc_id", None),
                     "latency_ms": getattr(event, "latency_ms", None),
                     "wire_offset_ms": getattr(event, "offset_ms", None),
-                    "policy_denied": getattr(event, "provenance", None) == "policy_denied",
+                    "policy_denied": getattr(event, "provenance", None)
+                    == "policy_denied",
                     "dedup_key": f"{connection_id}:{getattr(event, 'request_sequence', None)}",
                     "_mcp_connection_id": connection_id,
                     "_mcp_direction": direction.value,
@@ -740,16 +791,24 @@ class AsyncAgentSession:
                         and bool(result.get("is_error", result.get("isError", False)))
                     )
                     self._captured_tool_outcomes.append(not failed)
-                phase = LifecyclePhase.MCP_CALL if method == "tools/call" else (
-                    LifecyclePhase.INITIALIZATION if method == "initialize" else LifecyclePhase.IDLE
+                phase = (
+                    LifecyclePhase.MCP_CALL
+                    if method == "tools/call"
+                    else (
+                        LifecyclePhase.INITIALIZATION
+                        if method == "initialize"
+                        else LifecyclePhase.IDLE
+                    )
                 )
                 self._emit_event(kind, payload, turn_id=turn_id, phase=phase)
 
-    async def _collect_workspace(self, outcome: ExecutionOutcome, *, cleanup: bool = True) -> bool:
+    async def _collect_workspace(
+        self, outcome: ExecutionOutcome, *, cleanup: bool = True
+    ) -> bool:
         """Collect workspace evidence before removing the owned root."""
 
         try:
-            self._workspace.root
+            _ = self._workspace.root
         except WorkspaceError:
             # A session closed before startup owns no workspace to collect.
             return False
@@ -762,7 +821,9 @@ class AsyncAgentSession:
                 EventKind.WORKSPACE_CHANGED,
                 {
                     "diff": capture.diff.as_payload(),
-                    "artifacts": tuple(ref.model_dump(mode="json") for ref in capture.artifacts),
+                    "artifacts": tuple(
+                        ref.model_dump(mode="json") for ref in capture.artifacts
+                    ),
                     "limitations": capture.limitations,
                 },
                 phase=LifecyclePhase.CLEANUP,
@@ -794,9 +855,15 @@ class AsyncAgentSession:
             raise SessionStillOpen("agent session has not been opened")
 
     @staticmethod
-    def _message(message: str | UserMessage, metadata: Mapping[str, object] | None) -> UserMessage:
+    def _message(
+        message: str | UserMessage, metadata: Mapping[str, object] | None
+    ) -> UserMessage:
         try:
-            value = message if isinstance(message, UserMessage) else UserMessage.model_validate({"content": message})
+            value = (
+                message
+                if isinstance(message, UserMessage)
+                else UserMessage.model_validate({"content": message})
+            )
             if metadata is not None:
                 value = value.model_copy(update={"metadata": dict(metadata)})
             return value
@@ -809,17 +876,27 @@ class AsyncAgentSession:
             checker = getattr(self.adapter, "supports_content", None)
             for block in message.content:
                 kind = str(getattr(block, "kind", ""))
-                provider = str(getattr(block, "provider", "")) if isinstance(block, OpaqueContent) else None
+                provider = (
+                    str(getattr(block, "provider", ""))
+                    if isinstance(block, OpaqueContent)
+                    else None
+                )
                 allowed = True
                 if supported is not None:
                     allowed = kind in supported
                 if checker is not None:
                     result = checker(block)
-                    allowed = bool(await result) if inspect.isawaitable(result) else bool(result)
+                    allowed = (
+                        bool(await result)
+                        if inspect.isawaitable(result)
+                        else bool(result)
+                    )
                 if isinstance(block, OpaqueContent) and provider == "":
                     allowed = False
                 if not allowed:
-                    raise UnsupportedFeature(f"harness does not support {kind} message content")
+                    raise UnsupportedFeature(
+                        f"harness does not support {kind} message content"
+                    )
         except Exception:
             raise UnsupportedFeature("message contains unsupported content") from None
 
@@ -848,7 +925,9 @@ class AsyncAgentSession:
             self._active_turn_task = asyncio.current_task()
         try:
             async with self._operation_lock:
-                return await self._run_turn(value, timeout=timeout, metadata=value.metadata)
+                return await self._run_turn(
+                    value, timeout=timeout, metadata=value.metadata
+                )
         finally:
             async with self._state_lock:
                 self._active = False
@@ -888,14 +967,23 @@ class AsyncAgentSession:
                     self._active = True
                     self._active_turn_task = asyncio.current_task()
                 async with self._operation_lock:
-                    result = await self._run_turn(item.message, timeout=item.timeout, metadata=item.message.metadata, turn_id=item.handle.turn_id)
+                    result = await self._run_turn(
+                        item.message,
+                        timeout=item.timeout,
+                        metadata=item.message.metadata,
+                        turn_id=item.handle.turn_id,
+                    )
             except asyncio.CancelledError:
                 if not item.handle._future.done():
-                    item.handle._future.set_result(self._cancelled_turn(item.handle.turn_id))
+                    item.handle._future.set_result(
+                        self._cancelled_turn(item.handle.turn_id)
+                    )
                 raise
             except Exception:
                 if not item.handle._future.done():
-                    item.handle._future.set_result(self._cancelled_turn(item.handle.turn_id))
+                    item.handle._future.set_result(
+                        self._cancelled_turn(item.handle.turn_id)
+                    )
             else:
                 if not item.handle._future.done():
                     item.handle._future.set_result(result)
@@ -936,11 +1024,19 @@ class AsyncAgentSession:
             phase=LifecyclePhase.TURN,
         )
         try:
-            sender = getattr(self.adapter, "send", None) or getattr(self.adapter, "send_turn", None)
+            sender = getattr(self.adapter, "send", None) or getattr(
+                self.adapter, "send_turn", None
+            )
             if sender is None:
-                raise UnsupportedFeature("harness adapter does not implement turn sending")
+                raise UnsupportedFeature(
+                    "harness adapter does not implement turn sending"
+                )
             operation = sender(message, timeout=timeout, metadata=metadata)
-            raw = await asyncio.wait_for(operation, timeout=timeout) if timeout is not None else await operation
+            raw = (
+                await asyncio.wait_for(operation, timeout=timeout)
+                if timeout is not None
+                else await operation
+            )
             captured_tool_calls = self._pending_captured_tool_calls()
             self._emit_captured_wire_events(turn_id)
             self._record_tool_outcomes(raw)
@@ -969,7 +1065,11 @@ class AsyncAgentSession:
                 self._emit_turn_finished(turn_id, result)
                 self._turns.append(result)
                 if self._terminal_requested(raw):
-                    await self._finish(ExecutionOutcome.FAILED, ErrorCode.UNSUPPORTED, "tool policy violation")
+                    await self._finish(
+                        ExecutionOutcome.FAILED,
+                        ErrorCode.UNSUPPORTED,
+                        "tool policy violation",
+                    )
                 elif self._snapshot.lifecycle is ExecutionStatus.RUNNING_TURN:
                     self._snapshot = self._snapshot.transition(ExecutionStatus.IDLE)
                     self._emit_event(
@@ -991,21 +1091,33 @@ class AsyncAgentSession:
                         )
             self._turns.append(result)
             if self._terminal_requested(raw):
-                await self._finish(ExecutionOutcome.FAILED, ErrorCode.TRANSPORT_ERROR, "session lost during turn")
+                await self._finish(
+                    ExecutionOutcome.FAILED,
+                    ErrorCode.TRANSPORT_ERROR,
+                    "session lost during turn",
+                )
             return result
         except asyncio.TimeoutError:
             await self._cancel_adapter_safely()
-            result = self._failure_turn(turn_id, TurnOutcome.TIMED_OUT, ErrorCode.TIMEOUT, "turn timed out")
+            result = self._failure_turn(
+                turn_id, TurnOutcome.TIMED_OUT, ErrorCode.TIMEOUT, "turn timed out"
+            )
             self._emit_turn_finished(turn_id, result)
             self._turns.append(result)
-            await self._finish(ExecutionOutcome.TIMED_OUT, ErrorCode.TIMEOUT, "session timed out")
+            await self._finish(
+                ExecutionOutcome.TIMED_OUT, ErrorCode.TIMEOUT, "session timed out"
+            )
             return result
         except asyncio.CancelledError:
             await self._cancel_adapter_safely()
-            result = self._failure_turn(turn_id, TurnOutcome.CANCELLED, ErrorCode.CANCELLED, "turn cancelled")
+            result = self._failure_turn(
+                turn_id, TurnOutcome.CANCELLED, ErrorCode.CANCELLED, "turn cancelled"
+            )
             self._emit_turn_finished(turn_id, result)
             self._turns.append(result)
-            await self._finish(ExecutionOutcome.CANCELLED, ErrorCode.CANCELLED, "session cancelled")
+            await self._finish(
+                ExecutionOutcome.CANCELLED, ErrorCode.CANCELLED, "session cancelled"
+            )
             raise
         except Exception as exc:
             terminal = bool(getattr(exc, "terminal", False)) or isinstance(
@@ -1043,7 +1155,9 @@ class AsyncAgentSession:
         return value
 
     @classmethod
-    def _reported_tool_identity(cls, call: Mapping[str, Any]) -> tuple[ToolDescriptor | None, str | None]:
+    def _reported_tool_identity(
+        cls, call: Mapping[str, Any]
+    ) -> tuple[ToolDescriptor | None, str | None]:
         """Extract only a qualified MCP identity from adapter evidence."""
 
         try:
@@ -1058,7 +1172,12 @@ class AsyncAgentSession:
             if qualified_text is None or qualified_text.count(":") != 1:
                 return None, "tool_identity_invalid"
             server, tool = qualified_text.split(":", 1)
-        elif tool is None and isinstance(name, str) and server is None and name.count(":") == 1:
+        elif (
+            tool is None
+            and isinstance(name, str)
+            and server is None
+            and name.count(":") == 1
+        ):
             server, tool = name.split(":", 1)
         elif tool is None:
             tool = name
@@ -1081,7 +1200,9 @@ class AsyncAgentSession:
             return None, "tool_identity_invalid"
         try:
             destructive = call.get("destructive") is True
-            return ToolDescriptor(server=server_text, name=tool_text, destructive=destructive), None
+            return ToolDescriptor(
+                server=server_text, name=tool_text, destructive=destructive
+            ), None
         except Exception:
             return None, "tool_identity_invalid"
 
@@ -1154,10 +1275,14 @@ class AsyncAgentSession:
         # entirely anonymous updates, but never use it to repair malformed or
         # ambiguous identities. Exact cardinality is required and the adapter
         # must omit every identity field.
-        ordered_captured = captured_tool_calls if len(captured_tool_calls) == len(calls) else ()
+        ordered_captured = (
+            captured_tool_calls if len(captured_tool_calls) == len(calls) else ()
+        )
         for call_index, call in enumerate(calls):
             if not isinstance(call, Mapping):
-                violations.append(self._policy_violation(None, "tool_call_invalid", evidence))
+                violations.append(
+                    self._policy_violation(None, "tool_call_invalid", evidence)
+                )
                 continue
             descriptor, identity_error = self._reported_tool_identity(call)
             if identity_error == "provider_native":
@@ -1177,7 +1302,9 @@ class AsyncAgentSession:
                 identity_error = None
             if descriptor is None:
                 try:
-                    reported_name = call.get("tool", call.get("tool_name", call.get("name")))
+                    reported_name = call.get(
+                        "tool", call.get("tool_name", call.get("name"))
+                    )
                 except Exception:
                     reported_name = None
                 safe_name = self._safe_tool_label(reported_name)
@@ -1190,44 +1317,76 @@ class AsyncAgentSession:
                     descriptor = captured_candidates[0]
                     identity_error = None
                 elif len(captured_candidates) > 1:
-                    violations.append(self._policy_violation(None, "ambiguous_tool", evidence))
+                    violations.append(
+                        self._policy_violation(None, "ambiguous_tool", evidence)
+                    )
                     continue
             if descriptor is None and identity_error is None and records:
                 try:
-                    reported_name = call.get("tool", call.get("tool_name", call.get("name")))
+                    reported_name = call.get(
+                        "tool", call.get("tool_name", call.get("name"))
+                    )
                 except Exception:
                     reported_name = None
                 safe_name = self._safe_tool_label(reported_name)
-                advertised_candidates = tuple(
-                    record
-                    for record in records
-                    if getattr(record, "available", False) and safe_name in getattr(record, "tools", ())
-                ) if safe_name is not None else ()
+                advertised_candidates = (
+                    tuple(
+                        record
+                        for record in records
+                        if getattr(record, "available", False)
+                        and safe_name in getattr(record, "tools", ())
+                    )
+                    if safe_name is not None
+                    else ()
+                )
                 if len(advertised_candidates) > 1:
-                    violations.append(self._policy_violation(None, "ambiguous_tool", evidence))
+                    violations.append(
+                        self._policy_violation(None, "ambiguous_tool", evidence)
+                    )
                     continue
                 if len(advertised_candidates) == 1:
-                    descriptor = ToolDescriptor(server=advertised_candidates[0].key, name=safe_name or "")
+                    descriptor = ToolDescriptor(
+                        server=advertised_candidates[0].key, name=safe_name or ""
+                    )
                 elif safe_name is not None:
-                    violations.append(self._policy_violation(None, "tool_unavailable", evidence))
+                    violations.append(
+                        self._policy_violation(None, "tool_unavailable", evidence)
+                    )
                     continue
             if descriptor is None and identity_error is None:
-                violations.append(self._policy_violation(None, "tool_identity_unavailable", evidence))
+                violations.append(
+                    self._policy_violation(None, "tool_identity_unavailable", evidence)
+                )
                 continue
             if descriptor is None:
-                violations.append(self._policy_violation(None, identity_error or "tool_identity_invalid", evidence))
+                violations.append(
+                    self._policy_violation(
+                        None, identity_error or "tool_identity_invalid", evidence
+                    )
+                )
                 continue
             if records:
-                matching = tuple(record for record in records if record.key == descriptor.server)
+                matching = tuple(
+                    record for record in records if record.key == descriptor.server
+                )
                 if not matching or not matching[0].available:
-                    violations.append(self._policy_violation(descriptor, "server_unavailable", evidence))
+                    violations.append(
+                        self._policy_violation(
+                            descriptor, "server_unavailable", evidence
+                        )
+                    )
                     continue
                 if matching[0].tools and descriptor.name not in matching[0].tools:
-                    violations.append(self._policy_violation(descriptor, "tool_unavailable", evidence))
+                    violations.append(
+                        self._policy_violation(descriptor, "tool_unavailable", evidence)
+                    )
                     continue
             try:
                 evaluator = ToolPolicyEvaluator(evaluator_tools or (descriptor,))
-                supports = evidence.enforced in {"portable", "native"} or not self._requires_policy_preflight()
+                supports = (
+                    evidence.enforced in {"portable", "native"}
+                    or not self._requires_policy_preflight()
+                )
                 decision: ToolPolicyDecision = evaluator.decide(
                     policy,
                     descriptor,
@@ -1235,20 +1394,32 @@ class AsyncAgentSession:
                     supports_enforcement=supports,
                 )
             except Exception:
-                violations.append(self._policy_violation(descriptor, "policy_unavailable", evidence))
+                violations.append(
+                    self._policy_violation(descriptor, "policy_unavailable", evidence)
+                )
                 continue
             if not decision.allowed:
-                violations.append(self._policy_violation(descriptor, decision.reason, decision.evidence))
+                violations.append(
+                    self._policy_violation(
+                        descriptor, decision.reason, decision.evidence
+                    )
+                )
         return tuple(violations)
 
-    def _emit_policy_violations(self, violations: tuple[dict[str, object], ...], turn_id: TurnId) -> None:
+    def _emit_policy_violations(
+        self, violations: tuple[dict[str, object], ...], turn_id: TurnId
+    ) -> None:
         for violation in violations:
             self._emit_event(
                 EventKind.TOOL_RESULT_RECEIVED,
-                {"policy_violation": True, "evidence_mode": "policy_evaluator", **violation},
+                {
+                    "policy_violation": True,
+                    "evidence_mode": "policy_evaluator",
+                    **violation,
+                },
                 turn_id=turn_id,
-                    phase=LifecyclePhase.MCP_CALL,
-                )
+                phase=LifecyclePhase.MCP_CALL,
+            )
 
     def _pending_captured_tool_calls(self) -> tuple[ToolDescriptor, ...]:
         """Return this turn's stable forwarded calls before advancing capture."""
@@ -1261,7 +1432,9 @@ class AsyncAgentSession:
         try:
             records = tuple(getattr(manager.snapshot(), "records", ()))
             aliases = {
-                str(getattr(record, "connection_id", "")): str(getattr(record, "key", ""))
+                str(getattr(record, "connection_id", "")): str(
+                    getattr(record, "key", "")
+                )
                 for record in records
             }
             output: list[ToolDescriptor] = []
@@ -1308,15 +1481,26 @@ class AsyncAgentSession:
                     for item in policy_violations
                 )
                 or (descriptor is None and identity_error is not None)
-                or (descriptor is None and identity_error is None and any(item.get("server") == "unavailable" for item in policy_violations))
+                or (
+                    descriptor is None
+                    and identity_error is None
+                    and any(
+                        item.get("server") == "unavailable"
+                        for item in policy_violations
+                    )
+                )
             )
             if blocked:
                 # Adapter payloads may contain arguments or provider output.
                 # Preserve only the qualified identity and an explicit marker;
                 # policy evidence must never become a raw-value bypass.
                 safe_call: dict[str, object] = {
-                    "server": descriptor.server if descriptor is not None else "unavailable",
-                    "tool": descriptor.name if descriptor is not None else "unavailable",
+                    "server": descriptor.server
+                    if descriptor is not None
+                    else "unavailable",
+                    "tool": descriptor.name
+                    if descriptor is not None
+                    else "unavailable",
                     "policy_blocked": True,
                     "raw_evidence": "redacted_by_policy_boundary",
                 }
@@ -1454,7 +1638,11 @@ class AsyncAgentSession:
         elif isinstance(raw, TurnResponse):
             response, error, outcome = raw, None, TurnOutcome.COMPLETED
         elif isinstance(raw, TurnResult):
-            response, error, outcome = raw.response, raw.error, raw.snapshot.outcome or TurnOutcome.FAILED
+            response, error, outcome = (
+                raw.response,
+                raw.error,
+                raw.snapshot.outcome or TurnOutcome.FAILED,
+            )
         else:
             raise UnsupportedFeature("harness returned an unsupported turn result")
         limitations = getattr(raw, "trace_limitations", ())
@@ -1466,7 +1654,13 @@ class AsyncAgentSession:
             self._trace_limitations = tuple(merged)
         snapshot = self._turn_snapshot(turn_id, outcome)
         if error is not None:
-            error = ErrorInfo(code=error.code, message="tool error" if not self._terminal_requested(raw) else "turn failed", retryable=error.retryable)
+            error = ErrorInfo(
+                code=error.code,
+                message="tool error"
+                if not self._terminal_requested(raw)
+                else "turn failed",
+                retryable=error.retryable,
+            )
         return TurnResult(
             snapshot=snapshot,
             response=response,
@@ -1486,10 +1680,16 @@ class AsyncAgentSession:
             result = call.get("result")
             failed = bool(call.get("is_error", call.get("isError", False)))
             if isinstance(result, Mapping):
-                failed = failed or bool(result.get("is_error", result.get("isError", False)))
+                failed = failed or bool(
+                    result.get("is_error", result.get("isError", False))
+                )
             status = call.get("status", call.get("outcome"))
             if isinstance(status, str) and status.lower() in {
-                "failed", "error", "timed_out", "cancelled", "interrupted"
+                "failed",
+                "error",
+                "timed_out",
+                "cancelled",
+                "interrupted",
             }:
                 failed = True
             self._tool_outcomes.append(not failed)
@@ -1533,7 +1733,9 @@ class AsyncAgentSession:
                         error = getattr(event, "error", None)
                         failed = error is not None or (
                             isinstance(result, Mapping)
-                            and bool(result.get("is_error", result.get("isError", False)))
+                            and bool(
+                                result.get("is_error", result.get("isError", False))
+                            )
                         )
                         outcomes.append(not failed)
                         pending.pop(sequence, None)
@@ -1545,19 +1747,34 @@ class AsyncAgentSession:
     def _turn_snapshot(self, turn_id: TurnId, outcome: TurnOutcome) -> Any:
         from .types import TurnState
 
-        return TurnState(turn_id=turn_id, session_id=self._session_id, number=len(self._turns) + 1).transition(
-            TurnStatus.RUNNING
-        ).transition(TurnStatus.FINISHED, outcome)
+        return (
+            TurnState(
+                turn_id=turn_id,
+                session_id=self._session_id,
+                number=len(self._turns) + 1,
+            )
+            .transition(TurnStatus.RUNNING)
+            .transition(TurnStatus.FINISHED, outcome)
+        )
 
-    def _failure_turn(self, turn_id: TurnId, outcome: TurnOutcome, code: ErrorCode, message: str) -> TurnResult:
-        return TurnResult(snapshot=self._turn_snapshot(turn_id, outcome), error=ErrorInfo(code=code, message=message))
+    def _failure_turn(
+        self, turn_id: TurnId, outcome: TurnOutcome, code: ErrorCode, message: str
+    ) -> TurnResult:
+        return TurnResult(
+            snapshot=self._turn_snapshot(turn_id, outcome),
+            error=ErrorInfo(code=code, message=message),
+        )
 
     def _cancelled_turn(self, turn_id: TurnId) -> TurnResult:
-        return self._failure_turn(turn_id, TurnOutcome.CANCELLED, ErrorCode.CANCELLED, "turn cancelled")
+        return self._failure_turn(
+            turn_id, TurnOutcome.CANCELLED, ErrorCode.CANCELLED, "turn cancelled"
+        )
 
     async def _cancel_adapter_safely(self) -> None:
         try:
-            await asyncio.wait_for(self._cancel_adapter(), timeout=self._CANCEL_GRACE_SECONDS)
+            await asyncio.wait_for(
+                self._cancel_adapter(), timeout=self._CANCEL_GRACE_SECONDS
+            )
         except Exception:
             pass
 
@@ -1569,7 +1786,9 @@ class AsyncAgentSession:
         if task is None or task is current:
             return
         try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=self._CANCEL_GRACE_SECONDS)
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=self._CANCEL_GRACE_SECONDS
+            )
         except asyncio.TimeoutError:
             task.cancel()
             try:
@@ -1586,7 +1805,9 @@ class AsyncAgentSession:
         if task is None or task is asyncio.current_task():
             return
         try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=self._CANCEL_GRACE_SECONDS)
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=self._CANCEL_GRACE_SECONDS
+            )
         except asyncio.TimeoutError:
             task.cancel()
             try:
@@ -1598,12 +1819,17 @@ class AsyncAgentSession:
             # continues here and remains idempotent through the resource flags.
             pass
 
-    async def _finish(self, outcome: ExecutionOutcome, code: ErrorCode, message: str) -> None:
+    async def _finish(
+        self, outcome: ExecutionOutcome, code: ErrorCode, message: str
+    ) -> None:
         async with self._state_lock:
             if self._terminal_outcome is not None:
                 return
             if not self._session_created_emitted:
-                self._emit_event(EventKind.SESSION_CREATED, {"lifecycle": ExecutionStatus.CREATED.value})
+                self._emit_event(
+                    EventKind.SESSION_CREATED,
+                    {"lifecycle": ExecutionStatus.CREATED.value},
+                )
             if outcome is not ExecutionOutcome.COMPLETED:
                 self._closing = True
             self._emit_event(
@@ -1613,13 +1839,23 @@ class AsyncAgentSession:
             )
             if self._snapshot.lifecycle is not ExecutionStatus.FINISHED:
                 if self._snapshot.lifecycle is ExecutionStatus.CREATED:
-                    self._snapshot = self._snapshot.transition(ExecutionStatus.FINISHED, outcome)
+                    self._snapshot = self._snapshot.transition(
+                        ExecutionStatus.FINISHED, outcome
+                    )
                 else:
                     if self._snapshot.lifecycle is not ExecutionStatus.CLOSING:
-                        self._snapshot = self._snapshot.transition(ExecutionStatus.CLOSING)
-                    self._snapshot = self._snapshot.transition(ExecutionStatus.FINISHED, outcome)
+                        self._snapshot = self._snapshot.transition(
+                            ExecutionStatus.CLOSING
+                        )
+                    self._snapshot = self._snapshot.transition(
+                        ExecutionStatus.FINISHED, outcome
+                    )
             self._terminal_outcome = outcome
-            self._terminal_error = None if outcome is ExecutionOutcome.COMPLETED else ErrorInfo(code=code, message=message)
+            self._terminal_error = (
+                None
+                if outcome is ExecutionOutcome.COMPLETED
+                else ErrorInfo(code=code, message=message)
+            )
             self._emit_event(
                 EventKind.SESSION_STATE_CHANGED,
                 {"lifecycle": ExecutionStatus.FINISHED.value, "outcome": outcome.value},
@@ -1673,7 +1909,9 @@ class AsyncAgentSession:
         if result is None:
             return
         if result.error is None:
-            error = ErrorInfo(code=ErrorCode.CLEANUP_FAILED, message="session cleanup failed")
+            error = ErrorInfo(
+                code=ErrorCode.CLEANUP_FAILED, message="session cleanup failed"
+            )
         else:
             details = dict(result.error.details)
             details["cleanup"] = "failed"
@@ -1701,7 +1939,9 @@ class AsyncAgentSession:
         while not self._queue.empty():
             item = self._queue.get_nowait()
             if item is not None and not item.handle._future.done():
-                item.handle._future.set_result(self._cancelled_turn(item.handle.turn_id))
+                item.handle._future.set_result(
+                    self._cancelled_turn(item.handle.turn_id)
+                )
         if self._queue_task is not None and not self._queue_task.done():
             self._queue_task.cancel()
             try:
@@ -1732,9 +1972,19 @@ class AsyncAgentSession:
         if cleanup_failure:
             self._cleanup_failed = True
             if self._terminal_outcome is None:
-                await self._finish(ExecutionOutcome.FAILED, ErrorCode.CLEANUP_FAILED, "session cleanup failed")
+                await self._finish(
+                    ExecutionOutcome.FAILED,
+                    ErrorCode.CLEANUP_FAILED,
+                    "session cleanup failed",
+                )
         elif self._terminal_outcome is None:
-            await self._finish(outcome, ErrorCode.CANCELLED, "session cancelled" if outcome is ExecutionOutcome.CANCELLED else "session closed")
+            await self._finish(
+                outcome,
+                ErrorCode.CANCELLED,
+                "session cancelled"
+                if outcome is ExecutionOutcome.CANCELLED
+                else "session closed",
+            )
         if cleanup_failure:
             self._record_cleanup_failure()
             # Keep ownership until every child has actually closed.  The
@@ -1762,7 +2012,11 @@ class AsyncAgentSession:
         async with self._close_lock:
             if self._closed:
                 return
-            if not self._entered and self._startup_task is None and self._terminal_outcome is None:
+            if (
+                not self._entered
+                and self._startup_task is None
+                and self._terminal_outcome is None
+            ):
                 raise SessionStillOpen("agent session has not been opened")
             async with self._state_lock:
                 self._closing = True
@@ -1810,7 +2064,7 @@ class AsyncAgentSession:
         adapter_factory: Callable[
             [AgentSpec, SessionSource], HarnessAdapter | Awaitable[HarnessAdapter]
         ],
-    ) -> "AsyncAgentSession":
+    ) -> AsyncAgentSession:
         """Create a fresh child execution from this terminal session.
 
         The factory is mandatory: a child never reuses this session's adapter
@@ -1827,14 +2081,26 @@ class AsyncAgentSession:
         if source_turn_id is not None and all(
             turn.snapshot.turn_id != source_turn_id for turn in source.turns
         ):
-            raise UnsupportedFeature("fork source turn is not part of the source result")
+            raise UnsupportedFeature(
+                "fork source turn is not part of the source result"
+            )
         try:
             provenance = SessionSource(
                 mode=request.mode,
                 source_execution_id=source.snapshot.execution_id,
-                source_session_id=(source_turn_id and next(
-                    turn.snapshot.session_id for turn in source.turns if turn.snapshot.turn_id == source_turn_id
-                )) or (source.turns[-1].snapshot.session_id if source.turns else self._session_id),
+                source_session_id=(
+                    source_turn_id
+                    and next(
+                        turn.snapshot.session_id
+                        for turn in source.turns
+                        if turn.snapshot.turn_id == source_turn_id
+                    )
+                )
+                or (
+                    source.turns[-1].snapshot.session_id
+                    if source.turns
+                    else self._session_id
+                ),
                 source_turn_id=source_turn_id,
             )
         except Exception:
@@ -1854,7 +2120,9 @@ class AsyncAgentSession:
             except Exception:
                 raise UnsupportedFeature("fork server manager factory failed") from None
             if child_manager is self._server_manager:
-                raise UnsupportedFeature("fork server manager factory must create a fresh manager")
+                raise UnsupportedFeature(
+                    "fork server manager factory must create a fresh manager"
+                )
         return type(self)(
             self.spec,
             child_adapter,
@@ -1873,4 +2141,10 @@ class AsyncAgentSession:
             await self._run_close_safely(ExecutionOutcome.COMPLETED)
 
 
-__all__ = ["AdapterTurn", "AsyncAgentSession", "HarnessAdapter", "HarnessTurnError", "QueuedTurn"]
+__all__ = [
+    "AdapterTurn",
+    "AsyncAgentSession",
+    "HarnessAdapter",
+    "HarnessTurnError",
+    "QueuedTurn",
+]

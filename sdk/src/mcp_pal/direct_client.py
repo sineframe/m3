@@ -13,21 +13,40 @@ from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, NoReturn, Protocol, TypeVar, cast
 
-from jsonschema import Draft202012Validator, SchemaError, ValidationError  # type: ignore[import-untyped]
+from jsonschema import (  # type: ignore[import-untyped]
+    Draft202012Validator,
+    SchemaError,
+    ValidationError,
+)
 from mcp.shared.exceptions import MCPError as _OfficialMCPError
 from pydantic import Field, model_validator
 from referencing import Registry
 
-from .errors import ModelValidationError, OperationCancelled, OperationTimeout, ProtocolError, TransportError, UnsupportedFeature
 from .direct_trace import DirectTraceBridge
+from .errors import (
+    ModelValidationError,
+    OperationCancelled,
+    OperationTimeout,
+    ProtocolError,
+    TransportError,
+    UnsupportedFeature,
+)
 from .trace.redaction import RedactionConfig, redact_for_api
 from .types import (
-    PromptInfo as _PublicPromptInfo,
-    ResourceInfo as _PublicResourceInfo,
-    TemplateInfo as _PublicTemplateInfo,
-    ToolInfo as _PublicToolInfo,
     FrozenModel,
     TraceResult,
+)
+from .types import (
+    PromptInfo as _PublicPromptInfo,
+)
+from .types import (
+    ResourceInfo as _PublicResourceInfo,
+)
+from .types import (
+    TemplateInfo as _PublicTemplateInfo,
+)
+from .types import (
+    ToolInfo as _PublicToolInfo,
 )
 
 # Backwards-compatible direct-client names share identity with the stable
@@ -56,11 +75,20 @@ class _Session(Protocol):
 
     async def list_prompts(self, *, params: Any = None) -> Any: ...
 
-    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None, **kwargs: Any) -> Any: ...
+    async def get_prompt(
+        self, name: str, arguments: dict[str, str] | None = None, **kwargs: Any
+    ) -> Any: ...
 
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None, **kwargs: Any) -> Any: ...
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any] | None = None, **kwargs: Any
+    ) -> Any: ...
 
-    async def complete(self, reference: Any, argument: dict[str, str], context_arguments: dict[str, str] | None = None) -> Any: ...
+    async def complete(
+        self,
+        reference: Any,
+        argument: dict[str, str],
+        context_arguments: dict[str, str] | None = None,
+    ) -> Any: ...
 
     async def subscribe_resource(self, uri: str, *, meta: Any = None) -> Any: ...
 
@@ -70,7 +98,15 @@ class _Session(Protocol):
 
     async def set_logging_level(self, level: Any, *, meta: Any = None) -> Any: ...
 
-    async def send_progress_notification(self, progress_token: str | int, progress: float, total: float | None = None, message: str | None = None, *, meta: Any = None) -> Any: ...
+    async def send_progress_notification(
+        self,
+        progress_token: str | int,
+        progress: float,
+        total: float | None = None,
+        message: str | None = None,
+        *,
+        meta: Any = None,
+    ) -> Any: ...
 
     async def send_notification(self, notification: Any) -> Any: ...
 
@@ -85,13 +121,15 @@ class DirectEvidenceProvider(Protocol):
     to have performed those steps itself.
     """
 
-    def capture(self, operation: str, phase: Literal["started", "succeeded", "failed"]) -> Mapping[str, Any]: ...
+    def capture(
+        self, operation: str, phase: Literal["started", "succeeded", "failed"]
+    ) -> Mapping[str, Any]: ...
 
 
 class DirectEventHook(Protocol):
     """Observe operation boundaries for integration with a trace recorder."""
 
-    def __call__(self, event: "DirectOperationEvent") -> None: ...
+    def __call__(self, event: DirectOperationEvent) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +179,9 @@ def create_client_session(
         client_info=selected.client_info,
         log_level=selected.log_level,
         sampling_capabilities=selected.sampling_capabilities,
-        extensions=cast(dict[str, dict[str, Any]], dict(selected.extensions)) if selected.extensions is not None else None,
+        extensions=cast(dict[str, dict[str, Any]], dict(selected.extensions))
+        if selected.extensions is not None
+        else None,
         result_claims=selected.result_claims,
         notification_bindings=selected.notification_bindings,
         dispatcher=selected.dispatcher,
@@ -210,9 +250,11 @@ class InputRequiredResult(_RawValue):
     request_state: str | None = None
 
     @model_validator(mode="after")
-    def _requires_input_signal(self) -> "InputRequiredResult":
+    def _requires_input_signal(self) -> InputRequiredResult:
         if self.input_requests is None and self.request_state is None:
-            raise ValueError("input_required results need input_requests or request_state")
+            raise ValueError(
+                "input_required results need input_requests or request_state"
+            )
         return self
 
 
@@ -265,20 +307,27 @@ def _attribute(value: Any, name: str, default: Any = None) -> Any:
     if isinstance(value, Mapping):
         if name in value:
             return value[name]
-        camel = name.split("_")[0] + "".join(part.title() for part in name.split("_")[1:])
+        camel = name.split("_")[0] + "".join(
+            part.title() for part in name.split("_")[1:]
+        )
         return value.get(camel, default)
     return getattr(value, name, default)
 
 
 def _raw_content(value: Any) -> tuple[Mapping[str, Any], ...]:
     content = _attribute(value, "content", ())
-    if not isinstance(content, Sequence) or isinstance(content, (str, bytes, bytearray)):
+    if not isinstance(content, Sequence) or isinstance(
+        content, (str, bytes, bytearray)
+    ):
         return ()
     return tuple(_dump(item) for item in content)
 
 
 def _input_required(value: Any) -> InputRequiredResult | None:
-    if _attribute(value, "result_type") != "input_required" and _attribute(value, "resultType") != "input_required":
+    if (
+        _attribute(value, "result_type") != "input_required"
+        and _attribute(value, "resultType") != "input_required"
+    ):
         return None
     requests = _attribute(value, "input_requests")
     if requests is None:
@@ -287,7 +336,10 @@ def _input_required(value: Any) -> InputRequiredResult | None:
     return InputRequiredResult(
         raw=value,
         input_requests=cast(Mapping[str, Any] | None, plain_requests),
-        request_state=cast(str | None, _attribute(value, "request_state", _attribute(value, "requestState"))),
+        request_state=cast(
+            str | None,
+            _attribute(value, "request_state", _attribute(value, "requestState")),
+        ),
     )
 
 
@@ -297,8 +349,12 @@ def _tool(value: Any) -> Tool:
         name=str(_attribute(value, "name", "")),
         title=_attribute(value, "title"),
         description=_attribute(value, "description"),
-        input_schema=cast(Mapping[str, Any] | bool, _attribute(value, "input_schema", {})),
-        output_schema=cast(Mapping[str, Any] | bool | None, _attribute(value, "output_schema")),
+        input_schema=cast(
+            Mapping[str, Any] | bool, _attribute(value, "input_schema", {})
+        ),
+        output_schema=cast(
+            Mapping[str, Any] | bool | None, _attribute(value, "output_schema")
+        ),
     )
 
 
@@ -430,7 +486,9 @@ class AsyncDirectClient:
         workspace_root: str | None = None,
     ) -> None:
         if not math.isfinite(timeout) or timeout <= 0:
-            raise ModelValidationError("timeout must be positive and finite", details={"operation": "client"})
+            raise ModelValidationError(
+                "timeout must be positive and finite", details={"operation": "client"}
+            )
         self._session = session
         self._timeout = timeout
         self._validate_schemas = validate_schemas
@@ -461,7 +519,9 @@ class AsyncDirectClient:
     def final_trace(self) -> TraceResult | None:
         """Immutable finalized stable trace, if available."""
 
-        return self._trace_bridge.final_trace if self._trace_bridge is not None else None
+        return (
+            self._trace_bridge.final_trace if self._trace_bridge is not None else None
+        )
 
     def _trace_evidence(self) -> Mapping[str, Any] | None:
         if self._trace_bridge is None:
@@ -469,9 +529,12 @@ class AsyncDirectClient:
         try:
             return self._trace_bridge.partial_evidence()
         except Exception:
-            return {"evidence_mode": "unavailable", "limitations": ("capture_incomplete",)}
+            return {
+                "evidence_mode": "unavailable",
+                "limitations": ("capture_incomplete",),
+            }
 
-    async def __aenter__(self) -> "AsyncDirectClient":
+    async def __aenter__(self) -> AsyncDirectClient:
         if self._closed:
             raise RuntimeError("direct client is closed")
         if self._entered:
@@ -505,7 +568,9 @@ class AsyncDirectClient:
         if self._closed or not self._entered:
             raise RuntimeError("direct client must be entered before use")
 
-    def _evidence(self, operation: str, phase: Literal["started", "succeeded", "failed"]) -> Mapping[str, Any]:
+    def _evidence(
+        self, operation: str, phase: Literal["started", "succeeded", "failed"]
+    ) -> Mapping[str, Any]:
         if self._evidence_provider is None:
             return {"operation": operation, "phase": phase, "captured": False}
         try:
@@ -530,12 +595,23 @@ class AsyncDirectClient:
                     for key, item in bounded.items()
                     if str(key) not in {"operation", "phase", "captured"}
                 }
-                return {"operation": operation, "phase": phase, "captured": True, **safe_data}
+                return {
+                    "operation": operation,
+                    "phase": phase,
+                    "captured": True,
+                    **safe_data,
+                }
         except Exception:
             pass
         return {"operation": operation, "phase": phase, "captured": False}
 
-    def _emit_event(self, operation: str, phase: Literal["started", "succeeded", "failed"], *, error_kind: str | None = None) -> None:
+    def _emit_event(
+        self,
+        operation: str,
+        phase: Literal["started", "succeeded", "failed"],
+        *,
+        error_kind: str | None = None,
+    ) -> None:
         if self._event_hook is None:
             return
         try:
@@ -570,7 +646,9 @@ class AsyncDirectClient:
             details=details,
         )
 
-    def _transport_failure(self, operation: str, error: BaseException) -> TransportError:
+    def _transport_failure(
+        self, operation: str, error: BaseException
+    ) -> TransportError:
         del error
         self._emit_event(operation, "failed", error_kind="transport")
         return TransportError(
@@ -580,7 +658,11 @@ class AsyncDirectClient:
                 "phase": "transport",
                 "partial_evidence": self._evidence(operation, "failed"),
                 "error_kind": "transport",
-                **({"trace_evidence": self._trace_evidence()} if self._trace_evidence() is not None else {}),
+                **(
+                    {"trace_evidence": self._trace_evidence()}
+                    if self._trace_evidence() is not None
+                    else {}
+                ),
             },
         )
 
@@ -593,7 +675,11 @@ class AsyncDirectClient:
                 "phase": "protocol",
                 "timeout_seconds": timeout,
                 "partial_evidence": self._evidence(operation, "failed"),
-                **({"trace_evidence": self._trace_evidence()} if self._trace_evidence() is not None else {}),
+                **(
+                    {"trace_evidence": self._trace_evidence()}
+                    if self._trace_evidence() is not None
+                    else {}
+                ),
             },
         )
 
@@ -605,7 +691,11 @@ class AsyncDirectClient:
                 "operation": operation,
                 "phase": "protocol",
                 "partial_evidence": self._evidence(operation, "failed"),
-                **({"trace_evidence": self._trace_evidence()} if self._trace_evidence() is not None else {}),
+                **(
+                    {"trace_evidence": self._trace_evidence()}
+                    if self._trace_evidence() is not None
+                    else {}
+                ),
             },
         )
 
@@ -616,13 +706,17 @@ class AsyncDirectClient:
         module = type(error).__module__
         return module.startswith(("anyio", "httpx", "httpcore"))
 
-    async def _execute(self, operation: str, awaitable: Awaitable[_T], timeout: float | None = None) -> _T:
+    async def _execute(
+        self, operation: str, awaitable: Awaitable[_T], timeout: float | None = None
+    ) -> _T:
         effective_timeout = self._timeout if timeout is None else timeout
         if not math.isfinite(effective_timeout) or effective_timeout <= 0:
             close = getattr(awaitable, "close", None)
             if callable(close):
                 close()
-            raise ModelValidationError("timeout must be positive", details={"operation": operation})
+            raise ModelValidationError(
+                "timeout must be positive", details={"operation": operation}
+            )
         self._emit_event(operation, "started")
         try:
             # ClientSession owns an AnyIO cancel scope entered by its
@@ -668,7 +762,7 @@ class AsyncDirectClient:
             return self._initialized
         try:
             raw = await self._execute("initialize", self._session.initialize())
-        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
+        except (TransportError, OperationTimeout, OperationCancelled):
             raise
         info = _dump(_attribute(raw, "server_info", {}))
         result = InitializationResult(
@@ -684,9 +778,15 @@ class AsyncDirectClient:
     async def list_tools(self, *, cursor: str | None = None) -> ToolsPage:
         self._require_open()
         try:
-            raw = await self._execute("tools/list", self._session.list_tools(params=_params(cursor)))
-            return ToolsPage(raw=raw, tools=tuple(_tool(item) for item in _attribute(raw, "tools", ())), next_cursor=_attribute(raw, "next_cursor"))
-        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
+            raw = await self._execute(
+                "tools/list", self._session.list_tools(params=_params(cursor))
+            )
+            return ToolsPage(
+                raw=raw,
+                tools=tuple(_tool(item) for item in _attribute(raw, "tools", ())),
+                next_cursor=_attribute(raw, "next_cursor"),
+            )
+        except (TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
             raise self._protocol_failure("tools/list", exc) from exc
@@ -700,9 +800,17 @@ class AsyncDirectClient:
     async def list_resources(self, *, cursor: str | None = None) -> ResourcesPage:
         self._require_open()
         try:
-            raw = await self._execute("resources/list", self._session.list_resources(params=_params(cursor)))
-            return ResourcesPage(raw=raw, resources=tuple(_resource(item) for item in _attribute(raw, "resources", ())), next_cursor=_attribute(raw, "next_cursor"))
-        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
+            raw = await self._execute(
+                "resources/list", self._session.list_resources(params=_params(cursor))
+            )
+            return ResourcesPage(
+                raw=raw,
+                resources=tuple(
+                    _resource(item) for item in _attribute(raw, "resources", ())
+                ),
+                next_cursor=_attribute(raw, "next_cursor"),
+            )
+        except (TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
             raise self._protocol_failure("resources/list", exc) from exc
@@ -713,12 +821,24 @@ class AsyncDirectClient:
             pages.extend(page.resources)
         return tuple(pages)
 
-    async def list_resource_templates(self, *, cursor: str | None = None) -> ResourceTemplatesPage:
+    async def list_resource_templates(
+        self, *, cursor: str | None = None
+    ) -> ResourceTemplatesPage:
         self._require_open()
         try:
-            raw = await self._execute("resources/templates/list", self._session.list_resource_templates(params=_params(cursor)))
-            return ResourceTemplatesPage(raw=raw, resource_templates=tuple(_resource_template(item) for item in _attribute(raw, "resource_templates", ())), next_cursor=_attribute(raw, "next_cursor"))
-        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
+            raw = await self._execute(
+                "resources/templates/list",
+                self._session.list_resource_templates(params=_params(cursor)),
+            )
+            return ResourceTemplatesPage(
+                raw=raw,
+                resource_templates=tuple(
+                    _resource_template(item)
+                    for item in _attribute(raw, "resource_templates", ())
+                ),
+                next_cursor=_attribute(raw, "next_cursor"),
+            )
+        except (TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
             raise self._protocol_failure("resources/templates/list", exc) from exc
@@ -732,8 +852,14 @@ class AsyncDirectClient:
     async def list_prompts(self, *, cursor: str | None = None) -> PromptsPage:
         self._require_open()
         try:
-            raw = await self._execute("prompts/list", self._session.list_prompts(params=_params(cursor)))
-            return PromptsPage(raw=raw, prompts=tuple(_prompt(item) for item in _attribute(raw, "prompts", ())), next_cursor=_attribute(raw, "next_cursor"))
+            raw = await self._execute(
+                "prompts/list", self._session.list_prompts(params=_params(cursor))
+            )
+            return PromptsPage(
+                raw=raw,
+                prompts=tuple(_prompt(item) for item in _attribute(raw, "prompts", ())),
+                next_cursor=_attribute(raw, "next_cursor"),
+            )
         except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
@@ -755,7 +881,10 @@ class AsyncDirectClient:
             if cursor is None:
                 return
             if cursor in seen:
-                raise ProtocolError("MCP pagination cursor repeated", details={"phase": "pagination", "retryable": False})
+                raise ProtocolError(
+                    "MCP pagination cursor repeated",
+                    details={"phase": "pagination", "retryable": False},
+                )
             seen.add(cursor)
 
     async def read_resource(
@@ -815,7 +944,11 @@ class AsyncDirectClient:
             required = _input_required(raw)
             if required is not None:
                 return required
-            return PromptResult(raw=raw, description=_attribute(raw, "description"), messages=tuple(_dump(item) for item in _attribute(raw, "messages", ())))
+            return PromptResult(
+                raw=raw,
+                description=_attribute(raw, "description"),
+                messages=tuple(_dump(item) for item in _attribute(raw, "messages", ())),
+            )
         except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
@@ -913,24 +1046,35 @@ class AsyncDirectClient:
                     "tool JSON Schema validation failed", details=details
                 ) from None
             raise
-        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
+        except (TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
             raise self._protocol_failure("tools/call", exc) from exc
 
-    async def complete(self, reference: Any, argument: Mapping[str, str], context_arguments: Mapping[str, str] | None = None) -> CompletionResult:
+    async def complete(
+        self,
+        reference: Any,
+        argument: Mapping[str, str],
+        context_arguments: Mapping[str, str] | None = None,
+    ) -> CompletionResult:
         """Request server completion through the official ClientSession."""
 
         self._require_open()
         try:
             raw = await self._execute(
                 "completion/complete",
-                self._session.complete(reference, dict(argument), dict(context_arguments) if context_arguments is not None else None),
+                self._session.complete(
+                    reference,
+                    dict(argument),
+                    dict(context_arguments) if context_arguments is not None else None,
+                ),
             )
             completion = _attribute(raw, "completion")
             return CompletionResult(
                 raw=raw,
-                values=tuple(str(value) for value in (_attribute(completion, "values", ()) or ())),
+                values=tuple(
+                    str(value) for value in (_attribute(completion, "values", ()) or ())
+                ),
                 total=_attribute(completion, "total"),
                 has_more=_attribute(completion, "has_more"),
             )
@@ -942,7 +1086,9 @@ class AsyncDirectClient:
     async def subscribe_resource(self, uri: str, *, meta: Any = None) -> EmptyResult:
         self._require_open()
         try:
-            raw = await self._execute("resources/subscribe", self._session.subscribe_resource(uri, meta=meta))
+            raw = await self._execute(
+                "resources/subscribe", self._session.subscribe_resource(uri, meta=meta)
+            )
             return EmptyResult(raw=raw, result_type=_attribute(raw, "result_type"))
         except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
@@ -952,7 +1098,10 @@ class AsyncDirectClient:
     async def unsubscribe_resource(self, uri: str, *, meta: Any = None) -> EmptyResult:
         self._require_open()
         try:
-            raw = await self._execute("resources/unsubscribe", self._session.unsubscribe_resource(uri, meta=meta))
+            raw = await self._execute(
+                "resources/unsubscribe",
+                self._session.unsubscribe_resource(uri, meta=meta),
+            )
             return EmptyResult(raw=raw, result_type=_attribute(raw, "result_type"))
         except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
@@ -971,11 +1120,25 @@ class AsyncDirectClient:
 
     async def set_logging_level(self, level: str, *, meta: Any = None) -> EmptyResult:
         self._require_open()
-        allowed = {"debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"}
+        allowed = {
+            "debug",
+            "info",
+            "notice",
+            "warning",
+            "error",
+            "critical",
+            "alert",
+            "emergency",
+        }
         if level not in allowed:
-            raise ModelValidationError("unsupported logging level", details={"operation": "logging/setLevel"})
+            raise ModelValidationError(
+                "unsupported logging level", details={"operation": "logging/setLevel"}
+            )
         try:
-            raw = await self._execute("logging/setLevel", self._session.set_logging_level(cast(Any, level), meta=meta))
+            raw = await self._execute(
+                "logging/setLevel",
+                self._session.set_logging_level(cast(Any, level), meta=meta),
+            )
             return EmptyResult(raw=raw, result_type=_attribute(raw, "result_type"))
         except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
@@ -992,10 +1155,20 @@ class AsyncDirectClient:
         meta: Any = None,
     ) -> None:
         self._require_open()
-        if not math.isfinite(progress) or (total is not None and not math.isfinite(total)):
-            raise ModelValidationError("progress values must be finite", details={"operation": "notifications/progress"})
+        if not math.isfinite(progress) or (
+            total is not None and not math.isfinite(total)
+        ):
+            raise ModelValidationError(
+                "progress values must be finite",
+                details={"operation": "notifications/progress"},
+            )
         try:
-            await self._execute("notifications/progress", self._session.send_progress_notification(progress_token, progress, total, message, meta=meta))
+            await self._execute(
+                "notifications/progress",
+                self._session.send_progress_notification(
+                    progress_token, progress, total, message, meta=meta
+                ),
+            )
         except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
@@ -1004,7 +1177,9 @@ class AsyncDirectClient:
     async def send_notification(self, notification: Any) -> None:
         self._require_open()
         try:
-            await self._execute("notification", self._session.send_notification(notification))
+            await self._execute(
+                "notification", self._session.send_notification(notification)
+            )
         except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
@@ -1013,11 +1188,16 @@ class AsyncDirectClient:
     async def send_roots_list_changed(self) -> None:
         self._require_open()
         try:
-            await self._execute("notifications/roots/list_changed", self._session.send_roots_list_changed())
+            await self._execute(
+                "notifications/roots/list_changed",
+                self._session.send_roots_list_changed(),
+            )
         except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
-            raise self._protocol_failure("notifications/roots/list_changed", exc) from exc
+            raise self._protocol_failure(
+                "notifications/roots/list_changed", exc
+            ) from exc
 
     def register_callbacks(self, **callbacks: Any) -> NoReturn:
         """Reject post-construction callback mutation explicitly.
@@ -1063,35 +1243,35 @@ __all__ = [
     "AsyncDirectClient",
     "CallToolResult",
     "ClientSessionOptions",
-    "create_client_session",
-    "DirectEvidenceProvider",
     "DirectEventHook",
+    "DirectEvidenceProvider",
     "DirectOperationEvent",
-    "PromptInfo",
-    "ResourceInfo",
-    "TemplateInfo",
-    "ToolInfo",
     "GetPromptResult",
-    "InitializeResult",
     "InitializationResult",
+    "InitializeResult",
     "InputRequiredResult",
     "ListPromptsResult",
-    "ListResourcesResult",
     "ListResourceTemplatesResult",
+    "ListResourcesResult",
     "ListToolsResult",
     "Prompt",
+    "PromptInfo",
     "PromptPage",
     "PromptResult",
+    "PromptsPage",
     "Resource",
+    "ResourceInfo",
+    "ResourcePage",
     "ResourceReadResult",
     "ResourceTemplate",
     "ResourceTemplatePage",
     "ResourceTemplatesPage",
-    "ResourcePage",
     "ResourcesPage",
+    "TemplateInfo",
     "Tool",
     "ToolCallResult",
+    "ToolInfo",
     "ToolPage",
     "ToolsPage",
-    "PromptsPage",
+    "create_client_session",
 ]

@@ -7,8 +7,8 @@ import json
 import os
 import subprocess
 import sys
-from typing import Any
 import uuid
+from typing import Any
 
 
 def _send(value: object) -> None:
@@ -146,8 +146,7 @@ def _invoke(
             else next(
                 str(tool["name"])
                 for tool in tools
-                if isinstance(tool.get("name"), str)
-                and tool.get("name") != "failure"
+                if isinstance(tool.get("name"), str) and tool.get("name") != "failure"
             )
         )
         arguments = request.get("arguments")
@@ -204,9 +203,7 @@ def main() -> int:
                 for item in params.get("prompt", ())
                 if isinstance(item, dict) and item.get("type") == "text"
             )
-            server, tool, arguments, result = _invoke(
-                servers, _request_from_text(text)
-            )
+            server, tool, arguments, result = _invoke(servers, _request_from_text(text))
             call_id = "matrix-acp-" + uuid.uuid4().hex
             _send(
                 {
@@ -228,13 +225,19 @@ def main() -> int:
                 }
             )
             content = result.get("content")
-            response_text = "".join(
-                str(item.get("text", ""))
-                for item in content
-                if isinstance(item, dict) and isinstance(item.get("text"), str)
-            ) if isinstance(content, list) else ""
+            response_text = (
+                "".join(
+                    str(item.get("text", ""))
+                    for item in content
+                    if isinstance(item, dict) and isinstance(item.get("text"), str)
+                )
+                if isinstance(content, list)
+                else ""
+            )
             if not response_text:
-                response_text = json.dumps(result, sort_keys=True, separators=(",", ":"))
+                response_text = json.dumps(
+                    result, sort_keys=True, separators=(",", ":")
+                )
             _send(
                 {
                     "jsonrpc": "2.0",

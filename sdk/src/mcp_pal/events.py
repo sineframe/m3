@@ -7,26 +7,27 @@ boundary. This module owns construction helpers only; in particular,
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from threading import Lock
-import time
-from typing import Any, Callable, Mapping
+from typing import Any
 from uuid import uuid4
 
 from .types import (
-    Event,
+    EVENT_SCHEMA_ID,
+    EVENT_SCHEMA_VERSION,
     ConnectionId,
+    Event,
     EventDirection,
     EventId,
     EventKind,
     EventOrigin,
-    PayloadRef,
     EventSource,
-    EVENT_SCHEMA_ID,
-    EVENT_SCHEMA_VERSION,
+    EvidenceRef,
     ExecutionId,
     LifecyclePhase,
-    EvidenceRef,
+    PayloadRef,
     ReasoningState,
     ReasoningVisibility,
     RequestLink,
@@ -55,7 +56,9 @@ class EventSequence:
 
         with self._lock:
             if self._next_sequence != sequence + 1:
-                raise RuntimeError("cannot roll back a sequence that is no longer reserved")
+                raise RuntimeError(
+                    "cannot roll back a sequence that is no longer reserved"
+                )
             self._next_sequence = sequence
 
     def peek(self) -> int:
@@ -74,7 +77,11 @@ class RequestSequence:
         self._lock = Lock()
 
     def next(self, connection_id: ConnectionId | str) -> int:
-        key = connection_id.root if isinstance(connection_id, ConnectionId) else connection_id
+        key = (
+            connection_id.root
+            if isinstance(connection_id, ConnectionId)
+            else connection_id
+        )
         with self._lock:
             sequence = self._next_by_connection.get(key, self._start)
             self._next_by_connection[key] = sequence + 1
@@ -83,10 +90,16 @@ class RequestSequence:
     def rollback(self, connection_id: ConnectionId | str, sequence: int) -> None:
         """Return the most recently reserved request sequence after failure."""
 
-        key = connection_id.root if isinstance(connection_id, ConnectionId) else connection_id
+        key = (
+            connection_id.root
+            if isinstance(connection_id, ConnectionId)
+            else connection_id
+        )
         with self._lock:
             if self._next_by_connection.get(key) != sequence + 1:
-                raise RuntimeError("cannot roll back a request sequence that is no longer reserved")
+                raise RuntimeError(
+                    "cannot roll back a request sequence that is no longer reserved"
+                )
             if sequence == self._start:
                 self._next_by_connection.pop(key)
             else:
@@ -106,7 +119,11 @@ class EventFactory:
         monotonic_clock_ns: Callable[[], int] | None = None,
         source: str = "mcp_pal",
     ) -> None:
-        self.execution_id = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(execution_id)
+        self.execution_id = (
+            execution_id
+            if isinstance(execution_id, ExecutionId)
+            else ExecutionId(execution_id)
+        )
         self._allocator = allocator or EventSequence()
         self._request_allocator = request_allocator or RequestSequence()
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -150,19 +167,48 @@ class EventFactory:
                 now = timestamp or self._clock()
                 offset = monotonic_offset_ms
                 if offset is None:
-                    offset = (self._monotonic_clock_ns() - self._baseline_ns) / 1_000_000
-                normalized_event_id = event_id if isinstance(event_id, EventId) else EventId(event_id) if event_id is not None else EventId(str(uuid4()))
-                normalized_session_id = session_id if isinstance(session_id, SessionId) else SessionId(session_id) if session_id is not None else None
-                normalized_turn_id = turn_id if isinstance(turn_id, TurnId) else TurnId(turn_id) if turn_id is not None else None
-                normalized_connection_id = connection_id if isinstance(connection_id, ConnectionId) else ConnectionId(connection_id) if connection_id is not None else None
+                    offset = (
+                        self._monotonic_clock_ns() - self._baseline_ns
+                    ) / 1_000_000
+                normalized_event_id = (
+                    event_id
+                    if isinstance(event_id, EventId)
+                    else EventId(event_id)
+                    if event_id is not None
+                    else EventId(str(uuid4()))
+                )
+                normalized_session_id = (
+                    session_id
+                    if isinstance(session_id, SessionId)
+                    else SessionId(session_id)
+                    if session_id is not None
+                    else None
+                )
+                normalized_turn_id = (
+                    turn_id
+                    if isinstance(turn_id, TurnId)
+                    else TurnId(turn_id)
+                    if turn_id is not None
+                    else None
+                )
+                normalized_connection_id = (
+                    connection_id
+                    if isinstance(connection_id, ConnectionId)
+                    else ConnectionId(connection_id)
+                    if connection_id is not None
+                    else None
+                )
                 if (
                     correlation is not None
                     and correlation.request_sequence is None
                     and normalized_connection_id is not None
-                    and correlation.direction in {EventDirection.CLIENT_TO_SERVER, EventDirection.SDK_TO_HARNESS}
+                    and correlation.direction
+                    in {EventDirection.CLIENT_TO_SERVER, EventDirection.SDK_TO_HARNESS}
                 ):
                     allocated_connection = normalized_connection_id
-                    allocated_sequence = self._request_allocator.next(allocated_connection)
+                    allocated_sequence = self._request_allocator.next(
+                        allocated_connection
+                    )
                     allocated_request = (allocated_connection, allocated_sequence)
                     correlation = RequestLink(
                         jsonrpc_id=correlation.jsonrpc_id,
@@ -184,7 +230,8 @@ class EventFactory:
                     lifecycle_phase=lifecycle_phase,
                     payload=payload or {},
                     payload_ref=payload_ref,
-                    provenance=provenance or EventSource(origin=EventOrigin.NORMALIZED, source=self._source),
+                    provenance=provenance
+                    or EventSource(origin=EventOrigin.NORMALIZED, source=self._source),
                     raw_evidence_ref=raw_evidence_ref,
                     reasoning=reasoning,
                 )
@@ -198,21 +245,21 @@ class EventFactory:
 __all__ = [
     "EVENT_SCHEMA_ID",
     "EVENT_SCHEMA_VERSION",
-    "Event",
     "ConnectionId",
+    "Event",
     "EventDirection",
     "EventFactory",
     "EventId",
     "EventKind",
     "EventOrigin",
-    "PayloadRef",
+    "EventSequence",
     "EventSource",
+    "EvidenceRef",
     "ExecutionId",
     "LifecyclePhase",
-    "RequestSequence",
-    "EventSequence",
-    "EvidenceRef",
+    "PayloadRef",
     "ReasoningState",
     "ReasoningVisibility",
     "RequestLink",
+    "RequestSequence",
 ]

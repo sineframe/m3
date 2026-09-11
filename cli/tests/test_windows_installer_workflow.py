@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
@@ -36,14 +35,16 @@ def test_installer_parser_uses_native_powershell_parser_after_rendering() -> Non
     job = _quality_job()
 
     render_position = job.index("$template.Replace('@MCP_PAL_VERSION@', $version)")
-    parser_position = job.index("[System.Management.Automation.Language.Parser]::ParseFile")
+    parser_position = job.index(
+        "[System.Management.Automation.Language.Parser]::ParseFile"
+    )
 
     assert render_position < parser_position
     assert "shell: pwsh" in job
     assert "[ref] $tokens" in job
     assert "[ref] $parseErrors" in job
     assert "$parseErrors.Count -gt 0" in job
-    assert "throw \"PowerShell parser found syntax errors" in job
+    assert 'throw "PowerShell parser found syntax errors' in job
 
 
 def test_ci_concurrency_separates_scheduled_and_push_runs() -> None:

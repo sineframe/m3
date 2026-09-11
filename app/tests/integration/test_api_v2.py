@@ -1,8 +1,8 @@
-from pathlib import Path
 import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
@@ -11,22 +11,22 @@ from mcp_pal import (
     ACPAgent,
     AgentSpec,
     ClaudeCode,
+    EvaluationId,
+    EvaluationResult,
+    EvaluationSource,
+    EvaluationStatus,
+    EvidenceRef,
     ExecutionPage,
+    ExecutionReport,
     ExecutionSpec,
     ExecutionState,
-    EvaluationId,
-    EvaluationSource,
-    EvaluationResult,
-    EvaluationStatus,
     MCPTestKit,
     OpenCode,
-    ExecutionReport,
     RawEvidenceIntegrityError,
-    EvidenceRef,
     RawEvidenceUnavailable,
     TextContent,
-    TraceView,
     TraceUnavailable,
+    TraceView,
     UserMessage,
 )
 from mcp_pal.storage import SQLiteExecutionStore, StorageError
@@ -37,7 +37,15 @@ from mcp_pal_app.settings import Settings
 
 def _payload(run_id=None):
     spec = DirectSpec(
-        servers=(ServerBinding(server=StdioServer(name="echo", command=sys.executable, args=("-m", "mcp_pal.fixtures.echo_server"))),),
+        servers=(
+            ServerBinding(
+                server=StdioServer(
+                    name="echo",
+                    command=sys.executable,
+                    args=("-m", "mcp_pal.fixtures.echo_server"),
+                )
+            ),
+        ),
         operation=CallTool(server="echo", name="echo", arguments={"text": "hello"}),
         run_id=run_id,
     )
@@ -96,37 +104,68 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         body = created.json()
         assert body["version"] == "v2"
         execution_id = body["execution_id"]
-        assert TypeAdapter(ExecutionSpec).validate_python(body["spec"]) == DirectSpec.model_validate(payload["spec"])
+        assert TypeAdapter(ExecutionSpec).validate_python(
+            body["spec"]
+        ) == DirectSpec.model_validate(payload["spec"])
         assert body["spec"]["run_id"] == "api-run"
         assert body["snapshot"]["run_id"] == "api-run"
-        assert body["snapshot"]["lifecycle"] in {"created", "queued", "starting", "finished"}
+        assert body["snapshot"]["lifecycle"] in {
+            "created",
+            "queued",
+            "starting",
+            "finished",
+        }
         listed = client.get("/api/v2/executions")
-        assert TypeAdapter(ExecutionPage).validate_python(listed.json()["page"]).total == 1
+        assert (
+            TypeAdapter(ExecutionPage).validate_python(listed.json()["page"]).total == 1
+        )
         finished = _wait_finished(client, execution_id)
         assert finished["snapshot"]["outcome"] == "completed"
-        page = client.get("/api/v2/executions", params={"limit": 1, "outcome": "completed"})
+        page = client.get(
+            "/api/v2/executions", params={"limit": 1, "outcome": "completed"}
+        )
         typed_page = TypeAdapter(ExecutionPage).validate_python(page.json()["page"])
         assert typed_page.total == 1 and len(typed_page.items) == 1
         fetched = client.get(f"/api/v2/executions/{execution_id}")
         assert fetched.status_code == 200
-        assert TypeAdapter(ExecutionSpec).validate_python(fetched.json()["spec"]) == TypeAdapter(ExecutionSpec).validate_python(body["spec"])
+        assert TypeAdapter(ExecutionSpec).validate_python(
+            fetched.json()["spec"]
+        ) == TypeAdapter(ExecutionSpec).validate_python(body["spec"])
         assert fetched.json()["snapshot"]["run_id"] == "api-run"
         report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert report.status_code == 200
-        parsed_report = TypeAdapter(ExecutionReport).validate_python(report.json()["report"])
+        parsed_report = TypeAdapter(ExecutionReport).validate_python(
+            report.json()["report"]
+        )
         full_trace = TypeAdapter(TraceView).validate_python(report.json()["trace"])
         assert report.json()["report"]["direct_result"]["kind"] == "call_tool"
         assert report.json()["report"]["evidence"]["completeness"] == "partial"
         assert report.json()["trace"]["schema_version"] == "1.1"
-        bounded = client.get(f"/api/v2/executions/{execution_id}/report", params={"event_limit": 2})
+        bounded = client.get(
+            f"/api/v2/executions/{execution_id}/report", params={"event_limit": 2}
+        )
         assert bounded.json()["report"]["events_truncated"] is True
-        assert TypeAdapter(TraceView).validate_python(bounded.json()["trace"]) == full_trace
+        assert (
+            TypeAdapter(TraceView).validate_python(bounded.json()["trace"])
+            == full_trace
+        )
         next_cursor = bounded.json()["report"]["next_after_sequence"]
         assert next_cursor == bounded.json()["report"]["events"][-1]["sequence"]
-        follow_up = client.get(f"/api/v2/executions/{execution_id}/report", params={"after_sequence": next_cursor, "event_limit": 2})
-        assert all(event["sequence"] > next_cursor for event in follow_up.json()["report"]["events"])
-        assert not ({event["sequence"] for event in bounded.json()["report"]["events"]} & {event["sequence"] for event in follow_up.json()["report"]["events"]})
-        artifact_limited = client.get(f"/api/v2/executions/{execution_id}/report", params={"artifact_limit": 1})
+        follow_up = client.get(
+            f"/api/v2/executions/{execution_id}/report",
+            params={"after_sequence": next_cursor, "event_limit": 2},
+        )
+        assert all(
+            event["sequence"] > next_cursor
+            for event in follow_up.json()["report"]["events"]
+        )
+        assert not (
+            {event["sequence"] for event in bounded.json()["report"]["events"]}
+            & {event["sequence"] for event in follow_up.json()["report"]["events"]}
+        )
+        artifact_limited = client.get(
+            f"/api/v2/executions/{execution_id}/report", params={"artifact_limit": 1}
+        )
         assert artifact_limited.json()["report"]["artifact_count"] == 0
         assert artifact_limited.json()["report"]["artifacts_truncated"] is False
 
@@ -155,10 +194,15 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         )
         evaluated_report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert evaluated_report.status_code == 200
-        evaluated_parsed = TypeAdapter(ExecutionReport).validate_python(evaluated_report.json()["report"])
+        evaluated_parsed = TypeAdapter(ExecutionReport).validate_python(
+            evaluated_report.json()["report"]
+        )
         saved_evaluation = evaluated_report.json()["report"]["evaluations"][0]
         assert saved_evaluation["score"] == 0.91
-        assert saved_evaluation["rationale"] == "The local echo response matched the request."
+        assert (
+            saved_evaluation["rationale"]
+            == "The local echo response matched the request."
+        )
         assert saved_evaluation["metrics"] == {"quality": 0.91}
         assert saved_evaluation["provenance"]["provider"] == "test-suite"
         assert saved_evaluation["provenance"]["rubric_id"] == "echo-quality"
@@ -170,7 +214,9 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
     reopened = SQLiteExecutionStore(database)
     try:
         assert reopened.get_snapshot(execution_id) == parsed_report.snapshot
-        assert reopened.get_execution_spec(execution_id) == TypeAdapter(ExecutionSpec).validate_python(body["spec"])
+        assert reopened.get_execution_spec(execution_id) == TypeAdapter(
+            ExecutionSpec
+        ).validate_python(body["spec"])
         assert reopened.get_report(execution_id) == evaluated_parsed
         assert reopened.get_trace_view(execution_id) == full_trace
     finally:
@@ -180,17 +226,23 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
 def test_v2_feedback_reads_manifest_and_optional_baseline(tmp_path):
     database = Path(tmp_path).resolve() / "feedback.sqlite"
     store = SQLiteExecutionStore(database)
-    store.save_test_run("baseline-run", {"run_id": "baseline-run", "status": "finished"})
+    store.save_test_run(
+        "baseline-run", {"run_id": "baseline-run", "status": "finished"}
+    )
     store.save_test_run("current-run", {"run_id": "current-run", "status": "finished"})
     application = create_app(Settings(database_path=str(database)), v2_store=store)
     with TestClient(application) as client:
-        response = client.get("/api/v2/feedback/current-run", params={"baseline_run_id": "baseline-run"})
+        response = client.get(
+            "/api/v2/feedback/current-run", params={"baseline_run_id": "baseline-run"}
+        )
         assert response.status_code == 200
         body = response.json()
         assert body["version"] == "v2"
         assert body["feedback"]["run_id"] == "current-run"
         assert body["feedback"]["comparison"]["baseline_run_id"] == "baseline-run"
-        missing = client.get("/api/v2/feedback/current-run", params={"baseline_run_id": "missing"})
+        missing = client.get(
+            "/api/v2/feedback/current-run", params={"baseline_run_id": "missing"}
+        )
         assert missing.status_code == 404
         assert missing.json()["error"]["code"] == "feedback_baseline_not_found"
         unknown = client.get("/api/v2/feedback/missing")
@@ -202,7 +254,7 @@ def test_v2_feedback_reads_manifest_and_optional_baseline(tmp_path):
 def test_v2_feedback_reads_real_two_run_interface_and_score_changes(tmp_path):
     """Exercise pytest plugin -> SQLite -> HTTP feedback without fake rows."""
 
-    source = '''
+    source = """
 import os
 
 from mcp.server.lowlevel import Server
@@ -258,7 +310,7 @@ def test_order_tool_catalog():
             assert tools.tools[0].name == "find_order"
         expect(client.final_trace).to_have_trace()
         kit.evaluate(client.final_trace, "project.tool-description-quality.v1")
-'''
+"""
     test_file = tmp_path / "test_tool_feedback.py"
     test_file.write_text(source, encoding="utf-8")
     database = tmp_path / "feedback-flow.sqlite"
@@ -266,7 +318,9 @@ def test_order_tool_catalog():
 
     def run(description, score, baseline=None):
         environment = os.environ.copy()
-        environment["PYTHONPATH"] = sdk_source + os.pathsep + environment.get("PYTHONPATH", "")
+        environment["PYTHONPATH"] = (
+            sdk_source + os.pathsep + environment.get("PYTHONPATH", "")
+        )
         environment["TEST_TOOL_DESCRIPTION"] = description
         environment["TEST_EVAL_SCORE"] = str(score)
         command = [
@@ -360,7 +414,10 @@ def test_order_tool_catalog():
     assert interface_change["after"]["description"] == (
         "Find an order by its customer-visible order ID."
     )
-    assert interface_change["before"]["inputSchema"] == interface_change["after"]["inputSchema"]
+    assert (
+        interface_change["before"]["inputSchema"]
+        == interface_change["after"]["inputSchema"]
+    )
 
     evaluation_change = next(
         item
@@ -383,7 +440,9 @@ def test_v2_errors_and_deletion_constraints(tmp_path):
         assert missing.status_code == 404
         assert missing.json()["version"] == "v2"
         assert missing.json()["error"]["code"] == "execution_not_found"
-        unsafe = client.post("/api/v2/executions", json={"spec": {"pickle": "arbitrary"}})
+        unsafe = client.post(
+            "/api/v2/executions", json={"spec": {"pickle": "arbitrary"}}
+        )
         assert unsafe.status_code == 422
         assert unsafe.json()["error"]["code"] == "invalid_execution_spec"
         created = client.post("/api/v2/executions", json=_slow_payload()).json()
@@ -393,16 +452,27 @@ def test_v2_errors_and_deletion_constraints(tmp_path):
         assert blocked.json()["error"]["code"] == "execution_active"
         cancelled = client.post(f"/api/v2/executions/{execution_id}/cancel")
         assert cancelled.status_code == 200
-        cancelled_spec = TypeAdapter(ExecutionSpec).validate_python(cancelled.json()["spec"])
+        cancelled_spec = TypeAdapter(ExecutionSpec).validate_python(
+            cancelled.json()["spec"]
+        )
         assert isinstance(cancelled_spec, DirectSpec)
         cancelled_report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert cancelled_report.status_code == 200
-        assert TypeAdapter(TraceView).validate_python(cancelled_report.json()["trace"]).outcome == "cancelled"
+        assert (
+            TypeAdapter(TraceView)
+            .validate_python(cancelled_report.json()["trace"])
+            .outcome
+            == "cancelled"
+        )
         terminal_cancel = client.post(f"/api/v2/executions/{execution_id}/cancel")
         assert terminal_cancel.status_code == 409
         deleted = client.delete(f"/api/v2/executions/{execution_id}")
         assert deleted.status_code == 200
-        assert deleted.json() == {"version": "v2", "execution_id": execution_id, "deleted": True}
+        assert deleted.json() == {
+            "version": "v2",
+            "execution_id": execution_id,
+            "deleted": True,
+        }
         assert client.get(f"/api/v2/executions/{execution_id}").status_code == 404
 
 
@@ -417,7 +487,11 @@ def test_v2_validation_and_json_metadata(tmp_path):
         created = client.post("/api/v2/executions", json={"spec": spec})
         assert created.status_code == 202
         unsafe_spec = _payload()["spec"]
-        unsafe_spec["servers"][0]["server"] = {"name": "runtime", "kind": "in_process", "factory": {"module": "not-callable"}}
+        unsafe_spec["servers"][0]["server"] = {
+            "name": "runtime",
+            "kind": "in_process",
+            "factory": {"module": "not-callable"},
+        }
         unsafe = client.post("/api/v2/executions", json={"spec": unsafe_spec})
         assert unsafe.status_code == 422
         assert unsafe.json()["error"]["code"] == "invalid_execution_spec"
@@ -444,12 +518,18 @@ def test_v2_accepts_every_serializable_execution_spec_variant(tmp_path):
         with TestClient(app) as client:
             for submitted in specs:
                 response = client.post(
-                    "/api/v2/executions", json={"spec": submitted.model_dump(mode="json")}
+                    "/api/v2/executions",
+                    json={"spec": submitted.model_dump(mode="json")},
                 )
                 assert response.status_code == 202
-                response_spec = TypeAdapter(ExecutionSpec).validate_python(response.json()["spec"])
+                response_spec = TypeAdapter(ExecutionSpec).validate_python(
+                    response.json()["spec"]
+                )
                 assert response_spec == submitted
-                assert store.get_execution_spec(response.json()["execution_id"]) == submitted
+                assert (
+                    store.get_execution_spec(response.json()["execution_id"])
+                    == submitted
+                )
     finally:
         kit.close()
         store.close()
@@ -462,17 +542,28 @@ def test_v2_evaluation_aggregate_endpoint(tmp_path):
     try:
         execution_id = "aggregate-execution"
         store.create(ExecutionState(execution_id=execution_id, run_id="aggregate-run"))
-        store.save_evaluation(execution_id, EvaluationResult(
-            evaluation_id=EvaluationId("aggregate-evaluation"), name="quality.v1",
-            status=EvaluationStatus.PASSED,
-            context={"execution_id": execution_id, "case_id": "case-1"},
-        ))
-        app = create_app(Settings(database_path=str(Path(tmp_path).resolve() / "unused.sqlite")), v2_store=store, v2_kit=kit)
+        store.save_evaluation(
+            execution_id,
+            EvaluationResult(
+                evaluation_id=EvaluationId("aggregate-evaluation"),
+                name="quality.v1",
+                status=EvaluationStatus.PASSED,
+                context={"execution_id": execution_id, "case_id": "case-1"},
+            ),
+        )
+        app = create_app(
+            Settings(database_path=str(Path(tmp_path).resolve() / "unused.sqlite")),
+            v2_store=store,
+            v2_kit=kit,
+        )
         with TestClient(app) as client:
-            response = client.post("/api/v2/evaluations/aggregate", json={
-                "group_by": ["run_id", "case_id", "evaluator"],
-                "filters": {"evaluator": "quality.v1"},
-            })
+            response = client.post(
+                "/api/v2/evaluations/aggregate",
+                json={
+                    "group_by": ["run_id", "case_id", "evaluator"],
+                    "filters": {"evaluator": "quality.v1"},
+                },
+            )
             assert response.status_code == 200
             body = response.json()
             assert body["version"] == "v2"
@@ -486,12 +577,17 @@ def test_v2_evaluation_aggregate_endpoint(tmp_path):
 def test_v2_evaluation_aggregate_validation_and_openapi(tmp_path):
     database = Path(tmp_path).resolve() / "aggregate-validation.sqlite"
     with TestClient(create_app(Settings(database_path=str(database)))) as client:
-        invalid = client.post("/api/v2/evaluations/aggregate", json={"group_by": ["not-a-label"]})
+        invalid = client.post(
+            "/api/v2/evaluations/aggregate", json={"group_by": ["not-a-label"]}
+        )
         assert invalid.status_code == 422
         assert invalid.json()["error"]["code"] == "invalid_evaluation_aggregate_query"
         for payload in (
             {"group_by": ["run_id"]},
-            {"group_by": ["run_id"], "filters": {"evaluator": ["quality.v1", "judge.v1"]}},
+            {
+                "group_by": ["run_id"],
+                "filters": {"evaluator": ["quality.v1", "judge.v1"]},
+            },
         ):
             mixed = client.post("/api/v2/evaluations/aggregate", json=payload)
             assert mixed.status_code == 422
@@ -506,18 +602,36 @@ def test_v2_capability_doc_lists_every_route(tmp_path):
     source = Path(__file__).parents[2] / "docs" / "api-v2.md"
     text = source.read_text()
     import re
+
     documented = set(re.findall(r"`(GET|POST|DELETE|PUT|PATCH) (/api/v2/[^`]+)`", text))
-    with TestClient(create_app(Settings(database_path=str(tmp_path / "unused-doc-test.sqlite")))) as client:
+    with TestClient(
+        create_app(Settings(database_path=str(tmp_path / "unused-doc-test.sqlite")))
+    ) as client:
         schema = client.get("/openapi.json").json()
-    actual = {(method.upper(), path) for path, operations in schema["paths"].items() if path.startswith("/api/v2/") for method in operations if method.upper() in {"GET", "POST", "DELETE", "PUT", "PATCH"}}
+    actual = {
+        (method.upper(), path)
+        for path, operations in schema["paths"].items()
+        if path.startswith("/api/v2/")
+        for method in operations
+        if method.upper() in {"GET", "POST", "DELETE", "PUT", "PATCH"}
+    }
     assert actual <= documented
     assert documented <= actual
     prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     backticked = set(re.findall(r"`([^`]+)`", prose))
     assert {
-        "DirectSpec", "AgentSpec", "ExecutionState",
-        "events", "next_after_sequence", "evaluations", "TraceView",
-        "Observation", "max_bytes", "group_by", "filters", "health",
+        "DirectSpec",
+        "AgentSpec",
+        "ExecutionState",
+        "events",
+        "next_after_sequence",
+        "evaluations",
+        "TraceView",
+        "Observation",
+        "max_bytes",
+        "group_by",
+        "filters",
+        "health",
     } <= backticked
 
 
@@ -541,7 +655,9 @@ def test_v2_validation_codes_are_shape_stable_and_value_free(tmp_path):
             assert response.json()["error"]["code"] == code
 
 
-def test_v2_rejects_unsafe_spec_shapes_and_invalid_filters_without_echoing_values(tmp_path):
+def test_v2_rejects_unsafe_spec_shapes_and_invalid_filters_without_echoing_values(
+    tmp_path,
+):
     database = Path(tmp_path).resolve() / "unsafe-shapes.sqlite"
     canary = "v2-unsafe-shape-secret"
     with TestClient(create_app(Settings(database_path=str(database)))) as client:
@@ -549,7 +665,20 @@ def test_v2_rejects_unsafe_spec_shapes_and_invalid_filters_without_echoing_value
         unsafe_cases = (
             {"spec": {**base, "kind": "unknown-kind"}},
             {"spec": {"kind": "agent", "servers": base["servers"]}},
-            {"spec": {**base, "servers": [{"server": {"kind": "in_process", "name": "runtime", "factory": {"pickle": canary}}}]}},
+            {
+                "spec": {
+                    **base,
+                    "servers": [
+                        {
+                            "server": {
+                                "kind": "in_process",
+                                "name": "runtime",
+                                "factory": {"pickle": canary},
+                            }
+                        }
+                    ],
+                }
+            },
             {"spec": {**base, "metadata": {"callback": {"__callable__": canary}}}},
         )
         for payload in unsafe_cases:
@@ -568,13 +697,19 @@ def test_v2_rejects_unsafe_spec_shapes_and_invalid_filters_without_echoing_value
             assert response.json()["error"]["code"] == "invalid_request"
 
 
-def test_v2_service_failures_keep_stable_http_errors_and_hide_store_text(tmp_path, monkeypatch):
+def test_v2_service_failures_keep_stable_http_errors_and_hide_store_text(
+    tmp_path, monkeypatch
+):
     database = Path(tmp_path).resolve() / "service-failures.sqlite"
     store = SQLiteExecutionStore(database)
     kit = MCPTestKit(store=store, embedded_worker=False)
     canary = "underlying-store-secret"
     try:
-        app = create_app(Settings(database_path=str(Path(tmp_path).resolve() / "unused.sqlite")), v2_store=store, v2_kit=kit)
+        app = create_app(
+            Settings(database_path=str(Path(tmp_path).resolve() / "unused.sqlite")),
+            v2_store=store,
+            v2_kit=kit,
+        )
         with TestClient(app) as client:
             created = client.post("/api/v2/executions", json=_payload())
             execution_id = created.json()["execution_id"]
@@ -591,14 +726,23 @@ def test_v2_service_failures_keep_stable_http_errors_and_hide_store_text(tmp_pat
             reference = EvidenceRef(evidence_id="synthetic-evidence")
             for failure, status_code, code in (
                 (RawEvidenceUnavailable(canary), 404, "raw_evidence_not_found"),
-                (RawEvidenceIntegrityError(canary), 500, "raw_evidence_integrity_error"),
+                (
+                    RawEvidenceIntegrityError(canary),
+                    500,
+                    "raw_evidence_integrity_error",
+                ),
             ):
                 monkeypatch.setattr(
                     store,
                     "read_raw_evidence",
-                    lambda _reference, *, max_bytes, failure=failure: (_ for _ in ()).throw(failure),
+                    lambda _reference, *, max_bytes, failure=failure: (
+                        _ for _ in ()
+                    ).throw(failure),
                 )
-                response = client.post("/api/v2/evidence/read", json={"reference": reference.model_dump(mode="json")})
+                response = client.post(
+                    "/api/v2/evidence/read",
+                    json={"reference": reference.model_dump(mode="json")},
+                )
                 assert response.status_code == status_code
                 assert response.json()["error"]["code"] == code
                 assert canary.encode() not in response.content
@@ -613,7 +757,9 @@ def test_v2_trace_store_failure_is_a_sanitized_http_error(tmp_path, monkeypatch)
     canary = "trace-store-secret"
     app = create_app(Settings(database_path=str(database)))
     with TestClient(app) as client:
-        execution_id = client.post("/api/v2/executions", json=_payload()).json()["execution_id"]
+        execution_id = client.post("/api/v2/executions", json=_payload()).json()[
+            "execution_id"
+        ]
         _wait_finished(client, execution_id)
         monkeypatch.setattr(
             app.state.v2_store,
@@ -627,7 +773,9 @@ def test_v2_trace_store_failure_is_a_sanitized_http_error(tmp_path, monkeypatch)
 
 
 def test_v2_openapi_preserves_sdk_discriminators(tmp_path):
-    app = create_app(Settings(database_path=str(Path(tmp_path).resolve() / "openapi.sqlite")))
+    app = create_app(
+        Settings(database_path=str(Path(tmp_path).resolve() / "openapi.sqlite"))
+    )
     document = app.openapi()
     schemas = document["components"]["schemas"]
     spec_schema = schemas["V2ExecutionCreate"]["properties"]["spec"]
@@ -638,14 +786,22 @@ def test_v2_openapi_preserves_sdk_discriminators(tmp_path):
     assert report_schema["trace"]["$ref"].endswith("/TraceView")
     trace_schema = schemas["TraceView"]["properties"]
     assert trace_schema["runtime"]["discriminator"]["propertyName"] == "kind"
-    assert trace_schema["timeline"]["items"]["discriminator"]["mapping"]["transport"].endswith("/TransportEntry")
-    assert schemas["V2EvidenceRead"]["properties"]["reference"]["$ref"].endswith("/EvidenceRef")
-    assert {"reference", "content", "truncated", "redacted"} <= set(schemas["RawEvidence"]["properties"])
+    assert trace_schema["timeline"]["items"]["discriminator"]["mapping"][
+        "transport"
+    ].endswith("/TransportEntry")
+    assert schemas["V2EvidenceRead"]["properties"]["reference"]["$ref"].endswith(
+        "/EvidenceRef"
+    )
+    assert {"reference", "content", "truncated", "redacted"} <= set(
+        schemas["RawEvidence"]["properties"]
+    )
 
     def visit(value):
         if isinstance(value, dict):
             reference = value.get("$ref")
-            if isinstance(reference, str) and reference.startswith("#/components/schemas/"):
+            if isinstance(reference, str) and reference.startswith(
+                "#/components/schemas/"
+            ):
                 assert reference.removeprefix("#/components/schemas/") in schemas
             for nested in value.values():
                 visit(nested)
@@ -661,7 +817,11 @@ def test_v2_store_and_kit_can_be_injected(tmp_path):
     store = SQLiteExecutionStore(database)
     kit = MCPTestKit(store=store, embedded_worker=False)
     try:
-        app = create_app(Settings(database_path=str(Path(tmp_path).resolve() / "unused.sqlite")), v2_store=store, v2_kit=kit)
+        app = create_app(
+            Settings(database_path=str(Path(tmp_path).resolve() / "unused.sqlite")),
+            v2_store=store,
+            v2_kit=kit,
+        )
         assert app.state.v2_store is store
         assert app.state.v2_kit is kit
         with TestClient(app) as client:

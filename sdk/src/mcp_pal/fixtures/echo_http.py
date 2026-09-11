@@ -23,7 +23,11 @@ class EchoMcpHttpServer:
     async def start(self) -> str:
         self.server = await asyncio.start_server(self._connection, "127.0.0.1", 0)
         port = self.server.sockets[0].getsockname()[1]
-        return f"http://127.0.0.1:{port}/mcp" if self.transport == "http" else f"http://127.0.0.1:{port}/sse"
+        return (
+            f"http://127.0.0.1:{port}/mcp"
+            if self.transport == "http"
+            else f"http://127.0.0.1:{port}/sse"
+        )
 
     async def stop(self) -> None:
         if self._sse_response and not self._sse_response.done():
@@ -51,20 +55,31 @@ class EchoMcpHttpServer:
             }
         elif method == "tools/list":
             value = {
-                "tools": [{
-                    "name": "echo",
-                    "description": "Return the provided nonce unchanged.",
-                    "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
-                }]
+                "tools": [
+                    {
+                        "name": "echo",
+                        "description": "Return the provided nonce unchanged.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {"text": {"type": "string"}},
+                            "required": ["text"],
+                        },
+                    }
+                ]
             }
         elif method == "tools/call":
             args = (request.get("params") or {}).get("arguments") or {}
-            value = {"content": [{"type": "text", "text": args.get("text", "")}], "isError": False}
+            value = {
+                "content": [{"type": "text", "text": args.get("text", "")}],
+                "isError": False,
+            }
         else:
             value = {}
         return {"jsonrpc": "2.0", "id": request.get("id"), "result": value}
 
-    async def _connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         keep_open = False
         try:
             headers = await reader.readuntil(b"\r\n\r\n")
@@ -82,7 +97,12 @@ class EchoMcpHttpServer:
                 keep_open = await self._sse(method, path, request, writer)
             else:
                 await self._http(request, writer)
-        except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, ConnectionError, json.JSONDecodeError):
+        except (
+            asyncio.IncompleteReadError,
+            asyncio.LimitOverrunError,
+            ConnectionError,
+            json.JSONDecodeError,
+        ):
             pass
         finally:
             if not keep_open:
@@ -92,21 +112,40 @@ class EchoMcpHttpServer:
                 except (ConnectionError, asyncio.CancelledError):
                     pass
 
-    async def _http(self, request: dict[str, Any], writer: asyncio.StreamWriter) -> None:
+    async def _http(
+        self, request: dict[str, Any], writer: asyncio.StreamWriter
+    ) -> None:
         body = json.dumps(self._result(request), separators=(",", ":")).encode("utf-8")
-        writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
+            + str(len(body)).encode()
+            + b"\r\n\r\n"
+            + body
+        )
         await writer.drain()
 
-    async def _sse(self, method: str, path: str, request: dict[str, Any], writer: asyncio.StreamWriter) -> bool:
+    async def _sse(
+        self,
+        method: str,
+        path: str,
+        request: dict[str, Any],
+        writer: asyncio.StreamWriter,
+    ) -> bool:
         if method == "GET":
             self._sse_writer = writer
             self._sse_response = asyncio.get_running_loop().create_future()
-            writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n")
+            writer.write(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n"
+            )
             writer.write(b"event: endpoint\ndata: /message?session=probe\n\n")
             await writer.drain()
             try:
                 response = await self._sse_response
-                writer.write(b"data: " + json.dumps(response, separators=(",", ":")).encode("utf-8") + b"\n\n")
+                writer.write(
+                    b"data: "
+                    + json.dumps(response, separators=(",", ":")).encode("utf-8")
+                    + b"\n\n"
+                )
                 await writer.drain()
             except (asyncio.CancelledError, ConnectionError):
                 return True
@@ -117,7 +156,8 @@ class EchoMcpHttpServer:
         if method == "POST":
             if self._sse_response and not self._sse_response.done():
                 self._sse_response.set_result(self._result(request))
-            writer.write(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            writer.write(
+                b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
             await writer.drain()
         return False
-

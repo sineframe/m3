@@ -94,7 +94,7 @@ class HarnessObservationSink:
             if raw is not None and self._capture_config.capture_raw_evidence:
                 raw_content = raw.as_bytes()
                 raw_media_type = raw.media_type
-        except Exception:  # noqa: BLE001 - adapter boundary is non-throwing
+        except Exception:
             self._limit("capture_incomplete")
             self._diagnostic("harness_observation_failed")
             return
@@ -116,7 +116,7 @@ class HarnessObservationSink:
                 raw_evidence_content=raw_content,
                 raw_evidence_media_type=raw_media_type,
             )
-        except Exception:  # noqa: BLE001 - adapter boundary is non-throwing
+        except Exception:
             self._limit("persistence_failed")
             self._diagnostic("harness_observation_persistence_failed")
             return
@@ -386,7 +386,7 @@ class HarnessObservationSink:
             self._limitations.append(limitation)
         try:
             self._recorder.add_limitation(limitation)
-        except Exception:  # noqa: BLE001 - metadata must not break capture
+        except Exception:
             pass
 
     def _diagnostic(self, code: str) -> None:
@@ -401,7 +401,7 @@ class HarnessObservationSink:
                     origin=EventOrigin.DERIVED, source="mcp_pal.harness"
                 ),
             )
-        except Exception:  # noqa: BLE001 - adapter boundary is non-throwing
+        except Exception:
             self._limit("persistence_failed")
 
 

@@ -10,10 +10,8 @@ while the latter owns pytest and the SDK test code.
 from __future__ import annotations
 
 import argparse
-from collections import deque
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import signal
@@ -23,11 +21,14 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any, Mapping
+import zipfile
+from collections import deque
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
-import zipfile
 
 
 class StandaloneGateError(RuntimeError):
@@ -55,7 +56,9 @@ def _clean_environment(source: Mapping[str, str] | None = None) -> dict[str, str
     cleaned: dict[str, str] = {}
     for key, value in values.items():
         upper = key.upper()
-        if upper in _REMOVED_ENV_NAMES or any(part in upper for part in _SECRET_NAME_PARTS):
+        if upper in _REMOVED_ENV_NAMES or any(
+            part in upper for part in _SECRET_NAME_PARTS
+        ):
             continue
         cleaned[key] = value
     return cleaned
@@ -124,12 +127,16 @@ def _python_path(venv: Path) -> Path:
 
 
 def _command_path(directory: Path, name: str) -> Path:
-    return directory / ("Scripts" if os.name == "nt" else "bin") / (
-        f"{name}.exe" if os.name == "nt" else name
+    return (
+        directory
+        / ("Scripts" if os.name == "nt" else "bin")
+        / (f"{name}.exe" if os.name == "nt" else name)
     )
 
 
-def wheel_paths(release_dir: str | os.PathLike[str], version: str) -> tuple[Path, Path, Path]:
+def wheel_paths(
+    release_dir: str | os.PathLike[str], version: str
+) -> tuple[Path, Path, Path]:
     """Return exactly the CLI, SDK, and app wheels for ``version``."""
 
     release = Path(release_dir).expanduser().resolve()
@@ -139,8 +146,13 @@ def wheel_paths(release_dir: str | os.PathLike[str], version: str) -> tuple[Path
         release / f"{prefix}-{version}-py3-none-any.whl"
         for prefix in ("mcp_pal_cli", "mcp_pal", "mcp_pal_app")
     )
-    if any(not path.is_file() for path in expected) or len(tuple(release.glob("*.whl"))) != 3:
-        raise StandaloneGateError("release directory must contain exactly the three versioned wheels")
+    if (
+        any(not path.is_file() for path in expected)
+        or len(tuple(release.glob("*.whl"))) != 3
+    ):
+        raise StandaloneGateError(
+            "release directory must contain exactly the three versioned wheels"
+        )
     if len(set(expected)) != 3:
         raise StandaloneGateError("release wheel names are not unique")
     return expected
@@ -156,11 +168,15 @@ def assert_bundled_ui(wheel: Path) -> None:
         name.startswith("mcp_pal_cli/ui/assets/") and not name.endswith("/")
         for name in names
     ):
-        raise StandaloneGateError("CLI wheel does not contain the bundled production UI")
+        raise StandaloneGateError(
+            "CLI wheel does not contain the bundled production UI"
+        )
 
 
-def _tool_probe(tool_python: Path, expected_version: str, env: Mapping[str, str]) -> None:
-    code = r'''
+def _tool_probe(
+    tool_python: Path, expected_version: str, env: Mapping[str, str]
+) -> None:
+    code = r"""
 import importlib.metadata as metadata
 import importlib.util
 import json
@@ -182,18 +198,34 @@ payload = {
     "ui": ui.joinpath("index.html").is_file() and any(item.is_file() for item in ui.joinpath("assets").iterdir()),
 }
 print(json.dumps(payload, sort_keys=True))
-'''
+"""
     result = _run([str(tool_python), "-c", code], cwd=tool_python.parent, env=dict(env))
     try:
         payload = json.loads(result.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as exc:
-        raise StandaloneGateError("CLI tool environment returned an invalid package check") from exc
-    if payload.get("required") != {"mcp_pal_cli": True, "mcp_pal": True, "mcp_pal_app": True}:
-        raise StandaloneGateError("CLI tool environment is missing a required MCP Pal package")
-    if payload.get("forbidden") != {"pytest": True, "streamlit": True, "requests": True}:
-        raise StandaloneGateError("CLI tool environment contains a project-only package")
+        raise StandaloneGateError(
+            "CLI tool environment returned an invalid package check"
+        ) from exc
+    if payload.get("required") != {
+        "mcp_pal_cli": True,
+        "mcp_pal": True,
+        "mcp_pal_app": True,
+    }:
+        raise StandaloneGateError(
+            "CLI tool environment is missing a required MCP Pal package"
+        )
+    if payload.get("forbidden") != {
+        "pytest": True,
+        "streamlit": True,
+        "requests": True,
+    }:
+        raise StandaloneGateError(
+            "CLI tool environment contains a project-only package"
+        )
     if payload.get("version") != expected_version or payload.get("ui") is not True:
-        raise StandaloneGateError("CLI tool environment has the wrong version or no bundled UI")
+        raise StandaloneGateError(
+            "CLI tool environment has the wrong version or no bundled UI"
+        )
 
 
 def _project_probe(
@@ -202,7 +234,7 @@ def _project_probe(
     expected_version: str,
     env: Mapping[str, str],
 ) -> None:
-    code = r'''
+    code = r"""
 import importlib.metadata as metadata
 import importlib.util
 import json
@@ -218,19 +250,31 @@ else:
     required["SQLiteExecutionStore"] = True
 forbidden = {name: importlib.util.find_spec(name) is None for name in ("mcp_pal_cli", "mcp_pal_app")}
 print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("mcp-pal")}, sort_keys=True))
-'''
+"""
     result = _run([str(project_python), "-c", code], cwd=cwd, env=dict(env))
     try:
         payload = json.loads(result.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as exc:
-        raise StandaloneGateError("project environment returned an invalid package check") from exc
+        raise StandaloneGateError(
+            "project environment returned an invalid package check"
+        ) from exc
     required = payload.get("required")
-    if not isinstance(required, dict) or not all(required.get(name) for name in (
-        "pytest", "mcp_pal", "mcp_pal.pytest_plugin", "SQLiteExecutionStore"
-    )):
-        raise StandaloneGateError("project environment is missing pytest, SDK, plugin, or SQLite storage")
+    if not isinstance(required, dict) or not all(
+        required.get(name)
+        for name in (
+            "pytest",
+            "mcp_pal",
+            "mcp_pal.pytest_plugin",
+            "SQLiteExecutionStore",
+        )
+    ):
+        raise StandaloneGateError(
+            "project environment is missing pytest, SDK, plugin, or SQLite storage"
+        )
     if payload.get("forbidden") != {"mcp_pal_cli": True, "mcp_pal_app": True}:
-        raise StandaloneGateError("project environment contains the standalone CLI or app")
+        raise StandaloneGateError(
+            "project environment contains the standalone CLI or app"
+        )
     if payload.get("version") != expected_version:
         raise StandaloneGateError("project SDK version does not match the CLI release")
 
@@ -239,7 +283,7 @@ def _write_dummy_test(repo: Path) -> None:
     tests = repo / "tests"
     tests.mkdir(parents=True)
     (tests / "test_public_sdk.py").write_text(
-        '''from mcp_pal import MCPTestKit
+        """from mcp_pal import MCPTestKit
 from mcp_pal.testing import FaultInjector
 from mcp_pal.types import DirectSpec, Ping, ServerBinding
 
@@ -256,7 +300,7 @@ def test_stored_public_sdk_run() -> None:
     with MCPTestKit() as kit:
         result = kit.run(spec)
     assert result.snapshot.outcome.value == "completed"
-''',
+""",
         encoding="utf-8",
     )
 
@@ -267,7 +311,7 @@ def _stored_run_ids(
     database: Path,
     env: Mapping[str, str],
 ) -> list[str]:
-    code = r'''
+    code = r"""
 import json
 import sys
 from mcp_pal.storage import SQLiteExecutionStore
@@ -278,8 +322,10 @@ try:
     print(json.dumps([str(item.execution_id.root) for item in page.items]))
 finally:
     store.close()
-'''
-    result = _run([str(project_python), "-c", code, str(database)], cwd=repo, env=dict(env))
+"""
+    result = _run(
+        [str(project_python), "-c", code, str(database)], cwd=repo, env=dict(env)
+    )
     try:
         value = json.loads(result.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as exc:
@@ -331,7 +377,9 @@ def _parse_ui_links(output: str, origin: str, expected_id: str) -> str:
     history_matches = re.findall(r"(?m)^MCP-Pal UI: (https?://[^\s]+)$", output)
     expected_history = f"{origin}/history"
     if len(history_matches) != 1 or history_matches[0] != expected_history:
-        raise StandaloneGateError("CLI UI history link does not match the selected loopback origin")
+        raise StandaloneGateError(
+            "CLI UI history link does not match the selected loopback origin"
+        )
     direct_matches = re.findall(r"(?m)^Run: (https?://[^\s]+)$", output)
     if not direct_matches:
         raise StandaloneGateError("CLI UI process did not print a direct run link")
@@ -349,13 +397,19 @@ def _parse_ui_links(output: str, origin: str, expected_id: str) -> str:
         or parsed.query
         or parsed.fragment
     ):
-        raise StandaloneGateError("CLI direct link does not match the selected loopback origin")
+        raise StandaloneGateError(
+            "CLI direct link does not match the selected loopback origin"
+        )
     prefix = "/playground/run/"
     if not parsed.path.startswith(prefix):
-        raise StandaloneGateError("CLI direct link does not use the playground run route")
-    encoded_suffix = parsed.path[len(prefix):]
+        raise StandaloneGateError(
+            "CLI direct link does not use the playground run route"
+        )
+    encoded_suffix = parsed.path[len(prefix) :]
     if not encoded_suffix or unquote(encoded_suffix) != expected_id:
-        raise StandaloneGateError("CLI direct link does not identify the newly stored run")
+        raise StandaloneGateError(
+            "CLI direct link does not identify the newly stored run"
+        )
     return direct_url
 
 
@@ -375,12 +429,17 @@ def _assert_json_execution(body: bytes, expected_id: str) -> None:
     try:
         payload: Any = json.loads(body)
     except (TypeError, json.JSONDecodeError) as exc:
-        raise StandaloneGateError("the executions endpoint returned HTML or invalid JSON") from exc
+        raise StandaloneGateError(
+            "the executions endpoint returned HTML or invalid JSON"
+        ) from exc
 
     def contains(value: Any) -> bool:
         if isinstance(value, dict):
             return any(
-                (key in {"execution_id", "executionId", "id"} and str(item) == expected_id)
+                (
+                    key in {"execution_id", "executionId", "id"}
+                    and str(item) == expected_id
+                )
                 or contains(item)
                 for key, item in value.items()
             )
@@ -389,7 +448,9 @@ def _assert_json_execution(body: bytes, expected_id: str) -> None:
         return False
 
     if not contains(payload):
-        raise StandaloneGateError("the executions API does not contain the newly stored run")
+        raise StandaloneGateError(
+            "the executions API does not contain the newly stored run"
+        )
 
 
 def _terminate(process: subprocess.Popen[str]) -> None:
@@ -423,8 +484,17 @@ def _run_ui_gate(
     existing_id: str,
 ) -> None:
     command = [
-        str(executable), "test", "--ui", "--python", str(project_python),
-        "--results-db", str(database), "--port", str(port), "--", "-q",
+        str(executable),
+        "test",
+        "--ui",
+        "--python",
+        str(project_python),
+        "--results-db",
+        str(database),
+        "--port",
+        str(port),
+        "--",
+        "-q",
     ]
     print("+", _display(command), flush=True)
     try:
@@ -437,7 +507,11 @@ def _run_ui_gate(
             text=True,
             bufsize=1,
             start_new_session=(os.name == "posix"),
-            creationflags=(int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)) if os.name == "nt" else 0),
+            creationflags=(
+                int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+                if os.name == "nt"
+                else 0
+            ),
         )
     except OSError as exc:
         raise StandaloneGateError("could not start the CLI UI process") from exc
@@ -445,14 +519,18 @@ def _run_ui_gate(
     deadline = time.monotonic() + _UI_TIMEOUT
     while time.monotonic() < deadline:
         text = output.text()
-        if "MCP-Pal UI:" in text and re.search(r"(?m)^Run: http://127\.0\.0\.1:[0-9]+/playground/run/", text):
+        if "MCP-Pal UI:" in text and re.search(
+            r"(?m)^Run: http://127\.0\.0\.1:[0-9]+/playground/run/", text
+        ):
             break
         if process.poll() is not None:
             break
         time.sleep(0.1)
     else:
         _terminate(process)
-        raise StandaloneGateError("CLI UI process did not print its history and run links")
+        raise StandaloneGateError(
+            "CLI UI process did not print its history and run links"
+        )
 
     text = output.text()
     if "MCP-Pal UI:" not in text:
@@ -464,7 +542,9 @@ def _run_ui_gate(
     new_runs = [run_id for run_id in current_runs if run_id != existing_id]
     if len(current_runs) != 2 or len(new_runs) != 1:
         _terminate(process)
-        raise StandaloneGateError("UI test did not create exactly one additional stored run")
+        raise StandaloneGateError(
+            "UI test did not create exactly one additional stored run"
+        )
     expected_id = new_runs[0]
     origin = f"http://127.0.0.1:{port}"
     try:
@@ -478,11 +558,19 @@ def _run_ui_gate(
         raise StandaloneGateError("executions API did not return JSON")
     _assert_json_execution(body, expected_id)
     status, content_type, body = _http(origin + "/history")
-    if status != 200 or "html" not in content_type.lower() or b"<html" not in body.lower():
+    if (
+        status != 200
+        or "html" not in content_type.lower()
+        or b"<html" not in body.lower()
+    ):
         _terminate(process)
         raise StandaloneGateError("history route did not return the bundled SPA")
     status, content_type, body = _http(direct_url)
-    if status != 200 or "html" not in content_type.lower() or b"<html" not in body.lower():
+    if (
+        status != 200
+        or "html" not in content_type.lower()
+        or b"<html" not in body.lower()
+    ):
         _terminate(process)
         raise StandaloneGateError("direct run route did not return the bundled SPA")
     if re.search(r"(?i)\b(?:node|npm|vite)\b", text):
@@ -525,23 +613,37 @@ def check(release_dir: str | os.PathLike[str], version: str) -> None:
         cache_dir = root / "uv-cache"
         tool_bin.mkdir()
         env = _clean_environment()
-        env.update({
-            "UV_TOOL_DIR": str(tool_dir),
-            "UV_TOOL_BIN_DIR": str(tool_bin),
-            "UV_CACHE_DIR": str(cache_dir),
-            "PATH": str(tool_bin) + os.pathsep + env.get("PATH", ""),
-        })
+        env.update(
+            {
+                "UV_TOOL_DIR": str(tool_dir),
+                "UV_TOOL_BIN_DIR": str(tool_bin),
+                "UV_CACHE_DIR": str(cache_dir),
+                "PATH": str(tool_bin) + os.pathsep + env.get("PATH", ""),
+            }
+        )
         # The dummy repository is the only working directory used for test
         # commands.  No command below can see or modify the source checkout.
         _write_dummy_test(repo)
         _run(
-            [uv, "tool", "install", "--force", str(cli_wheel), "--with", str(sdk_wheel), "--with", str(app_wheel)],
+            [
+                uv,
+                "tool",
+                "install",
+                "--force",
+                str(cli_wheel),
+                "--with",
+                str(sdk_wheel),
+                "--with",
+                str(app_wheel),
+            ],
             cwd=repo,
             env=env,
         )
         executable = tool_bin / ("mcp-pal.exe" if os.name == "nt" else "mcp-pal")
         if not executable.is_file():
-            raise StandaloneGateError("uv did not create the standalone mcp-pal command")
+            raise StandaloneGateError(
+                "uv did not create the standalone mcp-pal command"
+            )
         tool_python = _command_path(tool_dir / "mcp-pal-cli", "python")
         if not tool_python.is_file():
             raise StandaloneGateError("uv tool environment Python is missing")
@@ -552,20 +654,56 @@ def check(release_dir: str | os.PathLike[str], version: str) -> None:
         # gate; production setup uses authenticated ``gh release download``.
         setup_env = dict(env)
         setup_env["MCP_PAL_RELEASE_BASE_URL"] = Path(release_dir).resolve().as_uri()
-        _run([str(executable), "setup", "--project-root", str(repo)], cwd=repo, env=setup_env)
+        _run(
+            [str(executable), "setup", "--project-root", str(repo)],
+            cwd=repo,
+            env=setup_env,
+        )
         project_python = _python_path(repo / ".venv")
         _project_probe(project_python, repo, version, env)
         database = repo / ".mcp-pal" / "executions.sqlite"
-        _run([str(executable), "doctor", "--python", str(project_python), "--project-root", str(repo), "--require", "storage:sqlite"], cwd=repo, env=env)
-        _run([str(executable), "test", "--python", str(project_python), "--results-db", str(database), "--", "-q"], cwd=repo, env=env)
+        _run(
+            [
+                str(executable),
+                "doctor",
+                "--python",
+                str(project_python),
+                "--project-root",
+                str(repo),
+                "--require",
+                "storage:sqlite",
+            ],
+            cwd=repo,
+            env=env,
+        )
+        _run(
+            [
+                str(executable),
+                "test",
+                "--python",
+                str(project_python),
+                "--results-db",
+                str(database),
+                "--",
+                "-q",
+            ],
+            cwd=repo,
+            env=env,
+        )
         first_runs = _stored_run_ids(project_python, repo, database, env)
         if len(first_runs) != 1:
-            raise StandaloneGateError(f"expected exactly one stored run after plain test, found {len(first_runs)}")
+            raise StandaloneGateError(
+                f"expected exactly one stored run after plain test, found {len(first_runs)}"
+            )
         port = _free_port()
-        _run_ui_gate(executable, project_python, repo, database, port, env, first_runs[0])
+        _run_ui_gate(
+            executable, project_python, repo, database, port, env, first_runs[0]
+        )
         final_runs = _stored_run_ids(project_python, repo, database, env)
         if len(final_runs) != 2 or first_runs[0] not in final_runs:
-            raise StandaloneGateError("UI test did not preserve exactly two stored runs")
+            raise StandaloneGateError(
+                "UI test did not preserve exactly two stored runs"
+            )
         print("isolated CLI standalone gate passed", flush=True)
 
 

@@ -40,18 +40,6 @@ from .types import (
     ContentBlock as _ContentBlock,
 )
 from .types import (
-    PromptInfo as _PromptInfo,
-)
-from .types import (
-    ResourceInfo as _ResourceInfo,
-)
-from .types import (
-    TemplateInfo as _TemplateInfo,
-)
-from .types import (
-    ToolInfo as _ToolInfo,
-)
-from .types import (
     ErrorInfo as _ErrorInfo,
 )
 from .types import (
@@ -62,6 +50,9 @@ from .types import (
 )
 from .types import (
     EventSource as _EventSource,
+)
+from .types import (
+    EvidenceRef as _EvidenceRef,
 )
 from .types import (
     ExecutionId as _ExecutionId,
@@ -76,10 +67,19 @@ from .types import (
     JsonRpcId as _JsonRpcId,
 )
 from .types import (
-    EvidenceRef as _EvidenceRef,
+    PromptInfo as _PromptInfo,
+)
+from .types import (
+    ResourceInfo as _ResourceInfo,
 )
 from .types import (
     SessionId as _SessionId,
+)
+from .types import (
+    TemplateInfo as _TemplateInfo,
+)
+from .types import (
+    ToolInfo as _ToolInfo,
 )
 from .types import (
     TraceId as _TraceId,
@@ -566,9 +566,7 @@ class InitializationEntry(TraceEntryBase):
     resource_templates: Observation[tuple[_TemplateInfo, ...]] = _Field(
         default_factory=_not_emitted
     )
-    prompts: Observation[tuple[_PromptInfo, ...]] = _Field(
-        default_factory=_not_emitted
-    )
+    prompts: Observation[tuple[_PromptInfo, ...]] = _Field(default_factory=_not_emitted)
 
 
 class InitializationValue(_FrozenModel):
@@ -586,9 +584,7 @@ class InitializationValue(_FrozenModel):
     resource_templates: Observation[tuple[_TemplateInfo, ...]] = _Field(
         default_factory=_not_emitted
     )
-    prompts: Observation[tuple[_PromptInfo, ...]] = _Field(
-        default_factory=_not_emitted
-    )
+    prompts: Observation[tuple[_PromptInfo, ...]] = _Field(default_factory=_not_emitted)
 
 
 class LifecycleEntry(TraceEntryBase):
@@ -914,12 +910,14 @@ del _model
 __all__ = [
     "ACPTrace",
     "ArtifactEntry",
+    "CaptureOptions",
     "ClaudeCodeTrace",
     "CodexTrace",
     "CorrelationState",
     "DiagnosticEntry",
     "DirectTrace",
     "EvaluationEntry",
+    "EvidenceCapture",
     "EvidenceConflict",
     "HttpExchange",
     "InitializationEntry",
@@ -938,9 +936,7 @@ __all__ = [
     "ProtocolErrorInfo",
     "ProtocolKind",
     "ProviderEntry",
-    "TransportEntry",
     "RawEvidence",
-    "EvidenceCapture",
     "RawEvidenceSource",
     "RawMessageEntry",
     "ReasoningEntry",
@@ -950,13 +946,13 @@ __all__ = [
     "ToolCallEntry",
     "ToolCallStatus",
     "ToolResult",
-    "CaptureOptions",
     "TraceEntry",
     "TraceEntryBase",
     "TraceStatus",
     "TraceSummary",
     "TraceTiming",
     "TraceView",
+    "TransportEntry",
     "UsageEntry",
     "UsageValue",
     "WireToolCall",

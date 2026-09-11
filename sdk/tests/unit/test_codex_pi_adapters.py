@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from datetime import datetime, timezone
 
 try:
@@ -23,11 +22,16 @@ from mcp_pal.harness.codex import (
     codex_configuration,
     render_codex_config,
 )
-from mcp_pal.harness.contracts import HarnessLaunch, HarnessTurnRequest
+from mcp_pal.harness.contracts import (
+    HarnessLaunch,
+    HarnessStartupError,
+    HarnessTurnRequest,
+)
 from mcp_pal.harness.pi import PiHarnessAdapter
 from mcp_pal.harness.pi_extension.bridge import MCPBridge, qualified_tool_name
 from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
 from mcp_pal.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
+from mcp_pal.transport.capture_proxy import McpCaptureManager
 from mcp_pal.types import (
     AgentSpec,
     Codex,
@@ -38,8 +42,6 @@ from mcp_pal.types import (
     StdioServer,
     TransportKind,
 )
-from mcp_pal.transport.capture_proxy import McpCaptureManager
-
 
 ROOT = Path(__file__).parents[1]
 CODEX_FIXTURE = ROOT / "fixtures" / "codex_app_server_fixture.py"
@@ -396,10 +398,11 @@ async def test_pi_streaming_tool_events_do_not_duplicate_execution_observations(
 
 def test_provider_protocol_errors_are_not_successes() -> None:
     from datetime import datetime, timezone
+
     from mcp_pal.harness._rpc_native import JsonRpcProcess
 
     adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
-    with pytest.raises(Exception):
+    with pytest.raises(HarnessStartupError):
         adapter.consume_frame(
             {"error": {"code": -1}}, 1, datetime.now(timezone.utc), 0.0, []
         )
@@ -515,7 +518,9 @@ def test_pi_bridge_catalog_names_are_stable_and_calls_are_routed() -> None:
     }
 
 
-def test_pi_bridge_qualified_names_are_safe_bounded_and_metadata_cannot_override() -> None:
+def test_pi_bridge_qualified_names_are_safe_bounded_and_metadata_cannot_override() -> (
+    None
+):
     server = "服务/" + "s" * 300
     tool = "工具." + "t" * 300
     bridge = MCPBridge(
@@ -754,8 +759,8 @@ async def test_pi_tool_observation_recovers_special_character_identity() -> None
         for item in observations
         if getattr(item, "kind", "") == "tool_call_observed"
     )
-    assert getattr(call, "server") == server
-    assert getattr(call, "tool") == tool
+    assert call.server == server
+    assert call.tool == tool
 
 
 @pytest.mark.asyncio
@@ -794,8 +799,12 @@ async def test_pi_tool_observation_recovers_duplicate_tool_names_per_server() ->
             observations,  # type: ignore[arg-type]
         )
         assert terminal is False
-    calls = [item for item in observations if getattr(item, "kind", "") == "tool_call_observed"]
-    assert {(getattr(item, "server"), getattr(item, "tool")) for item in calls} == {
+    calls = [
+        item
+        for item in observations
+        if getattr(item, "kind", "") == "tool_call_observed"
+    ]
+    assert {(item.server, item.tool) for item in calls} == {
         (server, tool) for server in servers
     }
 
@@ -867,9 +876,7 @@ async def test_codex_completed_item_does_not_duplicate_streamed_text() -> None:
     _, text, _ = adapter.consume_frame(
         {
             "method": "item/completed",
-            "params": {
-                "item": {"type": "agentMessage", "id": "m1", "text": "hello"}
-            },
+            "params": {"item": {"type": "agentMessage", "id": "m1", "text": "hello"}},
         },
         1,
         datetime.now(timezone.utc),
@@ -886,9 +893,7 @@ async def test_codex_completion_only_agent_message_returns_text() -> None:
     _, text, _ = adapter.consume_frame(
         {
             "method": "item/completed",
-            "params": {
-                "item": {"type": "agentMessage", "id": "m1", "text": "hello"}
-            },
+            "params": {"item": {"type": "agentMessage", "id": "m1", "text": "hello"}},
         },
         1,
         datetime.now(timezone.utc),
@@ -900,7 +905,9 @@ async def test_codex_completion_only_agent_message_returns_text() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("adapter_cls", [CodexHarnessAdapter, PiHarnessAdapter])
-async def test_native_timeout_closes_process_after_async_cancel(adapter_cls: object) -> None:
+async def test_native_timeout_closes_process_after_async_cancel(
+    adapter_cls: object,
+) -> None:
     class FakeProcess:
         owner = None
 
@@ -914,6 +921,7 @@ async def test_native_timeout_closes_process_after_async_cancel(adapter_cls: obj
             if self.closed:
                 raise RuntimeError("closed")
             self.frames.append(frame)
+
         async def next(self, timeout: float | None = None) -> object:
             if self.closed:
                 raise RuntimeError("stale frames unavailable")

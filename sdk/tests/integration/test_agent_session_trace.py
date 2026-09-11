@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.agent_session import AdapterTurn, AsyncAgentSession, HarnessAdapter, HarnessTurnError
+from mcp_pal.agent_session import (
+    AdapterTurn,
+    AsyncAgentSession,
+    HarnessAdapter,
+    HarnessTurnError,
+)
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.errors import CleanupError, TransportError
 from mcp_pal.harness import HarnessAdapterRegistry
@@ -17,23 +22,22 @@ from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.types import (
     ACPAgent,
-    ArtifactPolicy,
     AgentSpec,
-    Event,
+    ArtifactPolicy,
     ErrorCode,
     ErrorInfo,
+    Event,
     EventKind,
     ExecutionOutcome,
     ExecutionResult,
     ServerBinding,
     StdioServer,
     TextContent,
+    TurnOutcome,
     TurnResponse,
     TurnStatus,
-    TurnOutcome,
     UserMessage,
 )
-
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -42,7 +46,11 @@ def _spec(*, message: str | None = None) -> AgentSpec:
     return AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ACPAgent(model="fixture"),
-        message=(UserMessage(content=(TextContent(text=message),)) if message is not None else None),
+        message=(
+            UserMessage(content=(TextContent(text=message),))
+            if message is not None
+            else None
+        ),
     )
 
 
@@ -72,7 +80,9 @@ def _assert_trace_identity(result: ExecutionResult) -> None:
     assert trace is not None
     assert trace.execution_id == snapshot.execution_id
     assert trace.events[-1].kind is EventKind.EXECUTION_FINISHED
-    assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in trace.events) == 1
+    assert (
+        sum(event.kind is EventKind.EXECUTION_FINISHED for event in trace.events) == 1
+    )
     assert all(event.execution_id == snapshot.execution_id for event in trace.events)
     terminal = trace.events[-1]
     assert snapshot.outcome is not None
@@ -130,7 +140,9 @@ class _TerminalCompleteEvidenceHarness(_TraceHarness):
         return AdapterTurn(
             terminal=True,
             outcome=TurnOutcome.FAILED,
-            error=ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="terminal adapter failure"),
+            error=ErrorInfo(
+                code=ErrorCode.TRANSPORT_ERROR, message="terminal adapter failure"
+            ),
             evidence={"wire_complete": True},
         )
 
@@ -258,7 +270,8 @@ async def test_caller_async_agent_session_uses_configured_store_for_all_turns(
             result = session.result
             kit.register_evaluator("turn.present.v1", lambda context: True)
             turn_evaluation = await kit.evaluate(
-                result.turns[0], "turn.present.v1",
+                result.turns[0],
+                "turn.present.v1",
                 execution_id=result.snapshot.execution_id,
                 turn_id=result.turns[0].snapshot.turn_id,
             )
@@ -269,8 +282,16 @@ async def test_caller_async_agent_session_uses_configured_store_for_all_turns(
         assert persisted is not None
         assert persisted.snapshot.outcome is ExecutionOutcome.COMPLETED
         assert persisted.events
-        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events) == 1
-        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events) == 1
+        assert (
+            sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events)
+            == 1
+        )
+        assert (
+            sum(
+                event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events
+            )
+            == 1
+        )
         assert [
             event.payload["number"]
             for event in persisted.events
@@ -280,7 +301,14 @@ async def test_caller_async_agent_session_uses_configured_store_for_all_turns(
         reopened = SQLiteExecutionStore(tmp_path / "caller-async.sqlite")
         try:
             assert len(reopened.get_report(execution_id).turns) == 2
-            assert len(reopened.evaluations(execution_id, turn_id=result.turns[0].snapshot.turn_id)) == 1
+            assert (
+                len(
+                    reopened.evaluations(
+                        execution_id, turn_id=result.turns[0].snapshot.turn_id
+                    )
+                )
+                == 1
+            )
         finally:
             reopened.close()
         assert store.get_execution_spec(execution_id) == _spec()
@@ -314,8 +342,16 @@ def test_caller_sync_agent_session_uses_configured_store_for_all_turns(
         persisted = store.get_report(execution_id)
         assert persisted is not None
         assert persisted.snapshot.outcome is ExecutionOutcome.COMPLETED
-        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events) == 1
-        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events) == 1
+        assert (
+            sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events)
+            == 1
+        )
+        assert (
+            sum(
+                event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events
+            )
+            == 1
+        )
         assert [
             event.payload["number"]
             for event in persisted.events
@@ -346,8 +382,16 @@ async def test_caller_async_agent_session_startup_failure_is_terminal_and_persis
         persisted = store.get_report(execution_id)
         assert persisted is not None
         assert persisted.snapshot.outcome is ExecutionOutcome.FAILED
-        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events) == 1
-        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events) == 1
+        assert (
+            sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events)
+            == 1
+        )
+        assert (
+            sum(
+                event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events
+            )
+            == 1
+        )
     finally:
         store.close()
 
@@ -357,8 +401,8 @@ async def test_caller_async_agent_session_uses_store_artifact_backend(
     tmp_path: Path,
 ) -> None:
     class _ArtifactHarness(_TraceHarness):
-        async def open(self, launch: object) -> "_ArtifactHarness":
-            root = Path(str(getattr(launch, "workspace_root")))
+        async def open(self, launch: object) -> _ArtifactHarness:
+            root = Path(str(launch.workspace_root))
             (root / "result.txt").write_bytes(b"caller-session-artifact")
             return self
 
@@ -388,7 +432,9 @@ async def test_caller_async_agent_session_uses_store_artifact_backend(
 
 
 @pytest.mark.asyncio
-async def test_submitted_agent_execution_reuses_outer_execution_trace_authority() -> None:
+async def test_submitted_agent_execution_reuses_outer_execution_trace_authority() -> (
+    None
+):
     registry = HarnessAdapterRegistry({"acp": lambda _harness: _TraceHarness()})
     async with AsyncMCPTestKit(
         env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
@@ -400,7 +446,9 @@ async def test_submitted_agent_execution_reuses_outer_execution_trace_authority(
     _assert_trace_identity(result)
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
     assert result.trace is not None
-    assert [event.kind for event in events] == [event.kind for event in result.trace.events]
+    assert [event.kind for event in events] == [
+        event.kind for event in result.trace.events
+    ]
     assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in events) == 1
     assert result.trace.events[-1].kind is EventKind.EXECUTION_FINISHED
 
@@ -423,8 +471,16 @@ async def test_submitted_agent_execution_persists_one_outer_trace_in_sqlite(
         _assert_trace_identity(result)
         persisted = store.get_report(result.snapshot.execution_id)
         assert persisted is not None
-        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events) == 1
-        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events) == 1
+        assert (
+            sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events)
+            == 1
+        )
+        assert (
+            sum(
+                event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events
+            )
+            == 1
+        )
         assert result.trace is not None
         assert [event.event_id for event in persisted.events] == [
             event.event_id for event in result.trace.events
@@ -459,8 +515,16 @@ async def test_caller_async_agent_session_persists_prior_turn_before_terminal_fa
         persisted = store.get_report(result.snapshot.execution_id)
         assert persisted is not None
         assert persisted.snapshot.outcome is ExecutionOutcome.FAILED
-        assert sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events) == 1
-        assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events) == 1
+        assert (
+            sum(event.kind is EventKind.EXECUTION_CREATED for event in persisted.events)
+            == 1
+        )
+        assert (
+            sum(
+                event.kind is EventKind.EXECUTION_FINISHED for event in persisted.events
+            )
+            == 1
+        )
         assert [
             event.payload["number"]
             for event in persisted.events
@@ -486,7 +550,9 @@ async def test_direct_startup_failure_finalizes_after_cleanup() -> None:
     _assert_trace_identity(result)
     assert result.snapshot.outcome is ExecutionOutcome.FAILED
     assert result.trace is not None
-    assert any(event.kind is EventKind.SESSION_STATE_CHANGED for event in result.trace.events)
+    assert any(
+        event.kind is EventKind.SESSION_STATE_CHANGED for event in result.trace.events
+    )
 
 
 @pytest.mark.asyncio
@@ -522,7 +588,9 @@ async def test_direct_terminal_turn_failure_has_provisional_then_final_trace() -
 
 
 @pytest.mark.asyncio
-async def test_terminal_adapter_failure_with_complete_evidence_keeps_complete_trace() -> None:
+async def test_terminal_adapter_failure_with_complete_evidence_keeps_complete_trace() -> (
+    None
+):
     session = AsyncAgentSession(_spec(), _TerminalCompleteEvidenceHarness())
     await session.__aenter__()
     turn = await session.send("fail-with-complete-evidence")
@@ -610,8 +678,12 @@ async def test_cleanup_retry_publishes_one_partial_terminal_event() -> None:
 
 
 @pytest.mark.asyncio
-async def test_submitted_terminal_failure_has_outer_trace_without_duplicate_ids() -> None:
-    registry = HarnessAdapterRegistry({"acp": lambda _harness: _TerminalFailureHarness()})
+async def test_submitted_terminal_failure_has_outer_trace_without_duplicate_ids() -> (
+    None
+):
+    registry = HarnessAdapterRegistry(
+        {"acp": lambda _harness: _TerminalFailureHarness()}
+    )
     async with AsyncMCPTestKit(
         env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
     ) as kit:
@@ -623,7 +695,9 @@ async def test_submitted_terminal_failure_has_outer_trace_without_duplicate_ids(
     assert result.snapshot.outcome is ExecutionOutcome.FAILED
     trace = result.trace
     assert trace is not None
-    assert [event.event_id for event in events] == [event.event_id for event in trace.events]
+    assert [event.event_id for event in events] == [
+        event.event_id for event in trace.events
+    ]
     assert len({event.event_id for event in events}) == len(events)
     assert sum(event.kind is EventKind.EXECUTION_FINISHED for event in events) == 1
 
@@ -646,13 +720,18 @@ async def test_submitted_active_cancellation_overrides_session_close_outcome() -
     assert result.error.code is ErrorCode.CANCELLED
 
 
-def test_submitted_agent_trace_reopens_with_identical_stable_events(tmp_path: Path) -> None:
+def test_submitted_agent_trace_reopens_with_identical_stable_events(
+    tmp_path: Path,
+) -> None:
     async def run() -> tuple[ExecutionResult, tuple[Event, ...], str]:
         path = tmp_path / "agent-trace.sqlite"
         store = SQLiteExecutionStore(path)
         registry = HarnessAdapterRegistry({"acp": lambda _harness: _TraceHarness()})
         async with AsyncMCPTestKit(
-            env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry, store=store
+            env={},
+            cwd="/tmp/mcp-pal-no-project",
+            adapter_registry=registry,
+            store=store,
         ) as kit:
             handle = kit.submit(_spec(message="persist"))
             result = await handle.result(timeout=10)

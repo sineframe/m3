@@ -11,10 +11,14 @@ target-version = "py310"
 include = ["*.py", "*.pyi"]
 
 [tool.ruff.lint]
-# Start with Ruff's high-confidence syntax and undefined-name checks. The
-# existing workspace predates Ruff and has a substantial style backlog that
-# can be enabled rule-by-rule without weakening this gate.
-select = ["E9", "F63", "F7", "F82"]
+# Keep correctness and safe modernization enabled as the repository grows.
+# E501 remains intentionally disabled: Ruff's formatter handles ordinary line
+# wrapping, while long literals and generated protocol payloads are clearer as
+# written.
+select = ["F", "I", "B", "RUF", "UP", "E701", "E702"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mcp_pal", "mcp_pal_app", "mcp_pal_cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["sdk/tests", "app/tests", "cli/tests"]

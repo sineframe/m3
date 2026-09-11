@@ -29,8 +29,8 @@ from .execution_trace import ExecutionTraceRecorder, TraceRecorderError
 from .storage import ExecutionStore, InMemoryExecutionStore
 from .trace.redaction import RedactionConfig
 from .types import (
-    Event,
     ConnectionId,
+    Event,
     EventDirection,
     EventKind,
     EventOrigin,
@@ -91,7 +91,9 @@ def _message(value: Any) -> Any:
 
 
 def _dump_message(value: Any) -> dict[str, Any]:
-    if isinstance(value, (JSONRPCRequest, JSONRPCResponse, JSONRPCError, JSONRPCNotification)):
+    if isinstance(
+        value, (JSONRPCRequest, JSONRPCResponse, JSONRPCError, JSONRPCNotification)
+    ):
         dumped = value.model_dump(mode="json", by_alias=True)
         return dumped
     return {"stream_value": "unsupported_message"}
@@ -185,7 +187,11 @@ class DirectTraceBridge:
         )
         self._server_binding = server_binding
         self._server_bindings = tuple(dict(item) for item in server_bindings)
-        self._redaction_config = redaction_config if redaction_config is not None else RedactionConfig.from_environment()
+        self._redaction_config = (
+            redaction_config
+            if redaction_config is not None
+            else RedactionConfig.from_environment()
+        )
         self._factory = event_factory or EventFactory(
             self._execution_id,
             allocator=EventSequence(start=1),
@@ -194,7 +200,9 @@ class DirectTraceBridge:
         if self._factory.execution_id != self._execution_id:
             raise ValueError("event factory belongs to another execution")
         if self._factory.next_sequence < 1:
-            raise ValueError("event factory sequence must reserve 0 for execution.created")
+            raise ValueError(
+                "event factory sequence must reserve 0 for execution.created"
+            )
         self._recorder = recorder or ExecutionTraceRecorder(
             self._store,
             self._execution_id,
@@ -241,7 +249,9 @@ class DirectTraceBridge:
                 sensitive_keys=self._redaction_config.sensitive_keys,
                 include_environment=False,
             )
-            self._recorder.bind_redaction_config(self._redaction_config, allow_after_events=True)
+            self._recorder.bind_redaction_config(
+                self._redaction_config, allow_after_events=True
+            )
             self._pending.clear()
 
     @property
@@ -292,10 +302,14 @@ class DirectTraceBridge:
             "evidence_mode": "normalized_session_messages",
         }
 
-    def wrap_streams(self, read_stream: _ReadStream, write_stream: _WriteStream) -> tuple[_ReadStream, _WriteStream]:
+    def wrap_streams(
+        self, read_stream: _ReadStream, write_stream: _WriteStream
+    ) -> tuple[_ReadStream, _WriteStream]:
         """Return transparent observers preserving the official stream API."""
 
-        return _ObservedReadStream(read_stream, self), _ObservedWriteStream(write_stream, self)
+        return _ObservedReadStream(read_stream, self), _ObservedWriteStream(
+            write_stream, self
+        )
 
     def record_transport_connected(self, transport: TransportKind) -> None:
         """Record successful transport setup once, before MCP initialization."""
@@ -352,7 +366,11 @@ class DirectTraceBridge:
                 return
 
     def _correlation_direction(self, direction: Direction) -> EventDirection:
-        return EventDirection.CLIENT_TO_SERVER if direction == "outbound" else EventDirection.SERVER_TO_CLIENT
+        return (
+            EventDirection.CLIENT_TO_SERVER
+            if direction == "outbound"
+            else EventDirection.SERVER_TO_CLIENT
+        )
 
     def _observe_request(self, message: JSONRPCRequest, direction: Direction) -> None:
         method = _method(message)
@@ -370,10 +388,16 @@ class DirectTraceBridge:
             )
             if event is None:
                 return
-            event_sequence = event.correlation.request_sequence if event.correlation is not None else None
+            event_sequence = (
+                event.correlation.request_sequence
+                if event.correlation is not None
+                else None
+            )
         else:
             with self._factory_guard:
-                event_sequence = self._factory.next_request_sequence(self._connection_id)
+                event_sequence = self._factory.next_request_sequence(
+                    self._connection_id
+                )
                 event = self._create(
                     event_kind,
                     method=method,
@@ -384,7 +408,7 @@ class DirectTraceBridge:
                     payload_extra=_semantic_fields(message),
                 )
                 if event is None:
-                    request_allocator = getattr(self._factory, "_request_allocator")
+                    request_allocator = self._factory._request_allocator
                     request_allocator.rollback(self._connection_id, event_sequence)
                     return
         key = _id_key(message.id)
@@ -396,7 +420,9 @@ class DirectTraceBridge:
         if method == "notifications/cancelled":
             return
 
-    def _observe_notification(self, message: JSONRPCNotification, direction: Direction) -> None:
+    def _observe_notification(
+        self, message: JSONRPCNotification, direction: Direction
+    ) -> None:
         method = _method(message)
         self._create(
             _notification_kind(method),
@@ -407,7 +433,13 @@ class DirectTraceBridge:
             payload_extra=_semantic_fields(message),
         )
 
-    def _observe_response(self, message: JSONRPCResponse | JSONRPCError, direction: Direction, *, is_error: bool) -> None:
+    def _observe_response(
+        self,
+        message: JSONRPCResponse | JSONRPCError,
+        direction: Direction,
+        *,
+        is_error: bool,
+    ) -> None:
         key = _id_key(message.id)
         pending: tuple[int, str | None, EventKind] | None = None
         if key is not None:
@@ -463,7 +495,9 @@ class DirectTraceBridge:
         phase: LifecyclePhase,
         payload_extra: Mapping[str, Any] | None = None,
     ) -> Event | None:
-        message_payload: dict[str, Any] = {"evidence_mode": "normalized_session_message"}
+        message_payload: dict[str, Any] = {
+            "evidence_mode": "normalized_session_message"
+        }
         if method is not None:
             message_payload["method"] = method
         if payload_extra:
@@ -503,7 +537,7 @@ class DirectTraceBridge:
     def _rollback_reservation(self, event: Event) -> None:
         """Return reservations made by a factory event rejected by storage."""
 
-        allocator = getattr(self._factory, "_allocator")
+        allocator = self._factory._allocator
         allocator.rollback(event.sequence)
         correlation = event.correlation
         if (
@@ -513,8 +547,10 @@ class DirectTraceBridge:
             and correlation.direction
             in {EventDirection.CLIENT_TO_SERVER, EventDirection.SDK_TO_HARNESS}
         ):
-            request_allocator = getattr(self._factory, "_request_allocator")
-            request_allocator.rollback(event.connection_id, correlation.request_sequence)
+            request_allocator = self._factory._request_allocator
+            request_allocator.rollback(
+                event.connection_id, correlation.request_sequence
+            )
 
     def _record_diagnostic(self) -> None:
         self._create(
@@ -537,7 +573,12 @@ class DirectTraceBridge:
         with self._lock:
             if self._final is not None:
                 return self._final.model_copy()
-            allowed = {"cleanup_failed", "persistence_failed", "capture_incomplete", "partial_trace"}
+            allowed = {
+                "cleanup_failed",
+                "persistence_failed",
+                "capture_incomplete",
+                "partial_trace",
+            }
             merged_values: list[str] = []
             for item in limitations:
                 if not isinstance(item, str) or not item.strip() or item not in allowed:
@@ -586,16 +627,16 @@ class _ObservedReadStream:
     async def aclose(self) -> None:
         await self._stream.aclose()
 
-    def __aiter__(self) -> "_ObservedReadStream":
+    def __aiter__(self) -> _ObservedReadStream:
         return self
 
     async def __anext__(self) -> Any:
         try:
             return await self.receive()
         except (EndOfStream, StopAsyncIteration, EOFError):
-            raise StopAsyncIteration
+            raise StopAsyncIteration from None
 
-    async def __aenter__(self) -> "_ObservedReadStream":
+    async def __aenter__(self) -> _ObservedReadStream:
         enter = getattr(self._stream, "__aenter__", None)
         if callable(enter):
             await enter()
@@ -628,7 +669,7 @@ class _ObservedWriteStream:
     async def aclose(self) -> None:
         await self._stream.aclose()
 
-    async def __aenter__(self) -> "_ObservedWriteStream":
+    async def __aenter__(self) -> _ObservedWriteStream:
         enter = getattr(self._stream, "__aenter__", None)
         if callable(enter):
             await enter()

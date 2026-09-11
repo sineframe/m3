@@ -17,10 +17,20 @@ def test_usage_examples_compile() -> None:
 
 def test_usage_examples_require_mypy_strict() -> None:
     mypy = shutil.which("mypy")
-    assert mypy is not None, "mypy is required; run through the explicit typecheck dependency group"
+    assert mypy is not None, (
+        "mypy is required; run through the explicit typecheck dependency group"
+    )
     with tempfile.TemporaryDirectory(prefix="mcp-pal-mypy-") as cache_dir:
         result = subprocess.run(
-            [mypy, "--strict", "--python-version", "3.10", "--cache-dir", cache_dir, str(EXAMPLE)],
+            [
+                mypy,
+                "--strict",
+                "--python-version",
+                "3.10",
+                "--cache-dir",
+                cache_dir,
+                str(EXAMPLE),
+            ],
             cwd=Path(__file__).parents[2],
             check=False,
             capture_output=True,

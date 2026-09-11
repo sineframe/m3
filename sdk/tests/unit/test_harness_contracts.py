@@ -13,7 +13,13 @@ from mcp_pal.harness.contracts import (
     UnsupportedHarnessFeature,
 )
 from mcp_pal.server_group import ServerGroupManager
-from mcp_pal.types import ACPAgent, AgentSpec, RestrictiveToolPolicy, ServerBinding, StdioServer
+from mcp_pal.types import (
+    ACPAgent,
+    AgentSpec,
+    RestrictiveToolPolicy,
+    ServerBinding,
+    StdioServer,
+)
 
 
 def _launch(manager: ServerGroupManager) -> HarnessLaunch:
@@ -25,7 +31,9 @@ def _launch(manager: ServerGroupManager) -> HarnessLaunch:
             ),
         ),
     )
-    return HarnessLaunch(spec, manager.snapshot(), manager.configurations(), spec.tool_policy)
+    return HarnessLaunch(
+        spec, manager.snapshot(), manager.configurations(), spec.tool_policy
+    )
 
 
 @pytest.mark.asyncio
@@ -67,25 +75,35 @@ async def test_fake_adapter_rejects_unsupported_attachment_before_handler() -> N
 
     with pytest.raises(UnsupportedHarnessFeature):
         await session.send(
-            HarnessTurnRequest(UserMessage(content=(ImageContent(media_type="image/png", data="x"),)))
+            HarnessTurnRequest(
+                UserMessage(content=(ImageContent(media_type="image/png", data="x"),))
+            )
         )
     await session.close()
     await manager.close()
 
 
 @pytest.mark.asyncio
-async def test_fake_adapter_attaches_portable_policy_evidence_to_effective_launch() -> None:
+async def test_fake_adapter_attaches_portable_policy_evidence_to_effective_launch() -> (
+    None
+):
     manager = ServerGroupManager(
         (ServerBinding(server=StdioServer(name="memory", command="memory-server")),)
     )
     await manager.start()
     spec = AgentSpec(
         harness=ACPAgent(model="fake"),
-        servers=(ServerBinding(server=StdioServer(name="memory", command="memory-server")),),
+        servers=(
+            ServerBinding(server=StdioServer(name="memory", command="memory-server")),
+        ),
         tool_policy=RestrictiveToolPolicy(allowed_tools=("memory:read",)),
     )
     adapter = DeterministicHarnessAdapter()
-    await adapter.open(HarnessLaunch(spec, manager.snapshot(), manager.configurations(), spec.tool_policy))
+    await adapter.open(
+        HarnessLaunch(
+            spec, manager.snapshot(), manager.configurations(), spec.tool_policy
+        )
+    )
     assert adapter.last_launch is not None
     assert adapter.last_launch.tool_policy_evidence is not None
     assert adapter.last_launch.tool_policy_evidence.enforced == "portable"
@@ -95,30 +113,48 @@ async def test_fake_adapter_attaches_portable_policy_evidence_to_effective_launc
 
 
 @pytest.mark.asyncio
-async def test_fake_adapter_rejects_portable_policy_when_capability_is_unavailable() -> None:
+async def test_fake_adapter_rejects_portable_policy_when_capability_is_unavailable() -> (
+    None
+):
     manager = ServerGroupManager(
         (ServerBinding(server=StdioServer(name="memory", command="memory-server")),)
     )
     await manager.start()
     spec = AgentSpec(
         harness=ACPAgent(model="fake"),
-        servers=(ServerBinding(server=StdioServer(name="memory", command="memory-server")),),
+        servers=(
+            ServerBinding(server=StdioServer(name="memory", command="memory-server")),
+        ),
         tool_policy=RestrictiveToolPolicy(allowed_tools=("memory:read",)),
     )
     adapter = DeterministicHarnessAdapter(
-        capabilities=HarnessAdapterCapabilities(name="no-policy", supports_tool_policy=False)
+        capabilities=HarnessAdapterCapabilities(
+            name="no-policy", supports_tool_policy=False
+        )
     )
-    readiness = await adapter.preflight(HarnessLaunch(spec, manager.snapshot(), manager.configurations(), spec.tool_policy))
+    readiness = await adapter.preflight(
+        HarnessLaunch(
+            spec, manager.snapshot(), manager.configurations(), spec.tool_policy
+        )
+    )
     assert readiness.ready is False
     assert readiness.reason == "tool_policy_unsupported"
     with pytest.raises(HarnessStartupError):
-        await adapter.open(HarnessLaunch(spec, manager.snapshot(), manager.configurations(), spec.tool_policy))
+        await adapter.open(
+            HarnessLaunch(
+                spec, manager.snapshot(), manager.configurations(), spec.tool_policy
+            )
+        )
     await manager.close()
 
 
 @pytest.mark.asyncio
-async def test_fake_adapter_timeout_and_cancel_are_typed_and_cleanup_is_idempotent() -> None:
-    async def slow_handler(request: HarnessTurnRequest, state: dict[str, object]) -> str:
+async def test_fake_adapter_timeout_and_cancel_are_typed_and_cleanup_is_idempotent() -> (
+    None
+):
+    async def slow_handler(
+        request: HarnessTurnRequest, state: dict[str, object]
+    ) -> str:
         del request, state
         await asyncio.sleep(1)
         return "late"
@@ -130,9 +166,13 @@ async def test_fake_adapter_timeout_and_cancel_are_typed_and_cleanup_is_idempote
     adapter = DeterministicHarnessAdapter(handler=slow_handler)
     session = await adapter.open(_launch(manager))
 
-    timed_out = await session.send(HarnessTurnRequest.from_message("slow", timeout_seconds=0.01))
+    timed_out = await session.send(
+        HarnessTurnRequest.from_message("slow", timeout_seconds=0.01)
+    )
     assert timed_out.status == "timed_out"
-    running = asyncio.create_task(session.send(HarnessTurnRequest.from_message("cancel")))
+    running = asyncio.create_task(
+        session.send(HarnessTurnRequest.from_message("cancel"))
+    )
     await asyncio.sleep(0)
     await session.cancel()
     cancelled = await running

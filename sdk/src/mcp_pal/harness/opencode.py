@@ -78,8 +78,20 @@ from .observations import (
 )
 
 _URL = re.compile(r"https?://(?:127\.0\.0\.1|localhost|\[::1\]):\d+")
-_DIALECT_PROBE_CONTROL_KEYS = frozenset({"MCP_PAL_OPENCODE_MODE", "MCP_PAL_PROBE_MARKER", "MCP_PAL_VERSION_MARKER"})
-_TOKEN_COUNTERS = frozenset({"input", "output", "reasoning", "cache_creation", "cache_read", "cache_write", "total"})
+_DIALECT_PROBE_CONTROL_KEYS = frozenset(
+    {"MCP_PAL_OPENCODE_MODE", "MCP_PAL_PROBE_MARKER", "MCP_PAL_VERSION_MARKER"}
+)
+_TOKEN_COUNTERS = frozenset(
+    {
+        "input",
+        "output",
+        "reasoning",
+        "cache_creation",
+        "cache_read",
+        "cache_write",
+        "total",
+    }
+)
 _ToolStatus = Literal[
     "success",
     "tool_error",
@@ -109,9 +121,13 @@ def _valid_identifier(value: object) -> bool:
     )
 
 
-def opencode_configuration(launch: HarnessLaunch, *, dialect: str = "legacy") -> dict[str, Any]:
+def opencode_configuration(
+    launch: HarnessLaunch, *, dialect: str = "legacy"
+) -> dict[str, Any]:
     """Render OpenCode's config dialect (never Claude's ``mcpServers``)."""
-    if dialect == "v2" and any(config.transport.value == "sse" for config in launch.configurations):
+    if dialect == "v2" and any(
+        config.transport.value == "sse" for config in launch.configurations
+    ):
         # V2 documents only Streamable HTTP for remote MCP servers.
         raise HarnessStartupError("OpenCode V2 does not support SSE MCP servers")
     # Keep credentials as OpenCode's documented `{env:NAME}` substitutions in
@@ -123,7 +139,10 @@ def opencode_configuration(launch: HarnessLaunch, *, dialect: str = "legacy") ->
     for name, value in raw_servers.items():
         source = source_servers.get(name)
         if "command" in value:
-            item: dict[str, Any] = {"type": "local", "command": [value["command"], *value.get("args", [])]}
+            item: dict[str, Any] = {
+                "type": "local",
+                "command": [value["command"], *value.get("args", [])],
+            }
             if source is not None and source.environment:
                 item["environment"] = {
                     key: _opencode_config_value(key, raw)
@@ -139,30 +158,65 @@ def opencode_configuration(launch: HarnessLaunch, *, dialect: str = "legacy") ->
             item = {
                 "type": "remote",
                 "url": _opencode_config_value("url", endpoint),
-                "headers": {key: _opencode_config_value(key, raw) for key, raw in headers.items()},
+                "headers": {
+                    key: _opencode_config_value(key, raw)
+                    for key, raw in headers.items()
+                },
             }
         servers[name] = item
     policy = launch.tool_policy
     if isinstance(policy, NativeToolPolicy):
         mode = policy.policy.get("mode")
         server = policy.policy.get("server")
-        if mode not in {"mcp_only", "mcp_read_only", "full"} or not isinstance(server, str) or server not in servers:
+        if (
+            mode not in {"mcp_only", "mcp_read_only", "full"}
+            or not isinstance(server, str)
+            or server not in servers
+        ):
             raise HarnessStartupError("OpenCode native tool policy is invalid")
         if mode == "full":
             tools: dict[str, Any] = {"*": True}
             permissions: dict[str, Any] = {"*": "allow"}
         else:
             pattern = f"{server}_*"
-            read_only = tuple(str(item) for item in (policy.policy.get("read_only_tools") or ()))
-            tools = {"*": False, pattern: True, **({item: True for item in read_only} if mode == "mcp_read_only" else {})}
-            permissions = {"*": "deny", pattern: "allow", **({item: "allow" for item in read_only} if mode == "mcp_read_only" else {})}
+            read_only = tuple(
+                str(item) for item in (policy.policy.get("read_only_tools") or ())
+            )
+            tools = {
+                "*": False,
+                pattern: True,
+                **(
+                    {item: True for item in read_only}
+                    if mode == "mcp_read_only"
+                    else {}
+                ),
+            }
+            permissions = {
+                "*": "deny",
+                pattern: "allow",
+                **(
+                    {item: "allow" for item in read_only}
+                    if mode == "mcp_read_only"
+                    else {}
+                ),
+            }
     else:
         tools = {}
         permissions = {}
     if dialect == "v2":
-        return {"$schema": "https://opencode.ai/config.json", "mcp": {"servers": servers}, **({"tools": tools, "permission": permissions} if tools else {})}
+        return {
+            "$schema": "https://opencode.ai/config.json",
+            "mcp": {"servers": servers},
+            **({"tools": tools, "permission": permissions} if tools else {}),
+        }
     if dialect == "legacy":
-        return {"$schema": "https://opencode.ai/config.json", "mcp": {name: {**value, "enabled": True} for name, value in servers.items()}, **({"tools": tools, "permission": permissions} if tools else {})}
+        return {
+            "$schema": "https://opencode.ai/config.json",
+            "mcp": {
+                name: {**value, "enabled": True} for name, value in servers.items()
+            },
+            **({"tools": tools, "permission": permissions} if tools else {}),
+        }
     raise HarnessStartupError("unsupported OpenCode configuration dialect")
 
 
@@ -219,7 +273,9 @@ def _write_opencode_config(root: Path, launch: HarnessLaunch, dialect: str) -> P
     config = root / "opencode.json"
     descriptor: int | None = None
     try:
-        payload = json.dumps(opencode_configuration(launch, dialect=dialect), separators=(",", ":"))
+        payload = json.dumps(
+            opencode_configuration(launch, dialect=dialect), separators=(",", ":")
+        )
         descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             descriptor = None
@@ -234,7 +290,9 @@ def _write_opencode_config(root: Path, launch: HarnessLaunch, dialect: str) -> P
             config.unlink(missing_ok=True)
         except OSError:
             pass
-        raise HarnessStartupError("OpenCode configuration could not be prepared") from None
+        raise HarnessStartupError(
+            "OpenCode configuration could not be prepared"
+        ) from None
     return config
 
 
@@ -256,7 +314,12 @@ class _HistorySnapshot(NamedTuple):
 class OpenCodeHarnessAdapter:
     """One isolated OpenCode server and attached conversation session."""
 
-    def __init__(self, *, executable: str = "opencode", environment: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        executable: str = "opencode",
+        environment: Mapping[str, str] | None = None,
+    ) -> None:
         self.executable = _executable(executable, "opencode")
         self.environment = dict(environment or {})
         self._resolver_environment = environment
@@ -296,44 +359,91 @@ class OpenCodeHarnessAdapter:
         return self._capabilities.supported_content_kinds
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
-        if shutil.which(self.executable) is None and not Path(self.executable).is_file():
-            capability = Capability(name="harness:opencode", status=CapabilityStatus.UNAVAILABLE, reason="executable unavailable")
-            return Readiness(ready=False, capabilities=(capability,), reason="executable unavailable")
-        help_text = await asyncio.to_thread(probe_help, self.executable, ("serve", "--help"))
+        if (
+            shutil.which(self.executable) is None
+            and not Path(self.executable).is_file()
+        ):
+            capability = Capability(
+                name="harness:opencode",
+                status=CapabilityStatus.UNAVAILABLE,
+                reason="executable unavailable",
+            )
+            return Readiness(
+                ready=False, capabilities=(capability,), reason="executable unavailable"
+            )
+        help_text = await asyncio.to_thread(
+            probe_help, self.executable, ("serve", "--help")
+        )
         if help_text is None or "serve" not in help_text.lower():
-            capability = Capability(name="harness:opencode", status=CapabilityStatus.UNAVAILABLE, reason="serve unavailable")
-            return Readiness(ready=False, capabilities=(capability,), reason="serve unavailable")
+            capability = Capability(
+                name="harness:opencode",
+                status=CapabilityStatus.UNAVAILABLE,
+                reason="serve unavailable",
+            )
+            return Readiness(
+                ready=False, capabilities=(capability,), reason="serve unavailable"
+            )
         harness = launch.spec.harness
-        if isinstance(harness, OpenCode) and harness.dialect not in ("auto", "legacy", "v2"):
-            return Readiness(ready=False, reason="unsupported OpenCode configuration dialect")
+        if isinstance(harness, OpenCode) and harness.dialect not in (
+            "auto",
+            "legacy",
+            "v2",
+        ):
+            return Readiness(
+                ready=False, reason="unsupported OpenCode configuration dialect"
+            )
         try:
             detected = self._detect_dialect(launch)
         except HarnessStartupError as error:
             return Readiness(ready=False, reason=str(error))
-        if isinstance(harness, OpenCode) and harness.dialect != "auto" and harness.dialect != detected:
-            return Readiness(ready=False, reason="OpenCode configuration dialect mismatch")
+        if (
+            isinstance(harness, OpenCode)
+            and harness.dialect != "auto"
+            and harness.dialect != detected
+        ):
+            return Readiness(
+                ready=False, reason="OpenCode configuration dialect mismatch"
+            )
         self._detected_dialect = detected
         self.last_policy_evidence = None
         self._capabilities = replace(self._capabilities, supports_tool_policy=False)
         policy = launch.tool_policy
         if isinstance(policy, NativeToolPolicy):
-            if policy.harness != self.name or policy.policy.get("mode") not in {"mcp_only", "mcp_read_only", "full"}:
-                return self._capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+            if policy.harness != self.name or policy.policy.get("mode") not in {
+                "mcp_only",
+                "mcp_read_only",
+                "full",
+            }:
+                return self._capabilities.readiness(
+                    ready=False, reason="tool_policy_unsupported"
+                )
             server = policy.policy.get("server")
-            if not isinstance(server, str) or server not in {record.key for record in launch.servers.records}:
-                return self._capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+            if not isinstance(server, str) or server not in {
+                record.key for record in launch.servers.records
+            }:
+                return self._capabilities.readiness(
+                    ready=False, reason="tool_policy_unsupported"
+                )
             self.last_policy_evidence = ToolPolicyEvidence(
-                requested="native", enforced="native", observed="preflight", portable=False,
+                requested="native",
+                enforced="native",
+                observed="preflight",
+                portable=False,
                 nonportable_reason="OpenCode configuration permissions",
             )
             self._capabilities = replace(self._capabilities, supports_tool_policy=True)
             return self._capabilities.readiness()
         policy_requested = isinstance(policy, (FullToolPolicy, NativeToolPolicy)) or (
-            isinstance(policy, RestrictiveToolPolicy) and bool(policy.allowed_tools or policy.denied_tools)
+            isinstance(policy, RestrictiveToolPolicy)
+            and bool(policy.allowed_tools or policy.denied_tools)
         )
         if policy_requested:
-            if isinstance(policy, NativeToolPolicy) or not isinstance(policy, (RestrictiveToolPolicy, FullToolPolicy)):
-                return self._capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+            if isinstance(policy, NativeToolPolicy) or not isinstance(
+                policy, (RestrictiveToolPolicy, FullToolPolicy)
+            ):
+                return self._capabilities.readiness(
+                    ready=False, reason="tool_policy_unsupported"
+                )
             available_connections = tuple(
                 str(config.connection_id)
                 for config in launch.configurations
@@ -341,7 +451,9 @@ class OpenCodeHarnessAdapter:
             )
             enforcement = getattr(launch.capture, "enforces_portable_policy", None)
             if not callable(enforcement) or not enforcement(available_connections):
-                return self._capabilities.readiness(ready=False, reason="tool_policy_unsupported")
+                return self._capabilities.readiness(
+                    ready=False, reason="tool_policy_unsupported"
+                )
             self._capabilities = replace(self._capabilities, supports_tool_policy=True)
             descriptors = tuple(
                 ToolDescriptor(server=record.key, name=tool)
@@ -358,7 +470,9 @@ class OpenCodeHarnessAdapter:
 
     def _detect_dialect(self, launch: HarnessLaunch) -> str:
         del launch
-        with tempfile.TemporaryDirectory(prefix="mcp-pal-opencode-probe-") as probe_root:
+        with tempfile.TemporaryDirectory(
+            prefix="mcp-pal-opencode-probe-"
+        ) as probe_root:
             probe_environment = {
                 "PATH": os.environ.get("PATH", ""),
                 "HOME": probe_root,
@@ -375,9 +489,19 @@ class OpenCodeHarnessAdapter:
                 if key in _DIALECT_PROBE_CONTROL_KEYS
             )
             try:
-                result = subprocess.run((self.executable, "--version"), capture_output=True, text=True, timeout=5, check=False, env=probe_environment, cwd=probe_root)
+                result = subprocess.run(
+                    (self.executable, "--version"),
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                    env=probe_environment,
+                    cwd=probe_root,
+                )
             except (OSError, subprocess.SubprocessError):
-                raise HarnessStartupError("OpenCode configuration dialect could not be detected") from None
+                raise HarnessStartupError(
+                    "OpenCode configuration dialect could not be detected"
+                ) from None
         # Stable 1.x exposes the flat `mcp` schema. Unknown versions fail
         # closed rather than receiving a potentially incompatible config.
         if result.returncode == 0 and re.search(r"\b1\.\d+", result.stdout):
@@ -401,10 +525,19 @@ class OpenCodeHarnessAdapter:
             runtime_secrets: set[str] = set()
             if isinstance(harness, OpenCode):
                 for variable, reference in harness.credential_references.items():
-                    if not isinstance(variable, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", variable):
-                        raise HarnessStartupError("OpenCode credential reference is invalid")
-                    if not isinstance(reference, SecretReference) or reference.source != "environment":
-                        raise HarnessStartupError("OpenCode credential reference is unavailable")
+                    if not isinstance(variable, str) or not re.fullmatch(
+                        r"[A-Za-z_][A-Za-z0-9_]*", variable
+                    ):
+                        raise HarnessStartupError(
+                            "OpenCode credential reference is invalid"
+                        )
+                    if (
+                        not isinstance(reference, SecretReference)
+                        or reference.source != "environment"
+                    ):
+                        raise HarnessStartupError(
+                            "OpenCode credential reference is unavailable"
+                        )
                     value = environment.get(reference.name)
                     if value is None:
                         value = os.environ.get(reference.name)
@@ -442,7 +575,9 @@ class OpenCodeHarnessAdapter:
             if callable(writer_for) and runtime_secrets:
                 for configuration in launch.configurations:
                     try:
-                        writer = writer_for(configuration.connection_id, configuration.transport.value)
+                        writer = writer_for(
+                            configuration.connection_id, configuration.transport.value
+                        )
                         writer_add_secrets = getattr(writer, "add_secrets", None)
                         if callable(writer_add_secrets):
                             writer_add_secrets(runtime_secrets)
@@ -452,7 +587,9 @@ class OpenCodeHarnessAdapter:
                         pass
             dialect = self._detected_dialect
             if dialect not in ("legacy", "v2"):
-                raise HarnessStartupError("OpenCode configuration dialect could not be detected")
+                raise HarnessStartupError(
+                    "OpenCode configuration dialect could not be detected"
+                )
             config = _write_opencode_config(root, launch, dialect)
             workspace = workspace_for_launch(launch, root)
             environment["OPENCODE_CONFIG"] = str(config)
@@ -477,7 +614,9 @@ class OpenCodeHarnessAdapter:
                 try:
                     body = json.loads(await self._read_bounded_response(response))
                 except json.JSONDecodeError:
-                    raise HarnessStartupError("OpenCode session response is invalid") from None
+                    raise HarnessStartupError(
+                        "OpenCode session response is invalid"
+                    ) from None
             session_id = body.get("id") if isinstance(body, Mapping) else None
             if not isinstance(session_id, str) or not session_id:
                 raise HarnessStartupError("OpenCode session identity was unavailable")
@@ -486,7 +625,9 @@ class OpenCodeHarnessAdapter:
             self._client = client
             self._base_url = base_url
             self._launch = launch
-            self._session = OpenCodeSession(self, owner, client, self._capabilities, session_id)
+            self._session = OpenCodeSession(
+                self, owner, client, self._capabilities, session_id
+            )
             config.unlink(missing_ok=True)
             return self._session
         except BaseException:
@@ -502,11 +643,19 @@ class OpenCodeHarnessAdapter:
     async def start(self, spec: Any) -> None:
         raise HarnessStartupError("OpenCode requires a resolved harness launch")
 
-    async def send(self, message: UserMessage, *, timeout: float | None = None, metadata: Mapping[str, object] | None = None) -> AdapterTurn:
+    async def send(
+        self,
+        message: UserMessage,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> AdapterTurn:
         del metadata
         if self._session is None:
             raise HarnessAdapterError("OpenCode session is not open")
-        result = await self._session.send(HarnessTurnRequest.from_message(message, timeout_seconds=timeout))
+        result = await self._session.send(
+            HarnessTurnRequest.from_message(message, timeout_seconds=timeout)
+        )
         return AdapterTurn(
             response=result.response,
             error=result.error,
@@ -571,7 +720,9 @@ class OpenCodeHarnessAdapter:
             body.extend(chunk)
         return bytes(body)
 
-    async def _send(self, request: HarnessTurnRequest, sequence: int, session_id: str) -> HarnessTurnResult:
+    async def _send(
+        self, request: HarnessTurnRequest, sequence: int, session_id: str
+    ) -> HarnessTurnResult:
         client = self._client
         if client is None:
             raise HarnessAdapterError("OpenCode session is not open")
@@ -579,7 +730,12 @@ class OpenCodeHarnessAdapter:
         turn_wall_time = datetime.now(timezone.utc)
         payload = {
             "model": self._model_reference(),
-            "parts": [{"type": "text", "text": _text(request.message.model_dump(mode="python"))}],
+            "parts": [
+                {
+                    "type": "text",
+                    "text": _text(request.message.model_dump(mode="python")),
+                }
+            ],
         }
         try:
             async with client.stream(
@@ -697,8 +853,7 @@ class OpenCodeHarnessAdapter:
         # history page.  The final assistant parent is the authoritative
         # lineage; there is deliberately no pre-request full-history cursor.
         post_has_tool_parts = any(
-            isinstance(part, Mapping)
-            and part.get("type") in {"tool", "tool-call"}
+            isinstance(part, Mapping) and part.get("type") in {"tool", "tool-call"}
             for part in parts
         )
         history_after: _HistorySnapshot | None = None
@@ -712,7 +867,9 @@ class OpenCodeHarnessAdapter:
                 get_messages = getattr(client, "get", None)
                 remaining = None
                 if request.timeout_seconds is not None:
-                    remaining = request.timeout_seconds - (time.monotonic() - turn_started)
+                    remaining = request.timeout_seconds - (
+                        time.monotonic() - turn_started
+                    )
                     if remaining <= 0:
                         get_messages = None
                 if callable(get_messages):
@@ -740,7 +897,9 @@ class OpenCodeHarnessAdapter:
                             history_ambiguous = True
                     seen_part_ids: set[str] = set()
                     for item in parts:
-                        if isinstance(item, Mapping) and isinstance(item.get("id"), str):
+                        if isinstance(item, Mapping) and isinstance(
+                            item.get("id"), str
+                        ):
                             seen_part_ids.add(item["id"])
                     for candidate in candidates:
                         candidate_parts = candidate.get("parts")
@@ -927,18 +1086,23 @@ class OpenCodeHarnessAdapter:
                 call_id = part.get("callId")
             if call_id is None:
                 call_id = part.get("id")
-            if not isinstance(name, str) or not name or not isinstance(call_id, str) or not call_id:
+            if (
+                not isinstance(name, str)
+                or not name
+                or not isinstance(call_id, str)
+                or not call_id
+            ):
                 limitations.append("capture_incomplete")
                 continue
             server_name, tool_name = self._normalize_tool_name(name)
             state = part.get("state")
             state_mapping = state if isinstance(state, Mapping) else {}
             arguments_present = (
-                "arguments" in part
-                or "input" in part
-                or "input" in state_mapping
+                "arguments" in part or "input" in part or "input" in state_mapping
             )
-            arguments = part.get("arguments", part.get("input", state_mapping.get("input")))
+            arguments = part.get(
+                "arguments", part.get("input", state_mapping.get("input"))
+            )
             status = self._tool_status(state_mapping, part)
             result_present = "output" in state_mapping or "result" in state_mapping
             result_value = state_mapping.get("output", state_mapping.get("result"))
@@ -1077,40 +1241,71 @@ class OpenCodeHarnessAdapter:
                     value=True,
                 )
             )
-        evidence: dict[str, Any] = {"process_observed": False, "transport_observed": "http", "content_observed": bool(text), "tool_calls_observed": bool(tool_calls), "mcp_traffic_observed": bool(tool_calls), "usage_requested": True, "usage_enforced": False}
+        evidence: dict[str, Any] = {
+            "process_observed": False,
+            "transport_observed": "http",
+            "content_observed": bool(text),
+            "tool_calls_observed": bool(tool_calls),
+            "mcp_traffic_observed": bool(tool_calls),
+            "usage_requested": True,
+            "usage_enforced": False,
+        }
         if isinstance(info, Mapping):
             tokens = info.get("tokens")
             if isinstance(tokens, Mapping):
                 numeric_tokens = {
                     key: value
                     for key, value in tokens.items()
-                    if isinstance(key, str) and key in _TOKEN_COUNTERS
-                    and isinstance(value, (int, float)) and not isinstance(value, bool)
+                    if isinstance(key, str)
+                    and key in _TOKEN_COUNTERS
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
                 }
                 cache = tokens.get("cache")
                 if isinstance(cache, Mapping):
                     for key in ("read", "write"):
                         value = cache.get(key)
-                        if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        if isinstance(value, (int, float)) and not isinstance(
+                            value, bool
+                        ):
                             numeric_tokens[f"cache_{key}"] = value
                 if numeric_tokens:
                     evidence["tokens_observed"] = True
                     for key, value in numeric_tokens.items():
                         evidence[f"tokens_{key}"] = value
             cost = info.get("cost")
-            if isinstance(cost, (int, float)) and not isinstance(cost, bool): evidence["cost_observed"] = cost
-            provider_id = self._safe_evidence_identifier(info.get("providerID"), redaction)
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                evidence["cost_observed"] = cost
+            provider_id = self._safe_evidence_identifier(
+                info.get("providerID"), redaction
+            )
             model_id = self._safe_evidence_identifier(info.get("modelID"), redaction)
-            if provider_id is not None: evidence["provider_observed"] = provider_id
-            if model_id is not None: evidence["model_observed"] = model_id
-        usage_present = "usage" in body or (isinstance(info, Mapping) and "tokens" in info)
-        evidence.update({"usage_observed": usage_present, "usage_state": "observed" if usage_present else "unavailable", "usage_unavailable": not usage_present})
+            if provider_id is not None:
+                evidence["provider_observed"] = provider_id
+            if model_id is not None:
+                evidence["model_observed"] = model_id
+        usage_present = "usage" in body or (
+            isinstance(info, Mapping) and "tokens" in info
+        )
+        evidence.update(
+            {
+                "usage_observed": usage_present,
+                "usage_state": "observed" if usage_present else "unavailable",
+                "usage_unavailable": not usage_present,
+            }
+        )
         turn_status: _TurnStatus = "failed" if failed else "completed"
         return HarnessTurnResult(
             sequence=sequence,
             status=turn_status,
-            response=None if failed or not text else TurnResponse(content=(TextContent(text=text),)),
-            error=None if not failed else ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="OpenCode turn failed"),
+            response=None
+            if failed or not text
+            else TurnResponse(content=(TextContent(text=text),)),
+            error=None
+            if not failed
+            else ErrorInfo(
+                code=ErrorCode.TRANSPORT_ERROR, message="OpenCode turn failed"
+            ),
             tool_calls=tool_calls,
             evidence=evidence,
             trace_limitations=tuple(dict.fromkeys(limitations)),
@@ -1159,7 +1354,11 @@ class OpenCodeHarnessAdapter:
         candidate: object = value
         if isinstance(value, Mapping):
             candidate = next(
-                (value[key] for key in ("created", "start", "started", "updated") if key in value),
+                (
+                    value[key]
+                    for key in ("created", "start", "started", "updated")
+                    if key in value
+                ),
                 None,
             )
         if isinstance(candidate, datetime):
@@ -1174,8 +1373,15 @@ class OpenCodeHarnessAdapter:
             if parsed.tzinfo is None or parsed.utcoffset() is None:
                 return fallback, True
             return parsed.astimezone(timezone.utc), False
-        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool) and isfinite(candidate) and candidate >= 0:
-            seconds = candidate / 1000.0 if candidate > 100_000_000_000 else float(candidate)
+        if (
+            isinstance(candidate, (int, float))
+            and not isinstance(candidate, bool)
+            and isfinite(candidate)
+            and candidate >= 0
+        ):
+            seconds = (
+                candidate / 1000.0 if candidate > 100_000_000_000 else float(candidate)
+            )
             try:
                 return datetime.fromtimestamp(seconds, tz=timezone.utc), False
             except (OverflowError, OSError, ValueError):
@@ -1241,8 +1447,7 @@ class OpenCodeHarnessAdapter:
             ):
                 return snapshot((), raw, status_code, content_type, False, False)
             next_cursor = bool(
-                response.headers.get("x-next-cursor")
-                or response.headers.get("link")
+                response.headers.get("x-next-cursor") or response.headers.get("link")
             )
             return snapshot(
                 tuple(decoded), raw, status_code, content_type, next_cursor, True
@@ -1269,7 +1474,10 @@ class OpenCodeHarnessAdapter:
         )
         try:
             text = body.decode("utf-8")
-            safe = redact_for_api(text, config=RedactionConfig.from_environment(secrets=self._runtime_secrets))
+            safe = redact_for_api(
+                text,
+                config=RedactionConfig.from_environment(secrets=self._runtime_secrets),
+            )
             if not isinstance(safe, str):
                 raise ValueError
             return RawFrameObservation(
@@ -1354,7 +1562,9 @@ class OpenCodeHarnessAdapter:
             kwargs: dict[str, Any] = {}
             token_values = tokens if isinstance(tokens, Mapping) else {}
             if "tokens" in info and not isinstance(tokens, Mapping):
-                values.append(self._metadata_marker(sequence, "tokens", wall_time, started))
+                values.append(
+                    self._metadata_marker(sequence, "tokens", wall_time, started)
+                )
             for source, target in (
                 ("input", "input_tokens"),
                 ("output", "output_tokens"),
@@ -1363,25 +1573,32 @@ class OpenCodeHarnessAdapter:
                 ("total", "total_tokens"),
             ):
                 value = token_values.get(source)
-                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                if (
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                ):
                     kwargs[target] = value
                 elif isinstance(tokens, Mapping) and source in tokens:
                     values.append(
-                        self._metadata_marker(
-                            sequence, target, wall_time, started
-                        )
+                        self._metadata_marker(sequence, target, wall_time, started)
                     )
             cache = token_values.get("cache")
             if isinstance(cache, Mapping):
-                for source, target in (("read", "cache_read_tokens"), ("write", "cache_write_tokens")):
+                for source, target in (
+                    ("read", "cache_read_tokens"),
+                    ("write", "cache_write_tokens"),
+                ):
                     value = cache.get(source)
-                    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    if (
+                        isinstance(value, int)
+                        and not isinstance(value, bool)
+                        and value >= 0
+                    ):
                         kwargs[target] = value
                     elif source in cache:
                         values.append(
-                            self._metadata_marker(
-                                sequence, target, wall_time, started
-                            )
+                            self._metadata_marker(sequence, target, wall_time, started)
                         )
             cost = raw_cost
             if (
@@ -1392,12 +1609,16 @@ class OpenCodeHarnessAdapter:
             ):
                 kwargs["cost"] = cost
             elif "cost" in info:
-                values.append(self._metadata_marker(sequence, "cost", wall_time, started))
+                values.append(
+                    self._metadata_marker(sequence, "cost", wall_time, started)
+                )
             currency = info.get("currency")
             if isinstance(currency, str) and currency:
                 kwargs["currency"] = currency[:16]
             elif "currency" in info:
-                values.append(self._metadata_marker(sequence, "currency", wall_time, started))
+                values.append(
+                    self._metadata_marker(sequence, "currency", wall_time, started)
+                )
             if kwargs:
                 values.append(
                     UsageObservedObservation(
@@ -1440,20 +1661,31 @@ class OpenCodeHarnessAdapter:
 
         values: list[HarnessObservation] = []
         fields: list[tuple[str, Any]] = [
-            (f"{prefix}.method", "GET" if prefix.startswith("http_history") else "POST"),
+            (
+                f"{prefix}.method",
+                "GET" if prefix.startswith("http_history") else "POST",
+            ),
             (f"{prefix}.route", "/session/{session_id}/message"),
         ]
         if status_code is not None and not isinstance(status_code, bool):
             fields.append((f"{prefix}.status_code", status_code))
-        if isinstance(content_type, str) and 0 < len(content_type) <= 128 and all(
-            ord(char) >= 0x20 and ord(char) != 0x7F for char in content_type
+        if (
+            isinstance(content_type, str)
+            and 0 < len(content_type) <= 128
+            and all(ord(char) >= 0x20 and ord(char) != 0x7F for char in content_type)
         ):
-            fields.append((f"{prefix}.content_type", content_type.split(";", 1)[0].strip()))
+            fields.append(
+                (f"{prefix}.content_type", content_type.split(";", 1)[0].strip())
+            )
         elapsed = self._offset_ms(started)
         start = 0.0 if start_offset_ms is None else max(0.0, start_offset_ms)
         end = elapsed if end_offset_ms is None else max(start, end_offset_ms)
         fields.extend(
-            ((f"{prefix}.start_offset_ms", start), (f"{prefix}.end_offset_ms", end), (f"{prefix}.duration_ms", end - start))
+            (
+                (f"{prefix}.start_offset_ms", start),
+                (f"{prefix}.end_offset_ms", end),
+                (f"{prefix}.duration_ms", end - start),
+            )
         )
         for index, (name, value) in enumerate(fields):
             values.append(
@@ -1473,7 +1705,10 @@ class OpenCodeHarnessAdapter:
         """Redact and JSON-validate provider metadata before it crosses R5."""
 
         try:
-            safe = redact_for_api(value, config=RedactionConfig.from_environment(secrets=self._runtime_secrets))
+            safe = redact_for_api(
+                value,
+                config=RedactionConfig.from_environment(secrets=self._runtime_secrets),
+            )
             json.dumps(safe, ensure_ascii=False, allow_nan=False)
             return safe
         except (TypeError, ValueError, OverflowError):
@@ -1494,7 +1729,9 @@ class OpenCodeHarnessAdapter:
         if "id" in part or fallback_message_id is not _MISSING_IDENTIFIER:
             # None is intentional here: the sink preserves the field's
             # presence so TraceView can report malformed-present as unavailable.
-            message_kwargs["message_id"] = message_id if _valid_identifier(message_id) else None
+            message_kwargs["message_id"] = (
+                message_id if _valid_identifier(message_id) else None
+            )
         return MessageChunkObservation(
             observation_id=f"opencode-{sequence}-message-{index}",
             harness_kind="opencode",
@@ -1600,7 +1837,9 @@ class OpenCodeHarnessAdapter:
                 "process_observed": False,
                 "transport_observed": "http",
                 "usage_state": "unavailable",
-                **({"http_status_code": status_code} if status_code is not None else {}),
+                **(
+                    {"http_status_code": status_code} if status_code is not None else {}
+                ),
             },
             trace_limitations=limitations,
             turn_evidence=TurnEvidence(
@@ -1624,13 +1863,21 @@ class OpenCodeHarnessAdapter:
         return projected if isinstance(projected, str) and projected == value else None
 
     def _model_reference(self, harness: Any | None = None) -> dict[str, str]:
-        harness = harness if harness is not None else (self._launch.spec.harness if self._launch is not None else None)
+        harness = (
+            harness
+            if harness is not None
+            else (self._launch.spec.harness if self._launch is not None else None)
+        )
         model = getattr(harness, "model", "")
         provider = getattr(harness, "provider", None)
         qualified_provider = None
         if "/" in model:
             qualified_provider, model = model.split("/", 1)
-        if provider is not None and qualified_provider is not None and provider != qualified_provider:
+        if (
+            provider is not None
+            and qualified_provider is not None
+            and provider != qualified_provider
+        ):
             raise HarnessAdapterError("OpenCode provider and model do not agree")
         if provider is None and qualified_provider is not None:
             provider = qualified_provider
@@ -1644,12 +1891,21 @@ class OpenCodeHarnessAdapter:
 
 
 class OpenCodeSession(NativeSessionBase):
-    def __init__(self, adapter: OpenCodeHarnessAdapter, owner: ProcessOwner, client: httpx.AsyncClient, capabilities: HarnessAdapterCapabilities, session_id: str) -> None:
+    def __init__(
+        self,
+        adapter: OpenCodeHarnessAdapter,
+        owner: ProcessOwner,
+        client: httpx.AsyncClient,
+        capabilities: HarnessAdapterCapabilities,
+        session_id: str,
+    ) -> None:
         super().__init__(
             owner,
             capabilities,
             session_id,
-            server_configuration_count=len(adapter._launch.configurations) if adapter._launch is not None else 0,
+            server_configuration_count=len(adapter._launch.configurations)
+            if adapter._launch is not None
+            else 0,
             capture=adapter._launch.capture if adapter._launch is not None else None,
         )
         self._adapter = adapter

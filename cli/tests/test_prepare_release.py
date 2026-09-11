@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
-
 
 _SCRIPT = Path(__file__).parents[2] / "scripts" / "prepare_release.py"
 _SPEC = importlib.util.spec_from_file_location("prepare_release", _SCRIPT)
@@ -86,7 +85,9 @@ def test_inconsistent_project_versions_are_rejected(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(release.ReleasePreparationError, match="project versions must match"):
+    with pytest.raises(
+        release.ReleasePreparationError, match="project versions must match"
+    ):
         release.prepare("2.0.0", root=root, lock_runner=_fake_lock([]))
 
 
@@ -98,7 +99,9 @@ def test_missing_cli_dependency_pin_is_rejected(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(release.ReleasePreparationError, match="exactly one CLI dependency pin"):
+    with pytest.raises(
+        release.ReleasePreparationError, match="exactly one CLI dependency pin"
+    ):
         release.prepare("2.0.0", root=root, lock_runner=_fake_lock([]))
 
 
@@ -110,7 +113,9 @@ def test_missing_project_version_is_rejected(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(release.ReleasePreparationError, match="exactly one project version"):
+    with pytest.raises(
+        release.ReleasePreparationError, match="exactly one project version"
+    ):
         release.prepare("2.0.0", root=root, lock_runner=_fake_lock([]))
 
 
@@ -122,7 +127,9 @@ def test_mismatched_cli_dependency_pin_is_rejected(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(release.ReleasePreparationError, match="dependency pins must match"):
+    with pytest.raises(
+        release.ReleasePreparationError, match="dependency pins must match"
+    ):
         release.prepare("2.0.0", root=root, lock_runner=_fake_lock([]))
 
 
@@ -171,6 +178,7 @@ def test_lock_failure_restores_metadata_and_lockfile(tmp_path: Path) -> None:
     before = {path: path.read_text() for path in root.rglob("pyproject.toml")}
     lock = root / "uv.lock"
     before_lock = lock.read_text()
+
     def fail_lock(_root: Path, command: list[str]) -> None:
         if command == ["uv", "lock"]:
             lock.write_text("partially regenerated\n", encoding="utf-8")

@@ -23,6 +23,7 @@ from mcp_pal.async_api import AsyncMCPTestKit, InputRequiredResult
 from mcp_pal.errors import KitClosed, ProtocolError, UnsupportedFeature
 from mcp_pal.transport.local import TransportProcessError, TransportStartupError
 from mcp_pal.types import (
+    HTTPServer,
     InProcessServer,
     ProtocolConstraint,
     RevisionSelection,
@@ -30,7 +31,6 @@ from mcp_pal.types import (
     ServerProfileId,
     ServerProfileRef,
     StdioServer,
-    HTTPServer,
     TransportKind,
     TrustLevel,
 )
@@ -56,9 +56,13 @@ def _callback_server() -> Server:
         )
 
     async def call_tool(context: object, _params: object) -> types.CallToolResult:
-        session: Any = getattr(context, "session")
+        session: Any = context.session
         await session.create_message(
-            [types.SamplingMessage(role="user", content=types.TextContent(text="callback prompt"))],
+            [
+                types.SamplingMessage(
+                    role="user", content=types.TextContent(text="callback prompt")
+                )
+            ],
             max_tokens=5,
         )
         await session.elicit_form(
@@ -68,9 +72,13 @@ def _callback_server() -> Server:
         await session.list_roots()
         await session.send_log_message("info", "server callback log")
         await session.report_progress(0.5, 1.0, "halfway")
-        return types.CallToolResult(content=[types.TextContent(text="callback complete")])
+        return types.CallToolResult(
+            content=[types.TextContent(text="callback complete")]
+        )
 
-    return Server("callback-direct-fixture", on_list_tools=list_tools, on_call_tool=call_tool)
+    return Server(
+        "callback-direct-fixture", on_list_tools=list_tools, on_call_tool=call_tool
+    )
 
 
 def test_input_required_result_is_public_async_surface() -> None:
@@ -115,7 +123,9 @@ class _ShutdownFailureServer(Server):
         initialization_options: InitializationOptions,
         raise_exceptions: bool = False,
     ) -> None:
-        await super().run(read_stream, write_stream, initialization_options, raise_exceptions)
+        await super().run(
+            read_stream, write_stream, initialization_options, raise_exceptions
+        )
         raise RuntimeError("SHUTDOWN_IN_PROCESS_CANARY")
 
 
@@ -123,7 +133,9 @@ def _shutdown_failure_server() -> Server:
     return _ShutdownFailureServer("async-direct-shutdown-failure-fixture")
 
 
-async def _http_fixture(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+async def _http_fixture(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+) -> None:
     try:
         headers = await reader.readuntil(b"\r\n\r\n")
         method, _path, _version = headers.split(b"\r\n", 1)[0].split(b" ", 2)
@@ -143,7 +155,9 @@ async def _http_fixture(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     "result": {
                         "protocolVersion": "2025-11-25",
                         "capabilities": {
-                            "extensions": {"fixture.server.extension": {"version": "1"}},
+                            "extensions": {
+                                "fixture.server.extension": {"version": "1"}
+                            },
                         },
                         "serverInfo": {"name": "http-fixture", "version": "1"},
                     },
@@ -151,9 +165,15 @@ async def _http_fixture(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             ).encode()
         else:
             payload = b"{}"
-        status = b"200 OK" if method == b"DELETE" or request.get("method") == "initialize" else b"202 Accepted"
+        status = (
+            b"200 OK"
+            if method == b"DELETE" or request.get("method") == "initialize"
+            else b"202 Accepted"
+        )
         writer.write(
-            b"HTTP/1.1 " + status + b"\r\nContent-Type: application/json\r\nContent-Length: "
+            b"HTTP/1.1 "
+            + status
+            + b"\r\nContent-Type: application/json\r\nContent-Length: "
             + str(len(payload)).encode()
             + b"\r\nConnection: close\r\n\r\n"
             + payload
@@ -172,7 +192,10 @@ async def test_kit_direct_owns_in_process_client_and_closes_it() -> None:
         assert entered is client
         assert client.initialization is not None
         assert client.initialization.server_info["name"] == "async-direct-fixture"
-        assert client.transport_evidence.protocol_version == client.initialization.protocol_version
+        assert (
+            client.transport_evidence.protocol_version
+            == client.initialization.protocol_version
+        )
         assert client.transport_evidence.server_name == "async-direct-fixture"
         assert (await client.list_tools()).tools == ()
         assert client.trace is not None
@@ -188,7 +211,9 @@ async def test_kit_direct_owns_in_process_client_and_closes_it() -> None:
 
 
 @pytest.mark.asyncio
-async def test_kit_direct_exercises_official_server_callbacks_and_initialization_extensions() -> None:
+async def test_kit_direct_exercises_official_server_callbacks_and_initialization_extensions() -> (
+    None
+):
     callback_events: dict[str, list[object]] = {
         "sampling": [],
         "elicitation": [],
@@ -214,7 +239,11 @@ async def test_kit_direct_exercises_official_server_callbacks_and_initialization
     async def roots(*args: object, **kwargs: object) -> types.ListRootsResult:
         callback_events["roots"].append(args)
         return types.ListRootsResult(
-            roots=[types.Root.model_validate({"uri": "file:///tmp/mcp-pal", "name": "fixture"})]
+            roots=[
+                types.Root.model_validate(
+                    {"uri": "file:///tmp/mcp-pal", "name": "fixture"}
+                )
+            ]
         )
 
     async def logging(params: object) -> None:
@@ -223,7 +252,9 @@ async def test_kit_direct_exercises_official_server_callbacks_and_initialization
     async def message_handler(message: object) -> None:
         callback_events["messages"].append(message)
 
-    async def progress(progress: float, total: float | None, message: str | None) -> None:
+    async def progress(
+        progress: float, total: float | None, message: str | None
+    ) -> None:
         callback_events["progress"].append((progress, total, message))
 
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
@@ -241,11 +272,16 @@ async def test_kit_direct_exercises_official_server_callbacks_and_initialization
             assert initialization is not None
             assert initialization.server_info["name"] == "callback-direct-fixture"
             assert initialization.raw is not None
-            assert client.transport_evidence.protocol_version == initialization.protocol_version
+            assert (
+                client.transport_evidence.protocol_version
+                == initialization.protocol_version
+            )
 
             tools = await client.list_tools()
             assert [tool.name for tool in tools.tools] == ["callback_tool"]
-            result = await client.call_tool("callback_tool", {}, progress_callback=progress)
+            result = await client.call_tool(
+                "callback_tool", {}, progress_callback=progress
+            )
             assert not isinstance(result, InputRequiredResult)
             assert result.content[0]["text"] == "callback complete"
 
@@ -260,11 +296,14 @@ async def test_kit_direct_exercises_official_server_callbacks_and_initialization
 
 
 @pytest.mark.asyncio
-async def test_kit_direct_uses_remote_streamable_http_and_closes_the_server_connection() -> None:
+async def test_kit_direct_uses_remote_streamable_http_and_closes_the_server_connection() -> (
+    None
+):
     server_socket = await asyncio.start_server(_http_fixture, "127.0.0.1", 0)
     port = server_socket.sockets[0].getsockname()[1]
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
     try:
+
         async def sampling(*args: object, **kwargs: object) -> object:
             return None
 
@@ -285,7 +324,7 @@ async def test_kit_direct_uses_remote_streamable_http_and_closes_the_server_conn
             }
             assert client.transport_evidence.state == "initialized"
             assert client.transport_evidence.extensions == ("fixture.server.extension",)
-            session = getattr(client._session, "_session")
+            session = client._session._session
             assert callable(session._sampling_callback)
             assert session._extensions == {"fixture.extension": {}}
         assert client.transport_evidence.state == "closed"
@@ -354,7 +393,7 @@ async def test_cancelled_public_enter_cancels_owner_startup_without_leaking(
     with pytest.raises(asyncio.CancelledError):
         await entering
     await kit.aclose()
-    lifecycle = getattr(client, "_lifecycle")
+    lifecycle = client._lifecycle
     assert lifecycle is not None
     assert lifecycle._task.done()
     # Drain the future callback locally so this regression does not rely on a
@@ -382,7 +421,7 @@ async def test_public_direct_forwards_timeout_server_mode_and_session_options() 
     )
     async with client:
         assert client.timeout == 0.25
-        session = getattr(client._session, "_session")
+        session = client._session._session
         assert session._session_read_timeout_seconds == 0.25
         assert callable(session._sampling_callback)
         assert callable(session._elicitation_callback)
@@ -392,7 +431,9 @@ async def test_public_direct_forwards_timeout_server_mode_and_session_options() 
 
 
 @pytest.mark.asyncio
-async def test_public_direct_surfaces_original_in_process_failure_when_enabled() -> None:
+async def test_public_direct_surfaces_original_in_process_failure_when_enabled() -> (
+    None
+):
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
     client = kit.direct(
         InProcessServer(name="failing", factory=_failing_server),
@@ -462,7 +503,9 @@ async def test_public_direct_in_process_failures_are_original_and_terminal(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
-    client = kit.direct(InProcessServer(name="failure", factory=factory), raise_server_exceptions=True)
+    client = kit.direct(
+        InProcessServer(name="failure", factory=factory), raise_server_exceptions=True
+    )
     with pytest.raises(RuntimeError) as failure:
         async with client:
             if operation == "list_tools":
@@ -481,7 +524,12 @@ async def test_public_direct_in_process_failures_are_original_and_terminal(
 @pytest.mark.parametrize(
     ("factory", "operation", "error_type"),
     [
-        pytest.param(_initialization_failure_server, "initialize", TransportStartupError, id="initialization"),
+        pytest.param(
+            _initialization_failure_server,
+            "initialize",
+            TransportStartupError,
+            id="initialization",
+        ),
         pytest.param(_failing_server, "list_tools", ProtocolError, id="list-tools"),
         pytest.param(_call_failure_server, "call-tool", ProtocolError, id="call-tool"),
     ],
@@ -493,7 +541,9 @@ async def test_public_direct_in_process_failures_are_sanitized_when_disabled(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
-    client = kit.direct(InProcessServer(name="failure", factory=factory), raise_server_exceptions=False)
+    client = kit.direct(
+        InProcessServer(name="failure", factory=factory), raise_server_exceptions=False
+    )
     with pytest.raises(error_type) as failure:
         async with client:
             if operation == "list_tools":
@@ -566,6 +616,7 @@ async def test_primary_body_exception_survives_cleanup_failure(
     )
     with pytest.raises(RuntimeError) as failure:
         async with client:
+
             async def cleanup_failure() -> None:
                 raise RuntimeError("CLEANUP_CANARY")
 
@@ -627,7 +678,9 @@ def test_explicit_unsupported_protocol_fails_before_server_startup() -> None:
 
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
     with pytest.raises(UnsupportedFeature, match="protocol revision"):
-        kit.direct(InProcessServer(name="fixture", factory=factory), protocol="2024-11-05")
+        kit.direct(
+            InProcessServer(name="fixture", factory=factory), protocol="2024-11-05"
+        )
     assert started is False
 
 

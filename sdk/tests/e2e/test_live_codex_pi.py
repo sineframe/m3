@@ -42,11 +42,10 @@ from mcp_pal.types import (
     RestrictiveToolPolicy,
     SecretReference,
     ServerBinding,
-    TurnOutcome,
     TransportKind,
     TrustLevel,
+    TurnOutcome,
 )
-
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.process_lifecycle]
 

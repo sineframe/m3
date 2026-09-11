@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 CONTENT_KINDS = {"thinking", "text"}
 # These are model-produced activities.  ``update``, ``plan``, and ``state``
 # are emitted by ACP and remain public spans, but are also useful in the same
@@ -69,9 +68,7 @@ def attach_model_steps(spans: list[dict[str, Any]]) -> int:
         return 0
 
     turns_by_id = {
-        str(turn.get("id")): turn
-        for turn in turns
-        if turn.get("id") is not None
+        str(turn.get("id")): turn for turn in turns if turn.get("id") is not None
     }
     ordered_turns = sorted(turns, key=lambda turn: _number(turn.get("start_ms")))
 
@@ -81,7 +78,9 @@ def attach_model_steps(spans: list[dict[str, Any]]) -> int:
         if parent is not None:
             return parent
         start = _number(span.get("start_ms"))
-        candidates = [turn for turn in ordered_turns if _number(turn.get("start_ms")) <= start]
+        candidates = [
+            turn for turn in ordered_turns if _number(turn.get("start_ms")) <= start
+        ]
         return candidates[-1] if candidates else ordered_turns[0]
 
     # Keep the original list position as the final tie-breaker.  Stream
@@ -104,10 +103,18 @@ def attach_model_steps(spans: list[dict[str, Any]]) -> int:
         steps = turn["steps"]
         previous = steps[-1] if steps else None
         if kind in CONTENT_KINDS and previous and previous.get("kind") == kind:
-            previous["output"] = _append_text(previous.get("output"), span.get("output"))
-            previous["end_ms"] = max(_number(previous.get("end_ms")), _number(span.get("end_ms")))
-            previous["duration_ms"] = max(0.0, previous["end_ms"] - _number(previous.get("start_ms")))
-            previous["status"] = _merge_status(previous.get("status"), span.get("status"))
+            previous["output"] = _append_text(
+                previous.get("output"), span.get("output")
+            )
+            previous["end_ms"] = max(
+                _number(previous.get("end_ms")), _number(span.get("end_ms"))
+            )
+            previous["duration_ms"] = max(
+                0.0, previous["end_ms"] - _number(previous.get("start_ms"))
+            )
+            previous["status"] = _merge_status(
+                previous.get("status"), span.get("status")
+            )
             source_id = _source_id(span)
             if source_id is not None:
                 previous.setdefault("source_span_ids", []).append(source_id)
@@ -141,7 +148,12 @@ def attach_model_steps(spans: list[dict[str, Any]]) -> int:
     # Content belongs to the model turn now. Keeping these spans would expose
     # every streaming chunk as a separate top-level activity again.
     spans[:] = [span for span in spans if span.get("kind") not in CONTENT_KINDS]
-    return sum(1 for turn in turns for step in turn.get("steps", []) if step.get("kind") == "thinking")
+    return sum(
+        1
+        for turn in turns
+        for step in turn.get("steps", [])
+        if step.get("kind") == "thinking"
+    )
 
 
 __all__ = ["attach_model_steps"]

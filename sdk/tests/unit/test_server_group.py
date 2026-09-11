@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 import pytest
-from mcp.server.lowlevel import Server
 from mcp import types
+from mcp.server.lowlevel import Server
 
+from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.server_group import (
     AmbiguousToolError,
     ServerGroupManager,
     ServerStartupError,
     ServerUnavailableError,
 )
-from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.types import (
+    HTTPServer,
     InProcessServer,
     ServerBinding,
     StdioServer,
-    HTTPServer,
     TrustLevel,
 )
 
@@ -23,21 +23,35 @@ from mcp_pal.types import (
 def _memory_server() -> Server:
     async def list_tools(_context: object, _params: object) -> types.ListToolsResult:
         return types.ListToolsResult(
-            tools=[types.Tool(name="remember", description="stateful", input_schema={"type": "object"})]
+            tools=[
+                types.Tool(
+                    name="remember",
+                    description="stateful",
+                    input_schema={"type": "object"},
+                )
+            ]
         )
 
-    async def call_tool(_context: object, params: types.CallToolRequestParams) -> types.CallToolResult:
+    async def call_tool(
+        _context: object, params: types.CallToolRequestParams
+    ) -> types.CallToolResult:
         return types.CallToolResult(content=[types.TextContent(text=params.name)])
 
     return Server("memory", on_list_tools=list_tools, on_call_tool=call_tool)
 
 
 @pytest.mark.asyncio
-async def test_required_and_optional_server_startup_and_duplicate_tool_routing() -> None:
+async def test_required_and_optional_server_startup_and_duplicate_tool_routing() -> (
+    None
+):
     manager = ServerGroupManager(
         (
             ServerBinding(server=StdioServer(name="one", command="one"), alias="one"),
-            ServerBinding(server=StdioServer(name="two", command="two"), alias="two", required=False),
+            ServerBinding(
+                server=StdioServer(name="two", command="two"),
+                alias="two",
+                required=False,
+            ),
         ),
         unavailable={"two": "not_installed"},
     )
@@ -102,7 +116,9 @@ async def test_in_process_server_gets_loopback_endpoint_and_preserves_state() ->
     first = await manager.start()
     config = manager.configurations()[0]
     assert first.records[0].endpoint == config.endpoint
-    assert config.endpoint is not None and config.endpoint.startswith("http://127.0.0.1:")
+    assert config.endpoint is not None and config.endpoint.startswith(
+        "http://127.0.0.1:"
+    )
     connection_id = first.records[0].connection_id
     second = await manager.start()
     assert second.records[0].connection_id == connection_id

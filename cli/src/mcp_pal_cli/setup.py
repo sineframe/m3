@@ -7,23 +7,24 @@ the CLI or application package into that environment.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import importlib.metadata
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Any, Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 from urllib.request import Request, urlopen
 
 REPOSITORY = "mcppal/mcp-pal"
 _RELEASE_BASE_ENV = "MCP_PAL_RELEASE_BASE_URL"
 _CHECKSUMS = "SHA256SUMS"
-_VALIDATE_SCRIPT = r'''
+_VALIDATE_SCRIPT = r"""
 import importlib
 import importlib.metadata
 import json
@@ -47,7 +48,7 @@ try:
 except Exception:
     version = None
 print(json.dumps({"checks": checks, "version": version}, sort_keys=True))
-'''
+"""
 
 
 class SetupError(RuntimeError):
@@ -70,14 +71,20 @@ def _python_path(base: Path) -> Path:
 
 
 def _environment_root(python: Path) -> Path:
-    return python.parent.parent if python.parent.name in {"bin", "Scripts"} else python.parent
+    return (
+        python.parent.parent
+        if python.parent.name in {"bin", "Scripts"}
+        else python.parent
+    )
 
 
 def _absolute(value: str | os.PathLike[str]) -> Path:
     return Path(value).expanduser().absolute()
 
 
-def _resolve_explicit(value: str | os.PathLike[str], environment: Mapping[str, str]) -> Path:
+def _resolve_explicit(
+    value: str | os.PathLike[str], environment: Mapping[str, str]
+) -> Path:
     text = os.fspath(value)
     if os.sep not in text and (os.altsep is None or os.altsep not in text):
         found = shutil.which(text, path=environment.get("PATH"))
@@ -113,7 +120,11 @@ def _probe_python(
         raise SetupError("selected Python executable is unavailable")
     try:
         result = subprocess.run(
-            [str(python), "-c", "import json,sys; print(json.dumps({'version': sys.version_info[:2], 'prefix': sys.prefix, 'base_prefix': sys.base_prefix}))"],
+            [
+                str(python),
+                "-c",
+                "import json,sys; print(json.dumps({'version': sys.version_info[:2], 'prefix': sys.prefix, 'base_prefix': sys.base_prefix}))",
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -135,12 +146,16 @@ def _probe_python(
         # distinguish a project env from the global Conda base.
         is_conda = bool(allow_conda and conda_root is not None and prefix == conda_root)
         if prefix == base_prefix and not is_conda:
-            raise SetupError("refusing to install into a system or global Python; use an isolated environment")
+            raise SetupError(
+                "refusing to install into a system or global Python; use an isolated environment"
+            )
         return payload
     except SetupError:
         raise
     except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-        raise SetupError("selected Python executable returned an invalid check result") from None
+        raise SetupError(
+            "selected Python executable returned an invalid check result"
+        ) from None
 
 
 def resolve_target(
@@ -161,11 +176,23 @@ def resolve_target(
         return EnvironmentTarget(_environment_root(python), python, "--python")
 
     for variable in ("VIRTUAL_ENV", "CONDA_PREFIX"):
-        if variable == "CONDA_PREFIX" and env.get(variable) and env.get("CONDA_DEFAULT_ENV", "").casefold() == "base":
-            raise SetupError("active Conda base is not a project environment; create or activate a project environment")
+        if (
+            variable == "CONDA_PREFIX"
+            and env.get(variable)
+            and env.get("CONDA_DEFAULT_ENV", "").casefold() == "base"
+        ):
+            raise SetupError(
+                "active Conda base is not a project environment; create or activate a project environment"
+            )
         python = _environment_python(variable, env)
         if python is not None:
-            _probe_python(python, allow_conda=variable == "CONDA_PREFIX", conda_prefix=Path(raw).absolute() if (raw := env.get(variable)) else None)
+            _probe_python(
+                python,
+                allow_conda=variable == "CONDA_PREFIX",
+                conda_prefix=Path(raw).absolute()
+                if (raw := env.get(variable))
+                else None,
+            )
             return EnvironmentTarget(_environment_root(python), python, variable)
 
     venv = root / ".venv"
@@ -174,7 +201,9 @@ def resolve_target(
         _probe_python(python)
         return EnvironmentTarget(venv, python, "project .venv")
     if venv.exists():
-        raise SetupError("project .venv exists but its Python executable is unavailable")
+        raise SetupError(
+            "project .venv exists but its Python executable is unavailable"
+        )
 
     # The caller creates this exact target, and records that fact for rollback.
     return EnvironmentTarget(venv, python, "new project .venv", created=True)
@@ -217,9 +246,13 @@ def _cli_version() -> str:
         sdk = importlib.metadata.version("mcp-pal")
         cli = importlib.metadata.version("mcp-pal-cli")
     except importlib.metadata.PackageNotFoundError:
-        raise SetupError("the bundled MCP Pal SDK version is unavailable; reinstall mcp-pal-cli") from None
+        raise SetupError(
+            "the bundled MCP Pal SDK version is unavailable; reinstall mcp-pal-cli"
+        ) from None
     if sdk != cli:
-        raise SetupError("the bundled CLI and SDK versions do not match; reinstall mcp-pal-cli")
+        raise SetupError(
+            "the bundled CLI and SDK versions do not match; reinstall mcp-pal-cli"
+        )
     return sdk
 
 
@@ -233,26 +266,44 @@ def _download_release(version: str, directory: Path) -> Path:
 
     def download_with_url(name: str, destination: Path) -> None:
         if not base:
-            raise SetupError("authenticated GitHub access is required; run gh auth login")
+            raise SetupError(
+                "authenticated GitHub access is required; run gh auth login"
+            )
         url = f"{base.rstrip('/')}/{name}"
         try:
-            with urlopen(Request(url, method="GET"), timeout=30) as response, destination.open("wb") as handle:
+            with (
+                urlopen(Request(url, method="GET"), timeout=30) as response,
+                destination.open("wb") as handle,
+            ):
                 shutil.copyfileobj(response, handle)
         except (OSError, ValueError):
-            raise SetupError("could not download the matching MCP Pal SDK release") from None
+            raise SetupError(
+                "could not download the matching MCP Pal SDK release"
+            ) from None
 
     downloads = ((sdk_name, sdk), (_CHECKSUMS, checksums))
     gh: str | None = None
     if not base:
         gh = shutil.which("gh")
         if not gh:
-            raise SetupError("authenticated GitHub access is required; run gh auth login")
+            raise SetupError(
+                "authenticated GitHub access is required; run gh auth login"
+            )
         try:
-            auth = subprocess.run([gh, "auth", "status", "--hostname", "github.com"], capture_output=True, check=False, timeout=15)
+            auth = subprocess.run(
+                [gh, "auth", "status", "--hostname", "github.com"],
+                capture_output=True,
+                check=False,
+                timeout=15,
+            )
         except (OSError, subprocess.TimeoutExpired):
-            raise SetupError("authenticated GitHub access is required; run gh auth login") from None
+            raise SetupError(
+                "authenticated GitHub access is required; run gh auth login"
+            ) from None
         if auth.returncode != 0:
-            raise SetupError("authenticated GitHub access is required; run gh auth login")
+            raise SetupError(
+                "authenticated GitHub access is required; run gh auth login"
+            )
     for name, destination in downloads:
         if base:
             download_with_url(name, destination)
@@ -260,14 +311,27 @@ def _download_release(version: str, directory: Path) -> Path:
         try:
             assert gh is not None
             result = subprocess.run(
-                [gh, "release", "download", f"v{version}", "--repo", REPOSITORY, "--pattern", name, "--output", str(destination)],
+                [
+                    gh,
+                    "release",
+                    "download",
+                    f"v{version}",
+                    "--repo",
+                    REPOSITORY,
+                    "--pattern",
+                    name,
+                    "--output",
+                    str(destination),
+                ],
                 capture_output=True,
                 text=True,
                 check=False,
                 timeout=120,
             )
         except (OSError, subprocess.TimeoutExpired):
-            raise SetupError("could not download the matching MCP Pal SDK release") from None
+            raise SetupError(
+                "could not download the matching MCP Pal SDK release"
+            ) from None
         if result.returncode != 0 or not destination.is_file():
             raise SetupError("could not download the matching MCP Pal SDK release")
 
@@ -280,14 +344,24 @@ def _download_release(version: str, directory: Path) -> Path:
         raise SetupError("SDK release checksum manifest is unavailable") from None
     for record in records:
         parts = record.split()
-        if len(parts) != 2 or len(parts[0]) != 64 or any(char not in "0123456789abcdefABCDEF" for char in parts[0]) or parts[1] not in expected_names or parts[1] in seen:
+        if (
+            len(parts) != 2
+            or len(parts[0]) != 64
+            or any(char not in "0123456789abcdefABCDEF" for char in parts[0])
+            or parts[1] not in expected_names
+            or parts[1] in seen
+        ):
             raise SetupError("SDK release checksum manifest is invalid")
         seen.add(parts[1])
         if parts[1] == sdk_name:
             expected = parts[0].lower()
     if len(records) != 3 or seen != expected_names:
         raise SetupError("SDK release checksum manifest is invalid")
-    if expected is None or len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected):
+    if (
+        expected is None
+        or len(expected) != 64
+        or any(char not in "0123456789abcdef" for char in expected)
+    ):
         raise SetupError("SDK release checksum manifest is invalid")
     try:
         actual = hashlib.sha256(sdk.read_bytes()).hexdigest()
@@ -310,21 +384,53 @@ def _ready(python: Path, version: str, project_root: Path) -> bool:
         )
         payload = json.loads(result.stdout.strip().splitlines()[-1])
         checks = payload.get("checks", {})
-        return result.returncode == 0 and payload.get("version") == version and all(
-            checks.get(name) for name in ("pytest", "mcp_pal", "mcp_pal.pytest_plugin", "SQLiteExecutionStore")
+        return (
+            result.returncode == 0
+            and payload.get("version") == version
+            and all(
+                checks.get(name)
+                for name in (
+                    "pytest",
+                    "mcp_pal",
+                    "mcp_pal.pytest_plugin",
+                    "SQLiteExecutionStore",
+                )
+            )
         )
-    except (OSError, subprocess.TimeoutExpired, IndexError, TypeError, ValueError, json.JSONDecodeError):
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+        IndexError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
         return False
 
 
 def _install_sdk(target: EnvironmentTarget, sdk: Path) -> str:
     requirement = f"mcp-pal[pytest,storage] @ {sdk.resolve().as_uri()}"
     uv = shutil.which("uv")
-    command = [uv, "pip", "install", "--python", str(target.python), requirement] if uv else [str(target.python), "-m", "pip", "install", "--disable-pip-version-check", requirement]
+    command = (
+        [uv, "pip", "install", "--python", str(target.python), requirement]
+        if uv
+        else [
+            str(target.python),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            requirement,
+        ]
+    )
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=300)
+        result = subprocess.run(
+            command, capture_output=True, text=True, check=False, timeout=300
+        )
     except (OSError, subprocess.TimeoutExpired):
-        raise SetupError("could not install the MCP Pal SDK in the project environment") from None
+        raise SetupError(
+            "could not install the MCP Pal SDK in the project environment"
+        ) from None
     if result.returncode != 0:
         raise SetupError("could not install the MCP Pal SDK in the project environment")
     return "uv" if uv else "venv/pip"
@@ -339,7 +445,9 @@ def run(args: Any) -> int:
     if not target.created and _ready(target.python, version, root):
         print(f"Project environment ready: {target.path}")
         print(f"MCP Pal SDK: {version}")
-        print("Installer: skipped; environment is already ready (no download, install, or checksum verification)")
+        print(
+            "Installer: skipped; environment is already ready (no download, install, or checksum verification)"
+        )
         print("Next:\n  mcp-pal doctor\n  mcp-pal test --ui -- -q")
         return 0
 

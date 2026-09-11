@@ -24,9 +24,18 @@ from mcp_pal.types import (
 from mcp_pal.workspace import WorkspaceError, WorkspaceManager
 
 
-def _spec(*, operation: object = None, timeout: float | None = None, validate_schemas: bool = False) -> DirectSpec:
+def _spec(
+    *,
+    operation: object = None,
+    timeout: float | None = None,
+    validate_schemas: bool = False,
+) -> DirectSpec:
     return DirectSpec(
-        servers=(ServerBinding(server=StdioServer(name="outcome", command="unused"), alias="outcome"),),
+        servers=(
+            ServerBinding(
+                server=StdioServer(name="outcome", command="unused"), alias="outcome"
+            ),
+        ),
         operation=operation or Ping(server="outcome"),
         timeout_seconds=timeout,
         validate_schemas=validate_schemas,
@@ -39,7 +48,7 @@ class _OutcomeClient:
         self.started = asyncio.Event()
         self.closed = False
 
-    async def __aenter__(self) -> "_OutcomeClient":
+    async def __aenter__(self) -> _OutcomeClient:
         return self
 
     async def __aexit__(self, *_args: object) -> None:
@@ -59,7 +68,9 @@ class _OutcomeClient:
             content=({"type": "text", "text": "direct-secret"},)
             if self.mode == "secret"
             else ({"type": "text", "text": "ok"},),
-            structured_content={"secret": "direct-secret"} if self.mode == "secret" else {"value": 1},
+            structured_content={"secret": "direct-secret"}
+            if self.mode == "secret"
+            else {"value": 1},
             is_error=self.mode == "is_error",
         )
 
@@ -131,10 +142,14 @@ async def test_active_direct_operation_cancellation_is_terminal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_terminal_event_persists_redacted_typed_direct_result_without_raw() -> None:
+async def test_terminal_event_persists_redacted_typed_direct_result_without_raw() -> (
+    None
+):
     controller = AsyncExecutionController(
         _OutcomeKit(_OutcomeClient("secret")),
-        redaction_config=RedactionConfig(secrets=frozenset({"direct-secret"}), include_environment=False),
+        redaction_config=RedactionConfig(
+            secrets=frozenset({"direct-secret"}), include_environment=False
+        ),
     )
     result = await controller.run(
         _spec(operation=CallTool(server="outcome", name="echo", arguments={}))

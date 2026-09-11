@@ -10,12 +10,12 @@ from dataclasses import dataclass
 
 from ..errors import RawEvidenceIntegrityError, RawEvidenceUnavailable
 from ..observability import (
+    CaptureOptions,
+    EvidenceCapture,
     Observation,
     ObservationReason,
     ObservationState,
     RawEvidence,
-    EvidenceCapture,
-    CaptureOptions,
 )
 from ..trace.redaction import RedactionConfig, redact_artifact_bytes, redact_result
 from ..types import EventId, EvidenceRef
@@ -140,9 +140,7 @@ def verify_reference(reference: EvidenceRef, expected: EvidenceRef) -> None:
             )
 
 
-def make_capture(
-    reference: EvidenceRef, prepared: PreparedEvidence
-) -> EvidenceCapture:
+def make_capture(reference: EvidenceRef, prepared: PreparedEvidence) -> EvidenceCapture:
     """Build explicit preview state while retaining both capture booleans."""
 
     if prepared.truncated:

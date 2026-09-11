@@ -9,20 +9,26 @@ redacts bytes before they are persisted.
 from __future__ import annotations
 
 import hashlib
-from glob import has_magic
 import os
 import shutil
 import stat
 import subprocess
 import tempfile
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass
+from glob import has_magic
 from pathlib import Path
-from typing import Iterable
 
 from .storage import ArtifactStore, InMemoryArtifactStore
-from .types import ArtifactPolicy, ArtifactRef, ExecutionId, ExecutionOutcome, WorkspaceKind, WorkspacePolicy
-
+from .types import (
+    ArtifactPolicy,
+    ArtifactRef,
+    ExecutionId,
+    ExecutionOutcome,
+    WorkspaceKind,
+    WorkspacePolicy,
+)
 
 _EXCLUDED_DIRS = frozenset(
     {
@@ -44,7 +50,9 @@ _EXCLUDED_DIRS = frozenset(
         "artifacts",
     }
 )
-_EXCLUDED_NAMES = frozenset({"credentials", "credentials.json", "credentials.yaml", "credentials.yml"})
+_EXCLUDED_NAMES = frozenset(
+    {"credentials", "credentials.json", "credentials.yaml", "credentials.yml"}
+)
 _EXCLUDED_COMPONENTS = frozenset(
     value.casefold() for value in (_EXCLUDED_DIRS | _EXCLUDED_NAMES)
 )
@@ -143,12 +151,18 @@ class WorkspaceManager:
         acknowledge_risky_inclusion: bool = False,
     ) -> None:
         if include_excluded and not acknowledge_risky_inclusion:
-            raise WorkspaceError("including excluded workspace paths requires explicit acknowledgement")
+            raise WorkspaceError(
+                "including excluded workspace paths requires explicit acknowledgement"
+            )
         self.policy = policy
         self.execution_id = execution_id
         self.artifact_policy = artifact_policy
-        self.declared_artifacts = tuple(self._validate_relative_path(item) for item in declared_artifacts)
-        self._store = artifact_store if artifact_store is not None else InMemoryArtifactStore()
+        self.declared_artifacts = tuple(
+            self._validate_relative_path(item) for item in declared_artifacts
+        )
+        self._store = (
+            artifact_store if artifact_store is not None else InMemoryArtifactStore()
+        )
         self._include_excluded = include_excluded
         self._root: Path | None = None
         self._owned_root = False
@@ -228,8 +242,7 @@ class WorkspaceManager:
                 ["git", "worktree", "add", "--detach", str(target), "HEAD"],
                 cwd=str(source),
                 check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 timeout=30,
             )
@@ -249,12 +262,16 @@ class WorkspaceManager:
             with os.scandir(source) as iterator:
                 entries = sorted(iterator, key=lambda item: item.name)
         except OSError as exc:
-            raise WorkspaceError("workspace source could not be scanned safely") from exc
+            raise WorkspaceError(
+                "workspace source could not be scanned safely"
+            ) from exc
         for entry in entries:
             try:
                 entry_is_dir = entry.is_dir(follow_symlinks=False)
             except OSError as exc:
-                raise WorkspaceError("workspace source changed while being copied") from exc
+                raise WorkspaceError(
+                    "workspace source changed while being copied"
+                ) from exc
             if self._excluded(entry.name, is_dir=entry_is_dir):
                 continue
             destination = target / entry.name
@@ -280,7 +297,9 @@ class WorkspaceManager:
         try:
             fd = os.open(source, flags)
         except OSError as exc:
-            raise WorkspaceError("workspace source file could not be read safely") from exc
+            raise WorkspaceError(
+                "workspace source file could not be read safely"
+            ) from exc
         try:
             source_stat = os.fstat(fd)
             if not stat.S_ISREG(source_stat.st_mode) or source_stat.st_nlink != 1:
@@ -331,7 +350,9 @@ class WorkspaceManager:
                     continue
                 try:
                     if entry.is_symlink():
-                        digest = hashlib.sha256(os.readlink(entry.path).encode()).hexdigest()
+                        digest = hashlib.sha256(
+                            os.readlink(entry.path).encode()
+                        ).hexdigest()
                         result[relative] = (0, digest)
                     elif entry.is_file(follow_symlinks=False):
                         result[relative] = self._file_fingerprint(Path(entry.path))
@@ -352,7 +373,9 @@ class WorkspaceManager:
         try:
             fd = os.open(path, flags)
         except OSError as exc:
-            raise WorkspaceError("workspace file could not be fingerprinted safely") from exc
+            raise WorkspaceError(
+                "workspace file could not be fingerprinted safely"
+            ) from exc
         try:
             file_stat = os.fstat(fd)
             if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
@@ -366,7 +389,9 @@ class WorkspaceManager:
                     size += len(chunk)
                     digest.update(chunk)
         except OSError as exc:
-            raise WorkspaceError("workspace file could not be fingerprinted safely") from exc
+            raise WorkspaceError(
+                "workspace file could not be fingerprinted safely"
+            ) from exc
         finally:
             if fd >= 0:
                 os.close(fd)
@@ -385,14 +410,17 @@ class WorkspaceManager:
                 if before is None and after is not None:
                     entries.append(WorkspaceEntry(path, "added", after[0], after[1]))
                 elif before is not None and after is None:
-                    entries.append(WorkspaceEntry(path, "deleted", before[0], before[1]))
+                    entries.append(
+                        WorkspaceEntry(path, "deleted", before[0], before[1])
+                    )
                 elif before != after and after is not None:
                     entries.append(WorkspaceEntry(path, "modified", after[0], after[1]))
             diff = WorkspaceDiff(tuple(entries))
             artifacts: list[ArtifactRef] = []
             limitations: list[str] = []
             should_collect = self.artifact_policy is ArtifactPolicy.ALWAYS or (
-                self.artifact_policy is ArtifactPolicy.FAILED and outcome is not ExecutionOutcome.COMPLETED
+                self.artifact_policy is ArtifactPolicy.FAILED
+                and outcome is not ExecutionOutcome.COMPLETED
             )
             if should_collect:
                 for declared in self.declared_artifacts:
@@ -400,7 +428,9 @@ class WorkspaceManager:
                         artifacts.extend(self._collect_declared(declared))
                     except WorkspaceError:
                         limitations.append(f"artifact_unavailable:{declared}")
-            self._captured = WorkspaceCapture(diff, tuple(artifacts), tuple(limitations))
+            self._captured = WorkspaceCapture(
+                diff, tuple(artifacts), tuple(limitations)
+            )
             return self._captured
 
     def _collect_declared(self, relative: str) -> list[ArtifactRef]:
@@ -447,7 +477,9 @@ class WorkspaceManager:
             while stack:
                 directory = stack.pop()
                 try:
-                    entries = sorted(os.scandir(directory), key=lambda item: item.name, reverse=True)
+                    entries = sorted(
+                        os.scandir(directory), key=lambda item: item.name, reverse=True
+                    )
                 except OSError as exc:
                     raise WorkspaceError("declared artifact is unavailable") from exc
                 for entry in entries:
@@ -463,7 +495,9 @@ class WorkspaceManager:
                         elif entry.is_file(follow_symlinks=False):
                             result.extend(self._collect_file(entry_path, root))
                     except OSError as exc:
-                        raise WorkspaceError("declared artifact is unavailable") from exc
+                        raise WorkspaceError(
+                            "declared artifact is unavailable"
+                        ) from exc
             return result
         if not resolved.is_file():
             raise WorkspaceError("declared artifact is not a regular file")
@@ -502,7 +536,11 @@ class WorkspaceManager:
         if len(content) > _MAX_ARTIFACT_BYTES:
             raise WorkspaceError("declared artifact exceeds safe size limit")
         name = path.relative_to(root).as_posix()
-        return [self._store.put(self.execution_id, name, content, media_type="application/octet-stream")]
+        return [
+            self._store.put(
+                self.execution_id, name, content, media_type="application/octet-stream"
+            )
+        ]
 
     def cleanup(self) -> None:
         with self._lock:
@@ -517,7 +555,9 @@ class WorkspaceManager:
                 return
             try:
                 if self.policy.kind is WorkspaceKind.READ_ONLY:
-                    for directory, dirs, files in os.walk(root, topdown=False, followlinks=False):
+                    for directory, dirs, files in os.walk(
+                        root, topdown=False, followlinks=False
+                    ):
                         for name in files:
                             path = Path(directory) / name
                             if not path.is_symlink():
@@ -528,22 +568,27 @@ class WorkspaceManager:
                                 path.chmod(0o700)
                     root.chmod(0o700)
                 if self.policy.kind is WorkspaceKind.GIT_WORKTREE:
-                    source = Path(self.policy.source).expanduser().resolve() if self.policy.source else None
+                    source = (
+                        Path(self.policy.source).expanduser().resolve()
+                        if self.policy.source
+                        else None
+                    )
                     if source is None:
                         raise WorkspaceError("git worktree source is unavailable")
                     subprocess.run(
                         ["git", "worktree", "remove", "--force", str(root)],
                         cwd=str(source),
                         check=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        capture_output=True,
                         text=True,
                         timeout=30,
                     )
                 else:
                     shutil.rmtree(root)
                 if root.exists():
-                    raise WorkspaceError("workspace cleanup did not remove the owned root")
+                    raise WorkspaceError(
+                        "workspace cleanup did not remove the owned root"
+                    )
             except (OSError, subprocess.SubprocessError, WorkspaceError):
                 self._cleanup_error = WorkspaceError("workspace cleanup failed")
                 raise self._cleanup_error from None

@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import itertools
 import threading
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from mcp_pal.events import EventFactory
 from mcp_pal.execution_trace import (
     ExecutionTraceRecorder,
     TraceFinalizationConflict,
     TraceRecorderError,
 )
-from mcp_pal.events import EventFactory
-from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore, StorageConflict
+from mcp_pal.storage import (
+    InMemoryExecutionStore,
+    SQLiteExecutionStore,
+    StorageConflict,
+)
 from mcp_pal.trace.redaction import REDACTED, RedactionConfig, RedactionError
 from mcp_pal.types import (
     Event,
@@ -26,8 +31,8 @@ from mcp_pal.types import (
     SessionId,
     TraceId,
     TurnId,
-    TurnStatus,
     TurnOutcome,
+    TurnStatus,
 )
 
 
@@ -43,12 +48,20 @@ def test_recorder_does_not_swallow_store_create_type_errors() -> None:
         ExecutionTraceRecorder(BrokenStore(), "execution-type-error")  # type: ignore[arg-type]
 
 
-def test_snapshot_is_derived_from_committed_events_and_previous_value_stays_immutable() -> None:
+def test_snapshot_is_derived_from_committed_events_and_previous_value_stays_immutable() -> (
+    None
+):
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-snapshot")
     before = recorder.snapshot()
-    recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": ExecutionStatus.STARTING.value})
-    recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": ExecutionStatus.IDLE.value})
+    recorder.emit(
+        EventKind.EXECUTION_STATE_CHANGED,
+        payload={"lifecycle": ExecutionStatus.STARTING.value},
+    )
+    recorder.emit(
+        EventKind.EXECUTION_STATE_CHANGED,
+        payload={"lifecycle": ExecutionStatus.IDLE.value},
+    )
     after = recorder.snapshot()
     assert before.lifecycle is ExecutionStatus.CREATED
     assert before.sequence == 0
@@ -70,11 +83,14 @@ def test_typed_root_model_identifiers_are_preserved() -> None:
 def test_execution_scoped_clock_has_utc_timestamps_and_nondecreasing_offsets() -> None:
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-clock")
-    emitted = [recorder.emit(EventKind.DIAGNOSTIC, payload={"index": index}) for index in range(4)]
+    emitted = [
+        recorder.emit(EventKind.DIAGNOSTIC, payload={"index": index})
+        for index in range(4)
+    ]
     assert all(event.timestamp.tzinfo is not None for event in emitted)
     assert all(
         left.monotonic_offset_ms <= right.monotonic_offset_ms
-        for left, right in zip(emitted, emitted[1:])
+        for left, right in itertools.pairwise(emitted)
     )
 
 
@@ -91,7 +107,9 @@ def test_attached_recorder_continues_persistent_clock_offset(tmp_path: Path) -> 
     store.append_events((prior,))
 
     attached = ExecutionTraceRecorder(store, execution_id, trace_id=initial.trace_id)
-    emitted = attached.emit(EventKind.DIAGNOSTIC, payload={"source": "attached-process"})
+    emitted = attached.emit(
+        EventKind.DIAGNOSTIC, payload={"source": "attached-process"}
+    )
     trace = attached.finalize(ExecutionOutcome.COMPLETED)
     assert emitted.monotonic_offset_ms >= prior.monotonic_offset_ms
     assert trace.events[-1].monotonic_offset_ms >= emitted.monotonic_offset_ms
@@ -118,7 +136,10 @@ def test_turn_and_session_attribution_is_projected_from_committed_events() -> No
         EventKind.TURN_STATE_CHANGED,
         session_id="session-1",
         turn_id="turn-1",
-        payload={"lifecycle": TurnStatus.FINISHED.value, "outcome": TurnOutcome.COMPLETED.value},
+        payload={
+            "lifecycle": TurnStatus.FINISHED.value,
+            "outcome": TurnOutcome.COMPLETED.value,
+        },
     )
     turn = recorder.turn_snapshots()[0]
     assert turn.session_id.root == "session-1"
@@ -143,7 +164,9 @@ def test_typed_session_and_turn_ids_are_preserved_on_emitted_events() -> None:
 
 
 @pytest.mark.parametrize("outcome", tuple(ExecutionOutcome))
-def test_every_terminal_outcome_has_a_terminal_trace_and_snapshot(outcome: ExecutionOutcome) -> None:
+def test_every_terminal_outcome_has_a_terminal_trace_and_snapshot(
+    outcome: ExecutionOutcome,
+) -> None:
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, f"execution-{outcome.value}")
     trace = recorder.finalize(outcome)
@@ -154,7 +177,9 @@ def test_every_terminal_outcome_has_a_terminal_trace_and_snapshot(outcome: Execu
     assert recorder.snapshot().outcome is outcome
 
 
-def test_cleanup_or_final_persistence_failure_makes_trace_partial_with_safe_limitations() -> None:
+def test_cleanup_or_final_persistence_failure_makes_trace_partial_with_safe_limitations() -> (
+    None
+):
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-partial")
     with pytest.raises(TraceRecorderError):
@@ -173,12 +198,18 @@ def test_cleanup_or_final_persistence_failure_makes_trace_partial_with_safe_limi
     assert trace.completeness == "partial"
     assert trace.limitations == ("capture_incomplete", "cleanup_failed")
     assert "caller-secret" not in repr(trace)
-    persistence = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-persistence-failure")
-    persistence_trace = persistence.finalize(ExecutionOutcome.FAILED, persistence_succeeded=False)
+    persistence = ExecutionTraceRecorder(
+        InMemoryExecutionStore(), "execution-persistence-failure"
+    )
+    persistence_trace = persistence.finalize(
+        ExecutionOutcome.FAILED, persistence_succeeded=False
+    )
     assert persistence_trace.completeness == "partial"
     assert persistence_trace.limitations == ("persistence_failed",)
 
-    explicit = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-explicit-limitation")
+    explicit = ExecutionTraceRecorder(
+        InMemoryExecutionStore(), "execution-explicit-limitation"
+    )
     with pytest.raises(TraceRecorderError):
         explicit.finalize(
             ExecutionOutcome.COMPLETED,
@@ -209,8 +240,12 @@ def test_callbacks_see_the_whole_committed_batch_before_delivery() -> None:
 def test_finalization_is_idempotent_but_conflicting_outcomes_are_rejected() -> None:
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-idempotent")
-    first = recorder.finalize(ExecutionOutcome.CANCELLED, direct_result={"kind": "ping"})
-    second = recorder.finalize(ExecutionOutcome.CANCELLED, direct_result={"kind": "call_tool"})
+    first = recorder.finalize(
+        ExecutionOutcome.CANCELLED, direct_result={"kind": "ping"}
+    )
+    second = recorder.finalize(
+        ExecutionOutcome.CANCELLED, direct_result={"kind": "call_tool"}
+    )
     assert first == second
     assert len(recorder.events()) == 2
     assert recorder.events()[-1].payload["direct_result"]["kind"] == "ping"
@@ -221,7 +256,9 @@ def test_finalization_is_idempotent_but_conflicting_outcomes_are_rejected() -> N
 def test_payloads_are_redacted_before_commit_and_fail_closed() -> None:
     store = InMemoryExecutionStore()
     config = RedactionConfig(secrets=frozenset({"secret"}), include_environment=False)
-    recorder = ExecutionTraceRecorder(store, "execution-redaction", redaction_config=config)
+    recorder = ExecutionTraceRecorder(
+        store, "execution-redaction", redaction_config=config
+    )
     event = recorder.emit(EventKind.DIAGNOSTIC, payload={"raw": "secret"})
     assert event.payload["raw"] == REDACTED
     assert store.events("execution-redaction")[-1].payload["raw"] == REDACTED
@@ -240,28 +277,51 @@ def test_sqlite_reopen_and_payload_blob_contain_no_canaries(tmp_path: Path) -> N
     )
     database = tmp_path / "trace.sqlite"
     blobs = tmp_path / "blobs"
-    first = SQLiteExecutionStore(database, blob_root=blobs, config=config, payload_blob_threshold=16)
-    recorder = ExecutionTraceRecorder(first, "execution-cross-process", redaction_config=config)
+    first = SQLiteExecutionStore(
+        database, blob_root=blobs, config=config, payload_blob_threshold=16
+    )
+    recorder = ExecutionTraceRecorder(
+        first, "execution-cross-process", redaction_config=config
+    )
     recorder.emit(
         EventKind.DIAGNOSTIC,
-        payload={"assistant": literal, "result": reference, "error": f"{literal}|{reference}"},
+        payload={
+            "assistant": literal,
+            "result": reference,
+            "error": f"{literal}|{reference}",
+        },
     )
     first.close()
 
-    raw_files = [database.read_bytes(), *(path.read_bytes() for path in blobs.rglob("*") if path.is_file())]
-    assert all(canary.encode() not in raw for raw in raw_files for canary in (literal, reference))
+    raw_files = [
+        database.read_bytes(),
+        *(path.read_bytes() for path in blobs.rglob("*") if path.is_file()),
+    ]
+    assert all(
+        canary.encode() not in raw
+        for raw in raw_files
+        for canary in (literal, reference)
+    )
 
-    second = SQLiteExecutionStore(database, blob_root=blobs, config=config, payload_blob_threshold=16)
+    second = SQLiteExecutionStore(
+        database, blob_root=blobs, config=config, payload_blob_threshold=16
+    )
     restored = second.events("execution-cross-process")
     second.close()
     assert any(event.payload.get("assistant") == REDACTED for event in restored)
     assert all(canary not in repr(restored) for canary in (literal, reference))
 
 
-def test_redaction_covers_event_metadata_outside_payload_without_changing_identity() -> None:
+def test_redaction_covers_event_metadata_outside_payload_without_changing_identity() -> (
+    None
+):
     store = InMemoryExecutionStore()
-    config = RedactionConfig(secrets=frozenset({"server-secret"}), include_environment=False)
-    recorder = ExecutionTraceRecorder(store, "execution-metadata-redaction", redaction_config=config)
+    config = RedactionConfig(
+        secrets=frozenset({"server-secret"}), include_environment=False
+    )
+    recorder = ExecutionTraceRecorder(
+        store, "execution-metadata-redaction", redaction_config=config
+    )
     event = Event(
         event_id=EventId("metadata-event"),
         execution_id=ExecutionId("execution-metadata-redaction"),
@@ -296,7 +356,10 @@ def test_illegal_lifecycle_and_orphan_turn_events_are_rejected_without_commit() 
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, "execution-illegal")
     with pytest.raises(TraceRecorderError):
-        recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": ExecutionStatus.IDLE.value})
+        recorder.emit(
+            EventKind.EXECUTION_STATE_CHANGED,
+            payload={"lifecycle": ExecutionStatus.IDLE.value},
+        )
     with pytest.raises(TraceRecorderError):
         recorder.emit(
             EventKind.TURN_STATE_CHANGED,
@@ -331,7 +394,9 @@ def test_startup_failure_and_cleanup_failure_retain_terminal_evidence() -> None:
 
 
 def test_concurrent_emits_are_serialized_into_one_contiguous_trace() -> None:
-    recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-concurrent-emits")
+    recorder = ExecutionTraceRecorder(
+        InMemoryExecutionStore(), "execution-concurrent-emits"
+    )
     barrier = threading.Barrier(12)
     results: list[Event] = []
     failures: list[BaseException] = []
@@ -360,14 +425,21 @@ def test_concurrent_emits_are_serialized_into_one_contiguous_trace() -> None:
 def test_failed_emit_releases_its_reservation_for_the_next_producer() -> None:
     recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-release")
     with pytest.raises(TraceRecorderError):
-        recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": ExecutionStatus.IDLE.value})
+        recorder.emit(
+            EventKind.EXECUTION_STATE_CHANGED,
+            payload={"lifecycle": ExecutionStatus.IDLE.value},
+        )
     event = recorder.emit(EventKind.DIAGNOSTIC, payload={"after": "failure"})
     assert event.sequence == 1
     assert [item.sequence for item in recorder.events()] == [0, 1]
 
 
-def test_terminal_race_rejects_producer_after_finished_without_postterminal_event() -> None:
-    recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-terminal-race")
+def test_terminal_race_rejects_producer_after_finished_without_postterminal_event() -> (
+    None
+):
+    recorder = ExecutionTraceRecorder(
+        InMemoryExecutionStore(), "execution-terminal-race"
+    )
     clock_entered = threading.Event()
     release_clock = threading.Event()
     emitter_started = threading.Event()
@@ -413,7 +485,9 @@ def test_terminal_race_rejects_producer_after_finished_without_postterminal_even
 
 
 def test_concurrent_same_outcome_finalization_is_idempotent() -> None:
-    recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-finalize-race")
+    recorder = ExecutionTraceRecorder(
+        InMemoryExecutionStore(), "execution-finalize-race"
+    )
     barrier = threading.Barrier(8)
     traces: list[object] = []
     failures: list[BaseException] = []
@@ -441,7 +515,9 @@ def test_concurrent_same_outcome_finalization_is_idempotent() -> None:
 
 
 def test_concurrent_session_creation_allows_one_lifecycle_transition() -> None:
-    recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "execution-session-race")
+    recorder = ExecutionTraceRecorder(
+        InMemoryExecutionStore(), "execution-session-race"
+    )
     barrier = threading.Barrier(6)
     successes: list[Event] = []
     failures: list[BaseException] = []
@@ -450,7 +526,9 @@ def test_concurrent_session_creation_allows_one_lifecycle_transition() -> None:
     def create_session() -> None:
         barrier.wait()
         try:
-            event = recorder.emit(EventKind.SESSION_CREATED, session_id="session-1", payload={})
+            event = recorder.emit(
+                EventKind.SESSION_CREATED, session_id="session-1", payload={}
+            )
             with result_lock:
                 successes.append(event)
         except BaseException as exc:
@@ -463,5 +541,7 @@ def test_concurrent_session_creation_allows_one_lifecycle_transition() -> None:
     for thread in threads:
         thread.join()
     assert len(successes) == 1
-    assert all(isinstance(error, (TraceRecorderError, StorageConflict)) for error in failures)
+    assert all(
+        isinstance(error, (TraceRecorderError, StorageConflict)) for error in failures
+    )
     assert [event.sequence for event in recorder.events()] == [0, 1]

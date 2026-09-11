@@ -18,22 +18,22 @@ from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any
 from urllib.parse import urlsplit
 
 from .errors import MCPError
+from .transport.capture_proxy import McpCaptureManager
 from .types import (
+    HTTPServer,
     InProcessServer,
-    SSEServer,
     ServerBinding,
     ServerValue,
+    SSEServer,
     StdioServer,
-    HTTPServer,
+    ToolPolicy,
     TransportKind,
     TrustLevel,
-    ToolPolicy,
 )
-from .transport.capture_proxy import McpCaptureManager
 
 
 class ServerGroupError(MCPError):
@@ -121,17 +121,25 @@ class ServerGroupSnapshot:
         raise ServerUnavailableError("selected MCP server is not configured")
 
     def candidates(self, tool: str) -> tuple[ServerRecord, ...]:
-        return tuple(record for record in self.records if record.available and tool in record.tools)
+        return tuple(
+            record
+            for record in self.records
+            if record.available and tool in record.tools
+        )
 
     def route_tool(self, tool: str, *, server: str | None = None) -> ServerRecord:
         if server is not None:
             record = self.resolve(server)
             if tool not in record.tools:
-                raise ServerUnavailableError("requested MCP tool is not advertised by the selected server")
+                raise ServerUnavailableError(
+                    "requested MCP tool is not advertised by the selected server"
+                )
             return record
         matches = self.candidates(tool)
         if not matches:
-            raise ServerUnavailableError("requested MCP tool is not advertised by an available server")
+            raise ServerUnavailableError(
+                "requested MCP tool is not advertised by an available server"
+            )
         if len(matches) > 1:
             raise AmbiguousToolError("MCP tool requires an explicit server qualifier")
         return matches[0]
@@ -154,13 +162,20 @@ def _private_host(host: str) -> bool:
         address = ipaddress.ip_address(host)
     except ValueError:
         return False
-    return bool(address.is_private or address.is_loopback or address.is_link_local or address.is_reserved)
+    return bool(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+    )
 
 
 def _validate_binding(binding: ServerBinding, key: str) -> None:
     server = binding.server
     if server is None:
-        raise ServerStartupError("server profile resolution is unavailable in this runtime")
+        raise ServerStartupError(
+            "server profile resolution is unavailable in this runtime"
+        )
     if isinstance(server, (HTTPServer, SSEServer)):
         parsed = urlsplit(server.url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -173,7 +188,9 @@ def _validate_binding(binding: ServerBinding, key: str) -> None:
         if server.cwd is not None:
             path = Path(server.cwd)
             if not path.exists() or not path.is_dir():
-                raise ServerStartupError("stdio server working directory is unavailable")
+                raise ServerStartupError(
+                    "stdio server working directory is unavailable"
+                )
     del key
 
 
@@ -206,11 +223,13 @@ class _LoopbackEndpoint:
 
     async def start(self) -> str:
         try:
+            import uvicorn
             from mcp.server.streamable_http import StreamableHTTPServerTransport
             from mcp.server.transport_security import TransportSecuritySettings
-            import uvicorn
         except ImportError:
-            raise ServerStartupError("loopback transport dependencies are unavailable") from None
+            raise ServerStartupError(
+                "loopback transport dependencies are unavailable"
+            ) from None
 
         try:
             server = self._server_definition.factory()
@@ -219,7 +238,9 @@ class _LoopbackEndpoint:
             if not callable(getattr(server, "run", None)) or not callable(
                 getattr(server, "create_initialization_options", None)
             ):
-                raise ServerStartupError("in-process server factory is not an official MCP server")
+                raise ServerStartupError(
+                    "in-process server factory is not an official MCP server"
+                )
             transport = StreamableHTTPServerTransport(
                 None,
                 security_settings=TransportSecuritySettings(
@@ -242,18 +263,32 @@ class _LoopbackEndpoint:
             self._serve_task = asyncio.create_task(serve())
 
             class _Application:
-                async def __call__(application_self: Any, scope: Any, receive: Any, send: Any) -> None:
+                async def __call__(
+                    application_self: Any, scope: Any, receive: Any, send: Any
+                ) -> None:
                     if scope.get("type") != "http":
-                        await send({"type": "http.response.start", "status": 404, "headers": []})
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": 404,
+                                "headers": [],
+                            }
+                        )
                         await send({"type": "http.response.body", "body": b"not found"})
                         return
                     path = str(scope.get("path", ""))
                     client = scope.get("client")
                     token_path = "/" + self._token
-                    if not (path == token_path or path.startswith(token_path + "/")) or (
-                        client and client[0] not in {"127.0.0.1", "::1"}
-                    ):
-                        await send({"type": "http.response.start", "status": 404, "headers": []})
+                    if not (
+                        path == token_path or path.startswith(token_path + "/")
+                    ) or (client and client[0] not in {"127.0.0.1", "::1"}):
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": 404,
+                                "headers": [],
+                            }
+                        )
                         await send({"type": "http.response.body", "body": b"not found"})
                         return
                     capture = self._capture_writer
@@ -261,7 +296,10 @@ class _LoopbackEndpoint:
 
                     async def observed_receive() -> Any:
                         message = await receive()
-                        if capture is not None and message.get("type") == "http.request":
+                        if (
+                            capture is not None
+                            and message.get("type") == "http.request"
+                        ):
                             body = message.get("body", b"")
                             if body:
                                 request_parts.append(body)
@@ -272,13 +310,19 @@ class _LoopbackEndpoint:
                                     transport="in_process",
                                     direction="client_to_server",
                                     payload=parse_json_payload(b"".join(request_parts)),
-                                    metadata={"method": scope.get("method", ""), "path": scope.get("path", "")},
+                                    metadata={
+                                        "method": scope.get("method", ""),
+                                        "path": scope.get("path", ""),
+                                    },
                                 )
                                 request_parts.clear()
                         return message
 
                     async def observed_send(message: Any) -> None:
-                        if capture is not None and message.get("type") == "http.response.body":
+                        if (
+                            capture is not None
+                            and message.get("type") == "http.response.body"
+                        ):
                             body = message.get("body", b"")
                             if body:
                                 from .trace.capture import parse_json_payload
@@ -287,11 +331,15 @@ class _LoopbackEndpoint:
                                     transport="in_process",
                                     direction="server_to_client",
                                     payload=parse_json_payload(body),
-                                    metadata={"status_code": message.get("status", 200)},
+                                    metadata={
+                                        "status_code": message.get("status", 200)
+                                    },
                                 )
                         await send(message)
 
-                    await transport.handle_request(scope, observed_receive, observed_send)
+                    await transport.handle_request(
+                        scope, observed_receive, observed_send
+                    )
 
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -299,9 +347,13 @@ class _LoopbackEndpoint:
             self._socket.listen(64)
             port = int(self._socket.getsockname()[1])
             self._uvicorn = uvicorn.Server(
-                uvicorn.Config(_Application(), log_level="error", lifespan="off", access_log=False)
+                uvicorn.Config(
+                    _Application(), log_level="error", lifespan="off", access_log=False
+                )
             )
-            self._uvicorn_task = asyncio.create_task(self._uvicorn.serve(sockets=[self._socket]))
+            self._uvicorn_task = asyncio.create_task(
+                self._uvicorn.serve(sockets=[self._socket])
+            )
             for _ in range(100):
                 if self._uvicorn.started:
                     break
@@ -377,14 +429,16 @@ class ServerGroupManager:
         for binding in self._bindings:
             server = binding.server
             key = binding.alias or (server.name if server is not None else "profile")
-            connection_id = self._records.get(key, ServerRecord(key, None, binding.required, False, "")).connection_id
+            connection_id = self._records.get(
+                key, ServerRecord(key, None, binding.required, False, "")
+            ).connection_id
             if not connection_id:
                 connection_id = "connection-" + uuid.uuid4().hex
             reason = self._unavailable.get(key)
             available = reason is None and server is not None
             try:
                 _validate_binding(binding, key)
-            except ServerStartupError as error:
+            except ServerStartupError:
                 available = False
                 reason = "preflight_failed"
             records.append(
@@ -440,7 +494,8 @@ class ServerGroupManager:
                 if record.server is not None
                 and getattr(record.server, "trust", TrustLevel.UNTRUSTED)
                 in {TrustLevel.TRUSTED_PRIVATE, TrustLevel.SDK_LOOPBACK}
-                and record.transport in {TransportKind.STREAMABLE_HTTP, TransportKind.SSE}
+                and record.transport
+                in {TransportKind.STREAMABLE_HTTP, TransportKind.SSE}
             }
             self._capture = McpCaptureManager(
                 trusted_private_keys=trusted_private,
@@ -454,7 +509,10 @@ class ServerGroupManager:
                 configured_record = self._records.get(config.key)
                 if configured_record is None:
                     continue
-                if config.endpoint is not None and config.endpoint != configured_record.endpoint:
+                if (
+                    config.endpoint is not None
+                    and config.endpoint != configured_record.endpoint
+                ):
                     self._records[configured_record.key] = ServerRecord(
                         key=configured_record.key,
                         server=configured_record.server,
@@ -470,7 +528,9 @@ class ServerGroupManager:
                 if record.transport is TransportKind.IN_PROCESS:
                     loopback_endpoint = self._endpoints.get(record.key)
                     if loopback_endpoint is not None:
-                        self._capture.attach_loopback(record.connection_id, loopback_endpoint)
+                        self._capture.attach_loopback(
+                            record.connection_id, loopback_endpoint
+                        )
             self._started = True
             self._evidence = ServerLifecycleEvidence(started=True)
             return self.snapshot()

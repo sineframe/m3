@@ -14,19 +14,32 @@ from mcp.server.lowlevel import Server
 from mcp_pal import MCPTestKit
 from mcp_pal.async_api import (
     AsyncMCPTestKit,
+)
+from mcp_pal.async_api import (
     InputRequiredResult as AsyncInputRequiredResult,
+)
+from mcp_pal.async_api import (
     _adapt_callback as _async_adapt_callback,
 )
 from mcp_pal.errors import ProtocolError
-from mcp_pal.sync_api import InputRequiredResult, _adapt_callback as _sync_adapt_callback
+from mcp_pal.sync_api import (
+    InputRequiredResult,
+)
+from mcp_pal.sync_api import (
+    _adapt_callback as _sync_adapt_callback,
+)
 from mcp_pal.types import InProcessServer
 
-
-pytestmark = pytest.mark.filterwarnings("ignore::mcp.shared.exceptions.MCPDeprecationWarning")
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::mcp.shared.exceptions.MCPDeprecationWarning"
+)
 
 
 def _callback_server(
-    *, include_all_callbacks: bool = True, include_sampling: bool = True, include_logging: bool = False
+    *,
+    include_all_callbacks: bool = True,
+    include_sampling: bool = True,
+    include_logging: bool = False,
 ) -> Server:
     async def list_tools(_context: object, _params: object) -> types.ListToolsResult:
         return types.ListToolsResult(
@@ -37,7 +50,11 @@ def _callback_server(
         session = context.session
         if include_sampling:
             await session.create_message(
-                [types.SamplingMessage(role="user", content=types.TextContent(text="callback prompt"))],
+                [
+                    types.SamplingMessage(
+                        role="user", content=types.TextContent(text="callback prompt")
+                    )
+                ],
                 max_tokens=5,
             )
         if include_all_callbacks:
@@ -52,9 +69,13 @@ def _callback_server(
         elif include_logging:
             await session.send_log_message("info", "callback log")
             await asyncio.sleep(0.05)
-        return types.CallToolResult(content=[types.TextContent(text="callback complete")])
+        return types.CallToolResult(
+            content=[types.TextContent(text="callback complete")]
+        )
 
-    return Server("sync-callback-fixture", on_list_tools=list_tools, on_call_tool=call_tool)
+    return Server(
+        "sync-callback-fixture", on_list_tools=list_tools, on_call_tool=call_tool
+    )
 
 
 def test_plain_sync_callbacks_run_on_portal_thread_and_return_typed_values() -> None:
@@ -87,7 +108,11 @@ def test_plain_sync_callbacks_run_on_portal_thread_and_return_typed_values() -> 
         callback_threads.append(threading.get_ident())
         seen["roots"].append(context)
         return types.ListRootsResult(
-            roots=[types.Root.model_validate({"uri": "file:///tmp/sync-callback", "name": "fixture"})]
+            roots=[
+                types.Root.model_validate(
+                    {"uri": "file:///tmp/sync-callback", "name": "fixture"}
+                )
+            ]
         )
 
     def logging(params: object) -> None:
@@ -121,7 +146,9 @@ def test_plain_sync_callbacks_run_on_portal_thread_and_return_typed_values() -> 
     assert len(set(callback_threads)) == 1
 
 
-def test_sync_callback_exception_is_typed_and_value_free(caplog: pytest.LogCaptureFixture) -> None:
+def test_sync_callback_exception_is_typed_and_value_free(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     secret = "SYNC_CALLBACK_SECRET"
 
     def sampling(context: object, params: object) -> types.CreateMessageResult:
@@ -156,7 +183,9 @@ def test_sync_notification_callback_failure_does_not_log_secret(
                 InProcessServer(
                     name="sync-callback",
                     factory=lambda: _callback_server(
-                        include_all_callbacks=False, include_sampling=False, include_logging=True
+                        include_all_callbacks=False,
+                        include_sampling=False,
+                        include_logging=True,
                     ),
                 ),
                 logging_callback=logging_callback,
@@ -215,7 +244,9 @@ async def test_async_notification_callback_failure_does_not_log_secret(
                 InProcessServer(
                     name="async-callback",
                     factory=lambda: _callback_server(
-                        include_all_callbacks=False, include_sampling=False, include_logging=True
+                        include_all_callbacks=False,
+                        include_sampling=False,
+                        include_logging=True,
                     ),
                 ),
                 logging_callback=logging_callback,

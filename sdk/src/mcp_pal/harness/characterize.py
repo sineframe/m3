@@ -13,8 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from typing import Sequence
-
+from collections.abc import Sequence
 
 # Capability help is untrusted subprocess output.  Keep a bounded amount so a
 # broken binary cannot make characterization retain unbounded data, while
@@ -35,7 +34,9 @@ def _probe(executable: str, args: Sequence[str]) -> str:
         return _run_probe(executable, args, environment)
 
 
-def _run_probe(executable: str, args: Sequence[str], environment: dict[str, str]) -> str:
+def _run_probe(
+    executable: str, args: Sequence[str], environment: dict[str, str]
+) -> str:
     try:
         result = subprocess.run(
             [executable, *args],
@@ -91,15 +92,26 @@ def characterize(harness: str, executable: str) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Opt-in native harness live capability characterization")
-    parser.add_argument("--live", action="store_true", help="acknowledge live binary, credential, and privacy implications")
-    parser.add_argument("--harness", choices=("claude", "opencode", "codex", "pi"), required=True)
+    parser = argparse.ArgumentParser(
+        description="Opt-in native harness live capability characterization"
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="acknowledge live binary, credential, and privacy implications",
+    )
+    parser.add_argument(
+        "--harness", choices=("claude", "opencode", "codex", "pi"), required=True
+    )
     parser.add_argument("--executable", default=None)
     args = parser.parse_args(argv)
     if not args.live:
         parser.error("--live is required; characterization is never run implicitly")
     executable = args.executable or args.harness
-    print("WARNING: live characterization inspects an installed binary; it does not run a model prompt or use credentials.", file=sys.stderr)
+    print(
+        "WARNING: live characterization inspects an installed binary; it does not run a model prompt or use credentials.",
+        file=sys.stderr,
+    )
     try:
         return characterize(args.harness, executable)
     except (RuntimeError, ValueError) as error:

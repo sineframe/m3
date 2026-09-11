@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from mcp import ClientSession
 from mcp.server.lowlevel import Server
+from mcp.shared.exceptions import MCPError
 from mcp.types import ListToolsResult
 
 from mcp_pal.transport.local import (
@@ -32,7 +33,9 @@ def _server() -> Server:
 async def test_in_process_connection_uses_official_client_and_closes_cleanly() -> None:
     transport = InProcessMCPTransport(InProcessServer(name="test", factory=_server))
     async with transport as connection:
-        async with ClientSession(connection.read_stream, connection.write_stream) as client:
+        async with ClientSession(
+            connection.read_stream, connection.write_stream
+        ) as client:
             initialized = await client.initialize()
             assert initialized.server_info.name == "mcp-pal-test"
     assert connection.evidence.closed is True
@@ -64,9 +67,11 @@ async def test_in_process_server_exception_can_be_observed_or_sanitized(
         lambda: Server("broken", on_list_tools=broken_tools),
         raise_server_exceptions=True,
     ) as connection:
-        async with ClientSession(connection.read_stream, connection.write_stream) as client:
+        async with ClientSession(
+            connection.read_stream, connection.write_stream
+        ) as client:
             await client.initialize()
-            with pytest.raises(Exception):
+            with pytest.raises(MCPError):
                 await client.list_tools()
         await asyncio.sleep(0)
         with pytest.raises(TransportProcessError):
@@ -79,9 +84,11 @@ async def test_in_process_server_exception_can_be_observed_or_sanitized(
         lambda: Server("sanitized", on_list_tools=broken_tools),
         raise_server_exceptions=False,
     ) as connection:
-        async with ClientSession(connection.read_stream, connection.write_stream) as client:
+        async with ClientSession(
+            connection.read_stream, connection.write_stream
+        ) as client:
             await client.initialize()
-            with pytest.raises(Exception):
+            with pytest.raises(MCPError):
                 await client.list_tools()
         await asyncio.sleep(0)
         connection.raise_if_failed()
@@ -98,7 +105,9 @@ async def test_stdio_connection_uses_argv_only_and_owned_cleanup() -> None:
     )
     transport = StdioMCPTransport(server)
     async with transport as connection:
-        async with ClientSession(connection.read_stream, connection.write_stream) as client:
+        async with ClientSession(
+            connection.read_stream, connection.write_stream
+        ) as client:
             initialized = await client.initialize()
             assert initialized.server_info.name == "mcp-pal-echo"
     assert connection.evidence.closed is True
@@ -119,7 +128,9 @@ def test_stdio_environment_secret_observer_classifies_api_keys_and_references(
             "X-API-Key": "literal-x-api-key",
             "ANTHROPIC_API_KEY": "literal-anthropic-api-key",
             "PATH": "ordinary-path",
-            "REFERENCE": SecretReference(source="environment", name="MCP_STDIO_REFERENCE"),
+            "REFERENCE": SecretReference(
+                source="environment", name="MCP_STDIO_REFERENCE"
+            ),
         },
     )
     transport = StdioMCPTransport(server, secret_observer=observed.append)
@@ -138,7 +149,9 @@ def test_stdio_environment_secret_observer_classifies_api_keys_and_references(
 
 @pytest.mark.asyncio
 @pytest.mark.process_lifecycle
-async def test_stdio_connection_accepts_an_existing_absolute_cwd(tmp_path: Path) -> None:
+async def test_stdio_connection_accepts_an_existing_absolute_cwd(
+    tmp_path: Path,
+) -> None:
     server = StdioServer(
         name="echo",
         command=sys.executable,
@@ -146,14 +159,18 @@ async def test_stdio_connection_accepts_an_existing_absolute_cwd(tmp_path: Path)
         cwd=str(tmp_path),
     )
     async with StdioMCPTransport(server) as connection:
-        async with ClientSession(connection.read_stream, connection.write_stream) as client:
+        async with ClientSession(
+            connection.read_stream, connection.write_stream
+        ) as client:
             initialized = await client.initialize()
             assert initialized.server_info.name == "mcp-pal-echo"
 
 
 @pytest.mark.asyncio
 @pytest.mark.process_lifecycle
-async def test_stdio_cwd_requires_an_absolute_existing_directory(tmp_path: Path) -> None:
+async def test_stdio_cwd_requires_an_absolute_existing_directory(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(ValueError):
         StdioServer(name="nul", command=sys.executable, cwd="/tmp/\x00cwd")
 
@@ -162,7 +179,9 @@ async def test_stdio_cwd_requires_an_absolute_existing_directory(tmp_path: Path)
         await StdioMCPTransport(relative).open()
     assert str(relative_error.value) == "stdio cwd is not an existing directory"
 
-    missing = StdioServer(name="missing", command=sys.executable, cwd=str(tmp_path / "gone"))
+    missing = StdioServer(
+        name="missing", command=sys.executable, cwd=str(tmp_path / "gone")
+    )
     with pytest.raises(TransportStartupError) as missing_error:
         await StdioMCPTransport(missing).open()
     assert str(missing_error.value) == "stdio cwd is not an existing directory"
@@ -240,7 +259,9 @@ async def test_stdio_secret_resolution_failure_is_partial_and_sanitized() -> Non
     server = StdioServer(
         name="secret",
         command=sys.executable,
-        environment={"TOKEN": SecretReference(source="provider", name="internal-token")},
+        environment={
+            "TOKEN": SecretReference(source="provider", name="internal-token")
+        },
     )
     with pytest.raises(TransportStartupError) as error:
         await StdioMCPTransport(server).open()

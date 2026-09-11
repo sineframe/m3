@@ -23,7 +23,10 @@ async def _list_tools(_context: Any, _params: Any) -> types.ListToolsResult:
             types.Tool(
                 name="echo",
                 description="Return the supplied text.",
-                input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
+                input_schema={
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                },
             ),
             types.Tool(
                 name="bad",
@@ -44,7 +47,9 @@ async def _list_tools(_context: Any, _params: Any) -> types.ListToolsResult:
     )
 
 
-async def _call_tool(_context: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
+async def _call_tool(
+    _context: Any, params: types.CallToolRequestParams
+) -> types.CallToolResult:
     if params.name == "bad":
         return types.CallToolResult(
             content=[types.TextContent(text="expected tool failure")],
@@ -60,21 +65,35 @@ async def _call_tool(_context: Any, params: types.CallToolRequestParams) -> type
 
 async def _list_resources(_context: Any, _params: Any) -> types.ListResourcesResult:
     return types.ListResourcesResult(
-        resources=[types.Resource(name="document", uri="memory://document", mime_type="text/plain")]
+        resources=[
+            types.Resource(
+                name="document", uri="memory://document", mime_type="text/plain"
+            )
+        ]
     )
 
 
-async def _read_resource(_context: Any, params: types.ReadResourceRequestParams) -> types.ReadResourceResult:
+async def _read_resource(
+    _context: Any, params: types.ReadResourceRequestParams
+) -> types.ReadResourceResult:
     return types.ReadResourceResult(
-        contents=[types.TextResourceContents(uri=params.uri, mime_type="text/plain", text="resource value")]
+        contents=[
+            types.TextResourceContents(
+                uri=params.uri, mime_type="text/plain", text="resource value"
+            )
+        ]
     )
 
 
 async def _list_prompts(_context: Any, _params: Any) -> types.ListPromptsResult:
-    return types.ListPromptsResult(prompts=[types.Prompt(name="greeting", description="A greeting")])
+    return types.ListPromptsResult(
+        prompts=[types.Prompt(name="greeting", description="A greeting")]
+    )
 
 
-async def _get_prompt(_context: Any, params: types.GetPromptRequestParams) -> types.GetPromptResult:
+async def _get_prompt(
+    _context: Any, params: types.GetPromptRequestParams
+) -> types.GetPromptResult:
     return types.GetPromptResult(
         description="Generated greeting",
         messages=[
@@ -138,7 +157,9 @@ async def test_async_direct_client_real_e2e_tools_resources_and_prompts() -> Non
 
 @pytest.mark.asyncio
 async def test_server_exception_true_is_reported_as_partial_transport_failure() -> None:
-    async with InProcessMCPTransport(_server, raise_server_exceptions=True) as connection:
+    async with InProcessMCPTransport(
+        _server, raise_server_exceptions=True
+    ) as connection:
         async with _client(connection) as client:
             # AsyncDirectClient converts an official JSON-RPC failure into its
             # safe typed protocol error; the transport retains the stronger
@@ -155,7 +176,9 @@ async def test_server_exception_true_is_reported_as_partial_transport_failure() 
 
 @pytest.mark.asyncio
 async def test_server_exception_false_is_sanitized_without_process_failure() -> None:
-    async with InProcessMCPTransport(_server, raise_server_exceptions=False) as connection:
+    async with InProcessMCPTransport(
+        _server, raise_server_exceptions=False
+    ) as connection:
         async with _client(connection) as client:
             with pytest.raises(ProtocolError) as error:
                 await client.call_tool("explode", {})
@@ -167,12 +190,12 @@ async def test_server_exception_false_is_sanitized_without_process_failure() -> 
 
 
 @pytest.mark.asyncio
-async def test_cancelled_direct_operation_and_nested_cleanup_leave_no_fixture_tasks() -> None:
+async def test_cancelled_direct_operation_and_nested_cleanup_leave_no_fixture_tasks() -> (
+    None
+):
     current = asyncio.current_task()
     baseline = {
-        task
-        for task in asyncio.all_tasks()
-        if task is not current and not task.done()
+        task for task in asyncio.all_tasks() if task is not current and not task.done()
     }
     async with InProcessMCPTransport(_server) as connection:
         async with _client(connection) as client:

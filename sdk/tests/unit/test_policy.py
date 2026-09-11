@@ -7,13 +7,27 @@ from collections.abc import Mapping
 import pytest
 from pydantic import ValidationError
 
-from mcp_pal.errors import UnsupportedFeature
 from mcp_pal.agent_session import AsyncAgentSession
-from mcp_pal.harness.contracts import DeterministicHarnessAdapter, HarnessAdapterCapabilities, HarnessLaunch
+from mcp_pal.errors import UnsupportedFeature
+from mcp_pal.harness.contracts import (
+    DeterministicHarnessAdapter,
+    HarnessAdapterCapabilities,
+    HarnessLaunch,
+)
 from mcp_pal.policy import ToolDescriptor, ToolPolicyEvaluator
 from mcp_pal.server_group import ServerGroupManager, ServerGroupSnapshot, ServerRecord
-from mcp_pal.types import TransportKind
-from mcp_pal.types import ACPAgent, AgentSpec, FullToolPolicy, NativeToolPolicy, RestrictiveToolPolicy, ServerBinding, StdioServer, TurnResponse, UserMessage
+from mcp_pal.types import (
+    ACPAgent,
+    AgentSpec,
+    FullToolPolicy,
+    NativeToolPolicy,
+    RestrictiveToolPolicy,
+    ServerBinding,
+    StdioServer,
+    TransportKind,
+    TurnResponse,
+    UserMessage,
+)
 
 
 def _evaluator() -> ToolPolicyEvaluator:
@@ -26,7 +40,9 @@ def _evaluator() -> ToolPolicyEvaluator:
     )
 
 
-def test_restrictive_policy_defaults_to_deny_and_qualified_allowlists_disambiguate() -> None:
+def test_restrictive_policy_defaults_to_deny_and_qualified_allowlists_disambiguate() -> (
+    None
+):
     evaluator = _evaluator()
     default = evaluator.decide(
         RestrictiveToolPolicy(),
@@ -89,9 +105,15 @@ def test_preflight_fails_closed_for_unsupported_portable_policy() -> None:
         )
 
 
-def test_native_escape_hatch_requires_matching_harness_and_records_nonportable_evidence() -> None:
-    policy = NativeToolPolicy(harness="fixture", policy={"allow": "all"}, nonportable_reason="provider policy")
-    evidence = _evaluator().preflight(policy, harness_name="fixture", supports_enforcement=False)
+def test_native_escape_hatch_requires_matching_harness_and_records_nonportable_evidence() -> (
+    None
+):
+    policy = NativeToolPolicy(
+        harness="fixture", policy={"allow": "all"}, nonportable_reason="provider policy"
+    )
+    evidence = _evaluator().preflight(
+        policy, harness_name="fixture", supports_enforcement=False
+    )
     assert evidence.portable is False
     assert evidence.nonportable_reason == "provider policy"
     with pytest.raises(UnsupportedFeature):
@@ -111,12 +133,16 @@ def test_tool_descriptors_reject_ambiguous_or_controlled_identities() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unavailable_server_tools_do_not_make_available_unqualified_tools_ambiguous() -> None:
+async def test_unavailable_server_tools_do_not_make_available_unqualified_tools_ambiguous() -> (
+    None
+):
     spec = AgentSpec(
         harness=ACPAgent(model="fixture"),
         servers=(
             ServerBinding(server=StdioServer(name="available", command="server")),
-            ServerBinding(server=StdioServer(name="optional", command="server"), required=False),
+            ServerBinding(
+                server=StdioServer(name="optional", command="server"), required=False
+            ),
         ),
         tool_policy=RestrictiveToolPolicy(allowed_tools=("read",)),
     )
@@ -124,8 +150,24 @@ async def test_unavailable_server_tools_do_not_make_available_unqualified_tools_
         spec,
         ServerGroupSnapshot(
             records=(
-                ServerRecord("available", spec.servers[0].server, True, True, "c1", TransportKind.STDIO, tools=("read",)),
-                ServerRecord("optional", spec.servers[1].server, False, False, "c2", TransportKind.STDIO, tools=("read",)),
+                ServerRecord(
+                    "available",
+                    spec.servers[0].server,
+                    True,
+                    True,
+                    "c1",
+                    TransportKind.STDIO,
+                    tools=("read",),
+                ),
+                ServerRecord(
+                    "optional",
+                    spec.servers[1].server,
+                    False,
+                    False,
+                    "c2",
+                    TransportKind.STDIO,
+                    tools=("read",),
+                ),
             )
         ),
         (),
@@ -157,7 +199,9 @@ async def test_session_surfaces_portable_policy_preflight_failure_before_open() 
     )
     manager = ServerGroupManager(spec.servers)
     adapter = DeterministicHarnessAdapter(
-        capabilities=HarnessAdapterCapabilities(name="fixture", supports_tool_policy=False)
+        capabilities=HarnessAdapterCapabilities(
+            name="fixture", supports_tool_policy=False
+        )
     )
     session = AsyncAgentSession(spec, adapter, server_manager=manager)
     with pytest.raises(UnsupportedFeature):
@@ -167,10 +211,14 @@ async def test_session_surfaces_portable_policy_preflight_failure_before_open() 
 
 
 @pytest.mark.asyncio
-async def test_adapter_without_policy_preflight_cannot_silently_accept_explicit_allowlist() -> None:
+async def test_adapter_without_policy_preflight_cannot_silently_accept_explicit_allowlist() -> (
+    None
+):
     spec = AgentSpec(
         harness=ACPAgent(model="fixture"),
-        servers=(ServerBinding(server=StdioServer(name="memory", command="memory-server")),),
+        servers=(
+            ServerBinding(server=StdioServer(name="memory", command="memory-server")),
+        ),
         tool_policy=RestrictiveToolPolicy(allowed_tools=("memory:read",)),
     )
 

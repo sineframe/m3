@@ -6,6 +6,7 @@ Call :func:`terminate_process_group` with the SDK process PID from the runner's
 ``finally`` block.  Windows deliberately uses the SDK's normal child cleanup;
 the stronger group guarantee is POSIX-only.
 """
+
 from __future__ import annotations
 
 import os
@@ -14,7 +15,9 @@ import subprocess
 import time
 
 
-def terminate_process_group(pid: int | None = None, *, pgid: int | None = None, grace_seconds: float = 1.0) -> bool:
+def terminate_process_group(
+    pid: int | None = None, *, pgid: int | None = None, grace_seconds: float = 1.0
+) -> bool:
     """TERM, then KILL, the process group rooted at *pid*.
 
     Returns whether a POSIX group signal was attempted.  It is safe to call
@@ -64,11 +67,16 @@ def terminate_process_group(pid: int | None = None, *, pgid: int | None = None, 
 
     def members() -> list[int]:
         try:
-            listing = subprocess.run(["ps", "-axo", "pid=,pgid="], capture_output=True, text=True, check=False).stdout
+            listing = subprocess.run(
+                ["ps", "-axo", "pid=,pgid="],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout
             return [
                 int(member_pid)
                 for line in listing.splitlines()
-                if len((parts := line.split())) == 2 and parts[1] == str(pgid)
+                if len(parts := line.split()) == 2 and parts[1] == str(pgid)
                 for member_pid in [parts[0]]
                 if int(member_pid) not in {os.getpid(), pid}
             ]

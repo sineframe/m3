@@ -8,12 +8,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 EXPECTED_TOKEN = "acp-auth-server-canary"
 
 
 def _reply(request: dict[str, Any], result: dict[str, Any]) -> None:
-    print(json.dumps({"jsonrpc": "2.0", "id": request.get("id"), "result": result}, separators=(",", ":")), flush=True)
+    print(
+        json.dumps(
+            {"jsonrpc": "2.0", "id": request.get("id"), "result": result},
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
 
 
 def main() -> int:
@@ -24,7 +29,9 @@ def main() -> int:
     marker = os.environ.get("MCP_PAL_E2E_MCP_MARKER")
     observations: list[str] = []
     if marker:
-        Path(marker).write_text(json.dumps({"authorized": True, "methods": observations}), encoding="utf-8")
+        Path(marker).write_text(
+            json.dumps({"authorized": True, "methods": observations}), encoding="utf-8"
+        )
     for line in sys.stdin:
         try:
             request = json.loads(line)
@@ -34,14 +41,49 @@ def main() -> int:
         params = request.get("params") or {}
         observations.append(str(method))
         if marker:
-            Path(marker).write_text(json.dumps({"authorized": True, "methods": observations}), encoding="utf-8")
+            Path(marker).write_text(
+                json.dumps({"authorized": True, "methods": observations}),
+                encoding="utf-8",
+            )
         if method == "initialize":
-            _reply(request, {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}}, "serverInfo": {"name": "auth-fixture", "version": "1"}})
+            _reply(
+                request,
+                {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "auth-fixture", "version": "1"},
+                },
+            )
         elif method == "tools/list":
-            _reply(request, {"tools": [{"name": "echo", "description": "Authenticated echo", "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}}]})
+            _reply(
+                request,
+                {
+                    "tools": [
+                        {
+                            "name": "echo",
+                            "description": "Authenticated echo",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {"text": {"type": "string"}},
+                            },
+                        }
+                    ]
+                },
+            )
         elif method == "tools/call":
             arguments = params.get("arguments") or {}
-            _reply(request, {"content": [{"type": "text", "text": "authenticated:" + str(arguments.get("text", ""))}], "isError": False})
+            _reply(
+                request,
+                {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "authenticated:" + str(arguments.get("text", "")),
+                        }
+                    ],
+                    "isError": False,
+                },
+            )
         elif not str(method).startswith("notifications/"):
             _reply(request, {})
     return 0

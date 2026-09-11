@@ -14,17 +14,13 @@ from ..types import (
     Capability,
     CapabilityStatus,
     Codex,
-    ErrorCode,
-    ErrorInfo,
     NativeToolPolicy,
     Readiness,
-    RestrictiveToolPolicy,
     SecretReference,
 )
 from ._rpc_native import JsonRpcProcess, NativeRPCAdapter
 from .contracts import (
     HarnessLaunch,
-    HarnessSession,
     HarnessStartupError,
     HarnessTurnRequest,
 )
@@ -544,7 +540,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                                     wall_time=wall,
                                     monotonic_offset_ms=max(
                                         0.0,
-                                        (asyncio.get_event_loop().time() - started) * 1000,
+                                        (asyncio.get_event_loop().time() - started)
+                                        * 1000,
                                     ),
                                     text=candidate,
                                     complete=method == "item/completed",

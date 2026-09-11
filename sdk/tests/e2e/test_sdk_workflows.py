@@ -8,44 +8,48 @@ Pal internals or serialized scenario files.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from contextlib import contextmanager
 import hashlib
 import json
 import os
-from pathlib import Path
 import queue
 import signal
 import subprocess
 import sys
 import threading
 import time
-from typing import IO, Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from pathlib import Path
+from typing import IO
 
 import pytest
 from pydantic import TypeAdapter
 
 from mcp_pal import MCPTestKit
 from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.sync_api import InitializationResult, PromptResult, ResourceReadResult, ToolCallResult
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.testing import FaultInjector
 from mcp_pal.errors import UnsupportedFeature
+from mcp_pal.execution_trace import ExecutionTraceRecorder
 from mcp_pal.observability import ObservationState, TransportEntry
+from mcp_pal.storage import SQLiteExecutionStore
+from mcp_pal.sync_api import (
+    InitializationResult,
+    PromptResult,
+    ResourceReadResult,
+    ToolCallResult,
+)
+from mcp_pal.testing import FaultInjector
 from mcp_pal.types import (
     ACPAgent,
     AgentSpec,
     ArtifactPolicy,
     CallTool,
     CallToolResult,
-    DirectSpec,
-    DirectResult,
     DirectOperation,
-    _DirectResult,
+    DirectResult,
+    DirectSpec,
+    ErrorCode,
     ExecutionOutcome,
     ExecutionResult,
-    ErrorCode,
     FullToolPolicy,
     GetPrompt,
     GetPromptResult,
@@ -62,9 +66,9 @@ from mcp_pal.types import (
     PingResult,
     ReadResource,
     ReadResourceResult,
-    ServerBinding,
-    SecretReference,
     RestrictiveToolPolicy,
+    SecretReference,
+    ServerBinding,
     StdioServer,
     TextContent,
     TransportKind,
@@ -72,8 +76,8 @@ from mcp_pal.types import (
     UserMessage,
     WorkspaceKind,
     WorkspacePolicy,
+    _DirectResult,
 )
-
 
 pytestmark = [pytest.mark.e2e, pytest.mark.process_lifecycle]
 
@@ -91,7 +95,9 @@ _WORKER_OUTPUT_LIMIT = 16_384
 _MCP_MARKER_TIMEOUT = 30.0
 
 
-def _stdio_server(path: Path = _MATRIX_SERVER, *, environment: dict[str, str] | None = None) -> StdioServer:
+def _stdio_server(
+    path: Path = _MATRIX_SERVER, *, environment: dict[str, str] | None = None
+) -> StdioServer:
     return StdioServer(
         name="e2e-mcp",
         command=sys.executable,
@@ -150,7 +156,9 @@ def _scenario_acp_spec(mode: str, *, mcp_marker: Path) -> AgentSpec:
         ),
         servers=(
             ServerBinding(
-                server=_stdio_server(environment={"MCP_PAL_E2E_MCP_MARKER": str(mcp_marker)}),
+                server=_stdio_server(
+                    environment={"MCP_PAL_E2E_MCP_MARKER": str(mcp_marker)}
+                ),
                 alias="e2e-mcp",
             ),
         ),
@@ -158,7 +166,9 @@ def _scenario_acp_spec(mode: str, *, mcp_marker: Path) -> AgentSpec:
     )
 
 
-def _scenario_acp_cancel_spec(*, acp_pid_marker: Path, mcp_pid_marker: Path) -> AgentSpec:
+def _scenario_acp_cancel_spec(
+    *, acp_pid_marker: Path, mcp_pid_marker: Path
+) -> AgentSpec:
     """Build a real ACP/MCP pair that blocks during MCP initialization."""
 
     fixture = _FIXTURES / "acp_scenario_agent.py"
@@ -225,7 +235,10 @@ def _authenticated_acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentSpec:
 
 
 def _capture_stream(
-    stream: IO[str], output: list[str], output_done: threading.Event, lines: queue.Queue[str] | None = None,
+    stream: IO[str],
+    output: list[str],
+    output_done: threading.Event,
+    lines: queue.Queue[str] | None = None,
 ) -> None:
     """Drain a worker pipe continuously so a noisy child cannot block startup."""
 
@@ -258,8 +271,13 @@ def _output_text(output: list[str]) -> str:
 
 
 def _wait_for_line(
-    process: subprocess.Popen[str], stdout_lines: queue.Queue[str], stdout_output: list[str], stderr_output: list[str],
-    stdout_done: threading.Event, stderr_done: threading.Event, timeout: float,
+    process: subprocess.Popen[str],
+    stdout_lines: queue.Queue[str],
+    stdout_output: list[str],
+    stderr_output: list[str],
+    stdout_done: threading.Event,
+    stderr_done: threading.Event,
+    timeout: float,
 ) -> str:
     """Wait for readiness while reporting early exits and bounded diagnostics."""
 
@@ -299,7 +317,9 @@ def _persistent_worker(
     command: Sequence[str] | None = None,
     ready_timeout: float = _WORKER_READY_TIMEOUT,
 ) -> Iterator[subprocess.Popen[str]]:
-    worker_command = list(command or (sys.executable, str(_PERSISTENT_WORKER), str(database.resolve())))
+    worker_command = list(
+        command or (sys.executable, str(_PERSISTENT_WORKER), str(database.resolve()))
+    )
     process = subprocess.Popen(
         worker_command,
         stdin=subprocess.PIPE,
@@ -330,10 +350,18 @@ def _persistent_worker(
     stderr_reader.start()
     ready = False
     try:
-        assert _wait_for_line(
-            process, stdout_lines, stdout_output, stderr_output,
-            stdout_done, stderr_done, ready_timeout,
-        ) == "READY"
+        assert (
+            _wait_for_line(
+                process,
+                stdout_lines,
+                stdout_output,
+                stderr_output,
+                stdout_done,
+                stderr_done,
+                ready_timeout,
+            )
+            == "READY"
+        )
         ready = True
         yield process
     finally:
@@ -367,7 +395,9 @@ def _persistent_worker(
             stderr_reader.join(timeout=1)
 
 
-def test_persistent_worker_early_exit_reports_exit_code_and_stderr(tmp_path: Path) -> None:
+def test_persistent_worker_early_exit_reports_exit_code_and_stderr(
+    tmp_path: Path,
+) -> None:
     script = tmp_path / "early-exit-worker.py"
     script.write_text(
         "import sys\n"
@@ -376,7 +406,9 @@ def test_persistent_worker_early_exit_reports_exit_code_and_stderr(tmp_path: Pat
         encoding="utf-8",
     )
 
-    with pytest.raises(AssertionError, match=r"exit code 23.*worker failed during startup"):
+    with pytest.raises(
+        AssertionError, match=r"exit code 23.*worker failed during startup"
+    ):
         with _persistent_worker(
             tmp_path / "worker.sqlite",
             command=(sys.executable, str(script)),
@@ -385,7 +417,9 @@ def test_persistent_worker_early_exit_reports_exit_code_and_stderr(tmp_path: Pat
             raise AssertionError("the worker unexpectedly became ready")
 
 
-def test_persistent_worker_timeout_includes_stderr_diagnostics_and_cleans_up(tmp_path: Path) -> None:
+def test_persistent_worker_timeout_includes_stderr_diagnostics_and_cleans_up(
+    tmp_path: Path,
+) -> None:
     script = tmp_path / "stalled-worker.py"
     script.write_text(
         "import time\n"
@@ -430,7 +464,10 @@ def test_sync_author_exercises_stdio_tools_resources_prompts_and_trace() -> None
             initialization = client.initialization
             assert isinstance(initialization, InitializationResult)
             assert initialization.server_info["name"] == "matrix-stdio"
-            assert {tool.name for tool in client.list_all_tools()} == {"echo", "failure"}
+            assert {tool.name for tool in client.list_all_tools()} == {
+                "echo",
+                "failure",
+            }
             echo_result = client.call_tool("echo", {"text": "e2e-value"})
             assert isinstance(echo_result, ToolCallResult)
             assert echo_result.content[0]["text"] == "e2e-value"
@@ -507,12 +544,32 @@ def _run_sync_direct_operation(operation: DirectOperation) -> ExecutionResult:
     ("operation", "result_type"),
     [
         pytest.param(ListTools(server="e2e-mcp"), ListToolsResult, id="list-tools"),
-        pytest.param(ListResources(server="e2e-mcp"), ListResourcesResult, id="list-resources"),
-        pytest.param(ListTemplates(server="e2e-mcp"), ListTemplatesResult, id="list-resource-templates"),
-        pytest.param(ListPrompts(server="e2e-mcp"), ListPromptsResult, id="list-prompts"),
-        pytest.param(CallTool(server="e2e-mcp", name="echo", arguments={"text": "parity"}), CallToolResult, id="call-tool"),
-        pytest.param(ReadResource(server="e2e-mcp", uri="memory://document"), ReadResourceResult, id="read-resource"),
-        pytest.param(GetPrompt(server="e2e-mcp", name="greeting"), GetPromptResult, id="get-prompt"),
+        pytest.param(
+            ListResources(server="e2e-mcp"), ListResourcesResult, id="list-resources"
+        ),
+        pytest.param(
+            ListTemplates(server="e2e-mcp"),
+            ListTemplatesResult,
+            id="list-resource-templates",
+        ),
+        pytest.param(
+            ListPrompts(server="e2e-mcp"), ListPromptsResult, id="list-prompts"
+        ),
+        pytest.param(
+            CallTool(server="e2e-mcp", name="echo", arguments={"text": "parity"}),
+            CallToolResult,
+            id="call-tool",
+        ),
+        pytest.param(
+            ReadResource(server="e2e-mcp", uri="memory://document"),
+            ReadResourceResult,
+            id="read-resource",
+        ),
+        pytest.param(
+            GetPrompt(server="e2e-mcp", name="greeting"),
+            GetPromptResult,
+            id="get-prompt",
+        ),
         pytest.param(Ping(server="e2e-mcp"), PingResult, id="ping"),
     ],
 )
@@ -540,8 +597,14 @@ async def test_sync_async_direct_operation_parity_roundtrips_json(
     assert "raw" not in async_json
     assert sync_json == async_json
     adapter: TypeAdapter[DirectResult] = TypeAdapter(DirectResult)
-    assert adapter.validate_json(json.dumps(sync_json)).model_dump(mode="json") == sync_json
-    assert adapter.validate_json(json.dumps(async_json)).model_dump(mode="json") == async_json
+    assert (
+        adapter.validate_json(json.dumps(sync_json)).model_dump(mode="json")
+        == sync_json
+    )
+    assert (
+        adapter.validate_json(json.dumps(async_json)).model_dump(mode="json")
+        == async_json
+    )
 
 
 @pytest.mark.asyncio
@@ -559,7 +622,9 @@ async def test_sync_async_direct_list_tools_cursor_without_following_pages() -> 
     assert isinstance(async_result.direct_result, ListToolsResult)
     assert [tool.name for tool in sync_result.direct_result.tools] == ["failure"]
     assert [tool.name for tool in async_result.direct_result.tools] == ["failure"]
-    assert sync_result.direct_result.model_dump(mode="json") == async_result.direct_result.model_dump(mode="json")
+    assert sync_result.direct_result.model_dump(
+        mode="json"
+    ) == async_result.direct_result.model_dump(mode="json")
 
 
 @pytest.mark.asyncio
@@ -590,7 +655,9 @@ async def test_async_run_real_stdio_startup_failure_is_failed_and_traced() -> No
     spec = DirectSpec(
         servers=(
             ServerBinding(
-                server=StdioServer(name="missing", command="mcp-pal-no-such-executable"),
+                server=StdioServer(
+                    name="missing", command="mcp-pal-no-such-executable"
+                ),
                 alias="missing",
             ),
         ),
@@ -625,7 +692,9 @@ async def test_async_run_real_stdio_operation_timeout_is_timed_out_and_traced() 
 
 
 @pytest.mark.asyncio
-async def test_async_run_real_stdio_schema_validation_failure_is_failed_and_traced() -> None:
+async def test_async_run_real_stdio_schema_validation_failure_is_failed_and_traced() -> (
+    None
+):
     server = FaultInjector().invalid_result("tools/call").stdio_server()
     spec = DirectSpec(
         servers=(ServerBinding(server=server, alias="invalid"),),
@@ -642,7 +711,9 @@ async def test_async_run_real_stdio_schema_validation_failure_is_failed_and_trac
 
 
 @pytest.mark.asyncio
-async def test_async_run_dispatches_call_tool_to_real_stdio_and_returns_typed_result() -> None:
+async def test_async_run_dispatches_call_tool_to_real_stdio_and_returns_typed_result() -> (
+    None
+):
     spec = DirectSpec(
         servers=(ServerBinding(server=_stdio_server(), alias="e2e-mcp"),),
         operation=CallTool(
@@ -662,7 +733,9 @@ async def test_async_run_dispatches_call_tool_to_real_stdio_and_returns_typed_re
     assert result.trace.events[-1].kind.value == "execution.finished"
 
 
-def test_multiturn_acp_session_calls_one_real_mcp_and_keeps_a_trace(tmp_path: Path) -> None:
+def test_multiturn_acp_session_calls_one_real_mcp_and_keeps_a_trace(
+    tmp_path: Path,
+) -> None:
     """Three public sends retain one ACP/MCP lifecycle and complete trace."""
 
     acp_marker = tmp_path / "acp-observations.jsonl"
@@ -670,12 +743,18 @@ def test_multiturn_acp_session_calls_one_real_mcp_and_keeps_a_trace(tmp_path: Pa
     nonces = ("nonce-first", "nonce-second", "nonce-third")
 
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(_acp_spec(acp_marker=acp_marker, mcp_marker=mcp_marker)) as session:
+        with kit.agent_session(
+            _acp_spec(acp_marker=acp_marker, mcp_marker=mcp_marker)
+        ) as session:
             turns = [session.send(nonce) for nonce in nonces]
 
         assert len(turns) == len(nonces)
-        assert all(turn.snapshot.outcome is TurnOutcome.COMPLETED for turn in turns), [turn.error for turn in turns]
-        assert [turn.response.text if turn.response is not None else None for turn in turns] == list(nonces)
+        assert all(turn.snapshot.outcome is TurnOutcome.COMPLETED for turn in turns), [
+            turn.error for turn in turns
+        ]
+        assert [
+            turn.response.text if turn.response is not None else None for turn in turns
+        ] == list(nonces)
         assert all(
             turn.response is not None
             and len(turn.response.content) == 1
@@ -688,13 +767,17 @@ def test_multiturn_acp_session_calls_one_real_mcp_and_keeps_a_trace(tmp_path: Pa
         assert session.result.snapshot.outcome is ExecutionOutcome.COMPLETED
         assert len(session.result.turns) == 3
 
-    acp_observations = [json.loads(line) for line in acp_marker.read_text(encoding="utf-8").splitlines()]
+    acp_observations = [
+        json.loads(line) for line in acp_marker.read_text(encoding="utf-8").splitlines()
+    ]
     assert len({item["pid"] for item in acp_observations}) == 1
     assert [item["method"] for item in acp_observations].count("initialize") == 1
     assert [item["method"] for item in acp_observations].count("session/new") == 1
     assert [item["method"] for item in acp_observations].count("session/prompt") == 3
 
-    mcp_observations = [json.loads(line) for line in mcp_marker.read_text(encoding="utf-8").splitlines()]
+    mcp_observations = [
+        json.loads(line) for line in mcp_marker.read_text(encoding="utf-8").splitlines()
+    ]
     assert len({item["pid"] for item in mcp_observations}) == 1
     assert [item["method"] for item in mcp_observations].count("initialize") == 1
     assert [item["method"] for item in mcp_observations].count("tools/list") == 1
@@ -706,34 +789,44 @@ def test_multiturn_acp_session_calls_one_real_mcp_and_keeps_a_trace(tmp_path: Pa
     assert trace.completeness == "complete"
     assert trace.limitations == ()
     wire_calls = [
-        event for event in trace.events
-        if event.kind.value == "tool.call_requested" and event.payload.get("evidence_mode") == "wire_observed"
+        event
+        for event in trace.events
+        if event.kind.value == "tool.call_requested"
+        and event.payload.get("evidence_mode") == "wire_observed"
     ]
     wire_results = [
-        event for event in trace.events
-        if event.kind.value == "tool.result_received" and event.payload.get("evidence_mode") == "wire_observed"
+        event
+        for event in trace.events
+        if event.kind.value == "tool.result_received"
+        and event.payload.get("evidence_mode") == "wire_observed"
     ]
     assert len(wire_calls) == len(wire_results) == 3
     assert [event.payload["arguments"]["text"] for event in wire_calls] == list(nonces)
-    assert [event.payload["result"]["content"][0]["text"] for event in wire_results] == list(nonces)
+    assert [
+        event.payload["result"]["content"][0]["text"] for event in wire_results
+    ] == list(nonces)
     reported_calls = [
-        event for event in trace.events
+        event
+        for event in trace.events
         if event.kind.value == "tool.call_requested"
         and event.provenance.origin.value == "harness_reported"
         and event.provenance.source == "acp"
     ]
     reported_results = [
-        event for event in trace.events
+        event
+        for event in trace.events
         if event.kind.value == "tool.result_received"
         and event.provenance.origin.value == "harness_reported"
         and event.provenance.source == "acp"
     ]
     assert len(reported_calls) == len(reported_results) == 3
-    assert [event.turn_id for event in reported_calls] == [event.turn_id for event in reported_results]
+    assert [event.turn_id for event in reported_calls] == [
+        event.turn_id for event in reported_results
+    ]
     assert len({event.turn_id for event in reported_calls}) == 3
-    assert {event.server_binding for event in reported_calls} == {"e2e-mcp"}, repr([
-        dict(event.payload) for event in reported_calls
-    ])
+    assert {event.server_binding for event in reported_calls} == {"e2e-mcp"}, repr(
+        [dict(event.payload) for event in reported_calls]
+    )
     assert {event.payload.get("tool") for event in reported_calls} == {"echo"}, [
         dict(event.payload) for event in reported_calls
     ]
@@ -749,7 +842,9 @@ def test_multiturn_acp_session_calls_one_real_mcp_and_keeps_a_trace(tmp_path: Pa
     assert trace.events[-1].kind.value == "execution.finished"
 
 
-def test_agent_transport_entry_is_observed_and_survives_sqlite_reopen(tmp_path: Path) -> None:
+def test_agent_transport_entry_is_observed_and_survives_sqlite_reopen(
+    tmp_path: Path,
+) -> None:
     """The public agent path records configured/instrumented stdio transport."""
 
     acp_marker = tmp_path / "acp-transport.jsonl"
@@ -802,22 +897,31 @@ def test_acp_tool_error_recovers_on_same_real_session_and_trace(tmp_path: Path) 
 
     mcp_marker = tmp_path / "mcp-observations.jsonl"
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(_scenario_acp_spec("recover", mcp_marker=mcp_marker)) as session:
+        with kit.agent_session(
+            _scenario_acp_spec("recover", mcp_marker=mcp_marker)
+        ) as session:
             first = session.send("first")
             second = session.send("second")
 
         assert first.snapshot.outcome is TurnOutcome.COMPLETED
         assert second.snapshot.outcome is TurnOutcome.COMPLETED
         assert first.response is not None and first.response.text == "recovered:first"
-        assert second.response is not None and second.response.text == "recovered:second"
-        assert str(first.evidence["session_id"]) == str(second.evidence["session_id"]) != ""
+        assert (
+            second.response is not None and second.response.text == "recovered:second"
+        )
+        assert (
+            str(first.evidence["session_id"])
+            == str(second.evidence["session_id"])
+            != ""
+        )
         assert session.result.snapshot.outcome is ExecutionOutcome.COMPLETED
         assert session.result.activity_health.value == "mixed"
         trace = session.result.trace
         assert trace is not None and trace.completeness == "complete"
 
     wire_results = [
-        event for event in trace.events
+        event
+        for event in trace.events
         if event.kind.value == "tool.result_received"
         and event.payload.get("evidence_mode") == "wire_observed"
     ]
@@ -826,31 +930,47 @@ def test_acp_tool_error_recovers_on_same_real_session_and_trace(tmp_path: Path) 
     assert wire_results[1].payload["result"]["isError"] is False
     assert trace.events[-1].kind.value == "execution.finished"
     _wait_for_file(mcp_marker)
-    observations = [json.loads(line) for line in mcp_marker.read_text(encoding="utf-8").splitlines()]
+    observations = [
+        json.loads(line) for line in mcp_marker.read_text(encoding="utf-8").splitlines()
+    ]
     assert len({item["pid"] for item in observations}) == 1
     calls = [item for item in observations if item["method"] == "tools/call"]
     assert [item["name"] for item in calls] == ["failure", "echo"]
     assert [item["arguments"]["text"] for item in calls] == ["first", "second"]
 
 
-def test_acp_rejects_attachment_without_poisoning_following_turn(tmp_path: Path) -> None:
+def test_acp_rejects_attachment_without_poisoning_following_turn(
+    tmp_path: Path,
+) -> None:
     """Content validation happens before a turn and leaves the ACP session usable."""
 
     mcp_marker = tmp_path / "mcp-observations.jsonl"
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(_scenario_acp_spec("recover", mcp_marker=mcp_marker)) as session:
-            with pytest.raises(UnsupportedFeature, match="message contains unsupported content"):
-                session.send(UserMessage(content=(OpaqueContent(provider="fixture", payload={"x": 1}),)))
+        with kit.agent_session(
+            _scenario_acp_spec("recover", mcp_marker=mcp_marker)
+        ) as session:
+            with pytest.raises(
+                UnsupportedFeature, match="message contains unsupported content"
+            ):
+                session.send(
+                    UserMessage(
+                        content=(OpaqueContent(provider="fixture", payload={"x": 1}),)
+                    )
+                )
             result = session.send("after-attachment")
             assert result.snapshot.outcome is TurnOutcome.COMPLETED
-            assert result.response is not None and result.response.text == "recovered:after-attachment"
+            assert (
+                result.response is not None
+                and result.response.text == "recovered:after-attachment"
+            )
         assert session.result.snapshot.outcome is ExecutionOutcome.COMPLETED
         assert session.result.trace is not None
 
 
 @pytest.mark.asyncio
 async def test_acp_secret_reference_reaches_only_stdio_handoff_and_persists_redacted_evidence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Public ACP execution authenticates MCP without exposing its credential."""
 
@@ -864,9 +984,15 @@ async def test_acp_secret_reference_reaches_only_stdio_handoff_and_persists_reda
 
     store = SQLiteExecutionStore(database, blob_root=blobs)
     async with AsyncMCPTestKit(store=store, env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        result = await kit.run(spec.model_copy(update={
-            "message": UserMessage(content=(TextContent(text="credentialed-turn"),)),
-        }))
+        result = await kit.run(
+            spec.model_copy(
+                update={
+                    "message": UserMessage(
+                        content=(TextContent(text="credentialed-turn"),)
+                    ),
+                }
+            )
+        )
     store.close()
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
@@ -878,7 +1004,12 @@ async def test_acp_secret_reference_reaches_only_stdio_handoff_and_persists_reda
     assert canary not in encoded_config
     assert acp_config["mcpServers"][0]["env"] == []
     assert result.trace is not None
-    public_values = (result, result.model_dump(mode="json"), result.trace, result.trace.model_dump(mode="json"))
+    public_values = (
+        result,
+        result.model_dump(mode="json"),
+        result.trace,
+        result.trace.model_dump(mode="json"),
+    )
     assert all(canary not in repr(value) for value in public_values)
 
     reopened = SQLiteExecutionStore(database, blob_root=blobs)
@@ -886,7 +1017,10 @@ async def test_acp_secret_reference_reaches_only_stdio_handoff_and_persists_reda
         persisted_events = tuple(reopened.iter_events(result.snapshot.execution_id))
         persisted_snapshot = reopened.get_snapshot(result.snapshot.execution_id)
         assert persisted_snapshot is not None
-        assert all(canary not in repr(value) for value in (persisted_snapshot, persisted_events))
+        assert all(
+            canary not in repr(value)
+            for value in (persisted_snapshot, persisted_events)
+        )
     finally:
         reopened.close()
     raw_paths = [
@@ -896,21 +1030,32 @@ async def test_acp_secret_reference_reaches_only_stdio_handoff_and_persists_reda
         *blobs.rglob("*"),
         *tmp_path.rglob("*capture*"),
     ]
-    assert all(canary.encode() not in path.read_bytes() for path in raw_paths if path.is_file())
+    assert all(
+        canary.encode() not in path.read_bytes() for path in raw_paths if path.is_file()
+    )
 
 
-@pytest.mark.skipif(os.name == "nt", reason="process-group cleanup assertion is POSIX-specific")
-def test_acp_process_loss_is_failed_partial_trace_and_cleans_mcp(tmp_path: Path) -> None:
+@pytest.mark.skipif(
+    os.name == "nt", reason="process-group cleanup assertion is POSIX-specific"
+)
+def test_acp_process_loss_is_failed_partial_trace_and_cleans_mcp(
+    tmp_path: Path,
+) -> None:
     """A dead ACP child terminalizes the run and does not leak its MCP child."""
 
     mcp_marker = tmp_path / "mcp-observations.jsonl"
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(_scenario_acp_spec("loss", mcp_marker=mcp_marker)) as session:
+        with kit.agent_session(
+            _scenario_acp_spec("loss", mcp_marker=mcp_marker)
+        ) as session:
             # Keep the black-box test itself bounded if an ACP implementation
             # regresses from EOF detection to a hung prompt future.
             result = session.send("lose-process", timeout=5)
             assert result.snapshot.outcome is TurnOutcome.FAILED
-            assert result.error is not None and result.error.code is ErrorCode.TRANSPORT_ERROR
+            assert (
+                result.error is not None
+                and result.error.code is ErrorCode.TRANSPORT_ERROR
+            )
         assert session.result.snapshot.outcome is ExecutionOutcome.FAILED
         trace = session.result.trace
         assert trace is not None
@@ -923,7 +1068,9 @@ def test_acp_process_loss_is_failed_partial_trace_and_cleans_mcp(tmp_path: Path)
         assert view.processes[-1].exit_code.value == 17
 
     _wait_for_file(mcp_marker)
-    observations = [json.loads(line) for line in mcp_marker.read_text(encoding="utf-8").splitlines()]
+    observations = [
+        json.loads(line) for line in mcp_marker.read_text(encoding="utf-8").splitlines()
+    ]
     pid = next(item["pid"] for item in observations if item["method"] == "initialize")
     deadline = time.monotonic() + 3
     while _process_exists(pid) and time.monotonic() < deadline:
@@ -932,7 +1079,9 @@ def test_acp_process_loss_is_failed_partial_trace_and_cleans_mcp(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_separate_worker_success_returns_a_reopenable_trace(tmp_path: Path) -> None:
+async def test_separate_worker_success_returns_a_reopenable_trace(
+    tmp_path: Path,
+) -> None:
     """A UI/API process can submit while another OS process owns execution."""
 
     database = (tmp_path / "trace.sqlite").resolve()
@@ -943,7 +1092,9 @@ async def test_separate_worker_success_returns_a_reopenable_trace(tmp_path: Path
             handle = producer.submit(
                 DirectSpec(
                     servers=(ServerBinding(server=_stdio_server()),),
-                    operation=CallTool(name="echo", arguments={"text": "durable-value"}),
+                    operation=CallTool(
+                        name="echo", arguments={"text": "durable-value"}
+                    ),
                 )
             )
             result = await handle.result(timeout=15)
@@ -964,7 +1115,9 @@ async def test_separate_worker_success_returns_a_reopenable_trace(tmp_path: Path
                 DirectSpec(
                     servers=(
                         ServerBinding(
-                            server=FaultInjector().protocol_error("tools/call", code=-32042).stdio_server(),
+                            server=FaultInjector()
+                            .protocol_error("tools/call", code=-32042)
+                            .stdio_server(),
                         ),
                     ),
                     operation=CallTool(name="echo", arguments={}),
@@ -999,7 +1152,9 @@ async def test_separate_worker_success_returns_a_reopenable_trace(tmp_path: Path
     assert persisted_typed.raw is None
     error_terminal = next(
         event
-        for event in reversed(tuple(reopened.iter_events(error_result.snapshot.execution_id)))
+        for event in reversed(
+            tuple(reopened.iter_events(error_result.snapshot.execution_id))
+        )
         if event.kind.value == "execution.finished"
     )
     error_persisted = error_terminal.payload.get("direct_result")
@@ -1010,7 +1165,9 @@ async def test_separate_worker_success_returns_a_reopenable_trace(tmp_path: Path
     assert error_typed.raw is None
     failed_terminal = next(
         event
-        for event in reversed(tuple(reopened.iter_events(failed_result.snapshot.execution_id)))
+        for event in reversed(
+            tuple(reopened.iter_events(failed_result.snapshot.execution_id))
+        )
         if event.kind.value == "execution.finished"
     )
     assert "direct_result" not in failed_terminal.payload
@@ -1032,7 +1189,9 @@ async def test_separate_worker_persists_declared_artifact_bytes(tmp_path: Path) 
                 DirectSpec(
                     servers=(ServerBinding(server=_stdio_server()),),
                     operation=Ping(),
-                    workspace=WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)),
+                    workspace=WorkspacePolicy(
+                        kind=WorkspaceKind.COPY, source=str(source)
+                    ),
                     artifact_policy=ArtifactPolicy.ALWAYS,
                     declared_artifacts=("result.txt",),
                 )
@@ -1048,13 +1207,18 @@ async def test_separate_worker_persists_declared_artifact_bytes(tmp_path: Path) 
     try:
         assert len(result.artifacts) == 1
         assert reopened.artifacts.get(result.artifacts[0]) == b"persisted-e2e-artifact"
-        assert result.artifacts[0].sha256 == hashlib.sha256(b"persisted-e2e-artifact").hexdigest()
+        assert (
+            result.artifacts[0].sha256
+            == hashlib.sha256(b"persisted-e2e-artifact").hexdigest()
+        )
     finally:
         reopened.close()
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.name == "nt", reason="process-group liveness assertion is POSIX-specific")
+@pytest.mark.skipif(
+    os.name == "nt", reason="process-group liveness assertion is POSIX-specific"
+)
 @pytest.mark.parametrize("iteration", range(10))
 async def test_separate_worker_cancel_interrupts_owned_stdio_process(
     tmp_path: Path, iteration: int
@@ -1107,16 +1271,18 @@ async def test_separate_worker_cancel_interrupts_owned_stdio_process(
         command = reopened.get_command(f"command-{result.snapshot.execution_id.root}")
         assert command is not None and command.status == "cancelled"
         assert reopened.claim_next("post-cancel-probe") is None
-        reopened_trace = ExecutionTraceRecorder(reopened, result.snapshot.execution_id).finalize(
-            ExecutionOutcome.CANCELLED
-        )
+        reopened_trace = ExecutionTraceRecorder(
+            reopened, result.snapshot.execution_id
+        ).finalize(ExecutionOutcome.CANCELLED)
         assert reopened_trace.completeness == "partial"
     finally:
         reopened.close()
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.name == "nt", reason="process-group liveness assertion is POSIX-specific")
+@pytest.mark.skipif(
+    os.name == "nt", reason="process-group liveness assertion is POSIX-specific"
+)
 @pytest.mark.parametrize("iteration", range(2))
 async def test_separate_worker_cancel_interrupts_owned_acp_and_mcp_processes(
     tmp_path: Path, iteration: int
@@ -1139,10 +1305,12 @@ async def test_separate_worker_cancel_interrupts_owned_acp_and_mcp_processes(
         try:
             handle = producer.submit(spec)
             await asyncio.wait_for(
-                asyncio.to_thread(_wait_for_file, acp_pid_file), timeout=_MCP_MARKER_TIMEOUT + 5
+                asyncio.to_thread(_wait_for_file, acp_pid_file),
+                timeout=_MCP_MARKER_TIMEOUT + 5,
             )
             await asyncio.wait_for(
-                asyncio.to_thread(_wait_for_file, mcp_pid_file), timeout=_MCP_MARKER_TIMEOUT + 5
+                asyncio.to_thread(_wait_for_file, mcp_pid_file),
+                timeout=_MCP_MARKER_TIMEOUT + 5,
             )
             acp_pid = int(acp_pid_file.read_text(encoding="utf-8"))
             mcp_pid = int(mcp_pid_file.read_text(encoding="utf-8"))
@@ -1168,9 +1336,9 @@ async def test_separate_worker_cancel_interrupts_owned_acp_and_mcp_processes(
         command = reopened.get_command(f"command-{result.snapshot.execution_id.root}")
         assert command is not None and command.status == "cancelled"
         assert reopened.claim_next("post-cancel-acp-probe") is None
-        reopened_trace = ExecutionTraceRecorder(reopened, result.snapshot.execution_id).finalize(
-            ExecutionOutcome.CANCELLED
-        )
+        reopened_trace = ExecutionTraceRecorder(
+            reopened, result.snapshot.execution_id
+        ).finalize(ExecutionOutcome.CANCELLED)
         assert reopened_trace.completeness == "partial"
     finally:
         reopened.close()

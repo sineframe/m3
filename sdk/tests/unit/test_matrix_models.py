@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 import mcp_pal
+from mcp_pal.errors import UnsupportedFeature
 from mcp_pal.matrix import (
     HarnessCase,
     HarnessMatrix,
@@ -19,7 +20,6 @@ from mcp_pal.matrix import (
     ToolMatrix,
     ToolMatrixCase,
 )
-from mcp_pal.errors import UnsupportedFeature
 from mcp_pal.types import (
     ACPAgent,
     AgentSpec,
@@ -81,7 +81,7 @@ class _RecordingSession:
         self.entered = False
         self.closed = False
 
-    def __enter__(self) -> "_RecordingSession":
+    def __enter__(self) -> _RecordingSession:
         self.entered = True
         return self
 
@@ -106,7 +106,7 @@ class _AsyncRecordingSession:
         self.entered = False
         self.closed = False
 
-    async def __aenter__(self) -> "_AsyncRecordingSession":
+    async def __aenter__(self) -> _AsyncRecordingSession:
         self.entered = True
         return self
 
@@ -137,7 +137,7 @@ class _FailingAsyncRunKit(_AsyncRecordingKit):
 
 
 class _FailingEnterSession(_RecordingSession):
-    def __enter__(self) -> "_FailingEnterSession":
+    def __enter__(self) -> _FailingEnterSession:
         raise RuntimeError("session enter failed")
 
 
@@ -148,7 +148,7 @@ class _FailingEnterSessionKit(_SessionKit):
 
 
 class _FailingAsyncEnterSession(_AsyncRecordingSession):
-    async def __aenter__(self) -> "_FailingAsyncEnterSession":
+    async def __aenter__(self) -> _FailingAsyncEnterSession:
         raise RuntimeError("session enter failed")
 
 
@@ -178,13 +178,15 @@ def test_server_case_lookup_is_server_owned_and_reports_missing_ids() -> None:
     server = _server("catalog", search)
 
     assert server.tool("lookup") is search
-    with pytest.raises(KeyError, match="missing.*catalog"):
+    with pytest.raises(KeyError, match=r"missing.*catalog"):
         server.tool("missing")
 
 
 def test_tool_matrix_expands_server_outer_and_tool_inner() -> None:
     servers = (
-        _server("catalog", ToolCase(name="search"), ToolCase(id="get", name="get_item")),
+        _server(
+            "catalog", ToolCase(name="search"), ToolCase(id="get", name="get_item")
+        ),
         _server("warehouse", ToolCase(name="search")),
     )
     matrix = ToolMatrix(servers=servers)
@@ -252,14 +254,18 @@ def test_all_servers_expands_harness_outer_and_trial_inner() -> None:
     assert all(case.servers == servers for case in cases)
     assert all(case.mode == "all_servers" for case in cases)
     with pytest.raises(ValueError, match="only available"):
-        cases[0].server
+        _ = cases[0].server
     with pytest.raises(ValueError, match="only available"):
-        cases[0].tool
+        _ = cases[0].tool
 
 
 def test_each_tool_expands_server_tool_harness_trial() -> None:
     matrix = HarnessMatrix.each_tool(
-        servers=(_server("catalog", ToolCase(name="search"), ToolCase(id="get", name="get_item")),),
+        servers=(
+            _server(
+                "catalog", ToolCase(name="search"), ToolCase(id="get", name="get_item")
+            ),
+        ),
         harnesses=(_harness("acp"), _harness("opencode")),
         trials=2,
     )
@@ -277,16 +283,25 @@ def test_each_tool_expands_server_tool_harness_trial() -> None:
     ]
     assert all(isinstance(case, HarnessMatrixCase) for case in cases)
     assert [case.tool.id for case in cases] == [
-        "search", "search", "search", "search", "get", "get", "get", "get"
+        "search",
+        "search",
+        "search",
+        "search",
+        "get",
+        "get",
+        "get",
+        "get",
     ]
 
 
 @pytest.mark.parametrize("constructor", (ToolMatrix,))
-def test_tool_matrix_rejects_empty_and_duplicate_servers(constructor: type[ToolMatrix]) -> None:
+def test_tool_matrix_rejects_empty_and_duplicate_servers(
+    constructor: type[ToolMatrix],
+) -> None:
     with pytest.raises(ValidationError, match="at least one server"):
         constructor(servers=())
     duplicate = (_server("catalog"), _server("catalog"))
-    with pytest.raises(ValidationError, match="duplicate server name.*catalog"):
+    with pytest.raises(ValidationError, match=r"duplicate server name.*catalog"):
         constructor(servers=duplicate)
 
 
@@ -295,7 +310,7 @@ def test_harness_matrix_rejects_empty_duplicate_and_invalid_trials() -> None:
         HarnessMatrix.each_server(servers=(), harnesses=(_harness("acp"),))
     with pytest.raises(ValidationError, match="at least one harness"):
         HarnessMatrix.each_server(servers=(_server("catalog"),), harnesses=())
-    with pytest.raises(ValidationError, match="duplicate harness name.*acp"):
+    with pytest.raises(ValidationError, match=r"duplicate harness name.*acp"):
         HarnessMatrix.each_server(
             servers=(_server("catalog"),),
             harnesses=(_harness("acp"), _harness("acp")),
@@ -317,8 +332,12 @@ def test_server_case_rejects_empty_duplicate_tools_and_in_process_servers() -> N
             server=StdioServer(name="catalog", command="fixture-server"),
             tools=(),
         )
-    with pytest.raises(ValidationError, match="duplicate tool id.*search"):
-        _server("catalog", ToolCase(id="search", name="one"), ToolCase(id="search", name="two"))
+    with pytest.raises(ValidationError, match=r"duplicate tool id.*search"):
+        _server(
+            "catalog",
+            ToolCase(id="search", name="one"),
+            ToolCase(id="search", name="two"),
+        )
     with pytest.raises(ValidationError, match="InProcessServer"):
         ServerCase(
             name="loopback",
@@ -330,7 +349,9 @@ def test_server_case_rejects_empty_duplicate_tools_and_in_process_servers() -> N
 def test_all_servers_allows_claude_code_for_one_server() -> None:
     matrix = HarnessMatrix.all_servers(
         servers=(_server("catalog"),),
-        harnesses=(HarnessCase(name="claude", harness=ClaudeCode(model="claude-test")),),
+        harnesses=(
+            HarnessCase(name="claude", harness=ClaudeCode(model="claude-test")),
+        ),
     )
     assert [case.id for case in matrix.cases()] == ["all-servers/claude"]
 
@@ -339,12 +360,14 @@ def test_all_servers_rejects_claude_code_for_multiple_servers_as_unsupported() -
     with pytest.raises(UnsupportedFeature, match="does not support ClaudeCode"):
         HarnessMatrix.all_servers(
             servers=(_server("catalog"), _server("warehouse")),
-            harnesses=(HarnessCase(name="claude", harness=ClaudeCode(model="claude-test")),),
+            harnesses=(
+                HarnessCase(name="claude", harness=ClaudeCode(model="claude-test")),
+            ),
         )
 
 
 def test_generated_case_ids_reject_path_segment_collisions() -> None:
-    with pytest.raises(ValidationError, match="duplicate case id.*a/b/c"):
+    with pytest.raises(ValidationError, match=r"duplicate case id.*a/b/c"):
         ToolMatrix(
             servers=(
                 _server("a/b", ToolCase(id="c", name="first")),
@@ -352,7 +375,7 @@ def test_generated_case_ids_reject_path_segment_collisions() -> None:
             )
         )
 
-    with pytest.raises(ValidationError, match="duplicate case id.*a/b/c"):
+    with pytest.raises(ValidationError, match=r"duplicate case id.*a/b/c"):
         HarnessMatrix.each_server(
             servers=(_server("a/b"), _server("a")),
             harnesses=(
@@ -360,7 +383,7 @@ def test_generated_case_ids_reject_path_segment_collisions() -> None:
                 HarnessCase(name="b/c", harness=ACPAgent(model="second")),
             ),
         )
-    with pytest.raises(ValidationError, match="duplicate case id.*a/b/c/acp"):
+    with pytest.raises(ValidationError, match=r"duplicate case id.*a/b/c/acp"):
         HarnessMatrix.each_tool(
             servers=(
                 _server("a/b", ToolCase(id="c", name="first")),
@@ -390,7 +413,12 @@ def test_matrix_accepts_generators_without_reordering_or_side_effects() -> None:
     first = matrix.cases()
     second = matrix.cases()
     assert first == second
-    assert [case.id for case in first] == ["catalog/acp", "catalog/other", "warehouse/acp", "warehouse/other"]
+    assert [case.id for case in first] == [
+        "catalog/acp",
+        "catalog/other",
+        "warehouse/acp",
+        "warehouse/other",
+    ]
 
 
 def test_matrix_module_and_root_exports_are_stable() -> None:
@@ -427,10 +455,14 @@ def test_matrix_parametrize_uses_immutable_cases_and_stable_ids() -> None:
 
     assert tool_mark.mark.args[0] == "tool_case"
     assert tool_mark.mark.args[1] == tool_matrix.cases()
-    assert tool_mark.mark.kwargs["ids"] == tuple(case.id for case in tool_matrix.cases())
+    assert tool_mark.mark.kwargs["ids"] == tuple(
+        case.id for case in tool_matrix.cases()
+    )
     assert harness_mark.mark.args[0] == "case"
     assert harness_mark.mark.args[1] == harness_matrix.cases()
-    assert harness_mark.mark.kwargs["ids"] == tuple(case.id for case in harness_matrix.cases())
+    assert harness_mark.mark.kwargs["ids"] == tuple(
+        case.id for case in harness_matrix.cases()
+    )
 
 
 @pytest.mark.parametrize(
@@ -481,7 +513,10 @@ def test_tool_case_run_builds_direct_spec_and_preserves_caller_kit() -> None:
     ).cases()[0]
     kit = _RecordingKit()
 
-    assert case.run(kit=kit, timeout=3, validate_schemas=True, metadata={"suite": "unit"}) == "result"
+    assert (
+        case.run(kit=kit, timeout=3, validate_schemas=True, metadata={"suite": "unit"})
+        == "result"
+    )
     assert isinstance(kit.spec, DirectSpec)
     assert kit.spec.servers[0].alias == "catalog"
     assert isinstance(kit.spec.operation, CallTool)
@@ -496,7 +531,9 @@ def test_tool_case_run_builds_direct_spec_and_preserves_caller_kit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_case_async_run_builds_direct_spec_and_preserves_caller_kit() -> None:
+async def test_tool_case_async_run_builds_direct_spec_and_preserves_caller_kit() -> (
+    None
+):
     case = ToolMatrix(servers=(_server("catalog"),)).cases()[0]
     kit = _AsyncRecordingKit()
 
@@ -557,7 +594,9 @@ def test_harness_case_metadata_reserves_matrix_namespace_and_requires_message() 
     with pytest.raises(ValueError, match="requires an explicit message"):
         case.run(kit=_RecordingKit())
     with pytest.raises(ValueError, match="reserved"):
-        case.run("message", kit=_RecordingKit(), metadata={"mcp_pal.matrix.mode": "bad"})
+        case.run(
+            "message", kit=_RecordingKit(), metadata={"mcp_pal.matrix.mode": "bad"}
+        )
     kit = _RecordingKit()
     case.run("message", kit=kit, metadata={"suite": "unit"})
     assert kit.spec.metadata["mcp_pal.matrix.mode"] == "each_server"
@@ -582,7 +621,9 @@ def test_harness_session_uses_normal_session_and_preserves_supplied_kit() -> Non
 
 
 @pytest.mark.asyncio
-async def test_harness_async_session_uses_normal_session_and_preserves_supplied_kit() -> None:
+async def test_harness_async_session_uses_normal_session_and_preserves_supplied_kit() -> (
+    None
+):
     case = HarnessMatrix.each_server(
         servers=(_server("catalog"),), harnesses=(_harness("acp"),)
     ).cases()[0]
@@ -620,14 +661,14 @@ def test_harness_case_dump_validate_round_trip_preserves_accessors(mode: str) ->
     assert restored == original
     if mode == "all_servers":
         with pytest.raises(ValueError, match="only available"):
-            restored.server
+            _ = restored.server
     else:
         assert restored.server.name == original.server.name
     if mode == "each_tool":
         assert restored.tool.id == "search"
     else:
         with pytest.raises(ValueError, match="only available"):
-            restored.tool
+            _ = restored.tool
 
 
 def test_harness_case_scope_and_selected_tool_fields_are_validated() -> None:
@@ -710,7 +751,9 @@ def test_typed_user_message_takes_precedence_over_tool_prompt() -> None:
     assert kit.spec.message.content[0].text == "typed message"
 
 
-def test_owned_sync_run_closes_kit_on_success_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_owned_sync_run_closes_kit_on_success_and_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sync_api = importlib.import_module("mcp_pal.sync_api")
     created: list[_RecordingKit] = []
 
@@ -736,7 +779,9 @@ def test_owned_sync_run_closes_kit_on_success_and_failure(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
-async def test_owned_async_run_closes_kit_on_success_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_owned_async_run_closes_kit_on_success_and_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async_api = importlib.import_module("mcp_pal.async_api")
     created: list[_AsyncRecordingKit] = []
 
@@ -761,7 +806,9 @@ async def test_owned_async_run_closes_kit_on_success_and_failure(monkeypatch: py
     assert created[-1].closed is True
 
 
-def test_owned_sync_session_closes_kit_when_enter_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_owned_sync_session_closes_kit_when_enter_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sync_api = importlib.import_module("mcp_pal.sync_api")
     created: list[_FailingEnterSessionKit] = []
 
@@ -780,7 +827,9 @@ def test_owned_sync_session_closes_kit_when_enter_fails(monkeypatch: pytest.Monk
     assert created[0].closed is True
 
 
-def test_owned_sync_session_closes_kit_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_owned_sync_session_closes_kit_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sync_api = importlib.import_module("mcp_pal.sync_api")
     created: list[_SessionKit] = []
 
@@ -799,7 +848,9 @@ def test_owned_sync_session_closes_kit_on_success(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.asyncio
-async def test_owned_async_session_closes_kit_when_enter_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_owned_async_session_closes_kit_when_enter_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async_api = importlib.import_module("mcp_pal.async_api")
     created: list[_FailingAsyncEnterSessionKit] = []
 
@@ -819,7 +870,9 @@ async def test_owned_async_session_closes_kit_when_enter_fails(monkeypatch: pyte
 
 
 @pytest.mark.asyncio
-async def test_owned_async_session_closes_kit_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_owned_async_session_closes_kit_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async_api = importlib.import_module("mcp_pal.async_api")
     created: list[_AsyncSessionKit] = []
 

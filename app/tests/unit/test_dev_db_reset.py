@@ -6,15 +6,22 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 SCRIPT = Path(__file__).parents[2] / "scripts" / "dev_db_reset.py"
 
 
-def _run(root: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    root: Path, *args: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     selected = os.environ.copy()
     if env:
         selected.update(env)
-    return subprocess.run([sys.executable, str(SCRIPT), *args], cwd=root, env=selected, capture_output=True, text=True)
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        cwd=root,
+        env=selected,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_reset_requires_exact_confirmation_and_removes_only_sidecars(tmp_path):
@@ -79,7 +86,9 @@ def test_reset_rejects_symlinked_database_and_sidecars(tmp_path):
 def test_reset_rejects_extra_arguments_even_with_environment_confirmation(tmp_path):
     database = tmp_path / "state.sqlite"
     database.write_bytes(b"keep")
-    result = _run(tmp_path, "ignored", env={"CONFIRM": "reset", "DATABASE_PATH": database.name})
+    result = _run(
+        tmp_path, "ignored", env={"CONFIRM": "reset", "DATABASE_PATH": database.name}
+    )
     assert result.returncode == 2
     assert database.exists()
 
@@ -94,6 +103,11 @@ def test_reset_then_fresh_sqlite_startup_recreates_schema(tmp_path):
     assert result.returncode == 0, result.stderr
     recreated = SQLiteExecutionStore(database, blob_root=tmp_path / "blobs")
     with sqlite3.connect(database) as connection:
-        names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        names = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
     assert "v2_executions" in names
     recreated.close()

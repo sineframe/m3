@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -61,7 +61,9 @@ def test_build_release_rejects_nonempty_output_before_build(tmp_path: Path) -> N
 
 def test_build_release_rejects_tag_version_mismatch(tmp_path: Path) -> None:
     ui = _valid_ui(tmp_path)
-    with pytest.raises(release.ReleaseBuildError, match="does not match expected version"):
+    with pytest.raises(
+        release.ReleaseBuildError, match="does not match expected version"
+    ):
         release.build_release(ui, tmp_path / "out", expected_version="9.9.9")
 
 
@@ -93,12 +95,18 @@ def _wheel(
 ) -> Path:
     wheel = output / f"{filename_dist}-{version}-py3-none-any.whl"
     info = f"{filename_dist}-{version}.dist-info"
-    metadata = ["Metadata-Version: 2.3", f"Name: {metadata_name}", f"Version: {version}"]
+    metadata = [
+        "Metadata-Version: 2.3",
+        f"Name: {metadata_name}",
+        f"Version: {version}",
+    ]
     metadata.extend(f"Requires-Dist: {value}" for value in requires)
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr(f"{info}/METADATA", "\n".join(metadata) + "\n")
         if entry_point is not None:
-            archive.writestr(f"{info}/entry_points.txt", "[console_scripts]\n" + entry_point + "\n")
+            archive.writestr(
+                f"{info}/entry_points.txt", "[console_scripts]\n" + entry_point + "\n"
+            )
         if ui:
             archive.writestr("mcp_pal_cli/ui/index.html", "html")
             archive.writestr("mcp_pal_cli/ui/assets/app.js", "js")
@@ -133,7 +141,9 @@ def _synthetic_release(
     }, _valid_ui(root)
 
 
-def test_verify_release_checks_metadata_entry_point_dependencies_and_ui(tmp_path: Path) -> None:
+def test_verify_release_checks_metadata_entry_point_dependencies_and_ui(
+    tmp_path: Path,
+) -> None:
     version = "1.0"
     _wheel(tmp_path, "mcp_pal", "mcp-pal", version)
     _wheel(
@@ -141,7 +151,10 @@ def test_verify_release_checks_metadata_entry_point_dependencies_and_ui(tmp_path
         "mcp_pal_app",
         "mcp-pal-app",
         version,
-        requires=('requests>=2; extra == "legacy-ui"', 'streamlit>=1; extra == "legacy-ui"'),
+        requires=(
+            'requests>=2; extra == "legacy-ui"',
+            'streamlit>=1; extra == "legacy-ui"',
+        ),
     )
     _wheel(
         tmp_path,
@@ -163,7 +176,7 @@ def test_verify_release_checks_metadata_entry_point_dependencies_and_ui(tmp_path
 
 def test_verify_release_rejects_cli_without_packaged_ui(tmp_path: Path) -> None:
     expected, ui = _synthetic_release(tmp_path, cli_ui=False)
-    with pytest.raises(release.ReleaseBuildError, match="ui/index.html"):
+    with pytest.raises(release.ReleaseBuildError, match=r"ui/index\.html"):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
 
@@ -207,7 +220,9 @@ def test_verify_release_rejects_forbidden_mandatory_dependencies(
             dependency,
         ),
     )
-    with pytest.raises(release.ReleaseBuildError, match="forbidden mandatory dependency"):
+    with pytest.raises(
+        release.ReleaseBuildError, match="forbidden mandatory dependency"
+    ):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
 

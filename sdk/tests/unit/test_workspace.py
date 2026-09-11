@@ -8,12 +8,23 @@ import pytest
 
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.harness import DeterministicHarnessAdapter
-from mcp_pal.types import ArtifactPolicy, ExecutionId, ExecutionOutcome, WorkspaceKind, WorkspacePolicy
-from mcp_pal.types import ACPAgent, AgentSpec, ServerBinding, StdioServer
+from mcp_pal.types import (
+    ACPAgent,
+    AgentSpec,
+    ArtifactPolicy,
+    ExecutionId,
+    ExecutionOutcome,
+    ServerBinding,
+    StdioServer,
+    WorkspaceKind,
+    WorkspacePolicy,
+)
 from mcp_pal.workspace import WorkspaceError, WorkspaceManager
 
 
-def _manager(policy: WorkspacePolicy, tmp_path: Path, **kwargs: object) -> WorkspaceManager:
+def _manager(
+    policy: WorkspacePolicy, tmp_path: Path, **kwargs: object
+) -> WorkspaceManager:
     return WorkspaceManager(policy, ExecutionId("execution-test"), **kwargs)  # type: ignore[arg-type]
 
 
@@ -29,7 +40,9 @@ def test_copy_is_filtered_and_cleanup_is_owned(tmp_path: Path) -> None:
     (source / ".venv" / "x").write_text("secret")
     (source / "artifacts").mkdir()
     (source / "artifacts" / "secret").write_text("secret")
-    manager = _manager(WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), tmp_path)
+    manager = _manager(
+        WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), tmp_path
+    )
     root = manager.create()
     assert (root / "main.txt").read_text() == "safe"
     assert not (root / ".env.secret").exists()
@@ -41,7 +54,9 @@ def test_copy_is_filtered_and_cleanup_is_owned(tmp_path: Path) -> None:
     assert source.exists()
 
 
-def test_fresh_temporary_workspace_is_empty_and_risky_inclusion_is_explicit(tmp_path: Path) -> None:
+def test_fresh_temporary_workspace_is_empty_and_risky_inclusion_is_explicit(
+    tmp_path: Path,
+) -> None:
     manager = _manager(WorkspacePolicy(), tmp_path)
     root = manager.create()
     assert list(root.iterdir()) == []
@@ -63,7 +78,9 @@ def test_copy_skips_symlink_outside_source(tmp_path: Path) -> None:
         (source / "link.txt").symlink_to(outside)
     except (OSError, NotImplementedError):
         pytest.skip("symlinks unavailable")
-    manager = _manager(WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), tmp_path)
+    manager = _manager(
+        WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), tmp_path
+    )
     root = manager.create()
     assert not (root / "link.txt").exists()
     manager.cleanup()
@@ -73,7 +90,9 @@ def test_read_only_workspace_rejects_mutation(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     (source / "main.txt").write_text("safe")
-    manager = _manager(WorkspacePolicy(kind=WorkspaceKind.READ_ONLY, source=str(source)), tmp_path)
+    manager = _manager(
+        WorkspacePolicy(kind=WorkspaceKind.READ_ONLY, source=str(source)), tmp_path
+    )
     root = manager.create()
     with pytest.raises(PermissionError):
         (root / "main.txt").write_text("changed")
@@ -81,10 +100,12 @@ def test_read_only_workspace_rejects_mutation(tmp_path: Path) -> None:
 
 
 def test_in_place_requires_acknowledgement_and_does_not_cleanup(tmp_path: Path) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         WorkspacePolicy(kind=WorkspaceKind.IN_PLACE, source=str(tmp_path))
     manager = _manager(
-        WorkspacePolicy(kind=WorkspaceKind.IN_PLACE, source=str(tmp_path), acknowledge_risk=True),
+        WorkspacePolicy(
+            kind=WorkspaceKind.IN_PLACE, source=str(tmp_path), acknowledge_risk=True
+        ),
         tmp_path,
     )
     root = manager.create()
@@ -92,7 +113,9 @@ def test_in_place_requires_acknowledgement_and_does_not_cleanup(tmp_path: Path) 
     assert root.exists()
 
 
-def test_diff_is_structured_deterministic_and_undeclared_files_are_not_artifacts(tmp_path: Path) -> None:
+def test_diff_is_structured_deterministic_and_undeclared_files_are_not_artifacts(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "source"
     source.mkdir()
     (source / "modified.txt").write_text("before")
@@ -109,8 +132,18 @@ def test_diff_is_structured_deterministic_and_undeclared_files_are_not_artifacts
     (root / "undeclared.txt").write_text("not promoted")
     (root / "result.json").write_text('{"ok": true}')
     capture = manager.capture(ExecutionOutcome.COMPLETED)
-    assert [entry.path for entry in capture.diff.entries] == ["deleted.txt", "modified.txt", "result.json", "undeclared.txt"]
-    assert [entry.status for entry in capture.diff.entries] == ["deleted", "modified", "added", "added"]
+    assert [entry.path for entry in capture.diff.entries] == [
+        "deleted.txt",
+        "modified.txt",
+        "result.json",
+        "undeclared.txt",
+    ]
+    assert [entry.status for entry in capture.diff.entries] == [
+        "deleted",
+        "modified",
+        "added",
+        "added",
+    ]
     assert [ref.name for ref in capture.artifacts] == ["result.json"]
     assert all(ref.redacted for ref in capture.artifacts)
     manager.cleanup()
@@ -172,8 +205,12 @@ def test_concurrent_managers_are_isolated(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     (source / "file").write_text("x")
-    first = _manager(WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), tmp_path)
-    second = _manager(WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), tmp_path)
+    first = _manager(
+        WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), tmp_path
+    )
+    second = _manager(
+        WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), tmp_path
+    )
     assert first.create() != second.create()
     first.cleanup()
     second.cleanup()
@@ -183,12 +220,18 @@ def test_git_worktree_creation_and_cleanup(tmp_path: Path) -> None:
     source = tmp_path / "repo"
     source.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=source, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True)
-    subprocess.run(["git", "config", "user.name", "MCP Pal Test"], cwd=source, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "MCP Pal Test"], cwd=source, check=True
+    )
     (source / "file.txt").write_text("x")
     subprocess.run(["git", "add", "file.txt"], cwd=source, check=True)
     subprocess.run(["git", "commit", "-qm", "initial"], cwd=source, check=True)
-    manager = _manager(WorkspacePolicy(kind=WorkspaceKind.GIT_WORKTREE, source=str(source)), tmp_path)
+    manager = _manager(
+        WorkspacePolicy(kind=WorkspaceKind.GIT_WORKTREE, source=str(source)), tmp_path
+    )
     try:
         root = manager.create()
     except WorkspaceError:
@@ -198,7 +241,9 @@ def test_git_worktree_creation_and_cleanup(tmp_path: Path) -> None:
     assert not root.exists()
 
 
-def test_exclusions_are_case_insensitive_and_cover_worktree_metadata(tmp_path: Path) -> None:
+def test_exclusions_are_case_insensitive_and_cover_worktree_metadata(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "source"
     source.mkdir()
     (source / ".ENV.PROD").write_text("secret")
@@ -207,7 +252,9 @@ def test_exclusions_are_case_insensitive_and_cover_worktree_metadata(tmp_path: P
     (source / "VENV").mkdir()
     (source / "VENV" / "secret").write_text("secret")
     (source / "safe.txt").write_text("safe")
-    manager = _manager(WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), tmp_path)
+    manager = _manager(
+        WorkspacePolicy(kind=WorkspaceKind.COPY, source=str(source)), tmp_path
+    )
     root = manager.create()
     assert (root / "safe.txt").exists()
     assert not (root / ".ENV.PROD").exists()
@@ -234,7 +281,9 @@ def test_declared_artifact_globs_are_contained_and_redacted(tmp_path: Path) -> N
     manager.cleanup()
 
 
-def test_hardlinks_and_special_files_are_not_copied_or_collected(tmp_path: Path) -> None:
+def test_hardlinks_and_special_files_are_not_copied_or_collected(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "source"
     source.mkdir()
     outside = tmp_path / "outside-secret.txt"
@@ -259,11 +308,17 @@ def test_hardlinks_and_special_files_are_not_copied_or_collected(tmp_path: Path)
         assert not (root / "pipe").exists()
     capture = manager.capture(ExecutionOutcome.COMPLETED)
     assert capture.artifacts == ()
-    assert len(capture.limitations) == 2 if hasattr(os, "mkfifo") else len(capture.limitations) == 1
+    assert (
+        len(capture.limitations) == 2
+        if hasattr(os, "mkfifo")
+        else len(capture.limitations) == 1
+    )
     manager.cleanup()
 
 
-def test_excluded_artifact_and_cleanup_failure_are_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_excluded_artifact_and_cleanup_failure_are_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "source"
     source.mkdir()
     (source / ".git").write_text("gitdir: /private/admin")
@@ -291,7 +346,9 @@ def test_excluded_artifact_and_cleanup_failure_are_fail_closed(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
-async def test_agent_session_uses_and_cleans_its_workspace_before_terminal_result(tmp_path: Path) -> None:
+async def test_agent_session_uses_and_cleans_its_workspace_before_terminal_result(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "source"
     source.mkdir()
     (source / "input.txt").write_text("input")

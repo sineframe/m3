@@ -3,20 +3,31 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 import json
-from pathlib import Path
 import sys
-from typing import Any, AsyncIterator, Literal
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Literal
 
 import pytest
-
 from mcp import types
 from mcp.server.lowlevel import Server
 
-from mcp_pal.async_api import AsyncDirectClient, AsyncMCPTestKit, CallToolResult, PromptResult, ResourceReadResult
-from mcp_pal.types import InProcessServer, SSEServer, StdioServer, HTTPServer, TrustLevel
-
+from mcp_pal.async_api import (
+    AsyncDirectClient,
+    AsyncMCPTestKit,
+    CallToolResult,
+    PromptResult,
+    ResourceReadResult,
+)
+from mcp_pal.types import (
+    HTTPServer,
+    InProcessServer,
+    SSEServer,
+    StdioServer,
+    TrustLevel,
+)
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -33,7 +44,13 @@ def _cursor(params: Any) -> str | None:
 
 def _tool_values(cursor: str | None) -> list[types.Tool]:
     if cursor:
-        return [types.Tool(name="failure", description="Return an MCP tool error", input_schema={"type": "object"})]
+        return [
+            types.Tool(
+                name="failure",
+                description="Return an MCP tool error",
+                input_schema={"type": "object"},
+            )
+        ]
     return [
         types.Tool(
             name="echo",
@@ -45,44 +62,74 @@ def _tool_values(cursor: str | None) -> list[types.Tool]:
 
 async def _list_tools(_context: Any, params: Any) -> types.ListToolsResult:
     cursor = _cursor(params)
-    return types.ListToolsResult(tools=_tool_values(cursor), next_cursor=None if cursor else "page-2")
+    return types.ListToolsResult(
+        tools=_tool_values(cursor), next_cursor=None if cursor else "page-2"
+    )
 
 
-async def _call_tool(_context: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
+async def _call_tool(
+    _context: Any, params: types.CallToolRequestParams
+) -> types.CallToolResult:
     if params.name == "failure":
-        return types.CallToolResult(content=[types.TextContent(text="expected failure")], is_error=True)
+        return types.CallToolResult(
+            content=[types.TextContent(text="expected failure")], is_error=True
+        )
     return types.CallToolResult(
-        content=[types.TextContent(text=str((params.arguments or {}).get("text", "ok")))],
+        content=[
+            types.TextContent(text=str((params.arguments or {}).get("text", "ok")))
+        ],
         is_error=False,
     )
 
 
 async def _list_resources(_context: Any, _params: Any) -> types.ListResourcesResult:
     return types.ListResourcesResult(
-        resources=[types.Resource(name="document", uri="memory://document", mime_type="text/plain")]
+        resources=[
+            types.Resource(
+                name="document", uri="memory://document", mime_type="text/plain"
+            )
+        ]
     )
 
 
-async def _list_templates(_context: Any, _params: Any) -> types.ListResourceTemplatesResult:
+async def _list_templates(
+    _context: Any, _params: Any
+) -> types.ListResourceTemplatesResult:
     return types.ListResourceTemplatesResult(
-        resource_templates=[types.ResourceTemplate(name="item", uri_template="memory://item/{id}")]
+        resource_templates=[
+            types.ResourceTemplate(name="item", uri_template="memory://item/{id}")
+        ]
     )
 
 
-async def _read_resource(_context: Any, params: types.ReadResourceRequestParams) -> types.ReadResourceResult:
+async def _read_resource(
+    _context: Any, params: types.ReadResourceRequestParams
+) -> types.ReadResourceResult:
     return types.ReadResourceResult(
-        contents=[types.TextResourceContents(uri=params.uri, mime_type="text/plain", text="resource value")]
+        contents=[
+            types.TextResourceContents(
+                uri=params.uri, mime_type="text/plain", text="resource value"
+            )
+        ]
     )
 
 
 async def _list_prompts(_context: Any, _params: Any) -> types.ListPromptsResult:
-    return types.ListPromptsResult(prompts=[types.Prompt(name="greeting", description="A greeting")])
+    return types.ListPromptsResult(
+        prompts=[types.Prompt(name="greeting", description="A greeting")]
+    )
 
 
-async def _get_prompt(_context: Any, _params: types.GetPromptRequestParams) -> types.GetPromptResult:
+async def _get_prompt(
+    _context: Any, _params: types.GetPromptRequestParams
+) -> types.GetPromptResult:
     return types.GetPromptResult(
         description="Generated greeting",
-        messages=[types.PromptMessage(role="user", content=types.TextContent(text="hello greeting"))],
+        messages=[
+            types.PromptMessage(
+                role="user", content=types.TextContent(text="hello greeting")
+            )
+        ],
     )
 
 
@@ -126,19 +173,49 @@ def _wire_result(request: dict[str, Any]) -> dict[str, Any]:
         }
     elif method == "tools/call":
         result = {
-            "content": [{"type": "text", "text": "expected failure" if params.get("name") == "failure" else (params.get("arguments") or {}).get("text", "ok")}],
+            "content": [
+                {
+                    "type": "text",
+                    "text": "expected failure"
+                    if params.get("name") == "failure"
+                    else (params.get("arguments") or {}).get("text", "ok"),
+                }
+            ],
             "isError": params.get("name") == "failure",
         }
     elif method == "resources/list":
-        result = {"resources": [{"name": "document", "uri": "memory://document", "mimeType": "text/plain"}]}
+        result = {
+            "resources": [
+                {
+                    "name": "document",
+                    "uri": "memory://document",
+                    "mimeType": "text/plain",
+                }
+            ]
+        }
     elif method == "resources/templates/list":
-        result = {"resourceTemplates": [{"name": "item", "uriTemplate": "memory://item/{id}"}]}
+        result = {
+            "resourceTemplates": [{"name": "item", "uriTemplate": "memory://item/{id}"}]
+        }
     elif method == "resources/read":
-        result = {"contents": [{"uri": params.get("uri"), "mimeType": "text/plain", "text": "resource value"}]}
+        result = {
+            "contents": [
+                {
+                    "uri": params.get("uri"),
+                    "mimeType": "text/plain",
+                    "text": "resource value",
+                }
+            ]
+        }
     elif method == "prompts/list":
         result = {"prompts": [{"name": "greeting", "description": "A greeting"}]}
     elif method == "prompts/get":
-        result = {"description": "Generated greeting", "messages": [{"role": "user", "content": {"type": "text", "text": "hello greeting"}}]}
+        result = {
+            "description": "Generated greeting",
+            "messages": [
+                {"role": "user", "content": {"type": "text", "text": "hello greeting"}}
+            ],
+        }
     else:
         result = {}
     return {"jsonrpc": "2.0", "id": request.get("id"), "result": result}
@@ -163,19 +240,28 @@ class _RemoteMatrixFixture:
         header_bytes = await reader.readuntil(b"\r\n\r\n")
         lines = header_bytes[:-4].split(b"\r\n")
         method, target, _ = lines[0].decode().split(" ", 2)
-        headers = {line.decode().split(":", 1)[0].lower(): line.decode().split(":", 1)[1].strip() for line in lines[1:]}
+        headers = {
+            line.decode().split(":", 1)[0].lower(): line.decode()
+            .split(":", 1)[1]
+            .strip()
+            for line in lines[1:]
+        }
         length = int(headers.get("content-length", "0"))
         return method, target, await reader.readexactly(length) if length else b""
 
-    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         self.writers.add(writer)
         keep_open = False
         try:
-            method, target, body = await self._request(reader)
+            method, _target, body = await self._request(reader)
             if self.transport == "sse" and method == "GET":
                 self.writer = writer
                 self.ready.set()
-                writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: keep-alive\r\n\r\n")
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: keep-alive\r\n\r\n"
+                )
                 writer.write(b"event: endpoint\ndata: /messages?session_id=matrix\n\n")
                 await writer.drain()
                 keep_open = True
@@ -185,15 +271,26 @@ class _RemoteMatrixFixture:
             response = _wire_result(request)
             if self.transport == "sse":
                 await self.ready.wait()
-                writer.write(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                writer.write(
+                    b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
                 await writer.drain()
                 if self.writer is not None:
                     async with self.lock:
-                        self.writer.write(b"data: " + json.dumps(response, separators=(",", ":")).encode() + b"\n\n")
+                        self.writer.write(
+                            b"data: "
+                            + json.dumps(response, separators=(",", ":")).encode()
+                            + b"\n\n"
+                        )
                         await self.writer.drain()
             else:
                 encoded = json.dumps(response, separators=(",", ":")).encode()
-                writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + str(len(encoded)).encode() + b"\r\nMcp-Session-Id: matrix\r\n\r\n" + encoded)
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                    + str(len(encoded)).encode()
+                    + b"\r\nMcp-Session-Id: matrix\r\n\r\n"
+                    + encoded
+                )
                 await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionError, json.JSONDecodeError):
             pass
@@ -224,20 +321,33 @@ class _RemoteMatrixFixture:
 async def _client_for(kind: TransportKind) -> AsyncIterator[AsyncDirectClient]:
     fixture: _RemoteMatrixFixture | None = None
     if kind == "inprocess":
-        binding: Any = InProcessServer(name="matrix-inprocess", factory=_in_process_server)
+        binding: Any = InProcessServer(
+            name="matrix-inprocess", factory=_in_process_server
+        )
     elif kind == "stdio":
-        binding = StdioServer(name="matrix-stdio", command=sys.executable, args=(str(_STDIO_FIXTURE),), cwd=str(_ROOT))
+        binding = StdioServer(
+            name="matrix-stdio",
+            command=sys.executable,
+            args=(str(_STDIO_FIXTURE),),
+            cwd=str(_ROOT),
+        )
     else:
         fixture = _RemoteMatrixFixture(kind)
         url = await fixture.start()
         binding = (
             HTTPServer(name="matrix-remote", url=url, trust=TrustLevel.TRUSTED_PRIVATE)
             if kind == "streamable_http"
-            else SSEServer(name="matrix-remote", url=url, trust=TrustLevel.TRUSTED_PRIVATE)
+            else SSEServer(
+                name="matrix-remote", url=url, trust=TrustLevel.TRUSTED_PRIVATE
+            )
         )
     kit = AsyncMCPTestKit(env={}, cwd=str(_ROOT))
     try:
-        client = kit.direct(binding, resolve_host=lambda _host, _port: ("127.0.0.1",)) if fixture else kit.direct(binding)
+        client = (
+            kit.direct(binding, resolve_host=lambda _host, _port: ("127.0.0.1",))
+            if fixture
+            else kit.direct(binding)
+        )
         async with client:
             yield client
     finally:

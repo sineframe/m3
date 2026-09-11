@@ -3,7 +3,14 @@ from datetime import datetime, timezone
 import pytest
 
 from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.types import ExecutionId, ExecutionOutcome, ExecutionPage, ExecutionState, ExecutionStatus, ExecutionReport
+from mcp_pal.types import (
+    ExecutionId,
+    ExecutionOutcome,
+    ExecutionPage,
+    ExecutionReport,
+    ExecutionState,
+    ExecutionStatus,
+)
 
 
 def _snapshot(name: str, seconds: int) -> ExecutionState:
@@ -15,22 +22,37 @@ def _snapshot(name: str, seconds: int) -> ExecutionState:
 
 @pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
 def test_execution_listing_is_newest_first_with_stable_tie_break(tmp_path, store_kind):
-    store = InMemoryExecutionStore() if store_kind == "memory" else SQLiteExecutionStore(tmp_path.resolve() / "queries.sqlite")
+    store = (
+        InMemoryExecutionStore()
+        if store_kind == "memory"
+        else SQLiteExecutionStore(tmp_path.resolve() / "queries.sqlite")
+    )
     try:
-        for snapshot in (_snapshot("same-b", 2), _snapshot("same-a", 2), _snapshot("old", 1)):
+        for snapshot in (
+            _snapshot("same-b", 2),
+            _snapshot("same-a", 2),
+            _snapshot("old", 1),
+        ):
             store.create(snapshot)
         page = store.list_executions(limit=2, offset=0)
         assert isinstance(page, ExecutionPage)
         assert [item.execution_id.root for item in page.items] == ["same-b", "same-a"]
         assert page.total == 3
-        assert [item.execution_id.root for item in store.list_executions(limit=2, offset=2).items] == ["old"]
+        assert [
+            item.execution_id.root
+            for item in store.list_executions(limit=2, offset=2).items
+        ] == ["old"]
     finally:
         store.close()
 
 
 @pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
 def test_execution_listing_filters_lifecycle_and_outcome(tmp_path, store_kind):
-    store = InMemoryExecutionStore() if store_kind == "memory" else SQLiteExecutionStore(tmp_path.resolve() / "filters.sqlite")
+    store = (
+        InMemoryExecutionStore()
+        if store_kind == "memory"
+        else SQLiteExecutionStore(tmp_path.resolve() / "filters.sqlite")
+    )
     try:
         store.create(_snapshot("created", 1))
         finished = _snapshot("finished", 2).model_copy(
@@ -41,7 +63,9 @@ def test_execution_listing_filters_lifecycle_and_outcome(tmp_path, store_kind):
             }
         )
         store.create(finished)
-        page = store.list_executions(lifecycle=ExecutionStatus.FINISHED, outcome=ExecutionOutcome.CANCELLED)
+        page = store.list_executions(
+            lifecycle=ExecutionStatus.FINISHED, outcome=ExecutionOutcome.CANCELLED
+        )
         assert [item.execution_id.root for item in page.items] == ["finished"]
     finally:
         store.close()

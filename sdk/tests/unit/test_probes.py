@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 
 from mcp_pal.services.probes import (
-    Probes,
     ProbeKind,
     ProbeRequest,
+    Probes,
 )
 from mcp_pal.types import CapabilityStatus
 
@@ -25,7 +25,9 @@ def _fake_executable(tmp_path: Path, body: str, name: str = "fake-agent") -> Pat
     return path
 
 
-def test_binary_probe_records_version_and_redacts_output_and_environment(tmp_path: Path) -> None:
+def test_binary_probe_records_version_and_redacts_output_and_environment(
+    tmp_path: Path,
+) -> None:
     executable = _fake_executable(
         tmp_path,
         "import os; print('fake 1.2.3 token=' + os.environ.get('PROBE_TOKEN', 'missing') + ' custom=' + os.environ.get('CUSTOM_VALUE', 'missing'))",
@@ -33,7 +35,10 @@ def test_binary_probe_records_version_and_redacts_output_and_environment(tmp_pat
     result = Probes().probe_binary(
         "requested-agent",
         executable,
-        env={"PROBE_TOKEN": "super-secret-token", "CUSTOM_VALUE": "ordinary-secret-value"},
+        env={
+            "PROBE_TOKEN": "super-secret-token",
+            "CUSTOM_VALUE": "ordinary-secret-value",
+        },
     )
 
     assert result.status is CapabilityStatus.READY
@@ -62,7 +67,7 @@ def test_command_arguments_are_never_persisted(tmp_path: Path) -> None:
 def test_json_shaped_output_is_redacted_by_sensitive_keys(tmp_path: Path) -> None:
     executable = _fake_executable(
         tmp_path,
-        "print('{\"token\":\"json-secret\",\"nested\":{\"password\":\"json-password\"},\"ok\":true}')",
+        'print(\'{"token":"json-secret","nested":{"password":"json-password"},"ok":true}\')',
     )
     result = Probes().probe_binary("json-output", executable)
 
@@ -84,7 +89,11 @@ def test_missing_harness_does_not_select_or_initialize_another_harness() -> None
 
 
 def test_nonzero_and_timeout_are_degraded_without_fallback(tmp_path: Path) -> None:
-    failing = _fake_executable(tmp_path, "print('fake 4.5.6', flush=True); raise SystemExit(7)", "failing-agent")
+    failing = _fake_executable(
+        tmp_path,
+        "print('fake 4.5.6', flush=True); raise SystemExit(7)",
+        "failing-agent",
+    )
     hanging = _fake_executable(tmp_path, "import time; time.sleep(30)", "hanging-agent")
     failed = Probes(timeout_seconds=1.0).probe_binary("failed", failing)
     timed_out = Probes(timeout_seconds=0.1).probe_binary("hanging", hanging)
@@ -95,14 +104,20 @@ def test_nonzero_and_timeout_are_degraded_without_fallback(tmp_path: Path) -> No
     assert timed_out.evidence.details["timed_out"] is True
 
 
-def test_bare_executable_uses_caller_path_but_child_environment_stays_minimal(tmp_path: Path) -> None:
+def test_bare_executable_uses_caller_path_but_child_environment_stays_minimal(
+    tmp_path: Path,
+) -> None:
     bindir = tmp_path / "bin"
     bindir.mkdir()
     executable = bindir / "path-agent"
-    executable.write_text(f"#!{sys.executable}\nprint('path-agent 2.0.0')\n", encoding="utf-8")
+    executable.write_text(
+        f"#!{sys.executable}\nprint('path-agent 2.0.0')\n", encoding="utf-8"
+    )
     executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
 
-    result = Probes().probe_binary("path-agent", "path-agent", env={"PATH": str(bindir)})
+    result = Probes().probe_binary(
+        "path-agent", "path-agent", env={"PATH": str(bindir)}
+    )
 
     assert result.status is CapabilityStatus.READY
     assert result.evidence.details["resolved_executable"].endswith("/path-agent")
@@ -112,9 +127,13 @@ def test_bare_executable_uses_caller_path_but_child_environment_stays_minimal(tm
 
 def test_unknown_transport_does_not_execute_selected_command(tmp_path: Path) -> None:
     marker = tmp_path / "ran"
-    executable = _fake_executable(tmp_path, f"import pathlib; pathlib.Path({str(marker)!r}).write_text('ran')")
+    executable = _fake_executable(
+        tmp_path, f"import pathlib; pathlib.Path({str(marker)!r}).write_text('ran')"
+    )
 
-    result = Probes().probe_transport("unknown", transport="vendor-private", executable=executable)
+    result = Probes().probe_transport(
+        "unknown", transport="vendor-private", executable=executable
+    )
 
     assert result.status is CapabilityStatus.UNSUPPORTED
     assert result.evidence.details["executed"] is False
@@ -131,7 +150,9 @@ def test_all_timeout_values_must_be_finite_and_positive(tmp_path: Path) -> None:
         else:
             raise AssertionError(f"accepted invalid service timeout {invalid!r}")
         try:
-            Probes().probe_binary("invalid-timeout", executable, timeout_seconds=invalid)
+            Probes().probe_binary(
+                "invalid-timeout", executable, timeout_seconds=invalid
+            )
         except ValueError:
             pass
         else:
@@ -139,7 +160,9 @@ def test_all_timeout_values_must_be_finite_and_positive(tmp_path: Path) -> None:
 
 
 @pytest.mark.process_lifecycle
-def test_parent_exit_does_not_leave_grandchild_in_owned_process_group(tmp_path: Path) -> None:
+def test_parent_exit_does_not_leave_grandchild_in_owned_process_group(
+    tmp_path: Path,
+) -> None:
     if os.name != "posix":
         return
     child_pid = tmp_path / "child.pid"
@@ -148,7 +171,9 @@ def test_parent_exit_does_not_leave_grandchild_in_owned_process_group(tmp_path: 
         "import subprocess, sys, time; child = subprocess.Popen([sys.executable, '-c', 'import pathlib, sys, time; pathlib.Path(sys.argv[1]).write_text(str(__import__(\"os\").getpid())); time.sleep(30)', sys.argv[1]]); time.sleep(30)",
     )
 
-    result = Probes(timeout_seconds=2.0).probe_binary("descendant", executable, args=(str(child_pid),))
+    result = Probes(timeout_seconds=2.0).probe_binary(
+        "descendant", executable, args=(str(child_pid),)
+    )
 
     assert result.status is CapabilityStatus.UNAVAILABLE
     deadline = time.monotonic() + 2
@@ -184,7 +209,9 @@ raise SystemExit(0)""",
         "normal-exit-agent",
     )
 
-    result = Probes(timeout_seconds=2.0).probe_binary("normal-exit", executable, args=(str(child_pid),))
+    result = Probes(timeout_seconds=2.0).probe_binary(
+        "normal-exit", executable, args=(str(child_pid),)
+    )
 
     assert result.status is CapabilityStatus.READY
     deadline = time.monotonic() + 2
@@ -203,7 +230,9 @@ raise SystemExit(0)""",
         raise AssertionError(f"grandchild {pid} survived normal-exit cleanup")
 
 
-def test_output_is_bounded_and_child_environment_is_minimal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_output_is_bounded_and_child_environment_is_minimal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("AMBIENT_PROVIDER_KEY", "must-not-be-inherited")
     executable = _fake_executable(
         tmp_path,
@@ -246,7 +275,9 @@ def test_protocol_probe_records_detected_protocol_revision(tmp_path: Path) -> No
 
 
 def test_probe_request_without_target_is_unavailable_and_safe_repr() -> None:
-    request = ProbeRequest(ProbeKind.BINARY, "missing", env={"API_TOKEN": "secret-value"})
+    request = ProbeRequest(
+        ProbeKind.BINARY, "missing", env={"API_TOKEN": "secret-value"}
+    )
     report = Probes().probe_requested([request])
 
     assert report.results[0].status is CapabilityStatus.UNAVAILABLE

@@ -17,16 +17,18 @@ to validate an already-prepared release and its lockfile.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 
 try:
     from packaging.version import InvalidVersion, Version
-except ImportError as exc:  # pragma: no cover - the documented command supplies packaging
+except (
+    ImportError
+) as exc:  # pragma: no cover - the documented command supplies packaging
     raise SystemExit(
         "packaging is required; run this command through `uv run --with packaging`"
     ) from exc
@@ -58,7 +60,9 @@ class ReleaseState:
     def current_version(self) -> str:
         values = set(self.versions.values())
         if len(values) != 1:
-            details = ", ".join(f"{name}={value}" for name, value in self.versions.items())
+            details = ", ".join(
+                f"{name}={value}" for name, value in self.versions.items()
+            )
             raise ReleasePreparationError(f"project versions must match ({details})")
         return next(iter(values))
 
@@ -85,7 +89,9 @@ def _validate_target(value: str) -> str:
     try:
         normalized = str(Version(value))
     except InvalidVersion as exc:
-        raise ReleasePreparationError(f"{value!r} is not a valid PEP 440 version") from exc
+        raise ReleasePreparationError(
+            f"{value!r} is not a valid PEP 440 version"
+        ) from exc
     if normalized != value:
         print(f"normalized release version {value!r} to {normalized!r}")
     return normalized
@@ -100,7 +106,9 @@ def read_state(root: Path = ROOT) -> ReleaseState:
         path = root / relative_path
         text = _read(path)
         contents[name] = text
-        versions[name] = _single_match(VERSION_PATTERN, text, "project version", path).group(2)
+        versions[name] = _single_match(
+            VERSION_PATTERN, text, "project version", path
+        ).group(2)
 
     cli_path = root / PROJECT_FILES["mcp-pal-cli"]
     cli_text = contents["mcp-pal-cli"]
@@ -119,7 +127,9 @@ def read_state(root: Path = ROOT) -> ReleaseState:
         name: value for name, value in dependencies.items() if value != current
     }
     if mismatched_dependencies:
-        details = ", ".join(f"{name}={value}" for name, value in mismatched_dependencies.items())
+        details = ", ".join(
+            f"{name}={value}" for name, value in mismatched_dependencies.items()
+        )
         raise ReleasePreparationError(
             f"CLI dependency pins must match project version {current} ({details})"
         )
@@ -129,7 +139,7 @@ def read_state(root: Path = ROOT) -> ReleaseState:
 def _updated_contents(root: Path, target: str) -> dict[Path, str]:
     state = read_state(root)
     updated: dict[Path, str] = {}
-    for name, relative_path in PROJECT_FILES.items():
+    for _name, relative_path in PROJECT_FILES.items():
         path = root / relative_path
         text = _read(path)
         match = _single_match(VERSION_PATTERN, text, "project version", path)
@@ -137,8 +147,10 @@ def _updated_contents(root: Path, target: str) -> dict[Path, str]:
 
     cli_path = root / PROJECT_FILES["mcp-pal-cli"]
     cli_text = updated[cli_path]
-    for name, pattern in CLI_INTERNAL_DEPENDENCIES.items():
-        match = _single_match(pattern, cli_text, f"CLI dependency pin for {name}", cli_path)
+    for _name, pattern in CLI_INTERNAL_DEPENDENCIES.items():
+        match = _single_match(
+            pattern, cli_text, f"CLI dependency pin for {_name}", cli_path
+        )
         cli_text = cli_text[: match.start(2)] + target + cli_text[match.end(2) :]
     updated[cli_path] = cli_text
 
@@ -154,8 +166,7 @@ def _run_uv_lock(root: Path, command: list[str]) -> None:
             command,
             cwd=root,
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
     except OSError as exc:
@@ -214,14 +225,16 @@ def prepare(
     except (OSError, ReleasePreparationError):
         _write_files(originals)
         raise
-    return target, tuple(files) + (lock_path,)
+    return target, (*tuple(files), lock_path)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", help="new PEP 440 version, for example 0.2.0a4")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--dry-run", action="store_true", help="show files that would change")
+    mode.add_argument(
+        "--dry-run", action="store_true", help="show files that would change"
+    )
     mode.add_argument(
         "--check",
         action="store_true",

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -19,8 +19,13 @@ from mcp_pal.matrix import (
     ToolMatrixCase,
 )
 from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import ACPAgent, CallToolResult, ExecutionOutcome, StdioServer, TurnOutcome
-
+from mcp_pal.types import (
+    ACPAgent,
+    CallToolResult,
+    ExecutionOutcome,
+    StdioServer,
+    TurnOutcome,
+)
 
 _EXAMPLES_ROOT = Path(__file__).parents[1]
 _SERVER_SCRIPT = _EXAMPLES_ROOT / "servers" / "example_mcp_server.py"
@@ -70,7 +75,9 @@ _PARAMETERIZED_MATRIX = ToolMatrix(
         ),
         _server_case(
             "warehouse",
-            ToolCase(name="shipping_quote", arguments={"weight_kg": 2, "zone": "regional"}),
+            ToolCase(
+                name="shipping_quote", arguments={"weight_kg": 2, "zone": "regional"}
+            ),
         ),
     )
 )
@@ -84,15 +91,22 @@ def test_tool_matrix_parametrization_is_regular_pytest(case: ToolMatrixCase) -> 
     assert isinstance(result.direct_result, CallToolResult)
     assert result.trace_view.tool_calls
     if case.id == "catalog/normalize_customer":
-        assert result.direct_result.structured_content == {"customer_id": "ada-lovelace"}
+        assert result.direct_result.structured_content == {
+            "customer_id": "ada-lovelace"
+        }
     elif case.id == "catalog/batch_total":
         assert result.direct_result.structured_content == {"total": 6.0}
     else:
         assert case.id == "warehouse/shipping_quote"
-        assert result.direct_result.structured_content == {"amount": 12.0, "currency": "USD"}
+        assert result.direct_result.structured_content == {
+            "amount": 12.0,
+            "currency": "USD",
+        }
 
 
-def test_harness_matrix_each_server_and_each_tool_use_real_acp(example_server: StdioServer) -> None:
+def test_harness_matrix_each_server_and_each_tool_use_real_acp(
+    example_server: StdioServer,
+) -> None:
     server = ServerCase(
         name="example-mcp",
         server=example_server,
@@ -122,7 +136,9 @@ def test_harness_matrix_all_servers_session_uses_real_output_for_next_prompt(
         )
         for name in ("catalog", "warehouse")
     )
-    case = HarnessMatrix.all_servers(servers=servers, harnesses=(_harness(),)).cases()[0]
+    case = HarnessMatrix.all_servers(servers=servers, harnesses=(_harness(),)).cases()[
+        0
+    ]
     with MCPTestKit(env={}) as kit:
         with case.session(kit=kit) as session:
             first = session.send(
@@ -178,7 +194,9 @@ def test_harness_matrix_trials_are_independent(example_server: StdioServer) -> N
         server=example_server,
         tools=(ToolCase(name="shipping_quote"),),
     )
-    matrix = HarnessMatrix.each_server(servers=(server,), harnesses=(_harness(),), trials=2)
+    matrix = HarnessMatrix.each_server(
+        servers=(server,), harnesses=(_harness(),), trials=2
+    )
     with MCPTestKit(env={}) as kit:
         results = tuple(case.run(_prompt("local"), kit=kit) for case in matrix.cases())
 
@@ -189,13 +207,19 @@ def test_harness_matrix_trials_are_independent(example_server: StdioServer) -> N
     assert results[0].snapshot.execution_id != results[1].snapshot.execution_id
 
 
-def test_harness_matrix_explicit_id_is_shared_by_trial_cases(example_server: StdioServer) -> None:
+def test_harness_matrix_explicit_id_is_shared_by_trial_cases(
+    example_server: StdioServer,
+) -> None:
     server = ServerCase(
-        name="example-mcp", server=example_server,
+        name="example-mcp",
+        server=example_server,
         tools=(ToolCase(name="shipping_quote"),),
     )
     matrix = HarnessMatrix.each_tool(
-        id="shipping-quality", servers=(server,), harnesses=(_harness(),), trials=2,
+        id="shipping-quality",
+        servers=(server,),
+        harnesses=(_harness(),),
+        trials=2,
     )
     cases = matrix.cases()
     assert matrix.id == "shipping-quality"
@@ -204,13 +228,19 @@ def test_harness_matrix_explicit_id_is_shared_by_trial_cases(example_server: Std
     assert [case.trial_count for case in cases] == [2, 2]
 
 
-def test_tool_matrix_explicit_id_and_trials_are_stable(example_server: StdioServer) -> None:
+def test_tool_matrix_explicit_id_and_trials_are_stable(
+    example_server: StdioServer,
+) -> None:
     matrix = ToolMatrix(
-        id="tool-quality", trials=2,
-        servers=(ServerCase(
-            name="example-mcp", server=example_server,
-            tools=(ToolCase(name="shipping_quote"),),
-        ),),
+        id="tool-quality",
+        trials=2,
+        servers=(
+            ServerCase(
+                name="example-mcp",
+                server=example_server,
+                tools=(ToolCase(name="shipping_quote"),),
+            ),
+        ),
     )
     cases = matrix.cases()
     assert matrix.id == "tool-quality"
@@ -222,28 +252,41 @@ def test_tool_matrix_explicit_id_and_trials_are_stable(example_server: StdioServ
 
 
 @pytest.mark.asyncio
-async def test_tool_matrix_supports_the_async_helper(example_server: StdioServer) -> None:
+async def test_tool_matrix_supports_the_async_helper(
+    example_server: StdioServer,
+) -> None:
     server = ServerCase(
         name="example-mcp",
         server=example_server,
-        tools=(ToolCase(name="shipping_quote", arguments={"weight_kg": 3, "zone": "regional"}),),
+        tools=(
+            ToolCase(
+                name="shipping_quote", arguments={"weight_kg": 3, "zone": "regional"}
+            ),
+        ),
     )
     matrix = ToolMatrix(servers=(server,))
     async with AsyncMCPTestKit(env={}) as kit:
         result = await matrix.cases()[0].run_async(kit=kit)
 
     assert isinstance(result.direct_result, CallToolResult)
-    assert result.direct_result.structured_content == {"amount": 15.5, "currency": "USD"}
+    assert result.direct_result.structured_content == {
+        "amount": 15.5,
+        "currency": "USD",
+    }
 
 
 @pytest.mark.asyncio
-async def test_harness_matrix_supports_async_run_and_session(example_server: StdioServer) -> None:
+async def test_harness_matrix_supports_async_run_and_session(
+    example_server: StdioServer,
+) -> None:
     server = ServerCase(
         name="example-mcp",
         server=example_server,
         tools=(ToolCase(name="shipping_quote"),),
     )
-    case = HarnessMatrix.each_server(servers=(server,), harnesses=(_harness(),)).cases()[0]
+    case = HarnessMatrix.each_server(
+        servers=(server,), harnesses=(_harness(),)
+    ).cases()[0]
     async with AsyncMCPTestKit(env={}) as kit:
         run_result = await case.run_async(
             json.dumps(
@@ -274,19 +317,29 @@ async def test_harness_matrix_supports_async_run_and_session(example_server: Std
     assert turn.snapshot.outcome is TurnOutcome.COMPLETED
     assert session_result.snapshot.outcome is ExecutionOutcome.COMPLETED
     expect(run_result).to_have_tool_call(
-        "shipping_quote", server="example-mcp", arguments={"weight_kg": 2, "zone": "local"}
+        "shipping_quote",
+        server="example-mcp",
+        arguments={"weight_kg": 2, "zone": "local"},
     )
     expect(session_result).to_have_tool_call(
-        "shipping_quote", turn=turn, server="example-mcp",
+        "shipping_quote",
+        turn=turn,
+        server="example-mcp",
         arguments={"weight_kg": 3, "zone": "regional"},
     )
 
 
-def test_tool_matrix_execution_is_reopened_from_sqlite(example_server: StdioServer, tmp_path: Path) -> None:
+def test_tool_matrix_execution_is_reopened_from_sqlite(
+    example_server: StdioServer, tmp_path: Path
+) -> None:
     server = ServerCase(
         name="example-mcp",
         server=example_server,
-        tools=(ToolCase(name="shipping_quote", arguments={"weight_kg": 2, "zone": "local"}),),
+        tools=(
+            ToolCase(
+                name="shipping_quote", arguments={"weight_kg": 2, "zone": "local"}
+            ),
+        ),
     )
     store = SQLiteExecutionStore(tmp_path / "examples.sqlite")
     try:
@@ -300,7 +353,9 @@ def test_tool_matrix_execution_is_reopened_from_sqlite(example_server: StdioServ
         store.close()
 
 
-def test_tool_matrix_failure_keeps_typed_result_and_trace(example_server: StdioServer) -> None:
+def test_tool_matrix_failure_keeps_typed_result_and_trace(
+    example_server: StdioServer,
+) -> None:
     server = ServerCase(
         name="example-mcp",
         server=example_server,

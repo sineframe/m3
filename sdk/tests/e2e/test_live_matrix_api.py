@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 import pytest
 
 from mcp_pal import MCPTestKit, expect
 from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
 from mcp_pal.types import ClaudeCode, OpenCode, SecretReference, StdioServer
-
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.process_lifecycle]
 
@@ -47,18 +46,20 @@ def test_live_opencode_matrix_case_uses_real_harness() -> None:
     model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
     case = HarnessMatrix.each_server(
         servers=(_server(),),
-        harnesses=(HarnessCase(
-            name="opencode",
-            harness=OpenCode(
-                model=model,
-                executable=executable,
-                credential_references={
-                    "OPENCODE_API_KEY": SecretReference(
-                        source="environment", name="OPENCODE_API_KEY"
-                    )
-                },
+        harnesses=(
+            HarnessCase(
+                name="opencode",
+                harness=OpenCode(
+                    model=model,
+                    executable=executable,
+                    credential_references={
+                        "OPENCODE_API_KEY": SecretReference(
+                            source="environment", name="OPENCODE_API_KEY"
+                        )
+                    },
+                ),
             ),
-        ),),
+        ),
     ).cases()[0]
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
         result = case.run(
@@ -81,18 +82,20 @@ def test_live_claude_matrix_case_uses_real_harness() -> None:
         pytest.skip("ANTHROPIC_API_KEY is not available")
     case = HarnessMatrix.each_server(
         servers=(_server(),),
-        harnesses=(HarnessCase(
-            name="claude",
-            harness=ClaudeCode(
-                model=os.environ.get("MCP_PAL_LIVE_CLAUDE_MODEL", "sonnet"),
-                executable=executable,
-                credential_references={
-                    "ANTHROPIC_API_KEY": SecretReference(
-                        source="environment", name="ANTHROPIC_API_KEY"
-                    )
-                },
+        harnesses=(
+            HarnessCase(
+                name="claude",
+                harness=ClaudeCode(
+                    model=os.environ.get("MCP_PAL_LIVE_CLAUDE_MODEL", "sonnet"),
+                    executable=executable,
+                    credential_references={
+                        "ANTHROPIC_API_KEY": SecretReference(
+                            source="environment", name="ANTHROPIC_API_KEY"
+                        )
+                    },
+                ),
             ),
-        ),),
+        ),
     ).cases()[0]
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
         result = case.run(

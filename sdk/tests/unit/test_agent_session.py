@@ -11,12 +11,17 @@ import pytest
 
 from mcp_pal.agent_session import AdapterTurn, AsyncAgentSession, HarnessTurnError
 from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import CleanupError, SessionBusy, SessionStillOpen, UnsupportedFeature
+from mcp_pal.errors import (
+    CleanupError,
+    SessionBusy,
+    SessionStillOpen,
+    UnsupportedFeature,
+)
 from mcp_pal.sync_api import MCPTestKit
-from mcp_pal.workspace import WorkspaceManager
 from mcp_pal.types import (
     ACPAgent,
     AgentSpec,
+    ArtifactPolicy,
     ErrorCode,
     ExecutionOutcome,
     ServerBinding,
@@ -24,13 +29,13 @@ from mcp_pal.types import (
     StdioServer,
     TextContent,
     TurnOutcome,
-    TurnResult,
     TurnResponse,
+    TurnResult,
     UserMessage,
-    ArtifactPolicy,
     WorkspaceKind,
     WorkspacePolicy,
 )
+from mcp_pal.workspace import WorkspaceManager
 
 
 def _spec() -> AgentSpec:
@@ -54,7 +59,9 @@ class FakeHarness:
     async def start(self, spec: AgentSpec) -> None:
         self.started += 1
 
-    async def send(self, message, *, timeout=None, metadata: Mapping[str, object] | None = None):
+    async def send(
+        self, message, *, timeout=None, metadata: Mapping[str, object] | None = None
+    ):
         if self.delay:
             await asyncio.sleep(self.delay)
         text = message.content[0].text
@@ -148,7 +155,7 @@ class PreflightFailureHarness(FakeHarness):
         self.workspace_root: Path | None = None
 
     async def preflight(self, launch: object) -> object:
-        self.workspace_root = Path(str(getattr(launch, "workspace_root")))
+        self.workspace_root = Path(str(launch.workspace_root))
         raise UnsupportedFeature("preflight unavailable")
 
 
@@ -182,7 +189,9 @@ class DeletesWorkspaceOnClose(FakeHarness):
 
     async def send(self, message, *, timeout=None, metadata=None):
         assert self.session is not None
-        (self.session._workspace.root / "result.txt").write_text("captured", encoding="utf-8")
+        (self.session._workspace.root / "result.txt").write_text(
+            "captured", encoding="utf-8"
+        )
         return await super().send(message, timeout=timeout, metadata=metadata)
 
     async def close(self) -> None:
@@ -192,7 +201,9 @@ class DeletesWorkspaceOnClose(FakeHarness):
 
 
 @pytest.mark.asyncio
-async def test_session_preserves_adapter_and_returns_terminal_result_on_clean_close() -> None:
+async def test_session_preserves_adapter_and_returns_terminal_result_on_clean_close() -> (
+    None
+):
     adapter = FakeHarness()
     session = AsyncAgentSession(_spec(), adapter)
 
@@ -231,7 +242,9 @@ async def test_workspace_is_captured_before_adapter_teardown() -> None:
 
 
 @pytest.mark.asyncio
-async def test_public_turn_result_preserves_redacted_evidence_and_roundtrips(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_public_turn_result_preserves_redacted_evidence_and_roundtrips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("MCP_PAL_EVIDENCE_TOKEN", "evidence-canary")
     session = AsyncAgentSession(_spec(), EvidenceHarness())
     async with session:
@@ -275,7 +288,9 @@ async def test_fork_creates_fresh_identity_and_records_source_provenance() -> No
     child = await source.fork(request, adapter_factory=factory)
     assert child.provenance is not None
     assert child.provenance.source_execution_id == source_result.snapshot.execution_id
-    assert child.provenance.source_session_id == source_result.turns[0].snapshot.session_id
+    assert (
+        child.provenance.source_session_id == source_result.turns[0].snapshot.session_id
+    )
     assert child.provenance.source_turn_id == request.source_turn_id
     assert child.provenance.mode == "replay"
     assert child.provenance == (await child.snapshot()).provenance
@@ -290,13 +305,19 @@ async def test_fork_creates_fresh_identity_and_records_source_provenance() -> No
 async def test_fork_requires_terminal_source_and_fresh_adapter() -> None:
     source_adapter = FakeHarness()
     source = AsyncAgentSession(_spec(), source_adapter)
-    request = SessionForkRequest(mode="fork", replay_inputs=(UserMessage(content=(TextContent(text="input"),)),))
+    request = SessionForkRequest(
+        mode="fork", replay_inputs=(UserMessage(content=(TextContent(text="input"),)),)
+    )
     with pytest.raises(SessionStillOpen):
-        await source.fork(request, adapter_factory=lambda spec, provenance: FakeHarness())
+        await source.fork(
+            request, adapter_factory=lambda spec, provenance: FakeHarness()
+        )
     async with source:
         await source.send("source")
     with pytest.raises(UnsupportedFeature, match="fresh adapter"):
-        await source.fork(request, adapter_factory=lambda spec, provenance: source_adapter)
+        await source.fork(
+            request, adapter_factory=lambda spec, provenance: source_adapter
+        )
 
 
 @pytest.mark.asyncio
@@ -321,11 +342,21 @@ async def test_fork_recreates_server_manager_for_runtime_state() -> None:
 
     source_manager = make_manager()
     source_adapter = FakeHarness()
-    source = AsyncAgentSession(_spec(), source_adapter, server_manager=source_manager, server_manager_factory=make_manager)
+    source = AsyncAgentSession(
+        _spec(),
+        source_adapter,
+        server_manager=source_manager,
+        server_manager_factory=make_manager,
+    )
     async with source:
         await source.send("source")
-    request = SessionForkRequest(mode="replay", replay_inputs=(UserMessage(content=(TextContent(text="child"),)),))
-    child = await source.fork(request, adapter_factory=lambda spec, provenance: FakeHarness())
+    request = SessionForkRequest(
+        mode="replay",
+        replay_inputs=(UserMessage(content=(TextContent(text="child"),)),),
+    )
+    child = await source.fork(
+        request, adapter_factory=lambda spec, provenance: FakeHarness()
+    )
     assert len(managers) == 2
     assert managers[0] is source_manager and managers[1] is not source_manager
     async with child:
@@ -374,11 +405,15 @@ async def test_timeout_is_terminal_and_redacted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unsupported_content_fails_preflight_without_starting_or_sending() -> None:
+async def test_unsupported_content_fails_preflight_without_starting_or_sending() -> (
+    None
+):
     adapter = FakeHarness()
     async with AsyncAgentSession(_spec(), adapter) as session:
         with pytest.raises(UnsupportedFeature):
-            await session.send({"kind": "opaque", "provider": "other", "payload": {"x": 1}})  # type: ignore[arg-type]
+            await session.send(
+                {"kind": "opaque", "provider": "other", "payload": {"x": 1}}
+            )  # type: ignore[arg-type]
         assert adapter.messages == []
 
 
@@ -411,7 +446,9 @@ async def test_snapshot_is_running_during_turn_and_cancel_waits_before_close() -
 
 
 @pytest.mark.asyncio
-async def test_cancel_forcefully_reaps_uncooperative_turn_without_closing_race() -> None:
+async def test_cancel_forcefully_reaps_uncooperative_turn_without_closing_race() -> (
+    None
+):
     class Uncooperative(FakeHarness):
         async def send(self, message, *, timeout=None, metadata=None):
             await asyncio.sleep(10)
@@ -474,7 +511,9 @@ async def test_concurrent_close_attempts_are_serialized_and_retry_cleanup() -> N
     adapter = TransientCloseHarness()
     session = AsyncAgentSession(_spec(), adapter)
     await session.__aenter__()
-    results = await asyncio.gather(session.aclose(), session.aclose(), return_exceptions=True)
+    results = await asyncio.gather(
+        session.aclose(), session.aclose(), return_exceptions=True
+    )
     assert sum(isinstance(item, CleanupError) for item in results) == 1
     assert session._closed is True
     assert adapter.closed == 2
@@ -538,7 +577,9 @@ async def test_close_during_startup_prevents_late_activation_and_closes_once() -
     closing = asyncio.create_task(session.aclose())
     await asyncio.sleep(0)
     adapter.release_start.set()
-    entered_result, close_result = await asyncio.gather(entering, closing, return_exceptions=True)
+    entered_result, close_result = await asyncio.gather(
+        entering, closing, return_exceptions=True
+    )
     assert isinstance(entered_result, Exception)
     assert close_result is None
     assert adapter.started == 1
@@ -604,7 +645,9 @@ async def test_permanent_preflight_cleanup_failure_is_retryable_and_kit_owned(
     assert not adapter.workspace_root.exists()
 
 
-def test_sync_kit_retries_cleanup_after_preflight_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sync_kit_retries_cleanup_after_preflight_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     adapter = PreflightFailureHarness()
     kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
     session = kit.agent_session(_spec(), adapter=adapter)
@@ -683,7 +726,9 @@ async def test_base_exception_startup_terminalizes_before_reraising() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancellation_of_close_still_finishes_cleanup_and_terminal_state() -> None:
+async def test_cancellation_of_close_still_finishes_cleanup_and_terminal_state() -> (
+    None
+):
     adapter = CloseBarrierHarness()
     session = AsyncAgentSession(_spec(), adapter)
     await session.__aenter__()
@@ -711,7 +756,9 @@ async def test_hostile_content_capability_failure_is_value_free() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_configuration_is_read_only_and_timeout_is_validated_preflight() -> None:
+async def test_session_configuration_is_read_only_and_timeout_is_validated_preflight() -> (
+    None
+):
     adapter = FakeHarness()
     session = AsyncAgentSession(_spec(), adapter)
     with pytest.raises(AttributeError):
@@ -731,23 +778,32 @@ def test_sync_session_proxy_keeps_async_adapter_off_caller_thread(tmp_path) -> N
             assert session.snapshot().lifecycle.value == "idle"
             queued = session.enqueue_turn("queued")
             queued_result = queued.result()
-            assert queued_result.response is not None and queued_result.response.text == "queued"
+            assert (
+                queued_result.response is not None
+                and queued_result.response.text == "queued"
+            )
         assert session.result.snapshot.outcome is ExecutionOutcome.COMPLETED
     assert adapter.messages == ["sync", "queued"]
 
 
 def test_sync_session_fork_keeps_fresh_adapter_and_provenance(tmp_path) -> None:
     source_adapter = FakeHarness()
-    request = SessionForkRequest(mode="fork", replay_inputs=(UserMessage(content=(TextContent(text="child"),)),))
+    request = SessionForkRequest(
+        mode="fork", replay_inputs=(UserMessage(content=(TextContent(text="child"),)),)
+    )
     with MCPTestKit(env={}, cwd=tmp_path) as kit:
         with kit.agent_session(_spec(), adapter=source_adapter) as source:
             source.send("source")
         child_adapter = FakeHarness()
-        child = source.fork(request, adapter_factory=lambda spec, provenance: child_adapter)
+        child = source.fork(
+            request, adapter_factory=lambda spec, provenance: child_adapter
+        )
         with child:
             child_result = child.send("child")
         assert child_result.response is not None
         assert child.provenance is not None
-        assert child.provenance.source_execution_id == source.result.snapshot.execution_id
+        assert (
+            child.provenance.source_execution_id == source.result.snapshot.execution_id
+        )
     assert child_adapter.started == 1
     assert child_adapter.closed == 1

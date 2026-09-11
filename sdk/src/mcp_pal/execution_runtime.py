@@ -8,12 +8,19 @@ owns the server group for the lifetime of the execution.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 import threading
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import uuid4
+
 from pydantic import TypeAdapter, ValidationError
 
+from ._check_recording import (
+    bind_execution as _bind_execution,
+)
+from ._check_recording import (
+    bind_subject as _bind_subject,
+)
 from .direct_trace import DirectTraceBridge
 from .errors import (
     MCPError,
@@ -30,37 +37,31 @@ from .harness.contracts import HarnessStartupError
 from .storage import ArtifactStore, ExecutionStore, InMemoryExecutionStore
 from .trace.redaction import RedactionConfig
 from .transport.local import LocalTransportError
-from .workspace import WorkspaceError, WorkspaceManager
-from ._check_recording import bind_execution as _bind_execution, bind_subject as _bind_subject
 from .types import (
     ActivityHealth,
     AgentSpec,
     CallTool,
     CallToolResult,
-    Event,
-    DirectSpec,
     DirectResult,
+    DirectSpec,
     ErrorCode,
     ErrorInfo,
-    EventOrigin,
+    Event,
     EventDirection,
-    EventSource,
     EventKind,
+    EventOrigin,
+    EventSource,
+    EvidenceRef,
     ExecutionId,
     ExecutionOutcome,
     ExecutionResult,
+    ExecutionSpec,
     ExecutionState,
     ExecutionStatus,
-    LifecyclePhase,
-    EvidenceRef,
-    RequestLink,
-    SSEServer,
-    ServerBinding,
-    HTTPServer,
-    TraceResult,
-    ExecutionSpec,
     GetPrompt,
     GetPromptResult,
+    HTTPServer,
+    LifecyclePhase,
     ListPrompts,
     ListPromptsResult,
     ListResources,
@@ -73,7 +74,12 @@ from .types import (
     PingResult,
     ReadResource,
     ReadResourceResult,
+    RequestLink,
+    ServerBinding,
+    SSEServer,
+    TraceResult,
 )
+from .workspace import WorkspaceError, WorkspaceManager
 
 _DIRECT_RESULT_ADAPTER: TypeAdapter[DirectResult] = TypeAdapter(DirectResult)
 
@@ -92,7 +98,11 @@ def _direct_result_from_trace(trace: TraceResult | None) -> DirectResult | None:
 
 def _direct_result_from_events(events: Sequence[Event]) -> DirectResult | None:
     terminal = next(
-        (event for event in reversed(events) if event.kind is EventKind.EXECUTION_FINISHED),
+        (
+            event
+            for event in reversed(events)
+            if event.kind is EventKind.EXECUTION_FINISHED
+        ),
         None,
     )
     payload = terminal.payload.get("direct_result") if terminal is not None else None
@@ -120,24 +130,56 @@ class AgentRunner(Protocol):
 
 def _error_info(error: BaseException) -> ErrorInfo:
     if isinstance(error, OperationTimeout):
-        return ErrorInfo(code=ErrorCode.TIMEOUT, message="execution timed out", retryable=True)
+        return ErrorInfo(
+            code=ErrorCode.TIMEOUT, message="execution timed out", retryable=True
+        )
     if isinstance(error, (OperationCancelled, asyncio.CancelledError)):
-        return ErrorInfo(code=ErrorCode.CANCELLED, message="execution cancelled", retryable=False)
+        return ErrorInfo(
+            code=ErrorCode.CANCELLED, message="execution cancelled", retryable=False
+        )
     if isinstance(error, UnsupportedFeature):
-        return ErrorInfo(code=ErrorCode.UNSUPPORTED, message="execution feature is unsupported", retryable=False)
+        return ErrorInfo(
+            code=ErrorCode.UNSUPPORTED,
+            message="execution feature is unsupported",
+            retryable=False,
+        )
     if isinstance(error, HarnessStartupError):
-        return ErrorInfo(code=ErrorCode.UNSUPPORTED, message="requested harness is unavailable", retryable=False)
+        return ErrorInfo(
+            code=ErrorCode.UNSUPPORTED,
+            message="requested harness is unavailable",
+            retryable=False,
+        )
     if isinstance(error, ModelValidationError):
-        return ErrorInfo(code=ErrorCode.INVALID_ARGUMENT, message="execution validation failed", retryable=False)
+        return ErrorInfo(
+            code=ErrorCode.INVALID_ARGUMENT,
+            message="execution validation failed",
+            retryable=False,
+        )
     if isinstance(error, ProtocolError):
-        return ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="MCP protocol operation failed", retryable=False)
+        return ErrorInfo(
+            code=ErrorCode.PROTOCOL_ERROR,
+            message="MCP protocol operation failed",
+            retryable=False,
+        )
     if isinstance(error, TransportError):
-        return ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="MCP transport operation failed", retryable=True)
+        return ErrorInfo(
+            code=ErrorCode.TRANSPORT_ERROR,
+            message="MCP transport operation failed",
+            retryable=True,
+        )
     if isinstance(error, LocalTransportError):
-        return ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="MCP transport operation failed", retryable=True)
+        return ErrorInfo(
+            code=ErrorCode.TRANSPORT_ERROR,
+            message="MCP transport operation failed",
+            retryable=True,
+        )
     if isinstance(error, MCPError):
-        return ErrorInfo(code=ErrorCode.INVALID_ARGUMENT, message="execution failed", retryable=False)
-    return ErrorInfo(code=ErrorCode.INVALID_ARGUMENT, message="execution failed", retryable=False)
+        return ErrorInfo(
+            code=ErrorCode.INVALID_ARGUMENT, message="execution failed", retryable=False
+        )
+    return ErrorInfo(
+        code=ErrorCode.INVALID_ARGUMENT, message="execution failed", retryable=False
+    )
 
 
 def _outcome(error: BaseException | None) -> ExecutionOutcome:
@@ -157,13 +199,22 @@ def _activity_health(trace: TraceResult | None) -> ActivityHealth:
         return ActivityHealth.NO_CALLS
     pending: dict[str, bool] = {}
     outcomes: list[bool] = []
-    has_wire_evidence = any(event.provenance.origin is EventOrigin.WIRE_OBSERVED for event in trace.events)
+    has_wire_evidence = any(
+        event.provenance.origin is EventOrigin.WIRE_OBSERVED for event in trace.events
+    )
     for event in trace.events:
         correlation = event.correlation
         if correlation is not None and correlation.request_sequence is not None:
-            connection = event.connection_id.root if event.connection_id is not None else "<unknown>"
+            connection = (
+                event.connection_id.root
+                if event.connection_id is not None
+                else "<unknown>"
+            )
             key = f"wire:{connection}:{correlation.request_sequence}"
-        elif not has_wire_evidence and event.kind in {EventKind.TOOL_CALL_REQUESTED, EventKind.TOOL_RESULT_RECEIVED}:
+        elif not has_wire_evidence and event.kind in {
+            EventKind.TOOL_CALL_REQUESTED,
+            EventKind.TOOL_RESULT_RECEIVED,
+        }:
             if event.session_id is None or event.turn_id is None:
                 continue
             index = event.payload.get("tool_index", 0)
@@ -200,7 +251,7 @@ class AsyncExecutionHandle:
 
     def __init__(
         self,
-        controller: "AsyncExecutionController",
+        controller: AsyncExecutionController,
         spec: ExecutionSpec,
         *,
         store: ExecutionStore | None = None,
@@ -210,7 +261,13 @@ class AsyncExecutionHandle:
     ) -> None:
         self._controller = controller
         self._spec = spec
-        self._execution_id = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(str(execution_id)) if execution_id is not None else ExecutionId(f"execution-{uuid4().hex}")
+        self._execution_id = (
+            execution_id
+            if isinstance(execution_id, ExecutionId)
+            else ExecutionId(str(execution_id))
+            if execution_id is not None
+            else ExecutionId(f"execution-{uuid4().hex}")
+        )
         self._store: ExecutionStore = store or InMemoryExecutionStore()
         # Persistent stores expose their artifact store alongside execution
         # metadata.  Keep this handle on the submitted execution so every
@@ -219,8 +276,18 @@ class AsyncExecutionHandle:
         # fallback because they do not own a durable artifact backend.
         candidate_artifacts = getattr(self._store, "artifacts", None)
         if candidate_artifacts is not None:
-            required_methods = ("put", "get", "get_ref", "iter_refs", "delete", "cleanup")
-            if not all(callable(getattr(candidate_artifacts, name, None)) for name in required_methods):
+            required_methods = (
+                "put",
+                "get",
+                "get_ref",
+                "iter_refs",
+                "delete",
+                "cleanup",
+            )
+            if not all(
+                callable(getattr(candidate_artifacts, name, None))
+                for name in required_methods
+            ):
                 raise ModelValidationError(
                     "execution store exposes an incomplete artifact store",
                     details={"operation": "execution.artifacts"},
@@ -243,7 +310,9 @@ class AsyncExecutionHandle:
             # An explicit spec run ID has precedence over the controller
             # default while preserving the caller's immutable spec object.
             run_id=(spec.run_id.root if spec.run_id is not None else run_id),
-            server_bindings=tuple(binding.model_dump(mode="json") for binding in spec.servers),
+            server_bindings=tuple(
+                binding.model_dump(mode="json") for binding in spec.servers
+            ),
         )
         if getattr(controller.kit, "_record_checks", False):
             _bind_execution(
@@ -268,6 +337,7 @@ class AsyncExecutionHandle:
         self._result: ExecutionResult | None = None
         self._state_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
+        self._callback_tasks: set[asyncio.Task[Any]] = set()
         # A persistent handle may be submitted by one process while another
         # process owns the worker task.  The submitting process can only set
         # the durable cancellation flag; this watcher runs beside the owner
@@ -298,7 +368,11 @@ class AsyncExecutionHandle:
 
     async def _wait_terminal(self, timeout: float | None) -> None:
         if timeout is not None and timeout <= 0:
-            raise ModelValidationError("wait timeout must be positive", details={"operation": "execution.result"})
+            raise ModelValidationError(
+                "wait timeout must be positive",
+                details={"operation": "execution.result"},
+            )
+
         async def wait_for_terminal() -> None:
             while not self._terminal.is_set():
                 if self._persistent:
@@ -332,7 +406,9 @@ class AsyncExecutionHandle:
         if self._persistent:
             request_cancel = getattr(self._store, "request_cancel", None)
             if callable(request_cancel):
-                request_cancel(self._execution_id, reason="caller requested cancellation")
+                request_cancel(
+                    self._execution_id, reason="caller requested cancellation"
+                )
             if self._task is None:
                 await self._hydrate_terminal()
                 return
@@ -382,7 +458,9 @@ class AsyncExecutionHandle:
             artifacts=self._workspace_artifacts,
             direct_result=self._direct_result,
             activity_health=_activity_health(trace),
-            error=_error_info(OperationCancelled("execution cancelled")) if outcome is ExecutionOutcome.CANCELLED else None,
+            error=_error_info(OperationCancelled("execution cancelled"))
+            if outcome is ExecutionOutcome.CANCELLED
+            else None,
         )
         self._terminal.set()
         self._controller._finished(self)
@@ -392,7 +470,9 @@ class AsyncExecutionHandle:
         if self._task is None:
             self._task = asyncio.create_task(self._run())
         if self._persistent and self._cancel_watcher is None:
-            self._cancel_watcher = asyncio.create_task(self._watch_durable_cancellation())
+            self._cancel_watcher = asyncio.create_task(
+                self._watch_durable_cancellation()
+            )
         await self._task
 
     async def _watch_durable_cancellation(self) -> None:
@@ -446,7 +526,15 @@ class AsyncExecutionHandle:
             try:
                 value = callback(event.model_copy())
                 if hasattr(value, "__await__"):
-                    loop.create_task(value)
+                    task = loop.create_task(value)
+                    self._callback_tasks.add(task)
+
+                    def finish_callback(completed: asyncio.Task[Any]) -> None:
+                        self._callback_tasks.discard(completed)
+                        if not completed.cancelled():
+                            completed.exception()
+
+                    task.add_done_callback(finish_callback)
             except Exception:
                 return
 
@@ -465,7 +553,9 @@ class AsyncExecutionHandle:
         unsubscribe = self._store.subscribe(self._execution_id, enqueue)
         cursor = after_sequence
         try:
-            for event in self._store.iter_events(self._execution_id, after_sequence=cursor):
+            for event in self._store.iter_events(
+                self._execution_id, after_sequence=cursor
+            ):
                 cursor = event.sequence
                 yield event.model_copy()
                 if event.kind is EventKind.EXECUTION_FINISHED:
@@ -532,11 +622,16 @@ class AsyncExecutionHandle:
                         EventKind.WORKSPACE_CHANGED,
                         payload={
                             "diff": capture.diff.as_payload(),
-                            "artifacts": tuple(ref.model_dump(mode="json") for ref in capture.artifacts),
-                            "limitations": capture.limitations + self._workspace_limitations,
+                            "artifacts": tuple(
+                                ref.model_dump(mode="json") for ref in capture.artifacts
+                            ),
+                            "limitations": capture.limitations
+                            + self._workspace_limitations,
                         },
                         lifecycle_phase=LifecyclePhase.CLEANUP,
-                        provenance=EventSource(origin=EventOrigin.DERIVED, source="mcp_pal.workspace"),
+                        provenance=EventSource(
+                            origin=EventOrigin.DERIVED, source="mcp_pal.workspace"
+                        ),
                     )
                 except BaseException:
                     # Evidence is best effort; do not expose filesystem errors.
@@ -545,7 +640,9 @@ class AsyncExecutionHandle:
                     await asyncio.to_thread(self._workspace.cleanup)
                 except (WorkspaceError, OSError):
                     workspace_cleanup_failed = True
-            trace_limitations = ("capture_incomplete",) if outcome is ExecutionOutcome.CANCELLED else ()
+            trace_limitations = (
+                ("capture_incomplete",) if outcome is ExecutionOutcome.CANCELLED else ()
+            )
             try:
                 trace = self._finalize(
                     outcome,
@@ -569,7 +666,8 @@ class AsyncExecutionHandle:
                 result_error = (
                     _error_info(failure)
                     if isinstance(failure, (OperationCancelled, asyncio.CancelledError))
-                    else self._agent_error or (_error_info(failure) if failure is not None else None)
+                    else self._agent_error
+                    or (_error_info(failure) if failure is not None else None)
                 )
                 if workspace_cleanup_failed and result_error is None:
                     result_error = ErrorInfo(
@@ -610,7 +708,11 @@ class AsyncExecutionHandle:
             self._controller._finished(self)
             watcher = self._cancel_watcher
             self._cancel_watcher = None
-            if watcher is not None and watcher is not asyncio.current_task() and not watcher.done():
+            if (
+                watcher is not None
+                and watcher is not asyncio.current_task()
+                and not watcher.done()
+            ):
                 watcher.cancel()
                 await asyncio.gather(watcher, return_exceptions=True)
 
@@ -659,7 +761,9 @@ class AsyncExecutionHandle:
                 details={"operation": "execution.direct"},
             )
         if binding.server is None:
-            raise UnsupportedFeature("execution server profile resolution is not available")
+            raise UnsupportedFeature(
+                "execution server profile resolution is not available"
+            )
         effective_selector = cls._direct_binding_selector(binding)
         if effective_selector is None:
             raise ModelValidationError(
@@ -721,7 +825,9 @@ class AsyncExecutionHandle:
             "validate_schemas": spec.validate_schemas,
             "trace_bridge": self._bridge,
             "trace_owner": False,
-            "workspace_root": str(self._workspace.root) if self._workspace is not None else None,
+            "workspace_root": str(self._workspace.root)
+            if self._workspace is not None
+            else None,
         }
         async with self._controller.kit.direct(binding.server, **options) as client:
             if self._cancel_requested:
@@ -748,7 +854,9 @@ class AsyncExecutionHandle:
                 )
                 return ListResourcesResult(
                     raw=raw,
-                    resources=tuple(resource for page in pages for resource in page.resources),
+                    resources=tuple(
+                        resource for page in pages for resource in page.resources
+                    ),
                     next_cursor=pages[-1].next_cursor,
                 )
             if isinstance(operation, ListTemplates):
@@ -761,7 +869,9 @@ class AsyncExecutionHandle:
                 return ListTemplatesResult(
                     raw=raw,
                     resource_templates=tuple(
-                        template for page in pages for template in page.resource_templates
+                        template
+                        for page in pages
+                        for template in page.resource_templates
                     ),
                     next_cursor=pages[-1].next_cursor,
                 )
@@ -847,7 +957,9 @@ class AsyncExecutionHandle:
                 session_result = session.result
                 self._workspace_artifacts = tuple(session_result.artifacts)
                 self._agent_outcome = session_result.snapshot.outcome
-                if session_result.error is not None and not isinstance(failure, UnsupportedFeature):
+                if session_result.error is not None and not isinstance(
+                    failure, UnsupportedFeature
+                ):
                     self._agent_error = session_result.error
             except BaseException:
                 pass
@@ -879,15 +991,22 @@ class AsyncExecutionHandle:
             try:
                 direction = EventDirection(direction_value)
                 correlation = RequestLink(
-                    jsonrpc_id=jsonrpc_id if isinstance(jsonrpc_id, (int, str)) and not isinstance(jsonrpc_id, bool) else None,
+                    jsonrpc_id=jsonrpc_id
+                    if isinstance(jsonrpc_id, (int, str))
+                    and not isinstance(jsonrpc_id, bool)
+                    else None,
                     direction=direction,
-                    request_sequence=request_sequence if isinstance(request_sequence, int) else None,
+                    request_sequence=request_sequence
+                    if isinstance(request_sequence, int)
+                    else None,
                 )
             except ValueError:
                 correlation = None
         raw_evidence = None
         if is_wire and isinstance(raw_ref, str) and raw_ref:
-            raw_evidence = EvidenceRef(evidence_id=raw_ref, media_type="application/json")
+            raw_evidence = EvidenceRef(
+                evidence_id=raw_ref, media_type="application/json"
+            )
         origin = (
             EventOrigin.NORMALIZED
             if kind in {EventKind.TRANSPORT_CONNECTED, EventKind.TRANSPORT_DISCONNECTED}
@@ -913,7 +1032,9 @@ class AsyncExecutionHandle:
             turn_id=turn_id,
             lifecycle_phase=phase,
             server_binding=server_binding if isinstance(server_binding, str) else None,
-            connection_id=connection_value if isinstance(connection_value, str) else None,
+            connection_id=connection_value
+            if isinstance(connection_value, str)
+            else None,
             correlation=correlation,
             raw_evidence_ref=raw_evidence,
             provenance=EventSource(
@@ -983,9 +1104,15 @@ class AsyncExecutionController:
             identifier = str(command.execution_id)
             handle = self._handles_by_id.get(identifier)
             if handle is None:
-                payload = command.payload.get("spec") if isinstance(command.payload, Mapping) else None
+                payload = (
+                    command.payload.get("spec")
+                    if isinstance(command.payload, Mapping)
+                    else None
+                )
                 if not isinstance(payload, Mapping):
-                    raise RuntimeError("persistent command has no portable execution specification")
+                    raise RuntimeError(
+                        "persistent command has no portable execution specification"
+                    )
                 kind = payload.get("kind")
                 spec = (
                     AgentSpec.model_validate(payload)
@@ -995,14 +1122,18 @@ class AsyncExecutionController:
                     else None
                 )
                 if spec is None:
-                    raise RuntimeError("persistent command specification kind is invalid")
+                    raise RuntimeError(
+                        "persistent command specification kind is invalid"
+                    )
                 handle = AsyncExecutionHandle(
                     self,
                     spec,
                     store=self._persistent_store,
                     persistent=True,
                     execution_id=command.execution_id,
-                    run_id=str(command.payload.get("run_id")) if command.payload.get("run_id") else None,
+                    run_id=str(command.payload.get("run_id"))
+                    if command.payload.get("run_id")
+                    else None,
                 )
                 self._handles_by_id[identifier] = handle
             loop = self._worker_loop
@@ -1037,24 +1168,39 @@ class AsyncExecutionController:
         )
         self._worker_thread.start()
 
-    def submit(self, spec: ExecutionSpec, *, run_id: str | None = None) -> AsyncExecutionHandle:
+    def submit(
+        self, spec: ExecutionSpec, *, run_id: str | None = None
+    ) -> AsyncExecutionHandle:
         if not isinstance(spec, (DirectSpec, AgentSpec)):
-            raise ModelValidationError("execution spec is invalid", details={"operation": "execution.submit"})
+            raise ModelValidationError(
+                "execution spec is invalid", details={"operation": "execution.submit"}
+            )
         explicit_run_id = getattr(spec.run_id, "root", spec.run_id)
-        effective_run_id = str(explicit_run_id or run_id) if (explicit_run_id or run_id) else None
+        effective_run_id = (
+            str(explicit_run_id or run_id) if (explicit_run_id or run_id) else None
+        )
         if self._persistent_store is None:
             handle = AsyncExecutionHandle(self, spec, run_id=effective_run_id)
         else:
             if not callable(getattr(self._persistent_store, "enqueue_command", None)):
-                raise ModelValidationError("persistent execution store does not support durable commands", details={"operation": "execution.submit"})
-            handle = AsyncExecutionHandle(self, spec, store=self._persistent_store, persistent=True, run_id=effective_run_id)
+                raise ModelValidationError(
+                    "persistent execution store does not support durable commands",
+                    details={"operation": "execution.submit"},
+                )
+            handle = AsyncExecutionHandle(
+                self,
+                spec,
+                store=self._persistent_store,
+                persistent=True,
+                run_id=effective_run_id,
+            )
             handle._recorder.emit(
                 EventKind.EXECUTION_STATE_CHANGED,
                 payload={"lifecycle": ExecutionStatus.QUEUED.value},
             )
             try:
                 payload = spec.model_dump(mode="json")
-                enqueue_command = getattr(self._persistent_store, "enqueue_command")
+                enqueue_command = self._persistent_store.enqueue_command
                 enqueue_command(
                     handle.execution_id,
                     payload={"spec": payload, "run_id": effective_run_id},
@@ -1064,7 +1210,7 @@ class AsyncExecutionController:
                 # Leave no orphaned metadata when a non-serializable runtime
                 # specification cannot enter the durable queue.
                 try:
-                    getattr(self._persistent_store, "request_cancel")(
+                    self._persistent_store.request_cancel(
                         handle.execution_id,
                         reason="persistent submission failed",
                     )
@@ -1077,7 +1223,9 @@ class AsyncExecutionController:
             self._ensure_persistent_worker()
         return handle
 
-    async def run(self, spec: ExecutionSpec, *, run_id: str | None = None) -> ExecutionResult:
+    async def run(
+        self, spec: ExecutionSpec, *, run_id: str | None = None
+    ) -> ExecutionResult:
         return await self.submit(spec, run_id=run_id).result()
 
     async def close(self) -> None:

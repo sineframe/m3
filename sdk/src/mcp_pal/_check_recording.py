@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from contextlib import contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass
 import json
 import math
 import weakref
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from threading import RLock
-from typing import Any, Iterator
+from typing import Any
 from uuid import uuid4
 
 from .trace.redaction import RedactionConfig, redact_for_persistence
 from .types import EvaluationContext, EvaluationId, EvaluationResult, EvaluationStatus
-
 
 _DEFAULT = ContextVar("mcp_pal_record_checks_default", default=False)
 _SUPPRESSED = ContextVar("mcp_pal_record_checks_suppressed", default=0)
@@ -209,6 +208,7 @@ def record_matcher(
         # execution is observed by the current test attempt.
         try:
             from ._test_runs import associate_execution
+
             associate_execution(execution_id)
         except Exception:
             pass
@@ -238,9 +238,7 @@ def record_matcher(
             ),
             details=details,
         )
-        binding.store.save_evaluation(
-            execution_id, result, turn_id=turn_id
-        )
+        binding.store.save_evaluation(execution_id, result, turn_id=turn_id)
         return True
     except Exception:
         # This is an observational side effect. Never replace or mask the
@@ -302,9 +300,7 @@ def _subject_binding(subject: Any, execution_id: Any) -> _ResolvedBinding | None
         return None
 
 
-def _drop_store_binding(
-    key: str, store_ref: weakref.ReferenceType[Any]
-) -> None:
+def _drop_store_binding(key: str, store_ref: weakref.ReferenceType[Any]) -> None:
     with _LOCK:
         values = _BINDINGS.get(key)
         if values is None:
@@ -414,10 +410,14 @@ def _subject_evidence(
                     continue
                 if server is not None and actual_server != server:
                     continue
-                if requested_turn is not None and _identifier(actual_turn) != _identifier(requested_turn):
+                if requested_turn is not None and _identifier(
+                    actual_turn
+                ) != _identifier(requested_turn):
                     continue
                 tool_refs.append(_identifier(entry_id))
-            if matcher == "to_have_event" and getattr(entry, "kind", None) == arguments.get("kind"):
+            if matcher == "to_have_event" and getattr(
+                entry, "kind", None
+            ) == arguments.get("kind"):
                 event_refs.append(_identifier(entry_id))
         if tool_refs:
             result["tool_call_refs"] = tool_refs
@@ -434,13 +434,8 @@ def _safe_json(value: Any) -> Any:
         name = getattr(value, "__qualname__", getattr(value, "__name__", "callable"))
         return {"callable": f"{module}.{name}", "implementation": "unknown"}
     if isinstance(value, Mapping):
-        entries = (
-            (_safe_key(key), _safe_json(item)) for key, item in value.items()
-        )
-        return {
-            key: item
-            for key, item in sorted(entries, key=lambda entry: entry[0])
-        }
+        entries = ((_safe_key(key), _safe_json(item)) for key, item in value.items())
+        return {key: item for key, item in sorted(entries, key=lambda entry: entry[0])}
     if isinstance(value, (set, frozenset)):
         items = [_safe_json(item) for item in value]
         return sorted(items, key=_stable_json_key)
@@ -458,7 +453,11 @@ def _safe_json(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, bool)):
         return value
     if isinstance(value, float):
-        return value if math.isfinite(value) else {"state": "unavailable", "reason": "non_finite"}
+        return (
+            value
+            if math.isfinite(value)
+            else {"state": "unavailable", "reason": "non_finite"}
+        )
     if hasattr(value, "isoformat") and callable(value.isoformat):
         try:
             return value.isoformat()
@@ -468,7 +467,11 @@ def _safe_json(value: Any) -> Any:
 
 
 def _safe_key(value: Any) -> str:
-    return str(value) if isinstance(value, (str, int, bool)) else f"<{type(value).__name__}>"
+    return (
+        str(value)
+        if isinstance(value, (str, int, bool))
+        else f"<{type(value).__name__}>"
+    )
 
 
 def _stable_json_key(value: Any) -> str:

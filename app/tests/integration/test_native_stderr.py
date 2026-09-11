@@ -3,7 +3,6 @@
 import asyncio
 import os
 import stat
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -32,7 +31,9 @@ def _spec(*, timeout_seconds: float = 2) -> RunSpec:
 
 
 @pytest.mark.parametrize("kind", ["claude", "opencode"])
-def test_native_stderr_above_limits_does_not_deadlock(tmp_path: Path, kind: str) -> None:
+def test_native_stderr_above_limits_does_not_deadlock(
+    tmp_path: Path, kind: str
+) -> None:
     if kind == "claude":
         body = """
 import json,sys
@@ -73,10 +74,18 @@ time.sleep(30)
     executable_path = executable(tmp_path / f"{kind}-{outcome}.py", body)
 
     async def run_once(timeout_seconds: float) -> str | None:
-        runner: Any = ClaudeCodeRunner(executable_path) if kind == "claude" else OpenCodeRunner(executable_path)
-        cancel_event: asyncio.Event | None = asyncio.Event() if outcome == "cancelled" else None
+        runner: Any = (
+            ClaudeCodeRunner(executable_path)
+            if kind == "claude"
+            else OpenCodeRunner(executable_path)
+        )
+        cancel_event: asyncio.Event | None = (
+            asyncio.Event() if outcome == "cancelled" else None
+        )
         task = asyncio.create_task(
-            runner.run(_spec(timeout_seconds=timeout_seconds), cancel_event=cancel_event)
+            runner.run(
+                _spec(timeout_seconds=timeout_seconds), cancel_event=cancel_event
+            )
         )
         # Process scheduling can be delayed while the complete cleanup matrix
         # is distributed across two workers; bound startup independently from

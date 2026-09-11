@@ -9,16 +9,20 @@ from mcp_pal.harness import (
     DeterministicACPAdapter,
     FakeClaudeCodeAdapter,
     FakeOpenCodeAdapter,
-    HarnessCleanupError,
     HarnessAdapterContract,
+    HarnessCleanupError,
     HarnessLaunch,
     HarnessStartupError,
-    HarnessTurnResult,
     HarnessTurnRequest,
+    HarnessTurnResult,
     UnsupportedHarnessFeature,
     default_adapters,
 )
-from mcp_pal.interaction_handlers import Interactions, InteractionHandlers, PermissionRequest
+from mcp_pal.interaction_handlers import (
+    InteractionHandlers,
+    Interactions,
+    PermissionRequest,
+)
 from mcp_pal.server_group import ServerGroupManager
 from mcp_pal.types import (
     ACPAgent,
@@ -55,11 +59,15 @@ async def _launch() -> tuple[ServerGroupManager, HarnessLaunch]:
     manager.register_tools("memory", ("read",))
     manager.register_tools("other", ("read",))
     spec = _spec()
-    return manager, HarnessLaunch(spec, manager.snapshot(), manager.configurations(), spec.tool_policy)
+    return manager, HarnessLaunch(
+        spec, manager.snapshot(), manager.configurations(), spec.tool_policy
+    )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("factory", _factories(), ids=("deterministic-acp", "fake-claude", "fake-opencode"))
+@pytest.mark.parametrize(
+    "factory", _factories(), ids=("deterministic-acp", "fake-claude", "fake-opencode")
+)
 async def test_common_harness_contract_is_stateful_and_cleanup_safe(
     factory: Callable[..., HarnessAdapterContract],
 ) -> None:
@@ -83,7 +91,9 @@ async def test_common_harness_contract_is_stateful_and_cleanup_safe(
         assert snapshot.turns == 3
         assert snapshot.server_configuration_count == 2
         assert snapshot.evidence["process_scope"] == before.evidence["process_scope"]
-        assert snapshot.evidence["connection_scope"] == before.evidence["connection_scope"]
+        assert (
+            snapshot.evidence["connection_scope"] == before.evidence["connection_scope"]
+        )
         assert snapshot.evidence["usage_provenance"] == "unavailable"
         assert snapshot.evidence["policy_requested"] == "restrictive"
         assert snapshot.evidence["policy_enforced"] == "portable"
@@ -97,7 +107,9 @@ async def test_common_harness_contract_is_stateful_and_cleanup_safe(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("factory", _factories(), ids=("deterministic-acp", "fake-claude", "fake-opencode"))
+@pytest.mark.parametrize(
+    "factory", _factories(), ids=("deterministic-acp", "fake-claude", "fake-opencode")
+)
 async def test_common_contract_preserves_evidence_and_interaction_wiring(
     factory: Callable[..., HarnessAdapterContract],
 ) -> None:
@@ -112,7 +124,9 @@ async def test_common_contract_preserves_evidence_and_interaction_wiring(
         handlers=InteractionHandlers(permission=permission),
     )
 
-    async def handler(_request: HarnessTurnRequest, state: dict[str, object]) -> HarnessTurnResult:
+    async def handler(
+        _request: HarnessTurnRequest, state: dict[str, object]
+    ) -> HarnessTurnResult:
         controller = state["interactions"]
         assert controller is interactions
         result = await interactions.permission(PermissionRequest("read", "fixture"))
@@ -151,7 +165,9 @@ async def test_common_contract_preserves_evidence_and_interaction_wiring(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("factory", _factories(), ids=("deterministic-acp", "fake-claude", "fake-opencode"))
+@pytest.mark.parametrize(
+    "factory", _factories(), ids=("deterministic-acp", "fake-claude", "fake-opencode")
+)
 async def test_common_contract_enforces_declared_attachment_capability(
     factory: Callable[..., HarnessAdapterContract],
 ) -> None:
@@ -159,7 +175,9 @@ async def test_common_contract_enforces_declared_attachment_capability(
     adapter = factory()
     try:
         session = await adapter.open(launch)
-        message = UserMessage(content=(AudioContent(media_type="audio/wav", data="YQ=="),))
+        message = UserMessage(
+            content=(AudioContent(media_type="audio/wav", data="YQ=="),)
+        )
         if "audio" in adapter.capabilities.supported_content_kinds:
             result = await session.send(HarnessTurnRequest(message))
             assert result.status == "completed"
@@ -172,7 +190,9 @@ async def test_common_contract_enforces_declared_attachment_capability(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("factory", _factories(), ids=("deterministic-acp", "fake-claude", "fake-opencode"))
+@pytest.mark.parametrize(
+    "factory", _factories(), ids=("deterministic-acp", "fake-claude", "fake-opencode")
+)
 async def test_common_contract_rejects_startup_failure_and_records_cleanup_failure(
     factory: Callable[..., HarnessAdapterContract],
 ) -> None:
@@ -199,7 +219,9 @@ async def test_common_contract_rejects_startup_failure_and_records_cleanup_failu
 async def test_common_contract_isolates_concurrent_sessions_and_no_fallback() -> None:
     manager, launch = await _launch()
 
-    async def open_one(factory: Callable[..., HarnessAdapterContract]) -> tuple[str, str]:
+    async def open_one(
+        factory: Callable[..., HarnessAdapterContract],
+    ) -> tuple[str, str]:
         adapter = factory()
         session = await adapter.open(launch)
         await session.send(HarnessTurnRequest.from_message("one"))
@@ -223,7 +245,9 @@ async def test_common_contract_isolates_concurrent_sessions_and_no_fallback() ->
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("factory", _factories(), ids=("deterministic-acp", "fake-claude", "fake-opencode"))
+@pytest.mark.parametrize(
+    "factory", _factories(), ids=("deterministic-acp", "fake-claude", "fake-opencode")
+)
 async def test_common_harness_contract_maps_timeout_and_cancellation(
     factory: Callable[..., HarnessAdapterContract],
 ) -> None:
@@ -235,9 +259,13 @@ async def test_common_harness_contract_maps_timeout_and_cancellation(
     adapter = factory(handler=slow)
     try:
         session = await adapter.open(launch)
-        timed_out = await session.send(HarnessTurnRequest.from_message("timeout", timeout_seconds=0.01))
+        timed_out = await session.send(
+            HarnessTurnRequest.from_message("timeout", timeout_seconds=0.01)
+        )
         assert timed_out.status == "timed_out"
-        pending = asyncio.create_task(session.send(HarnessTurnRequest.from_message("cancel")))
+        pending = asyncio.create_task(
+            session.send(HarnessTurnRequest.from_message("cancel"))
+        )
         await asyncio.sleep(0)
         await session.cancel()
         cancelled = await pending

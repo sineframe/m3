@@ -15,8 +15,8 @@ import os
 import re
 import sys
 import tempfile
-from contextlib import AsyncExitStack
 from collections.abc import Mapping
+from contextlib import AsyncExitStack
 from typing import Any
 
 MAX_FRAME_BYTES = 1024 * 1024
@@ -33,7 +33,7 @@ def qualified_tool_name(server: str, tool: str) -> str:
         value = re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_")
         return value or "unnamed"
 
-    digest = hashlib.sha256(f"{server}\0{tool}".encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha256(f"{server}\0{tool}".encode()).hexdigest()[:12]
     # Keep the MCP names visible to the model while reserving room for a
     # collision-resistant suffix and the required provider-safe prefix.
     prefix = f"mcp_{slug(server)[:20]}_{slug(tool)[:20]}"
@@ -81,7 +81,10 @@ class MCPBridge:
                 fd, temporary = tempfile.mkstemp(prefix=".mapping-", dir=parent)
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     json.dump(
-                        {item["name"]: [item["server"], item["tool"]] for item in output},
+                        {
+                            item["name"]: [item["server"], item["tool"]]
+                            for item in output
+                        },
                         handle,
                     )
                 os.replace(temporary, mapping_path)
@@ -196,8 +199,8 @@ async def connect_configured_sessions(
                 sse_client(descriptor["url"], headers=descriptor.get("headers"))
             )
         elif transport in {"http", "streamable_http"}:
-            from mcp.client.streamable_http import streamable_http_client
             import httpx2
+            from mcp.client.streamable_http import streamable_http_client
 
             client = await stack.enter_async_context(
                 httpx2.AsyncClient(headers=descriptor.get("headers") or {})

@@ -20,6 +20,7 @@ from ..observability import (
     DiagnosticEntry,
     DirectTrace,
     EvaluationEntry,
+    EvidenceCapture,
     EvidenceConflict,
     InitializationEntry,
     InitializationValue,
@@ -37,7 +38,6 @@ from ..observability import (
     ProtocolErrorInfo,
     ProtocolKind,
     ProviderEntry,
-    EvidenceCapture,
     RawEvidenceSource,
     RawMessageEntry,
     ReasoningEntry,
@@ -46,12 +46,12 @@ from ..observability import (
     ToolCallEntry,
     ToolCallStatus,
     ToolResult,
-    TransportEntry,
     TraceEntry,
     TraceStatus,
     TraceSummary,
     TraceTiming,
     TraceView,
+    TransportEntry,
     UsageEntry,
     UsageValue,
     WireToolCall,
@@ -60,8 +60,8 @@ from ..observability import (
 from ..types import (
     ActivityHealth,
     ArtifactRef,
-    Event,
     ContentBlock,
+    Event,
     EventDirection,
     EventKind,
     EventOrigin,
@@ -76,31 +76,34 @@ from ..types import (
     TransportKind,
 )
 
-_ACP_INTERACTION_REQUESTS = frozenset({
-    EventKind.FILESYSTEM_READ_REQUEST,
-    EventKind.FILESYSTEM_WRITE_REQUEST,
-    EventKind.TERMINAL_CREATE_REQUEST,
-    EventKind.TERMINAL_OUTPUT_REQUEST,
-    EventKind.TERMINAL_WAIT_REQUEST,
-    EventKind.TERMINAL_RELEASE_REQUEST,
-    EventKind.TERMINAL_KILL_REQUEST,
-})
-_ACP_INTERACTION_RESPONSES = frozenset({
-    EventKind.FILESYSTEM_READ_RESPONSE,
-    EventKind.FILESYSTEM_WRITE_RESPONSE,
-    EventKind.TERMINAL_CREATE_RESPONSE,
-    EventKind.TERMINAL_OUTPUT_RESPONSE,
-    EventKind.TERMINAL_WAIT_RESPONSE,
-    EventKind.TERMINAL_RELEASE_RESPONSE,
-    EventKind.TERMINAL_KILL_RESPONSE,
-})
+_ACP_INTERACTION_REQUESTS = frozenset(
+    {
+        EventKind.FILESYSTEM_READ_REQUEST,
+        EventKind.FILESYSTEM_WRITE_REQUEST,
+        EventKind.TERMINAL_CREATE_REQUEST,
+        EventKind.TERMINAL_OUTPUT_REQUEST,
+        EventKind.TERMINAL_WAIT_REQUEST,
+        EventKind.TERMINAL_RELEASE_REQUEST,
+        EventKind.TERMINAL_KILL_REQUEST,
+    }
+)
+_ACP_INTERACTION_RESPONSES = frozenset(
+    {
+        EventKind.FILESYSTEM_READ_RESPONSE,
+        EventKind.FILESYSTEM_WRITE_RESPONSE,
+        EventKind.TERMINAL_CREATE_RESPONSE,
+        EventKind.TERMINAL_OUTPUT_RESPONSE,
+        EventKind.TERMINAL_WAIT_RESPONSE,
+        EventKind.TERMINAL_RELEASE_RESPONSE,
+        EventKind.TERMINAL_KILL_RESPONSE,
+    }
+)
 
 _JSON_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _CONTENT_ADAPTER: TypeAdapter[ContentBlock] = TypeAdapter(ContentBlock)
 _JSON_INVALID = object()
 _MALFORMED_INITIALIZATION = "__mcp_pal_malformed_initialization__"
 _T = TypeVar("_T")
-
 
 
 def _not_emitted() -> Observation[Any]:
@@ -220,19 +223,24 @@ def _float_observation(value: Any, *, present: bool = True) -> Observation[float
 def _native_usage(payload: Mapping[str, Any] | None) -> Observation[Any]:
     if payload is None:
         return _not_emitted()
+
     def integer(name: str) -> Observation[Any]:
         value = payload.get(name)
         return _int_observation(value, present=name in payload)
-    return _observed(UsageValue(
-        input_tokens=integer("input_tokens"),
-        output_tokens=integer("output_tokens"),
-        reasoning_tokens=integer("reasoning_tokens"),
-        cache_creation_tokens=integer("cache_creation_tokens"),
-        cache_read_tokens=integer("cache_read_tokens"),
-        cache_write_tokens=integer("cache_write_tokens"),
-        total_tokens=integer("total_tokens"),
-        cost=_not_emitted(), currency=_not_emitted(),
-    ))
+
+    return _observed(
+        UsageValue(
+            input_tokens=integer("input_tokens"),
+            output_tokens=integer("output_tokens"),
+            reasoning_tokens=integer("reasoning_tokens"),
+            cache_creation_tokens=integer("cache_creation_tokens"),
+            cache_read_tokens=integer("cache_read_tokens"),
+            cache_write_tokens=integer("cache_write_tokens"),
+            total_tokens=integer("total_tokens"),
+            cost=_not_emitted(),
+            currency=_not_emitted(),
+        )
+    )
 
 
 def _stderr_observation(payload: Mapping[str, Any]) -> Observation[str]:
@@ -892,12 +900,21 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
     reported_is_error = last.payload.get("isError", last.payload.get("is_error"))
     malformed_error_flag = (
         ("isError" in last.payload and not isinstance(last.payload["isError"], bool))
-        or ("is_error" in last.payload and not isinstance(last.payload["is_error"], bool))
+        or (
+            "is_error" in last.payload
+            and not isinstance(last.payload["is_error"], bool)
+        )
         or (
             isinstance(raw_result, Mapping)
             and (
-                ("isError" in raw_result and not isinstance(raw_result["isError"], bool))
-                or ("is_error" in raw_result and not isinstance(raw_result["is_error"], bool))
+                (
+                    "isError" in raw_result
+                    and not isinstance(raw_result["isError"], bool)
+                )
+                or (
+                    "is_error" in raw_result
+                    and not isinstance(raw_result["is_error"], bool)
+                )
             )
         )
     )
@@ -1550,9 +1567,12 @@ class TraceProjector:
             key = _correlation_key(event)
             candidates = requests.get(key, []) if key is not None else []
             if not candidates and event.kind in _ACP_INTERACTION_RESPONSES:
-                request_kind = EventKind(event.kind.value.removesuffix(".response") + ".request")
+                request_kind = EventKind(
+                    event.kind.value.removesuffix(".response") + ".request"
+                )
                 candidates = [
-                    item for item in all_requests
+                    item
+                    for item in all_requests
                     if item.kind is request_kind
                     and item.turn_id == event.turn_id
                     and item.sequence < event.sequence
@@ -1561,7 +1581,8 @@ class TraceProjector:
             reported_id = _reported_call_id(event)
             if event.kind in _ACP_INTERACTION_RESPONSES and candidates:
                 candidates = [
-                    item for item in candidates
+                    item
+                    for item in candidates
                     if item.sequence < event.sequence
                     and str(item.event_id.root) not in used
                 ]
@@ -1773,10 +1794,9 @@ class TraceProjector:
                     continue
                 if wire_entry.turn_id != reported_entry.turn_id:
                     continue
-                if (
-                    not _same_observed_text(reported_entry.server, wire_entry.server)
-                    or not _same_observed_text(reported_entry.tool, wire_entry.tool)
-                ):
+                if not _same_observed_text(
+                    reported_entry.server, wire_entry.server
+                ) or not _same_observed_text(reported_entry.tool, wire_entry.tool):
                     continue
                 candidates.append(wire_index)
             # An explicit ID may select one candidate directly; absent IDs
@@ -1940,6 +1960,7 @@ class TraceProjector:
                     usage_payload = event.payload
                 elif isinstance(category, str) and "data" in event.payload:
                     metadata[category] = event.payload["data"]
+
             def string_value(name: str) -> Observation[Any]:
                 if name not in metadata:
                     return _not_emitted()
@@ -1950,7 +1971,10 @@ class TraceProjector:
 
             usage = _not_emitted()
             if usage_payload is not None:
-                def usage_value(field: str, value: Observation[Any]) -> Observation[Any]:
+
+                def usage_value(
+                    field: str, value: Observation[Any]
+                ) -> Observation[Any]:
                     return (
                         _unavailable(ObservationReason.MALFORMED_SOURCE)
                         if _capture_marker(metadata.get(f"usage_{field}_state"))
@@ -1959,42 +1983,69 @@ class TraceProjector:
 
                 usage = _observed(
                     UsageValue(
-                        input_tokens=usage_value("input_tokens", _int_observation(
-                            usage_payload.get("input_tokens"),
-                            present="input_tokens" in usage_payload,
-                        )),
-                        output_tokens=usage_value("output_tokens", _int_observation(
-                            usage_payload.get("output_tokens"),
-                            present="output_tokens" in usage_payload,
-                        )),
-                        reasoning_tokens=usage_value("reasoning_tokens", _int_observation(
-                            usage_payload.get("reasoning_tokens"),
-                            present="reasoning_tokens" in usage_payload,
-                        )),
-                        cache_creation_tokens=usage_value("cache_creation_tokens", _int_observation(
-                            usage_payload.get("cache_creation_tokens"),
-                            present="cache_creation_tokens" in usage_payload,
-                        )),
-                        cache_read_tokens=usage_value("cache_read_tokens", _int_observation(
-                            usage_payload.get("cache_read_tokens"),
-                            present="cache_read_tokens" in usage_payload,
-                        )),
-                        cache_write_tokens=usage_value("cache_write_tokens", _int_observation(
-                            usage_payload.get("cache_write_tokens"),
-                            present="cache_write_tokens" in usage_payload,
-                        )),
-                        total_tokens=usage_value("total_tokens", _int_observation(
-                            usage_payload.get("total_tokens"),
-                            present="total_tokens" in usage_payload,
-                        )),
-                        cost=usage_value("cost", _float_observation(
-                            usage_payload.get("cost"),
-                            present="cost" in usage_payload,
-                        )),
-                        currency=usage_value("currency", _string_observation(
-                            usage_payload.get("currency"),
-                            present="currency" in usage_payload,
-                        )),
+                        input_tokens=usage_value(
+                            "input_tokens",
+                            _int_observation(
+                                usage_payload.get("input_tokens"),
+                                present="input_tokens" in usage_payload,
+                            ),
+                        ),
+                        output_tokens=usage_value(
+                            "output_tokens",
+                            _int_observation(
+                                usage_payload.get("output_tokens"),
+                                present="output_tokens" in usage_payload,
+                            ),
+                        ),
+                        reasoning_tokens=usage_value(
+                            "reasoning_tokens",
+                            _int_observation(
+                                usage_payload.get("reasoning_tokens"),
+                                present="reasoning_tokens" in usage_payload,
+                            ),
+                        ),
+                        cache_creation_tokens=usage_value(
+                            "cache_creation_tokens",
+                            _int_observation(
+                                usage_payload.get("cache_creation_tokens"),
+                                present="cache_creation_tokens" in usage_payload,
+                            ),
+                        ),
+                        cache_read_tokens=usage_value(
+                            "cache_read_tokens",
+                            _int_observation(
+                                usage_payload.get("cache_read_tokens"),
+                                present="cache_read_tokens" in usage_payload,
+                            ),
+                        ),
+                        cache_write_tokens=usage_value(
+                            "cache_write_tokens",
+                            _int_observation(
+                                usage_payload.get("cache_write_tokens"),
+                                present="cache_write_tokens" in usage_payload,
+                            ),
+                        ),
+                        total_tokens=usage_value(
+                            "total_tokens",
+                            _int_observation(
+                                usage_payload.get("total_tokens"),
+                                present="total_tokens" in usage_payload,
+                            ),
+                        ),
+                        cost=usage_value(
+                            "cost",
+                            _float_observation(
+                                usage_payload.get("cost"),
+                                present="cost" in usage_payload,
+                            ),
+                        ),
+                        currency=usage_value(
+                            "currency",
+                            _string_observation(
+                                usage_payload.get("currency"),
+                                present="currency" in usage_payload,
+                            ),
+                        ),
                     )
                 )
             elif any(key.startswith("usage_") for key in metadata):
@@ -2018,7 +2069,12 @@ class TraceProjector:
                 ("http.duration_ms", "duration_ms"),
             ):
                 value = metadata.get(source)
-                if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and value >= 0:
+                if (
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and isfinite(value)
+                    and value >= 0
+                ):
                     http_fields[target] = float(value)
             if "status_code" in http_fields:
                 http_lifecycle = _observed(http_fields)
@@ -2164,7 +2220,8 @@ class TraceProjector:
                 usage=claude_usage,
             )
         native_events = tuple(
-            event for event in events
+            event
+            for event in events
             if event.provenance.origin is EventOrigin.HARNESS_REPORTED
             and event.provenance.source in {"codex", "pi"}
         )
@@ -2179,18 +2236,29 @@ class TraceProjector:
                         native_usage_payload = event.payload
                     if isinstance(category, str) and "data" in event.payload:
                         native_metadata[category] = event.payload["data"]
+
             def native_value(name: str) -> Observation[Any]:
                 value = native_metadata.get(name)
-                return _identifier_observation(value) if isinstance(value, str) and value else _not_emitted()
+                return (
+                    _identifier_observation(value)
+                    if isinstance(value, str) and value
+                    else _not_emitted()
+                )
+
             if source == "codex":
                 return CodexTrace(
-                    thread_id=native_value("thread_id"), turn_id=native_value("turn_id"),
-                    model_id=native_value("model"), finish_reason=native_value("finish_reason"),
-                    sandbox=native_value("sandbox"), usage=_native_usage(native_usage_payload),
+                    thread_id=native_value("thread_id"),
+                    turn_id=native_value("turn_id"),
+                    model_id=native_value("model"),
+                    finish_reason=native_value("finish_reason"),
+                    sandbox=native_value("sandbox"),
+                    usage=_native_usage(native_usage_payload),
                 )
             return PiTrace(
-                session_id=native_value("session_id"), provider_id=native_value("provider"),
-                model_id=native_value("model"), finish_reason=native_value("finish_reason"),
+                session_id=native_value("session_id"),
+                provider_id=native_value("provider"),
+                model_id=native_value("model"),
+                finish_reason=native_value("finish_reason"),
                 usage=_native_usage(native_usage_payload),
             )
         acp_events = tuple(
@@ -2247,12 +2315,9 @@ class TraceProjector:
             None,
         )
         transport: Observation[Any]
-        transport_present = (
-            transport_event is not None
-            and (
-                "transport" in transport_event.payload
-                or "configured_transport" in transport_event.payload
-            )
+        transport_present = transport_event is not None and (
+            "transport" in transport_event.payload
+            or "configured_transport" in transport_event.payload
         )
         raw_transport = (
             transport_event.payload.get(
@@ -2498,9 +2563,7 @@ def _fallback_pair(request: Event, response: Event) -> bool:
     return response_direction is opposite
 
 
-def _initialization_request_matches(
-    initialized: Event, request: Event
-) -> bool:
+def _initialization_request_matches(initialized: Event, request: Event) -> bool:
     """Require the initialized marker to describe its initialize request."""
     initialized_correlation = initialized.correlation
     request_correlation = request.correlation

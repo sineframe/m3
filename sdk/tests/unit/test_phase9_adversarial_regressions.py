@@ -11,6 +11,7 @@ from mcp.server.lowlevel import Server
 
 from mcp_pal.agent_session import AdapterTurn, AsyncAgentSession
 from mcp_pal.async_api import AsyncMCPTestKit
+from mcp_pal.errors import KitClosed
 from mcp_pal.harness import DeterministicHarnessAdapter, HarnessAdapterRegistry
 from mcp_pal.types import (
     ACPAgent,
@@ -32,7 +33,9 @@ def _spec() -> AgentSpec:
     return AgentSpec(
         harness=ACPAgent(model="phase9-test"),
         servers=(
-            ServerBinding(server=StdioServer(name="required", command="fixture"), alias="required"),
+            ServerBinding(
+                server=StdioServer(name="required", command="fixture"), alias="required"
+            ),
             ServerBinding(
                 server=StdioServer(name="optional", command="fixture-optional"),
                 alias="optional",
@@ -84,7 +87,9 @@ async def test_startup_cancellation_reaps_adapter_and_loopback_manager_once() ->
         session = kit.agent_session(
             _spec(),
             adapter=adapter,
-            runtime_servers=(InProcessServer(name="loopback", factory=_loopback_server),),
+            runtime_servers=(
+                InProcessServer(name="loopback", factory=_loopback_server),
+            ),
         )
         entering = asyncio.create_task(session.__aenter__())
         await adapter.started.wait()
@@ -96,7 +101,7 @@ async def test_startup_cancellation_reaps_adapter_and_loopback_manager_once() ->
             assert adapter.close_count == 1
             assert session._server_manager.snapshot().evidence.closed is True
             assert session._closed is True
-            with pytest.raises(Exception):
+            with pytest.raises(KitClosed):
                 await session.send("after-cancel")
         finally:
             await asyncio.wait_for(session.aclose(), timeout=2)
@@ -130,7 +135,9 @@ async def test_close_during_startup_has_no_late_enter_or_duplicate_cleanup() -> 
 
 @pytest.mark.asyncio
 async def test_repeated_startup_cancel_races_leave_no_tasks_or_open_managers() -> None:
-    baseline = {task for task in asyncio.all_tasks() if task is not asyncio.current_task()}
+    baseline = {
+        task for task in asyncio.all_tasks() if task is not asyncio.current_task()
+    }
     async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
         for _ in range(12):
             adapter = _SlowStartupAdapter()
@@ -143,18 +150,24 @@ async def test_repeated_startup_cancel_races_leave_no_tasks_or_open_managers() -
             assert adapter.close_count == 1
             assert session._server_manager.snapshot().evidence.closed is True
         await asyncio.sleep(0)
-    remaining = {task for task in asyncio.all_tasks() if task is not asyncio.current_task()}
+    remaining = {
+        task for task in asyncio.all_tasks() if task is not asyncio.current_task()
+    }
     assert remaining == baseline
 
 
 @pytest.mark.asyncio
-async def test_fork_preserves_runtime_loopback_registration_and_fresh_identity() -> None:
+async def test_fork_preserves_runtime_loopback_registration_and_fresh_identity() -> (
+    None
+):
     source_adapter = DeterministicHarnessAdapter()
     runtime_server = InProcessServer(name="loopback", factory=_loopback_server)
     # Public construction is required for the runtime-only registration; use
     # the kit session so the source manager is the one being forked.
     async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
-        source = kit.agent_session(_spec(), adapter=source_adapter, runtime_servers=(runtime_server,))
+        source = kit.agent_session(
+            _spec(), adapter=source_adapter, runtime_servers=(runtime_server,)
+        )
         async with source:
             await source.send("source")
         request = SessionForkRequest(
@@ -163,7 +176,9 @@ async def test_fork_preserves_runtime_loopback_registration_and_fresh_identity()
             source_turn_id=source.result.turns[0].snapshot.turn_id,
         )
         child_adapter = DeterministicHarnessAdapter()
-        child = await source.fork(request, adapter_factory=lambda _spec, _provenance: child_adapter)
+        child = await source.fork(
+            request, adapter_factory=lambda _spec, _provenance: child_adapter
+        )
         async with child:
             await child.send("replay")
 
@@ -183,7 +198,13 @@ class _ToolEvidenceAdapter:
     async def start(self, _spec: AgentSpec) -> None:
         return None
 
-    async def send(self, message: UserMessage, *, timeout: float | None = None, metadata: Mapping[str, object] | None = None) -> AdapterTurn:
+    async def send(
+        self,
+        message: UserMessage,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> AdapterTurn:
         del timeout, metadata
         failed = self._outcomes[min(self._index, len(self._outcomes) - 1)]
         self._index += 1
@@ -199,9 +220,15 @@ class _ToolEvidenceAdapter:
 
 @pytest.mark.asyncio
 async def test_agent_trace_contains_turn_tool_evidence_and_activity_health() -> None:
-    spec = _spec().model_copy(update={"message": UserMessage(content=(TextContent(text="run"),))})
-    registry = HarnessAdapterRegistry({"acp": lambda _harness: _ToolEvidenceAdapter((False,))})
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry) as kit:
+    spec = _spec().model_copy(
+        update={"message": UserMessage(content=(TextContent(text="run"),))}
+    )
+    registry = HarnessAdapterRegistry(
+        {"acp": lambda _harness: _ToolEvidenceAdapter((False,))}
+    )
+    async with AsyncMCPTestKit(
+        env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+    ) as kit:
         result = await kit.run(spec)
 
     assert result.activity_health is ActivityHealth.ALL_SUCCEEDED

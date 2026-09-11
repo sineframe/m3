@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import sqlite3
 import asyncio
 import json
+import sqlite3
 from datetime import datetime, timezone
 
-from mcp_pal import MCPTestKit
-from mcp_pal import EvaluationQuery
+from mcp_pal import EvaluationQuery, MCPTestKit
 from mcp_pal.evaluations import EvaluationRunner
 from mcp_pal.storage.sqlite import SQLiteExecutionStore
 from mcp_pal.types import (
-    EvaluationDecision,
     EvaluationContext,
+    EvaluationDecision,
     EvaluationId,
     EvaluationResult,
     EvaluationStatus,
@@ -80,22 +79,29 @@ def test_existing_evaluation_schema_is_migrated_before_indexes(tmp_path) -> None
     store = SQLiteExecutionStore(database)
     store.close()
     connection = sqlite3.connect(database)
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(v2_evaluations)")}
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(v2_evaluations)")
+    }
     connection.close()
     assert {"evaluator_name", "status", "score", "run_id"} <= columns
     connection = sqlite3.connect(database)
-    execution_columns = {row[1] for row in connection.execute("PRAGMA table_info(v2_executions)")}
+    execution_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(v2_executions)")
+    }
     connection.close()
     assert "deleted_at" in execution_columns
 
 
-def test_legacy_evaluation_row_is_backfilled_and_malformed_row_is_skipped(tmp_path) -> None:
+def test_legacy_evaluation_row_is_backfilled_and_malformed_row_is_skipped(
+    tmp_path,
+) -> None:
     database = tmp_path / "legacy-row.sqlite"
     store = SQLiteExecutionStore(database)
     execution_id = ExecutionId("legacy-execution")
     store.create(_snapshot("legacy-execution"), run_id="legacy-run")
     legacy = EvaluationResult(
-        evaluation_id=EvaluationId("legacy-evaluation"), name="legacy.v1",
+        evaluation_id=EvaluationId("legacy-evaluation"),
+        name="legacy.v1",
         status=EvaluationStatus.PASSED,
         context=EvaluationContext(execution_id=execution_id, subject={"answer": "ok"}),
     )
@@ -104,15 +110,32 @@ def test_legacy_evaluation_row_is_backfilled_and_malformed_row_is_skipped(tmp_pa
     connection.execute(
         "INSERT INTO v2_evaluations(id,execution_id,turn_id,result_json,created_at,evaluator_name,status,score,run_id) "
         "VALUES(?,?,?,?,?,?,?,?,?)",
-        ("legacy-evaluation", "legacy-execution", None,
-         json.dumps(legacy.model_dump(mode="json")),
-         datetime.now(timezone.utc).isoformat(), None, None, None, None),
+        (
+            "legacy-evaluation",
+            "legacy-execution",
+            None,
+            json.dumps(legacy.model_dump(mode="json")),
+            datetime.now(timezone.utc).isoformat(),
+            None,
+            None,
+            None,
+            None,
+        ),
     )
     connection.execute(
         "INSERT INTO v2_evaluations(id,execution_id,turn_id,result_json,created_at,evaluator_name,status,score,run_id) "
         "VALUES(?,?,?,?,?,?,?,?,?)",
-        ("malformed-evaluation", "legacy-execution", None, "not-json",
-         datetime.now(timezone.utc).isoformat(), None, None, None, None),
+        (
+            "malformed-evaluation",
+            "legacy-execution",
+            None,
+            "not-json",
+            datetime.now(timezone.utc).isoformat(),
+            None,
+            None,
+            None,
+            None,
+        ),
     )
     connection.commit()
     connection.close()
@@ -123,16 +146,19 @@ def test_legacy_evaluation_row_is_backfilled_and_malformed_row_is_skipped(tmp_pa
         assert records[0].run_id.root == "legacy-run"
         assert records[0].subject_digest is not None
         assert "answer" not in repr(reopened.evaluation_json(execution_id)[0])
-        aggregate = reopened.aggregate_evaluations(EvaluationQuery(group_by=("evaluator",), filters={"evaluator": "legacy.v1"}))
+        aggregate = reopened.aggregate_evaluations(
+            EvaluationQuery(group_by=("evaluator",), filters={"evaluator": "legacy.v1"})
+        )
         assert aggregate.totals.trial_count == 1
     finally:
         reopened.close()
 
 
 def test_kit_run_id_is_stable_and_explicit_store_is_independent() -> None:
-    with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as first, MCPTestKit(
-        env={}, cwd="/tmp/mcp-pal-no-project"
-    ) as second:
+    with (
+        MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as first,
+        MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as second,
+    ):
         assert first.run_id != second.run_id
         from mcp_pal.types import RunId
 
@@ -150,7 +176,9 @@ def test_recorder_propagates_spec_run_id_into_snapshot(tmp_path) -> None:
     recorder = ExecutionTraceRecorder(
         store,
         "execution-run-id",
-        specification=_snapshot_spec().model_copy(update={"run_id": "spec-run"}).model_dump(mode="json"),
+        specification=_snapshot_spec()
+        .model_copy(update={"run_id": "spec-run"})
+        .model_dump(mode="json"),
     )
     assert store.get_snapshot(recorder.execution_id).run_id.root == "spec-run"
 
@@ -175,9 +203,17 @@ def test_builtins_use_redacted_mapping_view() -> None:
     )
     from mcp_pal.types import ExecutionResult
 
-    result = ExecutionResult(snapshot=completed, direct_result={"kind": "call_tool", "is_error": False})
-    assert runner.evaluate(result, "mcp_pal.execution.completed.v1").status is EvaluationStatus.PASSED
-    assert runner.evaluate(result.direct_result, "mcp_pal.tool_call.succeeded.v1").status is EvaluationStatus.PASSED
+    result = ExecutionResult(
+        snapshot=completed, direct_result={"kind": "call_tool", "is_error": False}
+    )
+    assert (
+        runner.evaluate(result, "mcp_pal.execution.completed.v1").status
+        is EvaluationStatus.PASSED
+    )
+    assert (
+        runner.evaluate(result.direct_result, "mcp_pal.tool_call.succeeded.v1").status
+        is EvaluationStatus.PASSED
+    )
 
 
 def test_async_user_llm_evaluator_uses_structured_decision_without_network() -> None:
@@ -193,7 +229,9 @@ def test_async_user_llm_evaluator_uses_structured_decision_without_network() -> 
     async def run():
         runner = EvaluationRunner()
         runner.register("project.user-llm-evaluator.v1", evaluate_with_llm)
-        return await runner.evaluate_async({"answer": "correct"}, "project.user-llm-evaluator.v1")
+        return await runner.evaluate_async(
+            {"answer": "correct"}, "project.user-llm-evaluator.v1"
+        )
 
     result = asyncio.run(run())
     assert result.status is EvaluationStatus.PASSED
@@ -207,11 +245,21 @@ def test_tool_matrix_trials_have_stable_ids_and_reserved_metadata() -> None:
     server = StdioServer(name="server", command="server")
     matrix = ToolMatrix(
         id="quality-matrix",
-        servers=(ServerCase(name="server", server=server, tools=(ToolCase(name="echo", arguments={}),)),),
+        servers=(
+            ServerCase(
+                name="server",
+                server=server,
+                tools=(ToolCase(name="echo", arguments={}),),
+            ),
+        ),
         trials=3,
     )
     cases = matrix.cases()
-    assert [case.id for case in cases] == ["server/echo/trial-1", "server/echo/trial-2", "server/echo/trial-3"]
+    assert [case.id for case in cases] == [
+        "server/echo/trial-1",
+        "server/echo/trial-2",
+        "server/echo/trial-3",
+    ]
     assert {case.matrix_id for case in cases} == {"quality-matrix"}
     assert [case.trial for case in cases] == [1, 2, 3]
     assert cases[0]._metadata(None)["mcp_pal.matrix.cell_id"] == "server/echo"
@@ -223,8 +271,15 @@ def test_direct_trace_bridge_persists_one_terminal_event_and_binding(tmp_path) -
 
     store = SQLiteExecutionStore(tmp_path / "direct.sqlite")
     bridge = DirectTraceBridge(
-        store=store, server_binding="configured-server", run_id="run-direct",
-        server_bindings=({"alias": "configured-server", "server": {"kind": "stdio", "name": "server", "command": "server"}},),
+        store=store,
+        server_binding="configured-server",
+        run_id="run-direct",
+        server_bindings=(
+            {
+                "alias": "configured-server",
+                "server": {"kind": "stdio", "name": "server", "command": "server"},
+            },
+        ),
     )
     bridge.record_transport_connected(TransportKind.STDIO)
     bridge.finalize(ExecutionOutcome.COMPLETED)

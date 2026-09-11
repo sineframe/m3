@@ -7,14 +7,14 @@ import threading
 
 import pytest
 from mcp.server.lowlevel import Server
-from mcp.types import CallToolResult as MCPCallToolResult, ListToolsResult
+from mcp.types import CallToolResult as MCPCallToolResult
+from mcp.types import ListToolsResult
 
+from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.errors import OperationCancelled, UnsupportedFeature
 from mcp_pal.harness import HarnessAdapterRegistry, HarnessStartupError
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.sync_api import DirectClient, MCPTestKit
-from mcp_pal.sync_api import _adapt_callback
 from mcp_pal.storage import InMemoryExecutionStore
+from mcp_pal.sync_api import DirectClient, MCPTestKit, _adapt_callback
 from mcp_pal.types import (
     AgentSpec,
     ClaudeCode,
@@ -60,7 +60,9 @@ def test_sync_direct_uses_typed_results_and_final_trace() -> None:
     kit.close()
 
 
-def test_sync_direct_does_not_expose_async_client_and_matches_supported_surface() -> None:
+def test_sync_direct_does_not_expose_async_client_and_matches_supported_surface() -> (
+    None
+):
     from mcp_pal.async_api import AsyncDirectClient
 
     expected = {
@@ -88,7 +90,9 @@ def test_nested_and_repeated_sync_kit_lifecycles_leave_no_portal_threads() -> No
         with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
             with kit as nested:
                 assert nested is kit
-                with kit.direct(InProcessServer(name="fixture", factory=_server)) as client:
+                with kit.direct(
+                    InProcessServer(name="fixture", factory=_server)
+                ) as client:
                     assert client.ping().raw is not None
     lingering = {
         thread.ident

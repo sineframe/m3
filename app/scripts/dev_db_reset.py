@@ -22,13 +22,17 @@ def _configured_path(root: Path) -> Path:
     path = Path(raw).expanduser()
     # Resolve ``..`` lexically, but never follow symlinks.  Following a
     # symlink here would make a path that looks app-owned delete its target.
-    candidate = Path(os.path.abspath(os.fspath(path if path.is_absolute() else root / path)))
+    candidate = Path(
+        os.path.abspath(os.fspath(path if path.is_absolute() else root / path))
+    )
     # Development reset must never be pointed at a user home, root, or an
     # arbitrary outside path through an environment variable.
     try:
         relative = candidate.relative_to(root)
     except ValueError as exc:
-        raise ValueError("database path is outside the repository development location") from exc
+        raise ValueError(
+            "database path is outside the repository development location"
+        ) from exc
     # Reject symlinks in the configured path, including a dangling final
     # symlink.  This is both clearer for callers and closes the reset-time
     # symlink-to-another-app attack.
@@ -53,7 +57,11 @@ def main(argv: list[str] | None = None) -> int:
     # The environment form is the documented recipe interface.  Extra
     # positional arguments must not be silently ignored when confirmation is
     # read from the environment.
-    confirmation = (os.environ.get("CONFIRM") if not args else None) if argv is None else (args[0] if len(args) == 1 else None)
+    confirmation = (
+        (os.environ.get("CONFIRM") if not args else None)
+        if argv is None
+        else (args[0] if len(args) == 1 else None)
+    )
     if confirmation != "reset":
         print("refusing database reset: use CONFIRM=reset", file=sys.stderr)
         return 2
@@ -68,14 +76,20 @@ def main(argv: list[str] | None = None) -> int:
         # Sidecars are exact siblings, never a glob or recursive target.
         if os.path.lexists(candidate):
             if candidate.is_symlink() or not candidate.is_file():
-                print("refusing database reset: database or sidecar is not a regular file", file=sys.stderr)
+                print(
+                    "refusing database reset: database or sidecar is not a regular file",
+                    file=sys.stderr,
+                )
                 return 2
             try:
                 candidate.unlink()
             except OSError:
                 # Keep the helper's failure surface value-free and avoid a
                 # traceback containing a user-controlled path.
-                print("refusing database reset: database file could not be removed", file=sys.stderr)
+                print(
+                    "refusing database reset: database file could not be removed",
+                    file=sys.stderr,
+                )
                 return 2
             removed.append(str(candidate))
     print(f"removed {len(removed)} development database file(s): {database}")

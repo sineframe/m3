@@ -9,19 +9,26 @@ model; adapters may report argument evidence separately for later evaluation.
 
 from __future__ import annotations
 
+from collections.abc import Callable as _Callable
 from collections.abc import Iterable as _Iterable
-from typing import Callable as _Callable
+
+from pydantic import Field as _Field
+from pydantic import field_validator as _field_validator
 
 from .errors import UnsupportedFeature as _UnsupportedFeature
+from .types import FrozenModel as _FrozenModel
 from .types import (
     FullToolPolicy as _FullToolPolicy,
+)
+from .types import (
     NativeToolPolicy as _NativeToolPolicy,
+)
+from .types import (
     RestrictiveToolPolicy as _RestrictiveToolPolicy,
+)
+from .types import (
     ToolPolicy as _ToolPolicy,
 )
-from pydantic import Field as _Field, field_validator as _field_validator
-
-from .types import FrozenModel as _FrozenModel
 
 
 class ToolDescriptor(_FrozenModel):
@@ -153,11 +160,15 @@ class ToolPolicyEvaluator:
         harness_name: str,
         supports_enforcement: bool,
     ) -> ToolPolicyEvidence:
-        if not isinstance(policy, (_RestrictiveToolPolicy, _FullToolPolicy, _NativeToolPolicy)):
+        if not isinstance(
+            policy, (_RestrictiveToolPolicy, _FullToolPolicy, _NativeToolPolicy)
+        ):
             raise _UnsupportedFeature("tool policy is unsupported")
         if isinstance(policy, _NativeToolPolicy):
             if policy.harness != harness_name:
-                raise _UnsupportedFeature("native tool policy targets a different harness")
+                raise _UnsupportedFeature(
+                    "native tool policy targets a different harness"
+                )
             return ToolPolicyEvidence(
                 requested="native",
                 enforced="native",
@@ -166,9 +177,13 @@ class ToolPolicyEvaluator:
                 nonportable_reason=policy.nonportable_reason,
             )
         if not supports_enforcement:
-            raise _UnsupportedFeature("harness cannot enforce the requested portable tool policy")
+            raise _UnsupportedFeature(
+                "harness cannot enforce the requested portable tool policy"
+            )
         kind = "full" if isinstance(policy, _FullToolPolicy) else "restrictive"
-        return ToolPolicyEvidence(requested=kind, enforced="portable", observed="preflight")
+        return ToolPolicyEvidence(
+            requested=kind, enforced="portable", observed="preflight"
+        )
 
     def decide(
         self,
@@ -205,9 +220,13 @@ class ToolPolicyEvaluator:
                 confirm=confirm,
             )
         try:
-            denied = any(_matches(value, descriptor, duplicates=self._duplicates) for value in policy.denied_tools)
+            denied = any(
+                _matches(value, descriptor, duplicates=self._duplicates)
+                for value in policy.denied_tools
+            )
             allowed = bool(policy.allowed_tools) and any(
-                _matches(value, descriptor, duplicates=self._duplicates) for value in policy.allowed_tools
+                _matches(value, descriptor, duplicates=self._duplicates)
+                for value in policy.allowed_tools
             )
         except (TypeError, ValueError):
             # Malformed policy entries must not accidentally turn into an
@@ -217,7 +236,9 @@ class ToolPolicyEvaluator:
             descriptor,
             evidence,
             allowed=allowed and not denied,
-            reason="tool denied by restrictive policy" if denied or not allowed else "allowed",
+            reason="tool denied by restrictive policy"
+            if denied or not allowed
+            else "allowed",
             confirm=confirm,
         )
 
@@ -238,4 +259,11 @@ def evaluate_tool_policy(
     )
 
 
-__all__ = ["ConfirmationHook", "ToolDescriptor", "ToolPolicyDecision", "ToolPolicyEvidence", "ToolPolicyEvaluator", "evaluate_tool_policy"]
+__all__ = [  # noqa: RUF022 - public API order is compatibility-checked
+    "ConfirmationHook",
+    "ToolDescriptor",
+    "ToolPolicyDecision",
+    "ToolPolicyEvidence",
+    "ToolPolicyEvaluator",
+    "evaluate_tool_policy",
+]

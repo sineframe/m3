@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import ast
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
-
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
 _PLAN = _REPOSITORY_ROOT / "plans" / "python-testing-sdk-v0.2-remediation.md"
@@ -87,7 +86,9 @@ def test_manifest_matches_section_7_findings() -> None:
         if entry["status"] == "planned":
             assert isinstance(regression, dict)
             assert regression["exists"] is False
-            assert not (_REPOSITORY_ROOT / regression["path"].split("::", 1)[0]).exists()
+            assert not (
+                _REPOSITORY_ROOT / regression["path"].split("::", 1)[0]
+            ).exists()
         else:
             assert isinstance(regression, str)
             _node_exists(regression)
@@ -96,7 +97,9 @@ def test_manifest_matches_section_7_findings() -> None:
     assert not strict_xfails
     for entry in strict_xfails:
         decorators = _function_decorators(entry["regression"])
-        xfail = tuple(item for item in decorators if item.startswith("pytest.mark.xfail"))
+        xfail = tuple(
+            item for item in decorators if item.startswith("pytest.mark.xfail")
+        )
         assert len(xfail) == 1, entry["regression"]
         assert re.search(r"\bstrict\s*=\s*True\b", xfail[0]), entry["regression"]
 

@@ -8,7 +8,9 @@ from pathlib import Path
 
 
 def probe_agent(path: Path, behavior: str = "ok") -> str:
-    path.write_text("#!/usr/bin/env python3\n" + textwrap.dedent(f'''\
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        + textwrap.dedent(f"""\
         import json, re, subprocess, sys
         from urllib.request import Request, build_opener, ProxyHandler
         from urllib.parse import urlsplit, urlunsplit
@@ -66,6 +68,7 @@ def probe_agent(path: Path, behavior: str = "ok") -> str:
                 for chunk in chunks: send({{"jsonrpc":"2.0", "method":"session/update", "params":{{"sessionId":"probe-session", "update":{{"sessionUpdate":"agent_message_chunk", "content":{{"type":"text", "text":chunk}}}}}}}})
                 stop = "max_tokens" if behavior == "wrong_stop" else "end_turn"
                 send({{"jsonrpc":"2.0", "id":ident, "result":{{"stopReason":stop}}}})
-'''))
+""")
+    )
     path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
     return str(path)

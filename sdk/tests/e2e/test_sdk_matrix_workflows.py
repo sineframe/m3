@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,7 +20,6 @@ from mcp_pal.types import (
     StdioServer,
     TurnOutcome,
 )
-
 
 pytestmark = [pytest.mark.e2e, pytest.mark.process_lifecycle]
 
@@ -68,16 +67,17 @@ def _full_policy(kind: str, server: str) -> FullToolPolicy:
     return FullToolPolicy(acknowledge_risk=True)
 
 
-def _tool_policy(
-    kind: str, server: str, tool: str
-) -> RestrictiveToolPolicy:
+def _tool_policy(kind: str, server: str, tool: str) -> RestrictiveToolPolicy:
     assert kind == "acp"
     return RestrictiveToolPolicy(allowed_tools=(f"{server}:{tool}",))
 
 
 def _prompt(
-    *, server: str | None = None, tool: str | None = None,
-    arguments: dict[str, Any] | None = None, query: str | None = None,
+    *,
+    server: str | None = None,
+    tool: str | None = None,
+    arguments: dict[str, Any] | None = None,
+    query: str | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -109,12 +109,10 @@ def _tool_observations(marker: Path) -> list[dict[str, Any]]:
 def test_server_by_harness_search_matrix_calls_a_discovered_tool(
     tmp_path: Path, server_name: str, harness_kind: str
 ) -> None:
-    """N×M: each harness receives one server and chooses from its tool list."""
+    """NxM: each harness receives one server and chooses from its tool list."""
 
     marker = tmp_path / f"{server_name}-{harness_kind}.jsonl"
-    binding = ServerBinding(
-        server=_server(server_name, marker), alias=server_name
-    )
+    binding = ServerBinding(server=_server(server_name, marker), alias=server_name)
     spec = AgentSpec(
         harness=_harness(harness_kind),
         servers=(binding,),
@@ -144,8 +142,7 @@ def test_each_harness_can_use_all_servers_in_one_multiturn_session(
     """M executions: each harness receives all N servers in one session."""
 
     markers = {
-        name: tmp_path / f"all-{harness_kind}-{name}.jsonl"
-        for name in _SERVER_NAMES
+        name: tmp_path / f"all-{harness_kind}-{name}.jsonl" for name in _SERVER_NAMES
     }
     bindings = tuple(
         ServerBinding(server=_server(name, markers[name]), alias=name)
@@ -195,7 +192,7 @@ def test_deterministic_server_by_tool_matrix(
     arguments: dict[str, Any],
     is_error: bool,
 ) -> None:
-    """N×T: direct calls give deterministic MCP contract coverage."""
+    """NxT: direct calls give deterministic MCP contract coverage."""
 
     marker = tmp_path / f"direct-{server_name}-{tool}.jsonl"
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
@@ -225,15 +222,13 @@ def test_server_by_tool_by_harness_matrix(
     is_error: bool,
     harness_kind: str,
 ) -> None:
-    """N×T×M: every harness is asked to invoke every server tool."""
+    """NxTxM: every harness is asked to invoke every server tool."""
 
     marker = tmp_path / f"full-{server_name}-{tool}-{harness_kind}.jsonl"
     spec = AgentSpec(
         harness=_harness(harness_kind),
         servers=(
-            ServerBinding(
-                server=_server(server_name, marker), alias=server_name
-            ),
+            ServerBinding(server=_server(server_name, marker), alias=server_name),
         ),
         tool_policy=_tool_policy(harness_kind, server_name, tool),
     )

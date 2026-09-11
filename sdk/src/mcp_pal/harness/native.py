@@ -11,17 +11,22 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from ..errors import CleanupError
 from ..types import ErrorCode, ErrorInfo, SecretReference
-from .contracts import HarnessAdapterCapabilities, HarnessLaunch, HarnessSessionSnapshot, HarnessStartupError, HarnessTurnResult
-
+from .contracts import (
+    HarnessAdapterCapabilities,
+    HarnessLaunch,
+    HarnessSessionSnapshot,
+    HarnessStartupError,
+    HarnessTurnResult,
+)
 
 MAX_FRAME_BYTES = 1024 * 1024
 MAX_STDERR_BYTES = 256 * 1024
@@ -35,7 +40,9 @@ def _executable(value: str | None, default: str) -> str:
     return candidate
 
 
-def _isolated_environment(root: Path, explicit: Mapping[str, str] | None) -> dict[str, str]:
+def _isolated_environment(
+    root: Path, explicit: Mapping[str, str] | None
+) -> dict[str, str]:
     """Build an isolated deterministic environment with explicit overrides."""
 
     environment = {
@@ -103,7 +110,11 @@ def _resolve_runtime_value(
         if end < 0:
             break
         name = output[begin + 2 : end]
-        if not name or any(character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_" for character in name):
+        if not name or any(
+            character
+            not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+            for character in name
+        ):
             raise HarnessStartupError("MCP configuration reference is invalid")
         resolved = (
             environment.get(name) if environment is not None else None
@@ -117,8 +128,18 @@ def _resolve_runtime_value(
     return output
 
 
-def _resolved_config_values(values: Mapping[str, Any], *, secrets: set[str] | None = None, environment: Mapping[str, str] | None = None) -> dict[str, str]:
-    return {str(key): _resolve_runtime_value(value, secrets=secrets, environment=environment) for key, value in values.items()}
+def _resolved_config_values(
+    values: Mapping[str, Any],
+    *,
+    secrets: set[str] | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    return {
+        str(key): _resolve_runtime_value(
+            value, secrets=secrets, environment=environment
+        )
+        for key, value in values.items()
+    }
 
 
 def _server_configuration(
@@ -149,7 +170,9 @@ def _server_configuration(
                 "command": config.command,
                 "args": list(config.args),
                 "env": (
-                    _resolved_config_values(config.environment, secrets=secrets, environment=environment)
+                    _resolved_config_values(
+                        config.environment, secrets=secrets, environment=environment
+                    )
                     if resolve_credentials
                     else _redact_config_values(config.environment)
                 ),
@@ -162,12 +185,16 @@ def _server_configuration(
             servers[config.key] = {
                 "type": "sse" if config.transport.value == "sse" else "http",
                 "url": (
-                    _resolve_runtime_value(config.endpoint, secrets=secrets, environment=environment)
+                    _resolve_runtime_value(
+                        config.endpoint, secrets=secrets, environment=environment
+                    )
                     if resolve_credentials
                     else config.endpoint
                 ),
                 "headers": (
-                    _resolved_config_values(config.headers, secrets=secrets, environment=environment)
+                    _resolved_config_values(
+                        config.headers, secrets=secrets, environment=environment
+                    )
                     if resolve_credentials
                     else _redact_config_values(config.headers)
                 ),
@@ -183,7 +210,16 @@ def _redact_config_values(values: Mapping[str, Any]) -> dict[str, Any]:
         lowered = str(key).replace("-", "_").lower()
         sensitive = any(
             marker in lowered
-            for marker in ("token", "secret", "password", "credential", "authorization", "api_key", "apikey", "cookie")
+            for marker in (
+                "token",
+                "secret",
+                "password",
+                "credential",
+                "authorization",
+                "api_key",
+                "apikey",
+                "cookie",
+            )
         )
         result[str(key)] = "[REDACTED]" if sensitive else value
     return result
@@ -203,7 +239,9 @@ def _text(value: Any) -> str:
     return ""
 
 
-async def read_bounded_line(stream: asyncio.StreamReader, *, maximum: int = MAX_FRAME_BYTES) -> bytes | None:
+async def read_bounded_line(
+    stream: asyncio.StreamReader, *, maximum: int = MAX_FRAME_BYTES
+) -> bytes | None:
     """Read one line without allowing an unterminated frame to grow unbounded."""
     try:
         line = await stream.readline()
@@ -237,7 +275,9 @@ async def drain_bounded(stream: Any, *, maximum: int = MAX_STDERR_BYTES) -> byte
             retained.extend(chunk[: maximum - len(retained)])
 
 
-async def discard_bounded(stream: asyncio.StreamReader, *, maximum: int = MAX_STDERR_BYTES) -> None:
+async def discard_bounded(
+    stream: asyncio.StreamReader, *, maximum: int = MAX_STDERR_BYTES
+) -> None:
     """Drain diagnostics to EOF without retaining them."""
 
     await drain_bounded(stream, maximum=maximum)
@@ -380,7 +420,9 @@ class ProcessOwner:
             await self.terminate()
             if self.stderr_task is not None:
                 try:
-                    await asyncio.wait_for(asyncio.shield(self.stderr_task), timeout=1.0)
+                    await asyncio.wait_for(
+                        asyncio.shield(self.stderr_task), timeout=1.0
+                    )
                 except asyncio.TimeoutError:
                     # An unowned descendant can retain an inherited pipe even
                     # after safe group cleanup refuses to signal it.
@@ -498,7 +540,9 @@ def write_config(
 def workspace_for_launch(launch: HarnessLaunch, control_root: Path) -> Path:
     """Resolve the harness cwd without conflating it with control storage."""
 
-    candidate = control_root if launch.workspace_root is None else Path(launch.workspace_root)
+    candidate = (
+        control_root if launch.workspace_root is None else Path(launch.workspace_root)
+    )
     try:
         resolved = candidate.resolve(strict=True)
     except OSError:
@@ -508,35 +552,41 @@ def workspace_for_launch(launch: HarnessLaunch, control_root: Path) -> Path:
     return resolved
 
 
-def result_from_output(sequence: int, output: Mapping[str, Any], response_text: str = "") -> HarnessTurnResult:
+def result_from_output(
+    sequence: int, output: Mapping[str, Any], response_text: str = ""
+) -> HarnessTurnResult:
     is_error = bool(output.get("is_error", output.get("isError", False)))
     return HarnessTurnResult(
         sequence=sequence,
         status="failed" if is_error else "completed",
         response=None,
-        error=None if not is_error else ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="harness turn failed"),
+        error=None
+        if not is_error
+        else ErrorInfo(code=ErrorCode.TRANSPORT_ERROR, message="harness turn failed"),
         evidence={"usage_observed": bool("usage" in output)},
-        tool_calls=tuple(item for item in output.get("tool_calls", ()) if isinstance(item, Mapping)),
+        tool_calls=tuple(
+            item for item in output.get("tool_calls", ()) if isinstance(item, Mapping)
+        ),
     )
 
 
 __all__ = [
+    "MAX_FRAME_BYTES",
+    "MAX_QUEUE_ITEMS",
+    "MAX_STDERR_BYTES",
     "NativeSessionBase",
     "ProcessOwner",
     "_executable",
     "_isolated_environment",
-    "_server_configuration",
     "_resolve_runtime_value",
     "_resolved_config_values",
+    "_server_configuration",
     "_text",
-    "MAX_FRAME_BYTES",
-    "MAX_QUEUE_ITEMS",
-    "MAX_STDERR_BYTES",
-    "drain_bounded",
     "discard_bounded",
-    "read_bounded_line",
+    "drain_bounded",
     "probe_help",
+    "read_bounded_line",
     "result_from_output",
-    "write_config",
     "workspace_for_launch",
+    "write_config",
 ]

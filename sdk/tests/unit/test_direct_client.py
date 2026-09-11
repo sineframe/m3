@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from collections.abc import Mapping as ABCMapping
+from typing import Any, cast
+
 import pytest
 from mcp import types
-from typing import Any, Mapping, cast
 
 from mcp_pal.direct_client import (
     AsyncDirectClient,
@@ -18,11 +20,26 @@ from mcp_pal.direct_client import (
     ToolCallResult,
     create_client_session,
 )
-from mcp_pal.errors import ModelValidationError, OperationCancelled, OperationTimeout, ProtocolError, TransportError, UnsupportedFeature
+from mcp_pal.errors import (
+    ModelValidationError,
+    OperationCancelled,
+    OperationTimeout,
+    ProtocolError,
+    TransportError,
+    UnsupportedFeature,
+)
 from mcp_pal.trace.redaction import RedactionConfig
 
 
-def _client(session: object, *, validate_schemas: bool = False, timeout: float = 30.0, evidence_provider: Any = None, event_hook: Any = None, redaction_config: RedactionConfig | None = None) -> AsyncDirectClient:
+def _client(
+    session: object,
+    *,
+    validate_schemas: bool = False,
+    timeout: float = 30.0,
+    evidence_provider: Any = None,
+    event_hook: Any = None,
+    redaction_config: RedactionConfig | None = None,
+) -> AsyncDirectClient:
     return AsyncDirectClient(
         cast(Any, session),
         validate_schemas=validate_schemas,
@@ -33,12 +50,16 @@ def _client(session: object, *, validate_schemas: bool = False, timeout: float =
     )
 
 
-def test_official_session_factory_preserves_constructor_callback_options(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_official_session_factory_preserves_constructor_callback_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import mcp
 
     sampling = object()
     elicitation = object()
-    options = ClientSessionOptions(sampling_callback=sampling, elicitation_callback=elicitation)
+    options = ClientSessionOptions(
+        sampling_callback=sampling, elicitation_callback=elicitation
+    )
     captured: dict[str, Any] = {}
 
     def factory(*args: Any, **kwargs: Any) -> object:
@@ -58,19 +79,25 @@ class FakeSession:
         self.tools_calls: list[str | None] = []
         self.fail_tools = False
         self.notifications: list[object] = []
-        self.completion_calls: list[tuple[object, dict[str, str], dict[str, str] | None]] = []
+        self.completion_calls: list[
+            tuple[object, dict[str, str], dict[str, str] | None]
+        ] = []
         self.subscribe_calls: list[tuple[str, dict[str, object]]] = []
         self.unsubscribe_calls: list[tuple[str, dict[str, object]]] = []
         self.ping_calls: list[dict[str, object]] = []
         self.logging_calls: list[tuple[object, dict[str, object]]] = []
-        self.progress_calls: list[tuple[str | int, float, float | None, str | None, dict[str, object]]] = []
+        self.progress_calls: list[
+            tuple[str | int, float, float | None, str | None, dict[str, object]]
+        ] = []
         self.roots_list_changed_count = 0
 
-    async def __aenter__(self) -> "FakeSession":
+    async def __aenter__(self) -> FakeSession:
         self.entered = True
         return self
 
-    async def __aexit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+    async def __aexit__(
+        self, exc_type: object, exc_value: object, traceback: object
+    ) -> None:
         self.closed = True
 
     async def initialize(self) -> types.InitializeResult:
@@ -88,42 +115,84 @@ class FakeSession:
             raise RuntimeError("secret=do-not-leak")
         if cursor is None:
             return types.ListToolsResult(
-                tools=[types.Tool(name="first", input_schema={"type": "object", "additionalProperties": False})],
+                tools=[
+                    types.Tool(
+                        name="first",
+                        input_schema={"type": "object", "additionalProperties": False},
+                    )
+                ],
                 next_cursor="page-2",
             )
-        return types.ListToolsResult(tools=[types.Tool(name="second", input_schema={"type": "object"})])
+        return types.ListToolsResult(
+            tools=[types.Tool(name="second", input_schema={"type": "object"})]
+        )
 
-    async def list_resources(self, *, params: object = None) -> types.ListResourcesResult:
-        return types.ListResourcesResult(resources=[types.Resource(name="doc", uri="memory://doc")])
+    async def list_resources(
+        self, *, params: object = None
+    ) -> types.ListResourcesResult:
+        return types.ListResourcesResult(
+            resources=[types.Resource(name="doc", uri="memory://doc")]
+        )
 
-    async def list_resource_templates(self, *, params: object = None) -> types.ListResourceTemplatesResult:
-        return types.ListResourceTemplatesResult(resource_templates=[types.ResourceTemplate(name="doc", uri_template="memory://{id}")])
+    async def list_resource_templates(
+        self, *, params: object = None
+    ) -> types.ListResourceTemplatesResult:
+        return types.ListResourceTemplatesResult(
+            resource_templates=[
+                types.ResourceTemplate(name="doc", uri_template="memory://{id}")
+            ]
+        )
 
-    async def read_resource(self, uri: str, **kwargs: object) -> types.ReadResourceResult:
-        return types.ReadResourceResult(contents=[types.TextResourceContents(uri=uri, text="hello")])
+    async def read_resource(
+        self, uri: str, **kwargs: object
+    ) -> types.ReadResourceResult:
+        return types.ReadResourceResult(
+            contents=[types.TextResourceContents(uri=uri, text="hello")]
+        )
 
     async def list_prompts(self, *, params: object = None) -> types.ListPromptsResult:
         return types.ListPromptsResult(prompts=[types.Prompt(name="greet")])
 
-    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None, **kwargs: object) -> types.GetPromptResult:
-        return types.GetPromptResult(messages=[types.PromptMessage(role="user", content=types.TextContent(text=name))])
+    async def get_prompt(
+        self, name: str, arguments: dict[str, str] | None = None, **kwargs: object
+    ) -> types.GetPromptResult:
+        return types.GetPromptResult(
+            messages=[
+                types.PromptMessage(role="user", content=types.TextContent(text=name))
+            ]
+        )
 
-    async def call_tool(self, name: str, arguments: dict[str, object] | None = None, **kwargs: object) -> types.CallToolResult:
+    async def call_tool(
+        self, name: str, arguments: dict[str, object] | None = None, **kwargs: object
+    ) -> types.CallToolResult:
         if name == "slow":
             await asyncio.sleep(1)
         if name == "bad":
-            return types.CallToolResult(content=[types.TextContent(text="failed")], is_error=True)
-        return types.CallToolResult(content=[types.TextContent(text="ok")], structured_content={"value": 3})
+            return types.CallToolResult(
+                content=[types.TextContent(text="failed")], is_error=True
+            )
+        return types.CallToolResult(
+            content=[types.TextContent(text="ok")], structured_content={"value": 3}
+        )
 
-    async def complete(self, reference: object, argument: dict[str, str], context_arguments: dict[str, str] | None = None) -> types.CompleteResult:
+    async def complete(
+        self,
+        reference: object,
+        argument: dict[str, str],
+        context_arguments: dict[str, str] | None = None,
+    ) -> types.CompleteResult:
         self.completion_calls.append((reference, argument, context_arguments))
-        return types.CompleteResult(completion=types.Completion(values=["one", "two"], total=2, has_more=False))
+        return types.CompleteResult(
+            completion=types.Completion(values=["one", "two"], total=2, has_more=False)
+        )
 
     async def subscribe_resource(self, uri: str, **kwargs: object) -> types.EmptyResult:
         self.subscribe_calls.append((uri, kwargs))
         return types.EmptyResult()
 
-    async def unsubscribe_resource(self, uri: str, **kwargs: object) -> types.EmptyResult:
+    async def unsubscribe_resource(
+        self, uri: str, **kwargs: object
+    ) -> types.EmptyResult:
         self.unsubscribe_calls.append((uri, kwargs))
         return types.EmptyResult()
 
@@ -131,11 +200,20 @@ class FakeSession:
         self.ping_calls.append(kwargs)
         return types.EmptyResult()
 
-    async def set_logging_level(self, level: object, **kwargs: object) -> types.EmptyResult:
+    async def set_logging_level(
+        self, level: object, **kwargs: object
+    ) -> types.EmptyResult:
         self.logging_calls.append((level, kwargs))
         return types.EmptyResult()
 
-    async def send_progress_notification(self, progress_token: str | int, progress: float, total: float | None = None, message: str | None = None, **kwargs: object) -> None:
+    async def send_progress_notification(
+        self,
+        progress_token: str | int,
+        progress: float,
+        total: float | None = None,
+        message: str | None = None,
+        **kwargs: object,
+    ) -> None:
         self.progress_calls.append((progress_token, progress, total, message, kwargs))
         return None
 
@@ -192,6 +270,7 @@ async def test_structural_input_and_output_validation() -> None:
     async with _client(session, validate_schemas=True) as client:
         with pytest.raises(ModelValidationError):
             await client.call_tool("first", {"unexpected": object()})
+
     class OutputSession(FakeSession):
         async def list_tools(self, *, params: object = None) -> types.ListToolsResult:
             return types.ListToolsResult(
@@ -212,7 +291,13 @@ async def test_structural_input_and_output_validation() -> None:
     class InvalidOutputSession(FakeSession):
         async def list_tools(self, *, params: object = None) -> types.ListToolsResult:
             return types.ListToolsResult(
-                tools=[types.Tool(name="first", input_schema={"type": "object"}, output_schema={"type": "string"})]
+                tools=[
+                    types.Tool(
+                        name="first",
+                        input_schema={"type": "object"},
+                        output_schema={"type": "string"},
+                    )
+                ]
             )
 
     async with _client(InvalidOutputSession(), validate_schemas=True) as client:
@@ -223,11 +308,24 @@ async def test_structural_input_and_output_validation() -> None:
     class MissingStructuredOutput(FakeSession):
         async def list_tools(self, *, params: object = None) -> types.ListToolsResult:
             return types.ListToolsResult(
-                tools=[types.Tool(name="first", input_schema={"type": "object"}, output_schema={"type": "object"})]
+                tools=[
+                    types.Tool(
+                        name="first",
+                        input_schema={"type": "object"},
+                        output_schema={"type": "object"},
+                    )
+                ]
             )
 
-        async def call_tool(self, name: str, arguments: dict[str, object] | None = None, **kwargs: object) -> types.CallToolResult:
-            return types.CallToolResult(content=[types.TextContent(text="only unstructured")])
+        async def call_tool(
+            self,
+            name: str,
+            arguments: dict[str, object] | None = None,
+            **kwargs: object,
+        ) -> types.CallToolResult:
+            return types.CallToolResult(
+                content=[types.TextContent(text="only unstructured")]
+            )
 
     async with _client(MissingStructuredOutput(), validate_schemas=True) as client:
         with pytest.raises(ModelValidationError) as error:
@@ -259,13 +357,17 @@ async def test_repeated_pagination_cursor_is_protocol_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_completion_subscriptions_ping_logging_and_notifications_use_official_methods() -> None:
+async def test_completion_subscriptions_ping_logging_and_notifications_use_official_methods() -> (
+    None
+):
     session = FakeSession()
     reference = types.PromptReference(name="greet")
     context_arguments = {"language": "en"}
     notification = types.InitializedNotification()
     async with _client(session) as client:
-        completion = await client.complete(reference, {"argument": "a"}, context_arguments)
+        completion = await client.complete(
+            reference, {"argument": "a"}, context_arguments
+        )
         await client.subscribe_resource("memory://doc", meta={"trace": "subscribe"})
         await client.unsubscribe_resource("memory://doc", meta={"trace": "unsubscribe"})
         await client.ping()
@@ -274,9 +376,15 @@ async def test_completion_subscriptions_ping_logging_and_notifications_use_offic
         await client.send_notification(notification)
         await client.send_roots_list_changed()
     assert completion.values == ("one", "two")
-    assert session.completion_calls == [(reference, {"argument": "a"}, context_arguments)]
-    assert session.subscribe_calls == [("memory://doc", {"meta": {"trace": "subscribe"}})]
-    assert session.unsubscribe_calls == [("memory://doc", {"meta": {"trace": "unsubscribe"}})]
+    assert session.completion_calls == [
+        (reference, {"argument": "a"}, context_arguments)
+    ]
+    assert session.subscribe_calls == [
+        ("memory://doc", {"meta": {"trace": "subscribe"}})
+    ]
+    assert session.unsubscribe_calls == [
+        ("memory://doc", {"meta": {"trace": "unsubscribe"}})
+    ]
     assert len(session.ping_calls) == 1
     assert session.logging_calls == [("info", {"meta": None})]
     assert session.progress_calls == [("token", 0.5, 1.0, "half", {"meta": None})]
@@ -285,7 +393,9 @@ async def test_completion_subscriptions_ping_logging_and_notifications_use_offic
 
 
 @pytest.mark.asyncio
-async def test_callback_registration_is_explicitly_unsupported_after_session_creation() -> None:
+async def test_callback_registration_is_explicitly_unsupported_after_session_creation() -> (
+    None
+):
     async with _client(FakeSession()) as client:
         with pytest.raises(UnsupportedFeature):
             client.register_callbacks(sampling=lambda: None)
@@ -332,25 +442,37 @@ async def test_transport_errors_are_typed_and_provider_evidence_is_hooked() -> N
             return {"raw_evidence_ref": {"evidence_id": f"{operation}-{phase}"}}
 
     events: list[DirectOperationEvent] = []
-    async with _client(BrokenSession(), evidence_provider=Evidence(), event_hook=events.append) as client:
+    async with _client(
+        BrokenSession(), evidence_provider=Evidence(), event_hook=events.append
+    ) as client:
         with pytest.raises(TransportError) as error:
             await client.ping()
     assert "socket-secret" not in str(error.value)
     assert error.value.details["partial_evidence"]["captured"] is True
-    assert [getattr(event, "phase") for event in events if getattr(event, "operation") == "ping"] == ["started", "failed"]
+    assert [event.phase for event in events if event.operation == "ping"] == [
+        "started",
+        "failed",
+    ]
 
 
 @pytest.mark.asyncio
 async def test_provider_evidence_cannot_override_operation_metadata() -> None:
     class Evidence:
         def capture(self, operation: str, phase: str) -> dict[str, object]:
-            return {"operation": "spoofed", "phase": "spoofed", "captured": False, "ref": "safe"}
+            return {
+                "operation": "spoofed",
+                "phase": "spoofed",
+                "captured": False,
+                "ref": "safe",
+            }
 
     events: list[DirectOperationEvent] = []
-    async with _client(FakeSession(), evidence_provider=Evidence(), event_hook=events.append) as client:
+    async with _client(
+        FakeSession(), evidence_provider=Evidence(), event_hook=events.append
+    ) as client:
         await client.ping()
 
-    ping_started = next(event for event in events if getattr(event, "operation") == "ping")
+    ping_started = next(event for event in events if event.operation == "ping")
     assert ping_started.operation == "ping"
     assert ping_started.phase == "started"
     assert ping_started.evidence["captured"] is True
@@ -387,7 +509,9 @@ async def test_provider_evidence_is_redacted_before_protocol_errors_and_hooks() 
 
 
 @pytest.mark.asyncio
-async def test_provider_evidence_is_redacted_before_transport_errors_and_hooks() -> None:
+async def test_provider_evidence_is_redacted_before_transport_errors_and_hooks() -> (
+    None
+):
     class BrokenSession(FakeSession):
         async def send_ping(self, **kwargs: object) -> types.EmptyResult:
             raise OSError("socket-secret")
@@ -486,7 +610,9 @@ async def test_official_mcp_errors_are_protocol_errors_without_provider_text() -
 
 
 @pytest.mark.asyncio
-async def test_official_input_required_results_are_not_coerced_to_empty_wrappers() -> None:
+async def test_official_input_required_results_are_not_coerced_to_empty_wrappers() -> (
+    None
+):
     class InteractiveSession(FakeSession):
         async def read_resource(self, uri: str, **kwargs: object) -> Any:
             return types.InputRequiredResult.model_construct(
@@ -494,20 +620,29 @@ async def test_official_input_required_results_are_not_coerced_to_empty_wrappers
                 request_state="state-1",
             )
 
-        async def get_prompt(self, name: str, arguments: dict[str, str] | None = None, **kwargs: object) -> Any:
+        async def get_prompt(
+            self, name: str, arguments: dict[str, str] | None = None, **kwargs: object
+        ) -> Any:
             return types.InputRequiredResult.model_construct(
                 input_requests={"request-2": {"method": "sampling/createMessage"}},
                 request_state="state-2",
             )
 
-        async def call_tool(self, name: str, arguments: dict[str, object] | None = None, **kwargs: object) -> Any:
+        async def call_tool(
+            self,
+            name: str,
+            arguments: dict[str, object] | None = None,
+            **kwargs: object,
+        ) -> Any:
             return types.InputRequiredResult.model_construct(
                 input_requests={"request-3": {"method": "roots/list"}},
                 request_state="state-3",
             )
 
     async with _client(InteractiveSession()) as client:
-        read = await client.read_resource("memory://interactive", allow_input_required=True)
+        read = await client.read_resource(
+            "memory://interactive", allow_input_required=True
+        )
         prompt = await client.get_prompt("interactive", allow_input_required=True)
         call = await client.call_tool("interactive", allow_input_required=True)
     assert isinstance(read, InputRequiredResult) and read.request_state == "state-1"
@@ -525,18 +660,30 @@ async def test_draft202012_nested_refs_and_boolean_schemas_are_supported() -> No
             # the JSON Schema boolean form, which MCP's Pydantic model rejects
             # at normal construction despite JSON Schema allowing it.
             if self.mode == "boolean":
-                raw_tool = types.Tool.model_construct(name="first", input_schema=True, output_schema=True)
+                raw_tool = types.Tool.model_construct(
+                    name="first", input_schema=True, output_schema=True
+                )
             else:
                 raw_tool = types.Tool(
                     name="first",
                     input_schema={
                         "$defs": {"positive": {"type": "integer", "minimum": 1}},
                         "type": "object",
-                        "properties": {"values": {"type": "array", "items": {"$ref": "#/$defs/positive"}, "minItems": 1}},
+                        "properties": {
+                            "values": {
+                                "type": "array",
+                                "items": {"$ref": "#/$defs/positive"},
+                                "minItems": 1,
+                            }
+                        },
                         "required": ["values"],
                         "additionalProperties": False,
                     },
-                    output_schema={"type": "object", "properties": {"value": {"type": "integer", "minimum": 1}}, "required": ["value"]},
+                    output_schema={
+                        "type": "object",
+                        "properties": {"value": {"type": "integer", "minimum": 1}},
+                        "required": ["value"],
+                    },
                 )
             return types.ListToolsResult.model_construct(tools=[raw_tool])
 
@@ -552,9 +699,13 @@ async def test_draft202012_nested_refs_and_boolean_schemas_are_supported() -> No
 
     false_session = SchemaSession()
     false_session.mode = "boolean"
+
     async def false_tools(*, params: object = None) -> types.ListToolsResult:
-        raw_tool = types.Tool.model_construct(name="first", input_schema=False, output_schema=True)
+        raw_tool = types.Tool.model_construct(
+            name="first", input_schema=False, output_schema=True
+        )
         return types.ListToolsResult.model_construct(tools=[raw_tool])
+
     false_session.list_tools = false_tools  # type: ignore[method-assign]
     async with _client(false_session, validate_schemas=True) as client:
         with pytest.raises(ModelValidationError) as error:
@@ -563,7 +714,9 @@ async def test_draft202012_nested_refs_and_boolean_schemas_are_supported() -> No
 
 
 @pytest.mark.asyncio
-async def test_malformed_and_remote_schemas_are_typed_without_echoing_untrusted_data() -> None:
+async def test_malformed_and_remote_schemas_are_typed_without_echoing_untrusted_data() -> (
+    None
+):
     class BadSchemaSession(FakeSession):
         async def list_tools(self, *, params: object = None) -> types.ListToolsResult:
             raw_tool = types.Tool.model_construct(
@@ -601,7 +754,9 @@ def test_wrappers_round_trip_without_serializing_raw_evidence() -> None:
     assert "raw" not in dumped
     assert Tool.model_validate(dumped).raw is None
 
-    result = ToolCallResult(raw={"secret": "not-public"}, structured_content={"ok": True})
+    result = ToolCallResult(
+        raw={"secret": "not-public"}, structured_content={"ok": True}
+    )
     result_dump = result.model_dump(mode="json")
     assert "raw" not in result_dump
     assert ToolCallResult.model_validate(result_dump).raw is None
@@ -621,7 +776,7 @@ async def test_lifecycle_failure_cleanup_and_use_state_are_explicit() -> None:
     assert "credential-secret" not in str(error.value)
 
     class FailingEnter(FakeSession):
-        async def __aenter__(self) -> "FailingEnter":
+        async def __aenter__(self) -> FailingEnter:
             raise RuntimeError("enter-secret")
 
     not_entered = FailingEnter()

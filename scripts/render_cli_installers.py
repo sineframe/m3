@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import re
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLACEHOLDER = "@MCP_PAL_VERSION@"
@@ -25,13 +24,19 @@ def render_template(template: Path, version: str) -> str:
         )
     rendered = text.replace(PLACEHOLDER, version)
     if PLACEHOLDER in rendered:
-        raise InstallerRenderError(f"{template.name} has an unresolved version placeholder")
+        raise InstallerRenderError(
+            f"{template.name} has an unresolved version placeholder"
+        )
     return rendered
 
 
 def render_installers(version: str, output_dir: str | Path) -> tuple[Path, Path]:
-    if not VERSION_PATTERN.fullmatch(version) or any(character in version for character in "\r\n'\""):
-        raise InstallerRenderError("version is not safe to embed in installer templates")
+    if not VERSION_PATTERN.fullmatch(version) or any(
+        character in version for character in "\r\n'\""
+    ):
+        raise InstallerRenderError(
+            "version is not safe to embed in installer templates"
+        )
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     rendered_paths: list[Path] = []

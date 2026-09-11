@@ -8,10 +8,10 @@ and an event is not observable until its append transaction has committed.
 
 from __future__ import annotations
 
+import copy
 import gzip
 import hashlib
 import json
-import copy
 import os
 import shutil
 import tempfile
@@ -26,11 +26,12 @@ from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from pydantic import TypeAdapter, ValidationError
 
+from ..aggregations import EvaluationQuery, EvaluationReport, aggregate_evaluations
 from ..errors import RawEvidenceUnavailable, TraceNotFinalized, TraceUnavailable
 from ..observability import (
-    RawEvidence,
-    EvidenceCapture,
     CaptureOptions,
+    EvidenceCapture,
+    RawEvidence,
     TraceView,
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
@@ -43,33 +44,32 @@ from ..trace.redaction import (
 from ..types import (
     ArtifactId,
     ArtifactRef,
-    Event,
     DirectResult,
     ErrorCode,
     ErrorInfo,
+    EvaluationId,
+    EvaluationRecord,
+    EvaluationResult,
+    EvaluationStatus,
+    Event,
     EventId,
     EventKind,
+    EvidenceRef,
     ExecutionEvidence,
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
-    ExecutionState,
-    ExecutionSpec,
-    EvaluationResult,
-    EvaluationId,
-    EvaluationStatus,
-    EvaluationRecord,
-    RunId,
-    ExecutionStatus,
     ExecutionReport,
-    EvidenceRef,
+    ExecutionSpec,
+    ExecutionState,
+    ExecutionStatus,
+    RunId,
     TraceId,
     TraceResult,
     TurnId,
-    TurnState,
     TurnResult,
+    TurnState,
 )
-from ..aggregations import EvaluationQuery, EvaluationReport, aggregate_evaluations
 from .evidence import (
     evidence_id_for as _evidence_id_for,
 )
@@ -129,7 +129,7 @@ class ExecutionTransaction(Protocol):
 
     def rollback(self) -> None: ...
 
-    def __enter__(self) -> "ExecutionTransaction": ...
+    def __enter__(self) -> ExecutionTransaction: ...
 
     def __exit__(
         self,
@@ -154,9 +154,13 @@ class ExecutionStore(Protocol):
         run_id: RunId | str | None = None,
     ) -> None: ...
 
-    def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None: ...
+    def get_snapshot(
+        self, execution_id: ExecutionId | str
+    ) -> ExecutionState | None: ...
 
-    def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None: ...
+    def get_execution_spec(
+        self, execution_id: ExecutionId | str
+    ) -> ExecutionSpec | None: ...
 
     def list_executions(
         self,
@@ -181,13 +185,24 @@ class ExecutionStore(Protocol):
 
     def get_trace_view(self, execution_id: ExecutionId | str) -> TraceView | None: ...
 
-    def save_evaluation(self, execution_id: ExecutionId | str, result: EvaluationResult | Mapping[str, object], *, evaluation_id: str | None = None, turn_id: TurnId | str | None = None) -> str: ...
+    def save_evaluation(
+        self,
+        execution_id: ExecutionId | str,
+        result: EvaluationResult | Mapping[str, object],
+        *,
+        evaluation_id: str | None = None,
+        turn_id: TurnId | str | None = None,
+    ) -> str: ...
 
-    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None) -> tuple[EvaluationRecord, ...]: ...
+    def evaluations(
+        self, execution_id: ExecutionId | str, *, turn_id: TurnId | str | None = None
+    ) -> tuple[EvaluationRecord, ...]: ...
 
     def aggregate_evaluations(self, query: EvaluationQuery) -> EvaluationReport: ...
 
-    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnState, TurnResult | None], ...]: ...
+    def turns(
+        self, execution_id: ExecutionId | str
+    ) -> tuple[tuple[TurnState, TurnResult | None], ...]: ...
 
     def save_snapshot(self, snapshot: ExecutionState) -> None: ...
 
@@ -203,9 +218,13 @@ class ExecutionStore(Protocol):
 
     def transaction(self, execution_id: ExecutionId | str) -> ExecutionTransaction: ...
 
-    def release(self, execution_id: ExecutionId | str, sequences: Sequence[int]) -> None: ...
+    def release(
+        self, execution_id: ExecutionId | str, sequences: Sequence[int]
+    ) -> None: ...
 
-    def subscribe(self, execution_id: ExecutionId | str, callback: EventCallback) -> Callable[[], None]: ...
+    def subscribe(
+        self, execution_id: ExecutionId | str, callback: EventCallback
+    ) -> Callable[[], None]: ...
 
     def put_raw_evidence(
         self, event_id: EventId | str, content: bytes, *, media_type: str
@@ -234,7 +253,9 @@ class ArtifactStore(Protocol):
 
     def get_ref(self, artifact_id: ArtifactId | str) -> ArtifactRef: ...
 
-    def iter_refs(self, execution_id: ExecutionId | str | None = None) -> Iterator[ArtifactRef]: ...
+    def iter_refs(
+        self, execution_id: ExecutionId | str | None = None
+    ) -> Iterator[ArtifactRef]: ...
 
     def delete(self, artifact: ArtifactRef | ArtifactId | str) -> None: ...
 
@@ -264,9 +285,18 @@ def _copy_execution_spec(specification: ExecutionSpec) -> ExecutionSpec:
     )
 
 
-def _report_fields(events: Sequence[Event]) -> tuple[DirectResult | None, ErrorInfo | None, ExecutionEvidence | None]:
+def _report_fields(
+    events: Sequence[Event],
+) -> tuple[DirectResult | None, ErrorInfo | None, ExecutionEvidence | None]:
     """Reconstruct only typed values explicitly committed in terminal events."""
-    terminal = next((event for event in reversed(events) if event.kind is EventKind.EXECUTION_FINISHED), None)
+    terminal = next(
+        (
+            event
+            for event in reversed(events)
+            if event.kind is EventKind.EXECUTION_FINISHED
+        ),
+        None,
+    )
     if terminal is None:
         return None, None, None
     payload = terminal.payload
@@ -293,8 +323,12 @@ def _report_fields(events: Sequence[Event]) -> tuple[DirectResult | None, ErrorI
         try:
             evidence = ExecutionEvidence(
                 completeness=cast(Literal["complete", "partial"], completeness),
-                limitations=tuple(item for item in limitations if isinstance(item, str)),
-                reason=payload.get("reason") if isinstance(payload.get("reason"), str) else None,
+                limitations=tuple(
+                    item for item in limitations if isinstance(item, str)
+                ),
+                reason=payload.get("reason")
+                if isinstance(payload.get("reason"), str)
+                else None,
             )
         except ValueError:
             evidence = None
@@ -306,7 +340,7 @@ def _artifact_key(value: ArtifactId | str) -> str:
 
 
 class _ExecutionBatch(AbstractContextManager["_ExecutionBatch"]):
-    def __init__(self, store: "InMemoryExecutionStore", execution_id: str) -> None:
+    def __init__(self, store: InMemoryExecutionStore, execution_id: str) -> None:
         self._store = store
         self._execution_id = execution_id
         self._events: list[Event] = []
@@ -317,7 +351,9 @@ class _ExecutionBatch(AbstractContextManager["_ExecutionBatch"]):
             raise StorageConflict("transaction is already closed")
         for event in events:
             if _execution_key(event.execution_id) != self._execution_id:
-                raise StorageConflict("all events in a transaction must belong to its execution")
+                raise StorageConflict(
+                    "all events in a transaction must belong to its execution"
+                )
         self._events.extend(events)
 
     def commit(self) -> None:
@@ -330,7 +366,7 @@ class _ExecutionBatch(AbstractContextManager["_ExecutionBatch"]):
         self._events.clear()
         self._done = True
 
-    def __enter__(self) -> "_ExecutionBatch":
+    def __enter__(self) -> _ExecutionBatch:
         if self._done:
             raise StorageConflict("transaction is already closed")
         return self
@@ -392,30 +428,49 @@ class InMemoryExecutionStore:
                 existing.stable_key != safe.stable_key
                 or existing.created_at != safe.created_at
             ):
-                raise StorageConflict("ACP probe id was already used for another dimension")
-            self._acp_probes[safe.id] = ACPProbeResult.model_validate(safe.model_dump(mode="json"))
+                raise StorageConflict(
+                    "ACP probe id was already used for another dimension"
+                )
+            self._acp_probes[safe.id] = ACPProbeResult.model_validate(
+                safe.model_dump(mode="json")
+            )
         return ACPProbeResult.model_validate(safe.model_dump(mode="json"))
 
     def get_acp_probe(self, probe_id: str) -> ACPProbeResult | None:
         with self._lock:
             value = self._acp_probes.get(str(probe_id))
-            return ACPProbeResult.model_validate(value.model_dump(mode="json")) if value is not None else None
+            return (
+                ACPProbeResult.model_validate(value.model_dump(mode="json"))
+                if value is not None
+                else None
+            )
 
-    def list_acp_probes(self, dimension: ACPProbeDimension | None = None, *, include_inflight: bool = True) -> tuple[ACPProbeResult, ...]:
+    def list_acp_probes(
+        self,
+        dimension: ACPProbeDimension | None = None,
+        *,
+        include_inflight: bool = True,
+    ) -> tuple[ACPProbeResult, ...]:
         with self._lock:
             values = list(self._acp_probes.values())
         key = getattr(dimension, "stable_key", None)
         if key is not None:
             values = [item for item in values if item.stable_key == key]
         if not include_inflight:
-            values = [item for item in values if item.status.value not in {"queued", "running"}]
+            values = [
+                item
+                for item in values
+                if item.status.value not in {"queued", "running"}
+            ]
         values.sort(key=lambda item: (item.created_at, item.id), reverse=True)
-        return tuple(ACPProbeResult.model_validate(item.model_dump(mode="json")) for item in values)
+        return tuple(
+            ACPProbeResult.model_validate(item.model_dump(mode="json"))
+            for item in values
+        )
 
     def latest_acp_probe(self, dimension: ACPProbeDimension) -> ACPProbeResult | None:
         values = self.list_acp_probes(dimension, include_inflight=False)
         return values[0] if values else None
-
 
     def create(
         self,
@@ -431,6 +486,7 @@ class InMemoryExecutionStore:
         del provenance, server_bindings, harness_binding, parent_execution_id
         try:
             from .._test_runs import associate_execution
+
             associate_execution(snapshot.execution_id, run_id=run_id or snapshot.run_id)
         except Exception:
             # Recording must never change execution behavior.
@@ -445,8 +501,16 @@ class InMemoryExecutionStore:
         with self._lock:
             if key in self._snapshots:
                 raise StorageConflict("execution already exists")
-            effective_run_id = snapshot.run_id or (run_id if isinstance(run_id, RunId) else RunId(run_id) if run_id is not None else None)
-            self._snapshots[key] = snapshot.model_copy(update={"run_id": effective_run_id})
+            effective_run_id = snapshot.run_id or (
+                run_id
+                if isinstance(run_id, RunId)
+                else RunId(run_id)
+                if run_id is not None
+                else None
+            )
+            self._snapshots[key] = snapshot.model_copy(
+                update={"run_id": effective_run_id}
+            )
             self._events[key] = ()
             self._reserved_sequences[key] = set()
             if validated is not None:
@@ -458,9 +522,13 @@ class InMemoryExecutionStore:
 
     def save_test_run(self, run_id: str, value: Mapping[str, object]) -> None:
         key = str(run_id)
-        safe = redact_for_persistence(dict(value), config=self._redaction_config, path="$.test_run")
+        safe = redact_for_persistence(
+            dict(value), config=self._redaction_config, path="$.test_run"
+        )
         with self._lock:
-            self._test_runs[key] = copy.deepcopy(dict(safe)) if isinstance(safe, Mapping) else {}
+            self._test_runs[key] = (
+                copy.deepcopy(dict(safe)) if isinstance(safe, Mapping) else {}
+            )
 
     def get_test_run(self, run_id: str) -> Mapping[str, object] | None:
         with self._lock:
@@ -470,18 +538,36 @@ class InMemoryExecutionStore:
     def list_test_runs(self) -> tuple[Mapping[str, object], ...]:
         with self._lock:
             values = copy.deepcopy(list(self._test_runs.values()))
-        values.sort(key=lambda item: (str(item.get("created_at", "")), str(item.get("run_id", ""))))
+        values.sort(
+            key=lambda item: (
+                str(item.get("created_at", "")),
+                str(item.get("run_id", "")),
+            )
+        )
         return tuple(dict(value) for value in values)
 
-    def save_test_result(self, run_id: str, attempt_id: str, value: Mapping[str, object]) -> None:
-        safe = redact_for_persistence(dict(value), config=self._redaction_config, path="$.test_result")
+    def save_test_result(
+        self, run_id: str, attempt_id: str, value: Mapping[str, object]
+    ) -> None:
+        safe = redact_for_persistence(
+            dict(value), config=self._redaction_config, path="$.test_result"
+        )
         with self._lock:
-            self._test_results.setdefault(str(run_id), {})[str(attempt_id)] = copy.deepcopy(dict(safe)) if isinstance(safe, Mapping) else {}
+            self._test_results.setdefault(str(run_id), {})[str(attempt_id)] = (
+                copy.deepcopy(dict(safe)) if isinstance(safe, Mapping) else {}
+            )
 
     def list_test_results(self, run_id: str) -> tuple[Mapping[str, object], ...]:
         with self._lock:
-            values = copy.deepcopy(list(self._test_results.get(str(run_id), {}).values()))
-        values.sort(key=lambda item: (str(item.get("node_id", "")), str(item.get("attempt_id", ""))))
+            values = copy.deepcopy(
+                list(self._test_results.get(str(run_id), {}).values())
+            )
+        values.sort(
+            key=lambda item: (
+                str(item.get("node_id", "")),
+                str(item.get("attempt_id", "")),
+            )
+        )
         return tuple(dict(value) for value in values)
 
     def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None:
@@ -490,11 +576,17 @@ class InMemoryExecutionStore:
             snapshot = self._snapshots.get(key)
             return snapshot.model_copy() if snapshot is not None else None
 
-    def get_execution_spec(self, execution_id: ExecutionId | str) -> ExecutionSpec | None:
+    def get_execution_spec(
+        self, execution_id: ExecutionId | str
+    ) -> ExecutionSpec | None:
         key = _execution_key(execution_id)
         with self._lock:
             specification = self._specifications.get(key)
-            return _copy_execution_spec(specification) if specification is not None else None
+            return (
+                _copy_execution_spec(specification)
+                if specification is not None
+                else None
+            )
 
     def list_executions(
         self,
@@ -511,19 +603,45 @@ class InMemoryExecutionStore:
         with self._lock:
             snapshots = list(self._snapshots.values())
         filtered = [
-            snapshot for snapshot in snapshots
+            snapshot
+            for snapshot in snapshots
             if (lifecycle_value is None or snapshot.lifecycle is lifecycle_value)
             and (outcome_value is None or snapshot.outcome is outcome_value)
-            and (run_id is None or snapshot.run_id == (run_id if isinstance(run_id, RunId) else RunId(str(run_id))))
+            and (
+                run_id is None
+                or snapshot.run_id
+                == (run_id if isinstance(run_id, RunId) else RunId(str(run_id)))
+            )
         ]
-        filtered.sort(key=lambda item: (item.created_at, str(item.execution_id.root)), reverse=True)
-        return page.model_copy(update={"items": tuple(item.model_copy() for item in filtered[offset : offset + limit]), "total": len(filtered)})
+        filtered.sort(
+            key=lambda item: (item.created_at, str(item.execution_id.root)),
+            reverse=True,
+        )
+        return page.model_copy(
+            update={
+                "items": tuple(
+                    item.model_copy() for item in filtered[offset : offset + limit]
+                ),
+                "total": len(filtered),
+            }
+        )
 
-    def get_report(self, execution_id: ExecutionId | str, *, after_sequence: int = -1, event_limit: int | None = None, artifact_limit: int | None = None) -> ExecutionReport | None:
+    def get_report(
+        self,
+        execution_id: ExecutionId | str,
+        *,
+        after_sequence: int = -1,
+        event_limit: int | None = None,
+        artifact_limit: int | None = None,
+    ) -> ExecutionReport | None:
         snapshot = self.get_snapshot(execution_id)
         if snapshot is None:
             return None
-        if after_sequence < -1 or (event_limit is not None and event_limit < 1) or (artifact_limit is not None and artifact_limit < 1):
+        if (
+            after_sequence < -1
+            or (event_limit is not None and event_limit < 1)
+            or (artifact_limit is not None and artifact_limit < 1)
+        ):
             raise ValueError("invalid report event cursor or limit")
         all_events = self.events(execution_id)
         events = tuple(event for event in all_events if event.sequence > after_sequence)
@@ -535,7 +653,9 @@ class InMemoryExecutionStore:
             direct_result=direct_result,
             error=error,
             evidence=evidence,
-            turns=tuple(result for _, result in self.turns(execution_id) if result is not None),
+            turns=tuple(
+                result for _, result in self.turns(execution_id) if result is not None
+            ),
             evaluations=self.evaluations(execution_id),
             event_count=len(events),
             events_truncated=event_limit is not None and len(events) > event_limit,
@@ -544,65 +664,138 @@ class InMemoryExecutionStore:
             artifacts_truncated=False,
         )
 
-    def save_evaluation(self, execution_id: ExecutionId | str, result: EvaluationResult | Mapping[str, object], *, evaluation_id: str | None = None, turn_id: object | None = None) -> str:
+    def save_evaluation(
+        self,
+        execution_id: ExecutionId | str,
+        result: EvaluationResult | Mapping[str, object],
+        *,
+        evaluation_id: str | None = None,
+        turn_id: object | None = None,
+    ) -> str:
         key = _execution_key(execution_id)
         with self._lock:
             if key not in self._snapshots:
                 raise StorageConflict("execution does not exist")
-            value: dict[str, Any] = result.model_dump(mode="json") if isinstance(result, EvaluationResult) else dict(result)
+            value: dict[str, Any] = (
+                result.model_dump(mode="json")
+                if isinstance(result, EvaluationResult)
+                else dict(result)
+            )
             raw_context = value.get("context")
-            context: Mapping[str, Any] = raw_context if isinstance(raw_context, Mapping) else {}
-            identifier = evaluation_id or str(value.get("evaluation_id") or f"evaluation-{len(self._evaluations.get(key, [])) + 1}")
+            context: Mapping[str, Any] = (
+                raw_context if isinstance(raw_context, Mapping) else {}
+            )
+            identifier = evaluation_id or str(
+                value.get("evaluation_id")
+                or f"evaluation-{len(self._evaluations.get(key, [])) + 1}"
+            )
             turn_value = turn_id or context.get("turn_id")
             if turn_value is not None:
                 turn_key = str(getattr(turn_value, "root", turn_value))
-                if not any(event.turn_id is not None and event.turn_id.root == turn_key for event in self._events.get(key, ())):
+                if not any(
+                    event.turn_id is not None and event.turn_id.root == turn_key
+                    for event in self._events.get(key, ())
+                ):
                     raise StorageConflict("turn does not belong to execution")
-            subject_digest = hashlib.sha256(json.dumps(context.get("subject"), sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
+            subject_digest = hashlib.sha256(
+                json.dumps(
+                    context.get("subject"),
+                    sort_keys=True,
+                    default=str,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
             record = EvaluationRecord(
                 evaluation_id=EvaluationId(identifier),
                 execution_id=ExecutionId(key),
-                case_id=str(value.get("case_id") or context.get("case_id")) if (value.get("case_id") or context.get("case_id")) is not None else None,
-                turn_id=TurnId(str(getattr(turn_value, "root", turn_value))) if turn_value else None,
+                case_id=str(value.get("case_id") or context.get("case_id"))
+                if (value.get("case_id") or context.get("case_id")) is not None
+                else None,
+                turn_id=TurnId(str(getattr(turn_value, "root", turn_value)))
+                if turn_value
+                else None,
                 name=str(value.get("name", "")),
                 status=EvaluationStatus(value.get("status", "error")),
                 required=bool(value.get("required", False)),
-                message=value.get("message"), score=value.get("score"),
-                rationale=value.get("rationale"), metrics=value.get("metrics", {}),
-                provenance=value.get("provenance"), details=value.get("details", {}), goal=context.get("goal"),
+                message=value.get("message"),
+                score=value.get("score"),
+                rationale=value.get("rationale"),
+                metrics=value.get("metrics", {}),
+                provenance=value.get("provenance"),
+                details=value.get("details", {}),
+                goal=context.get("goal"),
                 metadata=context.get("metadata", {}),
                 subject_kind=str(context.get("subject_kind", "unknown")),
                 subject_digest=subject_digest,
-                run_id=RunId(str(getattr(self._snapshots[key].run_id, "root", self._snapshots[key].run_id))) if self._snapshots[key].run_id else None,
+                run_id=RunId(
+                    str(
+                        getattr(
+                            self._snapshots[key].run_id,
+                            "root",
+                            self._snapshots[key].run_id,
+                        )
+                    )
+                )
+                if self._snapshots[key].run_id
+                else None,
             )
-            if any(item.evaluation_id == record.evaluation_id for item in self._evaluations.get(key, [])):
+            if any(
+                item.evaluation_id == record.evaluation_id
+                for item in self._evaluations.get(key, [])
+            ):
                 raise StorageConflict("evaluation already exists")
             self._evaluations.setdefault(key, []).append(record)
             return identifier
 
     def save_turn(self, snapshot: TurnState, result: TurnResult | None = None) -> None:
-        execution_key = next((key for key, events in self._events.items() if any(event.session_id == snapshot.session_id for event in events)), None)
+        execution_key = next(
+            (
+                key
+                for key, events in self._events.items()
+                if any(event.session_id == snapshot.session_id for event in events)
+            ),
+            None,
+        )
         if execution_key is None:
             execution_key = _execution_key(str(snapshot.session_id.root))
         with self._lock:
             values = self._turns.setdefault(execution_key, [])
             values[:] = [item for item in values if item[0].turn_id != snapshot.turn_id]
-            values.append((snapshot.model_copy(), result.model_copy() if result is not None else None))
+            values.append(
+                (
+                    snapshot.model_copy(),
+                    result.model_copy() if result is not None else None,
+                )
+            )
 
     append_turn = save_turn
 
-    def turns(self, execution_id: ExecutionId | str) -> tuple[tuple[TurnState, TurnResult | None], ...]:
+    def turns(
+        self, execution_id: ExecutionId | str
+    ) -> tuple[tuple[TurnState, TurnResult | None], ...]:
         with self._lock:
             values = self._turns.get(_execution_key(execution_id), ())
-            return tuple((snapshot.model_copy(), result.model_copy() if result is not None else None) for snapshot, result in values)
+            return tuple(
+                (
+                    snapshot.model_copy(),
+                    result.model_copy() if result is not None else None,
+                )
+                for snapshot, result in values
+            )
 
-    def evaluations(self, execution_id: ExecutionId | str, *, turn_id: object | None = None) -> tuple[EvaluationRecord, ...]:
+    def evaluations(
+        self, execution_id: ExecutionId | str, *, turn_id: object | None = None
+    ) -> tuple[EvaluationRecord, ...]:
         key = _execution_key(execution_id)
         with self._lock:
             values = tuple(self._evaluations.get(key, ()))
         if turn_id is not None:
             turn_key = str(getattr(turn_id, "root", turn_id))
-            values = tuple(item for item in values if str(getattr(item.turn_id, "root", item.turn_id)) == turn_key)
+            values = tuple(
+                item
+                for item in values
+                if str(getattr(item.turn_id, "root", item.turn_id)) == turn_key
+            )
         return tuple(item.model_copy() for item in values)
 
     def aggregate_evaluations(self, query: EvaluationQuery) -> EvaluationReport:
@@ -610,7 +803,9 @@ class InMemoryExecutionStore:
         if not isinstance(query, EvaluationQuery):
             query = EvaluationQuery.model_validate(query)
         with self._lock:
-            records = [record for values in self._evaluations.values() for record in values]
+            records = [
+                record for values in self._evaluations.values() for record in values
+            ]
             snapshots = {key: value for key, value in self._snapshots.items()}
             specifications = {key: value for key, value in self._specifications.items()}
         traces = {}
@@ -621,14 +816,22 @@ class InMemoryExecutionStore:
                 trace = None
             if trace is not None:
                 traces[execution_id] = trace
-        return aggregate_evaluations(query, records, snapshots=snapshots, specifications=specifications, traces=traces)
+        return aggregate_evaluations(
+            query,
+            records,
+            snapshots=snapshots,
+            specifications=specifications,
+            traces=traces,
+        )
 
     def get_trace(self, execution_id: ExecutionId | str) -> TraceResult | None:
         snapshot = self.get_snapshot(execution_id)
         if snapshot is None:
             return None
         events = self.events(execution_id)
-        created_events = [event for event in events if event.kind is EventKind.EXECUTION_CREATED]
+        created_events = [
+            event for event in events if event.kind is EventKind.EXECUTION_CREATED
+        ]
         if (
             not events
             or events[0].sequence != 0
@@ -661,7 +864,10 @@ class InMemoryExecutionStore:
             or outcome not in {item.value for item in ExecutionOutcome}
             or completeness not in {"complete", "partial"}
             or not isinstance(raw_limitations, (list, tuple))
-            or any(not isinstance(item, str) or not item.strip() for item in raw_limitations)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in raw_limitations
+            )
         ):
             raise TraceUnavailable("persisted execution.finished evidence is malformed")
         limitations = tuple(raw_limitations)
@@ -669,8 +875,13 @@ class InMemoryExecutionStore:
             typed_outcome = ExecutionOutcome(outcome)
         except ValueError:
             raise TraceUnavailable("persisted execution outcome is invalid") from None
-        if snapshot.lifecycle is not ExecutionStatus.FINISHED or snapshot.outcome != typed_outcome:
-            raise TraceUnavailable("persisted snapshot outcome conflicts with terminal evidence")
+        if (
+            snapshot.lifecycle is not ExecutionStatus.FINISHED
+            or snapshot.outcome != typed_outcome
+        ):
+            raise TraceUnavailable(
+                "persisted snapshot outcome conflicts with terminal evidence"
+            )
         try:
             return TraceResult(
                 trace_id=typed_trace_id,
@@ -708,9 +919,7 @@ class InMemoryExecutionStore:
 
     append = append_events
 
-    def append_event(
-        self, event: Event, content: bytes, *, media_type: str
-    ) -> Event:
+    def append_event(self, event: Event, content: bytes, *, media_type: str) -> Event:
         """Commit an event and its raw blob as one in-memory operation."""
         execution_id = _execution_key(event.execution_id)
         with self._lock:
@@ -730,7 +939,9 @@ class InMemoryExecutionStore:
             ):
                 raise ValueError("raw evidence media_type must be 1-256 characters")
             event_id = str(event.event_id.root)
-            if any(item.event_id == event.event_id for item in self._events[execution_id]):
+            if any(
+                item.event_id == event.event_id for item in self._events[execution_id]
+            ):
                 raise StorageConflict("event id is already committed")
             evidence_id = _evidence_id_for(event.event_id)
             if evidence_id in self._raw_refs:
@@ -823,11 +1034,15 @@ class InMemoryExecutionStore:
             candidate_sessions = {
                 event.session_id
                 for event in current
-                if event.kind is EventKind.SESSION_CREATED and event.session_id is not None
+                if event.kind is EventKind.SESSION_CREATED
+                and event.session_id is not None
             }
             for event in safe_events:
                 if event.kind is EventKind.SESSION_STATE_CHANGED:
-                    if event.session_id is None or event.session_id not in candidate_sessions:
+                    if (
+                        event.session_id is None
+                        or event.session_id not in candidate_sessions
+                    ):
                         raise StorageConflict("session does not exist")
                 elif event.kind is EventKind.SESSION_CREATED:
                     if event.session_id is None:
@@ -837,7 +1052,9 @@ class InMemoryExecutionStore:
                     candidate_sessions.add(event.session_id)
             for event in safe_events:
                 if _execution_key(event.execution_id) != execution_id:
-                    raise StorageConflict("all events in an append must belong to one execution")
+                    raise StorageConflict(
+                        "all events in an append must belong to one execution"
+                    )
                 if event.sequence != expected:
                     raise StorageConflict("event sequence must be contiguous")
                 if event.sequence in seen_sequences:
@@ -850,7 +1067,9 @@ class InMemoryExecutionStore:
             existing_ids = {str(item.event_id.root) for item in current}
             if existing_ids.intersection(seen_ids):
                 raise StorageConflict("event id is already committed")
-            candidate_events = current + tuple(item.model_copy() for item in safe_events)
+            candidate_events = current + tuple(
+                item.model_copy() for item in safe_events
+            )
             candidate_snapshot = self._derive_snapshot(execution_id, candidate_events)
             # Tuple replacement is the commit point. Readers cannot observe
             # the candidate batch because it is never placed in _events earlier.
@@ -872,7 +1091,9 @@ class InMemoryExecutionStore:
                 except Exception:
                     continue
 
-    def _derive_snapshot(self, execution_id: str, events: tuple[Event, ...]) -> ExecutionState:
+    def _derive_snapshot(
+        self, execution_id: str, events: tuple[Event, ...]
+    ) -> ExecutionState:
         previous = self._snapshots[execution_id]
         lifecycle = ExecutionStatus.CREATED
         outcome: ExecutionOutcome | None = None
@@ -897,7 +1118,9 @@ class InMemoryExecutionStore:
                 try:
                     outcome = ExecutionOutcome(event.payload["outcome"])
                 except (KeyError, TypeError, ValueError) as exc:
-                    raise StorageConflict("execution terminal payload is invalid") from exc
+                    raise StorageConflict(
+                        "execution terminal payload is invalid"
+                    ) from exc
                 lifecycle = ExecutionStatus.FINISHED
                 finished_at = event.timestamp
         return ExecutionState(
@@ -906,18 +1129,34 @@ class InMemoryExecutionStore:
             lifecycle=lifecycle,
             outcome=outcome,
             sequence=highest,
-            created_at=created_at if created_at.tzinfo is not None else datetime.now(timezone.utc),
+            created_at=created_at
+            if created_at.tzinfo is not None
+            else datetime.now(timezone.utc),
             finished_at=finished_at,
         )
 
     def _redact_event(self, event: Event) -> Event:
-        projected = redact_model_json(event, config=self._redaction_config, path="$.event")
+        projected = redact_model_json(
+            event, config=self._redaction_config, path="$.event"
+        )
         if not isinstance(projected, Mapping):
             raise StorageError("event projection is invalid")
         immutable_fields = (
-            "schema_id", "schema_version", "event_id", "execution_id", "sequence", "kind",
-            "session_id", "turn_id", "server_binding", "connection_id", "correlation",
-            "lifecycle_phase", "payload_ref", "raw_evidence_ref", "reasoning",
+            "schema_id",
+            "schema_version",
+            "event_id",
+            "execution_id",
+            "sequence",
+            "kind",
+            "session_id",
+            "turn_id",
+            "server_binding",
+            "connection_id",
+            "correlation",
+            "lifecycle_phase",
+            "payload_ref",
+            "raw_evidence_ref",
+            "reasoning",
         )
         try:
             safe_event = Event.model_validate(projected)
@@ -925,11 +1164,16 @@ class InMemoryExecutionStore:
             # Pydantic's validation context can render projected input.  The
             # redaction boundary must not preserve it as an exception cause.
             raise StorageError("event projection is invalid") from None
-        if any(getattr(safe_event, field) != getattr(event, field) for field in immutable_fields):
+        if any(
+            getattr(safe_event, field) != getattr(event, field)
+            for field in immutable_fields
+        ):
             raise StorageError("event identity changed during redaction")
         return safe_event
 
-    def iter_events(self, execution_id: ExecutionId | str, *, after_sequence: int = -1) -> Iterator[Event]:
+    def iter_events(
+        self, execution_id: ExecutionId | str, *, after_sequence: int = -1
+    ) -> Iterator[Event]:
         if after_sequence < -1:
             raise ValueError("after_sequence must be >= -1")
         key = _execution_key(execution_id)
@@ -937,7 +1181,9 @@ class InMemoryExecutionStore:
             events = tuple(event.model_copy() for event in self._events.get(key, ()))
         return iter(event for event in events if event.sequence > after_sequence)
 
-    def events(self, execution_id: ExecutionId | str, *, after_sequence: int = -1) -> tuple[Event, ...]:
+    def events(
+        self, execution_id: ExecutionId | str, *, after_sequence: int = -1
+    ) -> tuple[Event, ...]:
         return tuple(self.iter_events(execution_id, after_sequence=after_sequence))
 
     def transaction(self, execution_id: ExecutionId | str) -> ExecutionTransaction:
@@ -947,7 +1193,9 @@ class InMemoryExecutionStore:
                 raise StorageConflict("execution does not exist")
         return _ExecutionBatch(self, key)
 
-    def subscribe(self, execution_id: ExecutionId | str, callback: EventCallback) -> Callable[[], None]:
+    def subscribe(
+        self, execution_id: ExecutionId | str, callback: EventCallback
+    ) -> Callable[[], None]:
         key = _execution_key(execution_id)
         with self._lock:
             if key not in self._snapshots:
@@ -962,7 +1210,9 @@ class InMemoryExecutionStore:
 
         return unsubscribe
 
-    def allocate(self, execution_id: ExecutionId | str, *, count: int = 1) -> tuple[int, ...]:
+    def allocate(
+        self, execution_id: ExecutionId | str, *, count: int = 1
+    ) -> tuple[int, ...]:
         """Reserve the next per-execution sequence numbers.
 
         Reservation is invisible to readers. A reservation is consumed when
@@ -993,7 +1243,9 @@ class InMemoryExecutionStore:
 
     allocate_sequences = allocate
 
-    def release(self, execution_id: ExecutionId | str, sequences: Sequence[int]) -> None:
+    def release(
+        self, execution_id: ExecutionId | str, sequences: Sequence[int]
+    ) -> None:
         """Release uncommitted reservations after producer cancellation."""
         key = _execution_key(execution_id)
         with self._lock:
@@ -1128,7 +1380,9 @@ class InMemoryArtifactStore:
         self._lock = threading.RLock()
         self._refs: dict[str, ArtifactRef] = {}
         self._blobs: dict[str, bytes] = {}
-        self._redaction_config = config if config is not None else RedactionConfig.from_environment()
+        self._redaction_config = (
+            config if config is not None else RedactionConfig.from_environment()
+        )
 
     def put(
         self,
@@ -1142,7 +1396,9 @@ class InMemoryArtifactStore:
             raise ValueError("artifact name must not be empty")
         safe_content = self._prepare_content(content)
         safe_name, safe_media_type = self._prepare_metadata(name, media_type)
-        ref = self._new_ref(execution_id, safe_name, safe_content, media_type=safe_media_type)
+        ref = self._new_ref(
+            execution_id, safe_name, safe_content, media_type=safe_media_type
+        )
         compressed = gzip.compress(safe_content, mtime=0)
         self._commit_ref(ref, compressed)
         return ref
@@ -1155,10 +1411,18 @@ class InMemoryArtifactStore:
             config=self._redaction_config,
         ).data
 
-    def _prepare_metadata(self, name: str, media_type: str | None) -> tuple[str, str | None]:
-        safe_name = redact_for_persistence(name, config=self._redaction_config, path="$.artifact.name")
-        safe_media_type = redact_for_persistence(media_type, config=self._redaction_config, path="$.artifact.media_type")
-        if not isinstance(safe_name, str) or (safe_media_type is not None and not isinstance(safe_media_type, str)):
+    def _prepare_metadata(
+        self, name: str, media_type: str | None
+    ) -> tuple[str, str | None]:
+        safe_name = redact_for_persistence(
+            name, config=self._redaction_config, path="$.artifact.name"
+        )
+        safe_media_type = redact_for_persistence(
+            media_type, config=self._redaction_config, path="$.artifact.media_type"
+        )
+        if not isinstance(safe_name, str) or (
+            safe_media_type is not None and not isinstance(safe_media_type, str)
+        ):
             raise StorageError("artifact metadata could not be redacted")
         if not safe_name:
             raise ValueError("artifact name must not be empty")
@@ -1206,15 +1470,23 @@ class InMemoryArtifactStore:
             return ref.model_copy()
 
     def _resolve_ref(self, artifact: ArtifactRef | ArtifactId | str) -> ArtifactRef:
-        stored = self.get_ref(artifact.artifact_id if isinstance(artifact, ArtifactRef) else artifact)
+        stored = self.get_ref(
+            artifact.artifact_id if isinstance(artifact, ArtifactRef) else artifact
+        )
         if isinstance(artifact, ArtifactRef) and stored != artifact:
             raise StorageConflict("artifact reference does not match stored metadata")
         return stored
 
-    def iter_refs(self, execution_id: ExecutionId | str | None = None) -> Iterator[ArtifactRef]:
+    def iter_refs(
+        self, execution_id: ExecutionId | str | None = None
+    ) -> Iterator[ArtifactRef]:
         selected = None if execution_id is None else _execution_key(execution_id)
         with self._lock:
-            refs = tuple(ref.model_copy() for ref in self._refs.values() if selected is None or _execution_key(ref.execution_id) == selected)
+            refs = tuple(
+                ref.model_copy()
+                for ref in self._refs.values()
+                if selected is None or _execution_key(ref.execution_id) == selected
+            )
         return iter(refs)
 
     def delete(self, artifact: ArtifactRef | ArtifactId | str) -> None:
@@ -1233,23 +1505,39 @@ class InMemoryArtifactStore:
     close = cleanup
 
 
-def _verify_blob(compressed: bytes, expected_sha256: str, expected_length: int) -> bytes:
+def _verify_blob(
+    compressed: bytes, expected_sha256: str, expected_length: int
+) -> bytes:
     try:
         content = gzip.decompress(compressed)
     except (OSError, EOFError) as exc:
         raise BlobIntegrityError("compressed artifact cannot be decompressed") from exc
-    if len(content) != expected_length or hashlib.sha256(content).hexdigest() != expected_sha256:
-        raise BlobIntegrityError("artifact hash or uncompressed length does not match metadata")
+    if (
+        len(content) != expected_length
+        or hashlib.sha256(content).hexdigest() != expected_sha256
+    ):
+        raise BlobIntegrityError(
+            "artifact hash or uncompressed length does not match metadata"
+        )
     return content
 
 
 class TemporaryArtifactStore(InMemoryArtifactStore):
     """Filesystem-backed temporary artifact store with atomic blob placement."""
 
-    def __init__(self, root: str | os.PathLike[str] | None = None, *, config: RedactionConfig | None = None) -> None:
+    def __init__(
+        self,
+        root: str | os.PathLike[str] | None = None,
+        *,
+        config: RedactionConfig | None = None,
+    ) -> None:
         super().__init__(config=config)
         self._owned_root = root is None
-        self._root = Path(tempfile.mkdtemp(prefix="mcp-pal-artifacts-")) if root is None else Path(root).resolve()
+        self._root = (
+            Path(tempfile.mkdtemp(prefix="mcp-pal-artifacts-"))
+            if root is None
+            else Path(root).resolve()
+        )
         self._root.mkdir(parents=True, exist_ok=True)
         self._root = self._root.resolve()
         self._paths: set[Path] = set()
@@ -1278,7 +1566,9 @@ class TemporaryArtifactStore(InMemoryArtifactStore):
             raise ValueError("artifact name must not be empty")
         safe_content = self._prepare_content(content)
         safe_name, safe_media_type = self._prepare_metadata(name, media_type)
-        ref = self._new_ref(execution_id, safe_name, safe_content, media_type=safe_media_type)
+        ref = self._new_ref(
+            execution_id, safe_name, safe_content, media_type=safe_media_type
+        )
         path = self._blob_path(ref.sha256)
         compressed = gzip.compress(safe_content, mtime=0)
         with self._lock:
@@ -1286,7 +1576,9 @@ class TemporaryArtifactStore(InMemoryArtifactStore):
             if path.exists():
                 _verify_blob(path.read_bytes(), ref.sha256, ref.size_bytes)
             else:
-                fd, temporary_name = tempfile.mkstemp(prefix=".mcp-pal-", suffix=".tmp", dir=str(path.parent))
+                fd, temporary_name = tempfile.mkstemp(
+                    prefix=".mcp-pal-", suffix=".tmp", dir=str(path.parent)
+                )
                 temporary = Path(temporary_name)
                 try:
                     with os.fdopen(fd, "wb") as handle:

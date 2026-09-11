@@ -30,10 +30,9 @@ from mcp.shared._httpx_utils import (
     McpHttpClientFactory,
 )
 
-from ..types import SSEServer, SecretReference, HTTPServer, TrustLevel
 from ..direct_trace import DirectTraceBridge
 from ..trace.redaction import is_sensitive_key
-
+from ..types import HTTPServer, SecretReference, SSEServer, TrustLevel
 
 TransportName: TypeAlias = Literal["streamable_http", "sse"]
 HostResolver: TypeAlias = Callable[[str, int], tuple[str, ...]]
@@ -81,15 +80,23 @@ class TransportConnectionError(RuntimeError):
 class EndpointTrustError(ValueError):
     """Raised when an endpoint is not safe for the requested trust level."""
 
-    def __init__(self, reason: str = "endpoint trust policy rejected the destination") -> None:
+    def __init__(
+        self, reason: str = "endpoint trust policy rejected the destination"
+    ) -> None:
         # Keep this vocabulary value-free: hostnames can contain tenant or
         # credential material supplied by an untrusted profile.
-        self.reason = reason if isinstance(reason, str) and reason in {
-            "endpoint trust policy rejected the destination",
-            "endpoint URL is invalid",
-            "endpoint hostname could not be resolved",
-            "endpoint URL contains credential query parameters",
-        } else "endpoint trust policy rejected the destination"
+        self.reason = (
+            reason
+            if isinstance(reason, str)
+            and reason
+            in {
+                "endpoint trust policy rejected the destination",
+                "endpoint URL is invalid",
+                "endpoint hostname could not be resolved",
+                "endpoint URL contains credential query parameters",
+            }
+            else "endpoint trust policy rejected the destination"
+        )
         super().__init__(self.reason)
 
 
@@ -199,24 +206,29 @@ def _is_private_or_local(address: str) -> bool:
 
 def _is_credential_query_name(name: str) -> bool:
     normalized = "".join(character for character in name.lower() if character.isalnum())
-    return normalized in {
-        "accesskey",
-        "accesstoken",
-        "apikey",
-        "auth",
-        "authorization",
-        "clientid",
-        "clientsecret",
-        "credential",
-        "idtoken",
-        "jwt",
-        "password",
-        "privatekey",
-        "refreshtoken",
-        "secret",
-        "sessiontoken",
-        "token",
-    } or normalized.endswith("token") or normalized.endswith("secret")
+    return (
+        normalized
+        in {
+            "accesskey",
+            "accesstoken",
+            "apikey",
+            "auth",
+            "authorization",
+            "clientid",
+            "clientsecret",
+            "credential",
+            "idtoken",
+            "jwt",
+            "password",
+            "privatekey",
+            "refreshtoken",
+            "secret",
+            "sessiontoken",
+            "token",
+        }
+        or normalized.endswith("token")
+        or normalized.endswith("secret")
+    )
 
 
 def validate_endpoint_trust(
@@ -241,7 +253,10 @@ def validate_endpoint_trust(
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
     except (TypeError, ValueError):
         raise EndpointTrustError("endpoint URL is invalid") from None
-    if any(_is_credential_query_name(name) for name, _value in parse_qsl(parsed.query, keep_blank_values=True)):
+    if any(
+        _is_credential_query_name(name)
+        for name, _value in parse_qsl(parsed.query, keep_blank_values=True)
+    ):
         raise EndpointTrustError("endpoint URL contains credential query parameters")
     try:
         addresses = resolve_host(parsed.hostname, port)
@@ -265,7 +280,9 @@ def _header_value(
     resolver: SecretResolver,
 ) -> str:
     try:
-        resolved = resolver.resolve(value) if isinstance(value, SecretReference) else value
+        resolved = (
+            resolver.resolve(value) if isinstance(value, SecretReference) else value
+        )
         unsafe = "\r" in resolved or "\n" in resolved
     except TransportConnectionError:
         raise
@@ -306,7 +323,9 @@ def resolve_headers(
         try:
             unsafe = not name or "\r" in name or "\n" in name
         except BaseException:
-            raise TransportConnectionError("streamable_http", "authentication") from None
+            raise TransportConnectionError(
+                "streamable_http", "authentication"
+            ) from None
         if unsafe:
             raise TransportConnectionError("streamable_http", "authentication")
         resolved_value = _header_value(value, secret_resolver)
@@ -326,7 +345,11 @@ def _safe_capabilities(session: ClientSession) -> tuple[str, ...]:
     capabilities = session.server_capabilities
     if capabilities is None:
         return ()
-    values = [name for name, value in vars(capabilities).items() if value is not None and not name.startswith("_")]
+    values = [
+        name
+        for name, value in vars(capabilities).items()
+        if value is not None and not name.startswith("_")
+    ]
     return tuple(sorted(values))
 
 
@@ -335,7 +358,11 @@ def _safe_error_type(error: BaseException) -> str:
 
     builtin_name = type(error).__name__
     if type(error).__module__ == "builtins" and builtin_name in {
-        "CancelledError", "TimeoutError", "ValueError", "OSError", "RuntimeError",
+        "CancelledError",
+        "TimeoutError",
+        "ValueError",
+        "OSError",
+        "RuntimeError",
     }:
         return builtin_name
     return "TransportError"
@@ -383,7 +410,9 @@ class _RemoteConnection:
         self._session: ClientSession | None = None
         self._started = time.monotonic()
         self._events: list[TransportEvent] = []
-        self._state: Literal["created", "connecting", "initialized", "closed", "failed"] = "created"
+        self._state: Literal[
+            "created", "connecting", "initialized", "closed", "failed"
+        ] = "created"
         self._protocol_version: str | None = None
         self._server_name: str | None = None
         self._server_version: str | None = None
@@ -417,12 +446,18 @@ class _RemoteConnection:
     @property
     def session(self) -> ClientSession:
         if self._session is None:
-            raise TransportConnectionError(self._transport, "not_open", evidence=self.evidence)
+            raise TransportConnectionError(
+                self._transport, "not_open", evidence=self.evidence
+            )
         return self._session
 
     def _event(self, kind: str, **details: str | int | bool | None) -> None:
         self._events.append(
-            TransportEvent(kind=kind, offset_ms=(time.monotonic() - self._started) * 1000, details=dict(details))
+            TransportEvent(
+                kind=kind,
+                offset_ms=(time.monotonic() - self._started) * 1000,
+                details=dict(details),
+            )
         )
 
     def _resolved_headers(self) -> dict[str, str]:
@@ -451,7 +486,9 @@ class _RemoteConnection:
         self._instructions = session.instructions is not None
         self._capabilities = _safe_capabilities(session)
         advertised = session.server_capabilities
-        extensions = cast(Mapping[str, object], getattr(advertised, "extensions", None) or {})
+        extensions = cast(
+            Mapping[str, object], getattr(advertised, "extensions", None) or {}
+        )
         self._extensions = tuple(sorted(extensions))
         if self._state == "connecting":
             self._state = "initialized"
@@ -473,14 +510,18 @@ class _RemoteConnection:
 
     async def __aenter__(self) -> ClientSession:
         if self._opened or self._close_complete:
-            raise TransportConnectionError(self._transport, "already_open", evidence=self.evidence)
+            raise TransportConnectionError(
+                self._transport, "already_open", evidence=self.evidence
+            )
         self._opened = True
         self._owner_task = asyncio.current_task()
         self._stack = AsyncExitStack()
         self._state = "connecting"
         self._event("connect_started")
         try:
-            validate_endpoint_trust(self.server, for_agent=self._for_agent, resolve_host=self._resolve_host)
+            validate_endpoint_trust(
+                self.server, for_agent=self._for_agent, resolve_host=self._resolve_host
+            )
             headers = self._resolved_headers()
             streams: Any
             if self._transport == "streamable_http":

@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 from mcp_pal_cli import web
 from mcp_pal_cli.web import create_web_app, ui_directory
 
-
 _FIXTURE_UI = Path(__file__).parent / "fixtures" / "ui"
 
 
@@ -27,10 +26,15 @@ def test_ui_directory_requires_index_and_assets(tmp_path: Path) -> None:
         raise AssertionError("missing UI bundle was accepted")
 
 
-def test_full_app_uses_same_database_and_serves_spa_without_api_fallback(tmp_path: Path) -> None:
+def test_full_app_uses_same_database_and_serves_spa_without_api_fallback(
+    tmp_path: Path,
+) -> None:
     database = tmp_path / "shared.sqlite"
     application = create_web_app(database, ui_dir=_FIXTURE_UI)
-    assert not any(getattr(route, "path", "").startswith("/api/cli") for route in application.routes)
+    assert not any(
+        getattr(route, "path", "").startswith("/api/cli")
+        for route in application.routes
+    )
     assert application.state.settings.database_path == str(database.absolute())
     assert application.state.v2_store_owned is True
     assert application.state.v2_kit._embedded_worker is True
@@ -52,15 +56,26 @@ def test_local_host_and_origin_protection(tmp_path: Path) -> None:
     application = create_web_app(tmp_path / "shared.sqlite", ui_dir=_FIXTURE_UI)
     with TestClient(application, base_url="http://127.0.0.1:8123") as client:
         assert client.get("/api/v2/executions").status_code == 200
-        assert client.get("/api/v2/executions", headers={"host": "attacker.example"}).status_code == 400
-        assert client.get("/api/v2/executions", headers={"host": "[::1]"}).status_code == 200
+        assert (
+            client.get(
+                "/api/v2/executions", headers={"host": "attacker.example"}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.get("/api/v2/executions", headers={"host": "[::1]"}).status_code
+            == 200
+        )
 
         # Same-origin writes are allowed to reach the application.  This
         # endpoint has no matching record, so its validation response proves
         # the security middleware did not reject it.
         same_origin = client.delete(
             "/api/v2/executions/missing",
-            headers={"origin": "http://127.0.0.1:8123", "sec-fetch-site": "same-origin"},
+            headers={
+                "origin": "http://127.0.0.1:8123",
+                "sec-fetch-site": "same-origin",
+            },
         )
         assert same_origin.status_code != 403
         cross_origin = client.delete(
@@ -68,18 +83,31 @@ def test_local_host_and_origin_protection(tmp_path: Path) -> None:
         )
         assert cross_origin.status_code == 403
         assert cross_origin.headers["content-type"].startswith("application/json")
-        assert client.delete(
-            "/api/v2/executions/missing", headers={"origin": "https://127.0.0.1"}
-        ).status_code == 403
-        assert client.delete(
-            "/api/v2/executions/missing", headers={"sec-fetch-site": "cross-site"}
-        ).status_code == 403
-        assert client.delete(
-            "/api/v2/executions/missing", headers={"origin": "http://127.0.0.1/path"}
-        ).status_code == 403
-        assert client.delete(
-            "/api/v2/executions/missing", headers={"origin": "http://[::1"}
-        ).status_code == 403
+        assert (
+            client.delete(
+                "/api/v2/executions/missing", headers={"origin": "https://127.0.0.1"}
+            ).status_code
+            == 403
+        )
+        assert (
+            client.delete(
+                "/api/v2/executions/missing", headers={"sec-fetch-site": "cross-site"}
+            ).status_code
+            == 403
+        )
+        assert (
+            client.delete(
+                "/api/v2/executions/missing",
+                headers={"origin": "http://127.0.0.1/path"},
+            ).status_code
+            == 403
+        )
+        assert (
+            client.delete(
+                "/api/v2/executions/missing", headers={"origin": "http://[::1"}
+            ).status_code
+            == 403
+        )
 
 
 def test_same_origin_default_ports_are_normalized(tmp_path: Path) -> None:
@@ -105,7 +133,10 @@ def test_cli_does_not_add_api_route_and_legacy_ui_is_optional() -> None:
     assert "streamlit" not in app_dependencies
     assert "requests" not in app_dependencies
     legacy = app_metadata["optional-dependencies"]["legacy-ui"]
-    assert {dependency.split(">", 1)[0] for dependency in legacy} == {"requests", "streamlit"}
+    assert {dependency.split(">", 1)[0] for dependency in legacy} == {
+        "requests",
+        "streamlit",
+    }
 
 
 def test_web_startup_error_is_bounded_and_redacted(

@@ -4,14 +4,14 @@ import asyncio
 from pathlib import Path
 
 from mcp_pal import MCPTestKit
-from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal._default_store import (
+    install_default_run_id_factory,
     install_default_store_factory,
     make_default_store,
-    restore_default_store_factory,
-    install_default_run_id_factory,
     restore_default_run_id_factory,
+    restore_default_store_factory,
 )
+from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.storage import SQLiteExecutionStore
 
 
@@ -76,6 +76,7 @@ def test_async_scoped_store_explicit_precedence_and_owned_close(tmp_path: Path) 
 
     token = install_default_store_factory(factory)
     try:
+
         async def exercise() -> None:
             kit = AsyncMCPTestKit()
             assert kit.store is created[0]
@@ -91,7 +92,9 @@ def test_async_scoped_store_explicit_precedence_and_owned_close(tmp_path: Path) 
             await kit.aclose()
             await kit.aclose()
             assert calls == 1
-            explicit = SQLiteExecutionStore((tmp_path / "async-explicit.sqlite").resolve())
+            explicit = SQLiteExecutionStore(
+                (tmp_path / "async-explicit.sqlite").resolve()
+            )
             selected = AsyncMCPTestKit(store=explicit)
             assert selected.store is explicit
             await selected.aclose()
@@ -106,6 +109,7 @@ def test_default_factory_shares_one_run_id_across_kits(tmp_path: Path) -> None:
         lambda: SQLiteExecutionStore((tmp_path / "shared.sqlite").resolve())
     )
     from mcp_pal.types import RunId
+
     run_token = install_default_run_id_factory(lambda: RunId("pytest-shared"))
     try:
         first = MCPTestKit()

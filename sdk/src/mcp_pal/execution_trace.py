@@ -17,27 +17,27 @@ from uuid import uuid4
 from .storage import ExecutionStore, StorageConflict
 from .trace.redaction import RedactionConfig, redact_for_persistence, redact_model_json
 from .types import (
-    Event,
     ConnectionId,
+    Event,
     EventId,
     EventKind,
     EventOrigin,
     EventSource,
+    EvidenceRef,
     ExecutionId,
     ExecutionOutcome,
     ExecutionState,
-    RunId,
-    LifecyclePhase,
     ExecutionStatus,
-    EvidenceRef,
+    LifecyclePhase,
     RequestLink,
+    RunId,
     SessionId,
     TraceId,
     TraceResult,
     TurnId,
-    TurnStatus,
     TurnOutcome,
     TurnState,
+    TurnStatus,
 )
 
 
@@ -50,11 +50,30 @@ class TraceFinalizationConflict(TraceRecorderError):
 
 
 _EXECUTION_TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
-    ExecutionStatus.CREATED: frozenset({ExecutionStatus.QUEUED, ExecutionStatus.STARTING, ExecutionStatus.FINISHED}),
-    ExecutionStatus.QUEUED: frozenset({ExecutionStatus.STARTING, ExecutionStatus.FINISHED}),
-    ExecutionStatus.STARTING: frozenset({ExecutionStatus.IDLE, ExecutionStatus.RUNNING_TURN, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED}),
-    ExecutionStatus.IDLE: frozenset({ExecutionStatus.RUNNING_TURN, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED}),
-    ExecutionStatus.RUNNING_TURN: frozenset({ExecutionStatus.IDLE, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED}),
+    ExecutionStatus.CREATED: frozenset(
+        {ExecutionStatus.QUEUED, ExecutionStatus.STARTING, ExecutionStatus.FINISHED}
+    ),
+    ExecutionStatus.QUEUED: frozenset(
+        {ExecutionStatus.STARTING, ExecutionStatus.FINISHED}
+    ),
+    ExecutionStatus.STARTING: frozenset(
+        {
+            ExecutionStatus.IDLE,
+            ExecutionStatus.RUNNING_TURN,
+            ExecutionStatus.CLOSING,
+            ExecutionStatus.FINISHED,
+        }
+    ),
+    ExecutionStatus.IDLE: frozenset(
+        {
+            ExecutionStatus.RUNNING_TURN,
+            ExecutionStatus.CLOSING,
+            ExecutionStatus.FINISHED,
+        }
+    ),
+    ExecutionStatus.RUNNING_TURN: frozenset(
+        {ExecutionStatus.IDLE, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED}
+    ),
     ExecutionStatus.CLOSING: frozenset({ExecutionStatus.FINISHED}),
     ExecutionStatus.FINISHED: frozenset(),
 }
@@ -96,7 +115,11 @@ class ExecutionTraceRecorder:
         server_bindings: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         self._store = store
-        self._execution_id = execution_id if isinstance(execution_id, ExecutionId) else ExecutionId(str(execution_id))
+        self._execution_id = (
+            execution_id
+            if isinstance(execution_id, ExecutionId)
+            else ExecutionId(str(execution_id))
+        )
         requested_trace_id = (
             trace_id
             if isinstance(trace_id, TraceId)
@@ -104,7 +127,11 @@ class ExecutionTraceRecorder:
             if trace_id is not None
             else None
         )
-        self._redaction_config = redaction_config if redaction_config is not None else RedactionConfig.from_environment()
+        self._redaction_config = (
+            redaction_config
+            if redaction_config is not None
+            else RedactionConfig.from_environment()
+        )
         # One recorder lock covers reservation, validation, commit, and
         # terminal projection. Storage remains the commit authority, while
         # this lock prevents this recorder's producers from reserving or
@@ -117,9 +144,16 @@ class ExecutionTraceRecorder:
         self._runtime_limitations: list[str] = []
         if store.get_snapshot(self._execution_id) is None:
             self._trace_id = requested_trace_id or TraceId(f"trace-{uuid4().hex}")
-            effective_run_id = run_id or (str(specification.get("run_id")) if isinstance(specification, Mapping) and specification.get("run_id") else None)
+            effective_run_id = run_id or (
+                str(specification.get("run_id"))
+                if isinstance(specification, Mapping) and specification.get("run_id")
+                else None
+            )
             store.create(
-                ExecutionState(execution_id=self._execution_id, run_id=RunId(effective_run_id) if effective_run_id else None),
+                ExecutionState(
+                    execution_id=self._execution_id,
+                    run_id=RunId(effective_run_id) if effective_run_id else None,
+                ),
                 specification=specification,
                 server_bindings=server_bindings,
                 run_id=effective_run_id,
@@ -149,14 +183,18 @@ class ExecutionTraceRecorder:
                 existing_events = self._committed_events()
             else:
                 created_events = [
-                    event for event in existing_events if event.kind is EventKind.EXECUTION_CREATED
+                    event
+                    for event in existing_events
+                    if event.kind is EventKind.EXECUTION_CREATED
                 ]
                 if (
                     existing_events[0].sequence != 0
                     or existing_events[0].kind is not EventKind.EXECUTION_CREATED
                     or len(created_events) != 1
                 ):
-                    raise TraceRecorderError("persisted execution.created evidence is malformed")
+                    raise TraceRecorderError(
+                        "persisted execution.created evidence is malformed"
+                    )
                 persisted_trace_id = existing_events[0].payload.get("trace_id")
                 if not isinstance(persisted_trace_id, str) or not persisted_trace_id:
                     raise TraceRecorderError("persisted trace ID is unavailable")
@@ -179,7 +217,9 @@ class ExecutionTraceRecorder:
                     if limitation not in self._runtime_limitations
                 )
             if existing_events:
-                self._last_offset_ms = max(event.monotonic_offset_ms for event in existing_events)
+                self._last_offset_ms = max(
+                    event.monotonic_offset_ms for event in existing_events
+                )
             if self._has_committed_terminal():
                 existing = self._project_trace()
                 existing.view()
@@ -232,8 +272,13 @@ class ExecutionTraceRecorder:
         """Freeze a redaction policy before provider values are observed."""
 
         with self._record_lock:
-            if not allow_after_events and len(tuple(self._store.iter_events(self._execution_id))) > 1:
-                raise TraceRecorderError("redaction policy must be bound before trace capture")
+            if (
+                not allow_after_events
+                and len(tuple(self._store.iter_events(self._execution_id))) > 1
+            ):
+                raise TraceRecorderError(
+                    "redaction policy must be bound before trace capture"
+                )
             self._redaction_config = config
 
     def record(self, event: Event) -> Event:
@@ -317,9 +362,7 @@ class ExecutionTraceRecorder:
                     event = event.model_copy(
                         update={"timestamp": timestamp, "monotonic_offset_ms": offset}
                     )
-                    append_atomic = getattr(
-                        self._store, "append_event", None
-                    )
+                    append_atomic = getattr(self._store, "append_event", None)
                     if not callable(append_atomic):
                         raise TraceRecorderError(
                             "execution store does not support atomic raw evidence"
@@ -367,7 +410,9 @@ class ExecutionTraceRecorder:
                 self._final = existing
                 if outcome.value == self._terminal_outcome(existing):
                     return self._fresh_trace(existing)
-                raise TraceFinalizationConflict("execution was finalized with another outcome")
+                raise TraceFinalizationConflict(
+                    "execution was finalized with another outcome"
+                )
             safe_limitations = self._safe_limitations(
                 cleanup_succeeded=cleanup_succeeded,
                 persistence_succeeded=persistence_succeeded,
@@ -375,7 +420,9 @@ class ExecutionTraceRecorder:
             )
             terminal_payload: dict[str, Any] = {
                 "outcome": outcome.value,
-                "completeness": "complete" if cleanup_succeeded and persistence_succeeded and not safe_limitations else "partial",
+                "completeness": "complete"
+                if cleanup_succeeded and persistence_succeeded and not safe_limitations
+                else "partial",
                 "limitations": list(safe_limitations),
             }
             if direct_result is not None:
@@ -384,7 +431,11 @@ class ExecutionTraceRecorder:
                 EventKind.EXECUTION_FINISHED,
                 payload=terminal_payload,
             )
-            completeness: Literal["complete", "partial"] = "complete" if cleanup_succeeded and persistence_succeeded and not safe_limitations else "partial"
+            completeness: Literal["complete", "partial"] = (
+                "complete"
+                if cleanup_succeeded and persistence_succeeded and not safe_limitations
+                else "partial"
+            )
             trace = TraceResult(
                 trace_id=self._trace_id,
                 execution_id=self._execution_id,
@@ -401,14 +452,19 @@ class ExecutionTraceRecorder:
     def _allocate_sequence(self) -> int:
         allocator = getattr(self._store, "allocate_sequence", None)
         if not callable(allocator):
-            raise TraceRecorderError("execution store does not support sequence allocation")
+            raise TraceRecorderError(
+                "execution store does not support sequence allocation"
+            )
         return int(allocator(self._execution_id))
 
     def _committed_events(self) -> tuple[Event, ...]:
         return tuple(self._store.iter_events(self._execution_id))
 
     def _has_committed_terminal(self) -> bool:
-        return any(event.kind is EventKind.EXECUTION_FINISHED for event in self._committed_events())
+        return any(
+            event.kind is EventKind.EXECUTION_FINISHED
+            for event in self._committed_events()
+        )
 
     def _terminal_trace(self) -> TraceResult | None:
         if not self._has_committed_terminal():
@@ -420,13 +476,27 @@ class ExecutionTraceRecorder:
         # redacts and validates JSON-compatible output.  Comparing typed
         # fields prevents representation changes from being mistaken for a
         # semantic identity change.
-        projected = redact_model_json(event, config=self._redaction_config, path="$.event")
+        projected = redact_model_json(
+            event, config=self._redaction_config, path="$.event"
+        )
         if not isinstance(projected, Mapping):
             raise TraceRecorderError("event projection is invalid")
         immutable_fields = (
-            "schema_id", "schema_version", "event_id", "execution_id", "sequence", "kind",
-            "session_id", "turn_id", "server_binding", "connection_id", "correlation",
-            "lifecycle_phase", "payload_ref", "raw_evidence_ref", "reasoning",
+            "schema_id",
+            "schema_version",
+            "event_id",
+            "execution_id",
+            "sequence",
+            "kind",
+            "session_id",
+            "turn_id",
+            "server_binding",
+            "connection_id",
+            "correlation",
+            "lifecycle_phase",
+            "payload_ref",
+            "raw_evidence_ref",
+            "reasoning",
         )
         try:
             safe_event = Event.model_validate(projected)
@@ -434,7 +504,10 @@ class ExecutionTraceRecorder:
             # Do not retain a validation exception as a cause: its rendered
             # context may include hostile provider values.
             raise TraceRecorderError("event projection is invalid") from None
-        if any(getattr(safe_event, field) != getattr(event, field) for field in immutable_fields):
+        if any(
+            getattr(safe_event, field) != getattr(event, field)
+            for field in immutable_fields
+        ):
             raise TraceRecorderError("event identity changed during redaction")
         return safe_event
 
@@ -448,14 +521,24 @@ class ExecutionTraceRecorder:
     def _validate_event(self, event: Event) -> None:
         payload = event.payload
         if event.kind is EventKind.EXECUTION_CREATED:
-            if ExecutionTraceRecorder._required_lifecycle(payload) is not ExecutionStatus.CREATED:
+            if (
+                ExecutionTraceRecorder._required_lifecycle(payload)
+                is not ExecutionStatus.CREATED
+            ):
                 raise TraceRecorderError("execution creation payload is invalid")
-            if any(item.kind is EventKind.EXECUTION_CREATED for item in self._committed_events()):
+            if any(
+                item.kind is EventKind.EXECUTION_CREATED
+                for item in self._committed_events()
+            ):
                 raise TraceRecorderError("execution already exists")
         elif event.kind is EventKind.EXECUTION_STATE_CHANGED:
             lifecycle = ExecutionTraceRecorder._required_lifecycle(payload)
             current = self._project_snapshot().lifecycle
-            if lifecycle is ExecutionStatus.FINISHED or "outcome" in payload or lifecycle not in _EXECUTION_TRANSITIONS[current]:
+            if (
+                lifecycle is ExecutionStatus.FINISHED
+                or "outcome" in payload
+                or lifecycle not in _EXECUTION_TRANSITIONS[current]
+            ):
                 raise TraceRecorderError("execution state payload is invalid")
         elif event.kind is EventKind.EXECUTION_FINISHED:
             outcome = _string(payload.get("outcome"))
@@ -464,29 +547,43 @@ class ExecutionTraceRecorder:
             if self._project_snapshot().lifecycle is ExecutionStatus.FINISHED:
                 raise TraceRecorderError("execution already finished")
             lifecycle_value = _string(payload.get("lifecycle"))
-            if lifecycle_value is not None and lifecycle_value != ExecutionStatus.FINISHED.value:
+            if (
+                lifecycle_value is not None
+                and lifecycle_value != ExecutionStatus.FINISHED.value
+            ):
                 raise TraceRecorderError("execution terminal payload is invalid")
-        elif event.kind is EventKind.SESSION_CREATED or event.kind is EventKind.SESSION_STATE_CHANGED:
+        elif (
+            event.kind is EventKind.SESSION_CREATED
+            or event.kind is EventKind.SESSION_STATE_CHANGED
+        ):
             if event.session_id is None:
                 raise TraceRecorderError("session event requires a session")
             if event.kind is EventKind.SESSION_CREATED and event.session_id in {
                 item.session_id
                 for item in self._committed_events()
-                if item.kind is EventKind.SESSION_CREATED and item.session_id is not None
+                if item.kind is EventKind.SESSION_CREATED
+                and item.session_id is not None
             }:
                 raise TraceRecorderError("session already exists")
         elif event.kind is EventKind.TURN_CREATED:
-            if event.session_id is None or event.turn_id is None or _positive_int(payload.get("number"), 0) < 1:
+            if (
+                event.session_id is None
+                or event.turn_id is None
+                or _positive_int(payload.get("number"), 0) < 1
+            ):
                 raise TraceRecorderError("turn creation payload is invalid")
             existing_turns = self._project_turns()
             if event.session_id not in {
                 item.session_id
                 for item in self._committed_events()
-                if item.kind is EventKind.SESSION_CREATED and item.session_id is not None
+                if item.kind is EventKind.SESSION_CREATED
+                and item.session_id is not None
             }:
                 raise TraceRecorderError("session does not exist")
             if event.turn_id in existing_turns or any(
-                item.session_id == event.session_id and _positive_int(item.payload.get("number"), 0) == _positive_int(payload.get("number"), 0)
+                item.session_id == event.session_id
+                and _positive_int(item.payload.get("number"), 0)
+                == _positive_int(payload.get("number"), 0)
                 for item in self._committed_events()
                 if item.kind is EventKind.TURN_CREATED
             ):
@@ -568,8 +665,14 @@ class ExecutionTraceRecorder:
                 current = turns[turn_id]
                 lifecycle = _turn_lifecycle(event.payload, current.lifecycle)
                 outcome_value = _string(event.payload.get("outcome"))
-                turn_outcome = _enum_or_none(TurnOutcome, outcome_value) if outcome_value is not None else None
-                finished_at = event.timestamp if lifecycle is TurnStatus.FINISHED else None
+                turn_outcome = (
+                    _enum_or_none(TurnOutcome, outcome_value)
+                    if outcome_value is not None
+                    else None
+                )
+                finished_at = (
+                    event.timestamp if lifecycle is TurnStatus.FINISHED else None
+                )
                 if lifecycle is TurnStatus.FINISHED and turn_outcome is None:
                     continue
                 turns[turn_id] = TurnState(
@@ -587,7 +690,9 @@ class ExecutionTraceRecorder:
         events = self._committed_events()
         if not events:
             raise TraceRecorderError("execution has no committed trace evidence")
-        created = [event for event in events if event.kind is EventKind.EXECUTION_CREATED]
+        created = [
+            event for event in events if event.kind is EventKind.EXECUTION_CREATED
+        ]
         if (
             events[0].sequence != 0
             or events[0].kind is not EventKind.EXECUTION_CREATED
@@ -595,24 +700,35 @@ class ExecutionTraceRecorder:
             or events[0].payload.get("trace_id") != self._trace_id.root
         ):
             raise TraceRecorderError("execution creation evidence is malformed")
-        terminals = [event for event in events if event.kind is EventKind.EXECUTION_FINISHED]
+        terminals = [
+            event for event in events if event.kind is EventKind.EXECUTION_FINISHED
+        ]
         if len(terminals) != 1 or terminals[0] is not events[-1]:
             raise TraceRecorderError("execution terminal evidence is malformed")
         terminal = terminals[0]
         outcome_value = _string(terminal.payload.get("outcome"))
-        outcome = _enum_or_none(ExecutionOutcome, outcome_value) if outcome_value is not None else None
+        outcome = (
+            _enum_or_none(ExecutionOutcome, outcome_value)
+            if outcome_value is not None
+            else None
+        )
         completeness_value = _string(terminal.payload.get("completeness"))
         raw_limitations = terminal.payload.get("limitations")
         if (
             outcome is None
             or completeness_value not in {"complete", "partial"}
             or not isinstance(raw_limitations, (list, tuple))
-            or any(not isinstance(item, str) or not item.strip() for item in raw_limitations)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in raw_limitations
+            )
         ):
             raise TraceRecorderError("execution terminal evidence is malformed")
         snapshot = self._project_snapshot()
         if snapshot.outcome is not outcome:
-            raise TraceRecorderError("execution terminal outcome conflicts with snapshot")
+            raise TraceRecorderError(
+                "execution terminal outcome conflicts with snapshot"
+            )
         completeness = cast(Literal["complete", "partial"], completeness_value)
         limitations = tuple(raw_limitations)
         return TraceResult(
@@ -626,11 +742,18 @@ class ExecutionTraceRecorder:
 
     @staticmethod
     def _safe_limitations(
-        *, cleanup_succeeded: bool, persistence_succeeded: bool, limitations: Sequence[str]
+        *,
+        cleanup_succeeded: bool,
+        persistence_succeeded: bool,
+        limitations: Sequence[str],
     ) -> tuple[str, ...]:
         values: list[str] = []
         for item in limitations:
-            if not isinstance(item, str) or not item.strip() or item not in ExecutionTraceRecorder._ALLOWED_LIMITATIONS:
+            if (
+                not isinstance(item, str)
+                or not item.strip()
+                or item not in ExecutionTraceRecorder._ALLOWED_LIMITATIONS
+            ):
                 raise TraceRecorderError("execution limitation is invalid")
             if item not in values:
                 values.append(item)
@@ -641,9 +764,7 @@ class ExecutionTraceRecorder:
         return tuple(values)
 
     @classmethod
-    def _limitations_from_events(
-        cls, events: Sequence[Event]
-    ) -> tuple[str, ...]:
+    def _limitations_from_events(cls, events: Sequence[Event]) -> tuple[str, ...]:
         values: list[str] = []
         for event in events:
             if event.kind is not EventKind.DIAGNOSTIC:

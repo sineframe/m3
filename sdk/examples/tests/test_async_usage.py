@@ -1,10 +1,10 @@
 """Use the async SDK without crossing sync/async boundaries in application tests."""
 
 import pytest
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.sync_api import ToolCallResult
 
 from mcp_pal import StdioServer
+from mcp_pal.async_api import AsyncMCPTestKit
+from mcp_pal.sync_api import ToolCallResult
 
 
 @pytest.mark.asyncio

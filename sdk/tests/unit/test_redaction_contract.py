@@ -11,11 +11,12 @@ import pytest
 from pydantic import BaseModel, SecretStr, model_serializer
 
 from mcp_pal.trace.redaction import (
-    ArtifactBytesResult,
     REDACTED,
+    ArtifactBytesResult,
     RedactionConfig,
     RedactionError,
     assertion_view,
+    project_redacted,
     redact,
     redact_artifact_bytes,
     redact_model_json,
@@ -23,7 +24,6 @@ from mcp_pal.trace.redaction import (
     redact_repr,
     redacted_json,
     serialize_redacted,
-    project_redacted,
 )
 
 
@@ -41,7 +41,10 @@ def test_nested_shapes_exact_secrets_keys_headers_and_urls_are_redacted() -> Non
             "Cookie": "sid=exact-secret-value",
             "X-Request-ID": "keep-me",
         },
-        "header_pairs": [("Authorization", "Bearer exact-secret-value"), ("X-Request-ID", "keep-me")],
+        "header_pairs": [
+            ("Authorization", "Bearer exact-secret-value"),
+            ("X-Request-ID", "keep-me"),
+        ],
         "credential_file": "credential-file-content",
         "internal_marker": "configured-secret",
         "url": "https://user:password@example.test/mcp?token=query-secret&ok=1",
@@ -71,7 +74,9 @@ class Credentials(BaseModel):
 
 
 def test_pydantic_models_and_exceptions_are_structurally_redacted() -> None:
-    model = Credentials(api_key=SecretStr("model-secret"), note="model-secret appears here")
+    model = Credentials(
+        api_key=SecretStr("model-secret"), note="model-secret appears here"
+    )
     error = ValueError("request failed with model-secret")
     error.details = {"authorization": "model-secret"}  # type: ignore[attr-defined]
 
@@ -95,9 +100,13 @@ class BrokenRepr:
 
 
 def test_repr_projection_redacts_and_repr_failure_is_fail_closed() -> None:
-    assert "repr-secret" not in redact_repr(ReprLeaker(), config=RedactionConfig(secrets=frozenset({"repr-secret"})))
+    assert "repr-secret" not in redact_repr(
+        ReprLeaker(), config=RedactionConfig(secrets=frozenset({"repr-secret"}))
+    )
     with pytest.raises(RedactionError, match="object representation failed") as caught:
-        redact_repr(BrokenRepr(), config=RedactionConfig(secrets=frozenset({"repr-secret"})))
+        redact_repr(
+            BrokenRepr(), config=RedactionConfig(secrets=frozenset({"repr-secret"}))
+        )
     assert "repr-secret" not in str(caught.value)
 
 
@@ -112,8 +121,13 @@ def test_unknown_values_and_malformed_urls_never_fall_back_to_raw() -> None:
 
 
 def test_raw_evidence_and_all_serialization_projections_are_safe() -> None:
-    config = RedactionConfig(secrets=frozenset({"wire-secret"}), include_environment=False)
-    evidence = {"raw_event": {"params": {"token": "wire-secret"}}, "result": ["wire-secret"]}
+    config = RedactionConfig(
+        secrets=frozenset({"wire-secret"}), include_environment=False
+    )
+    evidence = {
+        "raw_event": {"params": {"token": "wire-secret"}},
+        "result": ["wire-secret"],
+    }
     raw = redact_raw_evidence(evidence, config=config)
     api = serialize_redacted(evidence, config=config)
 
@@ -136,7 +150,9 @@ def test_assertion_view_is_only_explicit_in_process_holder() -> None:
     assert safe == {"answer": REDACTED}
 
 
-def test_compatibility_call_can_disable_ambient_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_compatibility_call_can_disable_ambient_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("AUTH_TOKEN", "ambient-secret")
     safe, _ = redact("ambient-secret", secrets=set())
     assert safe == "ambient-secret"
@@ -172,17 +188,34 @@ class HostileList(list[str]):
 
 
 def test_hostile_mapping_model_exception_and_container_fail_value_free() -> None:
-    hostile_values: tuple[Any, ...] = (HostileMapping(), HostileModel(), HostileException(), HostileList())
+    hostile_values: tuple[Any, ...] = (
+        HostileMapping(),
+        HostileModel(),
+        HostileException(),
+        HostileList(),
+    )
     for hostile in hostile_values:
         with pytest.raises(RedactionError) as caught:
             redact(hostile)
         message = str(caught.value)
-        assert all(secret not in message for secret in ("mapping-secret", "model-secret", "exception-secret", "list-secret"))
+        assert all(
+            secret not in message
+            for secret in (
+                "mapping-secret",
+                "model-secret",
+                "exception-secret",
+                "list-secret",
+            )
+        )
 
 
-def test_model_json_helper_redacts_before_json_validation_and_rejects_constructed_opaque_values() -> None:
+def test_model_json_helper_redacts_before_json_validation_and_rejects_constructed_opaque_values() -> (
+    None
+):
     model = Credentials(api_key=SecretStr("model-secret"), note="model-secret")
-    projected = redact_model_json(model, config=RedactionConfig(secrets=frozenset({"model-secret"})))
+    projected = redact_model_json(
+        model, config=RedactionConfig(secrets=frozenset({"model-secret"}))
+    )
     assert projected == {"api_key": REDACTED, "note": REDACTED}
 
     from mcp_pal.types import Event, EventId, EventKind, ExecutionId
@@ -254,18 +287,32 @@ def test_artifact_bytes_redact_binary_canaries_longest_first_and_preserve_other_
     assert result.metadata["output_length"] == len(result.data)
     assert result.metadata["redacted_count"] == result.redacted_count
     representation = repr(result)
-    assert all(secret not in representation for secret in ("abc", "bc", "configured-secret", "file-secret", "ambient-secret"))
+    assert all(
+        secret not in representation
+        for secret in (
+            "abc",
+            "bc",
+            "configured-secret",
+            "file-secret",
+            "ambient-secret",
+        )
+    )
 
 
 def test_artifact_bytes_no_secret_roundtrip_and_opaque_binary_is_allowed() -> None:
     source = b"\x00\xff\x80opaque-binary\x01"
-    result = redact_artifact_bytes(source, config=RedactionConfig(secrets=frozenset({"not-present"})))
+    result = redact_artifact_bytes(
+        source, config=RedactionConfig(secrets=frozenset({"not-present"}))
+    )
 
     assert result.data == source
     assert result.value == source
     assert result.redacted_count == 0
     assert result.original_length == len(source)
-    assert repr(result) == "ArtifactBytesResult(original_length=17, output_length=17, redacted_count=0)"
+    assert (
+        repr(result)
+        == "ArtifactBytesResult(original_length=17, output_length=17, redacted_count=0)"
+    )
 
 
 def test_redaction_error_path_is_sanitized_for_hostile_keys() -> None:
@@ -281,7 +328,9 @@ def test_redaction_error_path_is_sanitized_for_hostile_keys() -> None:
     assert hostile_reason.reason == "value could not be safely redacted"
 
 
-def test_exact_canaries_are_redacted_but_transformed_values_are_outside_contract() -> None:
+def test_exact_canaries_are_redacted_but_transformed_values_are_outside_contract() -> (
+    None
+):
     config = RedactionConfig(
         secrets=frozenset({"literal-canary", "reference-canary"}),
         include_environment=False,

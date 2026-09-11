@@ -13,4 +13,6 @@ def test_application_openapi_uses_distribution_version() -> None:
 
     from mcp_pal_app.api import create_app
 
-    assert create_app().openapi()["info"]["version"] == importlib.metadata.version("mcp-pal")
+    assert create_app().openapi()["info"]["version"] == importlib.metadata.version(
+        "mcp-pal"
+    )

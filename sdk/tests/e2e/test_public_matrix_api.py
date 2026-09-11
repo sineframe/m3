@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,7 +23,6 @@ from mcp_pal.types import (
     TextContent,
     TurnOutcome,
 )
-
 
 pytestmark = [pytest.mark.e2e, pytest.mark.process_lifecycle]
 
@@ -77,9 +76,7 @@ def _calls(marker: Path) -> list[dict[str, Any]]:
 
 def _assert_processes_exited(marker: Path) -> None:
     pids = {
-        int(call["pid"])
-        for call in _calls(marker)
-        if isinstance(call.get("pid"), int)
+        int(call["pid"]) for call in _calls(marker) if isinstance(call.get("pid"), int)
     }
     deadline = time.monotonic() + 2
     while pids and time.monotonic() < deadline:
@@ -99,8 +96,14 @@ def _assert_processes_exited(marker: Path) -> None:
 def test_tool_matrix_calls_owned_tools_and_persists_each_cell(tmp_path: Path) -> None:
     markers = {name: tmp_path / f"{name}.jsonl" for name in ("catalog", "warehouse")}
     servers = (
-        _server_case("catalog", markers["catalog"], (ToolCase(name="echo", arguments={"text": "catalog"}),)),
-        _server_case("warehouse", markers["warehouse"], (ToolCase(name="failure", arguments={}),)),
+        _server_case(
+            "catalog",
+            markers["catalog"],
+            (ToolCase(name="echo", arguments={"text": "catalog"}),),
+        ),
+        _server_case(
+            "warehouse", markers["warehouse"], (ToolCase(name="failure", arguments={}),)
+        ),
     )
     matrix = ToolMatrix(servers=servers)
     store = SQLiteExecutionStore(tmp_path / "matrix.sqlite")
@@ -118,7 +121,10 @@ def test_tool_matrix_calls_owned_tools_and_persists_each_cell(tmp_path: Path) ->
                 assert report is not None
                 assert persisted.metadata["mcp_pal.matrix.case_id"] == case.id
                 assert persisted.metadata["mcp_pal.matrix.servers"] == case.server.name
-        assert [case.id for case in matrix.cases()] == ["catalog/echo", "warehouse/failure"]
+        assert [case.id for case in matrix.cases()] == [
+            "catalog/echo",
+            "warehouse/failure",
+        ]
         assert isinstance(results[0].direct_result, CallToolResult)
         assert results[0].direct_result.is_error is False
         assert results[0].direct_result.content[0]["text"] == "catalog"
@@ -139,13 +145,18 @@ def test_harness_matrix_each_server_and_each_tool_use_real_acp_decisions(
     markers = {name: tmp_path / f"{name}.jsonl" for name in ("catalog", "warehouse")}
     servers = (
         _server_case(
-            "catalog", markers["catalog"],
+            "catalog",
+            markers["catalog"],
             (ToolCase(id="search", name="echo"), ToolCase(id="get", name="failure")),
         ),
-        _server_case("warehouse", markers["warehouse"], (ToolCase(id="search", name="echo"),)),
+        _server_case(
+            "warehouse", markers["warehouse"], (ToolCase(id="search", name="echo"),)
+        ),
     )
     prompt = json.dumps({"query": "find the matrix value"})
-    matrix = HarnessMatrix.each_server(servers=servers, harnesses=(_harness(),), trials=2)
+    matrix = HarnessMatrix.each_server(
+        servers=servers, harnesses=(_harness(),), trials=2
+    )
     store = SQLiteExecutionStore(tmp_path / "harness.sqlite")
     try:
         with MCPTestKit(store=store, env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
@@ -153,7 +164,9 @@ def test_harness_matrix_each_server_and_each_tool_use_real_acp_decisions(
                 result = case.run(prompt, kit=kit, timeout=20)
                 assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
                 assert result.trace_view.tool_calls
-                expect(result).to_have_tool_call("echo", server=case.server.name, status="success")
+                expect(result).to_have_tool_call(
+                    "echo", server=case.server.name, status="success"
+                )
                 call = result.trace_view.tool_calls[0]
                 tool_result = call.result.value
                 assert tool_result is not None and tool_result.content
@@ -178,7 +191,13 @@ def test_harness_matrix_each_server_and_each_tool_use_real_acp_decisions(
         with MCPTestKit(store=tool_store, env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
             for case in tool_matrix.cases():
                 result = case.run(
-                    json.dumps({"server": case.server.name, "tool": case.tool.name, "arguments": {"text": case.id}}),
+                    json.dumps(
+                        {
+                            "server": case.server.name,
+                            "tool": case.tool.name,
+                            "arguments": {"text": case.id},
+                        }
+                    ),
                     kit=kit,
                     timeout=20,
                 )
@@ -188,7 +207,9 @@ def test_harness_matrix_each_server_and_each_tool_use_real_acp_decisions(
                 spec = tool_store.get_execution_spec(result.snapshot.execution_id)
                 assert spec is not None
                 assert isinstance(spec.tool_policy, RestrictiveToolPolicy)
-                assert spec.tool_policy.allowed_tools == (f"{case.server.name}:{case.tool.name}",)
+                assert spec.tool_policy.allowed_tools == (
+                    f"{case.server.name}:{case.tool.name}",
+                )
         _assert_processes_exited(markers["catalog"])
         _assert_processes_exited(markers["warehouse"])
     finally:
@@ -210,14 +231,26 @@ def test_harness_matrix_all_servers_chains_real_turns_and_persists_one_execution
             case = matrix.cases()[0]
             with case.session(kit=kit) as session:
                 first = session.send(
-                    json.dumps({"server": "catalog", "tool": "echo", "arguments": {"text": "item-42"}}),
+                    json.dumps(
+                        {
+                            "server": "catalog",
+                            "tool": "echo",
+                            "arguments": {"text": "item-42"},
+                        }
+                    ),
                     timeout=20,
                 )
                 assert first.response is not None
                 chained = first.response.text
                 assert chained == "item-42"
                 second = session.send(
-                    json.dumps({"server": "warehouse", "tool": "echo", "arguments": {"text": chained}}),
+                    json.dumps(
+                        {
+                            "server": "warehouse",
+                            "tool": "echo",
+                            "arguments": {"text": chained},
+                        }
+                    ),
                     timeout=20,
                 )
             result = session.result
@@ -225,9 +258,16 @@ def test_harness_matrix_all_servers_chains_real_turns_and_persists_one_execution
         assert second.snapshot.outcome is TurnOutcome.COMPLETED
         assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
         assert len(result.turns) == 2
-        expect(result).to_have_tool_call("echo", turn=first, server="catalog", arguments={"text": "item-42"})
-        expect(result).to_have_tool_call("echo", turn=second, server="warehouse", arguments={"text": chained})
-        assert any(call.get("arguments") == {"text": chained} for call in _calls(markers["warehouse"]))
+        expect(result).to_have_tool_call(
+            "echo", turn=first, server="catalog", arguments={"text": "item-42"}
+        )
+        expect(result).to_have_tool_call(
+            "echo", turn=second, server="warehouse", arguments={"text": chained}
+        )
+        assert any(
+            call.get("arguments") == {"text": chained}
+            for call in _calls(markers["warehouse"])
+        )
         report = store.get_report(result.snapshot.execution_id)
         assert report is not None
         assert sum(event.kind.value == "turn.created" for event in report.events) == 2
@@ -246,13 +286,17 @@ async def test_tool_matrix_async_run_helpers_use_real_processes_and_are_independ
     tmp_path: Path,
 ) -> None:
     marker = tmp_path / "async.jsonl"
-    server = _server_case("catalog", marker, (ToolCase(name="echo", arguments={"text": "async"}),))
+    server = _server_case(
+        "catalog", marker, (ToolCase(name="echo", arguments={"text": "async"}),)
+    )
     matrix = ToolMatrix(servers=(server,))
     store = SQLiteExecutionStore(tmp_path / "async.sqlite")
     try:
         from mcp_pal.async_api import AsyncMCPTestKit
 
-        async with AsyncMCPTestKit(store=store, env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
+        async with AsyncMCPTestKit(
+            store=store, env={}, cwd=str(_REPOSITORY_ROOT)
+        ) as kit:
             first = await matrix.cases()[0].run_async(kit=kit)
             second = await matrix.cases()[0].run_async(kit=kit)
         assert first.snapshot.execution_id != second.snapshot.execution_id
@@ -269,26 +313,43 @@ async def test_harness_matrix_async_run_and_session_use_real_processes(
 ) -> None:
     marker = tmp_path / "async-harness.jsonl"
     server = _server_case("catalog", marker, (ToolCase(name="echo"),))
-    case = HarnessMatrix.each_server(servers=(server,), harnesses=(_harness(),)).cases()[0]
+    case = HarnessMatrix.each_server(
+        servers=(server,), harnesses=(_harness(),)
+    ).cases()[0]
     store = SQLiteExecutionStore(tmp_path / "async-harness.sqlite")
     try:
         from mcp_pal.async_api import AsyncMCPTestKit
 
-        async with AsyncMCPTestKit(store=store, env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
+        async with AsyncMCPTestKit(
+            store=store, env={}, cwd=str(_REPOSITORY_ROOT)
+        ) as kit:
             run_result = await case.run_async(
-                json.dumps({"server": "catalog", "tool": "echo", "arguments": {"text": "async-run"}}),
+                json.dumps(
+                    {
+                        "server": "catalog",
+                        "tool": "echo",
+                        "arguments": {"text": "async-run"},
+                    }
+                ),
                 kit=kit,
                 timeout=20,
             )
             assert run_result.snapshot.outcome is ExecutionOutcome.COMPLETED
             assert run_result.trace_view.tool_calls
             expect(run_result).to_have_tool_call(
-                "echo", server="catalog", arguments={"text": "async-run"}, status="success"
+                "echo",
+                server="catalog",
+                arguments={"text": "async-run"},
+                status="success",
             )
             async with case.async_session(kit=kit) as session:
                 turn = await session.send(
                     json.dumps(
-                        {"server": "catalog", "tool": "echo", "arguments": {"text": "async-session"}}
+                        {
+                            "server": "catalog",
+                            "tool": "echo",
+                            "arguments": {"text": "async-session"},
+                        }
                     ),
                     timeout=20,
                 )
@@ -297,7 +358,11 @@ async def test_harness_matrix_async_run_and_session_use_real_processes(
         assert session_result.snapshot.outcome is ExecutionOutcome.COMPLETED
         assert session_result.trace_view.tool_calls
         expect(session_result).to_have_tool_call(
-            "echo", turn=turn, server="catalog", arguments={"text": "async-session"}, status="success"
+            "echo",
+            turn=turn,
+            server="catalog",
+            arguments={"text": "async-session"},
+            status="success",
         )
         spec = store.get_execution_spec(session_result.snapshot.execution_id)
         assert spec is not None

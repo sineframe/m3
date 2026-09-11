@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from mcp_pal.async_api import AsyncMCPTestKit
 
 from mcp_pal import (
     ArtifactId,
@@ -25,12 +25,12 @@ from mcp_pal import (
     RequiredEvaluationError,
     ServerBinding,
     StdioServer,
-    snapshot,
     check,
     expect,
+    snapshot,
 )
+from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.storage import SQLiteExecutionStore
-import sqlite3
 
 _QUOTE_CONTENT = {"type": "text", "text": '{"amount": 7.0, "currency": "USD"}'}
 _QUOTE_CONTENT_RESULT = {**_QUOTE_CONTENT, "annotations": None, "_meta": None}
@@ -227,7 +227,8 @@ def test_sqlite_evaluations_reopen_with_builtin_and_structured_custom(
     spec = DirectSpec(
         servers=(ServerBinding(server=example_server, alias="example"),),
         operation=CallTool(
-            server="example", name="shipping_quote",
+            server="example",
+            name="shipping_quote",
             arguments={"weight_kg": 1, "zone": "local"},
         ),
     )
@@ -250,14 +251,17 @@ def test_sqlite_evaluations_reopen_with_builtin_and_structured_custom(
     try:
         records = reopened.evaluations(execution_id)
         assert {record.name for record in records} == {
-            "mcp_pal.output.has_text.v1", "example.structured.v1"
+            "mcp_pal.output.has_text.v1",
+            "example.structured.v1",
         }
         assert custom.score == 1.0 and builtin.status is EvaluationStatus.PASSED
     finally:
         reopened.close()
 
 
-def test_public_direct_binding_alias_is_persisted(example_server: StdioServer, tmp_path) -> None:
+def test_public_direct_binding_alias_is_persisted(
+    example_server: StdioServer, tmp_path
+) -> None:
     database = tmp_path / "direct-binding.sqlite"
     store = SQLiteExecutionStore(database)
     binding = ServerBinding(server=example_server, alias="shipping")
@@ -274,7 +278,10 @@ def test_public_direct_binding_alias_is_persisted(example_server: StdioServer, t
         assert reopened.list_executions().total == 1
         report = reopened.get_report(execution_id)
         assert report is not None
-        assert sum(event.kind.value == "tool.call_requested" for event in report.events) == 2
+        assert (
+            sum(event.kind.value == "tool.call_requested" for event in report.events)
+            == 2
+        )
     finally:
         reopened.close()
     connection = sqlite3.connect(database)

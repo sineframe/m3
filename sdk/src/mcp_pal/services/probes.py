@@ -9,8 +9,8 @@ selected.
 
 from __future__ import annotations
 
-import importlib.util
 import asyncio as _asyncio
+import importlib.util
 import json
 import math
 import os
@@ -19,10 +19,10 @@ import shutil
 import signal
 import subprocess
 import threading
-import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 from pydantic import Field
 
@@ -82,7 +82,9 @@ class ProbeReport(FrozenModel):
     def result_for(self, name: str) -> ProbeResult | None:
         """Return the result for ``name`` without guessing another target."""
 
-        return next((result for result in self.results if result.capability.name == name), None)
+        return next(
+            (result for result in self.results if result.capability.name == name), None
+        )
 
 
 @dataclass(frozen=True, repr=False)
@@ -127,11 +129,15 @@ _DEFAULT_OUTPUT_LIMIT = 64 * 1024
 _DEFAULT_TIMEOUT = 5.0
 
 
-def _redact_text(value: str, secrets: Iterable[str] = (), *, parse_json: bool = True) -> str:
+def _redact_text(
+    value: str, secrets: Iterable[str] = (), *, parse_json: bool = True
+) -> str:
     """Redact known values and credential-shaped text without raising."""
 
     secrets = tuple(secrets)
-    result = _SENSITIVE_TEXT_RE.sub(lambda match: f"{match.group(1) or match.group(2)}{_REDACTED}", value)
+    result = _SENSITIVE_TEXT_RE.sub(
+        lambda match: f"{match.group(1) or match.group(2)}{_REDACTED}", value
+    )
     for secret in secrets:
         if secret:
             result = result.replace(secret, _REDACTED)
@@ -144,7 +150,11 @@ def _redact_text(value: str, secrets: Iterable[str] = (), *, parse_json: bool = 
             # Use the recursive key-aware redactor for JSON-shaped command
             # output, then serialize the safe projection.  Strings recurse
             # through the scalar path to avoid parsing nested text repeatedly.
-            result = json.dumps(_redact_value(parsed, set(secrets)), sort_keys=True, separators=(",", ":"))
+            result = json.dumps(
+                _redact_value(parsed, set(secrets)),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
     return result[:_DEFAULT_OUTPUT_LIMIT]
 
 
@@ -160,7 +170,10 @@ def _redact_value(value: Any, secrets: set[str], key_hint: str | None = None) ->
     if key_hint and _SENSITIVE_KEY_RE.search(key_hint):
         return _REDACTED
     if isinstance(value, Mapping):
-        return {str(key): _redact_value(item, secrets, str(key)) for key, item in value.items()}
+        return {
+            str(key): _redact_value(item, secrets, str(key))
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
         return [_redact_value(item, secrets) for item in value]
     if isinstance(value, str):
@@ -198,12 +211,19 @@ def _safe_name(value: str, secrets: set[str]) -> str:
 
 
 def _validate_timeout(value: float, *, field: str = "timeout_seconds") -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) <= 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) <= 0
+    ):
         raise ValueError(f"{field} must be finite and positive")
     return float(value)
 
 
-def _resolve_executable(executable: str, environment: Mapping[str, str] | None) -> str | None:
+def _resolve_executable(
+    executable: str, environment: Mapping[str, str] | None
+) -> str | None:
     """Resolve through the caller's PATH before constructing the child env."""
 
     if not isinstance(executable, str) or not executable or "\x00" in executable:
@@ -312,8 +332,12 @@ def _run_command(
     output_limit: int,
     secrets: set[str],
 ) -> _CommandOutput:
-    if not argv or any(not isinstance(part, str) or not part or "\x00" in part for part in argv):
-        raise ValueError("probe command must contain non-empty strings without NUL bytes")
+    if not argv or any(
+        not isinstance(part, str) or not part or "\x00" in part for part in argv
+    ):
+        raise ValueError(
+            "probe command must contain non-empty strings without NUL bytes"
+        )
     child_env = {
         "PATH": os.defpath,
         "LC_ALL": "C",
@@ -323,10 +347,14 @@ def _run_command(
     }
     if env:
         for key, value in env.items():
-            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            if not isinstance(key, str) or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*", key
+            ):
                 raise ValueError("probe environment contains an invalid variable name")
             if not isinstance(value, str) or "\x00" in value:
-                raise ValueError("probe environment values must be strings without NUL bytes")
+                raise ValueError(
+                    "probe environment values must be strings without NUL bytes"
+                )
             child_env[key] = value
 
     timeout_seconds = _validate_timeout(timeout_seconds)
@@ -347,8 +375,16 @@ def _run_command(
         )
         assert process.stdout is not None and process.stderr is not None
         readers = [
-            threading.Thread(target=_read_bounded, args=(process.stdout, stdout_chunks, output_limit), daemon=True),
-            threading.Thread(target=_read_bounded, args=(process.stderr, stderr_chunks, output_limit), daemon=True),
+            threading.Thread(
+                target=_read_bounded,
+                args=(process.stdout, stdout_chunks, output_limit),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=_read_bounded,
+                args=(process.stderr, stderr_chunks, output_limit),
+                daemon=True,
+            ),
         ]
         for reader in readers:
             reader.start()
@@ -374,7 +410,9 @@ def _run_command(
     except (OSError, ValueError) as error:
         if process is not None:
             _stop_process(process)
-        return _CommandOutput(returncode=None, stdout="", stderr="", error=_safe_error(error, secrets))
+        return _CommandOutput(
+            returncode=None, stdout="", stderr="", error=_safe_error(error, secrets)
+        )
     finally:
         if process is not None:
             for stream in (process.stdout, process.stderr):
@@ -408,7 +446,12 @@ class Probes:
     started without a shell.  A timeout owns cleanup of the process group.
     """
 
-    def __init__(self, *, timeout_seconds: float = _DEFAULT_TIMEOUT, output_limit: int = _DEFAULT_OUTPUT_LIMIT) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = _DEFAULT_TIMEOUT,
+        output_limit: int = _DEFAULT_OUTPUT_LIMIT,
+    ) -> None:
         timeout_seconds = _validate_timeout(timeout_seconds)
         if output_limit <= 0:
             raise ValueError("output_limit must be positive")
@@ -437,19 +480,35 @@ class Probes:
         self._ensure_open()
         secrets = _secret_values(env)
         safe_name = _safe_name(name, secrets)
-        effective_timeout = self.timeout_seconds if timeout_seconds is None else _validate_timeout(timeout_seconds)
+        effective_timeout = (
+            self.timeout_seconds
+            if timeout_seconds is None
+            else _validate_timeout(timeout_seconds)
+        )
         known_transport = _transport_kind(transport)
         if transport is not None and known_transport is None:
-            capability = Capability(name=safe_name, status=CapabilityStatus.UNSUPPORTED, reason="unknown transport")
+            capability = Capability(
+                name=safe_name,
+                status=CapabilityStatus.UNSUPPORTED,
+                reason="unknown transport",
+            )
             evidence = ProbeEvidence(
                 kind=kind,
                 target=safe_name,
-                details={"transport": _redact_text(str(transport), secrets), "executed": False},
+                details={
+                    "transport": _redact_text(str(transport), secrets),
+                    "executed": False,
+                },
             )
             return ProbeResult(capability=capability, evidence=evidence)
         resolved = _resolve_executable(executable, env)
         if resolved is None:
-            capability = Capability(name=safe_name, status=CapabilityStatus.UNAVAILABLE, reason="executable is unavailable", transport=known_transport)
+            capability = Capability(
+                name=safe_name,
+                status=CapabilityStatus.UNAVAILABLE,
+                reason="executable is unavailable",
+                transport=known_transport,
+            )
             evidence = ProbeEvidence(
                 kind=kind,
                 target=safe_name,
@@ -466,7 +525,9 @@ class Probes:
             output_limit=self.output_limit,
             secrets=secrets,
         )
-        combined = _redact_text("\n".join(part for part in (output.stdout, output.stderr) if part), secrets)[: self.output_limit]
+        combined = _redact_text(
+            "\n".join(part for part in (output.stdout, output.stderr) if part), secrets
+        )[: self.output_limit]
         detected = _detected_version(combined)
         details: dict[str, Any] = {
             "returncode": output.returncode,
@@ -481,8 +542,16 @@ class Probes:
             reason = output.error
             details["error"] = output.error
         elif output.timed_out:
-            status = CapabilityStatus.DEGRADED if combined.strip() else CapabilityStatus.UNAVAILABLE
-            reason = "probe timed out after partial evidence" if combined.strip() else "probe timed out before evidence"
+            status = (
+                CapabilityStatus.DEGRADED
+                if combined.strip()
+                else CapabilityStatus.UNAVAILABLE
+            )
+            reason = (
+                "probe timed out after partial evidence"
+                if combined.strip()
+                else "probe timed out before evidence"
+            )
         elif output.returncode != 0:
             status = CapabilityStatus.DEGRADED
             reason = "probe exited unsuccessfully"
@@ -602,11 +671,18 @@ class Probes:
         safe_name = _safe_name(name, secrets)
         kind = _transport_kind(transport)
         if kind is None:
-            capability = Capability(name=safe_name, status=CapabilityStatus.UNSUPPORTED, reason="unknown transport")
+            capability = Capability(
+                name=safe_name,
+                status=CapabilityStatus.UNSUPPORTED,
+                reason="unknown transport",
+            )
             evidence = ProbeEvidence(
                 kind=ProbeKind.TRANSPORT,
                 target=safe_name,
-                details={"transport": _redact_text(str(transport), secrets), "executed": False},
+                details={
+                    "transport": _redact_text(str(transport), secrets),
+                    "executed": False,
+                },
             )
             return ProbeResult(capability=capability, evidence=evidence)
         if executable is not None:
@@ -622,21 +698,50 @@ class Probes:
         if module:
             try:
                 available = importlib.util.find_spec(module) is not None
-                status = CapabilityStatus.READY if available else CapabilityStatus.UNAVAILABLE
-                reason = None if available else "optional transport dependency is unavailable"
-                details = {"module": _redact_text(module, secrets), "module_available": available}
+                status = (
+                    CapabilityStatus.READY
+                    if available
+                    else CapabilityStatus.UNAVAILABLE
+                )
+                reason = (
+                    None
+                    if available
+                    else "optional transport dependency is unavailable"
+                )
+                details = {
+                    "module": _redact_text(module, secrets),
+                    "module_available": available,
+                }
             except Exception as error:
                 status = CapabilityStatus.DEGRADED
                 reason = _safe_error(error, secrets)
                 details = {"module": _redact_text(module, secrets), "error": reason}
-            capability = Capability(name=safe_name, status=status, reason=reason, transport=kind)
-            evidence = ProbeEvidence(kind=ProbeKind.TRANSPORT, target=safe_name, details=details)
+            capability = Capability(
+                name=safe_name, status=status, reason=reason, transport=kind
+            )
+            evidence = ProbeEvidence(
+                kind=ProbeKind.TRANSPORT, target=safe_name, details=details
+            )
             return ProbeResult(capability=capability, evidence=evidence)
-        capability = Capability(name=safe_name, status=CapabilityStatus.UNSUPPORTED, reason="no transport probe was provided", transport=kind)
-        evidence = ProbeEvidence(kind=ProbeKind.TRANSPORT, target=safe_name, details={"transport": _redact_text(str(transport), secrets), "executed": False})
+        capability = Capability(
+            name=safe_name,
+            status=CapabilityStatus.UNSUPPORTED,
+            reason="no transport probe was provided",
+            transport=kind,
+        )
+        evidence = ProbeEvidence(
+            kind=ProbeKind.TRANSPORT,
+            target=safe_name,
+            details={
+                "transport": _redact_text(str(transport), secrets),
+                "executed": False,
+            },
+        )
         return ProbeResult(capability=capability, evidence=evidence)
 
-    def probe_storage(self, name: str = "memory", *, module: str | None = None) -> ProbeResult:
+    def probe_storage(
+        self, name: str = "memory", *, module: str | None = None
+    ) -> ProbeResult:
         """Report in-memory storage as ready; check optional storage lazily."""
 
         self._ensure_open()
@@ -644,23 +749,45 @@ class Probes:
         safe_name = _safe_name(name, secrets)
         if module is None and name in {"memory", "in_memory"}:
             capability = Capability(name=safe_name, status=CapabilityStatus.READY)
-            evidence = ProbeEvidence(kind=ProbeKind.STORAGE, target=safe_name, details={"implementation": "in_memory", "optional": False})
+            evidence = ProbeEvidence(
+                kind=ProbeKind.STORAGE,
+                target=safe_name,
+                details={"implementation": "in_memory", "optional": False},
+            )
             return ProbeResult(capability=capability, evidence=evidence)
         if not module:
-            capability = Capability(name=safe_name, status=CapabilityStatus.UNSUPPORTED, reason="no storage implementation probe was provided")
-            evidence = ProbeEvidence(kind=ProbeKind.STORAGE, target=safe_name, details={"optional": True})
+            capability = Capability(
+                name=safe_name,
+                status=CapabilityStatus.UNSUPPORTED,
+                reason="no storage implementation probe was provided",
+            )
+            evidence = ProbeEvidence(
+                kind=ProbeKind.STORAGE, target=safe_name, details={"optional": True}
+            )
             return ProbeResult(capability=capability, evidence=evidence)
         try:
             available = importlib.util.find_spec(module) is not None
-            status = CapabilityStatus.READY if available else CapabilityStatus.UNAVAILABLE
+            status = (
+                CapabilityStatus.READY if available else CapabilityStatus.UNAVAILABLE
+            )
             reason = None if available else "optional storage dependency is unavailable"
-            details = {"module": _redact_text(module, secrets), "module_available": available, "optional": True}
+            details = {
+                "module": _redact_text(module, secrets),
+                "module_available": available,
+                "optional": True,
+            }
         except Exception as error:
             status = CapabilityStatus.DEGRADED
             reason = _safe_error(error, secrets)
-            details = {"module": _redact_text(module, secrets), "error": reason, "optional": True}
+            details = {
+                "module": _redact_text(module, secrets),
+                "error": reason,
+                "optional": True,
+            }
         capability = Capability(name=safe_name, status=status, reason=reason)
-        evidence = ProbeEvidence(kind=ProbeKind.STORAGE, target=safe_name, details=details)
+        evidence = ProbeEvidence(
+            kind=ProbeKind.STORAGE, target=safe_name, details=details
+        )
         return ProbeResult(capability=capability, evidence=evidence)
 
     def probe_requested(self, requests: Iterable[ProbeRequest]) -> ProbeReport:
@@ -672,37 +799,94 @@ class Probes:
             if request.timeout_seconds is not None:
                 _validate_timeout(request.timeout_seconds)
             try:
-                kind = request.kind if isinstance(request.kind, ProbeKind) else ProbeKind(request.kind)
+                kind = (
+                    request.kind
+                    if isinstance(request.kind, ProbeKind)
+                    else ProbeKind(request.kind)
+                )
             except (TypeError, ValueError):
                 safe_name = _safe_name(request.name, _secret_values(request.env))
                 results.append(
                     ProbeResult(
-                        capability=Capability(name=safe_name, status=CapabilityStatus.UNAVAILABLE, reason="unknown probe kind"),
-                        evidence=ProbeEvidence(kind=ProbeKind.BINARY, target=safe_name, details={"requested": True}),
+                        capability=Capability(
+                            name=safe_name,
+                            status=CapabilityStatus.UNAVAILABLE,
+                            reason="unknown probe kind",
+                        ),
+                        evidence=ProbeEvidence(
+                            kind=ProbeKind.BINARY,
+                            target=safe_name,
+                            details={"requested": True},
+                        ),
                     )
                 )
                 continue
             if kind is ProbeKind.BINARY and request.executable is not None:
-                result = self.probe_binary(request.name, request.executable, args=request.args or ("--version",), env=request.env, timeout_seconds=request.timeout_seconds)
+                result = self.probe_binary(
+                    request.name,
+                    request.executable,
+                    args=request.args or ("--version",),
+                    env=request.env,
+                    timeout_seconds=request.timeout_seconds,
+                )
             elif kind is ProbeKind.PROTOCOL and request.executable is not None:
-                result = self.probe_protocol(request.name, request.executable, args=request.args or ("--protocol-version",), env=request.env, timeout_seconds=request.timeout_seconds, transport=request.transport)
+                result = self.probe_protocol(
+                    request.name,
+                    request.executable,
+                    args=request.args or ("--protocol-version",),
+                    env=request.env,
+                    timeout_seconds=request.timeout_seconds,
+                    transport=request.transport,
+                )
             elif kind is ProbeKind.HARNESS and request.executable is not None:
-                result = self.probe_harness(request.name, request.executable, args=request.args or ("--version",), env=request.env, timeout_seconds=request.timeout_seconds, transport=request.transport)
+                result = self.probe_harness(
+                    request.name,
+                    request.executable,
+                    args=request.args or ("--version",),
+                    env=request.env,
+                    timeout_seconds=request.timeout_seconds,
+                    transport=request.transport,
+                )
             elif kind is ProbeKind.TRANSPORT:
-                result = self.probe_transport(request.name, transport=request.transport or request.name, executable=request.executable, args=request.args or ("--transport-ready",), module=request.module, env=request.env, timeout_seconds=request.timeout_seconds)
+                result = self.probe_transport(
+                    request.name,
+                    transport=request.transport or request.name,
+                    executable=request.executable,
+                    args=request.args or ("--transport-ready",),
+                    module=request.module,
+                    env=request.env,
+                    timeout_seconds=request.timeout_seconds,
+                )
             elif kind is ProbeKind.STORAGE:
                 result = self.probe_storage(request.name, module=request.module)
             else:
                 safe_name = _safe_name(request.name, _secret_values(request.env))
                 result = ProbeResult(
-                    capability=Capability(name=safe_name, status=CapabilityStatus.UNAVAILABLE, reason="probe target was not specified"),
-                    evidence=ProbeEvidence(kind=kind, target=safe_name, details={"requested": True}),
+                    capability=Capability(
+                        name=safe_name,
+                        status=CapabilityStatus.UNAVAILABLE,
+                        reason="probe target was not specified",
+                    ),
+                    evidence=ProbeEvidence(
+                        kind=kind, target=safe_name, details={"requested": True}
+                    ),
                 )
             results.append(result)
         capabilities = tuple(result.capability for result in results)
-        failures = tuple(result for result in results if result.status is not CapabilityStatus.READY)
-        reason = None if not failures else "; ".join(f"{result.capability.name}: {result.capability.reason or result.status.value}" for result in failures)
-        readiness = Readiness(ready=not failures, capabilities=capabilities, reason=reason)
+        failures = tuple(
+            result for result in results if result.status is not CapabilityStatus.READY
+        )
+        reason = (
+            None
+            if not failures
+            else "; ".join(
+                f"{result.capability.name}: {result.capability.reason or result.status.value}"
+                for result in failures
+            )
+        )
+        readiness = Readiness(
+            ready=not failures, capabilities=capabilities, reason=reason
+        )
         return ProbeReport(readiness=readiness, results=tuple(results))
 
 
@@ -715,8 +899,15 @@ class AsyncProbes:
     async kit cannot accidentally expose blocking probe methods.
     """
 
-    def __init__(self, *, timeout_seconds: float = _DEFAULT_TIMEOUT, output_limit: int = _DEFAULT_OUTPUT_LIMIT) -> None:
-        self._service = Probes(timeout_seconds=timeout_seconds, output_limit=output_limit)
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = _DEFAULT_TIMEOUT,
+        output_limit: int = _DEFAULT_OUTPUT_LIMIT,
+    ) -> None:
+        self._service = Probes(
+            timeout_seconds=timeout_seconds, output_limit=output_limit
+        )
         self._lifecycle_guard: Callable[[], None] | None = None
 
     def _set_lifecycle_guard(self, guard: Callable[[], None]) -> None:
@@ -811,9 +1002,13 @@ class AsyncProbes:
             timeout_seconds=timeout_seconds,
         )
 
-    async def probe_storage(self, name: str = "memory", *, module: str | None = None) -> ProbeResult:
+    async def probe_storage(
+        self, name: str = "memory", *, module: str | None = None
+    ) -> ProbeResult:
         self._ensure_open()
-        return await _asyncio.to_thread(self._service.probe_storage, name, module=module)
+        return await _asyncio.to_thread(
+            self._service.probe_storage, name, module=module
+        )
 
     async def probe_requested(self, requests: Iterable[ProbeRequest]) -> ProbeReport:
         self._ensure_open()
@@ -822,11 +1017,11 @@ class AsyncProbes:
 
 
 __all__ = [
-    "Probes",
     "AsyncProbes",
     "ProbeEvidence",
     "ProbeKind",
     "ProbeReport",
     "ProbeRequest",
     "ProbeResult",
+    "Probes",
 ]

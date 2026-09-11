@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 from mcp_pal.storage import SQLiteExecutionStore
 
 
-def _run(tmp_path: Path, source: str, *extra: str) -> tuple[subprocess.CompletedProcess[str], Path]:
+def _run(
+    tmp_path: Path, source: str, *extra: str
+) -> tuple[subprocess.CompletedProcess[str], Path]:
     test_file = tmp_path / "test_case.py"
     test_file.write_text(source, encoding="utf-8")
     database = tmp_path / "results.sqlite"
@@ -95,7 +97,9 @@ def test_collection_error_still_writes_manifest(tmp_path: Path) -> None:
 
 
 def test_s_capture_is_reported_unavailable(tmp_path: Path) -> None:
-    result, database = _run(tmp_path, "def test_print_only():\n    print('diagnostic')\n", "-s")
+    result, database = _run(
+        tmp_path, "def test_print_only():\n    print('diagnostic')\n", "-s"
+    )
     assert result.returncode == 0
     store, run_id, record = _manifest(database)
     try:
@@ -110,5 +114,7 @@ def test_manifest_only_baseline_is_accepted(tmp_path: Path) -> None:
     assert first.returncode == 0
     store, run_id, _ = _manifest(database)
     store.close()
-    second, _ = _run(tmp_path, "def test_one():\n    pass\n", "--mcp-pal-baseline", run_id)
+    second, _ = _run(
+        tmp_path, "def test_one():\n    pass\n", "--mcp-pal-baseline", run_id
+    )
     assert second.returncode == 0

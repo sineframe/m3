@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mcp_pal import AgentSpec, MCPTestKit, Config, ServerValue
+from mcp_pal import AgentSpec, Config, MCPTestKit, ServerValue
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.sync_api import ProbeKind, ProbeRequest
 
@@ -25,7 +25,9 @@ async def async_usage(kit: AsyncMCPTestKit) -> None:
         assert isinstance(kit.config, Config)
 
 
-def sync_runtime_usage(kit: MCPTestKit, server: ServerValue, agent_spec: AgentSpec) -> None:
+def sync_runtime_usage(
+    kit: MCPTestKit, server: ServerValue, agent_spec: AgentSpec
+) -> None:
     """The planned runtime shape remains type-safe before its implementation phase."""
 
     with kit:
@@ -36,10 +38,12 @@ def sync_runtime_usage(kit: MCPTestKit, server: ServerValue, agent_spec: AgentSp
         with kit.agent_session(agent_spec) as session:
             session.send("message", timeout=None, metadata=None)
             session.snapshot()
-            session.result
+            _ = session.result
 
 
-async def async_runtime_usage(kit: AsyncMCPTestKit, server: ServerValue, agent_spec: AgentSpec) -> None:
+async def async_runtime_usage(
+    kit: AsyncMCPTestKit, server: ServerValue, agent_spec: AgentSpec
+) -> None:
     """The async twin mirrors the planned direct and agent lifecycle."""
 
     async with kit:
@@ -51,7 +55,7 @@ async def async_runtime_usage(kit: AsyncMCPTestKit, server: ServerValue, agent_s
         async with session:
             await session.send("message", timeout=None, metadata=None)
             await session.snapshot()
-            session.result
+            _ = session.result
 
 
 def sync_pytest_usage() -> None:

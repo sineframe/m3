@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
-from pathlib import Path
 import stat
 import subprocess
 import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from threading import Thread
 from urllib.request import Request, urlopen
 
@@ -17,7 +17,6 @@ from mcp_pal.server_group import HarnessServerConfig
 from mcp_pal.trace.capture import CaptureWriter
 from mcp_pal.transport.capture_proxy import McpCaptureManager
 from mcp_pal.types import SecretReference, TransportKind
-
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -66,10 +65,14 @@ def _capture_bytes(manager: McpCaptureManager, connection_id: str) -> bytes:
     return manager.writer_for(connection_id).path.read_bytes()
 
 
-def _run_proxy_with_handoff(handoff: Path, capture: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run_proxy_with_handoff(
+    handoff: Path, capture: Path, tmp_path: Path
+) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     source_root = str(Path(__file__).parents[2] / "src")
-    environment["PYTHONPATH"] = source_root + os.pathsep + environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = (
+        source_root + os.pathsep + environment.get("PYTHONPATH", "")
+    )
     return subprocess.run(
         (
             sys.executable,
@@ -103,7 +106,7 @@ async def test_api_key_literals_are_scanned_on_http_and_stdio(
     monkeypatch.setenv("HTTP_REFERENCE", resolved)
 
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -144,7 +147,9 @@ async def test_api_key_literals_are_scanned_on_http_and_stdio(
                     headers={
                         "X-API-Key": literal_http,
                         "ANTHROPIC_API_KEY": literal_vendor,
-                        "Authorization": SecretReference(source="environment", name="HTTP_REFERENCE"),
+                        "Authorization": SecretReference(
+                            source="environment", name="HTTP_REFERENCE"
+                        ),
                     },
                 ),
                 _configuration(
@@ -155,7 +160,9 @@ async def test_api_key_literals_are_scanned_on_http_and_stdio(
                     environment={
                         "X_API_KEY": literal_http,
                         "ANTHROPIC_API_KEY": literal_vendor,
-                        "REF_TOKEN": SecretReference(source="environment", name="HTTP_REFERENCE"),
+                        "REF_TOKEN": SecretReference(
+                            source="environment", name="HTTP_REFERENCE"
+                        ),
                     },
                 ),
             )
@@ -177,7 +184,9 @@ async def test_api_key_literals_are_scanned_on_http_and_stdio(
         assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
         child_environment = os.environ.copy()
         source_root = str(Path(__file__).parents[2] / "src")
-        child_environment["PYTHONPATH"] = source_root + os.pathsep + child_environment.get("PYTHONPATH", "")
+        child_environment["PYTHONPATH"] = (
+            source_root + os.pathsep + child_environment.get("PYTHONPATH", "")
+        )
         process = subprocess.Popen(
             (stdio_config.command, *stdio_config.args),
             stdin=subprocess.PIPE,
@@ -186,7 +195,9 @@ async def test_api_key_literals_are_scanned_on_http_and_stdio(
             env=child_environment,
         )
         assert process.stdin is not None and process.stdout is not None
-        stdout, _ = process.communicate('{"jsonrpc":"2.0","id":2,"method":"tools/call"}\n', timeout=10)
+        stdout, _ = process.communicate(
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call"}\n', timeout=10
+        )
         assert process.returncode == 0
         assert literal_http in stdout
         assert literal_vendor in stdout
@@ -218,9 +229,13 @@ async def test_proxy_writer_receives_resolved_canaries(
     monkeypatch.setenv("OPENAI_API_KEY", ambient)
 
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             data = json.dumps(
-                {"jsonrpc": "2.0", "id": 1, "result": {"value": f"{literal}|{resolved}|{ambient}"}}
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"value": f"{literal}|{resolved}|{ambient}"},
+                }
             ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -241,7 +256,9 @@ async def test_proxy_writer_receives_resolved_canaries(
             endpoint=f"http://127.0.0.1:{upstream.server_port}/mcp",
             headers={
                 "X-API-Key": literal,
-                "Authorization": SecretReference(source="environment", name="PROXY_REFERENCE"),
+                "Authorization": SecretReference(
+                    source="environment", name="PROXY_REFERENCE"
+                ),
             },
         )
         instrumented = (await manager.instrument((config,)))[0]
@@ -280,7 +297,9 @@ def test_stdio_handoff_rejects_legacy_shape_and_symlink(tmp_path: Path) -> None:
     legacy = tmp_path / "legacy.json"
     legacy.write_text('{"TOKEN": "legacy-secret"}', encoding="utf-8")
     legacy.chmod(0o600)
-    result = _run_proxy_with_handoff(legacy, tmp_path / "legacy-capture.jsonl", tmp_path)
+    result = _run_proxy_with_handoff(
+        legacy, tmp_path / "legacy-capture.jsonl", tmp_path
+    )
     assert result.returncode == 78
     assert not legacy.exists()
 
@@ -306,5 +325,7 @@ def test_capture_writer_without_explicit_canaries_keeps_ambient_redaction(
     ambient = "ambient-default-api-key"
     monkeypatch.setenv("VENDOR_API_KEY", ambient)
     writer = CaptureWriter(str(tmp_path / "capture.jsonl"), 0, secrets=set())
-    writer.write(transport="stdio", direction="server_to_client", payload={"result": ambient})
+    writer.write(
+        transport="stdio", direction="server_to_client", payload={"result": ambient}
+    )
     assert ambient.encode() not in (tmp_path / "capture.jsonl").read_bytes()

@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import os
 import sys
-import importlib.metadata
 from pathlib import Path
 from typing import Any
 
 from dotenv import dotenv_values
 
 from mcp_pal.configuration import ConfigError, load_config
-from mcp_pal.services.probes import Probes, ProbeKind, ProbeRequest
+from mcp_pal.services.probes import ProbeKind, ProbeRequest, Probes
+
 from .errors import CLIError
 
 _TRANSPORT_MODULES = {
@@ -67,7 +68,11 @@ def _read_selected_environment(path: Path | None) -> dict[str, str] | None:
             if key.startswith(_ENV_PREFIX) and isinstance(value, str)
         }
         selected.update(
-            {key: value for key, value in os.environ.items() if key.startswith(_ENV_PREFIX)}
+            {
+                key: value
+                for key, value in os.environ.items()
+                if key.startswith(_ENV_PREFIX)
+            }
         )
         return selected
     except (OSError, TypeError, ValueError):
@@ -86,7 +91,13 @@ def _parse_requirement(value: str) -> tuple[str, str | None]:
         kind, target = value.split(":", 1)
     except ValueError:
         raise DoctorCLIError("invalid requirement") from None
-    if not target or kind not in {"binary", "harness", "protocol", "transport", "storage"}:
+    if not target or kind not in {
+        "binary",
+        "harness",
+        "protocol",
+        "transport",
+        "storage",
+    }:
         raise DoctorCLIError("invalid requirement")
     if kind == "transport" and target not in _TRANSPORT_MODULES:
         raise DoctorCLIError("invalid requirement")
@@ -160,14 +171,23 @@ def _redact_requirement_targets(value: Any, targets: set[str]) -> Any:
     if isinstance(value, list):
         return [_redact_requirement_targets(item, targets) for item in value]
     if isinstance(value, dict):
-        return {key: _redact_requirement_targets(item, targets) for key, item in value.items()}
+        return {
+            key: _redact_requirement_targets(item, targets)
+            for key, item in value.items()
+        }
     return value
 
 
-def _safe_probe_results(results: list[Any], requirements: list[tuple[str, str | None]]) -> list[dict[str, Any]]:
+def _safe_probe_results(
+    results: list[Any], requirements: list[tuple[str, str | None]]
+) -> list[dict[str, Any]]:
     """Project probe results without exposing executable paths or arguments."""
 
-    targets = {target for kind, target in requirements if kind in {"binary", "harness", "protocol"} and target}
+    targets = {
+        target
+        for kind, target in requirements
+        if kind in {"binary", "harness", "protocol"} and target
+    }
     safe_results: list[dict[str, Any]] = []
     for result in results:
         safe = _redact_requirement_targets(_json_value(result), targets)
@@ -201,14 +221,20 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
             raise DoctorCLIError("project root unavailable") from None
     configuration: dict[str, Any] | None = None
     project_python: dict[str, Any] | None = None
-    from .supervisor import ProjectPythonError, resolve_project_python, validate_project_python
+    from .supervisor import (
+        ProjectPythonError,
+        resolve_project_python,
+        validate_project_python,
+    )
 
     root = (args.project_root or Path.cwd()).resolve()
     try:
         cli_version = importlib.metadata.version("mcp-pal-cli")
         bundled_sdk_version = importlib.metadata.version("mcp-pal")
     except importlib.metadata.PackageNotFoundError:
-        raise DoctorCLIError("the CLI installation is incomplete; reinstall mcp-pal-cli") from None
+        raise DoctorCLIError(
+            "the CLI installation is incomplete; reinstall mcp-pal-cli"
+        ) from None
     cli = {
         "status": "ready" if cli_version == bundled_sdk_version else "not ready",
         "version": cli_version,
@@ -242,7 +268,11 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         reason = str(error)
         if reason.startswith("no project environment is configured"):
             project_python = {"status": "not ready", "reason": reason}
-        elif "missing required MCP Pal packages" in reason or "does not match CLI SDK" in reason or "distribution version could not be determined" in reason:
+        elif (
+            "missing required MCP Pal packages" in reason
+            or "does not match CLI SDK" in reason
+            or "distribution version could not be determined" in reason
+        ):
             project_python = {"status": "not ready", "reason": reason, "source": source}
         else:
             raise DoctorProjectPythonError(reason) from None
@@ -264,12 +294,19 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         configuration = {"status": "ready", "settings": _json_value(config)}
     probe_report = Probes().probe_requested(_requests(requirements))
     results = _safe_probe_results(list(probe_report.results), requirements)
-    ready = cli_ready and project_python["status"] == "ready" and (configuration is None or configuration["status"] == "ready") and probe_report.readiness.ready
+    ready = (
+        cli_ready
+        and project_python["status"] == "ready"
+        and (configuration is None or configuration["status"] == "ready")
+        and probe_report.readiness.ready
+    )
     report = {
         "ready": ready,
         "cli": cli,
         "project_root": str(root),
-        "requirements": [_requirement_label(kind, target) for kind, target in requirements],
+        "requirements": [
+            _requirement_label(kind, target) for kind, target in requirements
+        ],
         "configuration": configuration,
         "project_python": project_python,
         "results": results,
@@ -286,7 +323,11 @@ def print_human(report: dict[str, Any]) -> None:
             print(f"bundled SDK: {cli.get('sdk_version')}")
     project_python = report.get("project_python")
     if project_python is not None:
-        detail = f" (mcp-pal {project_python['version']})" if project_python.get("version") else ""
+        detail = (
+            f" (mcp-pal {project_python['version']})"
+            if project_python.get("version")
+            else ""
+        )
         print(f"project environment: {project_python['status']}{detail}")
         if project_python.get("source"):
             print(f"project environment source: {project_python['source']}")
@@ -299,7 +340,10 @@ def print_human(report: dict[str, Any]) -> None:
     for result in report["results"]:
         capability = result["capability"]
         reason = capability.get("reason")
-        print(f"{capability['name']}: {capability['status']}" + (f" ({reason})" if reason else ""))
+        print(
+            f"{capability['name']}: {capability['status']}"
+            + (f" ({reason})" if reason else "")
+        )
     if not report.get("ready"):
         if cli := report.get("cli"):
             if cli.get("status") != "ready":
@@ -322,12 +366,12 @@ def print_configuration_error(error: ConfigError) -> None:
 
 
 __all__ = [
-    "DoctorCLIError",
     "DoctorArgumentError",
-    "DoctorProjectPythonError",
+    "DoctorCLIError",
     "DoctorConfigurationError",
-    "run",
-    "print_human",
-    "print_configuration_error",
+    "DoctorProjectPythonError",
     "_read_selected_environment",
+    "print_configuration_error",
+    "print_human",
+    "run",
 ]

@@ -2,25 +2,41 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-import hashlib
-import json
 from statistics import median
 from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
-from .types import FrozenModel, EvaluationRecord, EvaluationStatus
-
+from .types import EvaluationRecord, EvaluationStatus, FrozenModel
 
 Scalar = str | int | float | bool | None
 _TIME_GROUPS = {"time.hour", "time.day", "time.week"}
 _SYSTEM_LABELS = {
-    "run_id", "trial_id", "turn_id", "evaluator", "evaluation_status", "subject_kind", "case_id",
-    "execution_kind", "server", "tool", "transport", "harness", "model", "evaluation_kind",
-    "judge_provider", "judge_model", "rubric_id", "matrix.id", "matrix.cell", "trial.number",
+    "run_id",
+    "trial_id",
+    "turn_id",
+    "evaluator",
+    "evaluation_status",
+    "subject_kind",
+    "case_id",
+    "execution_kind",
+    "server",
+    "tool",
+    "transport",
+    "harness",
+    "model",
+    "evaluation_kind",
+    "judge_provider",
+    "judge_model",
+    "rubric_id",
+    "matrix.id",
+    "matrix.cell",
+    "trial.number",
 }
 
 
@@ -50,19 +66,24 @@ class EvaluationQuery(FrozenModel):
     def _filter_values(cls, value: Any) -> Mapping[str, tuple[Scalar, ...]]:
         if not isinstance(value, Mapping):
             raise ValueError("aggregate filters must be a mapping")
-        normalized = {str(key): tuple(item) if isinstance(item, (list, tuple, set)) else (item,) for key, item in value.items()}
+        normalized = {
+            str(key): tuple(item) if isinstance(item, (list, tuple, set)) else (item,)
+            for key, item in value.items()
+        }
         if any(not values for values in normalized.values()):
             raise ValueError("aggregate filter values must not be empty")
         return normalized
 
     @model_validator(mode="after")
-    def _valid_query(self) -> "EvaluationQuery":
+    def _valid_query(self) -> EvaluationQuery:
         if self.from_ is not None and self.to is not None and self.from_ >= self.to:
             raise ValueError("aggregate from must be before to")
         if len(set(self.group_by)) != len(self.group_by):
             raise ValueError("aggregate group_by labels must be unique")
         time_groups = tuple(name for name in self.group_by if name.startswith("time."))
-        if len(time_groups) > 1 or any(name not in _TIME_GROUPS for name in time_groups):
+        if len(time_groups) > 1 or any(
+            name not in _TIME_GROUPS for name in time_groups
+        ):
             raise ValueError("group_by may contain only one supported time bucket")
         if "evaluator" in self.filters and len(self.filters["evaluator"]) != 1:
             raise ValueError("evaluator filter must name exactly one evaluator")
@@ -131,13 +152,21 @@ class EvaluationReport(FrozenModel):
 
 
 def _utc(value: datetime) -> datetime:
-    return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return (
+        value.astimezone(timezone.utc)
+        if value.tzinfo
+        else value.replace(tzinfo=timezone.utc)
+    )
 
 
 def _bucket(value: datetime, name: str) -> str:
     value = _utc(value)
     if name == "time.hour":
-        return value.replace(minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+        return (
+            value.replace(minute=0, second=0, microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
     if name == "time.week":
         start = value.date().fromordinal(value.date().toordinal() - value.weekday())
         return start.isoformat()
@@ -159,10 +188,16 @@ def _percentile(values: list[float], percentile: float) -> float | None:
 
 
 def _observed(observation: Any) -> Scalar:
-    return getattr(observation, "value", None) if getattr(observation, "state", None) is not None else None
+    return (
+        getattr(observation, "value", None)
+        if getattr(observation, "state", None) is not None
+        else None
+    )
 
 
-def _labels(record: EvaluationRecord, snapshot: Any, spec: Any, trace: Any = None) -> dict[str, Scalar]:
+def _labels(
+    record: EvaluationRecord, snapshot: Any, spec: Any, trace: Any = None
+) -> dict[str, Scalar]:
     labels: dict[str, Scalar] = {}
     metadata: dict[str, Scalar] = {}
     if spec is not None and isinstance(getattr(spec, "metadata", None), Mapping):
@@ -176,13 +211,20 @@ def _labels(record: EvaluationRecord, snapshot: Any, spec: Any, trace: Any = Non
     labels["evaluator"] = record.name
     labels["evaluation_status"] = record.status.value
     labels["subject_kind"] = record.subject_kind
-    labels["evaluation_kind"] = getattr(record.provenance, "kind", None) or "deterministic"
+    labels["evaluation_kind"] = (
+        getattr(record.provenance, "kind", None) or "deterministic"
+    )
     labels["judge_provider"] = getattr(record.provenance, "provider", None)
     labels["judge_model"] = getattr(record.provenance, "model", None)
     labels["rubric_id"] = getattr(record.provenance, "rubric_id", None)
     matrix_id = metadata.get("mcp_pal.matrix.matrix_id")
     cell_id = metadata.get("mcp_pal.matrix.cell_id")
-    labels["case_id"] = record.case_id or getattr(spec, "case_id", None) or metadata.get("case_id") or metadata.get("mcp_pal.case_id")
+    labels["case_id"] = (
+        record.case_id
+        or getattr(spec, "case_id", None)
+        or metadata.get("case_id")
+        or metadata.get("mcp_pal.case_id")
+    )
     if labels["case_id"] is None and matrix_id is not None and cell_id is not None:
         labels["case_id"] = f"{matrix_id}:{cell_id}"
     if matrix_id is not None and cell_id is not None:
@@ -195,7 +237,9 @@ def _labels(record: EvaluationRecord, snapshot: Any, spec: Any, trace: Any = Non
         runtime = getattr(trace, "runtime", None)
         observed_transport = _observed(getattr(runtime, "transport", None))
         if observed_transport is not None:
-            labels["transport"] = str(getattr(observed_transport, "value", observed_transport))
+            labels["transport"] = str(
+                getattr(observed_transport, "value", observed_transport)
+            )
         observed_model = _observed(getattr(runtime, "model_id", None))
         if observed_model is not None:
             labels["model"] = str(observed_model)
@@ -205,26 +249,60 @@ def _labels(record: EvaluationRecord, snapshot: Any, spec: Any, trace: Any = Non
             tools = {_observed(getattr(call, "tool", None)) for call in calls}
             servers.discard(None)
             tools.discard(None)
-            labels["server"] = next(iter(servers)) if len(servers) == 1 else ("multiple" if len(servers) > 1 else None)
-            labels["tool"] = next(iter(tools)) if len(tools) == 1 else ("multiple" if len(tools) > 1 else None)
+            labels["server"] = (
+                next(iter(servers))
+                if len(servers) == 1
+                else ("multiple" if len(servers) > 1 else None)
+            )
+            labels["tool"] = (
+                next(iter(tools))
+                if len(tools) == 1
+                else ("multiple" if len(tools) > 1 else None)
+            )
         runtime_kind = getattr(runtime, "kind", None)
         if runtime_kind is not None:
-            labels.setdefault("execution_kind", "direct" if runtime_kind == "direct" else "agent")
+            labels.setdefault(
+                "execution_kind", "direct" if runtime_kind == "direct" else "agent"
+            )
             labels.setdefault("harness", runtime_kind)
     if spec is not None:
         labels["execution_kind"] = getattr(spec, "kind", None)
-        servers = tuple(getattr(binding, "alias", None) or getattr(getattr(binding, "server", None), "name", None) for binding in getattr(spec, "servers", ()))
+        servers = tuple(
+            getattr(binding, "alias", None)
+            or getattr(getattr(binding, "server", None), "name", None)
+            for binding in getattr(spec, "servers", ())
+        )
         servers = tuple(str(value) for value in servers if value)
-        labels.setdefault("server", servers[0] if len(servers) == 1 else ("multiple" if servers else None))
+        labels.setdefault(
+            "server",
+            servers[0] if len(servers) == 1 else ("multiple" if servers else None),
+        )
         operation = getattr(spec, "operation", None)
-        labels.setdefault("tool", getattr(operation, "name", None) if operation is not None else None)
+        labels.setdefault(
+            "tool", getattr(operation, "name", None) if operation is not None else None
+        )
         labels["harness"] = getattr(getattr(spec, "harness", None), "name", None)
-        server_value = getattr(getattr(spec, "servers", ())[0], "server", None) if getattr(spec, "servers", ()) else None
+        server_value = (
+            getattr(getattr(spec, "servers", ())[0], "server", None)
+            if getattr(spec, "servers", ())
+            else None
+        )
         labels.setdefault("transport", getattr(server_value, "kind", None))
-        labels.setdefault("model", getattr(getattr(spec, "harness", None), "model", None))
+        labels.setdefault(
+            "model", getattr(getattr(spec, "harness", None), "model", None)
+        )
         if labels["case_id"] is None:
-            normalized = spec.model_dump(mode="json", exclude={"run_id", "case_id", "metadata", "evaluations"})
-            labels["case_id"] = "spec:" + hashlib.sha256(json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            normalized = spec.model_dump(
+                mode="json", exclude={"run_id", "case_id", "metadata", "evaluations"}
+            )
+            labels["case_id"] = (
+                "spec:"
+                + hashlib.sha256(
+                    json.dumps(
+                        normalized, sort_keys=True, separators=(",", ":")
+                    ).encode()
+                ).hexdigest()
+            )
     return labels
 
 
@@ -246,7 +324,7 @@ def aggregate_evaluations(
     for record in records:
         snapshot = snapshots.get(record.execution_id.root)
         created = _utc(getattr(snapshot, "created_at", record.created_at))
-        if start and created < start or end and created >= end:
+        if (start and created < start) or (end and created >= end):
             continue
         snapshot = snapshots.get(record.execution_id.root)
         spec = specifications.get(record.execution_id.root)
@@ -257,41 +335,91 @@ def aggregate_evaluations(
             shape = {
                 "runtime": getattr(runtime, "kind", None),
                 "transport": _observed(getattr(runtime, "transport", None)),
-                "bindings": tuple(sorted(str(getattr(item, "server_binding", None)) for item in getattr(trace, "timeline", ()) if getattr(item, "server_binding", None))),
-                "tools": tuple((_observed(getattr(item, "server", None)), _observed(getattr(item, "tool", None))) for item in getattr(trace, "tool_calls", ())),
+                "bindings": tuple(
+                    sorted(
+                        str(getattr(item, "server_binding", None))
+                        for item in getattr(trace, "timeline", ())
+                        if getattr(item, "server_binding", None)
+                    )
+                ),
+                "tools": tuple(
+                    (
+                        _observed(getattr(item, "server", None)),
+                        _observed(getattr(item, "tool", None)),
+                    )
+                    for item in getattr(trace, "tool_calls", ())
+                ),
             }
-            if shape["runtime"] or shape["transport"] or shape["bindings"] or shape["tools"]:
-                labels["case_id"] = "trace:" + hashlib.sha256(json.dumps(shape, sort_keys=True, default=str).encode()).hexdigest()
+            if (
+                shape["runtime"]
+                or shape["transport"]
+                or shape["bindings"]
+                or shape["tools"]
+            ):
+                labels["case_id"] = (
+                    "trace:"
+                    + hashlib.sha256(
+                        json.dumps(shape, sort_keys=True, default=str).encode()
+                    ).hexdigest()
+                )
         selected.append((record, labels, traces.get(record.execution_id.root)))
 
     # Re-evaluation of the same execution/turn/subject is one trial.
-    latest: dict[tuple[str, str | None, str, str, str | None], tuple[EvaluationRecord, dict[str, Scalar], Any]] = {}
+    latest: dict[
+        tuple[str, str | None, str, str, str | None],
+        tuple[EvaluationRecord, dict[str, Scalar], Any],
+    ] = {}
     for record, labels, trace in selected:
-        key = (record.execution_id.root, record.turn_id.root if record.turn_id else None, record.name, record.subject_kind, record.subject_digest)
+        key = (
+            record.execution_id.root,
+            record.turn_id.root if record.turn_id else None,
+            record.name,
+            record.subject_kind,
+            record.subject_digest,
+        )
         current = latest.get(key)
-        if current is None or (record.created_at, record.evaluation_id.root) > (current[0].created_at, current[0].evaluation_id.root):
+        if current is None or (record.created_at, record.evaluation_id.root) > (
+            current[0].created_at,
+            current[0].evaluation_id.root,
+        ):
             latest[key] = (record, labels, trace)
     selected = list(latest.values())
     selected = [
-        item for item in selected
-        if all(not values or item[1].get(key) in values for key, values in query.filters.items())
+        item
+        for item in selected
+        if all(
+            not values or item[1].get(key) in values
+            for key, values in query.filters.items()
+        )
     ]
 
     group_names = tuple(query.group_by)
     evaluator_values = {record.name for record, _, _ in selected}
 
-    def key_for(item: tuple[EvaluationRecord, dict[str, Scalar], Any]) -> dict[str, Scalar]:
+    def key_for(
+        item: tuple[EvaluationRecord, dict[str, Scalar], Any],
+    ) -> dict[str, Scalar]:
         record, labels, _ = item
         snapshot = snapshots.get(record.execution_id.root)
         created = getattr(snapshot, "created_at", record.created_at)
-        return {name: (_bucket(created, name) if name.startswith("time.") else labels.get(name)) for name in group_names}
+        return {
+            name: (
+                _bucket(created, name) if name.startswith("time.") else labels.get(name)
+            )
+            for name in group_names
+        }
 
-    grouped: dict[tuple[tuple[str, Scalar], ...], list[tuple[EvaluationRecord, dict[str, Scalar], Any]]] = defaultdict(list)
+    grouped: dict[
+        tuple[tuple[str, Scalar], ...],
+        list[tuple[EvaluationRecord, dict[str, Scalar], Any]],
+    ] = defaultdict(list)
     for item in selected:
         key = key_for(item)
         grouped[tuple(key.items())].append(item)
 
-    def values(items: list[tuple[EvaluationRecord, dict[str, Scalar], Any]]) -> EvaluationStats:
+    def values(
+        items: list[tuple[EvaluationRecord, dict[str, Scalar], Any]],
+    ) -> EvaluationStats:
         statuses = {status.value: 0 for status in EvaluationStatus}
         scores: list[float] = []
         durations: list[float] = []
@@ -307,7 +435,7 @@ def aggregate_evaluations(
             if trace is not None and record.execution_id.root not in health_items:
                 health_items[record.execution_id.root] = trace
         for execution_id, trace in health_items.items():
-            snapshot = snapshots.get(execution_id)
+            snapshots.get(execution_id)
             if trace is not None:
                 summary = getattr(trace, "summary", None)
                 timing = getattr(summary, "timing", None)
@@ -318,23 +446,50 @@ def aggregate_evaluations(
                 failed += int(getattr(summary, "failed_tool_call_count", 0))
                 protocol += int(getattr(summary, "protocol_error_count", 0))
                 for call in getattr(trace, "tool_calls", ()):
-                    observed = getattr(getattr(call, "server_latency_ms", None), "value", None)
+                    observed = getattr(
+                        getattr(call, "server_latency_ms", None), "value", None
+                    )
                     if observed is not None:
                         latencies.append(float(observed))
-        measured = statuses[EvaluationStatus.PASSED.value] + statuses[EvaluationStatus.FAILED.value]
+        measured = (
+            statuses[EvaluationStatus.PASSED.value]
+            + statuses[EvaluationStatus.FAILED.value]
+        )
         outcome_counts: dict[str, int] = {}
         for execution_id in execution_ids:
-            outcome = getattr(getattr(snapshots.get(execution_id), "outcome", None), "value", None)
+            outcome = getattr(
+                getattr(snapshots.get(execution_id), "outcome", None), "value", None
+            )
             if outcome is not None:
                 outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
         return EvaluationStats(
-            trial_count=len(execution_ids), evaluation_count=len(items), measured_count=measured,
-            status_counts=statuses, pass_rate=(statuses[EvaluationStatus.PASSED.value] / measured if measured else None),
-            average_score=(sum(scores) / len(scores) if scores else None), score_count=len(scores),
-            health=HealthStats(execution_count=len(execution_ids), tool_calls=ToolCallStats(total=tools, successful=success, failed=failed), protocol_error_count=protocol,
+            trial_count=len(execution_ids),
+            evaluation_count=len(items),
+            measured_count=measured,
+            status_counts=statuses,
+            pass_rate=(
+                statuses[EvaluationStatus.PASSED.value] / measured if measured else None
+            ),
+            average_score=(sum(scores) / len(scores) if scores else None),
+            score_count=len(scores),
+            health=HealthStats(
+                execution_count=len(execution_ids),
+                tool_calls=ToolCallStats(
+                    total=tools, successful=success, failed=failed
+                ),
+                protocol_error_count=protocol,
                 outcome_counts=outcome_counts,
-                execution_duration_ms=LatencyStats(count=len(durations), p50=median(durations) if durations else None, p95=_percentile(durations, .95)),
-                server_latency_ms=LatencyStats(count=len(latencies), p50=median(latencies) if latencies else None, p95=_percentile(latencies, .95))),
+                execution_duration_ms=LatencyStats(
+                    count=len(durations),
+                    p50=median(durations) if durations else None,
+                    p95=_percentile(durations, 0.95),
+                ),
+                server_latency_ms=LatencyStats(
+                    count=len(latencies),
+                    p50=median(latencies) if latencies else None,
+                    p95=_percentile(latencies, 0.95),
+                ),
+            ),
         )
 
     group_values = [(dict(key), values(items)) for key, items in grouped.items()]
@@ -343,9 +498,24 @@ def aggregate_evaluations(
     if len(evaluator_values) > 1:
         total = total.model_copy(update={"pass_rate": None, "average_score": None})
     visible = group_values[query.offset : query.offset + query.limit]
-    return EvaluationReport(from_=query.start, to=query.to, totals=total,
+    return EvaluationReport(
+        from_=query.start,
+        to=query.to,
+        totals=total,
         groups=tuple(EvaluationGroup(key=key, values=item) for key, item in visible),
-        total_groups=len(group_values), limit=query.limit, offset=query.offset)
+        total_groups=len(group_values),
+        limit=query.limit,
+        offset=query.offset,
+    )
 
 
-__all__ = ["EvaluationQuery", "EvaluationReport", "EvaluationGroup", "EvaluationStats", "HealthStats", "LatencyStats", "ToolCallStats", "aggregate_evaluations"]
+__all__ = [
+    "EvaluationGroup",
+    "EvaluationQuery",
+    "EvaluationReport",
+    "EvaluationStats",
+    "HealthStats",
+    "LatencyStats",
+    "ToolCallStats",
+    "aggregate_evaluations",
+]

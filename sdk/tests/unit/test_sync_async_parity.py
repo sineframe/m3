@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 CHECKER = ROOT / "scripts" / "check_sync_async_parity.py"
@@ -35,7 +34,9 @@ def test_sync_async_parity_manifest_is_generator_normalize() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_new_one_sided_export_requires_an_explicit_manifest_decision(tmp_path: Path) -> None:
+def test_new_one_sided_export_requires_an_explicit_manifest_decision(
+    tmp_path: Path,
+) -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     manifest["module_exports"]["async_pending"].append("NewAsyncResult")
     altered = tmp_path / "parity.json"

@@ -9,6 +9,7 @@ from mcp_pal_app.builtin_profiles import (
     EXCALIDRAW_PROFILE_ID,
     EXCALIDRAW_REVISION_ID,
 )
+
 from .models import McpProfile, McpProfileRevision
 
 

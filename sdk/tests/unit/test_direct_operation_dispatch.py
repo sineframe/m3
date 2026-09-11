@@ -35,7 +35,7 @@ class _DispatchClient:
     def __init__(self) -> None:
         self.tool_cursors: list[str | None] = []
 
-    async def __aenter__(self) -> "_DispatchClient":
+    async def __aenter__(self) -> _DispatchClient:
         return self
 
     async def __aexit__(self, *_args: object) -> None:

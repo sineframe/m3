@@ -19,7 +19,9 @@ def test_group_id_alone_cannot_be_signalled(monkeypatch: pytest.MonkeyPatch) -> 
     assert called == []
 
 
-def test_mismatched_live_child_group_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mismatched_live_child_group_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     called = []
     monkeypatch.setattr(os, "getpgid", lambda _pid: 100)
     monkeypatch.setattr(os, "killpg", lambda *args: called.append(args))
@@ -28,7 +30,9 @@ def test_mismatched_live_child_group_fails_closed(monkeypatch: pytest.MonkeyPatc
     assert called == []
 
 
-def test_reaped_leader_only_allows_its_pid_rooted_group(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reaped_leader_only_allows_its_pid_rooted_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     called = []
 
     def gone(_pid: int) -> int:
@@ -41,7 +45,9 @@ def test_reaped_leader_only_allows_its_pid_rooted_group(monkeypatch: pytest.Monk
     assert called == []
 
 
-def test_matching_owned_child_receives_bounded_term_then_kill(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_matching_owned_child_receives_bounded_term_then_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = []
     monkeypatch.setattr(os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(os, "getpgrp", lambda: 1)
@@ -61,13 +67,17 @@ def test_eperm_does_not_retry_an_unowned_group(monkeypatch: pytest.MonkeyPatch) 
         raise PermissionError("not owner")
 
     monkeypatch.setattr(os, "killpg", denied)
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: type("R", (), {"stdout": ""})())
+    monkeypatch.setattr(
+        subprocess, "run", lambda *args, **kwargs: type("R", (), {"stdout": ""})()
+    )
 
     assert terminate_process_group(pid=200, pgid=200, grace_seconds=0) is False
     assert calls == [(200, signal.SIGTERM)]
 
 
-def test_reaped_owned_leader_falls_back_to_verified_group_members(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reaped_owned_leader_falls_back_to_verified_group_members(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     signals = []
 
     def gone(_pid: int) -> int:
@@ -90,7 +100,9 @@ def test_reaped_owned_leader_falls_back_to_verified_group_members(monkeypatch: p
     assert (123, signal.SIGTERM) in signals and (123, signal.SIGKILL) in signals
 
 
-def test_owned_process_group_refuses_backend_group(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_owned_process_group_refuses_backend_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = []
     monkeypatch.setattr(os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(os, "getpgrp", lambda: 200)

@@ -2,23 +2,26 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from pydantic import TypeAdapter, ValidationError
-from types import SimpleNamespace
 
 import mcp_pal.async_api as async_api
 import mcp_pal.sync_api as sync_api
-from mcp_pal.direct_client import AsyncDirectClient, Prompt, Resource, ResourceTemplate, Tool
+from mcp_pal.direct_client import (
+    AsyncDirectClient,
+    Prompt,
+    Resource,
+    ResourceTemplate,
+    Tool,
+)
 from mcp_pal.types import (
     CallTool,
     CallToolResult,
-    DirectSpec,
     DirectOperation,
     DirectResult,
-    PromptInfo,
-    ResourceInfo,
-    TemplateInfo,
-    ToolInfo,
+    DirectSpec,
     GetPrompt,
     GetPromptResult,
     ListPrompts,
@@ -31,10 +34,13 @@ from mcp_pal.types import (
     ListToolsResult,
     Ping,
     PingResult,
+    PromptInfo,
     ReadResource,
     ReadResourceResult,
+    ResourceInfo,
     ServerBinding,
     StdioServer,
+    ToolInfo,
 )
 
 
@@ -55,16 +61,20 @@ def test_direct_value_exports_use_the_stable_types_module_identities() -> None:
 
 
 @pytest.mark.asyncio
-async def test_direct_client_conversions_return_stable_values_with_raw_evidence() -> None:
+async def test_direct_client_conversions_return_stable_values_with_raw_evidence() -> (
+    None
+):
     class Session:
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *_args: object) -> None:
             return None
 
         async def initialize(self) -> object:
-            return SimpleNamespace(protocol_version="2025-06-18", server_info={}, capabilities={})
+            return SimpleNamespace(
+                protocol_version="2025-06-18", server_info={}, capabilities={}
+            )
 
         async def list_tools(self, *, params: object = None) -> object:
             del params
@@ -154,12 +164,16 @@ def test_direct_operation_inputs_are_frozen_and_validate_selectors() -> None:
         validate_schemas=True,
     )
     assert spec.operation.server == "primary"
-    assert DirectSpec.model_validate(spec.model_dump(mode="json")).validate_schemas is True
+    assert (
+        DirectSpec.model_validate(spec.model_dump(mode="json")).validate_schemas is True
+    )
     with pytest.raises(ValidationError, match="unique aliases"):
         DirectSpec(
             servers=(
                 ServerBinding(server=server, alias="same"),
-                ServerBinding(server=StdioServer(name="other", command="echo"), alias="same"),
+                ServerBinding(
+                    server=StdioServer(name="other", command="echo"), alias="same"
+                ),
             ),
             operation=Ping(),
         )
@@ -172,7 +186,9 @@ def test_direct_operation_inputs_are_frozen_and_validate_selectors() -> None:
         DirectSpec(
             servers=(
                 ServerBinding(server=server, alias="one"),
-                ServerBinding(server=StdioServer(name="other", command="echo"), alias="two"),
+                ServerBinding(
+                    server=StdioServer(name="other", command="echo"), alias="two"
+                ),
             ),
             operation=Ping(),
         )
@@ -180,7 +196,9 @@ def test_direct_operation_inputs_are_frozen_and_validate_selectors() -> None:
         DirectSpec(
             servers=(
                 ServerBinding(server=server),
-                ServerBinding(server=StdioServer(name="other", command="echo"), alias="echo"),
+                ServerBinding(
+                    server=StdioServer(name="other", command="echo"), alias="echo"
+                ),
             ),
             operation=Ping(server="echo"),
         )
@@ -191,17 +209,33 @@ def test_direct_operation_inputs_are_frozen_and_validate_selectors() -> None:
 def test_direct_operation_results_are_discriminated_and_serializable() -> None:
     adapter = TypeAdapter(DirectResult)
     results = (
-        ListToolsResult(tools=(ToolInfo(name="echo"),), raw=SimpleNamespace(kind="tools")),
-        ListResourcesResult(resources=(ResourceInfo(name="doc", uri="memory://doc"),), raw=SimpleNamespace(kind="resources")),
-        ListTemplatesResult(resource_templates=(), raw=SimpleNamespace(kind="templates")),
-        ListPromptsResult(prompts=(PromptInfo(name="greeting"),), raw=SimpleNamespace(kind="prompts")),
+        ListToolsResult(
+            tools=(ToolInfo(name="echo"),), raw=SimpleNamespace(kind="tools")
+        ),
+        ListResourcesResult(
+            resources=(ResourceInfo(name="doc", uri="memory://doc"),),
+            raw=SimpleNamespace(kind="resources"),
+        ),
+        ListTemplatesResult(
+            resource_templates=(), raw=SimpleNamespace(kind="templates")
+        ),
+        ListPromptsResult(
+            prompts=(PromptInfo(name="greeting"),), raw=SimpleNamespace(kind="prompts")
+        ),
         CallToolResult(
             content=({"type": "text", "text": "ok"},),
             structured_content={"value": 3},
             raw=SimpleNamespace(kind="call_tool"),
         ),
-        ReadResourceResult(contents=({"type": "text", "text": "ok"},), raw=SimpleNamespace(kind="read_resource")),
-        GetPromptResult(description="hello", messages=({"role": "user"},), raw=SimpleNamespace(kind="get_prompt")),
+        ReadResourceResult(
+            contents=({"type": "text", "text": "ok"},),
+            raw=SimpleNamespace(kind="read_resource"),
+        ),
+        GetPromptResult(
+            description="hello",
+            messages=({"role": "user"},),
+            raw=SimpleNamespace(kind="get_prompt"),
+        ),
         PingResult(result_type="pong", raw=SimpleNamespace(kind="ping")),
     )
     for result in results:

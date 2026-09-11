@@ -1,8 +1,7 @@
 """Discover and exercise an MCP server's resources and prompts."""
 
-from mcp_pal.sync_api import PromptResult, ResourceReadResult
-
 from mcp_pal import MCPTestKit, StdioServer
+from mcp_pal.sync_api import PromptResult, ResourceReadResult
 
 
 def test_read_a_resource(example_server: StdioServer) -> None:

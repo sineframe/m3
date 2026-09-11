@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import zipfile
+from pathlib import Path
 
 
 class SmokeError(RuntimeError):
@@ -45,7 +45,8 @@ def assert_ui_in_wheel(cli_wheel: Path) -> None:
     except (OSError, zipfile.BadZipFile) as exc:
         raise SmokeError("CLI wheel is not a readable wheel archive") from exc
     if "mcp_pal_cli/ui/index.html" not in names or not any(
-        name.startswith("mcp_pal_cli/ui/assets/") and not name.endswith("/") for name in names
+        name.startswith("mcp_pal_cli/ui/assets/") and not name.endswith("/")
+        for name in names
     ):
         raise SmokeError("CLI wheel does not contain the packaged UI")
 
@@ -95,9 +96,13 @@ def smoke(release_dir: str | Path, version: str) -> None:
         )
         executable = tool_bin / ("mcp-pal.exe" if os.name == "nt" else "mcp-pal")
         if not executable.is_file():
-            raise SmokeError("uv did not create the mcp-pal tool command in isolated storage")
+            raise SmokeError(
+                "uv did not create the mcp-pal tool command in isolated storage"
+            )
         run([str(executable), "--help"], env=env, cwd=root)
-        tool_python = installed_ui_check(tool_dir / "mcp-pal-cli", windows=os.name == "nt")
+        tool_python = installed_ui_check(
+            tool_dir / "mcp-pal-cli", windows=os.name == "nt"
+        )
         run(
             [
                 str(tool_python),

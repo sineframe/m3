@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import shutil
 import tempfile
 import time
@@ -17,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import JsonValue
@@ -54,22 +53,15 @@ from .native import (
     ProcessOwner,
     _executable,
     _isolated_environment,
-    _text,
     read_bounded_line,
     workspace_for_launch,
 )
 from .observations import (
     HarnessObservation,
-    MetadataObservedObservation,
-    MessageChunkObservation,
     ProcessObservedObservation,
     RawEvidenceInput,
     RawFrameObservation,
-    ReasoningChunkObservation,
-    ToolCallObservedObservation,
-    ToolResultObservedObservation,
     TurnEvidence,
-    UsageObservedObservation,
 )
 
 
@@ -178,7 +170,7 @@ class JsonRpcProcess:
 
 class NativeRPCSession(NativeSessionBase):
     def __init__(
-        self, adapter: "NativeRPCAdapter", process: JsonRpcProcess, session_id: str
+        self, adapter: NativeRPCAdapter, process: JsonRpcProcess, session_id: str
     ) -> None:
         if process.owner is None:
             raise HarnessAdapterError("harness process owner is unavailable")

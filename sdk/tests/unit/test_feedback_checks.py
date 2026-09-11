@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import gc
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
 from mcp.server.lowlevel import Server
 from mcp.types import ListToolsResult
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal import MCPTestKit
-from mcp_pal import _check_recording
+from mcp_pal import MCPTestKit, _check_recording
 from mcp_pal._check_recording import (
     _safe_json,
     _safe_text,
@@ -22,9 +20,10 @@ from mcp_pal._check_recording import (
     bind_execution,
     bind_subject,
 )
+from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
 from mcp_pal.matchers import check, expect
+from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
 from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from mcp_pal.types import ExecutionOutcome, InProcessServer, StdioServer
 
@@ -49,7 +48,11 @@ def test_matcher_records_pass_and_failure_against_exact_execution() -> None:
     assert [record.status.value for record in records] == ["passed", "failed"]
     assert records[0].name == "mcp_pal.matcher.to_have_trace.v1"
     assert records[1].details["subject"]["execution_id"] == "matcher-execution"
-    assert records[0].details["identity"]["function"].endswith("test_matcher_records_pass_and_failure_against_exact_execution")
+    assert (
+        records[0]
+        .details["identity"]["function"]
+        .endswith("test_matcher_records_pass_and_failure_against_exact_execution")
+    )
     assert records[0].details["identity"]["occurrence"] == 1
 
 
@@ -90,7 +93,9 @@ def test_duplicate_execution_id_across_stores_is_unavailable() -> None:
     assert second.evaluations(trace.execution_id) == ()
 
 
-def test_duplicate_execution_id_across_distinct_sqlite_instances_is_unavailable(tmp_path) -> None:
+def test_duplicate_execution_id_across_distinct_sqlite_instances_is_unavailable(
+    tmp_path,
+) -> None:
     path = tmp_path / "same-database.sqlite"
     first = SQLiteExecutionStore(path)
     second = SQLiteExecutionStore(path)
@@ -159,15 +164,20 @@ def test_long_matcher_messages_mark_truncation() -> None:
     assert value.endswith("…[truncated]")
 
 
-def test_recording_failure_does_not_change_matcher_failure_and_is_diagnostic(monkeypatch) -> None:
+def test_recording_failure_does_not_change_matcher_failure_and_is_diagnostic(
+    monkeypatch,
+) -> None:
     store = InMemoryExecutionStore()
     trace = _trace(store, "recording-failure")
     assert bind_execution(trace.execution_id, store)
     from mcp_pal._test_runs import activate_test, reset_test, test_attempt
 
-    state = test_attempt("run-recording-failure", "test-recording-failure", worker_id="master")
+    state = test_attempt(
+        "run-recording-failure", "test-recording-failure", worker_id="master"
+    )
     token = activate_test(state)
     try:
+
         def fail_redaction(*_args, **_kwargs):
             raise RuntimeError("sensitive internal detail")
 
@@ -258,7 +268,9 @@ def test_transient_kit_result_retains_store_until_trace_is_collected() -> None:
     expect(trace).to_have_trace()
 
 
-def test_tool_matrix_case_result_retains_feedback_after_temporary_kit_lifecycle() -> None:
+def test_tool_matrix_case_result_retains_feedback_after_temporary_kit_lifecycle() -> (
+    None
+):
     fixture = Path(__file__).parents[1] / "fixtures" / "matrix_stdio_server.py"
     server = StdioServer(
         name="matrix-feedback",

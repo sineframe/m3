@@ -31,13 +31,16 @@ class ProxyToolPolicy:
         self.policy = _coerce_policy(policy)
         self._unsupported = policy is not None and self.policy is None
         names = tuple(str(value) for value in known_tools if isinstance(value, str))
-        servers = tuple(dict.fromkeys((server, *(str(value) for value in known_servers))))
+        servers = tuple(
+            dict.fromkeys((server, *(str(value) for value in known_servers)))
+        )
         self._known_names = {
             str(alias): frozenset(str(name) for name in values if isinstance(name, str))
             for alias, values in (known_tools_by_server or {}).items()
         }
         self._inventory_complete = bool(known_tools_by_server) and all(
-            alias in self._known_names and bool(self._known_names[alias]) for alias in servers
+            alias in self._known_names and bool(self._known_names[alias])
+            for alias in servers
         )
         if known_tools and known_tools_by_server is None:
             for alias in servers:
@@ -75,7 +78,10 @@ class ProxyToolPolicy:
             return False, "tool_identity_invalid"
         if any(ord(char) < 0x20 or ord(char) == 0x7F for char in tool):
             return False, "tool_identity_invalid"
-        if isinstance(self.policy, RestrictiveToolPolicy) and tool in self.policy.allowed_tools:
+        if (
+            isinstance(self.policy, RestrictiveToolPolicy)
+            and tool in self.policy.allowed_tools
+        ):
             advertised_by = tuple(
                 alias for alias, names in self._known_names.items() if tool in names
             )
@@ -88,15 +94,18 @@ class ProxyToolPolicy:
             return False, "tool_unavailable"
         try:
             descriptor = ToolDescriptor(server=self.server, name=tool)
-            known = tuple(
-                ToolDescriptor(server=alias, name=name)
-                for alias, names in self._known_names.items()
-                for name in names
-            ) or self._descriptors
+            known = (
+                tuple(
+                    ToolDescriptor(server=alias, name=name)
+                    for alias, names in self._known_names.items()
+                    for name in names
+                )
+                or self._descriptors
+            )
             if (descriptor.server, descriptor.name) not in {
                 (item.server, item.name) for item in known
             }:
-                known = known + (descriptor,)
+                known = (*known, descriptor)
             evaluator = ToolPolicyEvaluator(known or (descriptor,))
             decision = evaluator.decide(
                 self.policy,
@@ -145,7 +154,7 @@ class ProxyToolPolicy:
         self._pending_list_ids[(type(identifier), identifier)] = continuation
 
     @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> "ProxyToolPolicy | None":
+    def from_payload(cls, payload: Mapping[str, Any]) -> ProxyToolPolicy | None:
         policy = payload.get("policy")
         server = payload.get("server")
         if not isinstance(server, str) or not server:
@@ -174,7 +183,9 @@ def _coerce_policy(value: ToolPolicy | Mapping[str, Any] | None) -> ToolPolicy |
                 denied_tools=tuple(value.get("denied_tools", ())),
             )
         if kind == "full":
-            return FullToolPolicy(acknowledge_risk=value.get("acknowledge_risk") is True)
+            return FullToolPolicy(
+                acknowledge_risk=value.get("acknowledge_risk") is True
+            )
     except Exception:
         return None
     # Native provider policy cannot be meaningfully enforced by a portable

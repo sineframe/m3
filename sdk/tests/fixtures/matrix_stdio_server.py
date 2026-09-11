@@ -15,10 +15,14 @@ def _record_observation(request: dict[str, Any]) -> None:
     if not marker:
         return
     observation = {
-        "arguments": request.get("params", {}).get("arguments") if isinstance(request.get("params"), dict) else None,
+        "arguments": request.get("params", {}).get("arguments")
+        if isinstance(request.get("params"), dict)
+        else None,
         "id": request.get("id"),
         "method": request.get("method"),
-        "name": request.get("params", {}).get("name") if isinstance(request.get("params"), dict) else None,
+        "name": request.get("params", {}).get("name")
+        if isinstance(request.get("params"), dict)
+        else None,
         "pid": os.getpid(),
     }
     with open(marker, "a", encoding="utf-8") as stream:
@@ -36,7 +40,10 @@ def _tools(cursor: str | None) -> dict[str, Any]:
         "description": "Return an MCP tool error",
         "inputSchema": {"type": "object"},
     }
-    return {"tools": [second] if cursor else [first], **({} if cursor else {"nextCursor": "page-2"})}
+    return {
+        "tools": [second] if cursor else [first],
+        **({} if cursor else {"nextCursor": "page-2"}),
+    }
 
 
 def _result(request: dict[str, Any]) -> dict[str, Any]:
@@ -54,19 +61,48 @@ def _result(request: dict[str, Any]) -> dict[str, Any]:
     elif method == "tools/call":
         arguments = params.get("arguments") or {}
         if params.get("name") == "failure":
-            value = {"content": [{"type": "text", "text": "expected failure"}], "isError": True}
+            value = {
+                "content": [{"type": "text", "text": "expected failure"}],
+                "isError": True,
+            }
         else:
-            value = {"content": [{"type": "text", "text": arguments.get("text", "ok")}], "isError": False}
+            value = {
+                "content": [{"type": "text", "text": arguments.get("text", "ok")}],
+                "isError": False,
+            }
     elif method == "resources/list":
-        value = {"resources": [{"name": "document", "uri": "memory://document", "mimeType": "text/plain"}]}
+        value = {
+            "resources": [
+                {
+                    "name": "document",
+                    "uri": "memory://document",
+                    "mimeType": "text/plain",
+                }
+            ]
+        }
     elif method == "resources/templates/list":
-        value = {"resourceTemplates": [{"name": "item", "uriTemplate": "memory://item/{id}"}]}
+        value = {
+            "resourceTemplates": [{"name": "item", "uriTemplate": "memory://item/{id}"}]
+        }
     elif method == "resources/read":
-        value = {"contents": [{"uri": params.get("uri"), "mimeType": "text/plain", "text": "resource value"}]}
+        value = {
+            "contents": [
+                {
+                    "uri": params.get("uri"),
+                    "mimeType": "text/plain",
+                    "text": "resource value",
+                }
+            ]
+        }
     elif method == "prompts/list":
         value = {"prompts": [{"name": "greeting", "description": "A greeting"}]}
     elif method == "prompts/get":
-        value = {"description": "Generated greeting", "messages": [{"role": "user", "content": {"type": "text", "text": "hello greeting"}}]}
+        value = {
+            "description": "Generated greeting",
+            "messages": [
+                {"role": "user", "content": {"type": "text", "text": "hello greeting"}}
+            ],
+        }
     elif method == "ping":
         value = {}
     else:

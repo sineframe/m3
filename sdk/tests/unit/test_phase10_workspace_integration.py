@@ -36,7 +36,9 @@ def _empty_server() -> Server:
 
 
 @pytest.mark.asyncio
-async def test_in_process_direct_factory_receives_scoped_workspace(tmp_path: Path) -> None:
+async def test_in_process_direct_factory_receives_scoped_workspace(
+    tmp_path: Path,
+) -> None:
     def factory() -> Server:
         root = current_workspace_root()
         assert root is not None
@@ -55,7 +57,9 @@ async def test_in_process_direct_factory_receives_scoped_workspace(tmp_path: Pat
 
 @pytest.mark.asyncio
 @pytest.mark.process_lifecycle
-async def test_stdio_direct_defaults_process_cwd_to_scoped_workspace(tmp_path: Path) -> None:
+async def test_stdio_direct_defaults_process_cwd_to_scoped_workspace(
+    tmp_path: Path,
+) -> None:
     script = tmp_path / "workspace_stdio.py"
     script.write_text(
         "import json, pathlib, sys\n"
@@ -79,7 +83,9 @@ async def test_stdio_direct_defaults_process_cwd_to_scoped_workspace(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_agent_execution_has_one_workspace_event_and_projects_artifacts(tmp_path: Path) -> None:
+async def test_agent_execution_has_one_workspace_event_and_projects_artifacts(
+    tmp_path: Path,
+) -> None:
     class Adapter:
         name = "workspace-agent"
         capabilities = HarnessAdapterCapabilities(name=name)
@@ -92,8 +98,8 @@ async def test_agent_execution_has_one_workspace_event_and_projects_artifacts(tm
         async def start(self, _spec: AgentSpec) -> None:
             return None
 
-        async def open(self, launch: object) -> "Adapter":
-            root = Path(str(getattr(launch, "workspace_root")))
+        async def open(self, launch: object) -> Adapter:
+            root = Path(str(launch.workspace_root))
             (root / "agent-result.json").write_text('{"ok":true}')
             return self
 
@@ -142,9 +148,14 @@ async def test_agent_execution_has_one_workspace_event_and_projects_artifacts(tm
     handle = AsyncExecutionController(Kit()).submit(spec)
     result = await handle.result(timeout=5)
     assert result.trace is not None
-    assert [event.kind.value for event in result.trace.events].count("workspace.changed") == 1
+    assert [event.kind.value for event in result.trace.events].count(
+        "workspace.changed"
+    ) == 1
     assert [artifact.name for artifact in result.artifacts] == ["agent-result.json"]
-    assert all(artifact.execution_id == result.snapshot.execution_id for artifact in result.artifacts)
+    assert all(
+        artifact.execution_id == result.snapshot.execution_id
+        for artifact in result.artifacts
+    )
 
 
 @pytest.mark.asyncio
@@ -157,8 +168,8 @@ async def test_persistent_agent_workspace_uses_outer_execution_artifact_store_an
         async def start(self, _spec: AgentSpec) -> None:
             return None
 
-        async def open(self, launch: object) -> "Adapter":
-            root = Path(str(getattr(launch, "workspace_root")))
+        async def open(self, launch: object) -> Adapter:
+            root = Path(str(launch.workspace_root))
             (root / "agent-result.txt").write_bytes(b"persistent-agent-artifact")
             return self
 
@@ -223,7 +234,12 @@ async def test_persistent_agent_workspace_uses_outer_execution_artifact_store_an
     store.close()
     reopened = SQLiteExecutionStore(tmp_path / "agent-artifacts.sqlite")
     try:
-        assert reopened.artifacts.get(result.artifacts[0]) == b"persistent-agent-artifact"
-        assert reopened.artifacts.get_ref(result.artifacts[0].artifact_id).sha256 == expected_hash
+        assert (
+            reopened.artifacts.get(result.artifacts[0]) == b"persistent-agent-artifact"
+        )
+        assert (
+            reopened.artifacts.get_ref(result.artifacts[0].artifact_id).sha256
+            == expected_hash
+        )
     finally:
         reopened.close()

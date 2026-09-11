@@ -10,16 +10,18 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import MCPTestKit, Config
+from mcp_pal import Config, MCPTestKit
 from mcp_pal._exports import PUBLIC_EXPORTS
-from mcp_pal.async_api import AsyncProbes, AsyncMCPTestKit
+from mcp_pal.async_api import AsyncMCPTestKit, AsyncProbes
 from mcp_pal.errors import KitClosed, UnsupportedFeature
 from mcp_pal.services.probes import Probes
 from mcp_pal.sync_api import ProbeKind, ProbeRequest
 from mcp_pal.types import CapabilityStatus
 
 
-def test_sync_kit_resolves_config_and_baseline_without_harness_probes(tmp_path: Path) -> None:
+def test_sync_kit_resolves_config_and_baseline_without_harness_probes(
+    tmp_path: Path,
+) -> None:
     kit = MCPTestKit(
         {"artifact_policy": "always"},
         env={"MCP_PAL_TELEMETRY_ENABLED": "true"},
@@ -31,7 +33,10 @@ def test_sync_kit_resolves_config_and_baseline_without_harness_probes(tmp_path: 
     assert isinstance(kit.config, Config)
     assert kit.config.artifact_policy == "always"
     assert kit.config.telemetry_enabled is True
-    assert [result.capability.name for result in report.results] == ["configuration", "memory"]
+    assert [result.capability.name for result in report.results] == [
+        "configuration",
+        "memory",
+    ]
     assert report.readiness.ready is True
     assert all(result.status is CapabilityStatus.READY for result in report.results)
 
@@ -42,10 +47,15 @@ def test_sync_kit_nonempty_capability_requests_are_exactly_scoped() -> None:
     report = kit.capabilities([ProbeRequest(ProbeKind.STORAGE, "memory")])
 
     assert [result.capability.name for result in report.results] == ["memory"]
-    assert kit.capabilities([ProbeRequest(ProbeKind.HARNESS, "missing")]).results[0].status is CapabilityStatus.UNAVAILABLE
+    assert (
+        kit.capabilities([ProbeRequest(ProbeKind.HARNESS, "missing")]).results[0].status
+        is CapabilityStatus.UNAVAILABLE
+    )
 
 
-def test_sync_kit_lifecycle_is_idempotent_and_future_execution_is_explicitly_unsupported() -> None:
+def test_sync_kit_lifecycle_is_idempotent_and_future_execution_is_explicitly_unsupported() -> (
+    None
+):
     kit = MCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
     for operation in (
         lambda: kit.run(None),
@@ -146,12 +156,18 @@ def test_async_direct_probe_offloads_without_blocking_event_loop() -> None:
 
 def test_async_kit_matches_sync_baseline_and_closes_idempotently() -> None:
     async def scenario() -> None:
-        sync_report = MCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project")).capabilities()
+        sync_report = MCPTestKit(
+            env={}, cwd=Path("/tmp/mcp-pal-no-project")
+        ).capabilities()
         kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
         async with kit as entered:
             report = await entered.capabilities()
-            assert [x.capability.name for x in report.results] == [x.capability.name for x in sync_report.results]
-            assert [x.status for x in report.results] == [x.status for x in sync_report.results]
+            assert [x.capability.name for x in report.results] == [
+                x.capability.name for x in sync_report.results
+            ]
+            assert [x.status for x in report.results] == [
+                x.status for x in sync_report.results
+            ]
         await kit.aclose()
         await kit.aclose()
 

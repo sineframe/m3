@@ -9,7 +9,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 _test_state_dir = Path(tempfile.mkdtemp(prefix="mcp-pal-pytest-"))
 _test_database = _test_state_dir / "mcp_pal.db"
 os.environ["DATABASE_PATH"] = str(_test_database)

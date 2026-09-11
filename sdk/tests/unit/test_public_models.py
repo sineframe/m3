@@ -11,22 +11,20 @@ import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 import mcp_pal
-from mcp_pal._exports import PUBLIC_EXPORTS, _INTERNAL_MODULES
+from mcp_pal._exports import _INTERNAL_MODULES, PUBLIC_EXPORTS
 from mcp_pal.errors import InvalidTransitionError, ModelValidationError
 from mcp_pal.types import (
-    AgentSpec,
     ACPAgent,
+    AgentSpec,
     ArtifactId,
     ArtifactRef,
     AudioContent,
     Capability,
     CapabilityStatus,
-    Event,
     ClaudeCode,
     ConnectionId,
     ContentBlock,
     DirectSpec,
-    Ping,
     ElicitationPolicy,
     ErrorCode,
     ErrorInfo,
@@ -35,12 +33,14 @@ from mcp_pal.types import (
     EvaluationRegistration,
     EvaluationResult,
     EvaluationStatus,
+    Event,
     EventId,
     ExecutionId,
     ExecutionOutcome,
     ExecutionResult,
-    ExecutionState,
     ExecutionSpec,
+    ExecutionState,
+    ExecutionStatus,
     FileContent,
     FilesystemPolicy,
     FullToolPolicy,
@@ -48,14 +48,15 @@ from mcp_pal.types import (
     HarnessProfileId,
     HarnessProfileRef,
     HarnessSpec,
+    HTTPServer,
     ImageContent,
     InProcessServer,
-    ExecutionStatus,
     Metadata,
     NativeToolPolicy,
     OpaqueContent,
     OpenCode,
     PermissionPolicy,
+    Ping,
     ProtocolConstraint,
     Readiness,
     ResourceLink,
@@ -63,27 +64,26 @@ from mcp_pal.types import (
     RevisionId,
     RevisionSelection,
     SamplingPolicy,
-    SSEServer,
+    SecretReference,
     ServerBinding,
+    ServerId,
     ServerProfileId,
     ServerProfileRef,
-    SecretReference,
-    SessionId,
-    StdioServer,
-    HTTPServer,
-    ServerId,
     ServerValue,
+    SessionId,
+    SSEServer,
+    StdioServer,
     TerminalPolicy,
     TextContent,
+    ToolPolicy,
     TraceId,
     TraceResult,
     TurnId,
-    TurnStatus,
     TurnOutcome,
     TurnResponse,
     TurnResult,
     TurnState,
-    ToolPolicy,
+    TurnStatus,
     UserMessage,
     WorkspaceKind,
     WorkspacePolicy,
@@ -95,7 +95,15 @@ class Mutable:
 
 
 def test_public_modules_import_without_application_layers() -> None:
-    for module_name in ("mcp_pal", "mcp_pal.sync_api", "mcp_pal.async_api", "mcp_pal.types", "mcp_pal.matchers", "mcp_pal.testing", "mcp_pal.pytest_plugin"):
+    for module_name in (
+        "mcp_pal",
+        "mcp_pal.sync_api",
+        "mcp_pal.async_api",
+        "mcp_pal.types",
+        "mcp_pal.matchers",
+        "mcp_pal.testing",
+        "mcp_pal.pytest_plugin",
+    ):
         module = importlib.import_module(module_name)
         assert module.__name__ == module_name
 
@@ -112,22 +120,35 @@ def test_phase4_implementation_modules_are_explicitly_internal() -> None:
 
 @pytest.mark.parametrize(
     "module_name",
-    tuple(name for name in PUBLIC_EXPORTS if name not in {"mcp_pal", "mcp_pal.types", "mcp_pal.errors"}),
+    tuple(
+        name
+        for name in PUBLIC_EXPORTS
+        if name not in {"mcp_pal", "mcp_pal.types", "mcp_pal.errors"}
+    ),
 )
-def test_boundary_exports_match_manifest_without_accidental_names(module_name: str) -> None:
+def test_boundary_exports_match_manifest_without_accidental_names(
+    module_name: str,
+) -> None:
     module = importlib.import_module(module_name)
     assert tuple(module.__all__) == PUBLIC_EXPORTS[module_name]
     public_names = {
         name
         for name, value in vars(module).items()
-        if not name.startswith("_") and name != "annotations" and not inspect.ismodule(value)
+        if not name.startswith("_")
+        and name != "annotations"
+        and not inspect.ismodule(value)
     }
     assert public_names == set(module.__all__)
 
 
 def test_root_exports_match_manifest_without_accidental_public_names() -> None:
     assert tuple(mcp_pal.__all__) == PUBLIC_EXPORTS["mcp_pal"]
-    public_names = {name for name, value in vars(mcp_pal).items() if (not name.startswith("_") or name == "__version__") and not inspect.ismodule(value)}
+    public_names = {
+        name
+        for name, value in vars(mcp_pal).items()
+        if (not name.startswith("_") or name == "__version__")
+        and not inspect.ismodule(value)
+    }
     assert public_names == set(mcp_pal.__all__)
 
 
@@ -147,7 +168,10 @@ def test_every_manifest_model_has_json_schema(module_name: str) -> None:
             assert value.model_json_schema()
 
 
-@pytest.mark.parametrize("alias_name", ("ContentBlock", "ExecutionSpec", "HarnessSpec", "ServerValue", "ToolPolicy"))
+@pytest.mark.parametrize(
+    "alias_name",
+    ("ContentBlock", "ExecutionSpec", "HarnessSpec", "ServerValue", "ToolPolicy"),
+)
 def test_every_public_serializable_alias_has_json_schema(alias_name: str) -> None:
     alias = getattr(importlib.import_module("mcp_pal.types"), alias_name)
     assert TypeAdapter(alias).json_schema()
@@ -218,7 +242,9 @@ def test_all_serializable_model_representatives_round_trip() -> None:
         ServerBinding(server=server),
         ServerProfileRef(
             profile_id=ServerProfileId("server-profile-2"),
-            revision=RevisionSelection(mode="pinned", revision_id=RevisionId("revision-2"), revision_number=1),
+            revision=RevisionSelection(
+                mode="pinned", revision_id=RevisionId("revision-2"), revision_number=1
+            ),
         ),
         ClaudeCode(model="claude-test"),
         OpenCode(model="opencode-test"),
@@ -230,7 +256,11 @@ def test_all_serializable_model_representatives_round_trip() -> None:
         WorkspacePolicy(),
         RestrictiveToolPolicy(),
         FullToolPolicy(acknowledge_risk=True),
-        NativeToolPolicy(harness="example", policy={"mode": "safe"}, nonportable_reason="provider-specific"),
+        NativeToolPolicy(
+            harness="example",
+            policy={"mode": "safe"},
+            nonportable_reason="provider-specific",
+        ),
         PermissionPolicy(),
         ElicitationPolicy(),
         SamplingPolicy(),
@@ -239,25 +269,59 @@ def test_all_serializable_model_representatives_round_trip() -> None:
         EvaluationRegistration(name="quality"),
         DirectSpec(servers=(ServerBinding(server=server),), operation=Ping()),
         AgentSpec(
-            servers=(ServerBinding(profile=ServerProfileRef(profile_id=ServerProfileId("server-profile-3"), revision=RevisionSelection(mode="latest"))),),
-            harness_profile=HarnessProfileRef(profile_id=HarnessProfileId("harness-profile-3"), revision=RevisionSelection(mode="pinned", revision_id=RevisionId("revision-4"), revision_number=2)),
+            servers=(
+                ServerBinding(
+                    profile=ServerProfileRef(
+                        profile_id=ServerProfileId("server-profile-3"),
+                        revision=RevisionSelection(mode="latest"),
+                    )
+                ),
+            ),
+            harness_profile=HarnessProfileRef(
+                profile_id=HarnessProfileId("harness-profile-3"),
+                revision=RevisionSelection(
+                    mode="pinned",
+                    revision_id=RevisionId("revision-4"),
+                    revision_number=2,
+                ),
+            ),
             message=UserMessage(content="hello"),
         ),
         ExecutionState(execution_id=execution),
         TurnState(turn_id=turn_id, session_id=session, number=1),
-        Event(event_id=EventId("event-2"), execution_id=execution, sequence=0, kind="execution.created", monotonic_offset_ms=0),
+        Event(
+            event_id=EventId("event-2"),
+            execution_id=execution,
+            sequence=0,
+            kind="execution.created",
+            monotonic_offset_ms=0,
+        ),
         trace,
         artifact,
         EvaluationContext(execution_id=execution, trace=trace, artifacts=(artifact,)),
-        EvaluationResult(evaluation_id=EvaluationId("evaluation-2"), name="quality", status=EvaluationStatus.NOT_RUN),
+        EvaluationResult(
+            evaluation_id=EvaluationId("evaluation-2"),
+            name="quality",
+            status=EvaluationStatus.NOT_RUN,
+        ),
         Capability(name="stdio", status=CapabilityStatus.READY),
         Readiness(ready=True),
         TurnResponse(content=(TextContent(text="done"),)),
-        TurnResult(snapshot=TurnState(turn_id=turn_id, session_id=session, number=1).transition(TurnStatus.FINISHED, TurnOutcome.COMPLETED)),
-        ExecutionResult(snapshot=ExecutionState(execution_id=execution).transition(ExecutionStatus.FINISHED, ExecutionOutcome.COMPLETED)),
+        TurnResult(
+            snapshot=TurnState(
+                turn_id=turn_id, session_id=session, number=1
+            ).transition(TurnStatus.FINISHED, TurnOutcome.COMPLETED)
+        ),
+        ExecutionResult(
+            snapshot=ExecutionState(execution_id=execution).transition(
+                ExecutionStatus.FINISHED, ExecutionOutcome.COMPLETED
+            )
+        ),
     )
     for value in values:
-        restored = type(value).model_validate(value.model_dump(mode="json", by_alias=True))
+        restored = type(value).model_validate(
+            value.model_dump(mode="json", by_alias=True)
+        )
         assert restored == value, type(value).__name__
 
 
@@ -298,7 +362,10 @@ def test_discriminated_public_aliases_round_trip() -> None:
         (ServerValue, server),
         (HarnessSpec, ClaudeCode(model="claude-test")),
         (ToolPolicy, FullToolPolicy(acknowledge_risk=True)),
-        (ExecutionSpec, DirectSpec(servers=(ServerBinding(server=server),), operation=Ping())),
+        (
+            ExecutionSpec,
+            DirectSpec(servers=(ServerBinding(server=server),), operation=Ping()),
+        ),
     )
     for annotation, value in cases:
         adapter = TypeAdapter(annotation)
@@ -314,7 +381,12 @@ def test_models_are_frozen_and_secret_references_have_no_value_field() -> None:
 
     with pytest.raises(ValidationError):
         FullToolPolicy()
-    assert FullToolPolicy(acknowledge_risk=True).model_dump(mode="json")["acknowledge_risk"] is True
+    assert (
+        FullToolPolicy(acknowledge_risk=True).model_dump(mode="json")[
+            "acknowledge_risk"
+        ]
+        is True
+    )
     updated = ClaudeCode(model="before").with_model("after")
     assert isinstance(updated, ClaudeCode)
     assert updated.model == "after"
@@ -351,22 +423,39 @@ def test_secret_references_remain_references_inside_arbitrary_payloads() -> None
 def test_non_json_arbitrary_values_are_rejected_at_construction() -> None:
     builders = (
         lambda: OpaqueContent(provider="fixture", payload={"bad": Mutable()}),
-        lambda: ErrorInfo(code=ErrorCode.INVALID_ARGUMENT, message="bad", details={"bad": Mutable()}),
+        lambda: ErrorInfo(
+            code=ErrorCode.INVALID_ARGUMENT, message="bad", details={"bad": Mutable()}
+        ),
         lambda: UserMessage(content="hello", metadata={"bad": Mutable()}),
         lambda: TurnResponse(metadata={"bad": Mutable()}),
-        lambda: Event(event_id="event-1", execution_id="execution-1", sequence=0, kind="test", monotonic_offset_ms=0, payload={"bad": Mutable()}),
+        lambda: Event(
+            event_id="event-1",
+            execution_id="execution-1",
+            sequence=0,
+            kind="test",
+            monotonic_offset_ms=0,
+            payload={"bad": Mutable()},
+        ),
         lambda: ACPAgent(model="acp", manifest={"bad": Mutable()}),
-        lambda: NativeToolPolicy(harness="example", policy={"bad": Mutable()}, nonportable_reason="test"),
-        lambda: InProcessServer(name="local", factory=lambda: object(), descriptor={"bad": Mutable()}),
+        lambda: NativeToolPolicy(
+            harness="example", policy={"bad": Mutable()}, nonportable_reason="test"
+        ),
+        lambda: InProcessServer(
+            name="local", factory=lambda: object(), descriptor={"bad": Mutable()}
+        ),
     )
     for build in builders:
         with pytest.raises(ValidationError):
             build()
 
 
-def test_revision_selection_and_profile_bindings_are_explicit_and_serializable() -> None:
+def test_revision_selection_and_profile_bindings_are_explicit_and_serializable() -> (
+    None
+):
     latest = RevisionSelection(mode="latest")
-    pinned = RevisionSelection(mode="pinned", revision_id="revision-1", revision_number=1)
+    pinned = RevisionSelection(
+        mode="pinned", revision_id="revision-1", revision_number=1
+    )
     assert latest.model_validate(latest.model_dump(mode="json")) == latest
     assert pinned.model_validate(pinned.model_dump(mode="json")) == pinned
     with pytest.raises(ValidationError):
@@ -375,12 +464,20 @@ def test_revision_selection_and_profile_bindings_are_explicit_and_serializable()
         RevisionSelection(mode="latest", revision_id="revision-1", revision_number=1)
 
     spec = DirectSpec(
-        servers=(ServerBinding(profile=ServerProfileRef(profile_id="server-profile", revision=pinned)),),
+        servers=(
+            ServerBinding(
+                profile=ServerProfileRef(profile_id="server-profile", revision=pinned)
+            ),
+        ),
         operation=Ping(),
     )
     assert DirectSpec.model_validate(spec.model_dump(mode="json")) == spec
     effective = DirectSpec(
-        servers=(ServerBinding(profile=ServerProfileRef(profile_id="server-profile", revision=pinned)),),
+        servers=(
+            ServerBinding(
+                profile=ServerProfileRef(profile_id="server-profile", revision=pinned)
+            ),
+        ),
         operation=Ping(),
     )
     assert effective.servers[0].profile is not None
@@ -392,10 +489,21 @@ def test_specs_reject_runtime_factories_and_missing_default_bindings() -> None:
         DirectSpec()
     with pytest.raises(ValidationError):
         DirectSpec(
-            servers=(ServerBinding(server=InProcessServer(name="local", factory=lambda: object())),),
+            servers=(
+                ServerBinding(
+                    server=InProcessServer(name="local", factory=lambda: object())
+                ),
+            ),
             operation=Ping(),
         )
-    optional = DirectSpec(servers=(ServerBinding(server=StdioServer(name="unused", command="echo"), required=False),), operation=Ping())
+    optional = DirectSpec(
+        servers=(
+            ServerBinding(
+                server=StdioServer(name="unused", command="echo"), required=False
+            ),
+        ),
+        operation=Ping(),
+    )
     assert optional.servers[0].required is False
 
 
@@ -417,20 +525,39 @@ def test_transitions_reject_nonterminal_outcomes_and_revalidate() -> None:
 
 def test_results_require_terminal_snapshots() -> None:
     with pytest.raises(ValidationError):
-        TurnResult(snapshot=TurnState(turn_id="turn-1", session_id="session-1", number=1))
+        TurnResult(
+            snapshot=TurnState(turn_id="turn-1", session_id="session-1", number=1)
+        )
     with pytest.raises(ValidationError):
         ExecutionResult(snapshot=ExecutionState(execution_id="execution-1"))
 
 
 def test_snapshot_finished_at_matches_lifecycle() -> None:
     with pytest.raises(ValidationError):
-        ExecutionState(lifecycle=ExecutionStatus.FINISHED, outcome=ExecutionOutcome.COMPLETED, execution_id="execution-1")
+        ExecutionState(
+            lifecycle=ExecutionStatus.FINISHED,
+            outcome=ExecutionOutcome.COMPLETED,
+            execution_id="execution-1",
+        )
     with pytest.raises(ValidationError):
-        ExecutionState(execution_id="execution-1", finished_at=datetime.now(timezone.utc))
+        ExecutionState(
+            execution_id="execution-1", finished_at=datetime.now(timezone.utc)
+        )
     with pytest.raises(ValidationError):
-        TurnState(lifecycle=TurnStatus.FINISHED, outcome=TurnOutcome.COMPLETED, turn_id="turn-1", session_id="session-1", number=1)
+        TurnState(
+            lifecycle=TurnStatus.FINISHED,
+            outcome=TurnOutcome.COMPLETED,
+            turn_id="turn-1",
+            session_id="session-1",
+            number=1,
+        )
     with pytest.raises(ValidationError):
-        TurnState(turn_id="turn-1", session_id="session-1", number=1, finished_at=datetime.now(timezone.utc))
+        TurnState(
+            turn_id="turn-1",
+            session_id="session-1",
+            number=1,
+            finished_at=datetime.now(timezone.utc),
+        )
 
 
 def test_workspace_risk_and_execution_transitions_are_validated() -> None:
@@ -446,7 +573,9 @@ def test_workspace_risk_and_execution_transitions_are_validated() -> None:
         finished.transition("queued")
 
     turn = TurnState(turn_id="turn-1", session_id="session-1", number=1)
-    finished_turn = turn.transition(TurnStatus.RUNNING).transition(TurnStatus.FINISHED, TurnOutcome.COMPLETED)
+    finished_turn = turn.transition(TurnStatus.RUNNING).transition(
+        TurnStatus.FINISHED, TurnOutcome.COMPLETED
+    )
     assert finished_turn.outcome is TurnOutcome.COMPLETED
 
 

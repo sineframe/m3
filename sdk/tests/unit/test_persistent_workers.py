@@ -23,7 +23,9 @@ def _assert_reopenable_terminal(
     outcome: ExecutionOutcome,
 ) -> None:
     events = store.events(execution_id)
-    terminals = tuple(event for event in events if event.kind is EventKind.EXECUTION_FINISHED)
+    terminals = tuple(
+        event for event in events if event.kind is EventKind.EXECUTION_FINISHED
+    )
     assert len(terminals) == 1
     terminal = terminals[0]
     assert terminal.payload["outcome"] == outcome.value
@@ -51,7 +53,10 @@ def _assert_reopenable_terminal(
 
 @pytest.mark.parametrize(
     ("action", "outcome"),
-    (("cancel", ExecutionOutcome.CANCELLED), ("interrupt", ExecutionOutcome.INTERRUPTED)),
+    (
+        ("cancel", ExecutionOutcome.CANCELLED),
+        ("interrupt", ExecutionOutcome.INTERRUPTED),
+    ),
 )
 def test_store_terminalization_continues_positive_trace_offset(
     tmp_path: Path,
@@ -62,11 +67,22 @@ def test_store_terminalization_continues_positive_trace_offset(
     store = _store(tmp_path)
     store.create(ExecutionState(execution_id=execution_id))
     factory = EventFactory(execution_id)
-    store.append_events((factory.create(
-        EventKind.EXECUTION_CREATED,
-        payload={"lifecycle": "created", "trace_id": f"trace-{execution_id.root}"},
-    ),))
-    prior = factory.create(EventKind.DIAGNOSTIC, monotonic_offset_ms=42.0, payload={"source": "prior-process"})
+    store.append_events(
+        (
+            factory.create(
+                EventKind.EXECUTION_CREATED,
+                payload={
+                    "lifecycle": "created",
+                    "trace_id": f"trace-{execution_id.root}",
+                },
+            ),
+        )
+    )
+    prior = factory.create(
+        EventKind.DIAGNOSTIC,
+        monotonic_offset_ms=42.0,
+        payload={"source": "prior-process"},
+    )
     store.append_events((prior,))
     command = store.enqueue_command(execution_id)
     if action == "cancel":
@@ -74,7 +90,9 @@ def test_store_terminalization_continues_positive_trace_offset(
     else:
         claimed = store.claim_next("worker-a", lease_seconds=30)
         assert claimed is not None and claimed[0].id == command.id
-        assert store.mark_stale_interrupted(now=datetime.now(timezone.utc) + timedelta(seconds=31))
+        assert store.mark_stale_interrupted(
+            now=datetime.now(timezone.utc) + timedelta(seconds=31)
+        )
     events = store.events(execution_id)
     assert events[-1].monotonic_offset_ms >= prior.monotonic_offset_ms
     _assert_reopenable_terminal(store, execution_id, outcome)
@@ -107,7 +125,9 @@ def test_sqlite_store_stale_claim_is_interrupted_and_never_reclaimed(tmp_path):
     assert store.get_snapshot("execution-1").outcome.value == "interrupted"
     assert store.get_command(command.id).status == "interrupted"
     assert store.claim_next("worker-b") is None
-    _assert_reopenable_terminal(store, ExecutionId("execution-1"), ExecutionOutcome.INTERRUPTED)
+    _assert_reopenable_terminal(
+        store, ExecutionId("execution-1"), ExecutionOutcome.INTERRUPTED
+    )
 
 
 def test_stable_store_worker_rejects_terminal_report_after_lease_expiry(tmp_path):
@@ -141,10 +161,19 @@ def test_stable_store_strict_fifo_blocks_newer_command_while_oldest_is_leased(tm
 def test_stable_command_retry_is_idempotent_and_key_reuse_conflicts(tmp_path):
     store = _store(tmp_path)
     store.create(ExecutionState(execution_id=ExecutionId("execution-1")))
-    first = store.enqueue_command("execution-1", command_id="stable", payload={"message": "hello"})
-    assert store.enqueue_command("execution-1", command_id="stable", payload={"message": "hello"}) == first
+    first = store.enqueue_command(
+        "execution-1", command_id="stable", payload={"message": "hello"}
+    )
+    assert (
+        store.enqueue_command(
+            "execution-1", command_id="stable", payload={"message": "hello"}
+        )
+        == first
+    )
     with pytest.raises(StorageConflict):
-        store.enqueue_command("execution-1", command_id="stable", payload={"message": "changed"})
+        store.enqueue_command(
+            "execution-1", command_id="stable", payload={"message": "changed"}
+        )
 
 
 def test_stable_worker_marks_heartbeat_failure_interrupted(tmp_path, monkeypatch):

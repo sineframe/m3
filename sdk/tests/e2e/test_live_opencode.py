@@ -19,6 +19,8 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+
+from mcp_pal import MCPTestKit, expect
 from mcp_pal.types import (
     AgentSpec,
     ExecutionOutcome,
@@ -31,8 +33,6 @@ from mcp_pal.types import (
     TurnOutcome,
     TurnResponse,
 )
-
-from mcp_pal import MCPTestKit, expect
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.process_lifecycle]
 
@@ -135,9 +135,9 @@ def _contains_text(value: object, expected: str) -> bool:
     if isinstance(value, (tuple, list)):
         return any(_contains_text(item, expected) for item in value)
     if hasattr(value, "content"):
-        return _contains_text(getattr(value, "content"), expected)
+        return _contains_text(value.content, expected)
     if hasattr(value, "text"):
-        return _contains_text(getattr(value, "text"), expected)
+        return _contains_text(value.text, expected)
     return isinstance(value, str) and expected in value
 
 
@@ -190,7 +190,7 @@ def test_live_opencode_calls_the_mcp_across_two_turns() -> None:
         view = trace.view()
         calls = [call for call in view.tool_calls if call.tool.value == "echo"]
         assert len(calls) == 2, "OpenCode did not report exactly two MCP echo calls"
-        for nonce, call in zip((nonce_one, nonce_two), calls):
+        for nonce, call in zip((nonce_one, nonce_two), calls, strict=False):
             assert call.correlation.value == "correlated"
             assert call.wire.state.value == "observed"
             assert call.reported.state.value == "observed"
@@ -207,7 +207,7 @@ def test_live_opencode_calls_the_mcp_across_two_turns() -> None:
 def test_live_opencode_server_search_matrix_chooses_the_right_tool(
     tmp_path: Path, server_name: str
 ) -> None:
-    """Real model-driven N×M search cells do not name the expected tool."""
+    """Real model-driven NxM search cells do not name the expected tool."""
 
     executable = shutil.which("opencode")
     if executable is None:
@@ -267,7 +267,7 @@ def test_live_opencode_server_by_tool_matrix(
     arguments: dict[str, object],
     is_error: bool,
 ) -> None:
-    """Real OpenCode N×T cells, complementing the real ACP matrix."""
+    """Real OpenCode NxT cells, complementing the real ACP matrix."""
 
     executable = shutil.which("opencode")
     if executable is None:

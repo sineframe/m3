@@ -3,42 +3,55 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator, Mapping
 import os
-from pathlib import Path
 import subprocess
 import sys
+from collections.abc import Iterator, Mapping
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from mcp import types as mcp_types
 
-from mcp_pal.async_api import AsyncMCPTestKit, CallToolResult, PromptResult, ResourceReadResult
-from mcp_pal.errors import ModelValidationError, OperationCancelled, OperationTimeout, ProtocolError, TransportError
+from mcp_pal import testing as testing_module
+from mcp_pal.async_api import (
+    AsyncMCPTestKit,
+    CallToolResult,
+    PromptResult,
+    ResourceReadResult,
+)
+from mcp_pal.errors import (
+    ModelValidationError,
+    OperationCancelled,
+    OperationTimeout,
+    ProtocolError,
+    TransportError,
+)
+from mcp_pal.sync_api import MCPTestKit
 from mcp_pal.testing import (
     ArtifactIntegrityError,
     FaultInjector,
     Gate,
     MockExpectationError,
     MockMCPServer,
+    RecordedArtifact,
     RecordedInteraction,
     Recording,
+    RedactionBinding,
     ReplayMismatch,
     ReplayServer,
     VirtualClock,
-    RecordedArtifact,
-    RedactionBinding,
 )
-from mcp_pal.sync_api import MCPTestKit
-from mcp import types as mcp_types
 from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal import testing as testing_module
 
 
 def _server() -> MockMCPServer:
     server = MockMCPServer(
         "phase7-mock",
-        redaction_config=RedactionConfig(secrets=frozenset({"mock-secret"}), include_environment=False),
+        redaction_config=RedactionConfig(
+            secrets=frozenset({"mock-secret"}), include_environment=False
+        ),
     )
 
     @server.tool("echo")
@@ -145,8 +158,15 @@ def test_expectation_modes_and_strict_unexpected_calls() -> None:
     mock.expect("tools/call", tool="repeat", repeat=(1, 2))
     mock.expect("tools/call", arguments={"nested": {"x": 1}}, subset=True)
     mock.expect("tools/call", tool="fallback", fallback=True).returns("fallback")
-    assert mock._expect_call("tools/call", {"tool": "echo", "arguments": {"text": "hello"}}) is not None
-    assert mock._expect_call("tools/call", {"tool": "repeat", "arguments": {}}) is not None
+    assert (
+        mock._expect_call(
+            "tools/call", {"tool": "echo", "arguments": {"text": "hello"}}
+        )
+        is not None
+    )
+    assert (
+        mock._expect_call("tools/call", {"tool": "repeat", "arguments": {}}) is not None
+    )
     with pytest.raises(MockExpectationError):
         mock._expect_call("unknown/method", {})
 
@@ -191,8 +211,15 @@ async def test_recording_is_redacted_json_and_replay_is_strict() -> None:
     encoded = recording.to_json()
     assert "mock-secret" not in encoded
     restored = Recording.from_json(encoded)
-    replay = ReplayServer(restored, redaction_config=RedactionConfig(secrets=frozenset({"mock-secret"}), include_environment=False))
-    match = replay.match("tools/call", {"tool": "echo", "arguments": {"text": "mock-secret"}})
+    replay = ReplayServer(
+        restored,
+        redaction_config=RedactionConfig(
+            secrets=frozenset({"mock-secret"}), include_environment=False
+        ),
+    )
+    match = replay.match(
+        "tools/call", {"tool": "echo", "arguments": {"text": "mock-secret"}}
+    )
     assert match.method == "tools/call"
     with pytest.raises(ReplayMismatch):
         replay.match("tools/call", {"tool": "echo", "arguments": {"text": "different"}})
@@ -206,26 +233,39 @@ def test_recorded_artifacts_are_content_addressed_and_tamper_evident() -> None:
         recording.validate_artifacts({"blob-1": b"tampered"})
     with pytest.raises(ValueError, match="explicit redaction config"):
         recording.to_json()
-    restored = Recording.from_json(recording.with_redaction_config(RedactionConfig(include_environment=False)).to_json())
+    restored = Recording.from_json(
+        recording.with_redaction_config(
+            RedactionConfig(include_environment=False)
+        ).to_json()
+    )
     assert restored.artifacts == (artifact,)
     with pytest.raises(ArtifactIntegrityError):
         ReplayServer(restored, artifacts={"blob-1": b"tampered"})
 
 
-def test_manual_recording_serialization_applies_explicit_redaction_and_safe_provenance() -> None:
+def test_manual_recording_serialization_applies_explicit_redaction_and_safe_provenance() -> (
+    None
+):
     canary = "MANUAL-CANARY-SECRET"
     config = RedactionConfig(
         secrets=frozenset({canary, "TOKEN", "TOKEN-LONG"}),
         include_environment=False,
     )
     recording = Recording(
-        (RecordedInteraction("tools/call", {"arguments": {"value": canary}}, {"echo": canary}),),
+        (
+            RecordedInteraction(
+                "tools/call", {"arguments": {"value": canary}}, {"echo": canary}
+            ),
+        ),
         redaction_bound=True,
-        redaction_bindings=(RedactionBinding(
-            source="runtime-secret-resolver", version="v2",
-            wildcard_paths=("$.interactions[].params.arguments.value",),
-            secret_references=("provider/test-secret",),
-        ),),
+        redaction_bindings=(
+            RedactionBinding(
+                source="runtime-secret-resolver",
+                version="v2",
+                wildcard_paths=("$.interactions[].params.arguments.value",),
+                secret_references=("provider/test-secret",),
+            ),
+        ),
     ).with_redaction_config(config)
     encoded = recording.to_json()
     assert canary not in encoded
@@ -247,7 +287,9 @@ def test_recording_rejects_bound_json_without_explicit_binding_metadata() -> Non
 
 
 @pytest.mark.asyncio
-async def test_recording_captures_ordered_non_tool_operations_and_replays_them() -> None:
+async def test_recording_captures_ordered_non_tool_operations_and_replays_them() -> (
+    None
+):
     mock = _server()
     mock.resource_template("memory://{name}", name="memory")
     async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
@@ -260,15 +302,27 @@ async def test_recording_captures_ordered_non_tool_operations_and_replays_them()
             await client.get_prompt("greet", {"name": "Ada"})
             await client.subscribe_resource("memory://doc")
             await client.unsubscribe_resource("memory://doc")
-            await client.complete(mcp_types.PromptReference(name="greet"), {"name": "name", "value": "A"})
+            await client.complete(
+                mcp_types.PromptReference(name="greet"), {"name": "name", "value": "A"}
+            )
     recording = mock.recording()
     methods = [item.method for item in recording.interactions]
     assert methods == [
-        "tools/list", "resources/list", "resources/templates/list", "prompts/list",
-        "resources/read", "prompts/get", "resources/subscribe", "resources/unsubscribe", "completion/complete",
+        "tools/list",
+        "resources/list",
+        "resources/templates/list",
+        "prompts/list",
+        "resources/read",
+        "prompts/get",
+        "resources/subscribe",
+        "resources/unsubscribe",
+        "completion/complete",
     ]
     assert recording.server_name == "phase7-mock"
-    assert recording.initialization["serverInfo"] == {"name": "phase7-mock", "version": "1"}
+    assert recording.initialization["serverInfo"] == {
+        "name": "phase7-mock",
+        "version": "1",
+    }
     replay = ReplayServer(Recording.from_json(recording.to_json()))
     async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
         async with kit.direct(replay.in_process()) as client:
@@ -280,7 +334,9 @@ async def test_recording_captures_ordered_non_tool_operations_and_replays_them()
             await client.get_prompt("greet", {"name": "Ada"})
             await client.subscribe_resource("memory://doc")
             await client.unsubscribe_resource("memory://doc")
-            await client.complete(mcp_types.PromptReference(name="greet"), {"name": "name", "value": "A"})
+            await client.complete(
+                mcp_types.PromptReference(name="greet"), {"name": "name", "value": "A"}
+            )
     replay.verify_replay()
 
 
@@ -346,7 +402,9 @@ async def test_wire_faults_are_typed_and_concurrent_responses_reorder() -> None:
 
 
 @pytest.mark.asyncio
-async def test_disconnect_malformed_and_partial_faults_close_as_transport_errors() -> None:
+async def test_disconnect_malformed_and_partial_faults_close_as_transport_errors() -> (
+    None
+):
     for configure in ("disconnect", "malformed", "partial_frame"):
         faults = FaultInjector()
         getattr(faults, configure)("tools/call")
@@ -364,7 +422,9 @@ async def test_disconnect_malformed_and_partial_faults_close_as_transport_errors
 
 @pytest.mark.asyncio
 async def test_protocol_and_cancellation_race_faults_are_typed() -> None:
-    protocol_fault = FaultInjector().protocol_error("tools/call", code=-32042, message="injected")
+    protocol_fault = FaultInjector().protocol_error(
+        "tools/call", code=-32042, message="injected"
+    )
     protocol_mock = MockMCPServer(faults=protocol_fault)
 
     @protocol_mock.tool("echo")
@@ -393,7 +453,9 @@ async def test_protocol_and_cancellation_race_faults_are_typed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_structured_result_is_model_validation_with_trace_evidence() -> None:
+async def test_invalid_structured_result_is_model_validation_with_trace_evidence() -> (
+    None
+):
     faults = FaultInjector().invalid_result("tools/call")
     mock = MockMCPServer(faults=faults)
 
@@ -417,7 +479,9 @@ async def test_invalid_structured_result_is_model_validation_with_trace_evidence
 
 @pytest.mark.asyncio
 @pytest.mark.process_lifecycle
-async def test_literal_wire_invalid_structured_result_is_sanitized_and_finalized() -> None:
+async def test_literal_wire_invalid_structured_result_is_sanitized_and_finalized() -> (
+    None
+):
     faults = FaultInjector().invalid_result("tools/call")
     async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
         async with kit.direct(faults.stdio_server(), validate_schemas=True) as client:
@@ -527,19 +591,29 @@ def test_json_projection_fails_closed_for_hostile_and_cyclic_values() -> None:
 
 
 def test_recording_rejects_hostile_json_shapes_and_unbound_replay() -> None:
-    valid_prefix = '{"schema":"mcp_pal.mock_recording.v1","redaction_bound":true,"interactions":['
-    with pytest.raises(ValueError):
-        Recording.from_json(valid_prefix + '{"method":"tools/call","params":{},"sequence":true}]}')
-    with pytest.raises(ValueError):
-        Recording.from_json(valid_prefix + '{"method":"tools/call","params":{},"unknown":1}]}')
-    with pytest.raises(ValueError):
-        Recording.from_json('{"schema":"mcp_pal.mock_recording.v1","redaction_bound":true,"interactions":[],"value":NaN}')
-    with pytest.raises(ValueError):
-        ReplayServer(Recording((), redaction_bound=False))
-    deep = "{" + "\"x\":{" * 70 + "0" + "}}" * 70
+    valid_prefix = (
+        '{"schema":"mcp_pal.mock_recording.v1","redaction_bound":true,"interactions":['
+    )
     with pytest.raises(ValueError):
         Recording.from_json(
-            '{"schema":"mcp_pal.mock_recording.v1","redaction_bound":true,"initialization":' + deep + ',"interactions":[]}'
+            valid_prefix + '{"method":"tools/call","params":{},"sequence":true}]}'
+        )
+    with pytest.raises(ValueError):
+        Recording.from_json(
+            valid_prefix + '{"method":"tools/call","params":{},"unknown":1}]}'
+        )
+    with pytest.raises(ValueError):
+        Recording.from_json(
+            '{"schema":"mcp_pal.mock_recording.v1","redaction_bound":true,"interactions":[],"value":NaN}'
+        )
+    with pytest.raises(ValueError):
+        ReplayServer(Recording((), redaction_bound=False))
+    deep = "{" + '"x":{' * 70 + "0" + "}}" * 70
+    with pytest.raises(ValueError):
+        Recording.from_json(
+            '{"schema":"mcp_pal.mock_recording.v1","redaction_bound":true,"initialization":'
+            + deep
+            + ',"interactions":[]}'
         )
 
 
@@ -557,12 +631,19 @@ def test_relaxed_replay_preserves_recording_and_relaxation_provenance() -> None:
 def test_property_strategy_accepts_json_schema_required_lists() -> None:
     pytest.importorskip("hypothesis")
     from hypothesis import find
+
     from mcp_pal.testing_property import schema_strategy
 
     strategy = schema_strategy(
-        {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        }
     )
-    value = find(strategy, lambda candidate: isinstance(candidate, dict) and "name" in candidate)
+    value = find(
+        strategy, lambda candidate: isinstance(candidate, dict) and "name" in candidate
+    )
     assert isinstance(value, dict)
     assert isinstance(value["name"], str)
 
@@ -571,6 +652,7 @@ def test_property_strategies_generate_valid_and_invalid_values() -> None:
     pytest.importorskip("hypothesis")
     from hypothesis import find
     from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+
     from mcp_pal.testing_property import invalid_schema_strategy, schema_strategy
 
     schema = {
@@ -578,7 +660,12 @@ def test_property_strategies_generate_valid_and_invalid_values() -> None:
         "type": "object",
         "properties": {
             "tag": {"$ref": "#/$defs/tag"},
-            "values": {"type": "array", "items": {"type": "integer"}, "minItems": 1, "maxItems": 3},
+            "values": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "minItems": 1,
+                "maxItems": 3,
+            },
         },
         "required": ["tag", "values"],
         "additionalProperties": False,
@@ -594,6 +681,7 @@ def test_property_strategies_cover_composition_nullable_and_bounds() -> None:
     pytest.importorskip("hypothesis")
     from hypothesis import find
     from jsonschema import Draft202012Validator
+
     from mcp_pal.testing_property import invalid_schema_strategy, schema_strategy
 
     schemas: list[dict[str, Any]] = [
@@ -607,8 +695,12 @@ def test_property_strategies_cover_composition_nullable_and_bounds() -> None:
     ]
     for schema in schemas:
         validator = Draft202012Validator(schema)
-        assert validator.is_valid(cast(Any, find(schema_strategy(schema), lambda value: True)))
-        assert not validator.is_valid(cast(Any, find(invalid_schema_strategy(schema), lambda value: True)))
+        assert validator.is_valid(
+            cast(Any, find(schema_strategy(schema), lambda value: True))
+        )
+        assert not validator.is_valid(
+            cast(Any, find(invalid_schema_strategy(schema), lambda value: True))
+        )
 
 
 def test_bare_tool_and_prompt_decorators_register_function_names() -> None:
@@ -638,10 +730,15 @@ def test_expectations_are_ordered_unless_explicitly_unordered() -> None:
     unordered = MockMCPServer()
     unordered.expect("tools/call", tool="first", unordered="g")
     unordered.expect("tools/call", tool="second", unordered="g")
-    assert unordered._expect_call("tools/call", {"tool": "second", "arguments": {}}) is not None
+    assert (
+        unordered._expect_call("tools/call", {"tool": "second", "arguments": {}})
+        is not None
+    )
 
 
-def test_native_pytest_setup_and_teardown_errors_remain_in_summary(tmp_path: Path) -> None:
+def test_native_pytest_setup_and_teardown_errors_remain_in_summary(
+    tmp_path: Path,
+) -> None:
     test_file = tmp_path / "test_failures.py"
     test_file.write_text(
         "import pytest\n"
@@ -656,8 +753,21 @@ def test_native_pytest_setup_and_teardown_errors_remain_in_summary(tmp_path: Pat
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "mcp_pal.pytest_plugin", "--mcp-pal-results-db", str(tmp_path / "results.sqlite"), str(test_file)],
-        env=env, capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "mcp_pal.pytest_plugin",
+            "--mcp-pal-results-db",
+            str(tmp_path / "results.sqlite"),
+            str(test_file),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 1
     assert "errors" in result.stdout
@@ -666,25 +776,50 @@ def test_native_pytest_setup_and_teardown_errors_remain_in_summary(tmp_path: Pat
 def test_progress_counts_setup_and_teardown_without_double_completion() -> None:
     from mcp_pal.pytest_plugin import _Progress
 
-    reporter = SimpleNamespace(isatty=True, rewrite=lambda *_args, **_kwargs: None, write_line=lambda *_args: None)
-    config = SimpleNamespace(option=SimpleNamespace(verbose=0, numprocesses=0), pluginmanager=SimpleNamespace(getplugin=lambda _: reporter))
+    reporter = SimpleNamespace(
+        isatty=True,
+        rewrite=lambda *_args, **_kwargs: None,
+        write_line=lambda *_args: None,
+    )
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=0),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+    )
     progress = _Progress(config)
     progress.reporter = reporter
     progress.enabled = True
     progress.pytest_collection_finish(SimpleNamespace(items=[1, 2, 3]))
-    progress.pytest_runtest_logreport(SimpleNamespace(nodeid="skip", when="setup", outcome="skipped"))
-    progress.pytest_runtest_logreport(SimpleNamespace(nodeid="fail", when="setup", outcome="failed"))
-    progress.pytest_runtest_logreport(SimpleNamespace(nodeid="ok", when="setup", outcome="passed"))
-    progress.pytest_runtest_logreport(SimpleNamespace(nodeid="ok", when="call", outcome="passed"))
-    progress.pytest_runtest_logreport(SimpleNamespace(nodeid="ok", when="teardown", outcome="failed"))
-    assert (progress.completed, progress.passed, progress.failed, progress.skipped) == (3, 0, 2, 1)
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="skip", when="setup", outcome="skipped")
+    )
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="fail", when="setup", outcome="failed")
+    )
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="ok", when="setup", outcome="passed")
+    )
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="ok", when="call", outcome="passed")
+    )
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="ok", when="teardown", outcome="failed")
+    )
+    assert (progress.completed, progress.passed, progress.failed, progress.skipped) == (
+        3,
+        0,
+        2,
+        1,
+    )
 
 
 def test_progress_is_disabled_for_non_tty() -> None:
     from mcp_pal.pytest_plugin import _Progress
 
     reporter = SimpleNamespace(isatty=False)
-    config = SimpleNamespace(option=SimpleNamespace(verbose=0, numprocesses=0), pluginmanager=SimpleNamespace(getplugin=lambda _: reporter))
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=0),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+    )
     progress = _Progress(config)
     progress.reporter = reporter
     progress.enabled = progress.enabled and progress._is_tty()
@@ -695,7 +830,10 @@ def test_progress_restores_exact_native_reporter_mode() -> None:
     from mcp_pal.pytest_plugin import _Progress
 
     reporter = SimpleNamespace(isatty=True, _show_progress_info="count")
-    config = SimpleNamespace(option=SimpleNamespace(verbose=0, numprocesses=0), pluginmanager=SimpleNamespace(getplugin=lambda _: reporter))
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=0),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+    )
     progress = _Progress(config)
     progress.reporter = reporter
     progress.disable_native_progress()

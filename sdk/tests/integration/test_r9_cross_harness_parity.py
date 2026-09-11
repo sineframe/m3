@@ -15,7 +15,11 @@ from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.execution_trace import ExecutionTraceRecorder
 from mcp_pal.harness.acp import AcpHarnessAdapter
 from mcp_pal.harness.claude import ClaudeCodeHarnessAdapter
-from mcp_pal.harness.contracts import HarnessLaunch, HarnessTurnRequest, HarnessTurnResult
+from mcp_pal.harness.contracts import (
+    HarnessLaunch,
+    HarnessTurnRequest,
+    HarnessTurnResult,
+)
 from mcp_pal.harness.observation_sink import HarnessObservationSink
 from mcp_pal.harness.opencode import OpenCodeHarnessAdapter
 from mcp_pal.observability import DirectTrace, ObservationState, TraceView
@@ -39,7 +43,6 @@ from mcp_pal.types import (
     TurnId,
     UserMessage,
 )
-
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -216,8 +219,11 @@ async def _native_trace(
     outcome = ExecutionOutcome(turn.status)
     limitations = tuple(
         dict.fromkeys(
-            (*turn.trace_limitations, *(turn.turn_evidence.limitations or ()))
-            + sink.limitations
+            (
+                *turn.trace_limitations,
+                *(turn.turn_evidence.limitations or ()),
+                *sink.limitations,
+            )
         )
     )
     return recorder.finalize(outcome, limitations=limitations).view(), turn
@@ -236,22 +242,38 @@ async def _native_view(
 async def test_r9_common_finalized_view_covers_all_local_harnesses() -> None:
     direct = DirectSpec(
         servers=(_server(),),
-        operation=CallTool(
-            server="e2e-mcp", name="echo", arguments={"text": "r9"}
-        ),
+        operation=CallTool(server="e2e-mcp", name="echo", arguments={"text": "r9"}),
     )
     async with AsyncMCPTestKit(env={}, cwd=ROOT.parent) as kit:
         direct_result = await kit.run(direct)
         assert direct_result.trace_view is not None
         _assert_common(direct_result.trace_view, "direct")
         assert isinstance(direct_result.trace_view.runtime, DirectTrace)
-        assert direct_result.trace_view.runtime.initialization.state is ObservationState.OBSERVED
+        assert (
+            direct_result.trace_view.runtime.initialization.state
+            is ObservationState.OBSERVED
+        )
         assert direct_result.trace_view.tool_calls
-        assert direct_result.trace_view.tool_calls[0].wire.state is ObservationState.OBSERVED
+        assert (
+            direct_result.trace_view.tool_calls[0].wire.state
+            is ObservationState.OBSERVED
+        )
 
         for spec, runtime, adapter in (
-            (_opencode_spec(), "opencode", OpenCodeHarnessAdapter(executable=str(FIXTURES / "opencode_serve_fixture.py"))),
-            (_claude_spec(), "claude_code", ClaudeCodeHarnessAdapter(executable=str(FIXTURES / "claude_observability_fixture.py"))),
+            (
+                _opencode_spec(),
+                "opencode",
+                OpenCodeHarnessAdapter(
+                    executable=str(FIXTURES / "opencode_serve_fixture.py")
+                ),
+            ),
+            (
+                _claude_spec(),
+                "claude_code",
+                ClaudeCodeHarnessAdapter(
+                    executable=str(FIXTURES / "claude_observability_fixture.py")
+                ),
+            ),
             (_acp_spec(), "acp", AcpHarnessAdapter()),
         ):
             _assert_common(await _native_view(spec, adapter), runtime)
@@ -261,14 +283,19 @@ async def test_r9_common_finalized_view_covers_all_local_harnesses() -> None:
 async def test_r9_native_source_specific_surfaces_remain_truthful() -> None:
     claude_view = await _native_view(
         _claude_spec(),
-        ClaudeCodeHarnessAdapter(executable=str(FIXTURES / "claude_observability_fixture.py")),
+        ClaudeCodeHarnessAdapter(
+            executable=str(FIXTURES / "claude_observability_fixture.py")
+        ),
     )
     assert claude_view.runtime.kind == "claude_code"
     assert claude_view.reasoning
     assert claude_view.runtime.encrypted_reasoning.state is ObservationState.OBSERVED
     assert claude_view.runtime.usage.state is ObservationState.OBSERVED
     assert claude_view.runtime.stop_reason.state is ObservationState.OBSERVED
-    assert claude_view.runtime.usage.value.cache_read_tokens.state is ObservationState.OBSERVED  # type: ignore[union-attr]
+    assert (
+        claude_view.runtime.usage.value.cache_read_tokens.state
+        is ObservationState.OBSERVED
+    )  # type: ignore[union-attr]
 
     opencode_view = await _native_view(
         _opencode_spec(),
@@ -291,13 +318,15 @@ async def test_r9_native_source_specific_surfaces_remain_truthful() -> None:
 async def test_r9_acp_rich_runtime_plan_state_and_modes_are_publicly_typed(
     tmp_path: Path,
 ) -> None:
-    view = await _native_view(_rich_acp_spec(tmp_path / "rich-acp.py"), AcpHarnessAdapter())
+    view = await _native_view(
+        _rich_acp_spec(tmp_path / "rich-acp.py"), AcpHarnessAdapter()
+    )
     assert view.runtime.kind == "acp"
     assert view.runtime.available_modes.state is ObservationState.OBSERVED
     modes = cast(Any, view.runtime.available_modes.value)
-    assert [
-        {key: dict(item).get(key) for key in ("id", "name")} for item in modes
-    ] == [{"id": "fast", "name": "Fast"}]
+    assert [{key: dict(item).get(key) for key in ("id", "name")} for item in modes] == [
+        {"id": "fast", "name": "Fast"}
+    ]
     assert view.runtime.current_mode.state is ObservationState.OBSERVED
     assert view.runtime.current_mode.value == "fast"
     assert view.runtime.config_options.state is ObservationState.OBSERVED
@@ -313,9 +342,7 @@ async def test_r9_acp_rich_runtime_plan_state_and_modes_are_publicly_typed(
 async def test_r9_tool_source_parity_keeps_wire_reported_and_builtin_identity() -> None:
     direct = DirectSpec(
         servers=(_server(),),
-        operation=CallTool(
-            server="e2e-mcp", name="echo", arguments={"text": "wire"}
-        ),
+        operation=CallTool(server="e2e-mcp", name="echo", arguments={"text": "wire"}),
     )
     async with AsyncMCPTestKit(env={}, cwd=ROOT.parent) as kit:
         direct_result = await kit.run(direct)
@@ -325,10 +352,12 @@ async def test_r9_tool_source_parity_keeps_wire_reported_and_builtin_identity() 
     assert direct_call.reported.state is ObservationState.NOT_EMITTED
 
     builtin_spec = _claude_spec().model_copy(
-        update={"harness": ClaudeCode(
-            model="fixture",
-            executable=str(FIXTURES / "claude_partial_observability_fixture.py"),
-        )}
+        update={
+            "harness": ClaudeCode(
+                model="fixture",
+                executable=str(FIXTURES / "claude_partial_observability_fixture.py"),
+            )
+        }
     )
     builtin = await _native_view(
         builtin_spec,
@@ -369,7 +398,9 @@ async def test_r9_reused_provider_call_ids_remain_distinct_across_turns() -> Non
     recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "r9-reused")
     try:
         for sequence in (1, 2, 3):
-            turn = await session.send(HarnessTurnRequest.from_message(f"turn-{sequence}"))
+            turn = await session.send(
+                HarnessTurnRequest.from_message(f"turn-{sequence}")
+            )
             assert turn.turn_evidence is not None
             sink = HarnessObservationSink(recorder, turn_id=TurnId(f"turn-{sequence}"))
             for observation in turn.turn_evidence.observations:
@@ -377,7 +408,11 @@ async def test_r9_reused_provider_call_ids_remain_distinct_across_turns() -> Non
     finally:
         await session.close()
     view = recorder.finalize(ExecutionOutcome.COMPLETED).view()
-    calls = [call for call in view.tool_calls if call.provider_call_id.value == "scenario-call"]
+    calls = [
+        call
+        for call in view.tool_calls
+        if call.provider_call_id.value == "scenario-call"
+    ]
     assert len(calls) == 3
     assert all(call.turn_id is not None for call in calls)
     assert {call.turn_id.root for call in calls if call.turn_id is not None} == {
@@ -414,9 +449,16 @@ async def test_r9_native_terminal_turns_finalize_and_reopen(
         )
     elif harness == "claude":
         spec = _claude_spec().model_copy(
-            update={"harness": ClaudeCode(model="fixture", executable=str(FIXTURES / "claude_stream_fixture.py"))}
+            update={
+                "harness": ClaudeCode(
+                    model="fixture",
+                    executable=str(FIXTURES / "claude_stream_fixture.py"),
+                )
+            }
         )
-        adapter = ClaudeCodeHarnessAdapter(executable=str(FIXTURES / "claude_stream_fixture.py"))
+        adapter = ClaudeCodeHarnessAdapter(
+            executable=str(FIXTURES / "claude_stream_fixture.py")
+        )
     else:
         spec = _acp_spec(mode or "recover")
         adapter = AcpHarnessAdapter()
@@ -472,8 +514,16 @@ def test_r9_direct_sync_async_public_views_have_matching_semantics() -> None:
     assert sync_result.trace_view is not None
     async_view = asyncio.run(_run_async_direct(spec))
     assert sync_result.trace_view.runtime.kind == async_view.runtime.kind == "direct"
-    assert sync_result.trace_view.outcome is async_view.outcome is ExecutionOutcome.COMPLETED
-    assert sync_result.trace_view.summary.tool_call_count == async_view.summary.tool_call_count == 1
+    assert (
+        sync_result.trace_view.outcome
+        is async_view.outcome
+        is ExecutionOutcome.COMPLETED
+    )
+    assert (
+        sync_result.trace_view.summary.tool_call_count
+        == async_view.summary.tool_call_count
+        == 1
+    )
     assert sync_result.trace_view.tool_calls[0].tool == async_view.tool_calls[0].tool
 
 
@@ -588,11 +638,15 @@ async def test_r9_sqlite_reopen_preserves_each_native_finalized_view(
     spec, adapter = {
         "opencode": (
             _opencode_spec(),
-            OpenCodeHarnessAdapter(executable=str(FIXTURES / "opencode_serve_fixture.py")),
+            OpenCodeHarnessAdapter(
+                executable=str(FIXTURES / "opencode_serve_fixture.py")
+            ),
         ),
         "claude": (
             _claude_spec(),
-            ClaudeCodeHarnessAdapter(executable=str(FIXTURES / "claude_observability_fixture.py")),
+            ClaudeCodeHarnessAdapter(
+                executable=str(FIXTURES / "claude_observability_fixture.py")
+            ),
         ),
         "acp": (_acp_spec(), AcpHarnessAdapter()),
     }[harness]

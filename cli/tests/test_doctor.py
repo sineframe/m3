@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from importlib import metadata
 import json
 import sys
+from importlib import metadata
 from pathlib import Path
 
 import pytest
@@ -38,7 +38,10 @@ def test_doctor_binary_and_unavailable_exit_codes(capsys) -> None:
     assert ready["project_python"]["executable"]
     assert sys.executable not in json.dumps(ready["results"])
 
-    assert main(["doctor", "--require", "binary:/definitely/missing-secret", "--json"]) == 1
+    assert (
+        main(["doctor", "--require", "binary:/definitely/missing-secret", "--json"])
+        == 1
+    )
     unavailable = json.loads(capsys.readouterr().out)
     assert unavailable["ready"] is False
     assert unavailable["results"][0]["capability"]["status"] == "unavailable"
@@ -46,12 +49,17 @@ def test_doctor_binary_and_unavailable_exit_codes(capsys) -> None:
     assert "/definitely/missing-secret" not in json.dumps(unavailable["results"])
 
 
-def test_doctor_selected_env_file_and_ambient_precedence(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_doctor_selected_env_file_and_ambient_precedence(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     selected = tmp_path / "selected.env"
     selected.write_text("MCP_PAL_ARTIFACT_POLICY=always\n", encoding="utf-8")
     monkeypatch.setenv("MCP_PAL_ARTIFACT_POLICY", "never")
 
-    assert main(["doctor", "--require", "config", "--env-file", str(selected), "--json"]) == 0
+    assert (
+        main(["doctor", "--require", "config", "--env-file", str(selected), "--json"])
+        == 0
+    )
     report = json.loads(capsys.readouterr().out)
     settings = report["configuration"]["settings"]
     assert settings["artifact_policy"] == "never"
@@ -75,9 +83,27 @@ def test_doctor_rejects_unknown_option_without_echoing_input(capsys) -> None:
 @pytest.mark.parametrize(
     ("variable", "value", "field", "origin", "reason"),
     (
-        ("MCP_PAL_TELEMETRY_ENABLED", "secret-not-bool", "telemetry_enabled", "env:MCP_PAL_TELEMETRY_ENABLED", "must be true or false"),
-        ("MCP_PAL_ARTIFACT_POLICY", "secret-policy", "artifact_policy", "env:MCP_PAL_ARTIFACT_POLICY", "must be one of failed, always, or never"),
-        ("MCP_PAL_UNKNOWN_SETTING", "secret-unknown-value", "MCP_PAL_UNKNOWN_SETTING", "environment", "unknown setting"),
+        (
+            "MCP_PAL_TELEMETRY_ENABLED",
+            "secret-not-bool",
+            "telemetry_enabled",
+            "env:MCP_PAL_TELEMETRY_ENABLED",
+            "must be true or false",
+        ),
+        (
+            "MCP_PAL_ARTIFACT_POLICY",
+            "secret-policy",
+            "artifact_policy",
+            "env:MCP_PAL_ARTIFACT_POLICY",
+            "must be one of failed, always, or never",
+        ),
+        (
+            "MCP_PAL_UNKNOWN_SETTING",
+            "secret-unknown-value",
+            "MCP_PAL_UNKNOWN_SETTING",
+            "environment",
+            "unknown setting",
+        ),
     ),
 )
 def test_doctor_configuration_errors_are_actionable_and_value_free(
@@ -94,7 +120,9 @@ def test_doctor_configuration_errors_are_actionable_and_value_free(
     payload = json.loads(capsys.readouterr().out)
     assert payload["ready"] is False
     assert payload["error"] == {
-        "code": "unknown_setting" if variable == "MCP_PAL_UNKNOWN_SETTING" else "invalid_configuration",
+        "code": "unknown_setting"
+        if variable == "MCP_PAL_UNKNOWN_SETTING"
+        else "invalid_configuration",
         "field": field,
         "origin": origin,
         "reason": reason,
@@ -102,7 +130,9 @@ def test_doctor_configuration_errors_are_actionable_and_value_free(
     assert value not in json.dumps(payload)
 
 
-def test_doctor_configuration_error_human_output_has_structured_diagnostic(monkeypatch, capsys) -> None:
+def test_doctor_configuration_error_human_output_has_structured_diagnostic(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setenv("MCP_PAL_TELEMETRY_ENABLED", "not-a-secret-bool")
     assert main(["doctor", "--require", "config"]) == 2
     captured = capsys.readouterr()
@@ -113,29 +143,51 @@ def test_doctor_configuration_error_human_output_has_structured_diagnostic(monke
     assert "not-a-secret-bool" not in captured.err
 
 
-def test_doctor_env_file_without_config_fails_before_reading_file(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_doctor_env_file_without_config_fails_before_reading_file(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     def fail_if_read(_path: Path):
         pytest.fail("doctor read an env file without a config requirement")
 
     monkeypatch.setattr(doctor_module, "_read_selected_environment", fail_if_read)
-    assert main(["doctor", "--require", "storage:memory", "--env-file", str(tmp_path / "secret.env")]) == 2
+    assert (
+        main(
+            [
+                "doctor",
+                "--require",
+                "storage:memory",
+                "--env-file",
+                str(tmp_path / "secret.env"),
+            ]
+        )
+        == 2
+    )
     captured = capsys.readouterr()
-    assert captured.err.strip() == "mcp-pal doctor: --env-file requires a config requirement"
+    assert (
+        captured.err.strip()
+        == "mcp-pal doctor: --env-file requires a config requirement"
+    )
 
 
 def test_doctor_transport_and_storage_namespaces(capsys) -> None:
-    assert main(
-        [
-            "doctor",
-            "--require",
-            "transport:stdio",
-            "--require",
-            "storage:memory",
-            "--json",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "doctor",
+                "--require",
+                "transport:stdio",
+                "--require",
+                "storage:memory",
+                "--json",
+            ]
+        )
+        == 0
+    )
     report = json.loads(capsys.readouterr().out)
-    assert [item["capability"]["status"] for item in report["results"]] == ["ready", "ready"]
+    assert [item["capability"]["status"] for item in report["results"]] == [
+        "ready",
+        "ready",
+    ]
 
 
 def test_doctor_checks_discovered_project_python(capsys) -> None:
@@ -153,18 +205,24 @@ def test_doctor_checks_default_project_python(capsys) -> None:
     assert report["project_python"]["status"] == "ready"
 
 
-def test_doctor_project_python_failure_is_actionable_and_safe(capsys, tmp_path: Path) -> None:
+def test_doctor_project_python_failure_is_actionable_and_safe(
+    capsys, tmp_path: Path
+) -> None:
     secret_path = tmp_path / "secret-python"
     assert main(["doctor", "--python", str(secret_path), "--json"]) == 2
     captured = capsys.readouterr()
     report = json.loads(captured.out)
     assert report["error"]["code"] == "project_python_unavailable"
-    assert "install" in report["error"]["reason"] or "started" in report["error"]["reason"]
+    assert (
+        "install" in report["error"]["reason"] or "started" in report["error"]["reason"]
+    )
     assert str(secret_path) not in captured.out
     assert str(secret_path) not in captured.err
 
 
-def test_doctor_reports_unconfigured_project_without_operational_error(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_doctor_reports_unconfigured_project_without_operational_error(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     monkeypatch.delenv("CONDA_PREFIX", raising=False)
     assert main(["doctor", "--project-root", str(tmp_path), "--json"]) == 1
@@ -174,7 +232,9 @@ def test_doctor_reports_unconfigured_project_without_operational_error(tmp_path:
     assert "mcp-pal setup" in report["project_python"]["reason"]
 
 
-def test_doctor_human_not_ready_has_direct_remediation(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_doctor_human_not_ready_has_direct_remediation(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     monkeypatch.delenv("CONDA_PREFIX", raising=False)
     assert main(["doctor", "--project-root", str(tmp_path)]) == 1

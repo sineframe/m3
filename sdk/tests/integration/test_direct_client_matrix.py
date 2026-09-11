@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 import time
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import httpx2
@@ -16,8 +16,13 @@ import pytest
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.errors import OperationCancelled
 from mcp_pal.transport.direct import TransportConnectionError
-from mcp_pal.types import SecretReference, SSEServer, HTTPServer, StdioServer, TrustLevel
-
+from mcp_pal.types import (
+    HTTPServer,
+    SecretReference,
+    SSEServer,
+    StdioServer,
+    TrustLevel,
+)
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -82,7 +87,9 @@ class _LiveSSEFixture:
             writer.write(b"event: message\ndata: " + payload + b"\n\n")
             await writer.drain()
 
-    async def __call__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def __call__(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         self._writers.add(writer)
         try:
             method, target, headers, body = await self._read_request(reader)
@@ -173,13 +180,17 @@ async def _start_server(
 async def test_streamable_http_live_matrix_with_bearer_and_tools() -> None:
     requests: list[tuple[str, str, dict[str, str]]] = []
 
-    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def handler(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         try:
             header_bytes = await reader.readuntil(b"\r\n\r\n")
             lines = header_bytes[:-4].split(b"\r\n")
             method, target, _version = lines[0].decode().split(" ", 2)
             headers = {
-                line.decode().split(":", 1)[0].lower(): line.decode().split(":", 1)[1].strip()
+                line.decode().split(":", 1)[0].lower(): line.decode()
+                .split(":", 1)[1]
+                .strip()
                 for line in lines[1:]
             }
             length = int(headers.get("content-length", "0"))
@@ -202,7 +213,11 @@ async def test_streamable_http_live_matrix_with_bearer_and_tools() -> None:
             elif request.get("method") == "tools/list":
                 body_out = _jsonrpc_response(
                     request,
-                    {"tools": [{"name": "fixture_tool", "inputSchema": {"type": "object"}}]},
+                    {
+                        "tools": [
+                            {"name": "fixture_tool", "inputSchema": {"type": "object"}}
+                        ]
+                    },
                 )
                 status = "200 OK"
             else:
@@ -232,8 +247,12 @@ async def test_streamable_http_live_matrix_with_bearer_and_tools() -> None:
             assert client.initialization.server_info["name"] == "live-http"
             assert (await client.list_tools()).tools[0].name == "fixture_tool"
             assert client.trace is not None
-            assert any(event.kind.value == "mcp.request" for event in client.trace.events)
-            assert any(event.kind.value == "mcp.response" for event in client.trace.events)
+            assert any(
+                event.kind.value == "mcp.request" for event in client.trace.events
+            )
+            assert any(
+                event.kind.value == "mcp.response" for event in client.trace.events
+            )
             assert "fixture-token" not in repr(client.trace)
             assert "fixture-token" not in repr(client.trace.model_dump(mode="json"))
             assert client.transport_evidence is not None
@@ -241,7 +260,10 @@ async def test_streamable_http_live_matrix_with_bearer_and_tools() -> None:
         assert client.transport_evidence.state == "closed"
         assert client.final_trace is not None
         assert client.final_trace.completeness == "partial"
-        assert any(request[2].get("authorization") == "Bearer fixture-token" for request in requests)
+        assert any(
+            request[2].get("authorization") == "Bearer fixture-token"
+            for request in requests
+        )
         assert "fixture-token" not in repr(client.transport_evidence)
     finally:
         await kit.aclose()
@@ -268,13 +290,19 @@ async def test_sse_live_matrix_uses_bearer_secret_and_closes_cleanly() -> None:
                 assert value == reference
                 return "fixture-token"
 
-        async with kit.direct(binding, secret_resolver=Resolver(), bearer_token=reference) as client:
+        async with kit.direct(
+            binding, secret_resolver=Resolver(), bearer_token=reference
+        ) as client:
             assert client.initialization is not None
             assert client.initialization.server_info["name"] == "live-sse"
             assert (await client.list_tools()).tools[0].name == "fixture_tool"
             assert client.trace is not None
-            assert any(event.kind.value == "mcp.request" for event in client.trace.events)
-            assert any(event.kind.value == "mcp.response" for event in client.trace.events)
+            assert any(
+                event.kind.value == "mcp.request" for event in client.trace.events
+            )
+            assert any(
+                event.kind.value == "mcp.response" for event in client.trace.events
+            )
             assert client.transport_evidence is not None
             assert client.transport_evidence.state == "initialized"
         assert client.transport_evidence.state == "closed"
@@ -302,7 +330,10 @@ async def test_remote_auth_rejection_retains_sanitized_partial_evidence() -> Non
             url=f"http://127.0.0.1:{port}/sse",
             trust=TrustLevel.TRUSTED_PRIVATE,
         )
-        client = kit.direct(binding, bearer_token=SecretReference(source="provider", name="wrong-secret"))
+        client = kit.direct(
+            binding,
+            bearer_token=SecretReference(source="provider", name="wrong-secret"),
+        )
         with pytest.raises(TransportConnectionError) as caught:
             await client.__aenter__()
         assert caught.value.evidence is not None
@@ -329,7 +360,9 @@ async def test_remote_initialization_cancellation_closes_transport() -> None:
     release = asyncio.Event()
     handler_done = asyncio.Event()
 
-    async def hanging_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def hanging_handler(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         try:
             await reader.readuntil(b"\r\n\r\n")
             initialized.set()
@@ -371,7 +404,9 @@ async def test_remote_initialization_cancellation_closes_transport() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process liveness assertion")
-async def test_stdio_initialization_cancellation_reaps_owned_process(tmp_path: Path) -> None:
+async def test_stdio_initialization_cancellation_reaps_owned_process(
+    tmp_path: Path,
+) -> None:
     """Cancellation during official stdio initialization leaves no child."""
 
     marker = tmp_path / "stdio.pid"

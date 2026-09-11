@@ -1,9 +1,9 @@
 """Examples for MCP tool errors, input schemas, and data-driven contracts."""
 
 import pytest
-from mcp_pal.sync_api import ToolCallResult
 
 from mcp_pal import MCPTestKit, ModelValidationError, StdioServer
+from mcp_pal.sync_api import ToolCallResult
 
 
 def test_assert_an_expected_tool_error(example_server: StdioServer) -> None:
@@ -45,7 +45,7 @@ def test_shipping_contract(
 def test_reject_arguments_that_do_not_match_the_tool_schema(
     example_server: StdioServer,
 ) -> None:
-    with (  # noqa: SIM117
+    with (
         MCPTestKit(env={}) as kit,
         kit.direct(example_server, validate_schemas=True) as client,
     ):

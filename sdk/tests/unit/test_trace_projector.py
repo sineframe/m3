@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 import pytest
+
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.errors import (
     ExecutionNotFound,
@@ -21,16 +22,16 @@ from mcp_pal.observability import (
     LifecycleEntry,
     MessageEntry,
     Observation,
+    ObservationReason,
     ObservationState,
     ProcessEntry,
     ProtocolEntry,
     ProviderEntry,
     RawMessageEntry,
     ReasoningEntry,
-    TransportEntry,
     ToolCallEntry,
-    ObservationReason,
     TraceStatus,
+    TransportEntry,
 )
 from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from mcp_pal.sync_api import MCPTestKit
@@ -40,11 +41,11 @@ from mcp_pal.types import (
     EvaluationStatus,
     EventDirection,
     EventKind,
+    EvidenceRef,
     ExecutionOutcome,
     ExecutionResult,
     ExecutionState,
     ExecutionStatus,
-    EvidenceRef,
     RequestLink,
     TraceResult,
 )
@@ -241,7 +242,7 @@ def test_json_null_is_observed_and_round_trips_while_invalid_json_is_unavailable
         update={"payload": {"result": {"structuredContent": {"bad": {1, 2}}}}}
     )
     view = trace.model_copy(
-        update={"events": trace.events[:7] + (request, result) + trace.events[9:]}
+        update={"events": (*trace.events[:7], request, result, *trace.events[9:])}
     ).view()
     assert view.tool_calls[0].arguments.state is ObservationState.OBSERVED
     assert view.tool_calls[0].arguments.value is None
@@ -257,7 +258,7 @@ def test_tools_call_is_projected_from_generic_mcp_request_response_events() -> N
     request = trace.events[7].model_copy(update={"kind": EventKind.MCP_REQUEST})
     response = trace.events[8].model_copy(update={"kind": EventKind.MCP_RESPONSE})
     generic = trace.model_copy(
-        update={"events": trace.events[:7] + (request, response) + trace.events[9:]}
+        update={"events": (*trace.events[:7], request, response, *trace.events[9:])}
     )
     calls = generic.view().tool_calls
     assert len(calls) == 1
@@ -282,7 +283,7 @@ def test_projector_keeps_unmatched_response_as_diagnostic_and_is_deterministic()
         }
     )
     # Replace the terminal with the unmatched error and append a new terminal.
-    events = trace.events[:-1] + (unmatched,)
+    events = (*trace.events[:-1], unmatched)
     factory = EventFactory(
         "projection-execution",
         allocator=EventSequence(start=len(events)),
@@ -297,7 +298,7 @@ def test_projector_keeps_unmatched_response_as_diagnostic_and_is_deterministic()
         trace_id=trace.trace_id,
         execution_id=trace.execution_id,
         highest_sequence=terminal.sequence,
-        events=events + (terminal,),
+        events=(*events, terminal),
     )
     first = rebuilt.view()
     second = rebuilt.view()
@@ -316,7 +317,7 @@ def test_finalized_only_and_malformed_terminal_errors() -> None:
         update={"payload": {"outcome": "unknown"}}
     )
     with pytest.raises(TraceUnavailable):
-        trace.model_copy(update={"events": trace.events[:-1] + (bad_terminal,)}).view()
+        trace.model_copy(update={"events": (*trace.events[:-1], bad_terminal)}).view()
 
 
 def test_store_retrieval_returns_trace_and_view_after_finalization() -> None:
@@ -342,7 +343,7 @@ def test_raw_evidence_is_a_typed_timeline_entry_without_displacing_protocol() ->
     )
     event = trace.events[8].model_copy(update={"raw_evidence_ref": reference})
     rebuilt = trace.model_copy(
-        update={"events": trace.events[:8] + (event,) + trace.events[9:]}
+        update={"events": (*trace.events[:8], event, *trace.events[9:])}
     )
     view = rebuilt.view()
     assert any(isinstance(item, RawMessageEntry) for item in view.timeline)
@@ -367,7 +368,7 @@ def test_paired_response_raw_evidence_remains_chronological_after_intervening_ev
             "payload": {"code": "between", "message": "between"},
         }
     )
-    events = trace.events[:8] + (intervening, response) + trace.events[9:]
+    events = (*trace.events[:8], intervening, response, *trace.events[9:])
     events = tuple(
         event.model_copy(update={"sequence": index})
         for index, event in enumerate(events)
@@ -491,7 +492,7 @@ def test_cleanup_failure_is_the_only_terminal_cleanup_failure_signal() -> None:
             }
         }
     )
-    view = trace.model_copy(update={"events": trace.events[:-1] + (terminal,)}).view()
+    view = trace.model_copy(update={"events": (*trace.events[:-1], terminal)}).view()
     assert view.outcome is ExecutionOutcome.COMPLETED
     assert view.summary.cleanup_status.value == "failed"
 
@@ -506,7 +507,7 @@ def test_reasoning_availability_states_are_never_synthesized(visibility: str) ->
         }
     )
     view = trace.model_copy(
-        update={"events": trace.events[:9] + (event,) + trace.events[10:]}
+        update={"events": (*trace.events[:9], event, *trace.events[10:])}
     ).view()
     reasoning = view.reasoning[0].content
     assert reasoning.state.value == visibility
@@ -524,7 +525,7 @@ def test_visible_malformed_reasoning_is_unavailable_and_unknown_role_is_diagnost
         update={"payload": {"role": "alien", "content": []}}
     )
     rebuilt = trace.model_copy(
-        update={"events": trace.events[:9] + (reasoning, message) + trace.events[11:]}
+        update={"events": (*trace.events[:9], reasoning, message, *trace.events[11:])}
     )
     view = rebuilt.view()
     assert view.reasoning[0].content.state.value == "unavailable"
@@ -542,7 +543,7 @@ def test_provider_identity_and_pid_boolean_are_not_guessed() -> None:
         update={"kind": EventKind.PROCESS_STARTED, "payload": {"pid": True}}
     )
     rebuilt = trace.model_copy(
-        update={"events": (trace.events[0], provider, process) + trace.events[3:]}
+        update={"events": (trace.events[0], provider, process, *trace.events[3:])}
     )
     view = rebuilt.view()
     assert any(
@@ -579,8 +580,13 @@ def test_present_malformed_scalars_are_unavailable_and_provider_data_presence_is
     )
     rebuilt = trace.model_copy(
         update={
-            "events": (trace.events[0], process, provider_null, provider_missing)
-            + trace.events[4:]
+            "events": (
+                trace.events[0],
+                process,
+                provider_null,
+                provider_missing,
+                *trace.events[4:],
+            )
         }
     )
     view = rebuilt.view()
@@ -600,9 +606,12 @@ def test_reversed_and_incompatible_pairs_are_not_correlated() -> None:
     trace = _trace()
     request = trace.events[7]
     response = trace.events[8]
-    reversed_events = (
-        list(trace.events[:7]) + [response, request] + list(trace.events[9:])
-    )
+    reversed_events = [
+        *list(trace.events[:7]),
+        response,
+        request,
+        *list(trace.events[9:]),
+    ]
     reversed_events = [
         event.model_copy(update={"sequence": index})
         for index, event in enumerate(reversed_events)
@@ -620,9 +629,12 @@ def test_reversed_and_incompatible_pairs_are_not_correlated() -> None:
     )
     incompatible = trace.model_copy(
         update={
-            "events": trace.events[:7]
-            + (incompatible_request, response)
-            + trace.events[9:]
+            "events": (
+                *trace.events[:7],
+                incompatible_request,
+                response,
+                *trace.events[9:],
+            )
         }
     )
     assert incompatible.view().reasoning == reversed_view.reasoning
@@ -645,7 +657,7 @@ def test_tool_errors_protocol_errors_and_typed_fallback_call_ids() -> None:
     )
     failed = (
         trace.model_copy(
-            update={"events": trace.events[:8] + (failed_result,) + trace.events[9:]}
+            update={"events": (*trace.events[:8], failed_result, *trace.events[9:])}
         )
         .view()
         .tool_calls[0]
@@ -660,7 +672,7 @@ def test_tool_errors_protocol_errors_and_typed_fallback_call_ids() -> None:
     )
     protocol = (
         trace.model_copy(
-            update={"events": trace.events[:8] + (protocol_result,) + trace.events[9:]}
+            update={"events": (*trace.events[:8], protocol_result, *trace.events[9:])}
         )
         .view()
         .tool_calls[0]
@@ -689,7 +701,7 @@ def test_malformed_tool_results_never_become_success(payload) -> None:
         update={"kind": EventKind.MCP_RESPONSE, "payload": payload}
     )
     view = trace.model_copy(
-        update={"events": trace.events[:8] + (response,) + trace.events[9:]}
+        update={"events": (*trace.events[:8], response, *trace.events[9:])}
     ).view()
     call = view.tool_calls[0]
     assert call.tool_status.value == "incomplete"
@@ -713,7 +725,7 @@ def test_valid_artifact_and_evaluation_events_are_public_entries() -> None:
         }
     )
     artifact_view = trace.model_copy(
-        update={"events": (trace.events[0], artifact) + trace.events[2:]}
+        update={"events": (trace.events[0], artifact, *trace.events[2:])}
     ).view()
     assert any(isinstance(item, ArtifactEntry) for item in artifact_view.timeline)
 
@@ -730,7 +742,7 @@ def test_valid_artifact_and_evaluation_events_are_public_entries() -> None:
         }
     )
     evaluation_view = trace.model_copy(
-        update={"events": (trace.events[0], evaluation) + trace.events[2:]}
+        update={"events": (trace.events[0], evaluation, *trace.events[2:])}
     ).view()
     assert any(isinstance(item, EvaluationEntry) for item in evaluation_view.timeline)
 
@@ -756,7 +768,7 @@ def test_projector_preserves_every_tool_terminal_status(
     )
     call = (
         trace.model_copy(
-            update={"events": trace.events[:8] + (result,) + trace.events[9:]}
+            update={"events": (*trace.events[:8], result, *trace.events[9:])}
         )
         .view()
         .tool_calls[0]
@@ -795,7 +807,7 @@ def test_projector_preserves_malformed_initialization_as_unavailable() -> None:
         }
     )
     view = trace.model_copy(
-        update={"events": trace.events[:3] + (response,) + trace.events[4:]}
+        update={"events": (*trace.events[:3], response, *trace.events[4:])}
     ).view()
     initialization = view.runtime.initialization.value
     assert initialization.protocol_version.state.value == "unavailable"
@@ -815,7 +827,7 @@ def test_unique_malformed_initialization_response_is_unavailable(payload) -> Non
     trace = _trace()
     response = trace.events[3].model_copy(update={"payload": payload})
     view = trace.model_copy(
-        update={"events": trace.events[:3] + (response,) + trace.events[4:]}
+        update={"events": (*trace.events[:3], response, *trace.events[4:])}
     ).view()
     initialization = view.runtime.initialization.value
     assert initialization.protocol_version.state is ObservationState.UNAVAILABLE
@@ -838,7 +850,7 @@ def test_initialization_lookup_validates_initialized_id_and_direction(update) ->
         update={"correlation": trace.events[4].correlation.model_copy(update=update)}
     )
     view = trace.model_copy(
-        update={"events": trace.events[:4] + (initialized,) + trace.events[5:]}
+        update={"events": (*trace.events[:4], initialized, *trace.events[5:])}
     ).view()
     assert (
         view.runtime.initialization.value.server_name.state
@@ -863,7 +875,7 @@ def test_initialization_lists_preserve_null_as_malformed_and_support_official_al
         }
     )
     view = trace.model_copy(
-        update={"events": trace.events[:3] + (response,) + trace.events[4:]}
+        update={"events": (*trace.events[:3], response, *trace.events[4:])}
     ).view()
     initialization = view.runtime.initialization.value
     assert initialization.tools.state is ObservationState.UNAVAILABLE
@@ -876,7 +888,7 @@ def test_malformed_present_transport_and_valid_empty_strings_are_distinguished()
     trace = _trace()
     transport = trace.events[1].model_copy(update={"payload": {"transport": 7}})
     transport_view = trace.model_copy(
-        update={"events": (trace.events[0], transport) + trace.events[2:]}
+        update={"events": (trace.events[0], transport, *trace.events[2:])}
     ).view()
     assert transport_view.runtime.transport.state is ObservationState.UNAVAILABLE
 
@@ -891,7 +903,7 @@ def test_malformed_present_transport_and_valid_empty_strings_are_distinguished()
         }
     )
     string_view = trace.model_copy(
-        update={"events": trace.events[:3] + (response,) + trace.events[4:]}
+        update={"events": (*trace.events[:3], response, *trace.events[4:])}
     ).view()
     initialization = string_view.runtime.initialization.value
     assert initialization.instructions.state is ObservationState.OBSERVED
@@ -901,7 +913,7 @@ def test_malformed_present_transport_and_valid_empty_strings_are_distinguished()
         update={"kind": EventKind.PROCESS_EXITED, "payload": {"stderr": ""}}
     )
     process_view = trace.model_copy(
-        update={"events": (trace.events[0], process) + trace.events[2:]}
+        update={"events": (trace.events[0], process, *trace.events[2:])}
     ).view()
     process_entry = next(
         item for item in process_view.processes if item.sequence_start == 1
@@ -926,8 +938,12 @@ def test_transport_events_project_to_typed_entries(
 ) -> None:
     trace = _trace()
     event = trace.events[1].model_copy(update={"kind": kind, "payload": payload})
-    view = trace.model_copy(update={"events": (trace.events[0], event) + trace.events[2:]}).view()
-    entry = next(item for item in view.transports if item.sequence_start == event.sequence)
+    view = trace.model_copy(
+        update={"events": (trace.events[0], event, *trace.events[2:])}
+    ).view()
+    entry = next(
+        item for item in view.transports if item.sequence_start == event.sequence
+    )
     assert entry.phase == phase
     assert entry.configured.state is ObservationState.OBSERVED
     assert entry.instrumented.state is ObservationState.OBSERVED
@@ -942,19 +958,27 @@ def test_transport_events_project_to_typed_entries(
         {"configured_transport": "vendor_private"},
     ],
 )
-def test_transport_missing_or_malformed_values_are_explicit(payload: dict[str, object]) -> None:
+def test_transport_missing_or_malformed_values_are_explicit(
+    payload: dict[str, object],
+) -> None:
     trace = _trace()
     event = trace.events[1].model_copy(
         update={"kind": EventKind.TRANSPORT_DISCONNECTED, "payload": payload}
     )
-    view = trace.model_copy(update={"events": (trace.events[0], event) + trace.events[2:]}).view()
-    entry = next(item for item in view.transports if item.sequence_start == event.sequence)
+    view = trace.model_copy(
+        update={"events": (trace.events[0], event, *trace.events[2:])}
+    ).view()
+    entry = next(
+        item for item in view.transports if item.sequence_start == event.sequence
+    )
     if not payload:
         assert entry.configured.state is ObservationState.NOT_EMITTED
         assert entry.instrumented.state is ObservationState.NOT_EMITTED
     else:
         observation = (
-            entry.configured if "configured_transport" in payload else entry.instrumented
+            entry.configured
+            if "configured_transport" in payload
+            else entry.instrumented
         )
         assert observation.state is ObservationState.UNAVAILABLE
         assert observation.reason is ObservationReason.MALFORMED_SOURCE
@@ -969,7 +993,7 @@ def test_standalone_interaction_explicit_nulls_are_observed() -> None:
         }
     )
     view = trace.model_copy(
-        update={"events": (trace.events[0], event) + trace.events[2:]}
+        update={"events": (trace.events[0], event, *trace.events[2:])}
     ).view()
     interaction = next(item for item in view.interactions if item.sequence_start == 1)
     assert interaction.request.state is ObservationState.OBSERVED
@@ -984,7 +1008,7 @@ def test_runtime_initialization_does_not_cross_correlate_connections() -> None:
         update={"connection_id": ConnectionId("other-connection")}
     )
     view = trace.model_copy(
-        update={"events": trace.events[:3] + (wrong_connection,) + trace.events[4:]}
+        update={"events": (*trace.events[:3], wrong_connection, *trace.events[4:])}
     ).view()
     initialization = view.runtime.initialization.value
     assert initialization.server_name.state is ObservationState.NOT_EMITTED
@@ -1012,13 +1036,17 @@ def test_projector_uses_unique_typed_id_fallback_but_not_ambiguous_candidates() 
         }
     )
     fallback = trace.model_copy(
-        update={"events": trace.events[:7] + (request, response) + trace.events[9:]}
+        update={"events": (*trace.events[:7], request, response, *trace.events[9:])}
     ).view()
     assert fallback.tool_calls[0].tool_status.value == "success"
 
     second_request = request.model_copy(update={"sequence": request.sequence + 1})
     ambiguous_events = (
-        trace.events[:7] + (request, second_request, response) + trace.events[9:]
+        *trace.events[:7],
+        request,
+        second_request,
+        response,
+        *trace.events[9:],
     )
     ambiguous_events = tuple(
         event.model_copy(update={"sequence": index})
@@ -1060,9 +1088,9 @@ def test_projector_rejects_invalid_execution_boundaries(mutation) -> None:
     changed = mutation(trace)
     events = trace.events
     if changed.sequence == events[0].sequence:
-        events = (changed,) + events[1:]
+        events = (changed, *events[1:])
     else:
-        events = (events[0], changed) + events[2:]
+        events = (events[0], changed, *events[2:])
     with pytest.raises(TraceUnavailable):
         trace.model_copy(update={"events": events}).view()
 
@@ -1079,7 +1107,7 @@ def test_projector_rejects_terminal_metadata_disagreement() -> None:
         }
     )
     with pytest.raises(TraceUnavailable):
-        trace.model_copy(update={"events": trace.events[:-1] + (terminal,)}).view()
+        trace.model_copy(update={"events": (*trace.events[:-1], terminal)}).view()
 
 
 def test_unmatched_tool_request_is_wire_only_and_incomplete() -> None:
@@ -1121,9 +1149,12 @@ def test_typed_jsonrpc_ids_and_fallback_call_ids_remain_distinct() -> None:
     )
     view = trace.model_copy(
         update={
-            "events": trace.events[:7]
-            + (string_request, string_response)
-            + trace.events[9:]
+            "events": (
+                *trace.events[:7],
+                string_request,
+                string_response,
+                *trace.events[9:],
+            )
         }
     ).view()
     assert view.tool_calls[0].call_id == "str:3"
@@ -1157,7 +1188,7 @@ def test_stable_event_kinds_have_typed_projection(kind, payload, expected) -> No
     trace = _trace()
     event = trace.events[1].model_copy(update={"kind": kind, "payload": payload})
     view = trace.model_copy(
-        update={"events": (trace.events[0], event) + trace.events[2:]}
+        update={"events": (trace.events[0], event, *trace.events[2:])}
     ).view()
     if expected is object:
         assert any(item.sequence_start == event.sequence for item in view.timeline)

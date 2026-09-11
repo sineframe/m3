@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.storage import SQLiteExecutionStore

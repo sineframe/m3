@@ -8,16 +8,16 @@ content, filesystem bytes, and terminal output.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import math
 import os
-from pathlib import Path
 import shutil
 import signal
 import stat
 import tempfile
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, TypeAlias
 from uuid import uuid4
@@ -29,7 +29,6 @@ from .types import (
     SamplingPolicy,
     TerminalPolicy,
 )
-
 
 Decision = Literal["allow", "deny", "error"]
 FilesystemOperation = Literal["read", "write", "list", "delete"]
@@ -78,7 +77,9 @@ class ElicitationResult:
     accepted: bool
     value: Any = None
     receipt: InteractionReceipt = field(
-        default_factory=lambda: InteractionReceipt("none", "elicitation", "deny", "default_deny")
+        default_factory=lambda: InteractionReceipt(
+            "none", "elicitation", "deny", "default_deny"
+        )
     )
 
 
@@ -86,7 +87,9 @@ class ElicitationResult:
 class SamplingRequest:
     prompt: str
     model: str | None = None
-    metadata: Mapping[str, str | int | float | bool | None] = field(default_factory=dict)
+    metadata: Mapping[str, str | int | float | bool | None] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
@@ -123,7 +126,9 @@ class TerminalRequest:
     max_output_bytes: int = 1 << 20
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "environment", MappingProxyType(dict(self.environment)))
+        object.__setattr__(
+            self, "environment", MappingProxyType(dict(self.environment))
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,7 +147,9 @@ class PermissionHandler(Protocol):
 
 
 class ElicitationHandler(Protocol):
-    async def __call__(self, request: ElicitationRequest) -> ElicitationResult | Any: ...
+    async def __call__(
+        self, request: ElicitationRequest
+    ) -> ElicitationResult | Any: ...
 
 
 class SamplingHandler(Protocol):
@@ -157,9 +164,15 @@ class TerminalHandler(Protocol):
     async def __call__(self, request: TerminalRequest) -> TerminalResult: ...
 
 
-PermissionCallback: TypeAlias = Callable[[PermissionRequest], PermissionResult | bool | Awaitable[PermissionResult | bool]]
-ElicitationCallback: TypeAlias = Callable[[ElicitationRequest], ElicitationResult | Any | Awaitable[ElicitationResult | Any]]
-SamplingCallback: TypeAlias = Callable[[SamplingRequest], SamplingResult | str | Awaitable[SamplingResult | str]]
+PermissionCallback: TypeAlias = Callable[
+    [PermissionRequest], PermissionResult | bool | Awaitable[PermissionResult | bool]
+]
+ElicitationCallback: TypeAlias = Callable[
+    [ElicitationRequest], ElicitationResult | Any | Awaitable[ElicitationResult | Any]
+]
+SamplingCallback: TypeAlias = Callable[
+    [SamplingRequest], SamplingResult | str | Awaitable[SamplingResult | str]
+]
 
 
 def _receipt(kind: str, decision: Decision, reason: str) -> InteractionReceipt:
@@ -171,7 +184,11 @@ def _deny(kind: str, reason: str = "default_deny") -> InteractionReceipt:
 
 
 async def _resolve(value: Any) -> Any:
-    return await value if asyncio.iscoroutine(value) or isinstance(value, Awaitable) else value
+    return (
+        await value
+        if asyncio.iscoroutine(value) or isinstance(value, Awaitable)
+        else value
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,14 +228,18 @@ class Interactions:
         # Policies are part of the immutable session contract.  Exposing a
         # mutable controller must not provide a way to weaken them after the
         # harness has been opened.
-        if name in {
-            "permission_policy",
-            "elicitation_policy",
-            "sampling_policy",
-            "filesystem_policy",
-            "terminal_policy",
-            "handlers",
-        } and name in self.__dict__:
+        if (
+            name
+            in {
+                "permission_policy",
+                "elicitation_policy",
+                "sampling_policy",
+                "filesystem_policy",
+                "terminal_policy",
+                "handlers",
+            }
+            and name in self.__dict__
+        ):
             raise AttributeError(f"interaction {name} is immutable")
         object.__setattr__(self, name, value)
 
@@ -234,16 +255,25 @@ class Interactions:
         if self.permission_policy.mode == "deny":
             return PermissionResult(False, await self._record(_deny("permission")))
         if self.permission_policy.mode == "allow":
-            return PermissionResult(True, await self._record(_receipt("permission", "allow", "policy_allow")))
+            return PermissionResult(
+                True,
+                await self._record(_receipt("permission", "allow", "policy_allow")),
+            )
         callback = self.handlers.permission
         if callback is None:
-            return PermissionResult(False, await self._record(_deny("permission", "confirmation_unavailable")), True)
+            return PermissionResult(
+                False,
+                await self._record(_deny("permission", "confirmation_unavailable")),
+                True,
+            )
         try:
             value = await _resolve(callback(request))
             if isinstance(value, PermissionResult):
                 allowed = bool(value.allowed)
                 receipt = await self._record(
-                    _receipt("permission", "allow" if allowed else "deny", "handler_decision")
+                    _receipt(
+                        "permission", "allow" if allowed else "deny", "handler_decision"
+                    )
                 )
                 return PermissionResult(
                     value.allowed,
@@ -253,30 +283,52 @@ class Interactions:
             allowed = bool(value)
             return PermissionResult(
                 allowed,
-                await self._record(_receipt("permission", "allow" if allowed else "deny", "handler_decision")),
+                await self._record(
+                    _receipt(
+                        "permission", "allow" if allowed else "deny", "handler_decision"
+                    )
+                ),
                 request.destructive,
             )
         except asyncio.CancelledError:
             raise
         except Exception:
-            return PermissionResult(False, await self._record(_deny("permission", "handler_error")))
+            return PermissionResult(
+                False, await self._record(_deny("permission", "handler_error"))
+            )
 
     async def elicitate(self, request: ElicitationRequest) -> ElicitationResult:
         if self.elicitation_policy.mode == "deny" or self.handlers.elicitation is None:
-            return ElicitationResult(False, receipt=await self._record(_deny("elicitation")))
+            return ElicitationResult(
+                False, receipt=await self._record(_deny("elicitation"))
+            )
         try:
             value = await _resolve(self.handlers.elicitation(request))
             if isinstance(value, ElicitationResult):
                 return ElicitationResult(
                     value.accepted,
                     value.value,
-                    await self._record(_receipt("elicitation", "allow" if value.accepted else "deny", "handler_decision")),
+                    await self._record(
+                        _receipt(
+                            "elicitation",
+                            "allow" if value.accepted else "deny",
+                            "handler_decision",
+                        )
+                    ),
                 )
-            return ElicitationResult(True, value, await self._record(_receipt("elicitation", "allow", "handler_decision")))
+            return ElicitationResult(
+                True,
+                value,
+                await self._record(
+                    _receipt("elicitation", "allow", "handler_decision")
+                ),
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
-            return ElicitationResult(False, receipt=await self._record(_deny("elicitation", "handler_error")))
+            return ElicitationResult(
+                False, receipt=await self._record(_deny("elicitation", "handler_error"))
+            )
 
     async def elicit(self, request: ElicitationRequest) -> ElicitationResult:
         """Alias using the protocol's conventional verb."""
@@ -292,20 +344,36 @@ class Interactions:
                 return SamplingResult(
                     value.accepted,
                     value.content,
-                    await self._record(_receipt("sampling", "allow" if value.accepted else "deny", "handler_decision")),
+                    await self._record(
+                        _receipt(
+                            "sampling",
+                            "allow" if value.accepted else "deny",
+                            "handler_decision",
+                        )
+                    ),
                 )
-            return SamplingResult(True, str(value), await self._record(_receipt("sampling", "allow", "handler_decision")))
+            return SamplingResult(
+                True,
+                str(value),
+                await self._record(_receipt("sampling", "allow", "handler_decision")),
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
-            return SamplingResult(False, None, await self._record(_deny("sampling", "handler_error")))
+            return SamplingResult(
+                False, None, await self._record(_deny("sampling", "handler_error"))
+            )
 
     async def filesystem(self, request: FilesystemRequest) -> FilesystemResult:
         allowed_mode = self.filesystem_policy.mode
         if allowed_mode == "deny" or self.handlers.filesystem is None:
-            return FilesystemResult(False, None, await self._record(_deny("filesystem")))
+            return FilesystemResult(
+                False, None, await self._record(_deny("filesystem"))
+            )
         if allowed_mode == "read_only" and request.operation in {"write", "delete"}:
-            return FilesystemResult(False, None, await self._record(_deny("filesystem", "read_only")))
+            return FilesystemResult(
+                False, None, await self._record(_deny("filesystem", "read_only"))
+            )
         try:
             result = await _resolve(self.handlers.filesystem(request))
             if not isinstance(result, FilesystemResult):
@@ -313,16 +381,32 @@ class Interactions:
             return FilesystemResult(
                 result.allowed,
                 result.data,
-                await self._record(_receipt("filesystem", "allow" if result.allowed else "deny", "handler_decision")),
+                await self._record(
+                    _receipt(
+                        "filesystem",
+                        "allow" if result.allowed else "deny",
+                        "handler_decision",
+                    )
+                ),
             )
         except asyncio.CancelledError:
             raise
         except Exception:
-            return FilesystemResult(False, None, await self._record(_deny("filesystem", "handler_error")))
+            return FilesystemResult(
+                False, None, await self._record(_deny("filesystem", "handler_error"))
+            )
 
     async def terminal(self, request: TerminalRequest) -> TerminalResult:
         if self.terminal_policy.mode == "deny" or self.handlers.terminal is None:
-            return TerminalResult(False, None, b"", b"", False, False, await self._record(_deny("terminal")))
+            return TerminalResult(
+                False,
+                None,
+                b"",
+                b"",
+                False,
+                False,
+                await self._record(_deny("terminal")),
+            )
         try:
             result = await _resolve(self.handlers.terminal(request))
             if not isinstance(result, TerminalResult):
@@ -334,18 +418,38 @@ class Interactions:
                 result.stderr,
                 result.timed_out,
                 result.truncated,
-                await self._record(_receipt("terminal", "allow" if result.allowed else "deny", "handler_decision")),
+                await self._record(
+                    _receipt(
+                        "terminal",
+                        "allow" if result.allowed else "deny",
+                        "handler_decision",
+                    )
+                ),
             )
         except asyncio.CancelledError:
             raise
         except Exception:
-            return TerminalResult(False, None, b"", b"", False, False, await self._record(_deny("terminal", "handler_error")))
+            return TerminalResult(
+                False,
+                None,
+                b"",
+                b"",
+                False,
+                False,
+                await self._record(_deny("terminal", "handler_error")),
+            )
 
 
 class WorkspaceFiles:
     """Bounded filesystem handler rooted inside one owned workspace."""
 
-    def __init__(self, root: str | Path, *, mode: Literal["read_only", "read_write"] = "read_only", max_bytes: int = 1 << 20) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        mode: Literal["read_only", "read_write"] = "read_only",
+        max_bytes: int = 1 << 20,
+    ) -> None:
         self._root = Path(root).resolve()
         if not self._root.is_dir():
             raise ValueError("filesystem root must be an existing directory")
@@ -419,12 +523,16 @@ class WorkspaceFiles:
             os.close(descriptor)
 
     async def __call__(self, request: FilesystemRequest) -> FilesystemResult:
-        if not isinstance(request.max_bytes, int) or isinstance(request.max_bytes, bool):
+        if not isinstance(request.max_bytes, int) or isinstance(
+            request.max_bytes, bool
+        ):
             return FilesystemResult(False, None, _deny("filesystem", "size_limit"))
         try:
             path = self._path(request.path)
         except (OSError, ValueError, PermissionError):
-            return FilesystemResult(False, None, _deny("filesystem", "path_outside_workspace"))
+            return FilesystemResult(
+                False, None, _deny("filesystem", "path_outside_workspace")
+            )
         if request.max_bytes <= 0 or request.max_bytes > self._max_bytes:
             return FilesystemResult(False, None, _deny("filesystem", "size_limit"))
         if request.operation in {"write", "delete"} and self._mode != "read_write":
@@ -432,8 +540,12 @@ class WorkspaceFiles:
         if request.operation == "read":
             try:
                 if not self._regular_file(path):
-                    return FilesystemResult(False, None, _deny("filesystem", "file_type_denied"))
-                data, truncated = await asyncio.to_thread(self._read_bounded, path, request.max_bytes)
+                    return FilesystemResult(
+                        False, None, _deny("filesystem", "file_type_denied")
+                    )
+                data, truncated = await asyncio.to_thread(
+                    self._read_bounded, path, request.max_bytes
+                )
             except (OSError, PermissionError):
                 return FilesystemResult(False, None, _deny("filesystem", "read_failed"))
             if truncated:
@@ -442,35 +554,50 @@ class WorkspaceFiles:
         if request.operation == "list":
             try:
                 if not self._directory(path):
-                    return FilesystemResult(False, None, _deny("filesystem", "directory_required"))
+                    return FilesystemResult(
+                        False, None, _deny("filesystem", "directory_required")
+                    )
                 entries_list: list[str] = []
                 total = 0
                 with os.scandir(path) as scandir_entries:
                     for item in scandir_entries:
                         total += len(item.name.encode("utf-8"))
                         if total > request.max_bytes:
-                            return FilesystemResult(False, None, _deny("filesystem", "size_limit"))
+                            return FilesystemResult(
+                                False, None, _deny("filesystem", "size_limit")
+                            )
                         entries_list.append(item.name)
                 entries = tuple(sorted(entries_list))
             except (OSError, UnicodeError):
                 return FilesystemResult(False, None, _deny("filesystem", "list_failed"))
-            return FilesystemResult(True, entries, _receipt("filesystem", "allow", "list"))
+            return FilesystemResult(
+                True, entries, _receipt("filesystem", "allow", "list")
+            )
         if request.operation == "write":
             data = request.data if request.data is not None else b""
             if not isinstance(data, bytes):
-                return FilesystemResult(False, None, _deny("filesystem", "data_invalid"))
+                return FilesystemResult(
+                    False, None, _deny("filesystem", "data_invalid")
+                )
             if len(data) > request.max_bytes:
                 return FilesystemResult(False, None, _deny("filesystem", "size_limit"))
             parent = path.parent
             if not self._directory(parent):
-                return FilesystemResult(False, None, _deny("filesystem", "path_unavailable"))
+                return FilesystemResult(
+                    False, None, _deny("filesystem", "path_unavailable")
+                )
             if path.exists() and not self._regular_file(path):
-                return FilesystemResult(False, None, _deny("filesystem", "file_type_denied"))
+                return FilesystemResult(
+                    False, None, _deny("filesystem", "file_type_denied")
+                )
             temporary: str | None = None
             try:
+
                 def atomic_write() -> None:
                     nonlocal temporary
-                    descriptor, temporary = tempfile.mkstemp(prefix=".mcp-pal-", dir=os.fspath(parent))
+                    descriptor, temporary = tempfile.mkstemp(
+                        prefix=".mcp-pal-", dir=os.fspath(parent)
+                    )
                     try:
                         with os.fdopen(descriptor, "wb") as stream:
                             stream.write(data)
@@ -487,17 +614,29 @@ class WorkspaceFiles:
 
                 await asyncio.to_thread(atomic_write)
             except (OSError, TypeError, ValueError):
-                return FilesystemResult(False, None, _deny("filesystem", "write_failed"))
-            return FilesystemResult(True, None, _receipt("filesystem", "allow", "write"))
+                return FilesystemResult(
+                    False, None, _deny("filesystem", "write_failed")
+                )
+            return FilesystemResult(
+                True, None, _receipt("filesystem", "allow", "write")
+            )
         if request.operation == "delete":
             try:
                 if not self._regular_file(path):
-                    return FilesystemResult(False, None, _deny("filesystem", "file_type_denied"))
+                    return FilesystemResult(
+                        False, None, _deny("filesystem", "file_type_denied")
+                    )
                 await asyncio.to_thread(path.unlink)
             except OSError:
-                return FilesystemResult(False, None, _deny("filesystem", "delete_failed"))
-            return FilesystemResult(True, None, _receipt("filesystem", "allow", "delete"))
-        return FilesystemResult(False, None, _deny("filesystem", "unsupported_operation"))
+                return FilesystemResult(
+                    False, None, _deny("filesystem", "delete_failed")
+                )
+            return FilesystemResult(
+                True, None, _receipt("filesystem", "allow", "delete")
+            )
+        return FilesystemResult(
+            False, None, _deny("filesystem", "unsupported_operation")
+        )
 
 
 class AllowedCommands:
@@ -535,7 +674,9 @@ class AllowedCommands:
             if not candidate.is_absolute():
                 allowed_names[os.fspath(candidate)] = os.fspath(resolved)
             else:
-                allowed_aliases[os.path.abspath(os.fspath(candidate))] = os.fspath(resolved)
+                allowed_aliases[os.path.abspath(os.fspath(candidate))] = os.fspath(
+                    resolved
+                )
         if not allowed_paths:
             raise ValueError("terminal executable allowlist is empty")
         self._allowed_paths = frozenset(allowed_paths)
@@ -545,7 +686,9 @@ class AllowedCommands:
         if not self._root.is_dir():
             raise ValueError("terminal root must be an existing directory")
         self._environment = dict(environment or {})
-        self._allowed_environment = frozenset(allowed_environment).union(self._environment)
+        self._allowed_environment = frozenset(allowed_environment).union(
+            self._environment
+        )
         if any(
             not isinstance(key, str)
             or not key
@@ -583,7 +726,11 @@ class AllowedCommands:
                 info = os.lstat(resolved)
             except OSError:
                 return None
-            return resolved if stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode) else None
+            return (
+                resolved
+                if stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+                else None
+            )
         alias = self._allowed_aliases.get(os.path.abspath(os.fspath(candidate)))
         resolved = alias or os.path.realpath(os.fspath(candidate))
         if resolved not in self._allowed_paths:
@@ -619,27 +766,66 @@ class AllowedCommands:
         await process.wait()
 
     async def __call__(self, request: TerminalRequest) -> TerminalResult:
-        if not isinstance(request.argv, (tuple, list)) or not request.argv or any(
-            not isinstance(value, str) or not value or "\x00" in value for value in request.argv
+        if (
+            not isinstance(request.argv, (tuple, list))
+            or not request.argv
+            or any(
+                not isinstance(value, str) or not value or "\x00" in value
+                for value in request.argv
+            )
         ):
-            return TerminalResult(False, None, b"", b"", False, False, _deny("terminal", "argv_invalid"))
+            return TerminalResult(
+                False, None, b"", b"", False, False, _deny("terminal", "argv_invalid")
+            )
         executable = self._executable(request.argv[0])
         if executable is None:
-            return TerminalResult(False, None, b"", b"", False, False, _deny("terminal", "executable_not_allowed"))
-        if not isinstance(request.timeout_seconds, (int, float)) or isinstance(request.timeout_seconds, bool):
-            return TerminalResult(False, None, b"", b"", False, False, _deny("terminal", "limits_invalid"))
-        if not isinstance(request.max_output_bytes, int) or isinstance(request.max_output_bytes, bool):
-            return TerminalResult(False, None, b"", b"", False, False, _deny("terminal", "limits_invalid"))
-        if not math.isfinite(request.timeout_seconds) or request.timeout_seconds <= 0 or request.max_output_bytes <= 0:
-            return TerminalResult(False, None, b"", b"", False, False, _deny("terminal", "limits_invalid"))
+            return TerminalResult(
+                False,
+                None,
+                b"",
+                b"",
+                False,
+                False,
+                _deny("terminal", "executable_not_allowed"),
+            )
+        if not isinstance(request.timeout_seconds, (int, float)) or isinstance(
+            request.timeout_seconds, bool
+        ):
+            return TerminalResult(
+                False, None, b"", b"", False, False, _deny("terminal", "limits_invalid")
+            )
+        if not isinstance(request.max_output_bytes, int) or isinstance(
+            request.max_output_bytes, bool
+        ):
+            return TerminalResult(
+                False, None, b"", b"", False, False, _deny("terminal", "limits_invalid")
+            )
+        if (
+            not math.isfinite(request.timeout_seconds)
+            or request.timeout_seconds <= 0
+            or request.max_output_bytes <= 0
+        ):
+            return TerminalResult(
+                False, None, b"", b"", False, False, _deny("terminal", "limits_invalid")
+            )
         process: asyncio.subprocess.Process | None = None
         try:
             cwd = self._cwd(request.cwd)
             if any(key not in self._allowed_environment for key in request.environment):
-                return TerminalResult(False, None, b"", b"", False, False, _deny("terminal", "environment_not_allowed"))
+                return TerminalResult(
+                    False,
+                    None,
+                    b"",
+                    b"",
+                    False,
+                    False,
+                    _deny("terminal", "environment_not_allowed"),
+                )
             environment = dict(self._environment)
             environment.update(request.environment)
-            if any("\x00" in key or "\x00" in value for key, value in environment.items()):
+            if any(
+                "\x00" in key or "\x00" in value for key, value in environment.items()
+            ):
                 raise ValueError("terminal environment is invalid")
             process = await asyncio.create_subprocess_exec(
                 executable,
@@ -652,6 +838,7 @@ class AllowedCommands:
             )
             if process.stdout is None or process.stderr is None:
                 raise RuntimeError("terminal output streams are unavailable")
+
             async def read(stream: asyncio.StreamReader) -> tuple[bytes, bool]:
                 data = await stream.read(request.max_output_bytes + 1)
                 if len(data) > request.max_output_bytes:
@@ -659,27 +846,72 @@ class AllowedCommands:
                         await self._terminate(process)
                     except ProcessLookupError:
                         pass
-                return data[: request.max_output_bytes], len(data) > request.max_output_bytes
+                return data[: request.max_output_bytes], len(
+                    data
+                ) > request.max_output_bytes
+
             try:
-                (stdout, stdout_truncated), (stderr, stderr_truncated) = await asyncio.wait_for(
-                    asyncio.gather(read(process.stdout), read(process.stderr)), request.timeout_seconds
+                (
+                    (stdout, stdout_truncated),
+                    (stderr, stderr_truncated),
+                ) = await asyncio.wait_for(
+                    asyncio.gather(read(process.stdout), read(process.stderr)),
+                    request.timeout_seconds,
                 )
                 await process.wait()
-                return TerminalResult(True, process.returncode, stdout, stderr, False, stdout_truncated or stderr_truncated, _receipt("terminal", "allow", "completed"))
+                return TerminalResult(
+                    True,
+                    process.returncode,
+                    stdout,
+                    stderr,
+                    False,
+                    stdout_truncated or stderr_truncated,
+                    _receipt("terminal", "allow", "completed"),
+                )
             except asyncio.TimeoutError:
                 await self._terminate(process)
-                return TerminalResult(True, process.returncode, b"", b"", True, False, _receipt("terminal", "allow", "timed_out"))
+                return TerminalResult(
+                    True,
+                    process.returncode,
+                    b"",
+                    b"",
+                    True,
+                    False,
+                    _receipt("terminal", "allow", "timed_out"),
+                )
         except asyncio.CancelledError:
             if process is not None:
                 await self._terminate(process)
             raise
         except Exception:
-            return TerminalResult(False, None, b"", b"", False, False, _deny("terminal", "handler_error"))
+            return TerminalResult(
+                False, None, b"", b"", False, False, _deny("terminal", "handler_error")
+            )
 
 
 __all__ = [
-    "AllowedCommands", "ElicitationCallback", "ElicitationHandler", "ElicitationRequest", "ElicitationResult",
-    "FilesystemHandler", "FilesystemOperation", "FilesystemRequest", "FilesystemResult", "Interactions", "InteractionHandlers",
-    "InteractionReceipt", "PermissionCallback", "PermissionHandler", "PermissionRequest", "PermissionResult", "SamplingCallback", "SamplingHandler",
-    "SamplingRequest", "SamplingResult", "TerminalHandler", "TerminalRequest", "TerminalResult", "WorkspaceFiles",
+    "AllowedCommands",
+    "ElicitationCallback",
+    "ElicitationHandler",
+    "ElicitationRequest",
+    "ElicitationResult",
+    "FilesystemHandler",
+    "FilesystemOperation",
+    "FilesystemRequest",
+    "FilesystemResult",
+    "InteractionHandlers",
+    "InteractionReceipt",
+    "Interactions",
+    "PermissionCallback",
+    "PermissionHandler",
+    "PermissionRequest",
+    "PermissionResult",
+    "SamplingCallback",
+    "SamplingHandler",
+    "SamplingRequest",
+    "SamplingResult",
+    "TerminalHandler",
+    "TerminalRequest",
+    "TerminalResult",
+    "WorkspaceFiles",
 ]
