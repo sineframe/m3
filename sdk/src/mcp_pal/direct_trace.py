@@ -263,6 +263,10 @@ class DirectTraceBridge:
         return self._connection_id
 
     @property
+    def _execution_store(self) -> ExecutionStore:
+        return self._store
+
+    @property
     def trace_id(self) -> TraceId:
         return self._recorder.trace_id
 

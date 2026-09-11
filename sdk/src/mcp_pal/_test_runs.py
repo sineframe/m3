@@ -65,7 +65,7 @@ def test_attempt(run_id: str, node_id: str, *, worker_id: str) -> dict[str, Any]
     }
 
 
-def activate_test(value: dict[str, Any]):
+def activate_test(value: dict[str, Any]) -> Any:
     return _ACTIVE_TEST.set(value)
 
 

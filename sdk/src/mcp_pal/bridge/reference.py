@@ -21,7 +21,7 @@ import re
 import subprocess
 import sys
 import uuid
-from typing import Any
+from typing import Any, cast
 
 
 def _send(message: dict[str, Any]) -> None:
@@ -47,7 +47,7 @@ def _rpc(
     response = json.loads(line)
     if "error" in response:
         raise RuntimeError("selected MCP server returned an error")
-    return response
+    return cast(dict[str, Any], response)
 
 
 def _env_from_mcp(server: dict[str, Any]) -> dict[str, str]:
@@ -104,9 +104,9 @@ def _target_result(
     except json.JSONDecodeError as exc:
         raise RuntimeError("structured target did not return JSON") from exc
     if isinstance(value, dict) and isinstance(value.get("final_output"), str):
-        return value["final_output"]
+        return cast(str, value["final_output"])
     if isinstance(value, dict) and isinstance(value.get("text"), str):
-        return value["text"]
+        return cast(str, value["text"])
     raise RuntimeError("structured target JSON lacks final_output")
 
 

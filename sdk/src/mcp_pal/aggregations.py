@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timezone
 from statistics import median
-from typing import Any
+from typing import Any, cast
 
 from pydantic import Field, field_validator, model_validator
 
@@ -245,14 +245,16 @@ def _labels(
             labels["model"] = str(observed_model)
         calls = getattr(trace, "tool_calls", ())
         if calls:
-            servers = {_observed(getattr(call, "server", None)) for call in calls}
+            observed_servers = {
+                _observed(getattr(call, "server", None)) for call in calls
+            }
             tools = {_observed(getattr(call, "tool", None)) for call in calls}
-            servers.discard(None)
+            observed_servers.discard(None)
             tools.discard(None)
             labels["server"] = (
-                next(iter(servers))
-                if len(servers) == 1
-                else ("multiple" if len(servers) > 1 else None)
+                next(iter(observed_servers))
+                if len(observed_servers) == 1
+                else ("multiple" if len(observed_servers) > 1 else None)
             )
             labels["tool"] = (
                 next(iter(tools))
@@ -267,27 +269,30 @@ def _labels(
             labels.setdefault("harness", runtime_kind)
     if spec is not None:
         labels["execution_kind"] = getattr(spec, "kind", None)
-        servers = tuple(
+        server_names: tuple[Any, ...] = tuple(
             getattr(binding, "alias", None)
             or getattr(getattr(binding, "server", None), "name", None)
             for binding in getattr(spec, "servers", ())
         )
-        servers = tuple(str(value) for value in servers if value)
+        server_names = tuple(str(value) for value in server_names if value)
         labels.setdefault(
             "server",
-            servers[0] if len(servers) == 1 else ("multiple" if servers else None),
+            server_names[0]
+            if len(server_names) == 1
+            else ("multiple" if server_names else None),
         )
         operation = getattr(spec, "operation", None)
         labels.setdefault(
             "tool", getattr(operation, "name", None) if operation is not None else None
         )
         labels["harness"] = getattr(getattr(spec, "harness", None), "name", None)
-        server_value = (
-            getattr(getattr(spec, "servers", ())[0], "server", None)
-            if getattr(spec, "servers", ())
+        server_bindings: Any = cast(Any, getattr(spec, "servers", ()))
+        server_value: Any = (
+            getattr(getattr(server_bindings[0], "server", None), "kind", None)
+            if server_bindings
             else None
         )
-        labels.setdefault("transport", getattr(server_value, "kind", None))
+        labels.setdefault("transport", server_value)
         labels.setdefault(
             "model", getattr(getattr(spec, "harness", None), "model", None)
         )
@@ -414,8 +419,8 @@ def aggregate_evaluations(
         list[tuple[EvaluationRecord, dict[str, Scalar], Any]],
     ] = defaultdict(list)
     for item in selected:
-        key = key_for(item)
-        grouped[tuple(key.items())].append(item)
+        group_key: dict[str, Scalar] = key_for(item)
+        grouped[tuple(group_key.items())].append(item)
 
     def values(
         items: list[tuple[EvaluationRecord, dict[str, Scalar], Any]],
@@ -498,7 +503,8 @@ def aggregate_evaluations(
     if len(evaluator_values) > 1:
         total = total.model_copy(update={"pass_rate": None, "average_score": None})
     visible = group_values[query.offset : query.offset + query.limit]
-    return EvaluationReport(
+    report_type = cast(Callable[..., EvaluationReport], EvaluationReport)
+    return report_type(
         from_=query.start,
         to=query.to,
         totals=total,

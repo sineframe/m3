@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time as _time
+from collections.abc import Iterator as _Iterator
 from contextvars import ContextVar as _ContextVar
 from pathlib import Path as _Path
 from typing import Any as _Any
@@ -313,7 +314,7 @@ def _save_attempt(config: _Any, state: dict[str, object]) -> None:
         config._mcp_pal_manifest_write_error = True
 
 
-def _pytest_runtest_protocol(item: _Any, nextitem: _Any) -> object:
+def _pytest_runtest_protocol(item: _Any, nextitem: _Any) -> _Iterator[_Any]:
     del nextitem
     config = item.config
     run_id = getattr(config, "_mcp_pal_run_id", None)

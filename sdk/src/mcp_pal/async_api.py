@@ -41,6 +41,7 @@ from ._default_store import (
 from ._default_store import (
     make_default_store as _make_default_store,
 )
+from .agent_session import AgentAdapter as _AgentAdapter
 from .agent_session import AsyncAgentSession as _CoreAsyncAgentSession
 from .agent_session import HarnessAdapter
 from .configuration import (
@@ -505,7 +506,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
         if kit._record_checks:
             _bind_execution(
                 self._trace_observer.execution_id,
-                getattr(self._trace_observer, "_store", None),
+                self._trace_observer._execution_store,
                 self._redaction_config,
             )
         self._trace_owner = trace_owner
@@ -823,7 +824,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
                 _bind_subject(
                     final_trace,
                     self._trace_observer.execution_id,
-                    getattr(self._trace_observer, "_store", None),
+                    self._trace_observer._execution_store,
                     self._redaction_config,
                 )
         try:
@@ -1263,7 +1264,7 @@ class AsyncMCPTestKit:
         self,
         spec: _AgentSpec,
         *,
-        adapter: HarnessAdapter | None = None,
+        adapter: _AgentAdapter | None = None,
         runtime_servers: _Iterable[_Any] = (),
         _event_sink: _Any = None,
         interaction_handlers: InteractionHandlers | None = None,

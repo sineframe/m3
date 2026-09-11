@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 WIRE_LIMITATION = (
     "No correlated MCP transport capture was available for this call; wire "
@@ -208,6 +208,10 @@ def _acp_evidence(
         update, update_type = _update_from_payload(payload)
         offset = _offset(raw_frame)
         update_count += 1
+        metadata: dict[str, Any]
+        kind: str
+        name: str
+        output: Any
         tool_id = (
             update.get("toolCallId")
             or update.get("tool_call_id")
@@ -289,20 +293,24 @@ def _acp_evidence(
         elif lower_type == "tool_call_update" or lower_type.endswith(
             "_tool_call_update"
         ):
-            call = calls_by_key.get(str(tool_id)) if tool_id is not None else None
-            if call is None:
+            existing_call = (
+                calls_by_key.get(str(tool_id)) if tool_id is not None else None
+            )
+            call_for_update: dict[str, Any] | None = existing_call
+            if call_for_update is None:
                 ident = str(tool_id) if tool_id is not None else f"acp-tool-{sequence}"
-                call = _call_base(
+                call_for_update = _call_base(
                     ident=ident,
                     server=selected_server,
                     tool="tool",
                     transport=transport,
                     start=offset,
                 )
-                call["tool_call_id"] = tool_id
-                calls.append(call)
+                call_for_update["tool_call_id"] = tool_id
+                calls.append(call_for_update)
                 if tool_id is not None:
-                    calls_by_key[str(tool_id)] = call
+                    calls_by_key[str(tool_id)] = call_for_update
+            call = call_for_update
             if update.get("title") or update.get("name") or update.get("tool"):
                 call["tool"] = _tool_name(
                     update.get("title") or update.get("name") or update.get("tool"),
@@ -476,7 +484,7 @@ def _wire_evidence(
         ):
             params = _dict(payload.get("params"))
             ident = payload.get("id")
-            call = {
+            call: dict[str, Any] = {
                 "id": ident,
                 "request_sequence": sequence,
                 "server": selected_server,
@@ -570,7 +578,12 @@ def _wire_evidence(
                 },
             }
         )
-    return protocol, calls, [*mcp_spans, *event_spans], list(pending.values())
+    return (
+        protocol,
+        calls,
+        [*mcp_spans, *event_spans],
+        cast(list[dict[str, Any]], list(pending.values())),
+    )
 
 
 def _time_related(acp: dict[str, Any], wire: dict[str, Any]) -> bool:
@@ -675,9 +688,11 @@ def build_acp_trace(
     tool_spans: list[dict[str, Any]] = []
     linked_wire = set(links)
     for call in acp_calls:
-        span = next((s for s in acp_spans if s["id"] == f"acp-tool-{call['id']}"), None)
-        if span is not None:
-            tool_spans.append(span)
+        tool_span: dict[str, Any] | None = next(
+            (s for s in acp_spans if s["id"] == f"acp-tool-{call['id']}"), None
+        )
+        if tool_span is not None:
+            tool_spans.append(tool_span)
     for wi, call in enumerate(wire_calls):
         if wi in linked_wire:
             continue
@@ -759,7 +774,7 @@ def build_acp_trace(
             "state": 1,
             "mcp": 2,
             "mcp_event": 3,
-        }.get(kind, 1)
+        }.get(cast(str, kind), 1)
         # ``activity`` is assembled in capture order.  Keep that stable for
         # equal timestamps; generated IDs are strings and would reorder
         # ``...-10`` before ``...-2`` in a long stream.
@@ -795,7 +810,7 @@ def build_acp_trace(
             "instrumented_transport": instrumented,
         },
     }
-    all_spans = [run_span, mcp_session, *activity]
+    all_spans: list[dict[str, Any]] = [run_span, mcp_session, *activity]
     all_spans = [all_spans[0], all_spans[1], *sorted(all_spans[2:], key=span_order)]
     from .model_steps import attach_model_steps
 
@@ -804,7 +819,9 @@ def build_acp_trace(
     # compatibility ``type`` alias for older report consumers.
     type_aliases = {"thinking": "thought", "text": "message", "tool_call": "tool"}
     for span in all_spans:
-        span.setdefault("type", type_aliases.get(span.get("kind"), span.get("kind")))
+        span.setdefault(
+            "type", type_aliases.get(cast(str, span.get("kind")), span.get("kind"))
+        )
     limitations = (
         [WIRE_LIMITATION]
         if any(not c.get("provenance", {}).get("wire") for c in merged_calls)

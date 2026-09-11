@@ -367,10 +367,13 @@ class ExecutionTraceRecorder:
                         raise TraceRecorderError(
                             "execution store does not support atomic raw evidence"
                         )
-                    return append_atomic(
-                        event,
-                        raw_evidence_content,
-                        media_type=raw_evidence_media_type,
+                    return cast(
+                        Event,
+                        append_atomic(
+                            event,
+                            raw_evidence_content,
+                            media_type=raw_evidence_media_type,
+                        ),
                     )
                 return self.record(event)
             except Exception:

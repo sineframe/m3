@@ -2,9 +2,10 @@
 
 import json
 import sys
+from typing import Any
 
 
-def send(i, result):
+def send(i: Any, result: Any) -> None:
     print(json.dumps({"jsonrpc": "2.0", "id": i, "result": result}), flush=True)
 
 

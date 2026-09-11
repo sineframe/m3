@@ -362,7 +362,7 @@ async def run_acp_probe(
     )
     try:
         is_async = inspect.iscoroutinefunction(runner) or inspect.iscoroutinefunction(
-            runner.__call__
+            cast(Any, runner).__call__
         )
         if is_async:
             value = await asyncio.wait_for(

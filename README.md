@@ -81,11 +81,21 @@ just check
 
 `just check` runs Ruff and the compile/import checks. Use `just lint` for Ruff
 alone, `just format` to format Python files in place, and `just format-check` to
-check whether files are already formatted without modifying them. Run `just --list` for focused tests, local API/UI
-commands, harness probes, and packaging checks. Live provider tests and the
+check whether files are already formatted without modifying them. Run
+`just --list` for focused tests, local API/UI commands, harness probes, and
+packaging checks. Live provider tests and the
 browser gate are opt-in because they require external credentials and may incur
 provider costs. Application configuration is documented in the
 [App guide](app/README.md).
+
+Type checking keeps the stable public boundary and the complete shipped SDK
+strict. `just typecheck-sdk-usage` checks
+the public usage examples through pytest. `just typecheck-sdk-public` runs
+strict mypy directly on these public modules:
+`types.py`, `errors.py`, `policy.py`, `interaction_handlers.py`, and
+`configuration.py`. `just typecheck-sdk` runs strict mypy over all of
+`sdk/src/mcp_pal` as the complete CI-required target; it is intentionally not
+baselined or weakened.
 
 `just setup` and `just install-hooks` install the repository's pre-push hook. The
 hook runs Ruff linting, formatting checks, and the complete non-live SDK,

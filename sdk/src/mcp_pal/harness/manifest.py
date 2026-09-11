@@ -12,7 +12,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -43,7 +43,7 @@ class ManifestValidationError(ValueError):
     """A manifest is malformed or contains a literal secret."""
 
 
-def _model(manifest: Any):
+def _model(manifest: Any) -> HarnessManifest:
     try:
         return HarnessManifest.model_validate(manifest)
     except ValidationError as exc:
@@ -87,7 +87,7 @@ def validate_manifest(manifest: Any, *, check_local: bool = False) -> dict[str, 
     if unknown:
         raise ManifestValidationError("unknown manifest fields: " + ", ".join(unknown))
     model = _model(manifest)
-    value = model.model_dump(mode="json")
+    value: dict[str, Any] = model.model_dump(mode="json")
     for name, reference in value["env"].items():
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
             raise ManifestValidationError(f"env: invalid child variable name: {name}")
@@ -126,7 +126,7 @@ def load_manifest(path: str | os.PathLike[str]) -> dict[str, Any]:
         raw = json.loads(source)
     except (json.JSONDecodeError, OSError) as exc:
         raise ManifestValidationError(f"invalid JSON: {exc}") from exc
-    return validate_manifest(raw)["manifest"]
+    return cast(dict[str, Any], validate_manifest(raw)["manifest"])
 
 
 def export_manifest(manifest: Any) -> str:

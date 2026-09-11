@@ -1218,7 +1218,11 @@ storage = [
 
 [package.dev-dependencies]
 typecheck = [
+    { name = "hypothesis" },
     { name = "mypy" },
+    { name = "pytest" },
+    { name = "sqlalchemy" },
+    { name = "tomli" },
 ]
 
 [package.metadata]
@@ -1251,7 +1255,13 @@ requires-dist = [
 provides-extras = ["pytest", "storage", "property", "docs", "all"]
 
 [package.metadata.requires-dev]
-typecheck = [{ name = "mypy", specifier = ">=1.11,<2" }]
+typecheck = [
+    { name = "hypothesis", specifier = ">=6.100,<7" },
+    { name = "mypy", specifier = ">=1.11,<2" },
+    { name = "pytest", specifier = ">=8,<10" },
+    { name = "sqlalchemy", specifier = ">=2.0,<3" },
+    { name = "tomli", specifier = ">=2,<3" },
+]
 
 [[package]]
 name = "mcp-pal-app"

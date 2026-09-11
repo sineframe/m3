@@ -376,7 +376,7 @@ def _tool_result_projection(result: ToolResult) -> JsonValue:
         "content": [block.model_dump(mode="json") for block in result.content]
     }
     if result.structured_content.state is ObservationState.OBSERVED:
-        value["structuredContent"] = cast(JsonValue, result.structured_content.value)
+        value["structuredContent"] = result.structured_content.value
     if result.is_error:
         value["isError"] = True
     if (
@@ -388,7 +388,7 @@ def _tool_result_projection(result: ToolResult) -> JsonValue:
 
 
 def _json_equal(left: Any, right: Any) -> bool:
-    return _thaw_json(left) == _thaw_json(right)
+    return cast(bool, _thaw_json(left) == _thaw_json(right))
 
 
 def _normalize_result_json(value: Any) -> Any:

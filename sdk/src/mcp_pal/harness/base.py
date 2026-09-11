@@ -9,7 +9,7 @@ from typing import Any
 class RunSpec:
     prompt: str
     model: str
-    mcp_config: dict
+    mcp_config: dict[str, Any]
     enabled_server: str
     tool_mode: str = "mcp_only"
     timeout_seconds: int = 120
@@ -23,9 +23,9 @@ class AcpRunSpec:
 
     prompt: str
     model: str
-    mcp_config: dict
+    mcp_config: dict[str, Any]
     enabled_server: str
-    manifest: dict
+    manifest: dict[str, Any]
     tool_mode: str = "agent_default"
     agent_mode_id: str | None = None
     session_config: dict[str, Any] = field(default_factory=dict)
@@ -40,7 +40,7 @@ class AcpRunSpec:
 class HarnessResult:
     status: str
     events: list[Any] = field(default_factory=list)
-    normalized: list[tuple[str, dict]] = field(default_factory=list)
+    normalized: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     # Receipt-timed Claude stream events and decoded MCP frames are kept in
     # memory until RunManager builds the redacted, versioned persisted trace.
     event_records: list[dict[str, Any]] = field(default_factory=list)
@@ -68,6 +68,9 @@ class HarnessResult:
 
 class HarnessRunner:
     async def run(
-        self, spec: RunSpec, on_event: Callable | None = None, cancel_event: Any = None
+        self,
+        spec: RunSpec,
+        on_event: Callable[..., Any] | None = None,
+        cancel_event: Any = None,
     ) -> HarnessResult:
         raise NotImplementedError

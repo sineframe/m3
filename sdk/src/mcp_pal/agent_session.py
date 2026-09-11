@@ -14,7 +14,7 @@ import math
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 from uuid import uuid4
 
 from .errors import (
@@ -70,6 +70,7 @@ from .types import (
 from .workspace import WorkspaceCapture, WorkspaceError, WorkspaceManager
 
 if TYPE_CHECKING:
+    from .harness.contracts import HarnessLaunch, HarnessSession
     from .harness.observations import TurnEvidence
 
 
@@ -93,6 +94,32 @@ class HarnessAdapter(Protocol):
     ) -> TurnResponse | AdapterTurn: ...
 
     async def close(self) -> None: ...
+
+
+class ControllerHarnessAdapter(Protocol):
+    """Adapter shape consumed by the controller for modern harnesses.
+
+    ``open`` returns an adapter-owned session, but the controller also uses
+    the adapter's compatibility ``send`` method for each turn.  Keeping both
+    operations in this protocol prevents the session-only
+    :class:`HarnessAdapterContract` from being accepted as a controller
+    adapter when it cannot actually send a turn through the outer object.
+    """
+
+    async def open(self, launch: HarnessLaunch) -> HarnessSession: ...
+
+    async def send(
+        self,
+        message: UserMessage,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TurnResponse | AdapterTurn: ...
+
+    async def close(self) -> None: ...
+
+
+AgentAdapter: TypeAlias = HarnessAdapter | ControllerHarnessAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,7 +196,7 @@ class AsyncAgentSession:
     def __init__(
         self,
         spec: AgentSpec,
-        adapter: HarnessAdapter,
+        adapter: AgentAdapter,
         *,
         server_manager: Any = None,
         server_manager_factory: Callable[[], Any] | None = None,

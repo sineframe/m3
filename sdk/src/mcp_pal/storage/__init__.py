@@ -1,6 +1,7 @@
 """Ephemeral storage contracts and implementations."""
 
 from typing import TYPE_CHECKING as _TYPE_CHECKING
+from typing import Any as _Any
 
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult, ACPProbeStore
 from ..services.persistent import SQLiteStoreWorker
@@ -54,7 +55,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> _Any:
     """Load the optional full execution store only on explicit use."""
     if name in {
         "SQLiteArtifactStore",

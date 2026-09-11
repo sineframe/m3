@@ -10,18 +10,22 @@ from __future__ import annotations
 import os as _os
 import re as _re
 import sys as _sys
+import typing as _typing
 from collections.abc import Mapping as _Mapping
 from enum import Enum as _Enum
 from pathlib import Path as _Path
 from typing import Any as _Any
 from typing import Literal as _Literal
 
-if _sys.version_info >= (3, 11):  # pragma: no cover - branch depends on runtime Python
-    import tomllib as _tomllib  # type: ignore[import-not-found]
+if _typing.TYPE_CHECKING:
+    import tomli as _tomllib
+elif _sys.version_info >= (
+    3,
+    11,
+):  # pragma: no cover - branch depends on runtime Python
+    import tomllib as _tomllib
 else:  # pragma: no cover
-    import tomli as _tomli
-
-    _tomllib = _tomli
+    import tomli as _tomllib
 
 from pydantic import (
     Field as _Field,

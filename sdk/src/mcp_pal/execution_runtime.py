@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from pydantic import TypeAdapter, ValidationError
@@ -79,6 +79,14 @@ from .types import (
     SSEServer,
     TraceResult,
 )
+
+
+class _PersistentExecutionStore(ExecutionStore, Protocol):
+    def enqueue_command(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def request_cancel(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
 from .workspace import WorkspaceError, WorkspaceManager
 
 _DIRECT_RESULT_ADAPTER: TypeAdapter[DirectResult] = TypeAdapter(DirectResult)
@@ -1080,7 +1088,9 @@ class AsyncExecutionController:
         self.kit = kit
         self.redaction_config = redaction_config or RedactionConfig.from_environment()
         self._handles: set[AsyncExecutionHandle] = set()
-        self._persistent_store = store
+        self._persistent_store: _PersistentExecutionStore | None = cast(
+            _PersistentExecutionStore | None, store
+        )
         self._persistent_worker: Any = None
         self._worker_thread: threading.Thread | None = None
         self._worker_stop = threading.Event()

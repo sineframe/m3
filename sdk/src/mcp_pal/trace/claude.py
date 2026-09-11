@@ -7,7 +7,7 @@ does not attempt to reconstruct hidden chain-of-thought from timing or tool call
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 SCHEMA_VERSION = "claude.v2"
 TRANSPORTS = {"stdio", "http", "sse"}
@@ -281,13 +281,11 @@ def build_claude_trace(
 
     def message_id(raw: dict[str, Any], typ: str) -> str | None:
         if typ == "stream_event":
-            stream = raw.get("event") if isinstance(raw.get("event"), dict) else {}
-            message = (
-                stream.get("message") if isinstance(stream.get("message"), dict) else {}
-            )
+            stream = _dict(raw.get("event"))
+            message = _dict(stream.get("message"))
             value = message.get("id")
         else:
-            message = raw.get("message") if isinstance(raw.get("message"), dict) else {}
+            message = _dict(raw.get("message"))
             value = message.get("id") or raw.get("message_id") or raw.get("id")
         return str(value) if value else None
 
@@ -481,14 +479,14 @@ def build_claude_trace(
                 turn["usage"],
                 turn["usage"],
             )
-            message = raw.get("message") if isinstance(raw.get("message"), dict) else {}
+            message = _dict(raw.get("message"))
             turn_span["metadata"]["model"] = raw.get("model") or message.get("model")
             for block_index, block in enumerate(_message_content(raw)):
                 add_block(turn, block, start, block_index, partial=False)
             if pending_turn is turn:
                 pending_turn = None
         elif typ == "stream_event":
-            stream = raw.get("event") if isinstance(raw.get("event"), dict) else {}
+            stream = _dict(raw.get("event"))
             stream_type = stream.get("type", "")
             if stream_type == "message_start":
                 turn = ensure_turn(start, raw, typ, partial=True)
@@ -501,31 +499,23 @@ def build_claude_trace(
             elif stream_type in {"content_block_start", "content_block_delta"}:
                 turn = pending_turn or ensure_turn(start, raw, typ, partial=True)
                 if stream_type == "content_block_start":
-                    block = (
-                        stream.get("content_block")
-                        if isinstance(stream.get("content_block"), dict)
-                        else {}
-                    )
+                    block = _dict(stream.get("content_block"))
                 else:
-                    delta = (
-                        stream.get("delta")
-                        if isinstance(stream.get("delta"), dict)
-                        else {}
-                    )
+                    delta = _dict(stream.get("delta"))
                     block = dict(delta)
                     block["type"] = {
                         "thinking_delta": "thinking_delta",
                         "text_delta": "text_delta",
                         "input_json_delta": "input_json_delta",
                         "signature_delta": "signature_delta",
-                    }.get(delta.get("type"), delta.get("type"))
+                    }.get(cast(str, delta.get("type")), delta.get("type"))
                 add_block(turn, block, start, stream.get("index"), partial=True)
             elif stream_type == "content_block_stop" and pending_turn:
-                block_index = str(
+                stop_index = str(
                     stream.get("index") if stream.get("index") is not None else 0
                 )
                 for (turn_id, index_key, _kind), span in block_spans.items():
-                    if turn_id == pending_turn["id"] and index_key == block_index:
+                    if turn_id == pending_turn["id"] and index_key == stop_index:
                         span["end_ms"] = max(_float(span.get("end_ms")), start)
                         span["duration_ms"] = _duration(
                             _float(span.get("start_ms")), _float(span["end_ms"])
@@ -533,9 +523,7 @@ def build_claude_trace(
                         span["status"] = "completed"
             elif stream_type == "message_delta" and pending_turn:
                 merge_usage(pending_turn, _usage(raw))
-                delta = (
-                    stream.get("delta") if isinstance(stream.get("delta"), dict) else {}
-                )
+                delta = _dict(stream.get("delta"))
                 if delta.get("stop_reason"):
                     next(span for span in spans if span["id"] == pending_turn["id"])[
                         "metadata"
@@ -768,3 +756,7 @@ def build_claude_trace(
 
 
 __all__ = ["SCHEMA_VERSION", "TRANSPORTS", "build_claude_trace", "transport_for_server"]
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}

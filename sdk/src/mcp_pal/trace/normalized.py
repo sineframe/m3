@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 SCHEMA_VERSION = "mcp.v1"
 UNMATCHED_LIMITATION = "No correlated MCP transport capture was available for this call; wire request/response and server latency are unavailable."
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _tool_name(value: Any, server: str | None = None) -> str:
@@ -160,18 +164,22 @@ def from_opencode_events(
         event, receipt = _unwrap(wrapper if isinstance(wrapper, dict) else {})
         if event.get("type") not in {"tool_use", "tool"}:
             continue
-        part = event.get("part") if isinstance(event.get("part"), dict) else event
+        part = (
+            cast(dict[str, Any], event.get("part"))
+            if isinstance(event.get("part"), dict)
+            else event
+        )
         tool_full = str(part.get("tool") or part.get("name") or "")
         if not _selected(tool_full, selected_server):
             continue
-        state = part.get("state") if isinstance(part.get("state"), dict) else {}
+        state = _dict(part.get("state"))
         ident = str(
             part.get("callID")
             or part.get("callId")
             or part.get("id")
             or f"opencode-mcp-{index}"
         )
-        timing = part.get("time") if isinstance(part.get("time"), dict) else {}
+        timing = _dict(part.get("time"))
         native_start, native_end = timing.get("start"), timing.get("end")
         duration = (
             native_end - native_start
@@ -180,14 +188,22 @@ def from_opencode_events(
             and native_end >= native_start
             else None
         )
+        start: float | None
+        end: float | None
         if receipt is not None:
             # Native timestamps give duration, while backend receipt time puts
             # that duration on the per-run monotonic timeline.
             end = receipt
             start = max(0.0, receipt - duration) if duration is not None else receipt
         else:
-            start = native_start if isinstance(native_start, (int, float)) else None
-            end = native_end if isinstance(native_end, (int, float)) else None
+            start = cast(
+                float | None,
+                native_start if isinstance(native_start, (int, float)) else None,
+            )
+            end = cast(
+                float | None,
+                native_end if isinstance(native_end, (int, float)) else None,
+            )
         result = state.get("output")
         err = _error(
             result, state.get("error") if state.get("status") == "error" else None
@@ -250,7 +266,7 @@ def build_opencode_trace(
         1,
     ):
         item = dict(record)
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        payload = _dict(item.get("payload"))
         item.setdefault("sequence", sequence)
         item.setdefault("jsonrpc_id", payload.get("id"))
         item.setdefault("method", payload.get("method"))
@@ -265,9 +281,7 @@ def build_opencode_trace(
     pending = {}
     wire_links: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     for record in sorted(protocol, key=lambda x: float(x.get("offset_ms", 0) or 0)):
-        payload = (
-            record.get("payload") if isinstance(record.get("payload"), dict) else {}
-        )
+        payload = _dict(record.get("payload"))
         ident = payload.get("id")
         if (
             record.get("direction") in {"client_to_server", "request"}
@@ -277,8 +291,11 @@ def build_opencode_trace(
             pending[str(ident)] = record
         elif ident is not None and str(ident) in pending:
             request = pending.pop(str(ident))
-            request_payload = request.get("payload") or {}
-            tool = str(request_payload.get("params", {}).get("name") or "")
+            request_payload = cast(dict[str, Any], request.get("payload") or {})
+            tool = str(
+                cast(dict[str, Any], request_payload.get("params") or {}).get("name")
+                or ""
+            )
             target = next(
                 (c for c in calls if c["tool"] == tool and c["wire_request"] is None),
                 None,
@@ -368,7 +385,11 @@ def build_opencode_trace(
         event, receipt = _unwrap(wrapper if isinstance(wrapper, dict) else {})
         offset = float(receipt or 0.0)
         typ = str(event.get("type") or "")
-        part = event.get("part") if isinstance(event.get("part"), dict) else event
+        part = (
+            cast(dict[str, Any], event.get("part"))
+            if isinstance(event.get("part"), dict)
+            else event
+        )
         if typ == "step_start":
             if active_turn is not None:
                 active_turn["end_ms"] = max(float(active_turn["end_ms"] or 0), offset)
@@ -381,7 +402,7 @@ def build_opencode_trace(
             if isinstance(cost, (int, float)):
                 total_cost += float(cost)
                 has_cost = True
-            tokens = part.get("tokens") if isinstance(part.get("tokens"), dict) else {}
+            tokens = _dict(part.get("tokens"))
             input_tokens += int(tokens.get("input", 0) or 0)
             output_tokens += int(tokens.get("output", 0) or 0)
             active_turn = None
@@ -454,24 +475,29 @@ def build_opencode_trace(
     for call in calls:
         tool_queues.setdefault(call["tool"], []).append(call)
     for sequence, record in enumerate(protocol, 1):
-        payload = (
-            record.get("payload") if isinstance(record.get("payload"), dict) else {}
-        )
+        payload = _dict(record.get("payload"))
         ident = payload.get("id")
         direction = record.get("direction")
         offset = float(record.get("offset_ms", 0) or 0)
         if direction in {"client_to_server", "request"} and ident is not None:
             protocol_pending[str(ident)] = (sequence, record)
             continue
-        request = protocol_pending.pop(str(ident), None) if ident is not None else None
-        if request:
-            request_sequence, request_record = request
-            request_payload = request_record.get("payload") or {}
+        matched_protocol: tuple[int, dict[str, Any]] | None = (
+            protocol_pending.pop(str(ident), None) if ident is not None else None
+        )
+        if matched_protocol:
+            request_sequence, request_record = matched_protocol
+            request_payload = cast(dict[str, Any], request_record.get("payload") or {})
             method = str(request_payload.get("method") or "MCP response")
             begin = float(request_record.get("offset_ms", 0) or 0)
             parent_id = "run-mcp"
             if method == "tools/call":
-                tool = str((request_payload.get("params") or {}).get("name") or "")
+                tool = str(
+                    cast(dict[str, Any], request_payload.get("params") or {}).get(
+                        "name"
+                    )
+                    or ""
+                )
                 queue = tool_queues.get(tool, [])
                 if queue:
                     matched = queue.pop(0)
@@ -526,14 +552,12 @@ def build_opencode_trace(
                     },
                 }
             )
-    for request_sequence, record in protocol_pending.values():
-        payload = (
-            record.get("payload") if isinstance(record.get("payload"), dict) else {}
-        )
+    for pending_sequence, record in protocol_pending.values():
+        payload = _dict(record.get("payload"))
         offset = float(record.get("offset_ms", 0) or 0)
         protocol_spans.append(
             {
-                "id": f"opencode-mcp-event-{request_sequence}",
+                "id": f"opencode-mcp-event-{pending_sequence}",
                 "parent_id": "run-mcp",
                 "kind": "mcp_event",
                 "name": str(payload.get("method") or "MCP request"),

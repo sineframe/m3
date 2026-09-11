@@ -15,7 +15,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .aggregations import EvaluationQuery
 from .storage import ExecutionStore
@@ -527,7 +527,7 @@ def _catalog_versions(entry: _Entry) -> tuple[Mapping[str, Any], ...]:
 def _catalogs(
     entries: tuple[_Entry, ...],
     contexts: Mapping[str, Mapping[str, Any]] | None = None,
-) -> Mapping[tuple[str, str, str], tuple[Mapping[str, Any], ...]]:
+) -> Mapping[tuple[str, str, str], list[Mapping[str, Any]]]:
     values: dict[tuple[str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
     for entry in entries:
         for version in _catalog_versions(entry):
@@ -557,8 +557,8 @@ def _catalogs(
 
 
 def _matched_catalogs(
-    values: Mapping[tuple[str, str, str], tuple[Mapping[str, Any], ...]],
-) -> Mapping[tuple[str, str, str], tuple[Mapping[str, Any], ...]]:
+    values: Mapping[tuple[str, str, str], list[Mapping[str, Any]]],
+) -> Mapping[tuple[str, str, str], list[Mapping[str, Any]]]:
     return {
         key: catalogs for key, catalogs in values.items() if "<unknown>" not in key[:2]
     }
@@ -745,24 +745,24 @@ def _evaluation_changes(
         ]
         left_inputs = sorted(
             {
-                _input_fingerprint(entry, record)
+                _input_fingerprint(cast(_Entry, entry), record)
                 for entry, record in zip(left_entries, left, strict=False)
             },
             key=lambda value: "" if value is None else value,
         )
         right_inputs = sorted(
             {
-                _input_fingerprint(entry, record)
+                _input_fingerprint(cast(_Entry, entry), record)
                 for entry, record in zip(right_entries, right, strict=False)
             },
             key=lambda value: "" if value is None else value,
         )
         left_unknown = any(
-            _unknown_callable(_input_value(entry, record))
+            _unknown_callable(_input_value(cast(_Entry, entry), record))
             for entry, record in zip(left_entries, left, strict=False)
         )
         right_unknown = any(
-            _unknown_callable(_input_value(entry, record))
+            _unknown_callable(_input_value(cast(_Entry, entry), record))
             for entry, record in zip(right_entries, right, strict=False)
         )
         comparable = (

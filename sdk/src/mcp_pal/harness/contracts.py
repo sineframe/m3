@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 
-from ..agent_session import HarnessAdapter as HarnessAdapter
+from ..agent_session import ControllerHarnessAdapter, HarnessAdapter
 from ..errors import MCPError
 from ..interaction_handlers import Interactions
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
@@ -254,7 +254,9 @@ class HarnessAdapterContract(Protocol):
     async def open(self, launch: HarnessLaunch) -> HarnessSession: ...
 
 
-HarnessAdapterFactory: TypeAlias = Callable[[HarnessSpec], HarnessAdapter]
+HarnessAdapterFactory: TypeAlias = Callable[
+    [HarnessSpec], HarnessAdapter | ControllerHarnessAdapter
+]
 
 
 class HarnessAdapterRegistry:
@@ -276,7 +278,7 @@ class HarnessAdapterRegistry:
             raise ValueError("harness kind must be non-empty and bounded")
         self._factories[kind] = factory
 
-    def resolve(self, spec: AgentSpec) -> HarnessAdapter:
+    def resolve(self, spec: AgentSpec) -> HarnessAdapter | ControllerHarnessAdapter:
         harness = spec.harness
         if harness is None:
             raise HarnessStartupError("harness profile resolution is unavailable")
@@ -303,15 +305,15 @@ def default_adapters() -> HarnessAdapterRegistry:
 
     registry = HarnessAdapterRegistry()
 
-    def claude_factory(harness: HarnessSpec) -> HarnessAdapter:
+    def claude_factory(harness: HarnessSpec) -> ControllerHarnessAdapter:
         executable = harness.executable if hasattr(harness, "executable") else None
         return ClaudeCodeHarnessAdapter(executable=executable or "claude")
 
-    def opencode_factory(harness: HarnessSpec) -> HarnessAdapter:
+    def opencode_factory(harness: HarnessSpec) -> ControllerHarnessAdapter:
         executable = harness.executable if hasattr(harness, "executable") else None
         return OpenCodeHarnessAdapter(executable=executable or "opencode")
 
-    def acp_factory(harness: HarnessSpec) -> HarnessAdapter:
+    def acp_factory(harness: HarnessSpec) -> ControllerHarnessAdapter:
         manifest = getattr(harness, "manifest", {})
         if not manifest or not manifest.get("command"):
             # A typed ACP value without an executable is not a runnable
@@ -321,11 +323,11 @@ def default_adapters() -> HarnessAdapterRegistry:
             raise HarnessStartupError("ACP harness manifest is unavailable")
         return AcpHarnessAdapter(manifest=manifest)
 
-    def codex_factory(harness: HarnessSpec) -> HarnessAdapter:
+    def codex_factory(harness: HarnessSpec) -> ControllerHarnessAdapter:
         executable = harness.executable if hasattr(harness, "executable") else None
         return CodexHarnessAdapter(executable=executable or "codex")
 
-    def pi_factory(harness: HarnessSpec) -> HarnessAdapter:
+    def pi_factory(harness: HarnessSpec) -> ControllerHarnessAdapter:
         executable = harness.executable if hasattr(harness, "executable") else None
         return PiHarnessAdapter(executable=executable or "pi")
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, cast
 
 
 class EchoMcpHttpServer:
@@ -47,6 +47,7 @@ class EchoMcpHttpServer:
     @staticmethod
     def _result(request: dict[str, Any]) -> dict[str, Any]:
         method = request.get("method")
+        value: Any
         if method == "initialize":
             value = {
                 "protocolVersion": "2024-11-05",
@@ -68,7 +69,9 @@ class EchoMcpHttpServer:
                 ]
             }
         elif method == "tools/call":
-            args = (request.get("params") or {}).get("arguments") or {}
+            args = cast(
+                dict[str, Any], (request.get("params") or {}).get("arguments") or {}
+            )
             value = {
                 "content": [{"type": "text", "text": args.get("text", "")}],
                 "isError": False,

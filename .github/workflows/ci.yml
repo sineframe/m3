@@ -169,7 +169,7 @@ jobs:
           enable-cache: true
 
       - name: Install locked workspace base dependencies
-        run: uv sync --locked --all-packages --no-dev --group lint
+        run: uv sync --locked --all-packages --no-dev --group lint --group typecheck
 
       - name: Verify lockfile
         run: uv lock --check
@@ -179,6 +179,12 @@ jobs:
 
       - name: Check Python formatting
         run: uv run --locked --group lint ruff format --check .
+
+      - name: Type-check SDK public ratchet
+        run: uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/mcp_pal/types.py sdk/src/mcp_pal/errors.py sdk/src/mcp_pal/policy.py sdk/src/mcp_pal/interaction_handlers.py sdk/src/mcp_pal/configuration.py
+
+      - name: Type-check SDK
+        run: uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/mcp_pal
 
       - name: Compile SDK
         run: uv run --locked --no-sync --project sdk python -m compileall -q sdk/src

@@ -20,13 +20,15 @@ def referenced_environment_variables(value: Any) -> list[str]:
     return sorted(set(ENV_RE.findall(text)))
 
 
-def _check_refs(value: Any, missing: list[str]):
+def _check_refs(value: Any, missing: list[str]) -> None:
     for n in referenced_environment_variables(value):
         if n not in os.environ and n not in missing:
             missing.append(n)
 
 
-def validate_mcp_config(config: Any, *, check_environment: bool = False) -> dict:
+def validate_mcp_config(
+    config: Any, *, check_environment: bool = False
+) -> dict[str, Any]:
     """Validate MCP profile shape without consulting the host by default.
 
     Profile validation is used while storing and listing revisions, so it must
@@ -110,7 +112,7 @@ def validate_mcp_config(config: Any, *, check_environment: bool = False) -> dict
     }
 
 
-def selected_server_config(config: dict, server: str) -> dict:
+def selected_server_config(config: dict[str, Any], server: str) -> dict[str, Any]:
     validate_mcp_config(config)
     if server not in config["mcpServers"]:
         raise ProfileValidationError([f"selected server not found: {server}"])

@@ -1854,7 +1854,7 @@ class OpenCodeHarnessAdapter:
     def _safe_evidence_identifier(value: object, config: RedactionConfig) -> str | None:
         if not _valid_identifier(value):
             return None
-        if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        if any(ord(char) < 0x20 or ord(char) == 0x7F for char in cast(str, value)):
             return None
         try:
             projected = redact_for_api(value, config=config)

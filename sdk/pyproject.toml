@@ -70,7 +70,11 @@ mcp-pal-reference-bridge = "mcp_pal.bridge.reference:main"
 
 [dependency-groups]
 typecheck = [
+  "hypothesis>=6.100,<7",
   "mypy>=1.11,<2",
+  "pytest>=8,<10",
+  "sqlalchemy>=2.0,<3",
+  "tomli>=2,<3",
 ]
 
 [tool.mypy]

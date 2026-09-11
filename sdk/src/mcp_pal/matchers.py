@@ -127,7 +127,9 @@ _SubjectT = _TypeVar("_SubjectT")
 _FailureSink = _Callable[[AssertionError], None]
 _UNAVAILABLE = object()
 _MATCHER_DEPTH = _ContextVar("mcp_pal_matcher_depth", default=0)
-_MATCHER_OCCURRENCES = _ContextVar("mcp_pal_matcher_occurrences", default=None)
+_MATCHER_OCCURRENCES: _ContextVar[dict[tuple[str, str, str, int, str], int] | None] = (
+    _ContextVar("mcp_pal_matcher_occurrences", default=None)
+)
 
 
 def _plain(value: _Any) -> _Any:
@@ -1403,7 +1405,9 @@ def _matcher_identity(name: str, subject: _Any) -> dict[str, _Any]:
             line,
             str(getattr(execution_id, "root", execution_id)),
         )
-        occurrences = dict(_MATCHER_OCCURRENCES.get() or {})
+        occurrences: dict[tuple[str, str, str, int, str], int] = dict(
+            _MATCHER_OCCURRENCES.get() or {}
+        )
         occurrence = occurrences.get(key, 0) + 1
         occurrences[key] = occurrence
         _MATCHER_OCCURRENCES.set(occurrences)

@@ -54,6 +54,7 @@ from ._default_store import (
 from ._default_store import (
     make_default_store as _make_default_store,
 )
+from .agent_session import AgentAdapter as _AgentAdapter
 from .agent_session import AsyncAgentSession as _AsyncAgentSession
 from .agent_session import HarnessAdapter
 from .configuration import (
@@ -394,11 +395,14 @@ class _PortalRuntime:
                 await client.aclose()
                 final_trace = client.final_trace
                 if self.kit._record_checks and final_trace is not None:
+                    trace_bridge = client._trace_bridge
                     _bind_subject(
                         final_trace,
                         final_trace.execution_id,
-                        getattr(client._trace_observer, "_store", None),
-                        getattr(client, "_redaction_config", None),
+                        trace_bridge._execution_store
+                        if trace_bridge is not None
+                        else None,
+                        client._redaction_config,
                     )
                 return (
                     final_trace,
@@ -414,7 +418,7 @@ class _PortalRuntime:
     def create_session(
         self,
         spec: _AgentSpec,
-        adapter: HarnessAdapter | None = None,
+        adapter: _AgentAdapter | None = None,
         runtime_servers: _Iterable[_Any] = (),
         interaction_handlers: InteractionHandlers | None = None,
     ) -> int:
@@ -969,7 +973,7 @@ class AgentSession:
         self,
         portal: _SyncPortal,
         spec: _AgentSpec,
-        adapter: HarnessAdapter | None = None,
+        adapter: _AgentAdapter | None = None,
         runtime_servers: _Iterable[_Any] = (),
         interaction_handlers: InteractionHandlers | None = None,
         _handle: int | None = None,
@@ -1597,7 +1601,7 @@ class MCPTestKit:
         self,
         spec: _AgentSpec,
         *,
-        adapter: HarnessAdapter | None = None,
+        adapter: _AgentAdapter | None = None,
         runtime_servers: _Iterable[_Any] = (),
         interaction_handlers: InteractionHandlers | None = None,
     ) -> AgentSession:

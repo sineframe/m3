@@ -55,8 +55,15 @@ dev-db-reset:
 package-check:
     uv run --project sdk --all-extras python scripts/check_packaging.py
 
-typecheck:
-    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests/unit/test_typecheck_examples.py
+typecheck-sdk-usage:
+    PYTHONDONTWRITEBYTECODE=1 uv run --locked --project sdk --extra pytest --group typecheck pytest -q sdk/tests/unit/test_typecheck_examples.py
+
+typecheck-sdk-public:
+    uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/mcp_pal/types.py sdk/src/mcp_pal/errors.py sdk/src/mcp_pal/policy.py sdk/src/mcp_pal/interaction_handlers.py sdk/src/mcp_pal/configuration.py
+
+# This checks the complete SDK without a baseline and is required by CI.
+typecheck-sdk:
+    uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/mcp_pal
 
 lint:
     uv run --group lint ruff check .
