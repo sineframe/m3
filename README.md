@@ -10,7 +10,7 @@ through the standalone CLI to record executions and inspect them in a local UI.
 |---|---|
 | Install the `mcp-pal` command, run tests, or open the local UI | [CLI guide](cli/README.md) |
 | Write Python tests against MCP servers or agent harnesses | [SDK guide](sdk/README.md) and [SDK quick start](sdk/docs/quick-start.md) |
-| Work on the internal FastAPI viewer runtime or legacy UI | [App guide](app/README.md) |
+| Work on the internal FastAPI application and viewer services | [App guide](app/README.md) |
 | Teach a coding agent how to set up and use MCP Pal | [Agent skill](skills/testing-with-mcp-pal/SKILL.md) |
 
 Most users should start with the CLI guide. SDK users who only need a library
@@ -31,7 +31,7 @@ different audiences and installation scopes:
 |---|---|---|
 | [`sdk/`](sdk/README.md) | `mcp-pal` | Public Python SDK, pytest integration, harnesses, tracing, assertions, and storage interfaces. Installed in the project being tested. |
 | [`cli/`](cli/README.md) | `mcp-pal-cli` | Standalone machine-level tool that provides the `mcp-pal` command, launches pytest in the project environment, and serves the bundled production UI. |
-| [`app/`](app/README.md) | `mcp-pal-app` | Internal FastAPI viewer, application services, and legacy Streamlit surface used by the standalone product. Consumers do not install it directly. |
+| [`app/`](app/README.md) | `mcp-pal-app` | Internal FastAPI application and viewer services used by the standalone product. Consumers do not install it directly. |
 
 The installation boundary matters. Adding `mcp-pal[pytest]` to a project
 installs the SDK, but it does not provide the `mcp-pal` command or UI. The

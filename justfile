@@ -21,12 +21,9 @@ prepare-release VERSION:
 api:
     uv run --project app uvicorn mcp_pal_app.main:app --reload
 
-ui:
-    uv run --project app --extra legacy-ui streamlit run app/src/mcp_pal_app/ui/app.py
-
 test:
     PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests
-    PYTHONDONTWRITEBYTECODE=1 uv run --project app --extra legacy-ui --group test --group typecheck pytest -q app/tests
+    PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test --group typecheck pytest -q app/tests
     PYTHONDONTWRITEBYTECODE=1 uv run --project cli pytest -q cli/tests
 
 # Complete non-live suite used by the pre-push hook.

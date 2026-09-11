@@ -50,6 +50,8 @@ class WheelMetadata:
     name: str
     version: str
     requires: tuple[str, ...]
+    provides_extras: tuple[str, ...]
+    files: tuple[str, ...]
     entry_points: tuple[str, ...]
 
 
@@ -151,9 +153,8 @@ def _run_build(project: Path, out_dir: Path) -> None:
 def _metadata_from_wheel(path: Path) -> WheelMetadata:
     try:
         with zipfile.ZipFile(path) as archive:
-            metadata_names = [
-                name for name in archive.namelist() if _WHEEL_DIST_INFO_RE.match(name)
-            ]
+            names = tuple(archive.namelist())
+            metadata_names = [name for name in names if _WHEEL_DIST_INFO_RE.match(name)]
             if len(metadata_names) != 1:
                 raise ReleaseBuildError(
                     f"wheel has invalid METADATA layout: {path.name}"
@@ -163,7 +164,7 @@ def _metadata_from_wheel(path: Path) -> WheelMetadata:
                 metadata_names[0].removesuffix("METADATA") + "entry_points.txt"
             )
             entry_points = ()
-            if entry_points_name in archive.namelist():
+            if entry_points_name in names:
                 entry_points = tuple(
                     line.strip()
                     for line in archive.read(entry_points_name)
@@ -180,6 +181,8 @@ def _metadata_from_wheel(path: Path) -> WheelMetadata:
                 name=name,
                 version=version,
                 requires=tuple(metadata.get_all("Requires-Dist") or ()),
+                provides_extras=tuple(metadata.get_all("Provides-Extra") or ()),
+                files=names,
                 entry_points=entry_points,
             )
     except zipfile.BadZipFile as exc:
@@ -240,9 +243,21 @@ def _verify_wheel(
         raise ReleaseBuildError(
             f"wheel metadata does not match {expected_name} {expected_version}: {metadata.path.name}"
         )
-    mandatory_requires = {"streamlit", "requests"}
-    if expected_name in {"mcp_pal", "mcp_pal_app", "mcp_pal_cli"}:
-        forbidden = mandatory_requires.intersection(
+    forbidden_requires = {"streamlit", "requests"}
+    if expected_name == "mcp_pal_app":
+        forbidden = forbidden_requires.intersection(
+            {_requirement_name(value) for value in metadata.requires}
+        )
+        if forbidden:
+            raise ReleaseBuildError("mcp_pal_app wheel has forbidden dependency")
+        if "legacy-ui" in {_package_name(value) for value in metadata.provides_extras}:
+            raise ReleaseBuildError(
+                "mcp_pal_app wheel provides removed legacy-ui extra"
+            )
+        if any(name.startswith("mcp_pal_app/ui/") for name in metadata.files):
+            raise ReleaseBuildError("mcp_pal_app wheel contains removed UI package")
+    elif expected_name in {"mcp_pal", "mcp_pal_cli"}:
+        forbidden = forbidden_requires.intersection(
             _mandatory_requirements(metadata.requires)
         )
         if forbidden:

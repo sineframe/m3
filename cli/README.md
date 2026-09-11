@@ -2,7 +2,7 @@
 
 `mcp-pal` is a standalone test runner for projects that use the MCP Pal SDK.
 The command is distributed with the production web UI, so users do not need a
-checkout of this repository, Node.js, Vite, Streamlit, or `uv` in the project
+checkout of this repository, Node.js, Vite, or `uv` in the project
 being tested.
 
 ## Install

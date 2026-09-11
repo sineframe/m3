@@ -119,7 +119,7 @@ def test_same_origin_default_ports_are_normalized(tmp_path: Path) -> None:
         assert response.status_code != 403
 
 
-def test_cli_does_not_add_api_route_and_legacy_ui_is_optional() -> None:
+def test_cli_and_app_do_not_depend_on_removed_ui_runtime() -> None:
     root = Path(__file__).parents[2]
     with (root / "cli" / "pyproject.toml").open("rb") as stream:
         cli_metadata = tomllib.load(stream)["project"]
@@ -132,11 +132,7 @@ def test_cli_does_not_add_api_route_and_legacy_ui_is_optional() -> None:
     assert "requests" not in cli_dependencies
     assert "streamlit" not in app_dependencies
     assert "requests" not in app_dependencies
-    legacy = app_metadata["optional-dependencies"]["legacy-ui"]
-    assert {dependency.split(">", 1)[0] for dependency in legacy} == {
-        "requests",
-        "streamlit",
-    }
+    assert "legacy-ui" not in app_metadata.get("optional-dependencies", {})
 
 
 def test_web_startup_error_is_bounded_and_redacted(

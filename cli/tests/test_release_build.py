@@ -90,8 +90,10 @@ def _wheel(
     version: str,
     *,
     requires: tuple[str, ...] = (),
+    provides_extras: tuple[str, ...] = (),
     entry_point: str | None = None,
     ui: bool = False,
+    app_ui: bool = False,
 ) -> Path:
     wheel = output / f"{filename_dist}-{version}-py3-none-any.whl"
     info = f"{filename_dist}-{version}.dist-info"
@@ -101,6 +103,7 @@ def _wheel(
         f"Version: {version}",
     ]
     metadata.extend(f"Requires-Dist: {value}" for value in requires)
+    metadata.extend(f"Provides-Extra: {value}" for value in provides_extras)
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr(f"{info}/METADATA", "\n".join(metadata) + "\n")
         if entry_point is not None:
@@ -110,6 +113,8 @@ def _wheel(
         if ui:
             archive.writestr("mcp_pal_cli/ui/index.html", "html")
             archive.writestr("mcp_pal_cli/ui/assets/app.js", "js")
+        if app_ui:
+            archive.writestr("mcp_pal_app/ui/__init__.py", "")
     return wheel
 
 
@@ -120,10 +125,20 @@ def _synthetic_release(
     cli_entry_point: str | None = "mcp-pal = mcp_pal_cli.main:main",
     cli_ui: bool = True,
     app_requires: tuple[str, ...] = (),
+    app_provides_extras: tuple[str, ...] = (),
+    app_ui: bool = False,
 ) -> tuple[dict[str, str], Path]:
     version = "1.0"
     _wheel(root, "mcp_pal", "mcp-pal", version)
-    _wheel(root, "mcp_pal_app", "mcp-pal-app", version, requires=app_requires)
+    _wheel(
+        root,
+        "mcp_pal_app",
+        "mcp-pal-app",
+        version,
+        requires=app_requires,
+        provides_extras=app_provides_extras,
+        app_ui=app_ui,
+    )
     _wheel(
         root,
         "mcp_pal_cli",
@@ -151,10 +166,7 @@ def test_verify_release_checks_metadata_entry_point_dependencies_and_ui(
         "mcp_pal_app",
         "mcp-pal-app",
         version,
-        requires=(
-            'requests>=2; extra == "legacy-ui"',
-            'streamlit>=1; extra == "legacy-ui"',
-        ),
+        requires=(),
     )
     _wheel(
         tmp_path,
@@ -206,14 +218,48 @@ def test_verify_release_rejects_incomplete_cli_contract(
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
 
-@pytest.mark.parametrize("target", ["app", "cli"])
-@pytest.mark.parametrize("dependency", ["requests>=2", "streamlit>=1"])
-def test_verify_release_rejects_forbidden_mandatory_dependencies(
-    tmp_path: Path, target: str, dependency: str
+@pytest.mark.parametrize(
+    "dependency",
+    [
+        "requests>=2",
+        "streamlit>=1",
+        'requests>=2; extra == "other"',
+        'streamlit>=1; extra == "other"',
+    ],
+)
+def test_verify_release_rejects_forbidden_app_dependencies(
+    tmp_path: Path, dependency: str
 ) -> None:
     expected, ui = _synthetic_release(
         tmp_path,
-        app_requires=(dependency,) if target == "app" else (),
+        app_requires=(dependency,),
+    )
+    with pytest.raises(release.ReleaseBuildError, match="forbidden dependency"):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+@pytest.mark.parametrize("extra", ["legacy-ui", "Legacy_UI"])
+def test_verify_release_rejects_removed_app_extra(tmp_path: Path, extra: str) -> None:
+    expected, ui = _synthetic_release(
+        tmp_path,
+        app_provides_extras=(extra,),
+    )
+    with pytest.raises(release.ReleaseBuildError, match="removed legacy-ui extra"):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+def test_verify_release_rejects_removed_app_ui_package(tmp_path: Path) -> None:
+    expected, ui = _synthetic_release(tmp_path, app_ui=True)
+    with pytest.raises(release.ReleaseBuildError, match="removed UI package"):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+@pytest.mark.parametrize("dependency", ["requests>=2", "streamlit>=1"])
+def test_verify_release_rejects_forbidden_cli_dependencies(
+    tmp_path: Path, dependency: str
+) -> None:
+    expected, ui = _synthetic_release(
+        tmp_path,
         cli_requires=(
             "mcp-pal[storage]==1.0",
             "mcp-pal-app==1.0",

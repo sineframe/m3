@@ -57,7 +57,7 @@ jobs:
       - name: Install locked test workspace
         run: >-
           uv sync --locked --all-packages
-          --extra pytest --extra storage --extra property --extra legacy-ui
+          --extra pytest --extra storage --extra property
           --group test --group typecheck
 
       - name: Run SDK tests without live providers

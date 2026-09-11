@@ -434,7 +434,7 @@ The DeepWiki Streamable HTTP example is opt-in:
 
 ```bash
 MCP_PAL_RUN_DEEPWIKI_LIVE=1 \
-uv run --locked --project app --extra legacy-ui --group test --group typecheck \
+uv run --locked --project app --group test --group typecheck \
 pytest -q app/tests/e2e/test_deepwiki_live_evaluation.py
 ```
 

@@ -1,5 +1,11 @@
 # MCP Pal v0.2 — Python SDK for Testing MCP Servers
 
+> Historical note: Streamlit sections in this plan describe a retired
+> implementation and are superseded by the [authoritative Streamlit removal
+> checklist](remove-obsolete-streamlit-ui.md). They are preserved as historical
+> context, not future architecture. The supported browser experience is the
+> CLI-owned compiled SPA.
+
 ## Summary
 
 Build MCP Pal around a published, framework-neutral Python SDK that becomes the single source of truth for direct MCP protocol testing, agent-driven multi-turn testing, execution management, tracing, persistence, assertions, and evaluation.

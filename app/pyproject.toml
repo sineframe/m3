@@ -11,12 +11,6 @@ dependencies = [
   "uvicorn[standard]>=0.30,<1",
 ]
 
-[project.optional-dependencies]
-legacy-ui = [
-  "requests>=2.31,<3",
-  "streamlit>=1.40,<2",
-]
-
 [dependency-groups]
 test = [
   "pytest>=8,<10",

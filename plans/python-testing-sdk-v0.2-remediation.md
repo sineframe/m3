@@ -2,6 +2,12 @@
 
 Status: proposed implementation plan, 2026-08-25
 
+> Historical note: Streamlit sections in this plan describe a retired
+> implementation and are superseded by the [authoritative Streamlit removal
+> checklist](remove-obsolete-streamlit-ui.md). They are preserved as historical
+> context, not future architecture. The supported browser experience is the
+> CLI-owned compiled SPA.
+
 This plan supersedes the completion claims in `python-testing-sdk-v0.2.md` until
 the corresponding gates below pass. It does not discard that document's public
 SDK design; it corrects the implementation sequence, package boundary, safety

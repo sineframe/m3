@@ -1,10 +1,4 @@
-"""Typed application profile lifecycle services.
-
-The application owns profile metadata and validation, while the SDK owns the
-durable profile rows and the execution specification types.  This boundary is
-also the seam used by the direct Streamlit client; it deliberately does not
-return HTTP-shaped dictionaries.
-"""
+"""Application profile service used by API and viewer composition."""
 
 from __future__ import annotations
 
