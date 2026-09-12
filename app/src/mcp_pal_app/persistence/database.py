@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase
 
 from mcp_pal_app.settings import get_settings
 
@@ -20,21 +20,3 @@ def make_engine(url: str | None = None):
         url,
         connect_args={"check_same_thread": False} if url.startswith("sqlite") else {},
     )
-
-
-engine = make_engine()
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-
-
-def init_db():
-    from . import models  # noqa: F401 - importing models registers ORM metadata
-
-    Base.metadata.create_all(engine)
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()

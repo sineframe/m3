@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -150,6 +151,63 @@ def test_cli_command_runs_only_the_existing_live_target() -> None:
 
 def test_assert_report_validates_shipping_quote_contract() -> None:
     _GATE.assert_report(_report(), "opencode/big-pickle", "run-1")
+
+
+def _persistence_fixture(path: Path, *, include_events: bool = True) -> None:
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE v2_executions (
+            id TEXT PRIMARY KEY,
+            run_id TEXT,
+            snapshot_json TEXT,
+            specification_json TEXT
+        );
+        CREATE TABLE v2_test_runs (run_id TEXT PRIMARY KEY);
+        CREATE TABLE v2_test_results (run_id TEXT);
+        CREATE TABLE v2_sessions (id TEXT PRIMARY KEY, execution_id TEXT);
+        CREATE TABLE v2_turns (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            snapshot_json TEXT,
+            result_json TEXT
+        );
+        CREATE TABLE v2_events (id TEXT PRIMARY KEY, execution_id TEXT);
+        INSERT INTO v2_executions VALUES (
+            'execution-1', 'pytest-1', '{"lifecycle":"finished"}', '{}'
+        );
+        INSERT INTO v2_test_runs VALUES ('pytest-1');
+        INSERT INTO v2_test_results VALUES ('pytest-1');
+        INSERT INTO v2_sessions VALUES ('session-1', 'execution-1');
+        INSERT INTO v2_turns VALUES (
+            'turn-1', 'session-1',
+            '{"lifecycle":"finished","outcome":"completed"}', '{}'
+        );
+        """
+    )
+    if include_events:
+        connection.execute("INSERT INTO v2_events VALUES ('event-1', 'execution-1')")
+    connection.commit()
+    connection.close()
+
+
+def test_assert_sqlite_persistence_checks_the_live_execution_graph(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "executions.sqlite"
+    _persistence_fixture(database)
+
+    _GATE.assert_sqlite_persistence(database, "execution-1")
+
+
+def test_assert_sqlite_persistence_rejects_incomplete_execution_graph(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "executions.sqlite"
+    _persistence_fixture(database, include_events=False)
+
+    with pytest.raises(_GATE.GateFailure, match="v2_events"):
+        _GATE.assert_sqlite_persistence(database, "execution-1")
 
 
 @pytest.mark.parametrize(

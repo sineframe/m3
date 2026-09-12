@@ -15,6 +15,7 @@ import re
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -475,6 +476,93 @@ def _assert_execution_in_history(payload: Any, run_id: str) -> None:
         raise GateFailure("history execution ID does not match the CLI direct link")
 
 
+def assert_sqlite_persistence(
+    database: str | os.PathLike[str], execution_id: str
+) -> None:
+    """Verify the live execution was durably recorded without reading payloads."""
+
+    required_tables = {
+        "v2_executions",
+        "v2_test_runs",
+        "v2_test_results",
+        "v2_sessions",
+        "v2_turns",
+        "v2_events",
+    }
+    path = Path(database).expanduser().resolve()
+    if not path.is_file():
+        raise GateFailure("live execution database was not created")
+    try:
+        connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        raise GateFailure(
+            "live execution database could not be opened read-only"
+        ) from exc
+    try:
+        found_tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        missing_tables = sorted(required_tables - found_tables)
+        if missing_tables:
+            raise GateFailure("live execution database is missing required v2 tables")
+        execution = connection.execute(
+            "SELECT run_id,snapshot_json,specification_json "
+            "FROM v2_executions WHERE id=?",
+            (execution_id,),
+        ).fetchone()
+        if (
+            execution is None
+            or not isinstance(execution[0], str)
+            or not execution[0]
+            or execution[1] is None
+            or execution[2] is None
+        ):
+            raise GateFailure("live execution row is missing its pytest run mapping")
+        run_id = execution[0]
+        checks = (
+            (
+                "v2_test_runs",
+                "SELECT 1 FROM v2_test_runs WHERE run_id=? LIMIT 1",
+            ),
+            (
+                "v2_test_results",
+                "SELECT 1 FROM v2_test_results WHERE run_id=? LIMIT 1",
+            ),
+            (
+                "v2_sessions",
+                "SELECT 1 FROM v2_sessions WHERE execution_id=? LIMIT 1",
+            ),
+            (
+                "v2_turns",
+                "SELECT 1 FROM v2_turns AS t JOIN v2_sessions AS s "
+                "ON s.id=t.session_id WHERE s.execution_id=? "
+                "AND t.result_json IS NOT NULL "
+                "AND json_extract(t.snapshot_json, '$.lifecycle')='finished' "
+                "AND json_extract(t.snapshot_json, '$.outcome')='completed' "
+                "LIMIT 1",
+            ),
+            (
+                "v2_events",
+                "SELECT 1 FROM v2_events WHERE execution_id=? LIMIT 1",
+            ),
+        )
+        for table, query in checks:
+            value = (
+                run_id if table in {"v2_test_runs", "v2_test_results"} else execution_id
+            )
+            if connection.execute(query, (value,)).fetchone() is None:
+                raise GateFailure(
+                    f"live execution persistence is incomplete in {table}"
+                )
+    except sqlite3.Error as exc:
+        raise GateFailure("live execution database could not be inspected") from exc
+    finally:
+        connection.close()
+
+
 def _unwrap(value: Any) -> Any:
     if isinstance(value, dict) and "state" in value:
         return value.get("value") if value.get("state") == "observed" else None
@@ -774,6 +862,7 @@ def check(
             raise GateFailure(
                 f"CLI did not preserve pytest success (exit {child.process.returncode})"
             )
+        assert_sqlite_persistence(database, run_id)
         shutil.rmtree(temp_path)
         temp_path = None
         print("live OpenCode and bundled UI gate passed", flush=True)

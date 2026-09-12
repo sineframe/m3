@@ -486,34 +486,40 @@ def create_app(
         "sqlalchemy.orm", fromlist=["sessionmaker"]
     ).sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
     Base.metadata.create_all(eng)
-    # Any process that was alive before restart cannot be resumed.
-    db = factory()
-    try:
-        ensure_builtin_profiles(db)
-        db.query(Run).filter(Run.status.in_(["queued", "running"])).update(
-            {
-                Run.status: "failed",
-                Run.error_message: "Interrupted by backend restart",
-                Run.finished_at: now(),
-            },
-            synchronize_session=False,
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
     manager = RunManager(factory, settings)
 
     @asynccontextmanager
     async def lifespan(application):
-        yield
-        manager.shutdown()
-        if application.state.v2_kit_owned:
-            application.state.v2_kit.close()
-        if application.state.v2_store_owned:
-            v2_store.close()
+        try:
+            # Any process that was alive before restart cannot be resumed.
+            db = factory()
+            try:
+                ensure_builtin_profiles(db)
+                db.query(Run).filter(Run.status.in_(["queued", "running"])).update(
+                    {
+                        Run.status: "failed",
+                        Run.error_message: "Interrupted by backend restart",
+                        Run.finished_at: now(),
+                    },
+                    synchronize_session=False,
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+            yield
+        finally:
+            try:
+                manager.shutdown()
+            finally:
+                try:
+                    if application.state.v2_kit_owned:
+                        application.state.v2_kit.close()
+                finally:
+                    if application.state.v2_store_owned:
+                        v2_store.close()
 
     app = FastAPI(
         title="MCP Testing Platform",

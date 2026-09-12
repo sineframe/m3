@@ -11,14 +11,14 @@ from mcp_pal_app.settings import Settings
 def test_excalidraw_profile_is_seeded_once_and_persists():
     settings = Settings(database_path=tempfile.mktemp(suffix=".db"))
 
-    first = TestClient(create_app(settings))
-    seeded = first.get(f"/api/v1/profiles/{EXCALIDRAW_PROFILE_ID}")
-    assert seeded.status_code == 200
-    assert seeded.json()["name"] == "Excalidraw"
-    assert seeded.json()["revisions"][0]["mcp_json"] == EXCALIDRAW_MCP_CONFIG
+    with TestClient(create_app(settings)) as first:
+        seeded = first.get(f"/api/v1/profiles/{EXCALIDRAW_PROFILE_ID}")
+        assert seeded.status_code == 200
+        assert seeded.json()["name"] == "Excalidraw"
+        assert seeded.json()["revisions"][0]["mcp_json"] == EXCALIDRAW_MCP_CONFIG
 
-    second = TestClient(create_app(settings))
-    profiles = second.get("/api/v1/profiles").json()
+    with TestClient(create_app(settings)) as second:
+        profiles = second.get("/api/v1/profiles").json()
     assert [profile["id"] for profile in profiles].count(EXCALIDRAW_PROFILE_ID) == 1
 
 
