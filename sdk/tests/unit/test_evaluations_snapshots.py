@@ -1,4 +1,4 @@
-"""Phase 7 contracts for stable snapshots and deterministic evaluations."""
+"""Contracts for stable snapshots and deterministic evaluations."""
 
 from __future__ import annotations
 

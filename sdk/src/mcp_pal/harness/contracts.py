@@ -125,7 +125,7 @@ class HarnessTurnResult:
     )
     trace_limitations: tuple[str, ...] = ()
     # Typed evidence is the preferred shared boundary.  ``evidence`` remains
-    # as a compatibility receipt for existing adapters until R6-R8 migrate.
+    # as a compatibility receipt for adapters that do not provide typed evidence.
     turn_evidence: TurnEvidence | None = None
 
     def __post_init__(self) -> None:

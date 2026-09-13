@@ -1,4 +1,4 @@
-"""Public Phase 9 agent-session wiring and multi-turn ownership tests."""
+"""Public agent-session wiring and multi-turn ownership tests."""
 
 from __future__ import annotations
 

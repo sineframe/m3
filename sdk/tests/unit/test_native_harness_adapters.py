@@ -739,7 +739,7 @@ async def test_opencode_official_response_matrix(case: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_opencode_response_maps_to_r5_typed_turn_evidence() -> None:
+async def test_opencode_response_maps_to_typed_turn_evidence() -> None:
     payload = {
         "info": {
             "id": "assistant-1",

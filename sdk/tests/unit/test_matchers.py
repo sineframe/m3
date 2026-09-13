@@ -1,4 +1,4 @@
-"""Phase 7 assertion contracts."""
+"""Assertion contracts."""
 
 from __future__ import annotations
 

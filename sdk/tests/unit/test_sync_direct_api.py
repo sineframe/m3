@@ -1,4 +1,4 @@
-"""Phase 6 synchronous portal/proxy contracts."""
+"""Synchronous portal/proxy contracts."""
 
 from __future__ import annotations
 

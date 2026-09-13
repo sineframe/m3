@@ -1,4 +1,4 @@
-"""R2 bounded, redacted raw-evidence storage contracts."""
+"""Bounded, redacted raw-evidence storage contracts."""
 
 from __future__ import annotations
 

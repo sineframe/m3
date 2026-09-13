@@ -1,4 +1,4 @@
-"""R1 typed observability model contracts."""
+"""Typed observability model contracts."""
 
 from datetime import datetime, timedelta, timezone
 

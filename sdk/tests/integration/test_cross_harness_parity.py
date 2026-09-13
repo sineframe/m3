@@ -1,4 +1,4 @@
-"""R9: the common finalized TraceView contract across local harnesses."""
+"""Common finalized TraceView contract across local harnesses."""
 
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ def _acp_spec(mode: str = "recover") -> AgentSpec:
             },
         ),
         servers=(_server(),),
-        message=UserMessage(content=(TextContent(text="r9"),)),
+        message=UserMessage(content=(TextContent(text="cross-harness"),)),
     )
 
 
@@ -116,7 +116,7 @@ for line in sys.stdin:
     if method == 'initialize':
         send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':1}})
     elif method == 'session/new':
-        send({'jsonrpc':'2.0','id':ident,'result':{'sessionId':'rich-r9','modes':{'currentModeId':'fast','availableModes':[{'id':'fast','name':'Fast'}]},'configOptions':[{'type':'select','id':'quality','name':'Quality','currentValue':'normal','options':[{'value':'high','name':'High'}]}]}})
+        send({'jsonrpc':'2.0','id':ident,'result':{'sessionId':'rich-cross-harness','modes':{'currentModeId':'fast','availableModes':[{'id':'fast','name':'Fast'}]},'configOptions':[{'type':'select','id':'quality','name':'Quality','currentValue':'normal','options':[{'value':'high','name':'High'}]}]}})
     elif method == 'session/set_mode':
         send({'jsonrpc':'2.0','id':ident,'result':{'modeId':'fast'}})
     elif method == 'session/set_config_option':
@@ -129,7 +129,7 @@ for line in sys.stdin:
             {'sessionUpdate':'current_mode_update','currentModeId':'fast'},
             {'sessionUpdate':'config_option_update','configOptions':[{'id':'quality','currentValue':'high'}]},
         ):
-            send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'rich-r9','update':update}})
+            send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'rich-cross-harness','update':update}})
         send({'jsonrpc':'2.0','id':ident,'result':{'stopReason':'end_turn'}})
 """,
         encoding="utf-8",
@@ -156,7 +156,7 @@ def _claude_spec() -> AgentSpec:
     return AgentSpec(
         harness=ClaudeCode(model="fixture", executable=executable),
         servers=(_server(),),
-        message=UserMessage(content=(TextContent(text="r9"),)),
+        message=UserMessage(content=(TextContent(text="cross-harness"),)),
     )
 
 
@@ -165,7 +165,7 @@ def _opencode_spec() -> AgentSpec:
     return AgentSpec(
         harness=OpenCode(model="fixture", executable=executable),
         servers=(_server(),),
-        message=UserMessage(content=(TextContent(text="r9"),)),
+        message=UserMessage(content=(TextContent(text="cross-harness"),)),
     )
 
 
@@ -173,10 +173,10 @@ async def _native_trace(
     spec: AgentSpec,
     adapter: Any,
     *,
-    message: str = "r9",
+    message: str = "cross-harness",
     timeout_seconds: float | None = None,
     store: Any = None,
-    execution_id: str = "r9-native",
+    execution_id: str = "cross-harness-native",
 ) -> tuple[TraceView, HarnessTurnResult]:
     configurations: tuple[HarnessServerConfig, ...] = ()
     capture = None
@@ -239,10 +239,12 @@ async def _native_view(
 
 
 @pytest.mark.asyncio
-async def test_r9_common_finalized_view_covers_all_local_harnesses() -> None:
+async def test_common_finalized_view_covers_all_local_harnesses() -> None:
     direct = DirectSpec(
         servers=(_server(),),
-        operation=CallTool(server="e2e-mcp", name="echo", arguments={"text": "r9"}),
+        operation=CallTool(
+            server="e2e-mcp", name="echo", arguments={"text": "cross-harness"}
+        ),
     )
     async with AsyncMCPTestKit(env={}, cwd=ROOT.parent) as kit:
         direct_result = await kit.run(direct)
@@ -280,7 +282,7 @@ async def test_r9_common_finalized_view_covers_all_local_harnesses() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r9_native_source_specific_surfaces_remain_truthful() -> None:
+async def test_native_source_specific_surfaces_remain_truthful() -> None:
     claude_view = await _native_view(
         _claude_spec(),
         ClaudeCodeHarnessAdapter(
@@ -315,7 +317,7 @@ async def test_r9_native_source_specific_surfaces_remain_truthful() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r9_acp_rich_runtime_plan_state_and_modes_are_publicly_typed(
+async def test_acp_rich_runtime_plan_state_and_modes_are_publicly_typed(
     tmp_path: Path,
 ) -> None:
     view = await _native_view(
@@ -339,7 +341,7 @@ async def test_r9_acp_rich_runtime_plan_state_and_modes_are_publicly_typed(
 
 
 @pytest.mark.asyncio
-async def test_r9_tool_source_parity_keeps_wire_reported_and_builtin_identity() -> None:
+async def test_tool_source_parity_keeps_wire_reported_and_builtin_identity() -> None:
     direct = DirectSpec(
         servers=(_server(),),
         operation=CallTool(server="e2e-mcp", name="echo", arguments={"text": "wire"}),
@@ -372,7 +374,7 @@ async def test_r9_tool_source_parity_keeps_wire_reported_and_builtin_identity() 
 
 
 @pytest.mark.asyncio
-async def test_r9_reused_provider_call_ids_remain_distinct_across_turns() -> None:
+async def test_reused_provider_call_ids_remain_distinct_across_turns() -> None:
     spec = _acp_spec()
     launch = HarnessLaunch(
         spec,
@@ -395,7 +397,7 @@ async def test_r9_reused_provider_call_ids_remain_distinct_across_turns() -> Non
     )
     adapter = AcpHarnessAdapter()
     session = await adapter.open(launch)
-    recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "r9-reused")
+    recorder = ExecutionTraceRecorder(InMemoryExecutionStore(), "cross-harness-reused")
     try:
         for sequence in (1, 2, 3):
             turn = await session.send(
@@ -433,7 +435,7 @@ async def test_r9_reused_provider_call_ids_remain_distinct_across_turns() -> Non
     ],
     ids=("opencode-failed", "opencode-timeout", "claude-timeout", "acp-failed"),
 )
-async def test_r9_native_terminal_turns_finalize_and_reopen(
+async def test_native_terminal_turns_finalize_and_reopen(
     tmp_path: Path,
     harness: str,
     mode: str | None,
@@ -471,7 +473,7 @@ async def test_r9_native_terminal_turns_finalize_and_reopen(
             message=message,
             timeout_seconds=timeout_seconds,
             store=store,
-            execution_id=f"r9-{harness}-{expected.value}",
+            execution_id=f"cross-harness-{harness}-{expected.value}",
         )
         assert turn.status == expected.value
         assert view.outcome is expected
@@ -502,7 +504,7 @@ async def _run_async_direct(spec: DirectSpec) -> TraceView:
     return result.trace_view
 
 
-def test_r9_direct_sync_async_public_views_have_matching_semantics() -> None:
+def test_direct_sync_async_public_views_have_matching_semantics() -> None:
     spec = DirectSpec(
         servers=(_server(),),
         operation=CallTool(
@@ -530,9 +532,7 @@ def test_r9_direct_sync_async_public_views_have_matching_semantics() -> None:
 @pytest.mark.parametrize(
     "case", ["completed", "failed", "timed_out"], ids=lambda value: f"direct-{value}"
 )
-def test_r9_direct_terminal_outcomes_persist_and_reopen(
-    tmp_path: Path, case: str
-) -> None:
+def test_direct_terminal_outcomes_persist_and_reopen(tmp_path: Path, case: str) -> None:
     if case == "completed":
         spec = DirectSpec(
             servers=(_server(),),
@@ -544,7 +544,9 @@ def test_r9_direct_terminal_outcomes_persist_and_reopen(
         spec = DirectSpec(
             servers=(
                 ServerBinding(
-                    server=StdioServer(name="missing", command="r9-no-such-command"),
+                    server=StdioServer(
+                        name="missing", command="cross-harness-no-such-command"
+                    ),
                     alias="missing",
                 ),
             ),
@@ -586,7 +588,7 @@ def test_r9_direct_terminal_outcomes_persist_and_reopen(
 
 
 @pytest.mark.asyncio
-async def test_r9_direct_cancelled_trace_persists_and_reopens(tmp_path: Path) -> None:
+async def test_direct_cancelled_trace_persists_and_reopens(tmp_path: Path) -> None:
     marker = tmp_path / "hanging.pid"
     server = StdioServer(
         name="hanging",
@@ -630,10 +632,10 @@ async def test_r9_direct_cancelled_trace_persists_and_reopens(tmp_path: Path) ->
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("harness", ["opencode", "claude", "acp"])
-async def test_r9_sqlite_reopen_preserves_each_native_finalized_view(
+async def test_sqlite_reopen_preserves_each_native_finalized_view(
     tmp_path: Path, harness: str
 ) -> None:
-    database = tmp_path / "r9.sqlite"
+    database = tmp_path / "cross-harness.sqlite"
     store = SQLiteExecutionStore(database, blob_root=tmp_path / "blobs")
     spec, adapter = {
         "opencode": (
@@ -654,7 +656,7 @@ async def test_r9_sqlite_reopen_preserves_each_native_finalized_view(
         spec,
         adapter,
         store=store,
-        execution_id=f"r9-sqlite-{harness}",
+        execution_id=f"cross-harness-sqlite-{harness}",
     )
     execution_id = first.execution_id
     assert first.raw_messages

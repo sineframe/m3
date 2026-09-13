@@ -1,4 +1,4 @@
-"""Phase 10 portable tool-policy contracts."""
+"""Portable tool-policy contracts."""
 
 from __future__ import annotations
 

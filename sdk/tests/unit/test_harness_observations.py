@@ -1,4 +1,4 @@
-"""R5 harness observation contracts and failure-safe sink coverage."""
+"""Harness observation contracts and failure-safe sink coverage."""
 
 import sqlite3
 from datetime import datetime, timezone
@@ -77,7 +77,7 @@ def _event_for_observation(recorder: ExecutionTraceRecorder, observation_id: str
     )
 
 
-def test_closed_discriminator_accepts_exact_r5_variants() -> None:
+def test_closed_discriminator_accepts_exact_observation_variants() -> None:
     values = (
         RawFrameObservation(**_common()),
         MessageChunkObservation(**_common()),
@@ -276,7 +276,7 @@ def _sink(
     *, config: CaptureOptions | None = None
 ) -> tuple[InMemoryExecutionStore, ExecutionTraceRecorder, HarnessObservationSink]:
     store = InMemoryExecutionStore(capture_config=config)
-    recorder = ExecutionTraceRecorder(store, "r5-test")
+    recorder = ExecutionTraceRecorder(store, "observation-test")
     return store, recorder, HarnessObservationSink(recorder, capture_config=config)
 
 
@@ -308,7 +308,7 @@ def test_sink_maps_variants_and_preserves_order_and_identity() -> None:
         value.observation_id for value in values
     ]
     assert all(event.provenance.source == "fixture" for event in events[1:])
-    assert store.get_snapshot("r5-test") is not None
+    assert store.get_snapshot("observation-test") is not None
 
 
 def test_sink_maps_all_remaining_variants_to_stable_kinds() -> None:
@@ -568,17 +568,17 @@ def test_reasoning_chunks_coalesce_only_with_same_block_or_adjacent_unidentified
     _, recorder, sink = _sink()
     sink.emit(
         ReasoningChunkObservation(
-            **_common(observation_id="r1", block_id="block-a", text="one")
+            **_common(observation_id="observation-1", block_id="block-a", text="one")
         )
     )
     sink.emit(
         ReasoningChunkObservation(
-            **_common(observation_id="r2", block_id="block-a", text="two")
+            **_common(observation_id="observation-2", block_id="block-a", text="two")
         )
     )
     sink.emit(
         ReasoningChunkObservation(
-            **_common(observation_id="r3", block_id="block-b", text="three")
+            **_common(observation_id="observation-3", block_id="block-b", text="three")
         )
     )
     trace = recorder.finalize(ExecutionOutcome.COMPLETED)
@@ -658,7 +658,9 @@ def test_sink_redacts_json_urls_errors_stderr_and_raw_bytes() -> None:
         include_environment=False,
     )
     store = InMemoryExecutionStore(config=config)
-    recorder = ExecutionTraceRecorder(store, "redaction-r5", redaction_config=config)
+    recorder = ExecutionTraceRecorder(
+        store, "redaction-observation", redaction_config=config
+    )
     sink = HarnessObservationSink(recorder)
     sink.emit(
         MetadataObservedObservation(
@@ -798,17 +800,17 @@ def test_sink_reported_calls_are_typed_and_matchable() -> None:
 
 def test_sink_never_raises_for_malformed_input_or_terminal_recorder() -> None:
     _, recorder, sink = _sink()
-    sink.emit({"kind": "not-a-r5-observation"})  # type: ignore[arg-type]
+    sink.emit({"kind": "not-an-observation"})  # type: ignore[arg-type]
     recorder.finalize(ExecutionOutcome.FAILED)
     sink.emit(ToolCallObservedObservation(**_common(tool="echo")))
     assert "persistence_failed" in sink.limitations
 
 
 def test_sink_sqlite_raw_evidence_reopens(tmp_path: Path) -> None:
-    database = tmp_path / "r5.sqlite"
-    blob_root = tmp_path / "r5-blobs"
+    database = tmp_path / "observation.sqlite"
+    blob_root = tmp_path / "observation-blobs"
     store = SQLiteExecutionStore(database, blob_root=blob_root)
-    recorder = ExecutionTraceRecorder(store, "r5-sqlite")
+    recorder = ExecutionTraceRecorder(store, "observation-sqlite")
     sink = HarnessObservationSink(recorder)
     value = RawFrameObservation(
         **_common(
@@ -939,7 +941,7 @@ def test_sqlite_atomic_raw_metadata_failure_is_transactional(tmp_path: Path) -> 
 def test_atomic_raw_callbacks_observe_complete_committed_reference() -> None:
     store, _recorder, sink = _sink()
     observed: list[object] = []
-    store.subscribe("r5-test", observed.append)
+    store.subscribe("observation-test", observed.append)
     sink.emit(
         RawFrameObservation(
             **_common(
@@ -960,7 +962,7 @@ def test_sqlite_atomic_raw_failure_does_not_leave_blob_or_reservation(
     database = tmp_path / "failed.sqlite"
     blob_root = tmp_path / "failed-blobs"
     store = SQLiteExecutionStore(database, blob_root=blob_root)
-    recorder = ExecutionTraceRecorder(store, "failed-r5")
+    recorder = ExecutionTraceRecorder(store, "failed-observation")
     sink = HarnessObservationSink(recorder)
 
     original_append = store._append

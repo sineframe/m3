@@ -1,4 +1,4 @@
-"""Phase 3 configuration/capability kit shell contracts."""
+"""Configuration/capability kit shell contracts."""
 
 from __future__ import annotations
 
@@ -53,16 +53,16 @@ def test_sync_kit_nonempty_capability_requests_are_exactly_scoped() -> None:
     )
 
 
-def test_sync_kit_lifecycle_is_idempotent_and_future_execution_is_explicitly_unsupported() -> (
-    None
-):
+def test_sync_kit_lifecycle_and_unsupported_operations_are_explicit() -> None:
     kit = MCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
     for operation in (
         lambda: kit.run(None),
         lambda: kit.submit(None),
         lambda: kit.agent_session(None),
     ):
-        with pytest.raises(UnsupportedFeature, match="configuration milestone"):
+        with pytest.raises(
+            UnsupportedFeature, match="does not support the supplied specification"
+        ):
             operation()
     with pytest.raises(UnsupportedFeature, match="runtime resolution"):
         kit.direct(None)

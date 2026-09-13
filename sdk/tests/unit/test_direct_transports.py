@@ -1,4 +1,4 @@
-"""Contract tests for Phase 5 remote transport lifecycle and policy."""
+"""Contract tests for remote transport lifecycle and policy."""
 
 from __future__ import annotations
 

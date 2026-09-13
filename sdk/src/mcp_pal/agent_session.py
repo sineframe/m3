@@ -135,7 +135,7 @@ class AdapterTurn:
         default_factory=dict
     )
     trace_limitations: tuple[str, ...] = ()
-    # Provider adapters may carry the closed R5 typed observation envelope
+    # Provider adapters may carry the typed observation envelope
     # without making this core state machine import provider modules.
     turn_evidence: TurnEvidence | None = None
 
@@ -1298,7 +1298,7 @@ class AsyncAgentSession:
                 if descriptor is not None and identity_error is None
             )
         violations: list[dict[str, object]] = []
-        # Preserve the pre-R6 positional association for adapters that emit
+        # Preserve the positional association for adapters that emit
         # entirely anonymous updates, but never use it to repair malformed or
         # ambiguous identities. Exact cardinality is required and the adapter
         # must omit every identity field.
@@ -1489,7 +1489,7 @@ class AsyncAgentSession:
         policy_violations: tuple[dict[str, object], ...] = (),
     ) -> None:
         if getattr(raw, "turn_evidence", None) is not None:
-            # Typed R5 observations have already been persisted by
+            # Typed observations have already been persisted by
             # ``_turn_result``; emitting the legacy adapter envelope too would
             # duplicate reported tool calls in the finalized projector.
             return
@@ -1643,7 +1643,7 @@ class AsyncAgentSession:
     def _turn_result(self, turn_id: TurnId, raw: object) -> TurnResult:
         typed_evidence = getattr(raw, "turn_evidence", None)
         if typed_evidence is not None:
-            # Provider adapters use the R5 typed boundary. Persist those
+            # Provider adapters use the typed boundary. Persist those
             # observations through the same failure-safe sink as direct
             # capture, so finalized TraceView contains provider output
             # without making the session state machine understand schemas.

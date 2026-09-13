@@ -1,4 +1,4 @@
-"""Small, deliberately boring stdio fault fixture for Phase 7 tests.
+"""Small, deliberately boring stdio fault fixture for tests.
 
 This module is launched by :meth:`FaultInjector.stdio_server`.  It speaks the
 official MCP stdio newline-delimited JSON framing directly so malformed and

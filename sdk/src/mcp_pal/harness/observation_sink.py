@@ -58,7 +58,7 @@ class HarnessObservationSink:
         self._observation_ids: set[str] = set()
         self._pending_limitations: set[str] = set()
         # Session callers provide the real TurnId.  Standalone adapters retain
-        # the deterministic R5 fallback keyed by observation sequence.
+        # the deterministic fallback keyed by observation sequence.
         # Keep Identifier objects intact: ``str(TurnId(...))`` is the
         # Pydantic ``root='...'`` representation, not the identifier value.
         self._turn_id = turn_id

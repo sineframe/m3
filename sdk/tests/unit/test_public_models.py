@@ -1,4 +1,4 @@
-"""Phase 2 public-surface and value-model contract tests."""
+"""Public-surface and value-model contract tests."""
 
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ def test_public_modules_import_without_application_layers() -> None:
         assert module.__name__ == module_name
 
 
-def test_phase4_implementation_modules_are_explicitly_internal() -> None:
+def test_implementation_modules_are_explicitly_internal() -> None:
     assert _INTERNAL_MODULES == (
         "mcp_pal.events",
         "mcp_pal.execution_trace",

@@ -1702,7 +1702,7 @@ class OpenCodeHarnessAdapter:
         return tuple(values)
 
     def _safe_metadata_value(self, value: object) -> Any:
-        """Redact and JSON-validate provider metadata before it crosses R5."""
+        """Redact and JSON-validate provider metadata at the boundary."""
 
         try:
             safe = redact_for_api(

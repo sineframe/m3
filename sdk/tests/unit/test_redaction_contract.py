@@ -1,4 +1,4 @@
-"""Adversarial contract tests for the Phase 4 redaction boundary."""
+"""Adversarial contract tests for the redaction boundary."""
 
 from __future__ import annotations
 

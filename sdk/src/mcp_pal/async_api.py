@@ -1119,7 +1119,7 @@ class AsyncMCPTestKit:
     def _unsupported(self, operation: str) -> _NoReturn:
         self._ensure_open()
         raise _UnsupportedFeature(
-            f"{operation} is not implemented in the configuration milestone"
+            f"{operation} does not support the supplied specification"
         )
 
     async def run(self, spec: _DirectSpec | _AgentSpec) -> _ExecutionResult:

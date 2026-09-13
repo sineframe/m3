@@ -1,4 +1,4 @@
-"""Deterministic Phase 9 lifecycle and trace acceptance regressions."""
+"""Deterministic lifecycle and trace acceptance regressions."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from mcp_pal.types import (
 
 def _spec() -> AgentSpec:
     return AgentSpec(
-        harness=ACPAgent(model="phase9-test"),
+        harness=ACPAgent(model="adversarial-test"),
         servers=(
             ServerBinding(
                 server=StdioServer(name="required", command="fixture"), alias="required"
@@ -46,7 +46,7 @@ def _spec() -> AgentSpec:
 
 
 def _loopback_server() -> Server:
-    return Server("phase9-loopback")
+    return Server("adversarial-loopback")
 
 
 class _SlowStartupAdapter:

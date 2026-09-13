@@ -1,4 +1,4 @@
-"""Guard the public MCP v2 APIs that Phase 5 will build on."""
+"""Guard the public MCP v2 APIs."""
 
 from __future__ import annotations
 

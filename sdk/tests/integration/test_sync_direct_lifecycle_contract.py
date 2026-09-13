@@ -1,4 +1,4 @@
-"""Black-box Phase 6 contracts for the synchronous portal/proxy."""
+"""Black-box contracts for the synchronous portal/proxy."""
 
 from __future__ import annotations
 

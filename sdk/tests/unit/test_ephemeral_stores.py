@@ -1,4 +1,4 @@
-"""Adversarial contract tests for ephemeral Phase 4 storage."""
+"""Adversarial contract tests for ephemeral storage."""
 
 from __future__ import annotations
 

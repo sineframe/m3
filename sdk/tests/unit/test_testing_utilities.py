@@ -1,4 +1,4 @@
-"""Phase 7 deterministic mock, fault, and replay contracts."""
+"""Deterministic mock, fault, and replay contracts."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ from mcp_pal.trace.redaction import RedactionConfig
 
 def _server() -> MockMCPServer:
     server = MockMCPServer(
-        "phase7-mock",
+        "mock-fixture",
         redaction_config=RedactionConfig(
             secrets=frozenset({"mock-secret"}), include_environment=False
         ),
@@ -318,9 +318,9 @@ async def test_recording_captures_ordered_non_tool_operations_and_replays_them()
         "resources/unsubscribe",
         "completion/complete",
     ]
-    assert recording.server_name == "phase7-mock"
+    assert recording.server_name == "mock-fixture"
     assert recording.initialization["serverInfo"] == {
-        "name": "phase7-mock",
+        "name": "mock-fixture",
         "version": "1",
     }
     replay = ReplayServer(Recording.from_json(recording.to_json()))

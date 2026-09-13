@@ -565,7 +565,7 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
 # Keep the historical root list before adding observability names.
 _ROOT_BASE = PUBLIC_EXPORTS["mcp_pal"]
 
-# Phase 4 implementation modules deliberately remain internal.  They expose
+# Implementation modules deliberately remain internal. They expose
 # direct ``__all__`` values for package-internal composition, but are not part
 # of the versioned SDK surface until their contracts are documented and
 # promoted through PUBLIC_EXPORTS.

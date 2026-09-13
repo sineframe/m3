@@ -1,4 +1,4 @@
-"""Phase 9 execution controller and handle contracts."""
+"""Execution controller and handle contracts."""
 
 from __future__ import annotations
 

@@ -36,8 +36,6 @@ def test_manifest_describes_current_regression_evidence() -> None:
     assert len(entry_ids) == len(set(entry_ids))
 
     for entry in entries:
-        assert isinstance(entry["owner_milestones"], list)
-        assert entry["owner_milestones"]
         assert entry["status"] in _VALID_STATUSES
         gate = entry["gate"]
         assert isinstance(gate["command"], str) and gate["command"].strip()
