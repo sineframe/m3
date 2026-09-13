@@ -18,7 +18,7 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.request import Request, urlopen
 
 REPOSITORY = "mcppal/mcp-pal"
@@ -149,7 +149,7 @@ def _probe_python(
             raise SetupError(
                 "refusing to install into a system or global Python; use an isolated environment"
             )
-        return payload
+        return cast(dict[str, Any], payload)
     except SetupError:
         raise
     except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -184,8 +184,9 @@ def resolve_target(
             raise SetupError(
                 "active Conda base is not a project environment; create or activate a project environment"
             )
-        python = _environment_python(variable, env)
-        if python is not None:
+        candidate = _environment_python(variable, env)
+        if candidate is not None:
+            python = candidate
             _probe_python(
                 python,
                 allow_conda=variable == "CONDA_PREFIX",

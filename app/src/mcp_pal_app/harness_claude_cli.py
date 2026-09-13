@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from mcp_pal.domain.validation import selected_server_config
 from mcp_pal.harness.base import HarnessResult, HarnessRunner, RunSpec
@@ -52,7 +52,7 @@ class ClaudeCodeRunner(HarnessRunner):
         self.process: Any = None
         self.cancel_requested = threading.Event()
 
-    def request_cancel(self):
+    def request_cancel(self) -> None:
         """Thread-safe cancellation request; the async runner performs reap."""
         self.cancel_requested.set()
         self._terminate()
@@ -93,7 +93,10 @@ class ClaudeCodeRunner(HarnessRunner):
         return cmd
 
     async def run(
-        self, spec: RunSpec, on_event=None, cancel_event=None
+        self,
+        spec: RunSpec,
+        on_event: Any = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> HarnessResult:
         result = HarnessResult(status="running")
         partial_text_seen = False
@@ -174,7 +177,7 @@ class ClaudeCodeRunner(HarnessRunner):
                 await self.process.stdin.drain()
                 self.process.stdin.close()
 
-                async def read_stdout():
+                async def read_stdout() -> None:
                     nonlocal partial_text_seen
                     async for line in self.process.stdout:
                         rawline = line.decode(errors="replace").rstrip("\n")
@@ -231,7 +234,7 @@ class ClaudeCodeRunner(HarnessRunner):
                                 and raw.get("result") is not None
                             ):
                                 result.final_text = (
-                                    raw.get("result")
+                                    cast(str, raw.get("result"))
                                     if isinstance(raw.get("result"), str)
                                     else json.dumps(
                                         raw.get("result"), ensure_ascii=False
@@ -312,7 +315,7 @@ class ClaudeCodeRunner(HarnessRunner):
             result.protocol_events = read_capture(capture_path)
         return result
 
-    async def _terminate_and_reap(self):
+    async def _terminate_and_reap(self) -> None:
         if self.process:
             await asyncio.to_thread(
                 terminate_process_group,
@@ -332,7 +335,7 @@ class ClaudeCodeRunner(HarnessRunner):
                 except asyncio.TimeoutError:
                     pass
 
-    def _terminate(self):
+    def _terminate(self) -> None:
         """Synchronous best-effort signal used by API cancellation."""
         if self.process and self.process.returncode is None:
             # This path is intentionally best effort; the async owner will

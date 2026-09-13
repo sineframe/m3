@@ -6,16 +6,18 @@ import argparse
 import os
 import re
 import sys
+from collections.abc import Awaitable, Callable
 from importlib import resources
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, cast
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import Headers
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -101,7 +103,9 @@ def _request_origin(request: Request) -> tuple[str, str, int] | None:
         return None
 
 
-async def _same_origin_mutations(request: Request, call_next):
+async def _same_origin_mutations(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     """Reject browser cross-site writes to the local application.
 
     The CLI app is intentionally local and has no login/session flow.  This
@@ -148,10 +152,10 @@ def _host_name(value: str) -> str | None:
 class _LoopbackHostMiddleware:
     """Allow only local Host values without TrustedHost's IPv6 limitation."""
 
-    def __init__(self, app):
+    def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in {"http", "websocket"}:
             await self.app(scope, receive, send)
             return
@@ -173,8 +177,12 @@ def create_web_app(
     from mcp_pal_app.settings import Settings  # type: ignore[import-untyped]
 
     root = ui_directory(ui_dir)
-    application = create_app(
-        Settings(database_path=str(Path(database).absolute())), v2_embedded_worker=True
+    application = cast(
+        FastAPI,
+        create_app(
+            Settings(database_path=str(Path(database).absolute())),
+            v2_embedded_worker=True,
+        ),
     )
     application.add_middleware(_LoopbackHostMiddleware)
     application.middleware("http")(_same_origin_mutations)
@@ -182,8 +190,8 @@ def create_web_app(
         "/assets", StaticFiles(directory=str(root / "assets")), name="assets"
     )
 
-    @application.api_route("/{path:path}", methods=["GET", "HEAD"])
-    async def spa_fallback(request: Request, path: str):
+    @application.api_route("/{path:path}", methods=["GET", "HEAD"], response_model=None)
+    async def spa_fallback(request: Request, path: str) -> Response:
         if path == "api" or path.startswith("api/"):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
         return FileResponse(root / "index.html")

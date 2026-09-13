@@ -22,6 +22,14 @@ mcp-pal-app = { workspace = true }
 test = [
   "pytest>=8,<10",
 ]
+typecheck = [
+  "mypy>=1.11,<2",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+pretty = true
 
 [build-system]
 requires = ["hatchling>=1.27"]

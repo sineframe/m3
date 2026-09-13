@@ -1,18 +1,21 @@
 import json
-from typing import Any
+from typing import Any, cast
+
+JSON = dict[str, Any]
 
 
 def normalize_events(
     raw: Any, selected_server: str | None = None
-) -> list[tuple[str, dict]]:
+) -> list[tuple[str, JSON]]:
     """Translate supported harness events into the backend's stable events."""
     if not isinstance(raw, dict):
         return [("error", {"message": str(raw)})]
+    raw = cast(JSON, raw)
     typ, subtype = raw.get("type", ""), raw.get("subtype", "")
     # OpenCode JSON output. A completed tool part contains both the call and its
     # result, so expose both stable events and correlate them by call ID.
     if typ in ("step_start", "step_finish", "text", "reasoning", "tool_use"):
-        part = raw.get("part") if isinstance(raw.get("part"), dict) else {}
+        part = cast(JSON, raw.get("part")) if isinstance(raw.get("part"), dict) else {}
         session_id = raw.get("sessionID") or part.get("sessionID")
         common = {"harness": "opencode", "session_id": session_id}
         if typ == "step_start":
@@ -33,7 +36,9 @@ def normalize_events(
             return [("assistant_text", {**common, "text": part.get("text", "")})]
         if typ == "reasoning":
             return [("thinking", {**common, "text": part.get("text", "")})]
-        state = part.get("state") if isinstance(part.get("state"), dict) else {}
+        state = (
+            cast(JSON, part.get("state")) if isinstance(part.get("state"), dict) else {}
+        )
         call_id = part.get("callID") or part.get("callId") or part.get("id")
         name = part.get("tool", "")
         server_name = (
@@ -69,11 +74,13 @@ def normalize_events(
     # events. Preserve each emitted delta so the trace can show first-output
     # timing and incremental thinking/text without inventing hidden reasoning.
     if typ == "stream_event":
-        event = raw.get("event") if isinstance(raw.get("event"), dict) else {}
+        event = (
+            cast(JSON, raw.get("event")) if isinstance(raw.get("event"), dict) else {}
+        )
         event_type = event.get("type", "")
         if event_type == "content_block_start":
             block = (
-                event.get("content_block")
+                cast(JSON, event.get("content_block"))
                 if isinstance(event.get("content_block"), dict)
                 else {}
             )
@@ -106,7 +113,11 @@ def normalize_events(
                     )
                 ]
         if event_type == "content_block_delta":
-            delta = event.get("delta") if isinstance(event.get("delta"), dict) else {}
+            delta = (
+                cast(JSON, event.get("delta"))
+                if isinstance(event.get("delta"), dict)
+                else {}
+            )
             delta_type = delta.get("type", "")
             if delta_type in ("thinking_delta", "signature_delta"):
                 return [("thinking", {"content": delta, "partial": True, "raw": raw})]
@@ -224,7 +235,7 @@ def normalize_events(
     return [("system", raw)]
 
 
-def normalize_event(raw: Any, selected_server: str | None = None) -> tuple[str, dict]:
+def normalize_event(raw: Any, selected_server: str | None = None) -> tuple[str, JSON]:
     """Compatibility helper returning the first normalized event."""
     return normalize_events(raw, selected_server)[0]
 
@@ -237,7 +248,7 @@ def _name(value: Any) -> str:
     return str(value or "")
 
 
-def _call_info(payload: dict) -> tuple[str | None, str]:
+def _call_info(payload: JSON) -> tuple[str | None, str]:
     blocks = payload.get("content", []) if isinstance(payload, dict) else []
     block = blocks[0] if blocks and isinstance(blocks[0], dict) else payload
     return (
@@ -262,8 +273,8 @@ def _result_error(payload: Any) -> bool:
     return False
 
 
-def _normalized(raw_events: list[Any], server: str):
-    out = []
+def _normalized(raw_events: list[Any], server: str) -> list[tuple[str, JSON]]:
+    out: list[tuple[str, JSON]] = []
     seen = set()
     stable_seen = set()
     for raw in raw_events:
@@ -292,7 +303,7 @@ def _normalized(raw_events: list[Any], server: str):
     return out
 
 
-def derive_mcp_summary(raw_events: list[Any], selected_server: str) -> dict:
+def derive_mcp_summary(raw_events: list[Any], selected_server: str) -> JSON:
     """Summarize initialization, selected calls, and correlated results."""
     normalized = _normalized(raw_events, selected_server)
     ns = _namespace(selected_server)
@@ -329,7 +340,7 @@ def derive_mcp_summary(raw_events: list[Any], selected_server: str) -> dict:
             init_state = "connected"
         elif state in ("failed", "error", "disconnected"):
             init_state = "failed"
-    advertised = []
+    advertised: list[str] = []
     for raw in raw_events:
         if isinstance(raw, dict):
             for key in ("tools", "mcp_tools", "advertised_tools"):

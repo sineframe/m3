@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ _STDERR_LIMIT = 64 * 1024
 
 READ_ONLY_TOOLS = ["read", "glob", "grep", "lsp", "webfetch", "websearch"]
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+JsonObject = dict[str, Any]
 
 
 def _redact(value: Any, secrets: set[str]) -> Any:
@@ -37,7 +39,7 @@ def _redact(value: Any, secrets: set[str]) -> Any:
         return "[REDACTED]"
 
 
-def _event_key(event_type: str, payload: dict) -> tuple:
+def _event_key(event_type: str, payload: JsonObject) -> tuple[Any, ...]:
     return (
         event_type,
         payload.get("session_id"),
@@ -50,7 +52,7 @@ def _event_key(event_type: str, payload: dict) -> tuple:
     )
 
 
-def _terminal_complete(normalized: list[tuple[str, dict]]) -> bool:
+def _terminal_complete(normalized: list[tuple[str, JsonObject]]) -> bool:
     """Return true only for a final text step, not an intermediate tool step."""
     complete = False
     text_waiting_for_finish = False
@@ -71,7 +73,11 @@ def _terminal_complete(normalized: list[tuple[str, dict]]) -> bool:
     return complete
 
 
-def _fresh_recovery(normalized, known, prior=()):
+def _fresh_recovery(
+    normalized: list[tuple[str, JsonObject]],
+    known: set[tuple[Any, ...]],
+    prior: Sequence[tuple[str, JsonObject]] = (),
+) -> list[tuple[str, JsonObject]]:
     """Deduplicate replayed calls while retaining a later final step finish."""
     fresh = []
     for index, item in enumerate(normalized):
@@ -100,7 +106,9 @@ def _env_refs(value: Any) -> Any:
     return value
 
 
-def opencode_config(mcp_config: dict, server_name: str, tool_mode: str) -> dict:
+def opencode_config(
+    mcp_config: JsonObject, server_name: str, tool_mode: str
+) -> JsonObject:
     source = selected_server_config(mcp_config, server_name)["mcpServers"][server_name]
     if source.get("type", "stdio") == "stdio":
         server = {
@@ -149,7 +157,7 @@ class OpenCodeRunner(HarnessRunner):
         self.process: Any = None
         self.cancel_requested = threading.Event()
 
-    def request_cancel(self):
+    def request_cancel(self) -> None:
         self.cancel_requested.set()
         self._terminate()
 
@@ -169,8 +177,8 @@ class OpenCodeRunner(HarnessRunner):
         return command
 
     async def _export_completed_session(
-        self, session_id: str, environment: dict, cwd: str
-    ) -> list[dict] | None:
+        self, session_id: str, environment: JsonObject, cwd: str
+    ) -> list[JsonObject] | None:
         """Recover output when OpenCode persists completion but its JSON stream hangs."""
         process = None
         try:
@@ -244,7 +252,9 @@ class OpenCodeRunner(HarnessRunner):
         normalized = [event for raw in recovered for event in normalize_events(raw)]
         return recovered if _terminal_complete(normalized) else None
 
-    async def _delete_session(self, session_id: str, environment: dict, cwd: str):
+    async def _delete_session(
+        self, session_id: str, environment: JsonObject, cwd: str
+    ) -> None:
         """Remove the persisted OpenCode transcript after the backend has captured it."""
         process = None
         try:
@@ -269,7 +279,7 @@ class OpenCodeRunner(HarnessRunner):
         except OSError:
             return
 
-    async def _terminate_process(self, process):
+    async def _terminate_process(self, process: asyncio.subprocess.Process) -> None:
         await asyncio.to_thread(
             terminate_process_group,
             pid=process.pid,
@@ -289,7 +299,10 @@ class OpenCodeRunner(HarnessRunner):
                 pass
 
     async def run(
-        self, spec: RunSpec, on_event=None, cancel_event=None
+        self,
+        spec: RunSpec,
+        on_event: Any = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> HarnessResult:
         result = HarnessResult(status="running")
         baseline = time.perf_counter_ns()
@@ -448,7 +461,7 @@ class OpenCodeRunner(HarnessRunner):
                 await self.process.stdin.drain()
                 self.process.stdin.close()
 
-                async def read_stdout():
+                async def read_stdout() -> None:
                     async for line in self.process.stdout:
                         rawline = line.decode(errors="replace").rstrip("\n")
                         try:
@@ -700,11 +713,11 @@ class OpenCodeRunner(HarnessRunner):
                     result.protocol_events = []
         return result
 
-    async def _terminate_and_reap(self):
+    async def _terminate_and_reap(self) -> None:
         if self.process:
             await self._terminate_process(self.process)
 
-    def _terminate(self):
+    def _terminate(self) -> None:
         if self.process and self.process.returncode is None:
             try:
                 if os.name == "posix":

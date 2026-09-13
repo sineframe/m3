@@ -7,22 +7,18 @@ persistent storage.
 
 ## Install the SDK
 
-Add the SDK and pytest support to the project being tested:
+Choose a release version and add the SDK wheel with pytest support to the
+project being tested:
 
 ```bash
-uv add "mcp-pal[pytest]"
+VERSION=X.Y.Z
+uv add \
+  "mcp-pal[pytest] @ https://github.com/mcppal/mcp-pal/releases/download/v${VERSION}/mcp_pal-${VERSION}-py3-none-any.whl"
 ```
 
-With pip:
-
-```bash
-python -m pip install "mcp-pal[pytest]"
-```
-
-The SDK requires Python 3.10 or newer. This project dependency does not install
-the standalone `mcp-pal` command or bundled UI. Those come from the separate
-machine-level CLI installation described in the
-[quick start](docs/quick-start.md#install-the-standalone-cli).
+The SDK requires Python 3.10 or newer. The standalone CLI is optional; install
+it separately only when you want the `mcp-pal` command or bundled UI, as
+described in the [quick start](docs/quick-start.md#install-the-standalone-cli).
 
 ## Learn the SDK
 

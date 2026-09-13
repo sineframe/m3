@@ -35,23 +35,19 @@ with MCPTestKit(env={}) as kit, kit.direct(server) as client:
 
 ## Install the project SDK
 
-Add MCP Pal and its pytest dependencies to a uv-managed project:
+Choose a release version and add the SDK wheel with pytest support to the
+project being tested:
 
 ```bash
-uv add "mcp-pal[pytest]"
-```
-
-The equivalent pip command is:
-
-```bash
-python -m pip install "mcp-pal[pytest]"
+VERSION=X.Y.Z
+uv add \
+  "mcp-pal[pytest] @ https://github.com/mcppal/mcp-pal/releases/download/v${VERSION}/mcp_pal-${VERSION}-py3-none-any.whl"
 ```
 
 The SDK requires Python 3.10 or newer.
 
-These commands install the `mcp-pal` Python SDK and pytest support inside the
-project environment. They do **not** install the standalone `mcp-pal` command
-or the bundled UI.
+This installs only the project SDK and pytest support. It does **not** install
+the standalone `mcp-pal` command or the bundled UI.
 
 ## Install the standalone CLI
 
@@ -61,8 +57,8 @@ project environment; its release installer includes the production UI. Follow
 the [CLI installation guide](../../cli/README.md#install), which covers GitHub
 authentication and macOS, Linux, and Windows installation.
 
-After installing the CLI, prepare the project environment and verify that its
-SDK version matches the CLI:
+If you install the CLI, it can prepare the project environment and verify that
+the SDK version matches the CLI:
 
 ```bash
 cd my-project
@@ -167,11 +163,13 @@ Persistence is optional when the SDK is used directly. An `MCPTestKit` with no
 configured store keeps execution data in memory for the lifetime of the kit;
 closing the kit does not leave a saved run history.
 
-Direct SDK users who choose SQLite must install the storage extra in addition
-to pytest support:
+Direct SDK users who choose SQLite can include storage support when adding the
+release wheel:
 
 ```bash
-uv add "mcp-pal[pytest,storage]"
+VERSION=X.Y.Z
+uv add \
+  "mcp-pal[pytest,storage] @ https://github.com/mcppal/mcp-pal/releases/download/v${VERSION}/mcp_pal-${VERSION}-py3-none-any.whl"
 ```
 
 `mcp-pal test` makes a different product-level choice: it always enables the

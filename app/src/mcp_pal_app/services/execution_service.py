@@ -9,7 +9,7 @@ or response-envelope dependencies.
 from __future__ import annotations
 
 import time
-from typing import Protocol
+from typing import Protocol, cast
 
 from mcp_pal import (
     AgentSpec,
@@ -31,7 +31,7 @@ from mcp_pal import (
     TraceView,
     build_feedback,
 )
-from mcp_pal.storage import StorageConflict, StorageError
+from mcp_pal.storage import ExecutionStore, StorageConflict, StorageError
 
 _CANCEL_SETTLE_TIMEOUT_SECONDS = 2.0
 _CANCEL_SETTLE_POLL_SECONDS = 0.01
@@ -369,7 +369,11 @@ class AppExecutionService:
                 "feedback_baseline_not_found", "feedback baseline run was not found"
             )
         try:
-            return build_feedback(self.store, current, baseline_run_id=baseline_run_id)
+            return build_feedback(
+                cast(ExecutionStore, self.store),
+                current,
+                baseline_run_id=baseline_run_id,
+            )
         except (StorageError, TypeError, ValueError) as exc:
             raise AppExecutionError(
                 "feedback_data_unavailable", "feedback data is unavailable"

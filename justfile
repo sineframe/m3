@@ -62,6 +62,14 @@ typecheck-sdk-public:
 typecheck-sdk:
     uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/mcp_pal
 
+typecheck-app:
+    uv run --isolated --python 3.10 --locked --project app --group typecheck mypy --config-file app/pyproject.toml --strict app/src/mcp_pal_app
+
+typecheck-cli:
+    uv run --isolated --python 3.10 --locked --project cli --group typecheck mypy --config-file cli/pyproject.toml --strict cli/src/mcp_pal_cli
+
+typecheck-production: typecheck-sdk typecheck-app typecheck-cli
+
 lint:
     uv run --group lint ruff check .
 

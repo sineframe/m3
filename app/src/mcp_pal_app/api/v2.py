@@ -452,7 +452,7 @@ def install_v2(
     original_openapi = application.openapi
 
     def openapi_with_sdk_models() -> dict[str, Any]:
-        schema = original_openapi()
+        schema: dict[str, Any] = cast(dict[str, Any], original_openapi())
         components = schema.setdefault("components", {}).setdefault("schemas", {})
 
         def add_model(model: Any) -> None:

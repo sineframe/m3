@@ -2,11 +2,12 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from importlib.metadata import version as distribution_version
 from pathlib import Path
+from typing import Any, cast
 
 from fastapi import (
     APIRouter,
@@ -28,7 +29,11 @@ from mcp_pal.domain.validation import (
     selected_server_config,
     validate_mcp_config,
 )
-from mcp_pal.harness.manifest import ManifestValidationError, validate_manifest
+from mcp_pal.harness.manifest import (
+    HarnessManifest,
+    ManifestValidationError,
+    validate_manifest,
+)
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.trace.claude import transport_for_server
 from mcp_pal.trace.redaction import RedactionConfig, redact_for_api
@@ -61,14 +66,14 @@ from .schemas import (
 from .v2 import install_v2
 
 
-def _api_projection(value, *, path="$"):
+def _api_projection(value: Any, *, path: str = "$") -> Any:
     """Apply the shared redaction policy at the HTTP response boundary."""
     # Build this at request time so credentials injected for a deterministic
     # worker/test process are covered without retaining them in app state.
     return redact_for_api(value, config=RedactionConfig.from_environment(), path=path)
 
 
-def _iso(v):
+def _iso(v: datetime | None) -> str | None:
     return v.isoformat() if v else None
 
 
@@ -88,7 +93,9 @@ REQUIRED_CLI_FLAGS = (
 REQUIRED_OPENCODE_FLAGS = ("run", "--format", "--model", "--thinking", "--pure")
 
 
-def _probe(executable, flags, command=()):
+def _probe(
+    executable: str, flags: tuple[str, ...], command: tuple[str, ...] = ()
+) -> tuple[bool, list[str], bool]:
     resolved = shutil.which(executable) or (
         os.path.isfile(executable) and os.access(executable, os.X_OK)
     )
@@ -110,7 +117,7 @@ def _probe(executable, flags, command=()):
     return False, missing, bool(resolved)
 
 
-def _saved_opencode_auth(executable, providers=None):
+def _saved_opencode_auth(executable: str, providers: list[str] | None = None) -> bool:
     try:
         probe = subprocess.run(
             [executable, "auth", "list"],
@@ -147,7 +154,7 @@ def _saved_opencode_auth(executable, providers=None):
         return False
 
 
-def _opencode_provider_env(provider, settings):
+def _opencode_provider_env(provider: str, settings: Settings) -> bool:
     provider = provider.lower()
     normalized = provider.replace("-", "_").upper()
     configured = {
@@ -163,7 +170,9 @@ def _opencode_provider_env(provider, settings):
     )
 
 
-def _manifest_local_ready(manifest):
+def _manifest_local_ready(
+    manifest: dict[str, Any],
+) -> tuple[bool, list[str], str | None]:
     """Return local executable/environment readiness for a persisted manifest."""
     try:
         checked = validate_manifest(manifest, check_local=True)
@@ -176,7 +185,9 @@ def _manifest_local_ready(manifest):
     )
 
 
-def _model_option_value(config_options, session_config):
+def _model_option_value(
+    config_options: Any, session_config: dict[str, Any] | None
+) -> str | None:
     """Resolve the selected model by ACP's option category, not an id name.
 
     ACP implementations are free to call the model option ``engine``,
@@ -199,7 +210,7 @@ def _model_option_value(config_options, session_config):
             and isinstance(session_config[ident], str)
             and session_config[ident]
         ):
-            return session_config[ident]
+            return cast(str, session_config[ident])
         for key in (
             "currentValue",
             "current_value",
@@ -208,11 +219,11 @@ def _model_option_value(config_options, session_config):
             "default_value",
         ):
             if isinstance(option.get(key), str) and option[key]:
-                return option[key]
+                return cast(str, option[key])
     return None
 
 
-def _latest_protocol_probe(db, revision_id):
+def _latest_protocol_probe(db: Session, revision_id: str) -> HarnessProbe | None:
     return (
         db.query(HarnessProbe)
         .filter_by(revision_id=revision_id, kind="protocol")
@@ -221,7 +232,13 @@ def _latest_protocol_probe(db, revision_id):
     )
 
 
-def _latest_full_probe(db, revision_id, transport, mode_id, session_config):
+def _latest_full_probe(
+    db: Session,
+    revision_id: str,
+    transport: str,
+    mode_id: str | None,
+    session_config: dict[str, Any] | None,
+) -> HarnessProbe | None:
     import json as _json
 
     probes = (
@@ -246,13 +263,21 @@ def _latest_full_probe(db, revision_id, transport, mode_id, session_config):
     )
 
 
-def _verification_for(db, revision, *, transport, mode_id, session_config):
+def _verification_for(
+    db: Session,
+    revision: HarnessProfileRevision,
+    *,
+    transport: str,
+    mode_id: str | None,
+    session_config: dict[str, Any] | None,
+) -> dict[str, Any]:
     """Build provenance from the newest probes for the exact run dimensions."""
     protocol = _latest_protocol_probe(db, revision.id)
     full = _latest_full_probe(db, revision.id, transport, mode_id, session_config)
-    protocol_verified = bool(protocol and protocol.status == "verified")
+    protocol_verified = protocol is not None and protocol.status == "verified"
     identity_mismatch = bool(
-        protocol_verified
+        protocol is not None
+        and protocol_verified
         and full
         and full.status == "verified"
         and protocol.agent_identity
@@ -260,7 +285,9 @@ def _verification_for(db, revision, *, transport, mode_id, session_config):
         and protocol.agent_identity != full.agent_identity
     )
     config_options = (
-        (protocol.evidence or {}).get("config_options", []) if protocol_verified else []
+        (protocol.evidence or {}).get("config_options", [])
+        if protocol_verified and protocol is not None
+        else []
     )
     effective_model = (
         _model_option_value(config_options, session_config) or "agent-default"
@@ -283,7 +310,7 @@ def _verification_for(db, revision, *, transport, mode_id, session_config):
     }
 
 
-def _listed_ids(value, *keys):
+def _listed_ids(value: Any, *keys: str) -> list[str]:
     if isinstance(value, dict):
         for key in keys:
             if isinstance(value.get(key), list):
@@ -302,7 +329,7 @@ def _listed_ids(value, *keys):
     return ids
 
 
-def _config_option_list(value):
+def _config_option_list(value: Any) -> list[Any]:
     if isinstance(value, dict):
         if value.get("id") or value.get("configId"):
             return [value]
@@ -316,7 +343,7 @@ def _config_option_list(value):
     return value if isinstance(value, list) else []
 
 
-def _select_option_values(options):
+def _select_option_values(options: Any) -> list[Any]:
     """Flatten both ACP flat choices and official grouped select choices."""
     values = []
     for item in options if isinstance(options, list) else []:
@@ -330,7 +357,9 @@ def _select_option_values(options):
     return values
 
 
-def _protocol_defaults(protocol):
+def _protocol_defaults(
+    protocol: HarnessProbe | None,
+) -> tuple[str | None, dict[str, Any]]:
     evidence = (protocol.evidence or {}) if protocol else {}
     raw_modes = evidence.get("modes", {})
     modes = _listed_ids(raw_modes, "availableModes", "available_modes")
@@ -365,7 +394,13 @@ def _protocol_defaults(protocol):
     return mode, config
 
 
-def _validate_acp_dimensions(db, revision, *, mode_id, session_config):
+def _validate_acp_dimensions(
+    db: Session,
+    revision: HarnessProfileRevision,
+    *,
+    mode_id: str | None,
+    session_config: dict[str, Any] | None,
+) -> None:
     """Validate requested ACP dimensions against the newest protocol probe."""
     protocol = _latest_protocol_probe(db, revision.id)
     config = dict(session_config or {})
@@ -428,7 +463,7 @@ def _validate_acp_dimensions(db, revision, *, mode_id, session_config):
             )
 
 
-def profile_json(p: McpProfile, include_json=False):
+def profile_json(p: McpProfile, include_json: bool = False) -> dict[str, Any]:
     revisions = sorted(p.revisions, key=lambda r: r.revision_number)
     out = {
         "id": p.id,
@@ -465,12 +500,12 @@ def profile_json(p: McpProfile, include_json=False):
 
 def create_app(
     settings: Settings | None = None,
-    engine_override=None,
-    session_factory=None,
-    v2_store=None,
-    v2_kit=None,
+    engine_override: Any = None,
+    session_factory: Any = None,
+    v2_store: Any = None,
+    v2_kit: Any = None,
     *,
-    v2_embedded_worker=True,
+    v2_embedded_worker: bool = True,
 ) -> FastAPI:
     settings = settings or get_settings()
     eng = engine_override or make_engine(settings.database_url)
@@ -489,7 +524,7 @@ def create_app(
     manager = RunManager(factory, settings)
 
     @asynccontextmanager
-    async def lifespan(application):
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         try:
             # Any process that was alive before restart cannot be resumed.
             db = factory()
@@ -535,7 +570,7 @@ def create_app(
     install_v2(app, v2_store, v2_kit, embedded_worker=v2_embedded_worker)
     app.state.v2_store_owned = owns_v2_store
 
-    def db_dep():
+    def db_dep() -> Generator[Session, None, None]:
         d = factory()
         try:
             yield d
@@ -544,8 +579,8 @@ def create_app(
 
     router = APIRouter(prefix="/api/v1")
 
-    @router.get("/health")
-    def health():
+    @router.get("/health", response_model=None)
+    def health() -> dict[str, Any]:
         d = factory()
         db_ok = True
         try:
@@ -608,8 +643,8 @@ def create_app(
             "harnesses": harnesses,
         }
 
-    @router.get("/capabilities")
-    def capabilities(d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.get("/capabilities", response_model=None)
+    def capabilities(d: Session = Depends(db_dep)) -> Any:  # noqa: B008 - FastAPI dependency/body marker
         claude_flags, _, claude_executable = _probe(
             settings.claude_executable, REQUIRED_CLI_FLAGS
         )
@@ -674,7 +709,7 @@ def create_app(
                 .all()
             )
             protocol = next((x for x in probes if x.kind == "protocol"), None)
-            dimensions = {}
+            dimensions: dict[tuple[str, str | None, str], HarnessProbe] = {}
             import json as _json
 
             for candidate in probes:
@@ -691,7 +726,11 @@ def create_app(
                 )
                 dimensions.setdefault(key, candidate)
             protocol_ok = bool(protocol and protocol.status == "verified")
-            protocol_identity = protocol.agent_identity if protocol_ok else None
+            protocol_identity = (
+                protocol.agent_identity
+                if protocol_ok and protocol is not None
+                else None
+            )
             verified_dimensions = []
             identity_mismatches = []
             for candidate in dimensions.values():
@@ -712,14 +751,19 @@ def create_app(
             full = verified_dimensions[0] if verified_dimensions else None
             identity_warning = bool(identity_mismatches and not verified_dimensions)
             manifest = (
-                d.get(HarnessProfileRevision, p.current_revision_id).manifest
+                cast(
+                    HarnessProfileRevision,
+                    d.get(HarnessProfileRevision, p.current_revision_id),
+                ).manifest
                 if p.current_revision_id
                 else {}
             )
             local_ready, missing_environment, executable = _manifest_local_ready(
                 manifest
             )
-            protocol_evidence = protocol.evidence if protocol_ok else {}
+            protocol_evidence = (
+                protocol.evidence if protocol_ok and protocol is not None else {}
+            )
             options = (
                 _config_option_list(protocol_evidence.get("config_options", []))
                 if protocol_ok
@@ -817,8 +861,11 @@ def create_app(
             )
         return _api_projection(out, path="$.harnesses")
 
-    @router.get("/harness-profiles")
-    def harness_profiles(include_archived: bool = False, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.get("/harness-profiles", response_model=None)
+    def harness_profiles(
+        include_archived: bool = False,
+        d: Session = Depends(db_dep),  # noqa: B008
+    ) -> Any:
         q = d.query(HarnessProfile)
         if not include_archived:
             q = q.filter_by(archived=False)
@@ -842,11 +889,11 @@ def create_app(
             for p in q.all()
         ]
 
-    @router.post("/harness-profiles", status_code=201)
+    @router.post("/harness-profiles", status_code=201, response_model=None)
     def create_harness_profile(
         body: HarnessProfileCreate,
         d: Session = Depends(db_dep),  # noqa: B008 - FastAPI dependency/body marker
-    ):
+    ) -> dict[str, Any]:
         if not body.trusted_unsandboxed:
             raise HTTPException(422, "Trusted unsandboxed acknowledgment is required")
         p = HarnessProfile(name=body.name, description=body.description)
@@ -864,8 +911,11 @@ def create_app(
         d.commit()
         return {"id": p.id, "current_revision_id": r.id, "name": p.name}
 
-    @router.get("/harness-profiles/{profile_id}")
-    def get_harness_profile(profile_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.get("/harness-profiles/{profile_id}", response_model=None)
+    def get_harness_profile(
+        profile_id: str,
+        d: Session = Depends(db_dep),  # noqa: B008
+    ) -> dict[str, Any]:
         p = d.get(HarnessProfile, profile_id)
         if not p:
             raise HTTPException(404, "Harness profile not found")
@@ -886,12 +936,12 @@ def create_app(
             ],
         }
 
-    @router.patch("/harness-profiles/{profile_id}")
+    @router.patch("/harness-profiles/{profile_id}", response_model=None)
     def update_harness_profile(
         profile_id: str,
-        body: dict = Body(...),  # noqa: B008 - FastAPI request body marker
+        body: dict[str, Any] = Body(...),  # noqa: B008 - FastAPI request body marker
         d: Session = Depends(db_dep),  # noqa: B008 - FastAPI dependency/body marker
-    ):
+    ) -> dict[str, Any]:
         p = d.get(HarnessProfile, profile_id)
         if not p:
             raise HTTPException(404, "Harness profile not found")
@@ -902,8 +952,11 @@ def create_app(
         d.commit()
         return {"id": p.id, "name": p.name, "description": p.description}
 
-    @router.post("/harness-profiles/{profile_id}/archive")
-    def archive_harness_profile(profile_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.post("/harness-profiles/{profile_id}/archive", response_model=None)
+    def archive_harness_profile(
+        profile_id: str,
+        d: Session = Depends(db_dep),  # noqa: B008
+    ) -> dict[str, Any]:
         p = d.get(HarnessProfile, profile_id)
         if not p:
             raise HTTPException(404, "Harness profile not found")
@@ -911,8 +964,11 @@ def create_app(
         d.commit()
         return {"id": p.id, "archived": True}
 
-    @router.post("/harness-profiles/{profile_id}/restore")
-    def restore_harness_profile(profile_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.post("/harness-profiles/{profile_id}/restore", response_model=None)
+    def restore_harness_profile(
+        profile_id: str,
+        d: Session = Depends(db_dep),  # noqa: B008
+    ) -> dict[str, Any]:
         p = d.get(HarnessProfile, profile_id)
         if not p:
             raise HTTPException(404, "Harness profile not found")
@@ -920,12 +976,16 @@ def create_app(
         d.commit()
         return {"id": p.id, "archived": False}
 
-    @router.post("/harness-profiles/{profile_id}/revisions", status_code=201)
+    @router.post(
+        "/harness-profiles/{profile_id}/revisions",
+        status_code=201,
+        response_model=None,
+    )
     def add_harness_revision(
         profile_id: str,
         body: HarnessRevisionCreate,
         d: Session = Depends(db_dep),  # noqa: B008 - FastAPI dependency/body marker
-    ):
+    ) -> dict[str, Any]:
         p = d.get(HarnessProfile, profile_id)
         if not p:
             raise HTTPException(404, "Harness profile not found")
@@ -946,8 +1006,11 @@ def create_app(
         d.commit()
         return {"id": r.id, "revision_number": n, "current_revision_id": r.id}
 
-    @router.get("/harness-profiles/{profile_id}/export")
-    def export_harness_profile(profile_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.get("/harness-profiles/{profile_id}/export", response_model=None)
+    def export_harness_profile(
+        profile_id: str,
+        d: Session = Depends(db_dep),  # noqa: B008
+    ) -> dict[str, Any]:
         p = d.get(HarnessProfile, profile_id)
         if not p:
             raise HTTPException(404, "Harness profile not found")
@@ -956,8 +1019,11 @@ def create_app(
         )
         return {"name": p.name, "description": p.description, "manifest": r.manifest}
 
-    @router.post("/harness-profiles/import", status_code=201)
-    def import_harness_profile(body: dict, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.post("/harness-profiles/import", status_code=201, response_model=None)
+    def import_harness_profile(
+        body: dict[str, Any],
+        d: Session = Depends(db_dep),  # noqa: B008
+    ) -> dict[str, Any]:
         manifest = (
             body.get("manifest")
             if isinstance(body.get("manifest"), dict)
@@ -974,7 +1040,7 @@ def create_app(
                 if manifest is not body
                 else "Imported harness",
                 description=body.get("description", "") if manifest is not body else "",
-                manifest=manifest,
+                manifest=cast(HarnessManifest, manifest),
                 trusted_unsandboxed=False,
             )
         except ValueError as exc:
@@ -997,8 +1063,8 @@ def create_app(
         d.commit()
         return {"id": p.id, "current_revision_id": r.id, "name": p.name}
 
-    @router.get("/harness-profiles/{profile_id}/probes")
-    def harness_probes(profile_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.get("/harness-profiles/{profile_id}/probes", response_model=None)
+    def harness_probes(profile_id: str, d: Session = Depends(db_dep)) -> Any:  # noqa: B008 - FastAPI dependency/body marker
         revision_ids = [
             r.id
             for r in d.query(HarnessProfileRevision)
@@ -1026,7 +1092,9 @@ def create_app(
             .all()
         ]
 
-    @router.post("/harness-profiles/{profile_id}/probe", status_code=202)
+    @router.post(
+        "/harness-profiles/{profile_id}/probe", status_code=202, response_model=None
+    )
     def probe_harness(
         profile_id: str,
         kind: str = "protocol",
@@ -1034,7 +1102,7 @@ def create_app(
         mode_id: str | None = None,
         session_config: str = "{}",
         d: Session = Depends(db_dep),  # noqa: B008 - FastAPI dependency/body marker
-    ):
+    ) -> Any:
         from ..persistence.models import HarnessProbe
 
         if kind not in {"protocol", "full"}:
@@ -1084,7 +1152,7 @@ def create_app(
         d.commit()
         d.refresh(probe)
 
-        def execute_probe():
+        def execute_probe() -> None:
             session_factory = app.state.session_factory
             db2 = session_factory()
             row = db2.get(HarnessProbe, probe.id)
@@ -1121,7 +1189,7 @@ def create_app(
                             frame.get("payload") if isinstance(frame, dict) else None
                         )
                         value = (
-                            payload.get("result")
+                            cast(dict[str, Any], payload.get("result"))
                             if isinstance(payload, dict)
                             and isinstance(payload.get("result"), dict)
                             else {}
@@ -1159,15 +1227,18 @@ def create_app(
             "session_config": config,
         }
 
-    @router.get("/profiles")
-    def profiles(include_archived: bool = False, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.get("/profiles", response_model=None)
+    def profiles(include_archived: bool = False, d: Session = Depends(db_dep)) -> Any:  # noqa: B008 - FastAPI dependency/body marker
         q = d.query(McpProfile)
         if not include_archived:
             q = q.filter_by(archived=False)
         return [profile_json(p) for p in q.order_by(McpProfile.name).all()]
 
-    @router.post("/profiles", status_code=201)
-    def create_profile(body: ProfileCreate, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.post("/profiles", status_code=201, response_model=None)
+    def create_profile(
+        body: ProfileCreate,
+        d: Session = Depends(db_dep),  # noqa: B008
+    ) -> dict[str, Any]:
         p = McpProfile(name=body.name, description=body.description)
         d.add(p)
         d.flush()
@@ -1181,19 +1252,21 @@ def create_app(
         d.refresh(p)
         return profile_json(p, True)
 
-    @router.get("/profiles/{profile_id}")
-    def get_profile(profile_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.get("/profiles/{profile_id}", response_model=None)
+    def get_profile(profile_id: str, d: Session = Depends(db_dep)) -> dict[str, Any]:  # noqa: B008 - FastAPI dependency/body marker
         p = d.get(McpProfile, profile_id)
         if not p:
             raise HTTPException(404, "Profile not found")
         return profile_json(p, True)
 
-    @router.post("/profiles/{profile_id}/revisions", status_code=201)
+    @router.post(
+        "/profiles/{profile_id}/revisions", status_code=201, response_model=None
+    )
     def add_revision(
         profile_id: str,
         body: RevisionCreate,
         d: Session = Depends(db_dep),  # noqa: B008 - FastAPI dependency/body marker
-    ):
+    ) -> dict[str, Any]:
         p = d.get(McpProfile, profile_id)
         if not p:
             raise HTTPException(404, "Profile not found")
@@ -1209,8 +1282,8 @@ def create_app(
         d.commit()
         return profile_json(p, True)
 
-    @router.post("/profiles/{profile_id}/archive")
-    def archive(profile_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.post("/profiles/{profile_id}/archive", response_model=None)
+    def archive(profile_id: str, d: Session = Depends(db_dep)) -> dict[str, Any]:  # noqa: B008 - FastAPI dependency/body marker
         p = d.get(McpProfile, profile_id)
         if not p:
             raise HTTPException(404, "Profile not found")
@@ -1218,8 +1291,8 @@ def create_app(
         d.commit()
         return profile_json(p)
 
-    @router.post("/profiles/{profile_id}/restore")
-    def restore(profile_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.post("/profiles/{profile_id}/restore", response_model=None)
+    def restore(profile_id: str, d: Session = Depends(db_dep)) -> dict[str, Any]:  # noqa: B008 - FastAPI dependency/body marker
         p = d.get(McpProfile, profile_id)
         if not p:
             raise HTTPException(404, "Profile not found")
@@ -1227,7 +1300,7 @@ def create_app(
         d.commit()
         return profile_json(p)
 
-    def run_json(r, d=None):
+    def run_json(r: Run, d: Session | None = None) -> Any:
         out = RunOut.model_validate(r).model_dump(mode="json")
         out["final_output"] = r.claude_result
         out["effective_model"] = r.model
@@ -1298,10 +1371,11 @@ def create_app(
     @router.post(
         "/runs",
         status_code=202,
+        response_model=None,
         deprecated=True,
         description="Deprecated. Use POST /api/v2/executions.",
     )
-    def create_run(body: RunCreate, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    def create_run(body: RunCreate, d: Session = Depends(db_dep)) -> Any:  # noqa: B008 - FastAPI dependency/body marker
         if body.model not in settings.models_for(body.harness):
             raise HTTPException(422, "Model is not configured for this harness")
         if body.harness == "acp" and not body.harness_revision_id:
@@ -1315,7 +1389,7 @@ def create_app(
         rev = d.get(McpProfileRevision, body.profile_revision_id)
         if not rev:
             raise HTTPException(404, "Profile revision not found")
-        p = d.get(McpProfile, rev.profile_id)
+        p = cast(McpProfile, d.get(McpProfile, rev.profile_id))
         if p.archived:
             raise HTTPException(422, "Profile is archived")
         try:
@@ -1333,9 +1407,10 @@ def create_app(
         )
         if body.harness == "acp" and (not hrev or not hrev.trusted_unsandboxed):
             raise HTTPException(422, "Trusted unsandboxed acknowledgment is required")
-        if body.harness == "acp" and (not hrev.profile or hrev.profile.archived):
-            raise HTTPException(422, "Harness profile is archived")
         if body.harness == "acp":
+            hrev = cast(HarnessProfileRevision, hrev)
+            if not hrev.profile or hrev.profile.archived:
+                raise HTTPException(422, "Harness profile is archived")
             _validate_acp_dimensions(
                 d, hrev, mode_id=body.agent_mode_id, session_config=body.session_config
             )
@@ -1354,12 +1429,13 @@ def create_app(
         d.add(r)
         d.flush()
         if body.harness == "acp":
+            acp_revision = cast(HarnessProfileRevision, hrev)
             transport = transport_for_server(
                 rev.mcp_json.get("mcpServers", {}).get(body.enabled_server) or {}
             )
             verification = _verification_for(
                 d,
-                hrev,
+                acp_revision,
                 transport=transport,
                 mode_id=body.agent_mode_id,
                 session_config=body.session_config,
@@ -1367,8 +1443,8 @@ def create_app(
             d.add(
                 RunHarnessSnapshot(
                     run_id=r.id,
-                    revision_id=hrev.id,
-                    manifest=hrev.manifest,
+                    revision_id=acp_revision.id,
+                    manifest=acp_revision.manifest,
                     session_config=body.session_config,
                     agent_mode_id=body.agent_mode_id,
                     tool_mode=body.tool_mode,
@@ -1382,6 +1458,7 @@ def create_app(
 
     @router.get(
         "/runs",
+        response_model=None,
         deprecated=True,
         description=(
             "Deprecated for new executions; use GET /api/v2/executions; legacy v1 "
@@ -1399,7 +1476,7 @@ def create_app(
         limit: int = Query(100, ge=1, le=500),
         offset: int = Query(0, ge=0),
         d: Session = Depends(db_dep),  # noqa: B008 - FastAPI dependency/body marker
-    ):
+    ) -> Any:
         q = d.query(Run)
         if status_filter:
             q = q.filter_by(status=status_filter)
@@ -1453,17 +1530,18 @@ def create_app(
 
     @router.get(
         "/runs/{run_id}",
+        response_model=None,
         deprecated=True,
         description="Deprecated. Use GET /api/v2/executions/{execution_id}.",
     )
-    def get_run(run_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    def get_run(run_id: str, d: Session = Depends(db_dep)) -> Any:  # noqa: B008 - FastAPI dependency/body marker
         r = d.get(Run, run_id)
         if not r:
             raise HTTPException(404, "Run not found")
         return run_json(r, d)
 
-    @router.get("/runs/{run_id}/events")
-    def events(run_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.get("/runs/{run_id}/events", response_model=None)
+    def events(run_id: str, d: Session = Depends(db_dep)) -> Any:  # noqa: B008 - FastAPI dependency/body marker
         if not d.get(Run, run_id):
             raise HTTPException(404, "Run not found")
         value = [
@@ -1481,13 +1559,17 @@ def create_app(
         ]
         return _api_projection(value, path="$.events")
 
-    @router.post("/runs/{run_id}/clone", status_code=202)
-    def clone(run_id: str, body: RunClone | None = None, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    @router.post("/runs/{run_id}/clone", status_code=202, response_model=None)
+    def clone(
+        run_id: str,
+        body: RunClone | None = None,
+        d: Session = Depends(db_dep),  # noqa: B008
+    ) -> Any:
         old = d.get(Run, run_id)
         if not old:
             raise HTTPException(404, "Run not found")
         o = body or RunClone()
-        rev_id = o.profile_revision_id or old.profile_revision_id
+        rev_id: str | None = o.profile_revision_id or old.profile_revision_id
         if o.use_latest_revision:
             original_profile = d.get(McpProfileRevision, old.profile_revision_id)
             profile = (
@@ -1579,12 +1661,12 @@ def create_app(
             )
             if o.use_latest_harness_revision and selected_harness_revision:
                 previous = d.get(HarnessProfileRevision, selected_harness_revision)
-                profile = (
+                harness_profile = (
                     d.get(HarnessProfile, previous.profile_id) if previous else None
                 )
                 selected_harness_revision = (
-                    profile.current_revision_id
-                    if profile
+                    harness_profile.current_revision_id
+                    if harness_profile
                     else selected_harness_revision
                 )
             selected = (
@@ -1628,9 +1710,13 @@ def create_app(
                     else (old_snapshot.agent_mode_id if old_snapshot else None)
                 )
                 _validate_acp_dimensions(
-                    d, selected, mode_id=next_mode, session_config=next_config
+                    d,
+                    selected,
+                    mode_id=next_mode,
+                    session_config=next_config,
                 )
             if unchanged_snapshot:
+                old_snapshot = cast(RunHarnessSnapshot, old_snapshot)
                 # Keep the snapshot byte-for-byte at the API level.  In
                 # particular, verification provenance is historical evidence,
                 # not something to replace with a fresh trusted flag.
@@ -1682,10 +1768,11 @@ def create_app(
 
     @router.post(
         "/runs/{run_id}/cancel",
+        response_model=None,
         deprecated=True,
         description="Deprecated. Use POST /api/v2/executions/{execution_id}/cancel.",
     )
-    def cancel(run_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    def cancel(run_id: str, d: Session = Depends(db_dep)) -> Any:  # noqa: B008 - FastAPI dependency/body marker
         r = d.get(Run, run_id)
         if not r:
             raise HTTPException(404, "Run not found")
@@ -1696,10 +1783,11 @@ def create_app(
     @router.delete(
         "/runs/{run_id}",
         status_code=204,
+        response_model=None,
         deprecated=True,
         description="Deprecated. Use DELETE /api/v2/executions/{execution_id}.",
     )
-    def delete_run(run_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    def delete_run(run_id: str, d: Session = Depends(db_dep)) -> Response:  # noqa: B008 - FastAPI dependency/body marker
         r = d.get(Run, run_id)
         if not r:
             raise HTTPException(404, "Run not found")
@@ -1716,12 +1804,12 @@ def create_app(
         d.commit()
         return Response(status_code=204)
 
-    @router.delete("/runs", status_code=204)
+    @router.delete("/runs", status_code=204, response_model=None)
     def clear_runs(
         confirm: bool = False,
-        body: dict | None = Body(None),  # noqa: B008 - FastAPI dependency/body marker
+        body: dict[str, Any] | None = Body(None),  # noqa: B008 - FastAPI dependency/body marker
         d: Session = Depends(db_dep),  # noqa: B008 - FastAPI dependency/body marker
-    ):
+    ) -> Response:
         confirm = confirm or bool(body and body.get("confirm"))
         if not confirm:
             raise HTTPException(400, "Pass confirm=true to clear history")
@@ -1743,14 +1831,15 @@ def create_app(
 
     @router.get(
         "/runs/{run_id}/report",
+        response_model=None,
         deprecated=True,
         description="Deprecated. Use GET /api/v2/executions/{execution_id}/report.",
     )
-    def report(run_id: str, d: Session = Depends(db_dep)):  # noqa: B008 - FastAPI dependency/body marker
+    def report(run_id: str, d: Session = Depends(db_dep)) -> Any:  # noqa: B008 - FastAPI dependency/body marker
         r = d.get(Run, run_id)
         if not r:
             raise HTTPException(404, "Run not found")
-        rev = d.get(McpProfileRevision, r.profile_revision_id)
+        rev = cast(McpProfileRevision, d.get(McpProfileRevision, r.profile_revision_id))
         ev = (
             d.query(RunEvent).filter_by(run_id=run_id).order_by(RunEvent.sequence).all()
         )
@@ -1843,10 +1932,10 @@ def create_app(
 
 def create_viewer_app(
     settings: Settings | None = None,
-    engine_override=None,
-    session_factory=None,
-    v2_store=None,
-    v2_kit=None,
+    engine_override: Any = None,
+    session_factory: Any = None,
+    v2_store: Any = None,
+    v2_kit: Any = None,
 ) -> FastAPI:
     """Create the history viewer's read-only HTTP application.
 

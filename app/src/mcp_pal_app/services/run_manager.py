@@ -2,10 +2,14 @@
 
 import asyncio
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, cast
+
+from sqlalchemy.orm import Session
 
 from mcp_pal.harness.acp import AcpHarnessRunner
-from mcp_pal.harness.base import AcpRunSpec, RunSpec
+from mcp_pal.harness.base import AcpRunSpec, HarnessResult, RunSpec
 from mcp_pal.trace.acp import build_acp_trace
 from mcp_pal.trace.claude import build_claude_trace, transport_for_server
 from mcp_pal.trace.normalized import build_opencode_trace
@@ -25,9 +29,10 @@ from mcp_pal_app.persistence.models import (
     RunTrace,
     now,
 )
+from mcp_pal_app.settings import Settings
 
 
-def _observed_acp_metadata(result):
+def _observed_acp_metadata(result: Any) -> dict[str, Any]:
     """Extract observed ACP session metadata from captured frames.
 
     The ACP runner already records raw protocol frames; keeping this parser in
@@ -35,7 +40,7 @@ def _observed_acp_metadata(result):
     harnesses while retaining requested-vs-observed provenance.
     """
     frames = getattr(result, "event_records", None) or ()
-    observed = {
+    observed: dict[str, Any] = {
         "session_id": getattr(result, "session_id", None),
         "agent_identity": None,
         "mode_id": None,
@@ -51,7 +56,11 @@ def _observed_acp_metadata(result):
         payload = frame.get("payload") if isinstance(frame, dict) else None
         if not isinstance(payload, dict):
             continue
-        value = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        value = (
+            cast(dict[str, Any], payload.get("result"))
+            if isinstance(payload.get("result"), dict)
+            else {}
+        )
         if isinstance(value.get("agentInfo"), dict):
             observed["agent_identity"] = value["agentInfo"]
         if value.get("sessionId") or value.get("session_id"):
@@ -64,7 +73,9 @@ def _observed_acp_metadata(result):
             )
         method = payload.get("method")
         params = (
-            payload.get("params") if isinstance(payload.get("params"), dict) else {}
+            cast(dict[str, Any], payload.get("params"))
+            if isinstance(payload.get("params"), dict)
+            else {}
         )
         if method == "session/set_mode":
             observed["mode_id"] = params.get("modeId") or params.get("mode_id")
@@ -79,18 +90,27 @@ def _observed_acp_metadata(result):
     return observed
 
 
+def _snapshot_verification(db: Session, run_id: str) -> dict[str, Any]:
+    snapshot = db.get(RunHarnessSnapshot, run_id)
+    return snapshot.verification if snapshot is not None else {}
+
+
 class RunManager:
-    def __init__(self, session_factory, settings):
+    def __init__(
+        self, session_factory: Callable[[], Session], settings: Settings
+    ) -> None:
         self.session_factory, self.settings = session_factory, settings
         self.executor = ThreadPoolExecutor(max_workers=1)
-        self.runners = {}
-        self.done_events = {}
+        self.runners: dict[
+            str, AcpHarnessRunner | ClaudeCodeRunner | OpenCodeRunner
+        ] = {}
+        self.done_events: dict[str, threading.Event] = {}
         self.lock = threading.Lock()
 
-    def submit(self, run_id):
+    def submit(self, run_id: str) -> None:
         self.executor.submit(self.execute, run_id)
 
-    def runner_for(self, harness):
+    def runner_for(self, harness: str) -> ClaudeCodeRunner | OpenCodeRunner:
         if harness == "claude-code":
             return ClaudeCodeRunner(self.settings.claude_executable)
         if harness == "opencode":
@@ -103,7 +123,7 @@ class RunManager:
             raise ValueError("ACP runner requires a revision manifest")
         raise ValueError(f"Unsupported harness: {harness}")
 
-    def execute(self, run_id):
+    def execute(self, run_id: str) -> None:
         db = self.session_factory()
         run = db.get(Run, run_id)
         if not run or run.status != "queued":
@@ -111,13 +131,18 @@ class RunManager:
             return
         run.status, run.started_at = "running", now()
         db.commit()
-        rev = db.get(McpProfileRevision, run.profile_revision_id)
+        rev = cast(
+            McpProfileRevision, db.get(McpProfileRevision, run.profile_revision_id)
+        )
         cancel = asyncio.Event()
         snapshot = db.get(RunHarnessSnapshot, run.id) if run.harness == "acp" else None
-        runner = (
-            (AcpHarnessRunner(snapshot.manifest) if snapshot else None)
-            if run.harness == "acp"
-            else self.runner_for(run.harness)
+        runner = cast(
+            AcpHarnessRunner | ClaudeCodeRunner | OpenCodeRunner,
+            (
+                (AcpHarnessRunner(snapshot.manifest) if snapshot else None)
+                if run.harness == "acp"
+                else self.runner_for(run.harness)
+            ),
         )
         done = threading.Event()
         with self.lock:
@@ -125,7 +150,7 @@ class RunManager:
         config = RedactionConfig.from_environment()
         seq = db.query(RunEvent).filter_by(run_id=run_id).count()
 
-        async def callback(raw, event_type, payload):
+        async def callback(raw: Any, event_type: str, payload: dict[str, Any]) -> None:
             nonlocal seq
             seq += 1
             safe_payload = redact_for_persistence(
@@ -145,8 +170,9 @@ class RunManager:
             )
             db.commit()
 
-        result = None
+        result: HarnessResult | None = None
         try:
+            spec: AcpRunSpec | RunSpec
             if run.harness == "acp":
                 if not snapshot:
                     raise ValueError("ACP harness snapshot not found")
@@ -172,7 +198,18 @@ class RunManager:
                     run.max_turns,
                     run.max_budget_usd,
                 )
-            result = asyncio.run(runner.run(spec, callback, cancel))
+            if run.harness == "acp":
+                result = asyncio.run(
+                    cast(AcpHarnessRunner, runner).run(
+                        cast(AcpRunSpec, spec), callback, cancel
+                    )
+                )
+            else:
+                result = asyncio.run(
+                    cast(ClaudeCodeRunner | OpenCodeRunner, runner).run(
+                        cast(RunSpec, spec), callback, cancel
+                    )
+                )
             safe_result = redact_for_persistence(
                 result.final_text, config=config, path="$.run.final_output"
             )
@@ -242,11 +279,7 @@ class RunManager:
                     instrumented_transport=instrumented_transport,
                     status=result.status,
                     session_id=result.session_id,
-                    result_metadata=(
-                        db.get(RunHarnessSnapshot, run.id).verification
-                        if db.get(RunHarnessSnapshot, run.id)
-                        else {}
-                    ),
+                    result_metadata=_snapshot_verification(db, run.id),
                 )
                 calls = trace.get("mcp_calls") or []
                 # The ACP report describes the model's claimed calls, while
@@ -339,11 +372,7 @@ class RunManager:
                     or result.transport,
                     status=result.status,
                     session_id=result.session_id,
-                    result_metadata=(
-                        db.get(RunHarnessSnapshot, run.id).verification
-                        if db.get(RunHarnessSnapshot, run.id)
-                        else {}
-                    ),
+                    result_metadata=_snapshot_verification(db, run.id),
                 )
                 safe_trace = redact_for_persistence(
                     trace, config=config, path="$.trace"
@@ -451,11 +480,7 @@ class RunManager:
                     or result.transport,
                     status="failed",
                     session_id=result.session_id,
-                    result_metadata=(
-                        db.get(RunHarnessSnapshot, run.id).verification
-                        if db.get(RunHarnessSnapshot, run.id)
-                        else {}
-                    ),
+                    result_metadata=_snapshot_verification(db, run.id),
                 )
                 safe_trace = redact_for_persistence(
                     trace, config=config, path="$.trace"
@@ -474,10 +499,11 @@ class RunManager:
             with self.lock:
                 self.runners.pop(run_id, None)
                 event = self.done_events.pop(run_id, None)
-                event and event.set()
+                if event:
+                    event.set()
             db.close()
 
-    def cancel(self, run_id):
+    def cancel(self, run_id: str) -> None:
         with self.lock:
             r, done = self.runners.get(run_id), self.done_events.get(run_id)
             r and r.request_cancel()
@@ -490,7 +516,7 @@ class RunManager:
             db.commit()
         db.close()
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         with self.lock:
             for runner in self.runners.values():
                 if runner is not None:

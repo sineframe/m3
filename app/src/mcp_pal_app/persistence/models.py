@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -15,6 +16,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
+
+JsonObject = dict[str, Any]
 
 
 def uid() -> str:
@@ -48,7 +51,7 @@ class McpProfileRevision(Base):
         ForeignKey("mcp_profiles.id"), nullable=False, index=True
     )
     revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    mcp_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    mcp_json: Mapped[JsonObject] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     profile: Mapped[McpProfile] = relationship(back_populates="revisions")
     __table_args__ = (UniqueConstraint("profile_id", "revision_number"),)
@@ -103,8 +106,8 @@ class RunEvent(Base):
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     event_type: Mapped[str] = mapped_column(String(40), nullable=False)
-    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
-    raw_event: Mapped[dict | str] = mapped_column(JSON, nullable=False)
+    payload: Mapped[JsonObject] = mapped_column(JSON, nullable=False)
+    raw_event: Mapped[JsonObject | str] = mapped_column(JSON, nullable=False)
     __table_args__ = (UniqueConstraint("run_id", "sequence"),)
 
 
@@ -120,7 +123,7 @@ class RunTrace(Base):
         String(30), nullable=False, default="claude.v2"
     )
     capture_status: Mapped[str] = mapped_column(String(30), nullable=False)
-    trace: Mapped[dict] = mapped_column(JSON, nullable=False)
+    trace: Mapped[JsonObject] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -147,7 +150,7 @@ class HarnessProfileRevision(Base):
         ForeignKey("harness_profiles.id"), nullable=False, index=True
     )
     revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    manifest: Mapped[dict] = mapped_column(JSON, nullable=False)
+    manifest: Mapped[JsonObject] = mapped_column(JSON, nullable=False)
     trusted_unsandboxed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     profile: Mapped[HarnessProfile] = relationship(back_populates="revisions")
@@ -162,11 +165,11 @@ class HarnessProbe(Base):
     )
     kind: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
-    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    evidence: Mapped[JsonObject] = mapped_column(JSON, default=dict)
     transport: Mapped[str] = mapped_column(String(20), default="stdio")
     mode_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    session_config: Mapped[dict] = mapped_column(JSON, default=dict)
-    agent_identity: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    session_config: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+    agent_identity: Mapped[JsonObject | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -176,8 +179,8 @@ class RunHarnessSnapshot(Base):
         ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
     )
     revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    manifest: Mapped[dict] = mapped_column(JSON, nullable=False)
-    session_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    manifest: Mapped[JsonObject] = mapped_column(JSON, nullable=False)
+    session_config: Mapped[JsonObject] = mapped_column(JSON, default=dict)
     agent_mode_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     tool_mode: Mapped[str] = mapped_column(String(40), default="agent_default")
-    verification: Mapped[dict] = mapped_column(JSON, default=dict)
+    verification: Mapped[JsonObject] = mapped_column(JSON, default=dict)

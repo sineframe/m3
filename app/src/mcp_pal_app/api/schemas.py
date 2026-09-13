@@ -14,7 +14,7 @@ class ProfileCreate(BaseModel):
 
     @field_validator("mcp_json")
     @classmethod
-    def valid_json(cls, v):
+    def valid_json(cls, v: dict[str, Any]) -> dict[str, Any]:
         validate_mcp_config(v)
         return v
 
@@ -24,7 +24,7 @@ class RevisionCreate(BaseModel):
 
     @field_validator("mcp_json")
     @classmethod
-    def valid_json(cls, v):
+    def valid_json(cls, v: dict[str, Any]) -> dict[str, Any]:
         validate_mcp_config(v)
         return v
 
@@ -45,7 +45,7 @@ class RunCreate(BaseModel):
 
     @field_validator("prompt", "expected_output")
     @classmethod
-    def nonblank(cls, v):
+    def nonblank(cls, v: str) -> str:
         if not v.strip():
             raise ValueError("must be nonblank")
         return v

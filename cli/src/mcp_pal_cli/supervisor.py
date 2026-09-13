@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.error import URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -498,7 +498,7 @@ class _ServerChild:
 def _ready(url: str) -> bool:
     try:
         with urlopen(Request(url, method="GET"), timeout=0.5) as response:
-            return 200 <= response.status < 300
+            return 200 <= cast(int, response.status) < 300
     except (OSError, URLError):
         return False
 

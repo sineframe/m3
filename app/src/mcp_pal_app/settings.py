@@ -37,7 +37,9 @@ class Settings(BaseSettings):
             selected = Path(path)
             if not selected.is_file():
                 raise ValueError("environment file is unavailable")
-            return cls(_env_file=selected)
+            # pydantic-settings accepts this runtime-only constructor option,
+            # but its generated typing does not expose it.
+            return cls(_env_file=selected)  # type: ignore[call-arg]
         except (OSError, TypeError, ValueError):
             raise ValueError("could not load the selected environment file") from None
 
