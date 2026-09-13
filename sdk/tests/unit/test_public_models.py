@@ -6,12 +6,21 @@ import importlib
 import inspect
 import pickle
 from datetime import datetime, timezone
+from typing import get_type_hints
 
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 import mcp_pal
-from mcp_pal._exports import _INTERNAL_MODULES, PUBLIC_EXPORTS
+from mcp_pal._exports import (
+    _INTERNAL_MODULES,
+    PUBLIC_EXPORTS,
+    PUBLIC_MODULES,
+    ROOT_COMMON,
+    ROOT_EXPORTS,
+    ROOT_LIMIT,
+    ROOT_OTHER,
+)
 from mcp_pal.errors import InvalidTransitionError, ModelValidationError
 from mcp_pal.types import (
     ACPAgent,
@@ -112,7 +121,6 @@ def test_phase4_implementation_modules_are_explicitly_internal() -> None:
     assert _INTERNAL_MODULES == (
         "mcp_pal.events",
         "mcp_pal.execution_trace",
-        "mcp_pal.storage",
         "mcp_pal.trace.redaction",
     )
     assert not set(_INTERNAL_MODULES).intersection(PUBLIC_EXPORTS)
@@ -150,6 +158,123 @@ def test_root_exports_match_manifest_without_accidental_public_names() -> None:
         and not inspect.ismodule(value)
     }
     assert public_names == set(mcp_pal.__all__)
+
+
+def test_root_export_categories_preserve_the_compatibility_surface() -> None:
+    assert ROOT_EXPORTS == PUBLIC_EXPORTS["mcp_pal"]
+    assert len(ROOT_EXPORTS) <= ROOT_LIMIT
+    assert set(ROOT_COMMON) | set(ROOT_OTHER) == set(PUBLIC_EXPORTS["mcp_pal"])
+    assert set(ROOT_COMMON).isdisjoint(ROOT_OTHER)
+    duplicate_names = {name for name in ROOT_EXPORTS if ROOT_EXPORTS.count(name) > 1}
+    assert duplicate_names == set()
+    assert set(PUBLIC_MODULES).isdisjoint(_INTERNAL_MODULES)
+    assert set(PUBLIC_EXPORTS) - {"mcp_pal"} <= set(PUBLIC_MODULES)
+    assert "mcp_pal.storage" in PUBLIC_MODULES
+    assert set(_INTERNAL_MODULES) == {
+        "mcp_pal.events",
+        "mcp_pal.execution_trace",
+        "mcp_pal.trace.redaction",
+    }
+    assert not set(_INTERNAL_MODULES) & set(PUBLIC_MODULES)
+
+
+def test_public_reexports_keep_the_same_objects() -> None:
+    types_module = importlib.import_module("mcp_pal.types")
+
+    for name in types_module.__all__:
+        value = getattr(types_module, name)
+        if hasattr(mcp_pal, name):
+            assert getattr(mcp_pal, name) is value
+
+
+def test_direct_client_aliases_keep_the_same_objects() -> None:
+    direct_module = importlib.import_module("mcp_pal.direct_client")
+    sync_module = importlib.import_module("mcp_pal.sync_api")
+    async_module = importlib.import_module("mcp_pal.async_api")
+    for module in (sync_module, async_module):
+        assert module.Tool is module.ToolInfo
+        assert module.Resource is module.ResourceInfo
+        assert module.ResourceTemplate is module.TemplateInfo
+    assert async_module.Prompt is async_module.PromptInfo
+    assert async_module.InitializeResult is async_module.InitializationResult
+    assert async_module.ReadResourceResult is async_module.ResourceReadResult
+    for name in (
+        "CallToolResult",
+        "GetPromptResult",
+        "InitializationResult",
+        "ListPromptsResult",
+        "ListResourcesResult",
+        "ListResourceTemplatesResult",
+        "ListToolsResult",
+        "ResourceReadResult",
+        "ToolCallResult",
+    ):
+        assert getattr(sync_module, name) is getattr(direct_module, name)
+    for result_name, page_name in (
+        ("ListPromptsResult", "PromptPage"),
+        ("ListResourcesResult", "ResourcePage"),
+        ("ListResourcesResult", "ResourcesPage"),
+        ("ListResourceTemplatesResult", "ResourceTemplatePage"),
+        ("ListResourceTemplatesResult", "ResourceTemplatesPage"),
+        ("ListToolsResult", "ToolPage"),
+        ("ListToolsResult", "ToolsPage"),
+    ):
+        assert getattr(async_module, result_name) is getattr(async_module, page_name)
+
+
+def test_direct_results_stay_distinct_from_durable_results() -> None:
+    types_module = importlib.import_module("mcp_pal.types")
+    sync_module = importlib.import_module("mcp_pal.sync_api")
+    async_module = importlib.import_module("mcp_pal.async_api")
+    for name in (
+        "CallToolResult",
+        "GetPromptResult",
+        "ListPromptsResult",
+        "ListResourcesResult",
+        "ListToolsResult",
+    ):
+        assert getattr(types_module, name) is not getattr(sync_module, name)
+        assert getattr(types_module, name) is not getattr(async_module, name)
+    assert types_module.ReadResourceResult is not async_module.ReadResourceResult
+    assert (
+        types_module.ListTemplatesResult is not async_module.ListResourceTemplatesResult
+    )
+
+
+def test_public_model_metadata_stays_in_the_types_module() -> None:
+    types_module = importlib.import_module("mcp_pal.types")
+    for name in PUBLIC_EXPORTS["mcp_pal.types"]:
+        value = getattr(types_module, name)
+        if inspect.isclass(value):
+            assert value.__module__ == "mcp_pal.types"
+    assert types_module._FrozenMapping.__module__ == "mcp_pal.types"
+
+
+def test_public_model_annotations_resolve_through_the_types_facade() -> None:
+    types_module = importlib.import_module("mcp_pal.types")
+    for name in types_module.__all__:
+        value = getattr(types_module, name)
+        if inspect.isclass(value):
+            get_type_hints(value)
+
+
+def test_public_values_keep_stable_pickle_paths() -> None:
+    execution = ExecutionId("execution-pickle")
+    values = (
+        execution,
+        Ping(),
+        ExecutionState(execution_id=execution),
+        ArtifactRef(
+            artifact_id=ArtifactId("artifact-pickle"),
+            execution_id=execution,
+            name="trace.json",
+            size_bytes=1,
+            sha256="0" * 64,
+        ),
+        Capability(name="stdio", status=CapabilityStatus.READY),
+    )
+    for value in values:
+        assert pickle.loads(pickle.dumps(value)) == value
 
 
 def test_types_manifest_contains_only_public_model_or_alias_names() -> None:

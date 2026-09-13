@@ -1,5 +1,8 @@
 """Checked manifest of the public SDK surface."""
 
+# PUBLIC_EXPORTS retains the historical root list.  The private snapshot below
+# is captured after this manifest is declared so later categorization can
+# preserve every existing import name and its order.
 PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
     "mcp_pal": (
         "__version__",
@@ -559,6 +562,9 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# Keep the historical root list before adding observability names.
+_ROOT_BASE = PUBLIC_EXPORTS["mcp_pal"]
+
 # Phase 4 implementation modules deliberately remain internal.  They expose
 # direct ``__all__`` values for package-internal composition, but are not part
 # of the versioned SDK surface until their contracts are documented and
@@ -566,15 +572,12 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
 _INTERNAL_MODULES: tuple[str, ...] = (
     "mcp_pal.events",
     "mcp_pal.execution_trace",
-    "mcp_pal.storage",
     "mcp_pal.trace.redaction",
 )
 
 __all__ = ["PUBLIC_EXPORTS"]
 
-# R1 typed observability models are a separate value-model module but are
-# promoted through each supported SDK boundary.  Keep this list derived from
-# that module's explicit ``__all__`` so the manifest cannot drift.
+# Add observability names to the supported boundaries from its own __all__.
 from .observability import __all__ as _OBSERVABILITY_EXPORTS
 
 PUBLIC_EXPORTS["mcp_pal.observability"] = tuple(_OBSERVABILITY_EXPORTS)
@@ -583,3 +586,64 @@ for _boundary in ("mcp_pal", "mcp_pal.sync_api", "mcp_pal.async_api"):
         _OBSERVABILITY_EXPORTS
     )
 del _boundary
+
+# Keep a small common root tier and the remaining compatibility names explicit.
+ROOT_COMMON: tuple[str, ...] = (
+    "__version__",
+    "MCPTestKit",
+    "StdioServer",
+    "HTTPServer",
+    "SSEServer",
+    "InProcessServer",
+    "ServerBinding",
+    "ClaudeCode",
+    "OpenCode",
+    "Codex",
+    "Pi",
+    "ACPAgent",
+    "DirectSpec",
+    "AgentSpec",
+    "ExecutionState",
+    "ExecutionResult",
+    "ExecutionStatus",
+    "ExecutionOutcome",
+    "WorkspacePolicy",
+    "RestrictiveToolPolicy",
+    "FullToolPolicy",
+    "expect",
+    "check",
+    "MCPError",
+    "OperationCancelled",
+    "OperationTimeout",
+    "ProtocolError",
+    "TransportError",
+)
+
+_ROOT_ALL = _ROOT_BASE + tuple(_OBSERVABILITY_EXPORTS)
+ROOT_OTHER: tuple[str, ...] = tuple(
+    name for name in _ROOT_ALL if name not in ROOT_COMMON
+)
+ROOT_EXPORTS: tuple[str, ...] = _ROOT_ALL
+
+# Keep the current root size as a review limit.
+ROOT_LIMIT: int = 276
+
+PUBLIC_EXPORTS["mcp_pal"] = ROOT_EXPORTS
+
+# These modules provide focused, user-facing APIs.  Storage is listed by
+# module name only; its package keeps optional SQLite imports lazy.
+PUBLIC_MODULES: tuple[str, ...] = (
+    "mcp_pal.types",
+    "mcp_pal.errors",
+    "mcp_pal.sync_api",
+    "mcp_pal.async_api",
+    "mcp_pal.matchers",
+    "mcp_pal.testing",
+    "mcp_pal.evaluations",
+    "mcp_pal.snapshots",
+    "mcp_pal.policy",
+    "mcp_pal.matrix",
+    "mcp_pal.pytest_plugin",
+    "mcp_pal.observability",
+    "mcp_pal.storage",
+)

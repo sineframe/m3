@@ -50,6 +50,7 @@ from mcp_pal.types import (
     ErrorCode,
     ExecutionOutcome,
     ExecutionResult,
+    FrozenModel,
     FullToolPolicy,
     GetPrompt,
     GetPromptResult,
@@ -76,7 +77,6 @@ from mcp_pal.types import (
     UserMessage,
     WorkspaceKind,
     WorkspacePolicy,
-    _DirectResult,
 )
 
 pytestmark = [pytest.mark.e2e, pytest.mark.process_lifecycle]
@@ -575,7 +575,7 @@ def _run_sync_direct_operation(operation: DirectOperation) -> ExecutionResult:
 )
 async def test_sync_async_direct_operation_parity_roundtrips_json(
     operation: DirectOperation,
-    result_type: type[_DirectResult],
+    result_type: type[FrozenModel],
 ) -> None:
     sync_result = await asyncio.to_thread(_run_sync_direct_operation, operation)
     async_spec = DirectSpec(

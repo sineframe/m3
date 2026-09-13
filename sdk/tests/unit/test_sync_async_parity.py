@@ -29,7 +29,7 @@ def test_sync_async_parity_checker_passes() -> None:
     assert "parity check passed" in result.stdout
 
 
-def test_sync_async_parity_manifest_is_generator_normalize() -> None:
+def test_sync_async_parity_manifest_is_generator_normalized() -> None:
     result = _run(GENERATOR, "--check")
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -38,25 +38,30 @@ def test_new_one_sided_export_requires_an_explicit_manifest_decision(
     tmp_path: Path,
 ) -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    manifest["module_exports"]["async_pending"].append("NewAsyncResult")
+    manifest["exports"]["async_only"].append("NewAsyncResult")
     altered = tmp_path / "parity.json"
     altered.write_text(json.dumps(manifest), encoding="utf-8")
 
     result = _run(CHECKER, "--manifest", str(altered))
 
     assert result.returncode != 0
-    assert "missing pending async export" in result.stderr
+    assert "missing async-only export" in result.stderr
 
 
 def test_manifest_records_lifecycle_and_result_alias_mappings() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    direct_key = "mcp_pal.sync_api.DirectClient:mcp_pal.async_api.AsyncDirectClient"
-    mappings = {tuple(pair) for pair in manifest["owner_members"][direct_key]["paired"]}
-    assert ("aclose", "close") in mappings
-    assert ("call_tool", "call_tool") in mappings
+    direct = next(
+        owner for owner in manifest["owners"] if owner["sync"] == "DirectClient"
+    )
+    assert ["close", "aclose"] in direct["renamed"]
+    kit = next(owner for owner in manifest["owners"] if owner["sync"] == "MCPTestKit")
+    assert ["__enter__", "__aenter__"] in kit["renamed"]
+    assert ["__exit__", "__aexit__"] in kit["renamed"]
+    assert ["InitializationResult", "InitializeResult"] in manifest["exports"][
+        "aliases"
+    ]
+    assert ["PromptInfo", "Prompt"] in manifest["exports"]["aliases"]
     assert [
-        "mcp_pal.sync_api",
         "InitializationResult",
-        "mcp_pal.async_api",
         "InitializeResult",
-    ] in manifest["module_exports"]["paired"]
+    ] not in manifest["exports"]["renamed"]
