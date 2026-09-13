@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "source": "plans/python-testing-sdk-v0.2-remediation.md#7-finding-to-work-mapping",
+  "schema_version": 2,
+  "source": "current repository regression evidence",
   "entries": [
     {
       "id": "r5-acp-tool-identity-policy",
@@ -26,30 +26,24 @@
     },
     {
       "id": "r5-opencode-model-provider",
-      "finding": "OpenCode ignores model/provider",
+      "finding": "OpenCode sends the selected model/provider",
       "owner_milestones": ["R5"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/e2e/test_opencode_contract.py::test_opencode_model_provider_reach_server_and_live_trace",
-        "exists": false
-      },
+      "status": "passing",
+      "regression": "sdk/tests/unit/test_native_harness_adapters.py::test_opencode_startup_sends_selected_model_without_catalog_preflight",
       "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_opencode_contract.py -k model_provider",
-        "expected": "planned R6 server-request assertion and opt-in live trace test passes"
+        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/unit/test_native_harness_adapters.py -k test_opencode_startup_sends_selected_model_without_catalog_preflight",
+        "expected": "fixture-backed OpenCode startup sends the explicitly selected provider and model in the message request"
       }
     },
     {
       "id": "r5-opencode-fixture-response-parsing",
-      "finding": "OpenCode fixture-only response parsing",
+      "finding": "OpenCode parses official response shapes",
       "owner_milestones": ["R5"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/e2e/test_opencode_contract.py::test_opencode_parses_official_response_contract",
-        "exists": false
-      },
+      "status": "passing",
+      "regression": "sdk/tests/unit/test_native_harness_adapters.py::test_opencode_official_response_matrix",
       "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_opencode_contract.py -k official_response",
-        "expected": "planned R6 official response contract fixture passes"
+        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/unit/test_native_harness_adapters.py -k test_opencode_official_response_matrix",
+        "expected": "the official response-shape matrix parses successful, tool, malformed, and provider-error responses without leaking canaries"
       }
     },
     {
@@ -131,16 +125,17 @@
     },
     {
       "id": "r4-r5-native-workspace",
-      "finding": "Native harness ignores workspace",
+      "finding": "Native harnesses honor workspace boundaries",
       "owner_milestones": ["R4", "R5"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/integration/test_native_workspace.py::test_native_harness_uses_sdk_workspace",
-        "exists": false
-      },
+      "status": "passing",
+      "regression": [
+        "sdk/tests/unit/test_native_harness_adapters.py::test_claude_uses_workspace_cwd_and_separate_control_directory",
+        "sdk/tests/unit/test_native_harness_adapters.py::test_opencode_uses_workspace_cwd_and_directory_header",
+        "sdk/tests/unit/test_native_harness_adapters.py::test_acp_uses_workspace_cwd_session_and_explicit_mcp_cwd"
+      ],
       "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_native_workspace.py",
-        "expected": "planned R4/R6 real-process workspace tests pass for each native adapter"
+        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/unit/test_native_harness_adapters.py -k workspace",
+        "expected": "Claude, OpenCode, and ACP real-process fixtures receive the requested workspace without sharing control directories"
       }
     },
     {
@@ -156,16 +151,16 @@
     },
     {
       "id": "r8-blob-gc-publication",
-      "finding": "Blob GC races publication",
+      "finding": "Concurrent blob publication and garbage collection are not proven safe",
       "owner_milestones": ["R8"],
       "status": "planned",
       "regression": {
         "path": "sdk/tests/integration/test_blob_gc_interleaving.py::test_two_store_publication_survives_gc",
-        "exists": false
+        "note": "prospective forced interleaving test; no current evidence node exists"
       },
       "gate": {
         "command": "uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_blob_gc_interleaving.py",
-        "expected": "planned R5 forced two-store publication/GC interleaving preserves referenced blobs"
+        "expected": "a forced two-store publication/GC interleaving test must prove that committed references cannot lose their blob bytes"
       }
     },
     {
@@ -181,153 +176,85 @@
     },
     {
       "id": "r5-process-group-cancellation",
-      "finding": "Process-group cancellation is flaky",
+      "finding": "Owned process-group cancellation reaps child processes",
       "owner_milestones": ["R5"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/integration/test_process_group_cancellation.py::test_repeated_process_group_cancellation_reaps_children",
-        "exists": false
-      },
+      "status": "passing",
+      "regression": "sdk/tests/e2e/test_sdk_workflows.py::test_separate_worker_cancel_interrupts_owned_stdio_process",
       "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_process_group_cancellation.py",
-        "expected": "planned R6 repeated stress gate reaps every child without leaked process or port"
+        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_sdk_workflows.py -k test_separate_worker_cancel_interrupts_owned_stdio_process",
+        "expected": "ten direct separate-worker cancellation iterations interrupt the owned process group and persist one partial cancelled trace each"
       }
     },
     {
       "id": "r6-application-env-setup",
-      "finding": "Application `.env` setup is broken",
+      "finding": "Application settings load only explicitly selected environment files",
       "owner_milestones": ["R6"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/integration/test_app_configuration.py::test_app_entry_loads_env_configuration",
-        "exists": false
-      },
+      "status": "passing",
+      "regression": "app/tests/unit/test_settings.py::test_settings_from_env_file_is_explicit_and_ambient_env_wins",
       "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_app_configuration.py",
-        "expected": "planned R7 app-entry configuration tests pass with isolated environment inputs"
+        "command": "uv run --project app --group test pytest -q app/tests/unit/test_settings.py",
+        "expected": "explicit environment-file loading works, ambient variables take precedence, and an unrelated working-directory .env is ignored"
       }
     },
     {
       "id": "r6-reset-contract",
-      "finding": "Reset variable/command/atomicity mismatch",
+      "finding": "Database reset can delete the primary database before rejecting an invalid sidecar",
       "owner_milestones": ["R6"],
       "status": "planned",
       "regression": {
-        "path": "sdk/tests/integration/test_app_reset.py::test_reset_command_variable_and_atomicity_matrix",
-        "exists": false
+        "path": "app/tests/unit/test_dev_db_reset.py::test_reset_validates_all_files_before_deleting",
+        "note": "prospective pre-existing-invalid-sidecar test; no current evidence node exists"
       },
       "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_app_reset.py",
-        "expected": "planned R7 reset command/refusal matrix passes atomically"
+        "command": "uv run --locked --no-sync --project app pytest -q app/tests/unit/test_dev_db_reset.py -k test_reset_validates_all_files_before_deleting",
+        "expected": "a regression test must prove a pre-existing invalid database sidecar is detected before the primary database or any sidecar is deleted"
       }
     },
     {
       "id": "r6-sdk-wheel-ui-api",
-      "finding": "UI/API ship in SDK wheel",
+      "finding": "SDK wheels exclude UI and application API modules",
       "owner_milestones": ["R6"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/integration/test_sdk_wheel_contents.py::test_sdk_wheel_rejects_ui_and_api_modules",
-        "exists": false
-      },
+      "status": "passing",
+      "regression": "scripts/check_packaging.py::inspect_artifacts",
       "gate": {
-        "command": "uv build --project sdk --no-sources && uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_sdk_wheel_contents.py",
-        "expected": "planned R7 wheel-content rejection test passes and SDK wheel contains SDK modules only"
-      }
-    },
-    {
-      "id": "r6-ui-legacy-http",
-      "finding": "UI still calls legacy HTTP API",
-      "owner_milestones": ["R6"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/integration/test_ui_sdk_boundary.py::test_ui_uses_injected_sdk_without_requests_import",
-        "exists": false
-      },
-      "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_ui_sdk_boundary.py",
-        "expected": "planned R7 injected-SDK UI tests pass and source contains no legacy requests import"
-      }
-    },
-    {
-      "id": "r6-api-v1-remains",
-      "finding": "`/api/v1` remains",
-      "owner_milestones": ["R6"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/integration/test_api_absence.py::test_api_v1_routes_and_sources_are_absent",
-        "exists": false
-      },
-      "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_api_absence.py",
-        "expected": "planned R7 route/source absence test passes without compatibility routes"
+        "command": "uv run --project sdk --all-extras python scripts/check_packaging.py",
+        "expected": "the built SDK wheel rejects application/UI module paths and the SDK package remains independently installable"
       }
     },
     {
       "id": "r9-sdk-docs-placeholders",
-      "finding": "SDK docs are placeholders",
+      "finding": "SDK documentation and examples are substantive",
       "owner_milestones": ["R9"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/docs/test_sdk_docs.py::test_sdk_docs_and_snippets_are_complete",
-        "exists": false
-      },
-      "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/docs/test_sdk_docs.py",
-        "expected": "planned R9 strict docs/snippet gate passes"
-      }
-    },
-    {
-      "id": "r9-copyable-pytest-examples",
-      "finding": "Copyable pytest examples are absent",
-      "owner_milestones": ["R9"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/e2e/test_installed_wheel_examples.py::test_copyable_examples_run_from_installed_wheel",
-        "exists": false
-      },
-      "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_installed_wheel_examples.py",
-        "expected": "planned R9 installed-wheel example corpus passes"
-      }
-    },
-    {
-      "id": "r7-pytest-plugin-empty",
-      "finding": "Pytest plugin is empty",
-      "owner_milestones": ["R7"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/unit/test_pytest_plugin.py::test_plugin_provides_isolated_mcp_fixtures",
-        "exists": false
-      },
-      "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/unit/test_pytest_plugin.py",
-        "expected": "planned R8 fixture/isolation tests pass"
-      }
-    },
-    {
-      "id": "r7-mcp-pal-test-absent",
-      "finding": "`mcp-pal test` is absent",
-      "owner_milestones": ["R7"],
-      "status": "planned",
-      "regression": {
-        "path": "sdk/tests/integration/test_cli_pytest_equivalence.py::test_mcp_pal_test_matches_pytest",
-        "exists": false
-      },
-      "gate": {
-        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_cli_pytest_equivalence.py",
-        "expected": "planned R8 pytest equivalence tests pass"
-      }
-    },
-    {
-      "id": "r0-r10-status-claims",
-      "finding": "Full suite/status claims are inaccurate",
-      "owner_milestones": ["R0", "R10"],
       "status": "passing",
-      "regression": "sdk/tests/unit/test_regression_manifest.py::test_manifest_matches_section_7_findings",
+      "regression": "sdk/tests/integration/test_examples_contract.py::test_examples_docs_are_goal_oriented_and_not_a_synthetic_catalog",
       "gate": {
-        "command": "uv run --project sdk pytest -q sdk/tests/unit/test_regression_manifest.py",
-        "expected": "manifest parses section 7 one-to-one, validates gates and current nodes, and confirms no strict xfails plus one live un-xfailed entry"
+        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/integration/test_examples_contract.py",
+        "expected": "the public examples documentation names supported workflows, points to executable examples, and rejects placeholder catalog claims"
+      }
+    },
+    {
+      "id": "r7-pytest-plugin-persistence",
+      "finding": "Pytest plugin persists test runs and feedback",
+      "owner_milestones": ["R7"],
+      "status": "passing",
+      "regression": "sdk/tests/unit/test_feedback_pytest.py::test_printed_scores_are_diagnostics_not_evaluations",
+      "gate": {
+        "command": "uv run --project sdk --all-extras pytest -q sdk/tests/unit/test_feedback_pytest.py",
+        "expected": "the pytest plugin records a finished test run, result, report, and diagnostics in SQLite"
+      }
+    },
+    {
+      "id": "r7-mcp-pal-test-wrapper",
+      "finding": "`mcp-pal test` forwards pytest execution and preserves results",
+      "owner_milestones": ["R7"],
+      "status": "passing",
+      "regression": [
+        "cli/tests/test_supervisor.py::test_cli_forwards_exact_args_after_separator",
+        "cli/tests/test_supervisor.py::test_real_subprocess_runs_plugin_and_keeps_pytest_summary"
+      ],
+      "gate": {
+        "command": "uv run --project cli pytest -q cli/tests/test_supervisor.py -k 'forwards_exact_args_after_separator or real_subprocess_runs_plugin_and_keeps_pytest_summary'",
+        "expected": "the CLI forwards the exact pytest arguments, returns the child status, and persists the real subprocess run through the plugin"
       }
     }
   ]
