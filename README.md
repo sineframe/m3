@@ -1,107 +1,207 @@
 # MCP Pal
 
-MCP Pal helps developers test MCP servers and verify how coding agents use
-their tools. Tests are ordinary Python tests: run them directly with pytest or
-through the standalone CLI to record executions and inspect them in a local UI.
+Test MCP servers and the agents that use them.
 
-## Choose your entry point
+MCP Pal turns MCP interactions into ordinary, repeatable Python tests. Discover
+tools and schemas, exercise real calls, capture typed traces and evidence, and
+compare a new run with a saved baseline. The standalone CLI is the recommended
+starting point: it runs your existing pytest suite, records managed runs, and
+opens a local browser viewer when you need one.
 
-| If you want to… | Start here |
-|---|---|
-| Install the `mcp-pal` command, run tests, or open the local UI | [CLI guide](cli/README.md) |
-| Write Python tests against MCP servers or agent harnesses | [SDK guide](sdk/README.md) and [SDK quick start](sdk/docs/quick-start.md) |
-| Work on the internal FastAPI application and viewer services | [App guide](app/README.md) |
-| Teach a coding agent how to set up and use MCP Pal | [Agent skill](skills/testing-with-mcp-pal/SKILL.md) |
+MCP Pal is currently an alpha release.
 
-Most users should start with the CLI guide. SDK users who only need a library
-and pytest can use the SDK directly without installing the CLI or UI.
+[![CI](https://github.com/mcppal/mcp-pal/actions/workflows/ci.yml/badge.svg)](https://github.com/mcppal/mcp-pal/actions/workflows/ci.yml)
 
-Runs through the MCP Pal pytest plugin produce a deterministic JSON feedback
-bundle under `.mcp-pal/reports/<run-id>/`. A later `mcp-pal test
---baseline RUN_ID` run compares the observed interface and saved results for a
-coding agent. Test `print()` and logging output remain diagnostics rather than
-an inferred score.
+## What you can do
 
-## The three packages
+- Verify an MCP server's tools, schemas, responses, and error handling.
+- Test direct MCP clients as well as agent sessions and harnesses.
+- Exercise native Claude Code, OpenCode, Codex, and Pi harnesses, or connect
+  another agent through an ACP-compatible adapter.
+- Capture lifecycle events, tool calls, traces, artifacts, and evaluations.
+- Repeat trials across harnesses and inspect aggregate results.
+- Save executions to SQLite, produce deterministic feedback bundles, and
+  compare later runs with `--baseline`.
 
-This repository is a `uv` workspace with three Python distributions. They have
-different audiences and installation scopes:
+## Test the behavior that matters
 
-| Directory | Distribution | Role |
-|---|---|---|
-| [`sdk/`](sdk/README.md) | `mcp-pal` | Public Python SDK, pytest integration, harnesses, tracing, assertions, and storage interfaces. Installed in the project being tested. |
-| [`cli/`](cli/README.md) | `mcp-pal-cli` | Standalone machine-level tool that provides the `mcp-pal` command, launches pytest in the project environment, and serves the bundled production UI. |
-| [`app/`](app/README.md) | `mcp-pal-app` | Internal FastAPI application and viewer services used by the standalone product. Consumers do not install it directly. |
+Start with a deployed Streamable HTTP MCP endpoint, exercise it through an
+agent, and assert the captured tool evidence—not just the agent's final prose.
+The same `AgentSpec` flow works with the native Claude Code, OpenCode, and
+Codex adapters:
 
-The installation boundary matters. Adding `mcp-pal[pytest]` to a project
-installs the SDK, but it does not provide the `mcp-pal` command or UI. The
-standalone CLI is installed separately and keeps its own CLI, app runtime, and
-bundled UI outside the tested project. `mcp-pal setup` then prepares that
-project with the matching SDK, pytest plugin, and SQLite support.
+```python
+import os
 
-Detailed installation, version matching, command behavior, and troubleshooting
-belong in the [CLI guide](cli/README.md). SDK APIs and test patterns belong in
-the [SDK documentation](sdk/docs/README.md).
+from mcp_pal import MCPTestKit, expect
+from mcp_pal.types import (
+    AgentSpec,
+    ClaudeCode,
+    Codex,
+    HTTPServer,
+    NativeToolPolicy,
+    OpenCode,
+    RestrictiveToolPolicy,
+    ServerBinding,
+    SecretReference,
+    TrustLevel,
+)
 
-## Give your coding agent the MCP Pal skill
+server = HTTPServer(
+    name="orders",
+    url="https://your-server.example/mcp",
+    trust=TrustLevel.PUBLIC,
+)
+harness = ClaudeCode(
+    model=os.environ["MCP_PAL_CLAUDE_MODEL"],
+    credential_references={
+        "ANTHROPIC_API_KEY": SecretReference(
+            source="environment", name="ANTHROPIC_API_KEY"
+        )
+    },
+)
+# harness = Codex(
+#     model=os.environ["MCP_PAL_CODEX_MODEL"],
+#     credential_references={
+#         "OPENAI_API_KEY": SecretReference(source="environment", name="OPENAI_API_KEY")
+#     },
+# )
+# harness = OpenCode(
+#     model=os.environ["MCP_PAL_OPENCODE_MODEL"],
+#     credential_references={
+#         "OPENCODE_API_KEY": SecretReference(
+#             source="environment", name="OPENCODE_API_KEY"
+#         )
+#     },
+# )
+# Claude Code requires its native policy shape; Codex and OpenCode use the
+# portable allowlist below.
+tool_policy = (
+    NativeToolPolicy(
+        harness="claude-code",
+        policy={"mode": "mcp_only", "server": "orders"},
+        nonportable_reason="Claude Code native MCP policy",
+    )
+    if isinstance(harness, ClaudeCode)
+    else RestrictiveToolPolicy(allowed_tools=("orders:create_order",))
+)
+spec = AgentSpec(
+    harness=harness,
+    servers=(ServerBinding(server=server, alias="orders"),),
+    tool_policy=tool_policy,
+)
 
-The repository ships the
-[`testing-with-mcp-pal`](skills/testing-with-mcp-pal/SKILL.md) skill. It teaches
-agents how to install and configure the separate CLI, choose between CLI and
-direct pytest execution, define SDK tests, and assert captured tool evidence.
+with MCPTestKit(env={}) as kit:
+    with kit.agent_session(spec) as session:
+        turn = session.send("Use the create_order tool for this request")
 
-For Codex, ask the agent to install it from this repository:
-
-> Use `$skill-installer` to install the skill from GitHub repository
-> `mcppal/mcp-pal`, path `skills/testing-with-mcp-pal`.
-
-The repository is private, so the agent needs access through existing Git
-credentials or `GITHUB_TOKEN`/`GH_TOKEN`. The installed skill becomes available
-on the next agent turn. Then point the agent at the skill explicitly:
-
-> Use `$testing-with-mcp-pal` to write and run tests for this MCP server.
-
-For another agent system that supports skills, install the
-[`skills/testing-with-mcp-pal/`](skills/testing-with-mcp-pal/) directory using
-that system's skill installation mechanism. If it does not support installed
-skills, point the agent directly to
-[`SKILL.md`](skills/testing-with-mcp-pal/SKILL.md) and its `references/`
-directory.
-
-## Repository development
-
-Install [`uv`](https://docs.astral.sh/uv/) and
-[`just`](https://just.systems/), then use the workspace recipes:
-
-```bash
-just setup
-just test
-just check
+expect(session.result).to_have_tool_call(
+    "create_order", turn=turn, server="orders", status="success"
+)
 ```
 
-`just check` runs Ruff and the compile/import checks. Use `just lint` for Ruff
-alone, `just format` to format Python files in place, and `just format-check` to
-check whether files are already formatted without modifying them. Run
-`just --list` for focused tests, local API/UI commands, harness probes, and
-packaging checks. Live provider tests and the
-browser gate are opt-in because they require external credentials and may incur
-provider costs. Application configuration is documented in the
-[App guide](app/README.md).
+Run the test with the recommended [MCP Pal CLI](cli/README.md) to retain a
+feedback report and inspect the run in the local UI, then compare a later run
+with a baseline. The [SDK HTTP and harness guides](sdk/docs/http.md) cover
+credentials, policies, matrices, and complete configurations. Pi and
+ACP-compatible adapters are supported through the same testing model.
 
-Type checking keeps the stable public boundary and the complete shipped SDK
-strict. `just typecheck-sdk-usage` checks
-the public usage examples through pytest. `just typecheck-sdk-public` runs
-strict mypy directly on these public modules:
-`types.py`, `errors.py`, `policy.py`, `interaction_handlers.py`, and
-`configuration.py`. `just typecheck-sdk` runs strict mypy over all of
-`sdk/src/mcp_pal` as the complete CI-required target; it is intentionally not
-baselined or weakened.
+## Bring your own harness
 
-`just setup` and `just install-hooks` install the repository's pre-push hook. The
-hook runs Ruff linting, formatting checks, and the complete non-live SDK,
-example, application, and CLI test suites before each push. In an
-urgent situation, `git push --no-verify` bypasses the hook, but doing so is not
-recommended.
+Built-in harnesses are convenient, but you can bring any agent implementing
+Agent Client Protocol (ACP) v1. Provide an `ACPAgent` manifest describing the
+executable, arguments, protocol version, and environment-variable references:
 
-Maintainers preparing a tagged build should follow the
-[release guide](docs/releasing.md).
+```json
+{
+  "schema_version": "mcp-pal.harness.v1",
+  "protocol": "acp",
+  "protocol_version": 1,
+  "command": "your-agent",
+  "args": ["--acp"],
+  "env": {"MY_AGENT_API_KEY": "${MY_AGENT_API_KEY}"}
+}
+```
+
+Bind the MCP server using a transport the agent advertises and supports;
+Streamable HTTP, stdio, and SSE are available where applicable. MCP Pal
+validates the manifest, can check local readiness and probe the configured
+process, then records the agent turn and captured MCP tool evidence using the
+same assertions as native harnesses.
+
+See the [BYO ACP guide](sdk/docs/quick-start.md#bring-your-own-harness-with-acp)
+and [complete ACP example](sdk/docs/examples.md#4-bring-your-own-harness-with-acp)
+for the manifest shape, probes, and executable test.
+
+## Ask your coding agent to get started
+
+If you use a coding agent, MCP Pal includes a reusable
+[`testing-with-mcp-pal`](skills/testing-with-mcp-pal/SKILL.md) skill. Ask your
+preferred agent to install the skill from this repository and use it to create
+tests for your server or agent workflow. This repository is private, so the
+agent needs authenticated Git access or `GITHUB_TOKEN`/`GH_TOKEN`. If it cannot
+access GitHub, use a local checkout and point it to
+`skills/testing-with-mcp-pal/SKILL.md` and that directory's `references/` files.
+
+The skill helps an agent inspect the real MCP contract, choose direct server
+tests or agent-behavior tests, assert captured tool evidence, and iterate using
+feedback reports and baselines. The recommended workflow is to use the CLI to
+run the tests and inspect persistent history or the local UI.
+
+```text
+Install and use the MCP Pal skill from
+https://github.com/mcppal/mcp-pal/tree/main/skills/testing-with-mcp-pal
+(authenticated GitHub access or GITHUB_TOKEN/GH_TOKEN may be required).
+If this repository is available only as a local checkout, read
+skills/testing-with-mcp-pal/SKILL.md and its references/ directory instead.
+Read its testing patterns, then add and run the smallest tests that verify
+<the behavior I care about> against <my MCP server or agent workflow>.
+Keep direct server checks separate from agent tool-selection checks, and use
+the MCP Pal CLI to run the tests and inspect the resulting report or UI.
+```
+
+This is one onboarding workflow; MCP Pal works with any agent and any ordinary
+Python and pytest workflow.
+
+## Start with the CLI
+
+The standalone `mcp-pal` command runs your existing pytest suite in its project
+environment and includes the local browser viewer. No Node.js or frontend
+checkout is needed in the project under test. The CLI guide covers installation,
+project setup, environment checks, test selection, persistent results, UI use,
+and troubleshooting.
+
+Start with the [CLI installation guide](cli/README.md#install), then follow the
+[project setup and testing guide](cli/README.md#set-up-a-project).
+
+CLI-managed runs use `.mcp-pal/executions.sqlite` by default and write an
+agent-readable report to `.mcp-pal/reports/<run-id>/feedback.json`. The CLI
+guide explains how to select pytest arguments, compare a run with a baseline,
+and open the bundled viewer.
+
+## Use the SDK with direct pytest
+
+The SDK is the library layer for Python tests. When managed history and the
+viewer are not needed, users may run SDK tests directly with pytest. The
+[SDK README](sdk/README.md) and [quick start](sdk/docs/quick-start.md) cover
+installation, direct clients, agent sessions, typed assertions, async tests,
+and explicit persistence. The CLI itself also runs pytest in the project's
+environment; these are two ways to run the same test style.
+
+## Choose your next step
+
+| I want to… | Read |
+| --- | --- |
+| Install and run the standalone command | [CLI guide](cli/README.md) |
+| Write direct Python or pytest tests | [SDK quick start](sdk/docs/quick-start.md) |
+| Understand traces, storage, and evaluations | [SDK concepts](sdk/docs/concepts.md) |
+| Score repeated agent trials | [Evaluation guide](sdk/docs/evaluations.md) |
+| Test a deployed Streamable HTTP server | [HTTP guide](sdk/docs/http.md) |
+| Give a coding agent MCP Pal instructions | [Testing skill](skills/testing-with-mcp-pal/SKILL.md) |
+| Contribute to the implementation | [Architecture](docs/architecture.md) |
+
+## Development
+
+Contributors should start with the [architecture guide](docs/architecture.md),
+then use the package-specific guides for SDK, app, and CLI workflows. See the
+[release guide](docs/releasing.md) when preparing a release.
