@@ -9,10 +9,12 @@ import json
 import os
 import re
 import socket
+import threading
 from collections.abc import AsyncIterator
 from typing import Any
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import SplitResult, urljoin, urlsplit, urlunsplit
 
+import anyio
 import httpx
 import uvicorn
 from starlette.applications import Starlette
@@ -24,6 +26,7 @@ from mcp_pal.trace.capture import CaptureWriter, parse_json_payload
 from mcp_pal.trace.redaction import is_sensitive_key
 from mcp_pal.types import ToolPolicy
 
+from ._http_pinning import ValidatingHTTPXTransport, canonical_hostname
 from .tool_policy import ProxyToolPolicy
 
 HOP_BY_HOP = {
@@ -39,6 +42,7 @@ HOP_BY_HOP = {
     "content-length",
 }
 _ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_UPSTREAM_CONNECT_TIMEOUT = 30.0
 
 
 class UnsafeUpstreamError(ValueError):
@@ -63,19 +67,16 @@ def _expand_configured(value: str, secrets: set[str]) -> str:
     return _expand_env(value)
 
 
-def validate_public_upstream(url: str) -> None:
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise UnsafeUpstreamError("MCP upstream must be an HTTP(S) URL")
+def _resolve_public_host(hostname: str, port: int) -> tuple[str, ...]:
     try:
         addresses = socket.getaddrinfo(
-            parsed.hostname,
-            parsed.port or (443 if parsed.scheme == "https" else 80),
+            hostname,
+            port,
             type=socket.SOCK_STREAM,
         )
     except socket.gaierror as exc:
         raise UnsafeUpstreamError(
-            f"MCP upstream host could not be resolved: {parsed.hostname}"
+            f"MCP upstream host could not be resolved: {hostname}"
         ) from exc
     for address in addresses:
         ip = ipaddress.ip_address(address[4][0])
@@ -83,6 +84,24 @@ def validate_public_upstream(url: str) -> None:
             raise UnsafeUpstreamError(
                 f"MCP upstream resolves to a blocked non-public address: {ip}"
             )
+    return tuple(dict.fromkeys(str(address[4][0]) for address in addresses))
+
+
+def _parse_upstream(url: str) -> tuple[SplitResult, int]:
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise UnsafeUpstreamError("MCP upstream must be an HTTP(S) URL")
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except (TypeError, ValueError):
+        raise UnsafeUpstreamError("MCP upstream must be an HTTP(S) URL") from None
+    return parsed, port
+
+
+def validate_public_upstream(url: str) -> tuple[str, ...]:
+    parsed, port = _parse_upstream(url)
+    assert parsed.hostname is not None
+    return _resolve_public_host(parsed.hostname, port)
 
 
 class McpHttpProxy:
@@ -143,9 +162,52 @@ class McpHttpProxy:
         self.initial_query = upstream.query
 
     async def start(self) -> str:
-        if not self.allow_private:
-            await asyncio.to_thread(validate_public_upstream, self.upstream_url)
-        self.client = httpx.AsyncClient(follow_redirects=False, timeout=None)
+        upstream, upstream_port = _parse_upstream(self.upstream_url)
+        assert upstream.hostname is not None
+        if self.allow_private:
+            # This explicit opt-out is used for loopback fixtures and deliberately
+            # does not apply the public-upstream SSRF boundary.
+            self.client = httpx.AsyncClient(follow_redirects=False, timeout=None)
+        else:
+            try:
+                with anyio.fail_after(_UPSTREAM_CONNECT_TIMEOUT):
+                    initial_addresses = await anyio.to_thread.run_sync(
+                        _resolve_public_host,
+                        upstream.hostname,
+                        upstream_port,
+                        abandon_on_cancel=True,
+                    )
+            except TimeoutError:
+                raise UnsafeUpstreamError(
+                    "MCP upstream host resolution timed out"
+                ) from None
+            initial_available = True
+            initial_lock = threading.Lock()
+            upstream_hostname = canonical_hostname(upstream.hostname)
+
+            def resolve_upstream(hostname: str, requested_port: int) -> tuple[str, ...]:
+                nonlocal initial_available
+                with initial_lock:
+                    if (
+                        initial_available
+                        and canonical_hostname(hostname) == upstream_hostname
+                        and requested_port == upstream_port
+                    ):
+                        initial_available = False
+                        return initial_addresses
+                return _resolve_public_host(hostname, requested_port)
+
+            self.client = httpx.AsyncClient(
+                follow_redirects=False,
+                timeout=httpx.Timeout(None, connect=_UPSTREAM_CONNECT_TIMEOUT),
+                trust_env=False,
+                transport=ValidatingHTTPXTransport(
+                    scheme=upstream.scheme,
+                    hostname=upstream.hostname,
+                    port=upstream_port,
+                    resolve_addresses=resolve_upstream,
+                ),
+            )
         app = Starlette(
             routes=[
                 Route(
@@ -164,8 +226,8 @@ class McpHttpProxy:
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.bind(("127.0.0.1", 0))
         self.socket.listen(128)
-        port = self.socket.getsockname()[1]
-        self.proxy_origin = f"http://127.0.0.1:{port}"
+        proxy_port = self.socket.getsockname()[1]
+        self.proxy_origin = f"http://127.0.0.1:{proxy_port}"
         config = uvicorn.Config(
             app, log_level="error", lifespan="off", access_log=False
         )
@@ -264,11 +326,6 @@ class McpHttpProxy:
         assert self.client is not None
         body = await request.body()
         target = self._target_url(request)
-        if not self.allow_private:
-            try:
-                await asyncio.to_thread(validate_public_upstream, target)
-            except UnsafeUpstreamError:
-                return Response("MCP upstream destination is blocked", status_code=502)
         # Capture every MCP exchange, including GET-based SSE handshakes.
         # Header values are intentionally not persisted; CaptureWriter redacts
         # the URL query and credential-shaped metadata fields.

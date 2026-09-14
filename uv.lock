@@ -641,8 +641,8 @@ name = "httpcore2"
 version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11", marker = "python_full_version < '3.11' or sys_platform != 'emscripten'" },
-    { name = "truststore", marker = "python_full_version < '3.11' or sys_platform != 'emscripten'" },
+    { name = "h11" },
+    { name = "truststore" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/be/ad/f4f0e57345f1870f3e8cb624e058d7eca6e5a27d33bcc3311d9b618734cd/httpcore2-2.12.0.tar.gz", hash = "sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648", size = 67548, upload-time = "2026-08-18T13:22:08.211Z" }
 wheels = [
@@ -1145,8 +1145,12 @@ version = "0.2.0a3"
 source = { editable = "sdk" }
 dependencies = [
     { name = "agent-client-protocol" },
+    { name = "anyio" },
+    { name = "httpcore" },
+    { name = "httpcore2" },
     { name = "httpx" },
     { name = "httpx2" },
+    { name = "idna" },
     { name = "jsonschema" },
     { name = "mcp" },
     { name = "pydantic" },
@@ -1194,11 +1198,15 @@ typecheck = [
 [package.metadata]
 requires-dist = [
     { name = "agent-client-protocol", specifier = "==0.12.1" },
+    { name = "anyio", specifier = ">=4.5,<5" },
+    { name = "httpcore", specifier = ">=1,<2" },
+    { name = "httpcore2", specifier = ">=2.5,<3" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27,<1" },
     { name = "httpx2", specifier = ">=2.5,<3" },
     { name = "hypothesis", marker = "extra == 'all'", specifier = ">=6.100,<7" },
     { name = "hypothesis", marker = "extra == 'property'", specifier = ">=6.100,<7" },
+    { name = "idna", specifier = ">=3,<4" },
     { name = "jsonschema", specifier = ">=4.20,<5" },
     { name = "mcp", specifier = ">=2,<3" },
     { name = "mkdocs-material", marker = "extra == 'all'", specifier = ">=9.5,<10" },

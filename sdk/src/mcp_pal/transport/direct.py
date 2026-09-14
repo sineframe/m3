@@ -12,6 +12,7 @@ import asyncio
 import ipaddress
 import os
 import socket
+import threading
 import time
 from collections.abc import Callable, Mapping
 from contextlib import AsyncExitStack
@@ -20,6 +21,7 @@ from types import MappingProxyType, TracebackType
 from typing import Any, Literal, Protocol, TypeAlias, cast
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
+import anyio
 import httpx2
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -33,6 +35,7 @@ from mcp.shared._httpx_utils import (
 from ..direct_trace import DirectTraceBridge
 from ..trace.redaction import is_sensitive_key
 from ..types import HTTPServer, SecretReference, SSEServer, TrustLevel
+from ._http_pinning import ValidatingHTTPX2Transport, canonical_hostname
 
 TransportName: TypeAlias = Literal["streamable_http", "sse"]
 HostResolver: TypeAlias = Callable[[str, int], tuple[str, ...]]
@@ -42,6 +45,11 @@ def _safe_mcp_http_client(
     headers: dict[str, str] | None = None,
     timeout: httpx2.Timeout | None = None,
     auth: httpx2.Auth | None = None,
+    *,
+    validated_origin: tuple[str, str, int] | None = None,
+    resolve_addresses: HostResolver | None = None,
+    allow_public_auth_origins: bool = False,
+    first_connect_deadline: float | None = None,
 ) -> httpx2.AsyncClient:
     """Create an MCP client that never follows an untrusted redirect.
 
@@ -53,11 +61,25 @@ def _safe_mcp_http_client(
     effective_timeout = timeout or httpx2.Timeout(
         MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT
     )
+    transport: httpx2.AsyncBaseTransport = (
+        ValidatingHTTPX2Transport(
+            scheme=validated_origin[0],
+            hostname=validated_origin[1],
+            port=validated_origin[2],
+            resolve_addresses=resolve_addresses,
+            allow_public_auth_origins=allow_public_auth_origins,
+            first_connect_deadline=first_connect_deadline,
+        )
+        if validated_origin is not None and resolve_addresses is not None
+        else httpx2.AsyncHTTPTransport(trust_env=True)
+    )
     return httpx2.AsyncClient(
         headers=headers,
         timeout=effective_timeout,
         auth=auth,
         follow_redirects=False,
+        transport=transport,
+        trust_env=False,
     )
 
 
@@ -183,7 +205,7 @@ def _default_host_resolver(host: str, port: int) -> tuple[str, ...]:
         records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except (OSError, ValueError):
         raise EndpointTrustError("endpoint hostname could not be resolved") from None
-    addresses = tuple(sorted({str(item[4][0]) for item in records}))
+    addresses = tuple(dict.fromkeys(str(item[4][0]) for item in records))
     if not addresses:
         raise EndpointTrustError("endpoint hostname could not be resolved")
     return addresses
@@ -194,14 +216,7 @@ def _is_private_or_local(address: str) -> bool:
         parsed = ipaddress.ip_address(address)
     except ValueError:
         return True
-    return bool(
-        parsed.is_private
-        or parsed.is_loopback
-        or parsed.is_link_local
-        or parsed.is_multicast
-        or parsed.is_reserved
-        or parsed.is_unspecified
-    )
+    return not parsed.is_global
 
 
 def _is_credential_query_name(name: str) -> bool:
@@ -231,21 +246,12 @@ def _is_credential_query_name(name: str) -> bool:
     )
 
 
-def validate_endpoint_trust(
+def _endpoint_trust_details(
     server: HTTPServer | SSEServer,
     *,
-    for_agent: bool = False,
-    resolve_host: HostResolver = _default_host_resolver,
-) -> str:
-    """Validate a remote endpoint before opening an outbound connection.
-
-    Private/local destinations require an explicit trusted classification.  A
-    public endpoint is still resolved before connecting to prevent a hostname
-    that currently points at a private address from bypassing the policy.
-    ``for_agent`` is explicit so callers cannot accidentally expose an
-    untrusted direct endpoint to an agent runtime.
-    """
-
+    for_agent: bool,
+    resolve_host: HostResolver,
+) -> tuple[str, str, str, int, tuple[str, ...]]:
     try:
         parsed = urlsplit(server.url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -264,6 +270,8 @@ def validate_endpoint_trust(
         raise
     except BaseException:
         raise EndpointTrustError("endpoint hostname could not be resolved") from None
+    if not addresses:
+        raise EndpointTrustError("endpoint hostname could not be resolved")
     private = any(_is_private_or_local(address) for address in addresses)
     trusted = server.trust in {TrustLevel.TRUSTED_PRIVATE, TrustLevel.SDK_LOOPBACK}
     if private and not trusted:
@@ -272,7 +280,91 @@ def validate_endpoint_trust(
         raise EndpointTrustError()
     if for_agent and private and server.trust is not TrustLevel.TRUSTED_PRIVATE:
         raise EndpointTrustError()
-    return _safe_endpoint(server.url)
+    return _safe_endpoint(server.url), parsed.scheme, parsed.hostname, port, addresses
+
+
+def validate_endpoint_trust(
+    server: HTTPServer | SSEServer,
+    *,
+    for_agent: bool = False,
+    resolve_host: HostResolver = _default_host_resolver,
+) -> str:
+    """Validate a remote endpoint before opening an outbound connection.
+
+    Private/local destinations require an explicit trusted classification.  A
+    public endpoint is still resolved before connecting to prevent a hostname
+    that currently points at a private address from bypassing the policy.
+    ``for_agent`` is explicit so callers cannot accidentally expose an
+    untrusted direct endpoint to an agent runtime.
+    """
+
+    safe_endpoint, _scheme, _hostname, _port, _addresses = _endpoint_trust_details(
+        server, for_agent=for_agent, resolve_host=resolve_host
+    )
+    return safe_endpoint
+
+
+def _validated_transport_policy(
+    server: HTTPServer | SSEServer,
+    *,
+    for_agent: bool,
+    resolve_host: HostResolver,
+) -> tuple[tuple[str, str, int], HostResolver]:
+    """Validate the primary origin and build a per-connection DNS policy."""
+
+    try:
+        parsed = urlsplit(server.url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise EndpointTrustError("endpoint URL is invalid")
+        scheme = parsed.scheme
+        hostname = parsed.hostname
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except (TypeError, ValueError):
+        raise EndpointTrustError("endpoint URL is invalid") from None
+    if any(
+        _is_credential_query_name(name)
+        for name, _value in parse_qsl(parsed.query, keep_blank_values=True)
+    ):
+        raise EndpointTrustError("endpoint URL contains credential query parameters")
+    if for_agent and server.trust is TrustLevel.UNTRUSTED:
+        raise EndpointTrustError()
+    primary_hostname = canonical_hostname(hostname)
+
+    def guarded_resolver(request_host: str, request_port: int) -> tuple[str, ...]:
+        try:
+            addresses = resolve_host(request_host, request_port)
+        except EndpointTrustError:
+            raise
+        except BaseException:
+            raise EndpointTrustError(
+                "endpoint hostname could not be resolved"
+            ) from None
+        if not addresses:
+            raise EndpointTrustError("endpoint hostname could not be resolved")
+
+        is_primary = (
+            canonical_hostname(request_host) == primary_hostname
+            and request_port == port
+        )
+        private = any(_is_private_or_local(address) for address in addresses)
+        if is_primary:
+            trusted = server.trust in {
+                TrustLevel.TRUSTED_PRIVATE,
+                TrustLevel.SDK_LOOPBACK,
+            }
+            if private and not trusted:
+                raise EndpointTrustError()
+            if for_agent and server.trust is TrustLevel.UNTRUSTED:
+                raise EndpointTrustError()
+            if for_agent and private and server.trust is not TrustLevel.TRUSTED_PRIVATE:
+                raise EndpointTrustError()
+        elif private:
+            # Authentication metadata and token endpoints may be cross-origin,
+            # but they never inherit the resource server's private trust grant.
+            raise EndpointTrustError()
+        return addresses
+
+    return (scheme, hostname, port), guarded_resolver
 
 
 def _header_value(
@@ -469,11 +561,31 @@ class _RemoteConnection:
             secret_observer=self._secret_observer,
         )
 
-    def _http_client(self, headers: dict[str, str]) -> httpx2.AsyncClient:
+    def _http_client(
+        self,
+        headers: dict[str, str],
+        validated_origin: tuple[str, str, int] | None = None,
+        resolve_addresses: HostResolver | None = None,
+        first_connect_deadline: float | None = None,
+    ) -> httpx2.AsyncClient:
         if self._http_client_factory is not None:
             return self._http_client_factory(headers)
+        if validated_origin is None or resolve_addresses is None:
+            validated_origin, resolve_addresses = _validated_transport_policy(
+                self.server,
+                for_agent=self._for_agent,
+                resolve_host=self._resolve_host,
+            )
         timeout = httpx2.Timeout(self._timeout, read=self._read_timeout)
-        return _safe_mcp_http_client(headers=headers, timeout=timeout, auth=self._auth)
+        return _safe_mcp_http_client(
+            headers=headers,
+            timeout=timeout,
+            auth=self._auth,
+            validated_origin=validated_origin,
+            resolve_addresses=resolve_addresses,
+            allow_public_auth_origins=self._auth is not None,
+            first_connect_deadline=first_connect_deadline,
+        )
 
     def capture_session_metadata(self) -> None:
         """Capture safe initialization metadata after an external initializer."""
@@ -519,13 +631,46 @@ class _RemoteConnection:
         self._state = "connecting"
         self._event("connect_started")
         try:
-            validate_endpoint_trust(
-                self.server, for_agent=self._for_agent, resolve_host=self._resolve_host
+            connect_deadline = time.monotonic() + self._timeout
+            validated_origin, resolve_addresses = _validated_transport_policy(
+                self.server,
+                for_agent=self._for_agent,
+                resolve_host=self._resolve_host,
             )
+            _scheme, hostname, port = validated_origin
+            with anyio.fail_after(self._timeout):
+                initial_addresses = await anyio.to_thread.run_sync(
+                    resolve_addresses,
+                    hostname,
+                    port,
+                    abandon_on_cancel=True,
+                )
+            initial_available = True
+            initial_lock = threading.Lock()
+
+            def connection_resolver(host: str, requested_port: int) -> tuple[str, ...]:
+                nonlocal initial_available
+                with initial_lock:
+                    if (
+                        initial_available
+                        and canonical_hostname(host) == canonical_hostname(hostname)
+                        and requested_port == port
+                    ):
+                        initial_available = False
+                        return initial_addresses
+                return resolve_addresses(host, requested_port)
+
             headers = self._resolved_headers()
+            if connect_deadline <= time.monotonic():
+                raise TimeoutError
             streams: Any
             if self._transport == "streamable_http":
-                client = self._http_client(headers)
+                client = self._http_client(
+                    headers,
+                    validated_origin,
+                    connection_resolver,
+                    connect_deadline,
+                )
                 await self._stack.enter_async_context(client)
                 streams = await self._stack.enter_async_context(
                     streamable_http_client(self.server.url, http_client=client)
@@ -533,7 +678,17 @@ class _RemoteConnection:
             else:
                 factory = self._http_client_factory
                 if factory is None:
-                    factory = _safe_mcp_http_client
+                    factory = lambda headers=None, timeout=None, auth=None: (
+                        _safe_mcp_http_client(
+                            headers=headers,
+                            timeout=timeout,
+                            auth=auth,
+                            validated_origin=validated_origin,
+                            resolve_addresses=connection_resolver,
+                            allow_public_auth_origins=auth is not None,
+                            first_connect_deadline=connect_deadline,
+                        )
+                    )
                 streams = await self._stack.enter_async_context(
                     sse_client(
                         self.server.url,
