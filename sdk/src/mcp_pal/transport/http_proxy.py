@@ -43,6 +43,7 @@ HOP_BY_HOP = {
 }
 _ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _UPSTREAM_CONNECT_TIMEOUT = 30.0
+_PROXY_START_TIMEOUT = 5.0
 
 
 class UnsafeUpstreamError(ValueError):
@@ -233,12 +234,18 @@ class McpHttpProxy:
         )
         self.server = uvicorn.Server(config)
         self.task = asyncio.create_task(self.server.serve(sockets=[self.socket]))
-        for _ in range(100):
-            if self.server.started:
-                break
-            if self.task.done():
-                await self.task
-            await asyncio.sleep(0.01)
+        with anyio.move_on_after(_PROXY_START_TIMEOUT) as startup_scope:
+            while not self.server.started:
+                if self.task.done():
+                    await self.task
+                    raise RuntimeError("MCP HTTP proxy exited before startup completed")
+                await asyncio.sleep(0.01)
+        if startup_scope.cancel_called:
+            await self.stop()
+            raise TimeoutError(
+                "MCP HTTP proxy failed to start within "
+                f"{_PROXY_START_TIMEOUT:g} seconds"
+            ) from None
         query = f"?{self.initial_query}" if self.initial_query else ""
         return f"{self.proxy_origin}{self.initial_path}{query}"
 
