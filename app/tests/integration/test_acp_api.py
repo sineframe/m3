@@ -4,7 +4,7 @@ import sys
 import time
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+from _local_client import TestClient
 
 from mcp_pal_app.api import create_app
 from mcp_pal_app.settings import Settings

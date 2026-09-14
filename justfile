@@ -19,7 +19,7 @@ prepare-release VERSION:
     uv run --no-project --with packaging python scripts/prepare_release.py {{VERSION}}
 
 api:
-    uv run --project app uvicorn mcp_pal_app.main:app --reload
+    uv run --project app uvicorn mcp_pal_app.main:app --host 127.0.0.1 --reload
 
 test:
     PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests

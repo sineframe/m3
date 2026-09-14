@@ -4,8 +4,8 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from _local_client import TestClient
 from acp_fixture import probe_agent as _probe_agent
-from fastapi.testclient import TestClient
 
 from mcp_pal_app.api import create_app
 from mcp_pal_app.settings import Settings

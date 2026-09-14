@@ -37,6 +37,7 @@ from mcp_pal.harness.manifest import (
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.trace.claude import transport_for_server
 from mcp_pal.trace.redaction import RedactionConfig, redact_for_api
+from mcp_pal_app.local_security import install_local_security
 from mcp_pal_app.persistence.database import Base, make_engine
 from mcp_pal_app.persistence.models import (
     HarnessProbe,
@@ -498,7 +499,7 @@ def profile_json(p: McpProfile, include_json: bool = False) -> dict[str, Any]:
     return out
 
 
-def create_app(
+def _create_app(
     settings: Settings | None = None,
     engine_override: Any = None,
     session_factory: Any = None,
@@ -1930,6 +1931,29 @@ def create_app(
     return app
 
 
+def create_app(
+    settings: Settings | None = None,
+    engine_override: Any = None,
+    session_factory: Any = None,
+    v2_store: Any = None,
+    v2_kit: Any = None,
+    *,
+    v2_embedded_worker: bool = True,
+) -> FastAPI:
+    """Create the supported local API with its mandatory security boundary."""
+
+    application = _create_app(
+        settings,
+        engine_override=engine_override,
+        session_factory=session_factory,
+        v2_store=v2_store,
+        v2_kit=v2_kit,
+        v2_embedded_worker=v2_embedded_worker,
+    )
+    install_local_security(application)
+    return application
+
+
 def create_viewer_app(
     settings: Settings | None = None,
     engine_override: Any = None,
@@ -1943,7 +1967,7 @@ def create_viewer_app(
     but they do not mutate server state and remain available to the viewer.
     """
 
-    application = create_app(
+    application = _create_app(
         settings,
         engine_override=engine_override,
         session_factory=session_factory,
@@ -1970,4 +1994,5 @@ def create_viewer_app(
         return await call_next(request)
 
     application.state.viewer_read_only = True
+    install_local_security(application)
     return application

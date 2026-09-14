@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.testclient import TestClient
+from _local_client import TestClient
 
 from mcp_pal import (
     CallTool,

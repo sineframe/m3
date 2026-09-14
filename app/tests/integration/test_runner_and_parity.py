@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import ClassVar
 
-from fastapi.testclient import TestClient
+from _local_client import TestClient
 
 import mcp_pal_app.harness_opencode_cli as opencode_module
 from mcp_pal.harness.base import HarnessResult, RunSpec

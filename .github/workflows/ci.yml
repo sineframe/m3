@@ -207,6 +207,11 @@ jobs:
       - name: Import CLI
         run: uv run --locked --no-sync --project cli python -c "import mcp_pal_cli; print(mcp_pal_cli.__name__)"
 
+      - name: Run live local-ASGI security gate
+        run: >-
+          uv run --isolated --python 3.10 --locked --project cli --group test
+          pytest -q -c cli/pyproject.toml cli/tests/test_web_security_live.py
+
       - name: Render and parse PowerShell installer
         shell: pwsh
         run: |

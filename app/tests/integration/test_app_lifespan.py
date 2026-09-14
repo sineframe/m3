@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+from _local_client import TestClient
 from sqlalchemy.orm import sessionmaker
 
 from mcp_pal import MCPTestKit

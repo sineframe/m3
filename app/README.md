@@ -43,8 +43,14 @@ The application does not implicitly load a working-directory `.env`; the
 explicitly, run:
 
 ```bash
-uv run --env-file .env --project app uvicorn mcp_pal_app.main:app --reload
+uv run --env-file .env --project app uvicorn mcp_pal_app.main:app --host 127.0.0.1 --reload
 ```
+
+The exported ASGI application is an unauthenticated local service. It rejects
+non-loopback peers and Host headers as well as cross-origin browser mutations,
+and must remain bound to loopback. A non-loopback deployment requires a separate
+authenticated gateway and is not a supported replacement for the local security
+boundary.
 
 ## Test the app
 

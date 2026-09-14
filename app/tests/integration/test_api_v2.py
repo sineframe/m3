@@ -4,7 +4,7 @@ import sys
 import time
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+from _local_client import TestClient
 from pydantic import TypeAdapter
 
 from mcp_pal import (

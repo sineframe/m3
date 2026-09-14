@@ -6,22 +6,14 @@ import argparse
 import os
 import re
 import sys
-from collections.abc import Awaitable, Callable
 from importlib import resources
 from pathlib import Path
 from typing import NoReturn, cast
-from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.datastructures import Headers
-from starlette.responses import PlainTextResponse, Response
-from starlette.types import ASGIApp, Receive, Scope, Send
-
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-_DEFAULT_PORTS = {"http": 80, "https": 443}
+from starlette.responses import Response
 
 
 def _fail(message: str) -> NoReturn:
@@ -63,111 +55,6 @@ def ui_directory(value: str | os.PathLike[str] | None = None) -> Path:
     return root
 
 
-def _origin_parts(value: str) -> tuple[str, str, int] | None:
-    """Parse an HTTP origin and normalize its default port.
-
-    Browser ``Origin`` headers contain only scheme, authority, and an
-    optional port.  Rejecting the other URL components avoids accidentally
-    treating a malformed value as a same-origin request.
-    """
-
-    try:
-        parsed = urlsplit(value)
-        if parsed.scheme not in _DEFAULT_PORTS or not parsed.netloc:
-            return None
-        if parsed.username is not None or parsed.password is not None:
-            return None
-        if parsed.path or parsed.query or parsed.fragment:
-            return None
-        hostname = parsed.hostname
-        if not hostname:
-            return None
-        port = parsed.port or _DEFAULT_PORTS[parsed.scheme]
-    except ValueError:
-        return None
-    return parsed.scheme, hostname.rstrip(".").lower(), port
-
-
-def _request_origin(request: Request) -> tuple[str, str, int] | None:
-    try:
-        scheme = request.url.scheme.lower()
-        hostname = request.url.hostname
-        if scheme not in _DEFAULT_PORTS or not hostname:
-            return None
-        return (
-            scheme,
-            hostname.rstrip(".").lower(),
-            request.url.port or _DEFAULT_PORTS[scheme],
-        )
-    except ValueError:
-        return None
-
-
-async def _same_origin_mutations(
-    request: Request, call_next: Callable[[Request], Awaitable[Response]]
-) -> Response:
-    """Reject browser cross-site writes to the local application.
-
-    The CLI app is intentionally local and has no login/session flow.  This
-    lightweight browser boundary protects state-changing endpoints while
-    preserving non-browser API clients that omit ``Origin``.
-    """
-
-    if request.method in _MUTATING_METHODS:
-        fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
-        if fetch_site == "cross-site":
-            return JSONResponse({"detail": "Forbidden"}, status_code=403)
-        origin = request.headers.get("origin")
-        if origin is not None:
-            supplied = _origin_parts(origin.strip())
-            expected = _request_origin(request)
-            if supplied is None or expected is None or supplied != expected:
-                return JSONResponse({"detail": "Forbidden"}, status_code=403)
-    return await call_next(request)
-
-
-def _host_name(value: str) -> str | None:
-    """Extract a hostname from a Host header, including bracketed IPv6."""
-
-    if value.startswith("["):
-        closing = value.find("]")
-        if closing < 0:
-            return None
-        hostname = value[1:closing]
-        suffix = value[closing + 1 :]
-        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
-            return None
-    elif value.count(":") == 0:
-        hostname = value
-    elif value.count(":") == 1:
-        hostname, port = value.rsplit(":", 1)
-        if not hostname or not port.isdigit():
-            return None
-    else:
-        # An IPv6 Host header must use brackets around the address.
-        return None
-    return hostname.rstrip(".").lower() if hostname else None
-
-
-class _LoopbackHostMiddleware:
-    """Allow only local Host values without TrustedHost's IPv6 limitation."""
-
-    def __init__(self, app: ASGIApp) -> None:
-        self.app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] not in {"http", "websocket"}:
-            await self.app(scope, receive, send)
-            return
-        host = _host_name(Headers(scope=scope).get("host", ""))
-        if host not in _LOOPBACK_HOSTS:
-            await PlainTextResponse("Invalid host header", status_code=400)(
-                scope, receive, send
-            )
-            return
-        await self.app(scope, receive, send)
-
-
 def create_web_app(
     database: str | os.PathLike[str], *, ui_dir: str | os.PathLike[str] | None = None
 ) -> FastAPI:
@@ -184,8 +71,6 @@ def create_web_app(
             v2_embedded_worker=True,
         ),
     )
-    application.add_middleware(_LoopbackHostMiddleware)
-    application.middleware("http")(_same_origin_mutations)
     application.mount(
         "/assets", StaticFiles(directory=str(root / "assets")), name="assets"
     )

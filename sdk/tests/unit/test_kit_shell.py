@@ -113,8 +113,6 @@ def test_async_probe_namespace_is_async_only_and_matches_sync_surface() -> None:
     assert isinstance(kit.probes, AsyncProbes)
     assert "AsyncProbes" in PUBLIC_EXPORTS["mcp_pal.async_api"]
     assert "Probes" not in PUBLIC_EXPORTS["mcp_pal.async_api"]
-    assert "Probes" not in PUBLIC_EXPORTS["mcp_pal.async_api"]
-    assert "Probes" not in PUBLIC_EXPORTS["mcp_pal.async_api"]
 
 
 def test_async_closed_namespace_raises_stable_error() -> None:

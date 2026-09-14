@@ -38,7 +38,11 @@ def test_full_app_uses_same_database_and_serves_spa_without_api_fallback(
     assert application.state.settings.database_path == str(database.absolute())
     assert application.state.v2_store_owned is True
     assert application.state.v2_kit._embedded_worker is True
-    with TestClient(application, base_url="http://127.0.0.1") as client:
+    with TestClient(
+        application,
+        base_url="http://127.0.0.1",
+        client=("127.0.0.1", 50000),
+    ) as client:
         executions = client.get("/api/v2/executions")
         assert executions.status_code == 200
         assert executions.headers["content-type"].startswith("application/json")
@@ -54,7 +58,11 @@ def test_full_app_uses_same_database_and_serves_spa_without_api_fallback(
 
 def test_local_host_and_origin_protection(tmp_path: Path) -> None:
     application = create_web_app(tmp_path / "shared.sqlite", ui_dir=_FIXTURE_UI)
-    with TestClient(application, base_url="http://127.0.0.1:8123") as client:
+    with TestClient(
+        application,
+        base_url="http://127.0.0.1:8123",
+        client=("127.0.0.1", 50000),
+    ) as client:
         assert client.get("/api/v2/executions").status_code == 200
         assert (
             client.get(
@@ -112,7 +120,11 @@ def test_local_host_and_origin_protection(tmp_path: Path) -> None:
 
 def test_same_origin_default_ports_are_normalized(tmp_path: Path) -> None:
     application = create_web_app(tmp_path / "shared.sqlite", ui_dir=_FIXTURE_UI)
-    with TestClient(application, base_url="http://localhost") as client:
+    with TestClient(
+        application,
+        base_url="http://localhost",
+        client=("127.0.0.1", 50000),
+    ) as client:
         response = client.delete(
             "/api/v2/executions/missing", headers={"origin": "http://localhost:80"}
         )

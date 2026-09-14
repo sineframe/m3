@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+from _local_client import TestClient
 
 from mcp_pal_app.api.app import create_app, create_viewer_app
 from mcp_pal_app.settings import Settings
@@ -12,6 +12,12 @@ def test_viewer_allows_history_reads_and_semantic_evidence_post(tmp_path: Path) 
     assert application.state.v2_kit._embedded_worker is False
     with TestClient(application) as client:
         assert client.get("/api/v2/executions").status_code == 200
+        assert (
+            client.get(
+                "/api/v2/executions", headers={"host": "attacker.example"}
+            ).status_code
+            == 400
+        )
         # A structurally invalid evidence request reaches normal validation;
         # it is not rejected by the read-only boundary.
         assert client.post("/api/v2/evidence/read", json={}).status_code == 422
