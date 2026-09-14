@@ -707,6 +707,31 @@ def test_opencode_harness_limits_are_not_reported_as_enforced(tmp_path):
     assert run["max_turns"] is None and run["max_budget_usd"] is None
 
 
+def test_health_only_checks_storage_without_cli_probes(tmp_path):
+    marker = tmp_path / "cli-probed"
+    script = fake(
+        tmp_path / "probe.py",
+        f"from pathlib import Path; Path({str(marker)!r}).touch()",
+    )
+    settings = Settings(
+        database_path=str(tmp_path / "health.db"),
+        anthropic_api_key="key",
+        claude_executable=script,
+        opencode_api_key="key",
+        opencode_executable=script,
+    )
+
+    health = TestClient(create_app(settings)).get("/api/v1/health")
+
+    assert health.status_code == 200
+    assert health.json() == {
+        "status": "connected",
+        "ready": True,
+        "checks": {"database": True},
+    }
+    assert not marker.exists()
+
+
 def test_opencode_readiness_accepts_non_zen_saved_provider_auth(tmp_path):
     script = fake(
         tmp_path / "opencode-auth.py",
@@ -723,8 +748,11 @@ if '--help' in sys.argv: print('run --format --model --thinking --pure'); raise 
         opencode_executable=script,
         opencode_model_ids=["openrouter/model"],
     )
-    health = TestClient(create_app(settings)).get("/api/v1/health").json()
-    assert health["harnesses"]["opencode"]["ready"]
+    capabilities = TestClient(create_app(settings)).get("/api/v1/capabilities").json()
+    opencode = next(
+        item for item in capabilities["harnesses"] if item["harness"] == "opencode"
+    )
+    assert opencode["ready"]
 
 
 def test_opencode_go_saved_auth_is_provider_aware(tmp_path):
@@ -742,8 +770,11 @@ if '--help' in sys.argv: print('run --format --model --thinking --pure'); raise 
         opencode_executable=script,
         opencode_model_ids=["opencode-go/model"],
     )
-    health = TestClient(create_app(settings)).get("/api/v1/health").json()
-    assert health["harnesses"]["opencode"]["ready"]
+    capabilities = TestClient(create_app(settings)).get("/api/v1/capabilities").json()
+    opencode = next(
+        item for item in capabilities["harnesses"] if item["harness"] == "opencode"
+    )
+    assert opencode["ready"]
 
 
 def test_hanging_opencode_export_is_killed_and_reaped(tmp_path):
@@ -807,7 +838,7 @@ print(json.dumps({'type':'step_finish','sessionID':'s','part':{'type':'step-fini
     assert next(x for x in capabilities["harnesses"] if x["harness"] == "opencode")[
         "models"
     ] == ["open/model"]
-    assert client.get("/api/v1/health").json()["harnesses"]["opencode"]["ready"]
+    assert client.get("/api/v1/health").json()["ready"]
     profile = client.post(
         "/api/v1/profiles",
         json={"name": "x", "mcp_json": {"mcpServers": {"draw": {"command": "x"}}}},

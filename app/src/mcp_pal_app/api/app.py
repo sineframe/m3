@@ -590,58 +590,10 @@ def _create_app(
             db_ok = False
         finally:
             d.close()
-        claude_flags, claude_missing, claude_executable = _probe(
-            settings.claude_executable, REQUIRED_CLI_FLAGS
-        )
-        opencode_flags, opencode_missing, opencode_executable = _probe(
-            settings.opencode_executable, REQUIRED_OPENCODE_FLAGS, ("run",)
-        )
-        providers = settings.opencode_providers()
-        opencode_auth = any(
-            _opencode_provider_env(provider, settings) for provider in providers
-        ) or (
-            opencode_executable
-            and _saved_opencode_auth(settings.opencode_executable, providers)
-        )
-        harnesses = {
-            "claude-code": {
-                "ready": bool(
-                    db_ok
-                    and settings.anthropic_api_key
-                    and claude_executable
-                    and claude_flags
-                ),
-                "api_key": bool(settings.anthropic_api_key),
-                "executable": claude_executable,
-                "required_cli_flags": {"ok": claude_flags, "missing": claude_missing},
-            },
-            "opencode": {
-                "ready": bool(
-                    db_ok and opencode_auth and opencode_executable and opencode_flags
-                ),
-                "api_key_or_saved_auth": bool(opencode_auth),
-                "providers": providers,
-                "executable": opencode_executable,
-                "required_cli_flags": {
-                    "ok": opencode_flags,
-                    "missing": opencode_missing,
-                },
-            },
-        }
-        checks = {
-            "api_key": bool(settings.anthropic_api_key),
-            "database": db_ok,
-            "claude_executable": claude_executable,
-            "required_cli_flags": {"ok": claude_flags, "missing": claude_missing},
-            "harnesses": harnesses,
-        }
-        ready = db_ok and any(value["ready"] for value in harnesses.values())
         return {
             "status": "connected" if db_ok else "degraded",
-            "ready": ready,
-            "run_ready": ready,
-            "checks": checks,
-            "harnesses": harnesses,
+            "ready": db_ok,
+            "checks": {"database": db_ok},
         }
 
     @router.get("/capabilities", response_model=None)
