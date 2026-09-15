@@ -33,7 +33,9 @@ def _service(
 def test_real_shaped_protocol_output_is_projected_into_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def raw_protocol(_manifest: dict[str, object]) -> dict[str, object]:
+    async def raw_protocol(
+        _manifest: dict[str, object], _timeout_seconds: float = 30.0
+    ) -> dict[str, object]:
         return {
             "status": "verified",
             "agent_info": {"name": "fixture", "version": "1"},
@@ -72,7 +74,9 @@ def test_real_shaped_protocol_output_is_projected_into_evidence(
 def test_protocol_wire_frame_fallback_recovers_snake_case_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def raw_protocol(_manifest: dict[str, object]) -> dict[str, object]:
+    async def raw_protocol(
+        _manifest: dict[str, object], _timeout_seconds: float = 30.0
+    ) -> dict[str, object]:
         return {
             "status": "verified",
             "frames": [
@@ -122,7 +126,9 @@ def test_protocol_wire_frame_fallback_recovers_snake_case_metadata(
 def test_oversized_protocol_frames_keep_typed_modes_options_and_readiness(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def raw_protocol(_manifest: dict[str, object]) -> dict[str, object]:
+    async def raw_protocol(
+        _manifest: dict[str, object], _timeout_seconds: float = 30.0
+    ) -> dict[str, object]:
         return {
             "status": "verified",
             "agent_info": {"name": "fixture", "version": "1"},
@@ -215,6 +221,51 @@ def test_full_probe_requires_protocol_and_applies_defaults(tmp_path: Path) -> No
     result = asyncio.run(service.run(full))
     assert result.status is ACPProbeStatus.VERIFIED and calls[0].agent_mode_id == "safe"
     assert calls[0].session_config == {"quality": "high"}
+    store.close()
+
+
+def test_manifest_dispatch_preserves_protocol_deadline_and_passes_full_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    protocol_calls: list[tuple[dict[str, object], tuple[object, ...]]] = []
+    full_calls: list[tuple[dict[str, object], dict[str, object]]] = []
+
+    async def fake_protocol(
+        manifest: dict[str, object], *args: object
+    ) -> dict[str, object]:
+        protocol_calls.append((manifest, args))
+        return {"status": "verified"}
+
+    async def fake_full(
+        manifest: dict[str, object], **kwargs: object
+    ) -> dict[str, object]:
+        full_calls.append((manifest, kwargs))
+        return {"status": "verified"}
+
+    monkeypatch.setattr(
+        "mcp_pal_app.services.acp_probe_service.protocol_probe", fake_protocol
+    )
+    monkeypatch.setattr("mcp_pal_app.services.acp_probe_service.full_probe", fake_full)
+    store = SQLiteExecutionStore(tmp_path / "dispatch.sqlite")
+    profile = store.create_harness_profile(
+        "agent", {"manifest": {"command": "echo"}, "trusted_unsandboxed": True}
+    )
+    revision = store.resolve_revision(profile.id)
+    service = ACPProbes(store)
+    protocol_request = ACPProbeRequest(
+        profile_id=profile.id,
+        revision_id=str(revision.id.root),
+        probe_type=ACPProbeKind.PROTOCOL,
+        timeout_seconds=60,
+    )
+    asyncio.run(service._run_current_manifest(protocol_request))
+    assert protocol_calls and protocol_calls[0][1] == ()
+
+    full_request = protocol_request.model_copy(
+        update={"probe_type": ACPProbeKind.FULL, "timeout_seconds": 77}
+    )
+    asyncio.run(service._run_current_manifest(full_request))
+    assert full_calls and full_calls[0][1]["timeout_seconds"] == 77
     store.close()
 
 

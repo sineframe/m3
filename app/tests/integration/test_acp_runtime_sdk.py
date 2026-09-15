@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
+import stat
 import sys
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
+import pytest
 from acp_fixture import probe_agent
 
+from mcp_pal.harness.acp import full_probe, protocol_probe
 from mcp_pal.services.acp_probes import ACPProbeKind, ACPProbeRequest, ACPProbeStatus
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal_app.services.app_service import AppRuntimeService
@@ -27,6 +33,97 @@ class _ReopenedKit:
 
     def close(self) -> None:
         return None
+
+
+def _ambient_canary_agent(path: Path) -> str:
+    path.write_text(
+        """import json, os, pathlib, sys
+marker = pathlib.Path(sys.argv[1])
+def send(value):
+    print(json.dumps(value, separators=(',', ':')), flush=True)
+for line in sys.stdin:
+    request = json.loads(line); method = request.get('method'); ident = request.get('id')
+    if method == 'initialize':
+        marker.write_text(os.environ.get('MCP_PAL_UNRELATED_CANARY', '<missing>'), encoding='utf-8')
+        send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':1}})
+    elif method == 'session/new':
+        send({'jsonrpc':'2.0','id':ident,'result':{'sessionId':'canary-session'}})
+    elif method == 'session/prompt':
+        send({'jsonrpc':'2.0','id':ident,'result':{'stopReason':'end_turn'}})
+""",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return str(path)
+
+
+def _prompt_behavior_agent(path: Path, marker: Path, behavior: str) -> str:
+    path.write_text(
+        """import json, os, signal, sys, time
+marker = sys.argv[1]
+behavior = sys.argv[2]
+def send(value):
+    print(json.dumps(value, separators=(',', ':')), flush=True)
+for line in sys.stdin:
+    request = json.loads(line); method = request.get('method'); ident = request.get('id')
+    if method == 'initialize':
+        if behavior == 'initialize_hang':
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            open(marker, 'w').write(str(os.getpid()))
+            while True:
+                time.sleep(1)
+        send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':1}})
+    elif method == 'session/new':
+        send({'jsonrpc':'2.0','id':ident,'result':{'sessionId':'probe-session'}})
+    elif method == 'session/prompt':
+        if behavior == 'hang':
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        open(marker, 'w').write(str(os.getpid()))
+        if behavior == 'hang':
+            while True:
+                time.sleep(1)
+        time.sleep(float(behavior))
+        send({'jsonrpc':'2.0','id':ident,'result':{'stopReason':'end_turn'}})
+""",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return str(path)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def test_acp_probes_do_not_inherit_unrelated_ambient_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both probe entry points launch a real child with an allowlisted env."""
+    canary = "ambient-probe-canary"
+    monkeypatch.setenv("MCP_PAL_UNRELATED_CANARY", canary)
+    agent = _ambient_canary_agent(tmp_path / "canary-agent.py")
+    protocol_marker = tmp_path / "protocol-marker"
+    full_marker = tmp_path / "full-marker"
+
+    async def run() -> tuple[dict[str, object], dict[str, object]]:
+        protocol = await protocol_probe(
+            {"command": sys.executable, "args": [agent, str(protocol_marker)]}
+        )
+        full = await full_probe(
+            {"command": sys.executable, "args": [agent, str(full_marker)]}
+        )
+        return protocol, full
+
+    protocol, full = asyncio.run(run())
+    assert protocol_marker.read_text(encoding="utf-8") == "<missing>"
+    assert full_marker.read_text(encoding="utf-8") == "<missing>"
+    assert canary not in repr(protocol) and canary not in repr(full)
 
 
 def test_runtime_sdk_acp_protocol_full_persists_and_reopens(tmp_path: Path) -> None:
@@ -55,6 +152,10 @@ def test_runtime_sdk_acp_protocol_full_persists_and_reopens(tmp_path: Path) -> N
     assert protocol.status is ACPProbeStatus.VERIFIED
     assert protocol.agent_identity is not None
     assert protocol.agent_identity.name == "probe-fixture"
+    assert protocol.agent_capabilities["mcpCapabilities"] == {
+        "http": True,
+        "sse": True,
+    }
     assert tuple(mode.id for mode in protocol.agent_modes) == ("mode-a",)
     assert protocol.config_options[0]["id"] == "quality"
 
@@ -75,6 +176,7 @@ def test_runtime_sdk_acp_protocol_full_persists_and_reopens(tmp_path: Path) -> N
     assert isinstance(calls, (list, tuple)) and calls
     call = calls[0]
     assert isinstance(call, Mapping)
+
     arguments = call.get("arguments")
     assert isinstance(arguments, Mapping) and dict(arguments) == {"text": nonce}
     result = call.get("result")
@@ -116,3 +218,119 @@ def test_runtime_sdk_acp_protocol_full_persists_and_reopens(tmp_path: Path) -> N
     assert "persistence.models" not in type(reopened.acp_probes).__module__
     reopened.close()
     reopened_store.close()
+
+
+def test_full_probe_propagates_requested_turn_timeout(tmp_path: Path) -> None:
+    marker = tmp_path / "prompt-started"
+    agent = _prompt_behavior_agent(tmp_path / "slow-agent.py", marker, "0.2")
+    result = asyncio.run(
+        full_probe(
+            {
+                "command": sys.executable,
+                "args": [agent, str(marker), "0.2"],
+            },
+            timeout_seconds=0.05,
+        )
+    )
+    assert result["status"] == "timed_out"
+
+
+def test_protocol_probe_has_intrinsic_initialize_deadline(tmp_path: Path) -> None:
+    marker = tmp_path / "initialize-started"
+    agent = _prompt_behavior_agent(
+        tmp_path / "hanging-agent.py", marker, "initialize_hang"
+    )
+    result = asyncio.run(
+        protocol_probe(
+            {
+                "command": sys.executable,
+                "args": [agent, str(marker), "initialize_hang"],
+            },
+            timeout_seconds=0.05,
+        )
+    )
+    assert result["status"] == "timed_out"
+    pid = int(marker.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 2.0
+    while _pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not _pid_alive(pid)
+
+
+def test_runtime_protocol_probe_keeps_intrinsic_deadline_with_long_request_timeout(
+    tmp_path: Path,
+) -> None:
+    """The app request may be long, but protocol initialize remains capped at 5s."""
+    marker = tmp_path / "service-initialize-started"
+    agent = _prompt_behavior_agent(
+        tmp_path / "service-hanging-agent.py", marker, "initialize_hang"
+    )
+    settings = Settings(
+        database_path=str(tmp_path / "service-protocol-timeout.sqlite"),
+        claude_executable="missing-claude",
+        opencode_executable="missing-opencode",
+    )
+    runtime = AppRuntimeService(settings)
+    try:
+        profile = runtime.create_harness(
+            HarnessProfileInput(
+                name="service-timeout-agent",
+                manifest={
+                    "command": sys.executable,
+                    "args": [agent, str(marker), "initialize_hang"],
+                },
+                trusted_unsandboxed=True,
+            )
+        )
+        revision = runtime.store.resolve_revision(profile.record.id)
+        request = ACPProbeRequest(
+            profile_id=profile.record.id,
+            revision_id=str(revision.id.root),
+            probe_type=ACPProbeKind.PROTOCOL,
+            timeout_seconds=8.0,
+        )
+        started = time.monotonic()
+        result = asyncio.run(runtime.acp_probes.run(request))
+        elapsed = time.monotonic() - started
+        assert result.status is ACPProbeStatus.TIMED_OUT
+        assert elapsed < 7.0
+        pid = int(marker.read_text(encoding="utf-8"))
+        deadline = time.monotonic() + 2.0
+        while _pid_alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not _pid_alive(pid)
+    finally:
+        runtime.close()
+
+
+def test_cancelling_full_probe_reaps_uncooperative_acp_process(tmp_path: Path) -> None:
+    marker = tmp_path / "prompt-started"
+    agent = _prompt_behavior_agent(tmp_path / "hanging-agent.py", marker, "hang")
+    pid: int | None = None
+
+    async def run_and_cancel() -> None:
+        nonlocal pid
+        task = asyncio.create_task(
+            full_probe(
+                {"command": sys.executable, "args": [agent, str(marker), "hang"]}
+            )
+        )
+        try:
+            deadline = time.monotonic() + 2.0
+            while not marker.exists() and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+            assert marker.exists(), "ACP fixture never received session/prompt"
+            pid = int(marker.read_text(encoding="utf-8"))
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            if pid is not None and _pid_alive(pid):
+                os.kill(pid, signal.SIGKILL)
+
+    asyncio.run(run_and_cancel())
+    assert pid is not None
+    deadline = time.monotonic() + 2.0
+    while _pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not _pid_alive(pid)

@@ -21,6 +21,7 @@ from mcp.types import ListToolsResult
 
 from mcp_pal.async_api import AsyncMCPTestKit, InputRequiredResult
 from mcp_pal.errors import KitClosed, ProtocolError, UnsupportedFeature
+from mcp_pal.services.profiles import ProfileResolutionError
 from mcp_pal.transport.local import TransportProcessError, TransportStartupError
 from mcp_pal.types import (
     HTTPServer,
@@ -658,10 +659,14 @@ async def test_direct_rejects_closed_kit_and_unresolved_profile_bindings() -> No
     binding = ServerBinding(
         profile=ServerProfileRef(
             profile_id=ServerProfileId("server-profile"),
+            server_name="fixture",
             revision=RevisionSelection(mode="latest"),
         )
     )
-    with pytest.raises(UnsupportedFeature, match="runtime resolution"):
+    with pytest.raises(
+        ProfileResolutionError,
+        match="saved profile resolution requires a configured execution store",
+    ):
         kit.direct(binding)
     await kit.aclose()
     with pytest.raises(KitClosed):

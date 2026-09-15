@@ -274,5 +274,5 @@ def test_verify_release_rejects_forbidden_cli_dependencies(
 
 def test_ui_ref_is_the_pinned_commit() -> None:
     assert (release.ROOT / "cli" / "UI_REF").read_text(encoding="utf-8") == (
-        "5bc28a18f25a8b86e5ebc46a63cb5d9c5bd22941\n"
+        "98e39a3c3eea3087d9ed08f3477d62cfac2fb18b\n"
     )

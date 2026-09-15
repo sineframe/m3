@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
-_ARCHIVE_PATH = "/api/v1/profiles/00000000-0000-4000-8000-000000000001/archive"
+_ARCHIVE_PATH = "/api/v2/profiles/nonexistent-profile/archive"
 _OPENER = build_opener(ProxyHandler({}))
 
 
@@ -60,7 +60,7 @@ def _server(command: list[str], env: dict[str, str], port: int) -> Iterator[str]
                 _out, error = process.communicate()
                 raise AssertionError(f"security gate server exited early: {error}")
             try:
-                if _status(base, "/api/v1/health") == 200:
+                if _status(base, "/api/v2/health") == 200:
                     break
             except OSError:
                 pass
@@ -113,7 +113,7 @@ def _assert_local_boundary(base: str) -> None:
                 "Sec-Fetch-Site": "same-origin",
             },
         )
-        == 200
+        == 404
     )
 
 

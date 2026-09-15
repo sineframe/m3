@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING as _TYPE_CHECKING
 from typing import Any
@@ -14,6 +13,7 @@ from mcp_pal import (
     AgentSpec,
     ClaudeCode,
     HTTPServer,
+    InProcessServer,
     OpenCode,
     RevisionSelection,
     SecretReference,
@@ -21,9 +21,9 @@ from mcp_pal import (
     SSEServer,
     StdioServer,
     TextContent,
-    TrustLevel,
     UserMessage,
 )
+from mcp_pal.services.profiles import server_value_from_mapping
 from mcp_pal.storage import StorageConflict
 from mcp_pal.types import NativeToolPolicy
 
@@ -66,7 +66,6 @@ class OneTurnRunDraft(BaseModel):
         return value
 
 
-_ENV_REFERENCE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 _CLAUDE_READ_ONLY_TOOLS = (
     "Agent",
     "Read",
@@ -85,50 +84,13 @@ _CLAUDE_READ_ONLY_TOOLS = (
 _OPENCODE_READ_ONLY_TOOLS = ("read", "glob", "grep", "lsp", "webfetch", "websearch")
 
 
-def _secret_or_literal(value: Any) -> SecretReference | str:
-    if isinstance(value, SecretReference):
-        return value
-    if isinstance(value, Mapping) and set(value) == {"source", "name"}:
-        try:
-            return SecretReference.model_validate(dict(value))
-        except ValueError as exc:
-            raise ProfileServiceError("MCP credential reference is invalid") from exc
-    if isinstance(value, str):
-        match = _ENV_REFERENCE.fullmatch(value)
-        if match:
-            return SecretReference(source="environment", name=match.group(1))
-        return value
-    raise ProfileServiceError("MCP credential values must be strings or references")
-
-
-def _server(name: str, raw: Mapping[str, Any]) -> StdioServer | HTTPServer | SSEServer:
-    typ = str(raw.get("type", "stdio")).lower()
-    trust = TrustLevel(str(raw.get("trust", TrustLevel.UNTRUSTED.value)))
-    if typ == "stdio":
-        return StdioServer(
-            name=name,
-            trust=trust,
-            command=str(raw.get("command", "")),
-            args=tuple(str(item) for item in (raw.get("args") or ())),
-            environment={
-                str(key): _secret_or_literal(item)
-                for key, item in (raw.get("env") or {}).items()
-            },
-            cwd=raw.get("cwd"),
-        )
-    headers = {
-        str(key): _secret_or_literal(item)
-        for key, item in (raw.get("headers") or {}).items()
-    }
-    if typ == "http":
-        return HTTPServer(
-            name=name, trust=trust, url=str(raw.get("url", "")), headers=headers
-        )
-    if typ == "sse":
-        return SSEServer(
-            name=name, trust=trust, url=str(raw.get("url", "")), headers=headers
-        )
-    raise ProfileServiceError(f"unsupported MCP transport: {typ}")
+def _server(
+    name: str, raw: Mapping[str, Any]
+) -> StdioServer | HTTPServer | SSEServer | InProcessServer:
+    try:
+        return server_value_from_mapping(name, raw)
+    except ValueError as exc:
+        raise ProfileServiceError(str(exc)) from exc
 
 
 class ExecutionSpecBuilder:
@@ -139,14 +101,14 @@ class ExecutionSpecBuilder:
         self.settings = settings
 
     def build(self, draft: OneTurnRunDraft) -> AgentSpec:
-        profile = self.store.get_profile(draft.profile_id)
+        profile = self.store.get_profile(draft.profile_id, kind="server")
         if profile is None or profile.kind != "server":
             raise ProfileServiceError("MCP profile does not exist")
         if profile.archived:
             raise ProfileServiceError("MCP profile is archived")
         try:
             revision = self.store.resolve_revision(
-                draft.profile_id, draft.profile_revision
+                draft.profile_id, draft.profile_revision, kind="server"
             )
         except StorageConflict as exc:
             raise ProfileServiceError("MCP profile revision does not exist") from exc
@@ -167,12 +129,14 @@ class ExecutionSpecBuilder:
                 )
             if not draft.harness_profile_id:
                 raise ProfileServiceError("ACP requires a harness profile")
-            hp = self.store.get_profile(draft.harness_profile_id)
+            hp = self.store.get_profile(draft.harness_profile_id, kind="harness")
             if hp is None or hp.kind != "harness" or hp.archived:
                 raise ProfileServiceError("ACP harness profile is missing or archived")
             try:
                 harness_profile_revision = self.store.resolve_revision(
-                    draft.harness_profile_id, draft.harness_revision
+                    draft.harness_profile_id,
+                    draft.harness_revision,
+                    kind="harness",
                 )
             except StorageConflict as exc:
                 raise ProfileServiceError(

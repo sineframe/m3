@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
+from threading import RLock
 from typing import Any, Protocol, cast
 
 from mcp_pal.harness.acp import full_probe, protocol_probe
@@ -24,8 +26,8 @@ from mcp_pal.services.acp_probes import (
 
 
 class _ProfileStore(ACPProbeStore, Protocol):
-    def get_profile(self, profile_id: str) -> Any: ...
-    def get_revision(self, revision_id: str) -> Any: ...
+    def get_profile(self, profile_id: str, *, kind: str | None = None) -> Any: ...
+    def get_revision(self, revision_id: str, *, kind: str | None = None) -> Any: ...
 
 
 def _option_id(option: Mapping[str, object]) -> str | None:
@@ -56,18 +58,62 @@ class ACPProbes:
         self.store = store
         self.runner = runner if runner is not None else self._run_current_manifest
         self._closed = False
+        self._executor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="mcp-pal-acp-probe"
+        )
+        self._lock = RLock()
+        self._futures: dict[str, Future[None]] = {}
+        self._tasks: dict[
+            str, tuple[asyncio.AbstractEventLoop, asyncio.Task[object]]
+        ] = {}
 
     def _ensure_open(self) -> None:
-        if self._closed:
-            raise RuntimeError("ACP probe service is closed")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("ACP probe service is closed")
 
     def close(self) -> None:
-        self._closed = True
+        with self._lock:
+            if self._closed:
+                return
+            # Mark every outstanding observation terminal before closing the
+            # store. A worker that is between protocol calls will see this
+            # state and retain it rather than writing a late result.
+            futures = tuple(self._futures.values())
+            for future in futures:
+                future.cancel()
+            for loop, task in self._tasks.values():
+                if not task.done():
+                    loop.call_soon_threadsafe(task.cancel)
+            for probe_id in tuple(self._futures):
+                current = self.store.get_acp_probe(probe_id)
+                if current is not None and current.status in {
+                    ACPProbeStatus.QUEUED,
+                    ACPProbeStatus.RUNNING,
+                }:
+                    self.store.save_acp_probe(
+                        current.model_copy(
+                            update={
+                                "status": ACPProbeStatus.CANCELLED,
+                                "finished_at": datetime.now(timezone.utc),
+                                "error": "probe cancelled during shutdown",
+                            }
+                        )
+                    )
+            self._closed = True
+        # ACP subprocess probes clean up their process in their coroutine
+        # finally blocks. Give active workers a bounded opportunity to finish;
+        # futures that were never started are cancelled immediately.
+        wait(futures, timeout=5.0)
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        with self._lock:
+            self._futures.clear()
+            self._tasks.clear()
 
     def _current_profile_revision(self, request: ACPProbeRequest) -> tuple[Any, Any]:
         store = cast(_ProfileStore, self.store)
-        profile = store.get_profile(request.profile_id)
-        revision = store.get_revision(request.revision_id)
+        profile = store.get_profile(request.profile_id, kind="harness")
+        revision = store.get_revision(request.revision_id, kind="harness")
         current = getattr(profile, "current_revision_id", None)
         current_id = (
             str(getattr(current, "root", current)) if current is not None else None
@@ -99,6 +145,9 @@ class ACPProbes:
         _, revision = self._current_profile_revision(request)
         manifest = self._manifest(revision)
         if request.probe_type is ACPProbeKind.PROTOCOL:
+            # Protocol negotiation has its own SDK safety deadline (5s). The
+            # request timeout remains the outer lifecycle bound in run_acp_probe;
+            # it must not turn a protocol probe into an arbitrarily long child.
             raw = await protocol_probe(manifest)
         else:
             raw = await full_probe(
@@ -106,6 +155,7 @@ class ACPProbes:
                 mode_id=request.agent_mode_id,
                 session_config=dict(request.session_config),
                 transport=request.transport,
+                timeout_seconds=request.timeout_seconds,
             )
         # protocol_probe calls the field ``agent_info`` while full_probe uses
         # ``agent_identity``.  Explicitly lift both plus capabilities/options,
@@ -320,23 +370,80 @@ class ACPProbes:
         )
 
     def request(self, request: ACPProbeRequest) -> ACPProbeResult:
-        self._ensure_open()
-        self._current_profile_revision(request)
-        result = ACPProbeResult.model_validate(
-            {
-                **request.model_dump(mode="python", exclude={"timeout_seconds"}),
-                "status": ACPProbeStatus.QUEUED,
-            }
-        )
-        return self.store.save_acp_probe(result)
+        with self._lock:
+            self._ensure_open()
+            self._current_profile_revision(request)
+            result = ACPProbeResult.model_validate(
+                {
+                    **request.model_dump(mode="python", exclude={"timeout_seconds"}),
+                    "status": ACPProbeStatus.QUEUED,
+                }
+            )
+            return self.store.save_acp_probe(result)
+
+    def enqueue(self, request: ACPProbeRequest) -> ACPProbeResult:
+        """Validate/normalize dimensions, then persist one queued probe.
+
+        The API uses this before scheduling ``run`` so the returned probe ID
+        is the same ID consumed by the background lifecycle task.
+        """
+        return self.request(self._normalize_full_request(request))
+
+    def start(self, request: ACPProbeRequest) -> ACPProbeResult:
+        """Queue and execute a probe on the service-owned worker pool."""
+        with self._lock:
+            self._ensure_open()
+            queued = self.enqueue(request)
+
+            def execute() -> None:
+                loop = asyncio.new_event_loop()
+                task: asyncio.Task[object] | None = None
+                try:
+                    asyncio.set_event_loop(loop)
+                    task = loop.create_task(self.run(request, queued=queued))
+                    with self._lock:
+                        self._tasks[queued.id] = (loop, task)
+                    loop.run_until_complete(task)
+                except (asyncio.CancelledError, RuntimeError):
+                    # Cancellation is persisted by run() when the task is
+                    # interrupted. Runtime shutdown may close the service
+                    # before the task reaches its final persistence step.
+                    pass
+                finally:
+                    if task is not None and not task.done():
+                        task.cancel()
+                    loop.run_until_complete(
+                        asyncio.gather(task, return_exceptions=True)
+                    ) if task is not None else None
+                    loop.close()
+                    with self._lock:
+                        self._futures.pop(queued.id, None)
+                        self._tasks.pop(queued.id, None)
+
+            # Keep submission and registration under one lock: a very fast
+            # worker must not finish and pop its entry before assignment, and
+            # shutdown cannot slip between persistence and submission.
+            future = self._executor.submit(execute)
+            self._futures[queued.id] = future
+        return queued
 
     async def run(
-        self, request: ACPProbeRequest, *, runner: Runner | None = None
+        self,
+        request: ACPProbeRequest,
+        *,
+        runner: Runner | None = None,
+        queued: ACPProbeResult | None = None,
     ) -> ACPProbeResult:
         self._ensure_open()
         selected = runner if runner is not None else self.runner
         normalized = self._normalize_full_request(request)
-        queued = self.request(normalized)
+        queued = queued or self.request(normalized)
+        with self._lock:
+            if self._closed:
+                return queued
+            current = self.store.get_acp_probe(queued.id)
+            if current is not None and current.status is ACPProbeStatus.CANCELLED:
+                return current
         started = queued.model_copy(
             update={
                 "status": ACPProbeStatus.RUNNING,
@@ -344,7 +451,10 @@ class ACPProbes:
             }
         )
         try:
-            self.store.save_acp_probe(started)
+            with self._lock:
+                if self._closed:
+                    return queued
+                self.store.save_acp_probe(started)
             outcome = await run_acp_probe(
                 normalized, selected, probe_id=queued.id, created_at=queued.created_at
             )
@@ -357,7 +467,9 @@ class ACPProbes:
                     "error": "probe cancelled",
                 }
             )
-            self.store.save_acp_probe(cancelled)
+            with self._lock:
+                if not self._closed:
+                    self.store.save_acp_probe(cancelled)
             raise
         except BaseException:
             failed = queued.model_copy(
@@ -368,12 +480,17 @@ class ACPProbes:
                     "error": "probe interrupted",
                 }
             )
-            self.store.save_acp_probe(failed)
+            with self._lock:
+                if not self._closed:
+                    self.store.save_acp_probe(failed)
             raise
-        current = self.store.get_acp_probe(queued.id)
-        if current is not None and current.status is ACPProbeStatus.CANCELLED:
-            return current
-        return self.store.save_acp_probe(outcome)
+        with self._lock:
+            if self._closed:
+                return outcome
+            current = self.store.get_acp_probe(queued.id)
+            if current is not None and current.status is ACPProbeStatus.CANCELLED:
+                return current
+            return self.store.save_acp_probe(outcome)
 
     def probe(
         self, request: ACPProbeRequest, *, runner: Runner | None = None
@@ -397,32 +514,49 @@ class ACPProbes:
         self._ensure_open()
         return self.store.latest_acp_probe(dimension)
 
-    def cancel(self, probe_id: str) -> ACPProbeResult | None:
+    def cancel(
+        self, probe_id: str, *, profile_id: str | None = None
+    ) -> ACPProbeResult | None:
         self._ensure_open()
-        current = self.store.get_acp_probe(probe_id)
-        if current is None or current.status in {
-            ACPProbeStatus.VERIFIED,
-            ACPProbeStatus.FAILED,
-            ACPProbeStatus.TIMED_OUT,
-            ACPProbeStatus.CANCELLED,
-        }:
-            return current
-        finished = datetime.now(timezone.utc)
-        duration = (
-            (finished - current.started_at).total_seconds() * 1000
-            if current.started_at
-            else None
-        )
-        return self.store.save_acp_probe(
-            current.model_copy(
-                update={
-                    "status": ACPProbeStatus.CANCELLED,
-                    "finished_at": finished,
-                    "duration_ms": duration,
-                    "error": "probe cancelled",
-                }
+        with self._lock:
+            current = self.store.get_acp_probe(probe_id)
+            # Profile-scoped API callers must establish ownership before any
+            # cancellation side effect.  Returning None keeps the endpoint's
+            # existing not-found behavior without revealing another profile's
+            # probe.
+            if current is None or (
+                profile_id is not None and current.profile_id != profile_id
+            ):
+                return None
+            future = self._futures.get(probe_id)
+            task_info = self._tasks.get(probe_id)
+            if future is not None:
+                future.cancel()
+            if task_info is not None and not task_info[1].done():
+                task_info[0].call_soon_threadsafe(task_info[1].cancel)
+            if current.status in {
+                ACPProbeStatus.VERIFIED,
+                ACPProbeStatus.FAILED,
+                ACPProbeStatus.TIMED_OUT,
+                ACPProbeStatus.CANCELLED,
+            }:
+                return current
+            finished = datetime.now(timezone.utc)
+            duration = (
+                (finished - current.started_at).total_seconds() * 1000
+                if current.started_at
+                else None
             )
-        )
+            return self.store.save_acp_probe(
+                current.model_copy(
+                    update={
+                        "status": ACPProbeStatus.CANCELLED,
+                        "finished_at": finished,
+                        "duration_ms": duration,
+                        "error": "probe cancelled",
+                    }
+                )
+            )
 
 
 __all__ = ["ACPProbes"]

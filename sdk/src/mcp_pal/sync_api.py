@@ -1493,8 +1493,15 @@ class MCPTestKit:
         trace_owner: bool = True,
         workspace_root: str | None = None,
     ) -> DirectClient:
+        if timeout is not None and (not _math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("timeout must be positive and finite")
         selected = server.server if hasattr(server, "server") else server
-        self._validate_direct_preflight(selected, protocol, timeout)
+        # Profile bindings are resolved by the authoritative async kit inside
+        # the portal, where the configured execution store is available.  A
+        # preflight against ``None`` here would reject the valid binding
+        # before that resolution boundary (and make sync/async APIs diverge).
+        if not (isinstance(server, _ServerBinding) and server.profile is not None):
+            self._validate_direct_preflight(selected, protocol, timeout)
         options = {
             key: value
             for key, value in {
@@ -1566,8 +1573,6 @@ class MCPTestKit:
             raise _UnsupportedFeature(
                 "direct server profiles require runtime resolution"
             )
-        if timeout is not None and (not _math.isfinite(timeout) or timeout <= 0):
-            raise ValueError("timeout must be positive and finite")
         requested_revision: str | None = self.config.protocol_revision
         requested_transport: _TransportKind | None = None
         if protocol is None:

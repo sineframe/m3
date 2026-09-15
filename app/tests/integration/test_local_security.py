@@ -28,9 +28,10 @@ def test_local_app_installs_host_and_browser_mutation_boundary(tmp_path: Path) -
             ).status_code
             == 400
         )
+        path = "/api/v2/profiles/nonexistent-profile/archive"
         assert (
             client.post(
-                "/api/v1/profiles/00000000-0000-4000-8000-000000000001/archive",
+                path,
                 headers={
                     "origin": "https://attacker.example",
                     "sec-fetch-site": "cross-site",
@@ -39,14 +40,13 @@ def test_local_app_installs_host_and_browser_mutation_boundary(tmp_path: Path) -
             == 403
         )
         same_origin = client.post(
-            "/api/v1/profiles/00000000-0000-4000-8000-000000000001/archive",
+            path,
             headers={
                 "origin": "http://127.0.0.1:8123",
                 "sec-fetch-site": "same-origin",
             },
         )
-        assert same_origin.status_code == 200
-        assert same_origin.json()["archived"] is True
+        assert same_origin.status_code == 404
 
 
 def test_local_app_rejects_dns_rebinding_origin_before_route_dispatch(
@@ -59,7 +59,7 @@ def test_local_app_rejects_dns_rebinding_origin_before_route_dispatch(
         client=("127.0.0.1", 50000),
     ) as client:
         response = client.post(
-            "/api/v1/harness-profiles",
+            "/api/v2/harness-profiles",
             headers={
                 "host": "attacker.example:8123",
                 "origin": "http://attacker.example:8123",
@@ -72,7 +72,7 @@ def test_local_app_rejects_dns_rebinding_origin_before_route_dispatch(
             },
         )
         assert response.status_code == 400
-        assert client.get("/api/v1/harness-profiles").json() == []
+        assert client.get("/api/v2/harness-profiles").json() == []
 
 
 def test_local_app_rejects_non_loopback_peer_even_with_local_host(

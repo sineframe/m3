@@ -18,6 +18,7 @@ import hashlib
 import json
 import threading
 import uuid
+import warnings
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -29,12 +30,14 @@ from typing import Any, Literal, cast
 from pydantic import TypeAdapter, ValidationError
 
 from ..aggregations import EvaluationQuery, EvaluationReport, aggregate_evaluations
+from ..domain.validation import validate_mcp_config
 from ..errors import (
     RawEvidenceIntegrityError,
     RawEvidenceUnavailable,
     TraceNotFinalized,
     TraceUnavailable,
 )
+from ..harness.manifest import validate_manifest
 from ..observability import (
     CaptureOptions,
     EvidenceCapture,
@@ -222,6 +225,34 @@ def _json(value: Any) -> str:
 
 def _loads(value: str | None, default: Any = None) -> Any:
     return default if value is None else json.loads(value)
+
+
+def _upgrade_persisted_execution_spec(value: Any) -> Any:
+    """Fill fields introduced after the first durable execution-spec schema."""
+    if not isinstance(value, Mapping):
+        return value
+    servers = value.get("servers")
+    if not isinstance(servers, (list, tuple)):
+        return value
+    upgraded = dict(value)
+    upgraded_servers: list[Any] = []
+    for binding in servers:
+        if not isinstance(binding, Mapping):
+            upgraded_servers.append(binding)
+            continue
+        upgraded_binding = dict(binding)
+        profile = binding.get("profile")
+        if isinstance(profile, Mapping) and "server_name" not in profile:
+            profile_id = profile.get("profile_id")
+            if isinstance(profile_id, str) and profile_id:
+                upgraded_profile = dict(profile)
+                # Before server_name became explicit, the profile ID was the
+                # stable selector used by persisted specs.
+                upgraded_profile["server_name"] = profile_id
+                upgraded_binding["profile"] = upgraded_profile
+        upgraded_servers.append(upgraded_binding)
+    upgraded["servers"] = upgraded_servers
+    return upgraded
 
 
 def _evaluation_subject_kind(subject: Any) -> str:
@@ -421,6 +452,9 @@ CREATE TABLE IF NOT EXISTS v2_sequence_reservations (
 
 
 class _SqliteBase:
+    _migrate_profiles_enabled = False
+    _redaction_config: RedactionConfig
+
     def __init__(
         self,
         database: str | Path,
@@ -548,6 +582,9 @@ class _SqliteBase:
                 migrate = getattr(self, "_migrate_legacy_evaluations", None)
                 if callable(migrate):
                     migrate(connection)
+                profile_migrate = getattr(self, "_migrate_legacy_profiles", None)
+                if self._migrate_profiles_enabled and callable(profile_migrate):
+                    profile_migrate(connection)
         except StorageError:
             raise
         except Exception as exc:
@@ -651,6 +688,239 @@ class _SqliteBase:
             except Exception:
                 # Malformed legacy input must not make the database unusable.
                 continue
+
+    def _migrate_legacy_profiles(self, connection: _CompatConnection) -> None:
+        self._begin(connection, immediate=True)
+        try:
+            self._migrate_legacy_profiles_unlocked(connection)
+            self._commit(connection)
+        except BaseException:
+            self._rollback(connection)
+            raise
+
+    def _migrate_legacy_profiles_unlocked(self, connection: _CompatConnection) -> None:
+        """Import legacy profile rows into v2 exactly once.
+
+        Runs/events and probe attestations intentionally remain legacy-only.
+        A v2 row wins both ID and name conflicts; conflicting legacy data is
+        left untouched and surfaced as a warning for operators.
+        """
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        families = (
+            ("server", "mcp_profiles", "mcp_profile_revisions", "mcp_json"),
+            ("harness", "harness_profiles", "harness_profile_revisions", None),
+        )
+        for kind, profile_table, revision_table, value_column in families:
+            if profile_table not in tables or revision_table not in tables:
+                continue
+            profiles = connection.execute(f"SELECT * FROM {profile_table}").fetchall()
+            for profile in profiles:
+                profile_id = str(profile["id"])
+                # Legacy metadata crossed the old persistence boundary without
+                # the redaction applied by v2 create/update.  Project it
+                # before using it for either conflict checks or insertion.
+                try:
+                    name_value = redact_for_persistence(
+                        str(profile["name"]),
+                        config=self._redaction_config,
+                        path="$.legacy_profile.name",
+                    )
+                    description_value = redact_for_persistence(
+                        str(profile["description"] or ""),
+                        config=self._redaction_config,
+                        path="$.legacy_profile.description",
+                    )
+                except Exception:
+                    warnings.warn(
+                        f"skipping legacy {kind} profile: metadata is invalid",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                if not isinstance(name_value, str) or not isinstance(
+                    description_value, str
+                ):
+                    warnings.warn(
+                        f"skipping legacy {kind} profile: metadata is invalid",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                name = name_value
+                description = description_value
+                v2_table = f"v2_{kind}_profiles"
+                existing_id = connection.execute(
+                    f"SELECT id FROM {v2_table} WHERE id=?", (profile_id,)
+                ).fetchone()
+                existing_name = connection.execute(
+                    f"SELECT id FROM {v2_table} WHERE name=?", (name,)
+                ).fetchone()
+                revisions = connection.execute(
+                    f"SELECT * FROM {revision_table} WHERE profile_id=? ORDER BY revision_number,id",
+                    (profile_id,),
+                ).fetchall()
+                rev_table = f"v2_{kind}_profile_revisions"
+                legacy_values: list[tuple[Any, Any]] = []
+                for revision in revisions:
+                    try:
+                        if kind == "server":
+                            value = revision[value_column]  # type: ignore[index]
+                            if isinstance(value, str):
+                                value = _loads(value)
+                            if not isinstance(value, Mapping):
+                                raise ValueError("MCP revision is not an object")
+                            validate_mcp_config(dict(value))
+                            value = dict(value)
+                        else:
+                            manifest = revision["manifest"]
+                            if isinstance(manifest, str):
+                                manifest = _loads(manifest)
+                            if not isinstance(manifest, Mapping):
+                                raise ValueError("harness manifest is not an object")
+                            value = {
+                                "manifest": validate_manifest(dict(manifest))[
+                                    "manifest"
+                                ],
+                                "trusted_unsandboxed": bool(
+                                    revision["trusted_unsandboxed"]
+                                ),
+                            }
+                        safe_value = serialize_durable(
+                            value,
+                            config=self._redaction_config,
+                            path=f"$.legacy_profile.{kind}.revision",
+                        )
+                    except Exception:
+                        warnings.warn(
+                            f"skipping legacy {kind} profile revision: malformed",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                        continue
+                    legacy_values.append((revision, safe_value))
+                if revisions and not legacy_values:
+                    # A profile with no usable revision cannot be selected or
+                    # executed.  Keep the legacy source untouched and avoid
+                    # importing an unusable v2 shell; profiles with no legacy
+                    # revision rows at all remain importable for diagnostics.
+                    warnings.warn(
+                        f"skipping legacy {kind} profile: no valid revisions",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                valid_current = {str(revision["id"]) for revision, _ in legacy_values}
+                legacy_current = profile["current_revision_id"]
+                if (
+                    legacy_current is not None
+                    and str(legacy_current) not in valid_current
+                ):
+                    if revisions:
+                        warnings.warn(
+                            f"legacy {kind} profile has no valid current revision",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                    legacy_current = None
+                if existing_id is not None or existing_name is not None:
+                    same = False
+                    if existing_id is not None:
+                        current = connection.execute(
+                            f"SELECT * FROM {v2_table} WHERE id=?", (profile_id,)
+                        ).fetchone()
+                        same = bool(
+                            current is not None
+                            and str(current["name"]) == name
+                            and str(current["description"] or "") == description
+                            and bool(current["archived"]) == bool(profile["archived"])
+                            and str(current["current_revision_id"] or "")
+                            == str(legacy_current or "")
+                            and str(current["created_at"]) == str(profile["created_at"])
+                            and str(current["updated_at"]) == str(profile["updated_at"])
+                        )
+                        if same:
+                            rows = connection.execute(
+                                f"SELECT id,revision_number,value_json,created_at FROM {rev_table} WHERE profile_id=? ORDER BY revision_number,id",
+                                (profile_id,),
+                            ).fetchall()
+                            same = len(rows) == len(legacy_values) and all(
+                                str(row["id"]) == str(revision["id"])
+                                and int(row["revision_number"])
+                                == int(revision["revision_number"])
+                                and _json(_loads(row["value_json"], {})) == _json(value)
+                                and str(row["created_at"])
+                                == str(revision["created_at"])
+                                for row, (revision, value) in zip(
+                                    rows, legacy_values, strict=True
+                                )
+                            )
+                    if not same:
+                        warnings.warn(
+                            f"v2 {kind} profile wins legacy ID/name conflict",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                    continue
+                if any(
+                    connection.execute(
+                        f"SELECT 1 FROM {rev_table} WHERE id=?", (str(rev["id"]),)
+                    ).fetchone()
+                    is not None
+                    for rev, _value in legacy_values
+                ):
+                    warnings.warn(
+                        f"skipping legacy {kind} profile: revision ID conflicts with v2",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                if len(
+                    {
+                        int(revision["revision_number"])
+                        for revision, _value in legacy_values
+                    }
+                ) != len(legacy_values):
+                    warnings.warn(
+                        f"skipping legacy {kind} profile: duplicate revision number",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                created = str(profile["created_at"])
+                updated = str(profile["updated_at"])
+                connection.execute(
+                    f"INSERT INTO {v2_table}(id,name,description,archived,current_revision_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                    (
+                        profile_id,
+                        name,
+                        description,
+                        int(bool(profile["archived"])),
+                        None,
+                        created,
+                        updated,
+                    ),
+                )
+                for revision, value in legacy_values:
+                    connection.execute(
+                        f"INSERT INTO {rev_table}(id,profile_id,revision_number,value_json,created_at) VALUES(?,?,?,?,?)",
+                        (
+                            str(revision["id"]),
+                            profile_id,
+                            int(revision["revision_number"]),
+                            _json(value),
+                            str(revision["created_at"]),
+                        ),
+                    )
+                if legacy_current is not None:
+                    connection.execute(
+                        f"UPDATE {v2_table} SET current_revision_id=? WHERE id=?",
+                        (str(legacy_current), profile_id),
+                    )
 
     @staticmethod
     def _begin(connection: _CompatConnection, *, immediate: bool = False) -> None:
@@ -934,6 +1204,7 @@ class SQLiteExecutionStore(_SqliteBase):
     _TERMINAL_LIMITATIONS = frozenset(
         {"cleanup_failed", "persistence_failed", "capture_incomplete", "partial_trace"}
     )
+    _migrate_profiles_enabled = True
 
     def __init__(
         self,
@@ -947,8 +1218,11 @@ class SQLiteExecutionStore(_SqliteBase):
     ) -> None:
         if payload_blob_threshold < 0:
             raise ValueError("payload_blob_threshold must be non-negative")
-        super().__init__(database, **kwargs)
+        # Store initialization performs legacy migration before returning, so
+        # migration must see the same explicit redaction policy used by all
+        # later profile and execution writes.
         self._redaction_config = config or RedactionConfig.from_environment()
+        super().__init__(database, **kwargs)
         self._capture_config = (
             capture_config if capture_config is not None else CaptureOptions()
         )
@@ -1206,7 +1480,7 @@ class SQLiteExecutionStore(_SqliteBase):
             ).fetchone()
         if row is None or row[0] is None:
             return None
-        value = _loads(row[0])
+        value = _upgrade_persisted_execution_spec(_loads(row[0]))
         try:
             return TypeAdapter(ExecutionSpec).validate_python(value)
         except (TypeError, ValueError, ValidationError) as exc:
@@ -2509,8 +2783,8 @@ class SQLiteExecutionStore(_SqliteBase):
         # Probe history is tied to a real harness profile revision.  Keeping
         # this check at the durable boundary prevents forged/stale dimensions
         # from becoming selectable readiness evidence.
-        profile = self.get_profile(safe.profile_id)
-        revision = self.get_revision(safe.revision_id)
+        profile = self.get_profile(safe.profile_id, kind="harness")
+        revision = self.get_revision(safe.revision_id, kind="harness")
         if (
             profile is None
             or profile.kind != "harness"
@@ -2641,6 +2915,7 @@ class SQLiteExecutionStore(_SqliteBase):
     ) -> ProfileRecord:
         if kind not in {"server", "harness"}:
             raise ValueError("profile kind must be server or harness")
+        profile_kind = cast(Literal["server", "harness"], kind)
         safe_name = redact_for_persistence(
             name, config=self._redaction_config, path="$.profile.name"
         )
@@ -2653,8 +2928,8 @@ class SQLiteExecutionStore(_SqliteBase):
         pid, rid, table, revision_table = (
             profile_id or _new_id(f"{kind}-profile"),
             revision_id or _new_id(f"{kind}-revision"),
-            f"v2_{kind}_profiles",
-            f"v2_{kind}_profile_revisions",
+            f"v2_{profile_kind}_profiles",
+            f"v2_{profile_kind}_profile_revisions",
         )
         connection = self._connect()
         try:
@@ -2688,7 +2963,7 @@ class SQLiteExecutionStore(_SqliteBase):
             raise StorageConflict("profile name or id already exists") from exc
         finally:
             connection.close()
-        return self.get_profile(pid)  # type: ignore[return-value]
+        return self.get_profile(pid, kind=profile_kind)  # type: ignore[return-value]
 
     def create_server_profile(
         self, name: str, value: Mapping[str, Any], **kwargs: Any
@@ -2700,16 +2975,24 @@ class SQLiteExecutionStore(_SqliteBase):
     ) -> ProfileRecord:
         return self.create_profile("harness", name, value, **kwargs)
 
-    def get_profile(self, profile_id: str) -> ProfileRecord | None:
+    def get_profile(
+        self,
+        profile_id: str,
+        *,
+        kind: Literal["server", "harness"] | None = None,
+    ) -> ProfileRecord | None:
         with self._connect() as connection:
-            for kind in ("server", "harness"):
+            if kind is not None and kind not in {"server", "harness"}:
+                raise ValueError("profile kind must be server or harness")
+            for profile_kind in (kind,) if kind is not None else ("server", "harness"):
                 row = connection.execute(
-                    f"SELECT * FROM v2_{kind}_profiles WHERE id=?", (profile_id,)
+                    f"SELECT * FROM v2_{profile_kind}_profiles WHERE id=?",
+                    (profile_id,),
                 ).fetchone()
                 if row:
                     return ProfileRecord(
                         str(row["id"]),
-                        kind,
+                        profile_kind,
                         str(row["name"]),
                         str(row["description"]),
                         bool(row["archived"]),
@@ -2720,6 +3003,118 @@ class SQLiteExecutionStore(_SqliteBase):
                         _parse_dt(row["updated_at"]),
                     )
         return None
+
+    def resolve_profile(
+        self,
+        profile_id: str,
+        selection: RevisionSelection,
+        *,
+        kind: Literal["server", "harness"],
+    ) -> tuple[ProfileRecord | None, ProfileRevisionRecord | None]:
+        """Read one profile and its selected immutable revision.
+
+        This is intentionally a read-only composition boundary used by the
+        SDK runtime.  Kind is checked here so an ID collision across the two
+        profile families cannot silently resolve to the wrong descriptor.
+        """
+        if kind not in {"server", "harness"}:
+            raise ValueError("profile kind must be server or harness")
+        connection = self._connect()
+        try:
+            # Keep the profile pointer and selected revision in one SQLite
+            # snapshot.  In particular, latest must not observe an archive or
+            # add_revision committed between two independent connections.
+            self._begin(connection)
+            try:
+                row = connection.execute(
+                    f"SELECT * FROM v2_{kind}_profiles WHERE id=?", (profile_id,)
+                ).fetchone()
+                if row is None:
+                    # Return a same-ID record from the other family from this
+                    # same snapshot so wrong-kind diagnostics are consistent.
+                    other_kind = "harness" if kind == "server" else "server"
+                    other = connection.execute(
+                        f"SELECT * FROM v2_{other_kind}_profiles WHERE id=?",
+                        (profile_id,),
+                    ).fetchone()
+                    self._commit(connection)
+                    if other is None:
+                        return None, None
+                    return (
+                        ProfileRecord(
+                            str(other["id"]),
+                            other_kind,
+                            str(other["name"]),
+                            str(other["description"]),
+                            bool(other["archived"]),
+                            RevisionId(str(other["current_revision_id"]))
+                            if other["current_revision_id"]
+                            else None,
+                            _parse_dt(other["created_at"]),
+                            _parse_dt(other["updated_at"]),
+                        ),
+                        None,
+                    )
+                profile = ProfileRecord(
+                    str(row["id"]),
+                    kind,
+                    str(row["name"]),
+                    str(row["description"]),
+                    bool(row["archived"]),
+                    RevisionId(str(row["current_revision_id"]))
+                    if row["current_revision_id"]
+                    else None,
+                    _parse_dt(row["created_at"]),
+                    _parse_dt(row["updated_at"]),
+                )
+                if profile.archived:
+                    self._commit(connection)
+                    return profile, None
+                selected = (
+                    selection
+                    if isinstance(selection, RevisionSelection)
+                    else RevisionSelection(
+                        mode=cast(Literal["latest", "pinned"], selection)
+                    )
+                )
+                revisions_table = f"v2_{kind}_profile_revisions"
+                if selected.mode == "latest":
+                    revision_row = connection.execute(
+                        f"SELECT * FROM {revisions_table} WHERE id=? AND profile_id=?",
+                        (
+                            profile.current_revision_id.root
+                            if profile.current_revision_id
+                            else "",
+                            profile_id,
+                        ),
+                    ).fetchone()
+                else:
+                    revision_row = connection.execute(
+                        f"SELECT * FROM {revisions_table} WHERE id=? AND profile_id=? AND revision_number=?",
+                        (
+                            selected.revision_id.root if selected.revision_id else "",
+                            profile_id,
+                            selected.revision_number,
+                        ),
+                    ).fetchone()
+                self._commit(connection)
+                if revision_row is None:
+                    return profile, None
+                return (
+                    profile,
+                    ProfileRevisionRecord(
+                        RevisionId(str(revision_row["id"])),
+                        profile_id,
+                        int(revision_row["revision_number"]),
+                        _loads(revision_row["value_json"], {}),
+                        _parse_dt(revision_row["created_at"]),
+                    ),
+                )
+            except BaseException:
+                self._rollback(connection)
+                raise
+        finally:
+            connection.close()
 
     def list_profiles(
         self, kind: str, *, include_archived: bool = False
@@ -2754,10 +3149,13 @@ class SQLiteExecutionStore(_SqliteBase):
         )
 
     def list_profile_revisions(
-        self, profile_id: str
+        self,
+        profile_id: str,
+        *,
+        kind: Literal["server", "harness"] | None = None,
     ) -> tuple[ProfileRevisionRecord, ...]:
         """Return every revision ordered by revision number then id."""
-        profile = self.get_profile(profile_id)
+        profile = self.get_profile(profile_id, kind=kind)
         if profile is None:
             raise StorageConflict("profile does not exist")
         with self._connect() as connection:
@@ -2783,35 +3181,58 @@ class SQLiteExecutionStore(_SqliteBase):
         *,
         name: str | None = None,
         description: str | None = None,
+        kind: Literal["server", "harness"] | None = None,
     ) -> ProfileRecord:
         """Update mutable metadata without changing the immutable revision."""
-        if name is None and description is None:
-            profile = self.get_profile(profile_id)
-            if profile is None:
-                raise StorageConflict("profile does not exist")
-            return profile
-        profile = self.get_profile(profile_id)
-        if profile is None:
-            raise StorageConflict("profile does not exist")
-        safe_name = (
-            redact_for_persistence(
-                name, config=self._redaction_config, path="$.profile.name"
-            )
-            if name is not None
-            else profile.name
-        )
-        safe_description = (
-            redact_for_persistence(
-                description, config=self._redaction_config, path="$.profile.description"
-            )
-            if description is not None
-            else profile.description
-        )
-        if not isinstance(safe_name, str) or not isinstance(safe_description, str):
-            raise StorageError("profile metadata could not be redacted")
+        if kind is not None and kind not in {"server", "harness"}:
+            raise ValueError("profile kind must be server or harness")
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
+            profile: ProfileRecord | None = None
+            kinds = (kind,) if kind is not None else ("server", "harness")
+            for profile_kind in kinds:
+                row = connection.execute(
+                    f"SELECT * FROM v2_{profile_kind}_profiles WHERE id=?",
+                    (profile_id,),
+                ).fetchone()
+                if row is not None:
+                    profile = ProfileRecord(
+                        str(row["id"]),
+                        profile_kind,
+                        str(row["name"]),
+                        str(row["description"]),
+                        bool(row["archived"]),
+                        RevisionId(str(row["current_revision_id"]))
+                        if row["current_revision_id"]
+                        else None,
+                        _parse_dt(row["created_at"]),
+                        _parse_dt(row["updated_at"]),
+                    )
+                    break
+            if profile is None:
+                raise StorageConflict("profile does not exist")
+            if name is None and description is None:
+                self._commit(connection)
+                return profile
+            safe_name = (
+                redact_for_persistence(
+                    name, config=self._redaction_config, path="$.profile.name"
+                )
+                if name is not None
+                else profile.name
+            )
+            safe_description = (
+                redact_for_persistence(
+                    description,
+                    config=self._redaction_config,
+                    path="$.profile.description",
+                )
+                if description is not None
+                else profile.description
+            )
+            if not isinstance(safe_name, str) or not isinstance(safe_description, str):
+                raise StorageError("profile metadata could not be redacted")
             connection.execute(
                 f"UPDATE v2_{profile.kind}_profiles SET name=?,description=?,updated_at=? WHERE id=?",
                 (safe_name, safe_description, _iso(_utcnow()), profile_id),
@@ -2824,7 +3245,8 @@ class SQLiteExecutionStore(_SqliteBase):
             raise
         finally:
             connection.close()
-        return self.get_profile(profile_id)  # type: ignore[return-value]
+        profile_kind = cast(Literal["server", "harness"], profile.kind)
+        return self.get_profile(profile_id, kind=profile_kind)  # type: ignore[return-value]
 
     def add_revision(
         self,
@@ -2832,31 +3254,36 @@ class SQLiteExecutionStore(_SqliteBase):
         value: Mapping[str, Any],
         *,
         revision_id: str | None = None,
+        kind: Literal["server", "harness"] | None = None,
     ) -> ProfileRevisionRecord:
+        if kind is not None and kind not in {"server", "harness"}:
+            raise ValueError("profile kind must be server or harness")
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
             found: tuple[str, _CompatRow] | None = None
-            for kind in ("server", "harness"):
+            kinds = (kind,) if kind is not None else ("server", "harness")
+            for profile_kind in kinds:
                 row = connection.execute(
-                    f"SELECT * FROM v2_{kind}_profiles WHERE id=?", (profile_id,)
+                    f"SELECT * FROM v2_{profile_kind}_profiles WHERE id=?",
+                    (profile_id,),
                 ).fetchone()
                 if row:
-                    found = (kind, row)
+                    found = (profile_kind, row)
                     break
             if found is None:
                 raise StorageConflict("profile does not exist")
-            kind = found[0]
+            profile_kind = found[0]
             if bool(found[1]["archived"]):
                 raise StorageConflict("profile is archived")
-            table = f"v2_{kind}_profile_revisions"
+            table = f"v2_{profile_kind}_profile_revisions"
             number = int(
                 connection.execute(
                     f"SELECT COALESCE(MAX(revision_number),0)+1 FROM {table} WHERE profile_id=?",
                     (profile_id,),
                 ).fetchone()[0]
             )
-            rid = revision_id or _new_id(f"{kind}-revision")
+            rid = revision_id or _new_id(f"{profile_kind}-revision")
             created = _iso(_utcnow())
             safe = serialize_durable(
                 dict(value), config=self._redaction_config, path="$.profile.revision"
@@ -2866,7 +3293,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 (rid, profile_id, number, _json(safe), created),
             )
             connection.execute(
-                f"UPDATE v2_{kind}_profiles SET current_revision_id=?,updated_at=? WHERE id=?",
+                f"UPDATE v2_{profile_kind}_profiles SET current_revision_id=?,updated_at=? WHERE id=?",
                 (rid, created, profile_id),
             )
             self._commit(connection)
@@ -2883,28 +3310,68 @@ class SQLiteExecutionStore(_SqliteBase):
         finally:
             connection.close()
 
-    def archive_profile(self, profile_id: str) -> ProfileRecord:
-        return self._set_archived(profile_id, True)
+    def archive_profile(
+        self,
+        profile_id: str,
+        *,
+        kind: Literal["server", "harness"] | None = None,
+    ) -> ProfileRecord:
+        return self._set_archived(profile_id, True, kind=kind)
 
-    def restore_profile(self, profile_id: str) -> ProfileRecord:
-        return self._set_archived(profile_id, False)
+    def restore_profile(
+        self,
+        profile_id: str,
+        *,
+        kind: Literal["server", "harness"] | None = None,
+    ) -> ProfileRecord:
+        return self._set_archived(profile_id, False, kind=kind)
 
-    def _set_archived(self, profile_id: str, value: bool) -> ProfileRecord:
-        profile = self.get_profile(profile_id)
-        if profile is None:
-            raise StorageConflict("profile does not exist")
-        table = f"v2_{profile.kind}_profiles"
-        with self._connect() as connection:
+    def _set_archived(
+        self,
+        profile_id: str,
+        value: bool,
+        *,
+        kind: Literal["server", "harness"] | None = None,
+    ) -> ProfileRecord:
+        if kind is not None and kind not in {"server", "harness"}:
+            raise ValueError("profile kind must be server or harness")
+        connection = self._connect()
+        try:
+            self._begin(connection, immediate=True)
+            kinds = (kind,) if kind is not None else ("server", "harness")
+            profile_kind: Literal["server", "harness"] | None = None
+            for candidate in kinds:
+                row = connection.execute(
+                    f"SELECT id FROM v2_{candidate}_profiles WHERE id=?",
+                    (profile_id,),
+                ).fetchone()
+                if row is not None:
+                    profile_kind = cast(Literal["server", "harness"], candidate)
+                    break
+            if profile_kind is None:
+                raise StorageConflict("profile does not exist")
             connection.execute(
-                f"UPDATE {table} SET archived=?,updated_at=? WHERE id=?",
+                f"UPDATE v2_{profile_kind}_profiles SET archived=?,updated_at=? WHERE id=?",
                 (int(value), _iso(_utcnow()), profile_id),
             )
-        return self.get_profile(profile_id)  # type: ignore[return-value]
+            self._commit(connection)
+        except BaseException:
+            self._rollback(connection)
+            raise
+        finally:
+            connection.close()
+        return self.get_profile(profile_id, kind=profile_kind)  # type: ignore[return-value]
 
     def resolve_revision(
-        self, profile_id: str, selection: RevisionSelection | str = "latest"
+        self,
+        profile_id: str,
+        selection: RevisionSelection | str = "latest",
+        *,
+        kind: Literal["server", "harness"] | None = None,
     ) -> ProfileRevisionRecord:
-        profile = self.get_profile(profile_id)
+        if kind is not None and kind not in {"server", "harness"}:
+            raise ValueError("profile kind must be server or harness")
+        profile = self.get_profile(profile_id, kind=kind)
         if profile is None:
             raise StorageConflict("profile does not exist")
         selected = (
@@ -2916,11 +3383,12 @@ class SQLiteExecutionStore(_SqliteBase):
         with self._connect() as connection:
             if selected.mode == "latest":
                 row = connection.execute(
-                    f"SELECT * FROM {table} WHERE id=?",
+                    f"SELECT * FROM {table} WHERE id=? AND profile_id=?",
                     (
                         profile.current_revision_id.root
                         if profile.current_revision_id
                         else "",
+                        profile_id,
                     ),
                 ).fetchone()
             else:
@@ -2943,15 +3411,21 @@ class SQLiteExecutionStore(_SqliteBase):
         )
 
     def get_revision(
-        self, revision_id: RevisionId | str
+        self,
+        revision_id: RevisionId | str,
+        *,
+        kind: Literal["server", "harness"] | None = None,
     ) -> ProfileRevisionRecord | None:
         key = str(
             revision_id.root if isinstance(revision_id, RevisionId) else revision_id
         )
         with self._connect() as connection:
-            for kind in ("server", "harness"):
+            if kind is not None and kind not in {"server", "harness"}:
+                raise ValueError("profile kind must be server or harness")
+            for profile_kind in (kind,) if kind is not None else ("server", "harness"):
                 row = connection.execute(
-                    f"SELECT * FROM v2_{kind}_profile_revisions WHERE id=?", (key,)
+                    f"SELECT * FROM v2_{profile_kind}_profile_revisions WHERE id=?",
+                    (key,),
                 ).fetchone()
                 if row:
                     return ProfileRevisionRecord(
@@ -3811,11 +4285,15 @@ class SQLiteExecutionStore(_SqliteBase):
             for item in server_values:
                 if item.get("profile_id"):
                     item["revision_id"] = str(
-                        self.resolve_revision(str(item["profile_id"])).id.root
+                        self.resolve_revision(
+                            str(item["profile_id"]), kind="server"
+                        ).id.root
                     )
             if harness_value and harness_value.get("profile_id"):
                 harness_value["revision_id"] = str(
-                    self.resolve_revision(str(harness_value["profile_id"])).id.root
+                    self.resolve_revision(
+                        str(harness_value["profile_id"]), kind="harness"
+                    ).id.root
                 )
         provenance = {
             "clone_of": source,

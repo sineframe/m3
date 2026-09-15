@@ -63,6 +63,7 @@ from ..types import (
     ExecutionSpec,
     ExecutionState,
     ExecutionStatus,
+    RevisionSelection,
     RunId,
     TraceId,
     TraceResult,
@@ -118,6 +119,18 @@ class ArtifactNotFound(StorageError):
 
 
 EventCallback: TypeAlias = Callable[[Event], None]
+
+
+class ProfileResolver(Protocol):
+    """Read-only saved-profile lookup used by execution runtimes."""
+
+    def resolve_profile(
+        self,
+        profile_id: str,
+        selection: RevisionSelection,
+        *,
+        kind: Literal["server", "harness"],
+    ) -> tuple[Any, Any]: ...
 
 
 class ExecutionTransaction(Protocol):

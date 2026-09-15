@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sqlite3
+import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -282,6 +285,77 @@ def test_playwright_timeout_is_a_safe_gate_failure(
     monkeypatch.setattr(_GATE.subprocess, "run", timeout)
     with pytest.raises(_GATE.GateFailure, match="could not complete"):
         _GATE.run_playwright(tmp_path / "playwright", tmp_path, {"PATH": "/bin"})
+
+
+def test_run_streaming_emits_and_retains_redacted_output(tmp_path: Path) -> None:
+    output_path = tmp_path / "command.log"
+    result = _GATE._run_streaming(
+        [sys.executable, "-c", "print('live progress')"],
+        cwd=tmp_path,
+        env={"PATH": "/bin"},
+        timeout=5,
+        label="fixture",
+        output_path=output_path,
+    )
+    assert result.stdout.strip() == "live progress"
+    assert output_path.read_text(encoding="utf-8").strip() == "live progress"
+
+
+def test_run_streaming_bounds_a_stalled_command(tmp_path: Path) -> None:
+    with pytest.raises(_GATE.GateFailure, match="fixture timed out after"):
+        _GATE._run_streaming(
+            [sys.executable, "-c", "import time; time.sleep(2)"],
+            cwd=tmp_path,
+            env={"PATH": "/bin"},
+            timeout=0.05,
+            label="fixture",
+        )
+
+
+@pytest.mark.skipif(
+    os.name != "posix", reason="process-group assertion is POSIX-specific"
+)
+def test_run_streaming_terminates_process_group_on_timeout(tmp_path: Path) -> None:
+    child_pid_path = tmp_path / "child.pid"
+    code = (
+        "import pathlib, subprocess, sys, time; "
+        "child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+        f"pathlib.Path({str(child_pid_path)!r}).write_text(str(child.pid)); "
+        "time.sleep(30)"
+    )
+    with pytest.raises(_GATE.GateFailure, match="fixture timed out after"):
+        _GATE._run_streaming(
+            [sys.executable, "-c", code],
+            cwd=tmp_path,
+            env={"PATH": "/bin"},
+            timeout=0.2,
+            label="fixture",
+        )
+    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+    for _ in range(20):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError(f"timed-out child process {child_pid} survived")
+
+
+def test_child_log_is_redacted_before_it_reaches_disk(tmp_path: Path) -> None:
+    canary = "provider-canary-value"
+    output_path = tmp_path / "app.log"
+    child = _GATE.Child(
+        [sys.executable, "-c", "import os; print(os.environ['CANARY_API_KEY'])"],
+        tmp_path,
+        {"PATH": "/bin", "CANARY_API_KEY": canary},
+        label="app",
+        output_path=output_path,
+    )
+    child.process.wait(timeout=5)
+    child.join()
+    assert canary not in output_path.read_text(encoding="utf-8")
+    assert "<redacted>" in output_path.read_text(encoding="utf-8")
 
 
 def test_windows_terminate_does_not_mutate_global_os_name(

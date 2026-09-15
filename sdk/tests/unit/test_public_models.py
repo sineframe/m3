@@ -367,6 +367,7 @@ def test_all_serializable_model_representatives_round_trip() -> None:
         ServerBinding(server=server),
         ServerProfileRef(
             profile_id=ServerProfileId("server-profile-2"),
+            server_name="fixture",
             revision=RevisionSelection(
                 mode="pinned", revision_id=RevisionId("revision-2"), revision_number=1
             ),
@@ -398,6 +399,7 @@ def test_all_serializable_model_representatives_round_trip() -> None:
                 ServerBinding(
                     profile=ServerProfileRef(
                         profile_id=ServerProfileId("server-profile-3"),
+                        server_name="fixture",
                         revision=RevisionSelection(mode="latest"),
                     )
                 ),
@@ -591,7 +593,9 @@ def test_revision_selection_and_profile_bindings_are_explicit_and_serializable()
     spec = DirectSpec(
         servers=(
             ServerBinding(
-                profile=ServerProfileRef(profile_id="server-profile", revision=pinned)
+                profile=ServerProfileRef(
+                    profile_id="server-profile", server_name="fixture", revision=pinned
+                )
             ),
         ),
         operation=Ping(),
@@ -600,7 +604,9 @@ def test_revision_selection_and_profile_bindings_are_explicit_and_serializable()
     effective = DirectSpec(
         servers=(
             ServerBinding(
-                profile=ServerProfileRef(profile_id="server-profile", revision=pinned)
+                profile=ServerProfileRef(
+                    profile_id="server-profile", server_name="fixture", revision=pinned
+                )
             ),
         ),
         operation=Ping(),

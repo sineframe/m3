@@ -1245,7 +1245,6 @@ dependencies = [
     { name = "fastapi" },
     { name = "mcp-pal", extra = ["storage"] },
     { name = "pydantic-settings" },
-    { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1264,7 +1263,6 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "mcp-pal", extras = ["storage"], editable = "sdk" },
     { name = "pydantic-settings", specifier = ">=2.4,<3" },
-    { name = "sqlalchemy", specifier = ">=2.0,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
 ]
 

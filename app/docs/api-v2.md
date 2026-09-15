@@ -60,7 +60,12 @@ The main public models are `DirectSpec`, `AgentSpec`,
 `ExecutionState`, `ExecutionReport`, `RawEvidence`, and
 `EvaluationReport`.
 
-Every successful response has `version: "v2"`. Every error has this shape:
+Execution, report, evidence, evaluation, feedback, and probe responses carry
+`version: "v2"`. Control-plane profile list/object responses (including
+imports) and harness export responses retain their bare shapes for the pinned
+UI client. Route-handler validation and domain errors use this v2 envelope;
+middleware, security, and transport failures may use framework-level error
+responses.
 
 ```json
 {"version":"v2","error":{"code":"...","message":"...","details":{}}}
@@ -71,6 +76,14 @@ request shape errors, `invalid_execution_spec` for a malformed `spec`, and
 `invalid_evaluation_aggregate_query` for an invalid aggregate body. The
 aggregate and evidence POSTs are read operations and are allowed in the
 read-only viewer; they do not start work or mutate saved executions.
+
+Control-plane route-handler errors are machine-readable v2 envelopes as well.
+Profile lookup errors use `profile_not_found`, duplicate names use
+`profile_conflict`, and invalid profile or probe inputs use `invalid_profile`
+or `invalid_probe_request`; messages do not echo submitted values. Probe history
+is filtered by the exact probe dimensions. For a full probe created with a
+non-empty session configuration, pass that configuration as the URL-encoded
+JSON `session_config` query parameter to retrieve the same history.
 
 ## Routes
 
@@ -85,6 +98,28 @@ read-only viewer; they do not start work or mutate saved executions.
 | `POST /api/v2/evidence/read` | Read one bounded evidence value. |
 | `POST /api/v2/evaluations/aggregate` | Calculate pass-rate trends and health. |
 | `GET /api/v2/feedback/{run_id}` | Read saved test feedback, optionally compared with `baseline_run_id`. |
+| `GET /api/v2/profiles` | List saved MCP server profiles. |
+| `POST /api/v2/profiles` | Create an MCP server profile. |
+| `GET /api/v2/profiles/{profile_id}` | Read one MCP server profile and revisions. |
+| `PATCH /api/v2/profiles/{profile_id}` | Update MCP profile metadata. |
+| `POST /api/v2/profiles/{profile_id}/revisions` | Add an immutable MCP profile revision. |
+| `POST /api/v2/profiles/{profile_id}/archive` | Archive an MCP profile. |
+| `POST /api/v2/profiles/{profile_id}/restore` | Restore an MCP profile. |
+| `GET /api/v2/harness-profiles` | List saved ACP harness profiles. |
+| `POST /api/v2/harness-profiles` | Create an ACP harness profile. |
+| `GET /api/v2/harness-profiles/{profile_id}` | Read one harness profile and revisions. |
+| `PATCH /api/v2/harness-profiles/{profile_id}` | Update harness profile metadata. |
+| `POST /api/v2/harness-profiles/{profile_id}/revisions` | Add an immutable harness revision. |
+| `POST /api/v2/harness-profiles/{profile_id}/archive` | Archive a harness profile. |
+| `POST /api/v2/harness-profiles/{profile_id}/restore` | Restore a harness profile. |
+| `GET /api/v2/harness-profiles/{profile_id}/export` | Export a harness profile. |
+| `POST /api/v2/harness-profiles/import` | Import a harness profile. |
+| `GET /api/v2/harness-profiles/{profile_id}/probes` | Read harness probe history. |
+| `POST /api/v2/harness-profiles/{profile_id}/probes` | Start a harness probe. |
+| `POST /api/v2/harness-profiles/{profile_id}/probes/{probe_id}/cancel` | Cancel a harness probe. |
+| `GET /api/v2/capabilities` | Read local capability and readiness details. |
+| `GET /api/v2/readiness` | Read the local readiness snapshot. |
+| `GET /api/v2/health` | Check application storage health. |
 
 ## API-created execution details
 
@@ -188,6 +223,9 @@ Route details:
   The standard app uses its embedded worker.
   Errors are `422 invalid_execution_spec` for an invalid discriminator or
   spec, and `422 execution_submission_failed` when submission cannot be made.
+  Saved server or harness references that cannot be resolved use the
+  `profile_resolution_failed` envelope: missing references return `404`, while
+  archived references return `409`.
 - `GET /api/v2/executions/{execution_id}` accepts the path ID and returns the
   execution envelope with `200`, or `422 invalid_execution_id`, `404
   execution_not_found`, or `500 execution_data_unavailable`. It reads the

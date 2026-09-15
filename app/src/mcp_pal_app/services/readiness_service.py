@@ -46,7 +46,10 @@ class _ProbeStore(Protocol):
     ) -> tuple[ProfileRecord, ...]: ...
 
     def list_profile_revisions(
-        self, profile_id: str
+        self,
+        profile_id: str,
+        *,
+        kind: Literal["server", "harness"] | None = None,
     ) -> tuple[ProfileRevisionRecord, ...]: ...
 
 
@@ -466,7 +469,8 @@ class ReadinessService:
         warnings: list[str] = []
         try:
             revision = _current_revision(
-                profile, self.store.list_profile_revisions(profile.id)
+                profile,
+                self.store.list_profile_revisions(profile.id, kind="harness"),
             )
         except Exception:
             warnings.append("Harness revision is unavailable")

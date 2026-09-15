@@ -30,8 +30,8 @@ def test_viewer_rejects_v1_and_v2_mutations(tmp_path: Path) -> None:
             client.post("/api/v2/executions", json={}),
             client.post("/api/v2/executions/not-present/cancel"),
             client.delete("/api/v2/executions/not-present"),
-            client.post("/api/v1/profiles", json={}),
-            client.delete("/api/v1/runs/history", params={"confirm": "true"}),
+            client.post("/api/v2/profiles", json={}),
+            client.delete("/api/v2/executions/history", params={"confirm": "true"}),
         )
     for response in attempts:
         assert response.status_code == 405

@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING as _TYPE_CHECKING
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -18,11 +18,6 @@ from mcp_pal.harness.manifest import (
     validate_manifest,
 )
 from mcp_pal.storage import StorageConflict
-from mcp_pal_app.builtin_profiles import (
-    EXCALIDRAW_MCP_CONFIG,
-    EXCALIDRAW_PROFILE_ID,
-    EXCALIDRAW_REVISION_ID,
-)
 
 if _TYPE_CHECKING:
     from mcp_pal.storage import ProfileRecord, ProfileRevisionRecord
@@ -30,10 +25,6 @@ if _TYPE_CHECKING:
 
 class ProfileServiceError(ValueError):
     """Safe, transport-neutral profile service error."""
-
-
-class BuiltinProfileError(ProfileServiceError):
-    """The reserved built-in profile ID is occupied by another profile."""
 
 
 class ProfileStore(Protocol):
@@ -50,9 +41,17 @@ class ProfileStore(Protocol):
     def list_profiles(
         self, kind: str, *, include_archived: bool = False
     ) -> tuple[ProfileRecord, ...]: ...
-    def get_profile(self, profile_id: str) -> ProfileRecord | None: ...
+    def get_profile(
+        self,
+        profile_id: str,
+        *,
+        kind: Literal["server", "harness"] | None = None,
+    ) -> ProfileRecord | None: ...
     def list_profile_revisions(
-        self, profile_id: str
+        self,
+        profile_id: str,
+        *,
+        kind: Literal["server", "harness"] | None = None,
     ) -> tuple[ProfileRevisionRecord, ...]: ...
     def add_revision(
         self,
@@ -60,9 +59,14 @@ class ProfileStore(Protocol):
         value: Mapping[str, Any],
         *,
         revision_id: str | None = None,
+        kind: Literal["server", "harness"] | None = None,
     ) -> ProfileRevisionRecord: ...
     def resolve_revision(
-        self, profile_id: str, selection: RevisionSelection | str = "latest"
+        self,
+        profile_id: str,
+        selection: RevisionSelection | str = "latest",
+        *,
+        kind: Literal["server", "harness"] | None = None,
     ) -> ProfileRevisionRecord: ...
     def update_profile(
         self,
@@ -70,9 +74,20 @@ class ProfileStore(Protocol):
         *,
         name: str | None = None,
         description: str | None = None,
+        kind: Literal["server", "harness"] | None = None,
     ) -> ProfileRecord: ...
-    def archive_profile(self, profile_id: str) -> ProfileRecord: ...
-    def restore_profile(self, profile_id: str) -> ProfileRecord: ...
+    def archive_profile(
+        self,
+        profile_id: str,
+        *,
+        kind: Literal["server", "harness"] | None = None,
+    ) -> ProfileRecord: ...
+    def restore_profile(
+        self,
+        profile_id: str,
+        *,
+        kind: Literal["server", "harness"] | None = None,
+    ) -> ProfileRecord: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +151,12 @@ class HarnessProfileInput(BaseModel):
 
 
 def _view(store: ProfileStore, record: ProfileRecord) -> ProfileView:
-    return ProfileView(record, store.list_profile_revisions(record.id))
+    return ProfileView(
+        record,
+        store.list_profile_revisions(
+            record.id, kind=cast(Literal["server", "harness"], record.kind)
+        ),
+    )
 
 
 class ProfileService:
@@ -145,41 +165,8 @@ class ProfileService:
     def __init__(self, store: ProfileStore) -> None:
         self.store = store
 
-    def ensure_builtins(self) -> None:
-        """Seed the v2 built-ins through the public SDK profile store."""
-        existing = self.store.get_profile(EXCALIDRAW_PROFILE_ID)
-        if existing is not None:
-            if existing.kind != "server" or existing.name != "Excalidraw":
-                raise BuiltinProfileError("reserved Excalidraw profile ID is occupied")
-            try:
-                revision = self.store.resolve_revision(EXCALIDRAW_PROFILE_ID)
-            except StorageConflict as exc:
-                raise BuiltinProfileError(
-                    "reserved Excalidraw profile is malformed"
-                ) from exc
-            if revision.value != EXCALIDRAW_MCP_CONFIG:
-                raise BuiltinProfileError("reserved Excalidraw profile is malformed")
-            return
-        try:
-            self.store.create_profile(
-                "server",
-                "Excalidraw",
-                EXCALIDRAW_MCP_CONFIG,
-                description="Built-in Excalidraw MCP server over HTTP.",
-                profile_id=EXCALIDRAW_PROFILE_ID,
-                revision_id=EXCALIDRAW_REVISION_ID,
-            )
-        except StorageConflict:
-            # Another application instance may win the idempotent race.
-            existing = self.store.get_profile(EXCALIDRAW_PROFILE_ID)
-            if existing is None:
-                raise ProfileServiceError(
-                    "built-in profile could not be seeded"
-                ) from None
-            self.ensure_builtins()
-
     def _get(self, profile_id: str, kind: str) -> ProfileView:
-        record = self.store.get_profile(profile_id)
+        record = self.store.get_profile(profile_id, kind=kind)  # type: ignore[arg-type]
         if record is None or record.kind != kind:
             raise ProfileServiceError(f"{kind} profile does not exist")
         return _view(self.store, record)
@@ -231,10 +218,14 @@ class ProfileService:
             return _view(
                 self.store,
                 self.store.update_profile(
-                    profile_id, name=name, description=description
+                    profile_id, name=name, description=description, kind="server"
                 ),
             )
         except StorageConflict as exc:
+            if str(exc) == "profile does not exist":
+                raise ProfileServiceError("MCP profile does not exist") from exc
+            if str(exc) == "profile name already exists":
+                raise ProfileServiceError("MCP profile already exists") from exc
             raise ProfileServiceError(
                 "MCP profile metadata could not be updated"
             ) from exc
@@ -244,22 +235,32 @@ class ProfileService:
     ) -> ProfileView:
         try:
             validate_mcp_config(config)
-            self.store.add_revision(profile_id, config)
+            self.store.add_revision(profile_id, config, kind="server")
         except ProfileValidationError:
             raise
         except StorageConflict as exc:
-            raise ProfileServiceError("MCP profile is missing or archived") from exc
+            if str(exc) == "profile does not exist":
+                raise ProfileServiceError("MCP profile does not exist") from exc
+            if str(exc) == "profile is archived":
+                raise ProfileServiceError("MCP profile cannot be modified") from exc
+            raise ProfileServiceError(
+                "MCP profile revision could not be added"
+            ) from exc
         return self.get_mcp(profile_id)
 
     def archive_mcp(self, profile_id: str) -> ProfileView:
         try:
-            return _view(self.store, self.store.archive_profile(profile_id))
+            return _view(
+                self.store, self.store.archive_profile(profile_id, kind="server")
+            )
         except StorageConflict as exc:
             raise ProfileServiceError("MCP profile does not exist") from exc
 
     def restore_mcp(self, profile_id: str) -> ProfileView:
         try:
-            return _view(self.store, self.store.restore_profile(profile_id))
+            return _view(
+                self.store, self.store.restore_profile(profile_id, kind="server")
+            )
         except StorageConflict as exc:
             raise ProfileServiceError("MCP profile does not exist") from exc
 
@@ -306,10 +307,14 @@ class ProfileService:
             return _view(
                 self.store,
                 self.store.update_profile(
-                    profile_id, name=name, description=description
+                    profile_id, name=name, description=description, kind="harness"
                 ),
             )
         except StorageConflict as exc:
+            if str(exc) == "profile does not exist":
+                raise ProfileServiceError("harness profile does not exist") from exc
+            if str(exc) == "profile name already exists":
+                raise ProfileServiceError("harness profile already exists") from exc
             raise ProfileServiceError(
                 "harness profile metadata could not be updated"
             ) from exc
@@ -336,23 +341,35 @@ class ProfileService:
         try:
             normalized = validate_manifest(manifest)["manifest"]
             self.store.add_revision(
-                profile_id, {"manifest": normalized, "trusted_unsandboxed": True}
+                profile_id,
+                {"manifest": normalized, "trusted_unsandboxed": True},
+                kind="harness",
             )
         except ManifestValidationError:
             raise
         except StorageConflict as exc:
-            raise ProfileServiceError("harness profile is missing or archived") from exc
+            if str(exc) == "profile does not exist":
+                raise ProfileServiceError("harness profile does not exist") from exc
+            if str(exc) == "profile is archived":
+                raise ProfileServiceError("harness profile cannot be modified") from exc
+            raise ProfileServiceError(
+                "harness profile revision could not be added"
+            ) from exc
         return self.get_harness(profile_id)
 
     def archive_harness(self, profile_id: str) -> ProfileView:
         try:
-            return _view(self.store, self.store.archive_profile(profile_id))
+            return _view(
+                self.store, self.store.archive_profile(profile_id, kind="harness")
+            )
         except StorageConflict as exc:
             raise ProfileServiceError("harness profile does not exist") from exc
 
     def restore_harness(self, profile_id: str) -> ProfileView:
         try:
-            return _view(self.store, self.store.restore_profile(profile_id))
+            return _view(
+                self.store, self.store.restore_profile(profile_id, kind="harness")
+            )
         except StorageConflict as exc:
             raise ProfileServiceError("harness profile does not exist") from exc
 
@@ -411,7 +428,6 @@ class ProfileService:
 
 
 __all__ = [
-    "BuiltinProfileError",
     "HarnessProfileInput",
     "MCPProfileInput",
     "ProfileService",

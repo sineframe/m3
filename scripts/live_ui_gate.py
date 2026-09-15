@@ -25,6 +25,7 @@ import zipfile
 from collections import deque
 from collections.abc import Mapping
 from pathlib import Path
+from queue import Empty, Queue
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlsplit
@@ -150,6 +151,92 @@ def _run(
         raise GateFailure(f"could not start {command[0]}") from exc
     if result.returncode != 0:
         detail = safe_diagnostics(result.stdout + "\n" + result.stderr, env)
+        suffix = f"\n{detail}" if detail else ""
+        raise GateFailure(
+            f"command failed with exit {result.returncode}: {command[0]}{suffix}"
+        )
+    return result
+
+
+def _run_streaming(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    timeout: float = PROCESS_TIMEOUT,
+    label: str = "command",
+    output_path: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a bounded command while emitting redacted output as it arrives."""
+
+    output_file = output_path.open("w", encoding="utf-8") if output_path else None
+    kwargs: dict[str, Any] = {
+        "cwd": str(cwd),
+        "env": dict(env),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+        "bufsize": 1,
+    }
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    elif os.name == "nt":
+        kwargs["creationflags"] = int(
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+    try:
+        process = subprocess.Popen(
+            command,
+            **kwargs,
+        )
+    except OSError as exc:
+        if output_file:
+            output_file.close()
+        raise GateFailure(f"could not start {command[0]}") from exc
+    print("+", _display(command), flush=True)
+
+    output: list[str] = []
+    lines: Queue[str] = Queue()
+
+    def read_output() -> None:
+        if process.stdout is None:
+            return
+        try:
+            for line in process.stdout:
+                lines.put(line)
+        except (OSError, ValueError):
+            return
+
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+    deadline = time.monotonic() + timeout
+    while process.poll() is None or not lines.empty():
+        if process.poll() is None and time.monotonic() >= deadline:
+            terminate_process(process)
+            reader.join(timeout=1)
+            if output_file:
+                output_file.close()
+            detail = safe_diagnostics("\n".join(output), env)
+            suffix = f"\n{detail}" if detail else ""
+            raise GateFailure(f"{label} timed out after {timeout:.0f}s{suffix}")
+        try:
+            line = lines.get(timeout=0.2)
+        except Empty:
+            continue
+        clean = redact(line.rstrip("\r\n"), env)
+        output.append(clean)
+        if output_file:
+            output_file.write(clean + "\n")
+            output_file.flush()
+        print(f"[{label}] {clean}", flush=True)
+    if output_file:
+        output_file.close()
+    reader.join(timeout=1)
+    result = subprocess.CompletedProcess(
+        command, process.returncode, "\n".join(output), None
+    )
+    if result.returncode != 0:
+        detail = safe_diagnostics(result.stdout, env)
         suffix = f"\n{detail}" if detail else ""
         raise GateFailure(
             f"command failed with exit {result.returncode}: {command[0]}{suffix}"
@@ -318,7 +405,16 @@ def cli_test_command(
 class Child:
     """Capture bounded, redacted output from the CLI process."""
 
-    def __init__(self, command: list[str], cwd: Path, env: Mapping[str, str]) -> None:
+    def __init__(
+        self,
+        command: list[str],
+        cwd: Path,
+        env: Mapping[str, str],
+        *,
+        label: str = "cli",
+        output_path: Path | None = None,
+    ) -> None:
+        output_file = output_path.open("w", encoding="utf-8") if output_path else None
         kwargs: dict[str, Any] = {
             "cwd": str(cwd),
             "env": dict(env),
@@ -336,11 +432,16 @@ class Child:
         try:
             self.process = subprocess.Popen(command, **kwargs)
         except OSError as exc:
+            if output_file:
+                output_file.close()
             raise GateFailure("could not start the standalone CLI") from exc
         self.env = dict(env)
+        self.label = label
+        self.output_file = output_file
         self.lines: deque[str] = deque(maxlen=600)
         self._lock = threading.Lock()
-        threading.Thread(target=self._capture, daemon=True).start()
+        self._capture_thread = threading.Thread(target=self._capture, daemon=True)
+        self._capture_thread.start()
 
     def _capture(self) -> None:
         if self.process.stdout is None:
@@ -350,9 +451,15 @@ class Child:
                 clean = redact(line.rstrip("\r\n"), self.env)
                 with self._lock:
                     self.lines.append(clean[:MAX_DIAGNOSTICS])
-                print(f"[cli] {clean}", flush=True)
+                if self.output_file:
+                    self.output_file.write(clean + "\n")
+                    self.output_file.flush()
+                print(f"[{self.label}] {clean}", flush=True)
         except (OSError, ValueError):
             return
+        finally:
+            if self.output_file:
+                self.output_file.close()
 
     def text(self) -> str:
         with self._lock:
@@ -361,11 +468,15 @@ class Child:
     def alive(self) -> bool:
         return self.process.poll() is None
 
+    def join(self, timeout: float = 1.0) -> None:
+        self._capture_thread.join(timeout)
 
-def terminate(child: Child | None) -> None:
-    if child is None:
+
+def terminate_process(process: subprocess.Popen[Any] | None) -> None:
+    """Terminate a process and all descendants it owns."""
+
+    if process is None:
         return
-    process = child.process
     if process.poll() is None:
         try:
             if os.name == "posix":
@@ -388,6 +499,12 @@ def terminate(child: Child | None) -> None:
             process.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired):
             pass
+
+
+def terminate(child: Child | None) -> None:
+    if child is None:
+        return
+    terminate_process(child.process)
 
 
 def interrupt(child: Child | None) -> None:

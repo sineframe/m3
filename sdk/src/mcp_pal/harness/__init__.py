@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .acp import ACPAdapter, ACPAgentAdapter, AcpHarnessAdapter
-    from .base import AcpRunSpec, HarnessResult, HarnessRunner, RunSpec
     from .claude import ClaudeCodeHarnessAdapter, ClaudeCodeSession
     from .codex import CodexHarnessAdapter
     from .contracts import (
@@ -87,10 +86,6 @@ _LAZY_MODULES = {
         )
     },
     **{name: ".acp" for name in ("ACPAdapter", "ACPAgentAdapter", "AcpHarnessAdapter")},
-    **{
-        name: ".base"
-        for name in ("AcpRunSpec", "HarnessResult", "HarnessRunner", "RunSpec")
-    },
     **{name: ".claude" for name in ("ClaudeCodeHarnessAdapter", "ClaudeCodeSession")},
     **{name: ".codex" for name in ("CodexHarnessAdapter",)},
     **{
@@ -152,7 +147,6 @@ __all__ = [
     "ACPAdapter",
     "ACPAgentAdapter",
     "AcpHarnessAdapter",
-    "AcpRunSpec",
     "ClaudeCodeHarnessAdapter",
     "ClaudeCodeSession",
     "CodexHarnessAdapter",
@@ -172,8 +166,6 @@ __all__ = [
     "HarnessObservation",
     "HarnessObservationBase",
     "HarnessObservationSink",
-    "HarnessResult",
-    "HarnessRunner",
     "HarnessSession",
     "HarnessSessionEvidence",
     "HarnessSessionSnapshot",
@@ -192,7 +184,6 @@ __all__ = [
     "RawEvidenceInput",
     "RawFrameObservation",
     "ReasoningChunkObservation",
-    "RunSpec",
     "StateObservedObservation",
     "ToolCallObservedObservation",
     "ToolResultObservedObservation",

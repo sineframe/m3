@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect as _inspect
+import math as _math
 from collections.abc import Awaitable as _Awaitable
 from collections.abc import Callable as _Callable
 from collections.abc import Iterable as _Iterable
@@ -166,6 +167,15 @@ from .services.probes import (
     ProbeReport,
     ProbeRequest,
     ProbeResult,
+)
+from .services.profiles import (
+    ProfileResolutionError as _ProfileResolutionError,
+)
+from .services.profiles import (
+    resolve_agent_spec as _resolve_agent_spec,
+)
+from .services.profiles import (
+    resolve_server_reference as _resolve_server_reference,
 )
 from .storage import ArtifactStore as _ArtifactStore
 from .storage import ExecutionStore as _ExecutionStore
@@ -1179,20 +1189,36 @@ class AsyncMCPTestKit:
         workspace_root: str | None = None,
     ) -> AsyncDirectClient:
         self._ensure_open()
+        if timeout is not None and (not _math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("timeout must be positive and finite")
         selected = server.server if hasattr(server, "server") else server
         binding = (
             server
             if isinstance(server, _ServerBinding)
             else _ServerBinding(server=selected)
         )
+        profile_provenance: _Mapping[str, _Any] | None = None
+        if binding.profile is not None:
+            resolver = self._execution_controller._persistent_store
+            if resolver is None:
+                raise _ProfileResolutionError(
+                    "saved profile resolution requires a configured execution store",
+                    details={"reason": "resolver_unavailable"},
+                )
+            resolved_profile = _resolve_server_reference(binding.profile, resolver)
+            selected = resolved_profile.value
+            binding = _ServerBinding(
+                server=selected,
+                alias=binding.alias or selected.name,
+                required=binding.required,
+            )
+            profile_provenance = resolved_profile.provenance
         if selected is None or not isinstance(
             selected, (_InProcessServer, _StdioServer, _HTTPServer, _SSEServer)
         ):
             raise _UnsupportedFeature(
                 "direct server profiles require runtime resolution"
             )
-        if timeout is not None and timeout <= 0:
-            raise ValueError("timeout must be positive")
         requested_revision: str | None
         requested_transport: _TransportKind | None = None
         if protocol is None:
@@ -1235,7 +1261,19 @@ class AsyncMCPTestKit:
             trace_bridge=trace_bridge,
             trace_owner=trace_owner,
             workspace_root=workspace_root,
-            server_bindings=(binding.model_dump(mode="json"),),
+            server_bindings=(
+                {
+                    **binding.model_dump(mode="json"),
+                    **(
+                        {
+                            "profile_id": profile_provenance["profile_id"],
+                            "revision_id": profile_provenance["revision_id"],
+                        }
+                        if profile_provenance is not None
+                        else {}
+                    ),
+                },
+            ),
             session_options={
                 key: value
                 for key, value in {
@@ -1277,6 +1315,32 @@ class AsyncMCPTestKit:
         if not isinstance(spec, _AgentSpec):
             self._unsupported("agent_session")
         spec = _cast(_AgentSpec, self._with_run_id(spec))
+        session_profile_provenance: tuple[_Mapping[str, str], ...] = ()
+        if (
+            any(item.profile is not None for item in spec.servers)
+            or spec.harness_profile
+        ):
+            resolver = self._execution_controller._persistent_store
+            if resolver is None:
+                raise _ProfileResolutionError(
+                    "saved profile resolution requires a configured execution store",
+                    details={"reason": "resolver_unavailable"},
+                )
+            spec, session_profile_provenance = _resolve_agent_spec(spec, resolver)
+        server_profile_by_ordinal = {
+            item.get("_ordinal"): item
+            for item in session_profile_provenance
+            if item.get("kind") == "server_profile"
+        }
+        session_server_bindings: list[_Mapping[str, _Any]] = []
+        for index, binding in enumerate(spec.servers):
+            marker = server_profile_by_ordinal.get(str(index))
+            row = dict(binding.model_dump(mode="json"))
+            if marker is not None:
+                row.update(
+                    profile_id=marker["profile_id"], revision_id=marker["revision_id"]
+                )
+            session_server_bindings.append(row)
         resolved = adapter or self._adapter_registry.resolve(spec)
         bindings = spec.servers + _runtime_server_bindings(runtime_servers)
         manager = _ServerGroupManager(bindings, tool_policy=spec.tool_policy)
@@ -1307,6 +1371,32 @@ class AsyncMCPTestKit:
                 run_id=spec.run_id.root
                 if spec.run_id is not None
                 else self._run_id.root,
+                server_bindings=tuple(session_server_bindings),
+                harness_binding=next(
+                    (
+                        {
+                            "profile_id": item["profile_id"],
+                            "revision_id": item["revision_id"],
+                        }
+                        for item in session_profile_provenance
+                        if item.get("kind") == "harness_profile"
+                    ),
+                    None,
+                ),
+                provenance=(
+                    {
+                        "profiles": tuple(
+                            {
+                                key: value
+                                for key, value in item.items()
+                                if key != "_ordinal"
+                            }
+                            for item in session_profile_provenance
+                        )
+                    }
+                    if session_profile_provenance
+                    else None
+                ),
             )
         elif _artifact_store is None:
             # Runtime-owned sessions already receive their artifact backend

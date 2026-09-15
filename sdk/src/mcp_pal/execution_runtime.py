@@ -34,7 +34,13 @@ from .errors import (
 from .events import EventFactory, EventSequence
 from .execution_trace import ExecutionTraceRecorder
 from .harness.contracts import HarnessStartupError
-from .storage import ArtifactStore, ExecutionStore, InMemoryExecutionStore
+from .services.profiles import ProfileResolutionError, resolve_execution_spec
+from .storage import (
+    ArtifactStore,
+    ExecutionStore,
+    InMemoryExecutionStore,
+    ProfileResolver,
+)
 from .trace.redaction import RedactionConfig
 from .transport.local import LocalTransportError
 from .types import (
@@ -81,7 +87,7 @@ from .types import (
 )
 
 
-class _PersistentExecutionStore(ExecutionStore, Protocol):
+class _PersistentExecutionStore(ExecutionStore, ProfileResolver, Protocol):
     def enqueue_command(self, *args: Any, **kwargs: Any) -> Any: ...
 
     def request_cancel(self, *args: Any, **kwargs: Any) -> Any: ...
@@ -266,6 +272,7 @@ class AsyncExecutionHandle:
         persistent: bool = False,
         execution_id: ExecutionId | str | None = None,
         run_id: str | None = None,
+        resolution_provenance: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         self._controller = controller
         self._spec = spec
@@ -307,6 +314,34 @@ class AsyncExecutionHandle:
             )
         self._artifact_store: ArtifactStore | None = candidate_artifacts
         self._persistent = persistent
+        server_bindings = []
+        provenance_values = tuple(resolution_provenance)
+        by_ordinal = {
+            int(item["_ordinal"]): item
+            for item in provenance_values
+            if item.get("kind") == "server_profile" and "_ordinal" in item
+        }
+        for index, binding in enumerate(spec.servers):
+            value = binding.model_dump(mode="json")
+            marker = by_ordinal.get(index)
+            if marker is not None:
+                value.update(
+                    profile_id=marker.get("profile_id"),
+                    revision_id=marker.get("revision_id"),
+                )
+            server_bindings.append(value)
+        harness_binding = next(
+            (
+                {
+                    "profile_id": item.get("profile_id"),
+                    "revision_id": item.get("revision_id"),
+                    "kind": item.get("kind"),
+                }
+                for item in provenance_values
+                if item.get("kind") == "harness_profile"
+            ),
+            None,
+        )
         self._recorder = ExecutionTraceRecorder(
             self._store,
             self._execution_id,
@@ -318,8 +353,17 @@ class AsyncExecutionHandle:
             # An explicit spec run ID has precedence over the controller
             # default while preserving the caller's immutable spec object.
             run_id=(spec.run_id.root if spec.run_id is not None else run_id),
-            server_bindings=tuple(
-                binding.model_dump(mode="json") for binding in spec.servers
+            server_bindings=tuple(server_bindings),
+            harness_binding=harness_binding,
+            provenance=(
+                {
+                    "profiles": tuple(
+                        {key: value for key, value in item.items() if key != "_ordinal"}
+                        for item in provenance_values
+                    )
+                }
+                if provenance_values
+                else None
             ),
         )
         if getattr(controller.kit, "_record_checks", False):
@@ -1186,11 +1230,23 @@ class AsyncExecutionController:
                 "execution spec is invalid", details={"operation": "execution.submit"}
             )
         explicit_run_id = getattr(spec.run_id, "root", spec.run_id)
+        resolution_provenance: tuple[Mapping[str, Any], ...] = ()
+        try:
+            spec, resolution_provenance = resolve_execution_spec(
+                spec, self._persistent_store
+            )
+        except ProfileResolutionError:
+            raise
         effective_run_id = (
             str(explicit_run_id or run_id) if (explicit_run_id or run_id) else None
         )
         if self._persistent_store is None:
-            handle = AsyncExecutionHandle(self, spec, run_id=effective_run_id)
+            handle = AsyncExecutionHandle(
+                self,
+                spec,
+                run_id=effective_run_id,
+                resolution_provenance=resolution_provenance,
+            )
         else:
             if not callable(getattr(self._persistent_store, "enqueue_command", None)):
                 raise ModelValidationError(
@@ -1203,6 +1259,7 @@ class AsyncExecutionController:
                 store=self._persistent_store,
                 persistent=True,
                 run_id=effective_run_id,
+                resolution_provenance=resolution_provenance,
             )
             handle._recorder.emit(
                 EventKind.EXECUTION_STATE_CHANGED,

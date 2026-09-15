@@ -478,6 +478,43 @@ def test_ephemeral_and_sqlite_artifact_bytes_redact_and_reopen(tmp_path: Path) -
     )
 
 
+def test_persisted_execution_spec_upgrades_legacy_profile_selector(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    profile = store.create_server_profile(
+        "legacy-selector",
+        {"mcpServers": {"echo": {"command": "echo"}}},
+        profile_id="legacy-profile",
+    )
+    from mcp_pal.types import ServerProfileRef
+
+    spec = DirectSpec(
+        servers=(
+            ServerBinding(
+                profile=ServerProfileRef(
+                    profile_id=profile.id,
+                    server_name="echo",
+                    revision=RevisionSelection(mode="latest"),
+                )
+            ),
+        ),
+        operation=Ping(server="echo"),
+    )
+    persisted = spec.model_dump(mode="json")
+    del persisted["servers"][0]["profile"]["server_name"]
+    persisted["operation"]["server"] = "legacy-profile"
+    execution_id = ExecutionId("legacy-spec-execution")
+    store.create(ExecutionState(execution_id=execution_id), specification=persisted)
+    try:
+        loaded = store.get_execution_spec(execution_id)
+        assert loaded is not None
+        assert loaded.servers[0].profile is not None
+        assert loaded.servers[0].profile.server_name == "legacy-profile"
+    finally:
+        store.close()
+
+
 def test_event_and_artifact_references_share_refcount_and_gc_after_terminal_delete(
     tmp_path: Path,
 ) -> None:

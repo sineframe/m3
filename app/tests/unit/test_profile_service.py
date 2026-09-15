@@ -99,6 +99,50 @@ def test_profile_lifecycle_import_export_and_trust(tmp_path: Path) -> None:
     store.close()
 
 
+def test_profile_service_reads_and_mutates_same_id_families_independently(
+    tmp_path: Path,
+) -> None:
+    store, service = _service(tmp_path)
+    try:
+        server = store.create_server_profile(
+            "server",
+            {"mcpServers": {"echo": {"command": "echo"}}},
+            profile_id="shared-profile",
+            revision_id="shared-server-revision",
+        )
+        harness = store.create_harness_profile(
+            "harness",
+            {"manifest": {"command": "agent"}, "trusted_unsandboxed": True},
+            profile_id="shared-profile",
+            revision_id="shared-harness-revision",
+        )
+
+        assert service.get_mcp(server.id).record.kind == "server"
+        assert service.get_harness(harness.id).record.kind == "harness"
+        service.add_mcp_revision(
+            server.id, {"mcpServers": {"echo": {"command": "printf"}}}
+        )
+        service.add_harness_revision(
+            harness.id,
+            {"command": "agent-2"},
+            trusted_unsandboxed=True,
+        )
+        assert (
+            service.get_mcp(server.id).current_revision.value["mcpServers"]["echo"][
+                "command"
+            ]
+            == "printf"
+        )
+        assert (
+            service.get_harness(harness.id).current_revision.value["manifest"][
+                "command"
+            ]
+            == "agent-2"
+        )
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     ("server", "expected"),
     [("stdio", StdioServer), ("http", HTTPServer), ("sse", SSEServer)],

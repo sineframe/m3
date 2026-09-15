@@ -128,6 +128,10 @@ ServerValue = _Annotated[
 
 class ServerProfileRef(FrozenModel):
     profile_id: ServerProfileId
+    # The logical server selector is part of the reference, rather than being
+    # inferred from mutable profile metadata.  This lets a submitted spec
+    # retain a stable selector after the profile is resolved.
+    server_name: str = _Field(min_length=1, max_length=256)
     revision: RevisionSelection
 
 
@@ -475,7 +479,7 @@ class DirectSpec(_ExecutionSpecBase):
             or (
                 binding.server.name
                 if binding.server is not None
-                else binding.profile.profile_id.root
+                else binding.profile.server_name
                 if binding.profile is not None
                 else None
             )

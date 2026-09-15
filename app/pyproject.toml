@@ -7,7 +7,6 @@ dependencies = [
   "mcp-pal[storage]",
   "fastapi>=0.115,<1",
   "pydantic-settings>=2.4,<3",
-  "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.30,<1",
 ]
 

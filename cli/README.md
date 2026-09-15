@@ -157,6 +157,35 @@ execution persistence is automatic whenever tests run through `mcp-pal test`;
 tests run directly with pytest use in-memory SDK storage unless they pass an
 explicit `SQLiteExecutionStore` or install the plugin and flag themselves.
 
+Profiles saved in the UI are stored in that same results database. A later
+CLI-managed test can reference one directly; no additional CLI option is
+needed. Use the profile ID shown by the UI and explicitly select the server
+inside its MCP document:
+
+```python
+from mcp_pal import MCPTestKit
+from mcp_pal.types import RevisionSelection, ServerBinding, ServerProfileRef
+
+saved_server = ServerBinding(
+    profile=ServerProfileRef(
+        profile_id="profile-from-ui",
+        server_name="orders",
+        revision=RevisionSelection(mode="latest"),
+    )
+)
+
+def test_saved_server_profile():
+    with MCPTestKit() as kit, kit.direct(saved_server) as client:
+        assert client.list_all_tools()
+```
+
+At execution start, `latest` resolves to one immutable revision and its profile
+and revision IDs are retained with the execution. Use a pinned
+`RevisionSelection` when the test must name an exact revision. The same shared
+store resolves `HarnessProfileRef` in agent specifications. This automatic
+store selection applies to `mcp-pal test` (including `--ui`); plain `pytest`
+must be given the same `SQLiteExecutionStore` explicitly.
+
 The database records SDK executions, specifications, recorded events and
 traces, sessions/turns, saved artifacts/evidence, evaluations attached to
 those executions, and internal pytest run records. Direct SDK evaluations are saved only with

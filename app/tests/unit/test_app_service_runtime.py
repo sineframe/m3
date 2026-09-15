@@ -9,11 +9,10 @@ from mcp_pal import AgentSpec, EventKind, ExecutionId, ExecutionOutcome
 from mcp_pal.execution_trace import ExecutionTraceRecorder
 from mcp_pal.harness import HarnessAdapterRegistry
 from mcp_pal.services.acp_probes import ACPProbeKind, ACPProbeRequest
-from mcp_pal.storage import SQLiteExecutionStore
+from mcp_pal.storage import SQLiteExecutionStore, StorageError
 from mcp_pal_app.services.app_service import AppRuntimeService
 from mcp_pal_app.services.execution_service import AppExecutionError
 from mcp_pal_app.services.profile_service import (
-    BuiltinProfileError,
     HarnessProfileInput,
     MCPProfileInput,
 )
@@ -123,6 +122,42 @@ def test_runtime_composes_injected_falsey_resources_and_typed_crud(
     kit.store.close()
 
 
+def test_runtime_close_attempts_owned_resources_after_probe_close_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = AppRuntimeService(
+        _settings(tmp_path / "runtime.sqlite"), embedded_worker=False
+    )
+    closed: list[str] = []
+
+    class FailingProbeService:
+        def close(self) -> None:
+            closed.append("probes")
+            raise RuntimeError("probe close failed")
+
+    original_kit_close = runtime.kit.close
+    original_store_close = runtime.store.close
+
+    def close_kit() -> None:
+        closed.append("kit")
+        original_kit_close()
+
+    def close_store() -> None:
+        closed.append("store")
+        original_store_close()
+
+    monkeypatch.setattr(runtime.kit, "close", close_kit)
+    monkeypatch.setattr(runtime.store, "close", close_store)
+    runtime._acp_probes = FailingProbeService()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="probe close failed"):
+        runtime.close()
+    assert closed == ["probes", "kit", "store"]
+
+    runtime.close()
+    assert closed == ["probes", "kit", "store"]
+
+
 def test_runtime_rejects_mismatched_injected_kit_and_registry_resources(
     tmp_path: Path,
 ) -> None:
@@ -145,6 +180,34 @@ def test_runtime_rejects_registry_when_kit_is_injected(tmp_path: Path) -> None:
             adapter_registry=HarnessAdapterRegistry(),
         )
     store.close()
+
+
+def test_runtime_resolves_database_parent_aliases_and_preserves_file_guards(
+    tmp_path: Path,
+) -> None:
+    """App aliases such as macOS ``/tmp`` do not weaken SQLite path checks."""
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    alias_parent = tmp_path / "tmp-alias"
+    alias_parent.symlink_to(real_parent, target_is_directory=True)
+
+    database = alias_parent / "runtime.sqlite"
+    runtime = AppRuntimeService(_settings(database), embedded_worker=False)
+    assert runtime.store.database == real_parent / database.name
+    runtime.close()
+
+    target = real_parent / "target.sqlite"
+    target.write_bytes(b"keep")
+    linked_database = alias_parent / "linked.sqlite"
+    linked_database.symlink_to(target)
+    with pytest.raises(StorageError, match="symlink"):
+        AppRuntimeService(_settings(linked_database), embedded_worker=False)
+    assert target.read_bytes() == b"keep"
+
+    sidecar_database = real_parent / "sidecar.sqlite"
+    Path(f"{sidecar_database}-wal").symlink_to(target)
+    with pytest.raises(StorageError, match="symlink"):
+        AppRuntimeService(_settings(sidecar_database), embedded_worker=False)
 
 
 def test_runtime_clone_preserves_pinned_one_turn_inputs(tmp_path: Path) -> None:
@@ -183,14 +246,9 @@ def test_runtime_clone_preserves_pinned_one_turn_inputs(tmp_path: Path) -> None:
     runtime.close()
 
 
-def test_runtime_clear_terminal_history_and_seed_idempotency(tmp_path: Path) -> None:
+def test_runtime_clear_terminal_history(tmp_path: Path) -> None:
     runtime, _kit, _profile_id = _runtime(tmp_path)
     store = runtime.store
-    runtime.profiles.ensure_builtins()
-    assert (
-        len([item for item in runtime.list_mcp() if item.record.name == "Excalidraw"])
-        == 1
-    )
     execution_id = ExecutionId("finished-test")
     recorder = ExecutionTraceRecorder(store, execution_id)
     recorder.finalize(ExecutionOutcome.COMPLETED)
@@ -237,19 +295,6 @@ def test_terminal_trace_and_spec_reopen_in_a_second_runtime(tmp_path: Path) -> N
     assert reopened_failed.events[-1].kind is EventKind.EXECUTION_FINISHED
     reopened.close()
     reopened_store.close()
-
-
-def test_builtin_fixed_id_wrong_kind_is_typed_failure(tmp_path: Path) -> None:
-    store = SQLiteExecutionStore(tmp_path / "collision.sqlite")
-    store.create_harness_profile(
-        "collision",
-        {"command": "echo"},
-        profile_id="00000000-0000-4000-8000-000000000001",
-    )
-    runtime_settings = _settings(tmp_path / "unused.sqlite")
-    with pytest.raises(BuiltinProfileError, match="reserved Excalidraw profile ID"):
-        AppRuntimeService(runtime_settings, store=store, kit=_FalseyKit(store))
-    store.close()
 
 
 def test_owned_runtime_rejects_settings_only_secret_in_acp_session_config(

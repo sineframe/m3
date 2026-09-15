@@ -31,6 +31,7 @@ from mcp_pal import (
     TraceView,
     build_feedback,
 )
+from mcp_pal.services.profiles import ProfileResolutionError
 from mcp_pal.storage import ExecutionStore, StorageConflict, StorageError
 
 _CANCEL_SETTLE_TIMEOUT_SECONDS = 2.0
@@ -40,9 +41,12 @@ _CANCEL_SETTLE_POLL_SECONDS = 0.01
 class AppExecutionError(RuntimeError):
     """Typed service failure independent of an HTTP transport."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self, code: str, message: str, *, details: dict[str, object] | None = None
+    ) -> None:
         self.code = code
         self.message = message
+        self.details = dict(details or {})
         super().__init__(message)
 
 
@@ -156,6 +160,12 @@ class AppExecutionService:
             )
         try:
             handle = self.kit.submit(spec)
+        except ProfileResolutionError as exc:
+            raise AppExecutionError(
+                "profile_resolution_failed",
+                exc.message,
+                details=exc.details,
+            ) from exc
         except (StorageConflict, ValueError, RuntimeError) as exc:
             raise AppExecutionError(
                 "execution_submission_failed", "execution could not be submitted"

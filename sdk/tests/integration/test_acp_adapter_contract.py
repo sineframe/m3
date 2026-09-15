@@ -209,6 +209,37 @@ async def test_acp_adapter_keeps_one_session_across_turns(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_acp_session_close_can_resume_after_connection_shutdown_cancelled(
+    tmp_path: Path,
+) -> None:
+    """A cancelled close must not mark the live process as already closed."""
+    session = await AcpHarnessAdapter().open(_launch(_agent(tmp_path / "agent.py")))
+    connection = session._connection
+    assert connection is not None
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_close = connection.close
+
+    async def blocked_close() -> None:
+        entered.set()
+        await release.wait()
+        await original_close()
+
+    connection.close = blocked_close  # type: ignore[method-assign]
+    closing = asyncio.create_task(session.close())
+    await asyncio.wait_for(entered.wait(), timeout=2.0)
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    assert not session.snapshot().closed
+
+    release.set()
+    await session.close()
+    assert session.snapshot().closed
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_acp_typed_observations_and_public_runtime_are_finalized(
     tmp_path: Path,
 ) -> None:

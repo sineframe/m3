@@ -23,6 +23,9 @@ from .probes import (
     ProbeResult,
     Probes,
 )
+from .profiles import (
+    ProfileResolver,
+)
 
 __all__ = [
     "ACPAgentIdentity",
@@ -41,6 +44,7 @@ __all__ = [
     "ProbeRequest",
     "ProbeResult",
     "Probes",
+    "ProfileResolver",
     "SQLiteStoreWorker",
     "redact_probe",
     "run_acp_probe",

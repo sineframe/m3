@@ -113,6 +113,8 @@ class ExecutionTraceRecorder:
         specification: Mapping[str, Any] | None = None,
         run_id: str | None = None,
         server_bindings: Sequence[Mapping[str, Any]] = (),
+        harness_binding: Mapping[str, Any] | None = None,
+        provenance: Mapping[str, Any] | None = None,
     ) -> None:
         self._store = store
         self._execution_id = (
@@ -155,7 +157,9 @@ class ExecutionTraceRecorder:
                     run_id=RunId(effective_run_id) if effective_run_id else None,
                 ),
                 specification=specification,
+                provenance=provenance,
                 server_bindings=server_bindings,
+                harness_binding=harness_binding,
                 run_id=effective_run_id,
             )
             self.emit(

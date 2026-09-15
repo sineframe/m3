@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import math
 import threading
 
 import pytest
@@ -13,13 +15,15 @@ from mcp.types import ListToolsResult
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.errors import OperationCancelled, UnsupportedFeature
 from mcp_pal.harness import HarnessAdapterRegistry, HarnessStartupError
-from mcp_pal.storage import InMemoryExecutionStore
+from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from mcp_pal.sync_api import DirectClient, MCPTestKit, _adapt_callback
 from mcp_pal.types import (
     AgentSpec,
     ClaudeCode,
     InProcessServer,
+    RevisionSelection,
     ServerBinding,
+    ServerProfileRef,
     StdioServer,
     TextContent,
     UserMessage,
@@ -41,6 +45,41 @@ async def test_sync_and_async_kits_expose_the_configured_store() -> None:
     assert asynchronous.store is store
     sync.close()
     await asynchronous.aclose()
+
+
+def test_profile_backed_sync_and_async_direct_reject_nonfinite_timeouts(
+    tmp_path,
+) -> None:
+    store = SQLiteExecutionStore(tmp_path / "profiles.sqlite")
+    profile = store.create_server_profile(
+        "profile-server",
+        {"mcpServers": {"echo": {"command": "echo"}}},
+    )
+    binding = ServerBinding(
+        profile=ServerProfileRef(
+            profile_id=profile.id,
+            server_name="echo",
+            revision=RevisionSelection(mode="latest"),
+        )
+    )
+    try:
+        sync = MCPTestKit(store=store)
+        try:
+            for timeout in (math.inf, math.nan):
+                with pytest.raises(ValueError, match="positive and finite"):
+                    sync.direct(binding, timeout=timeout)
+        finally:
+            sync.close()
+
+        async_kit = AsyncMCPTestKit(store=store)
+        try:
+            for timeout in (math.inf, math.nan):
+                with pytest.raises(ValueError, match="positive and finite"):
+                    async_kit.direct(binding, timeout=timeout)
+        finally:
+            asyncio.run(async_kit.aclose())
+    finally:
+        store.close()
 
 
 def test_sync_direct_uses_typed_results_and_final_trace() -> None:

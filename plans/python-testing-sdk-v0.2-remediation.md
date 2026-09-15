@@ -728,7 +728,7 @@ Gate:
 - [x] Root `pyproject.toml` declares the `sdk` and private `app` uv workspace
   projects; the lock contains both projects.
 - [x] UI, API, application entrypoint, application settings, legacy ORM
-  persistence, built-in profiles, run orchestration, and one-shot native
+  persistence, run orchestration, and one-shot native
   runners live under `app/src/mcp_pal_app`.
 - [x] Legacy application event normalization and its regression tests live in
   the app; modern SDK adapters, ACP contracts, stable trace/storage, and
@@ -798,8 +798,8 @@ store, `MCPTestKit`, `AppExecutionService`, `ProfileService`, and
 `ExecutionSpecBuilder`, with injection-friendly ownership and idempotent close.
 It exposes typed one-turn submit/history/report/cancel/delete/terminal-history
 operations, profile operations, bounded `ExecutionView` projections, pinned
-clone-draft reconstruction, and idempotent fresh-v2 Excalidraw seeding. SQLite
-and in-memory stores both retain validated defensive execution-spec copies.
+clone-draft reconstruction. SQLite and in-memory stores both retain validated
+defensive execution-spec copies.
 Sync toolkit adapter registries preserve deliberately empty injected registries.
 Claude/OpenCode/ACP adapters prefer explicit Settings credential values and
 register resolved secrets before child output; persisted specs/events/settings

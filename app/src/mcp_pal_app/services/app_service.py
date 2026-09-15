@@ -8,7 +8,8 @@ operate on them; transport adapters should not construct any of these pieces.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any, Literal, Protocol
 
 from mcp_pal import (
     AgentSpec,
@@ -46,6 +47,20 @@ from mcp_pal_app.services.profile_service import (
 from mcp_pal_app.services.readiness_service import ReadinessService, ReadinessView
 from mcp_pal_app.services.spec_builder import ExecutionSpecBuilder, OneTurnRunDraft
 from mcp_pal_app.settings import Settings
+
+
+def _normalized_database_path(value: str) -> Path:
+    """Resolve application path aliases without hiding a symlinked database.
+
+    macOS exposes common temporary/system directories through symlinks (for
+    example, ``/tmp`` through ``/private/tmp``).  The SDK store intentionally
+    rejects symlink components, so resolve the parent directory at this
+    application-owned boundary.  Keep the final component lexical so the
+    store can still reject a symlinked database file or journal sidecar.
+    """
+    raw = value.removeprefix("sqlite:///")
+    expanded = Path(raw).expanduser()
+    return expanded.parent.resolve() / expanded.name
 
 
 def build_harness_adapter_registry(settings: Settings) -> HarnessAdapterRegistry:
@@ -143,6 +158,7 @@ class AppRuntimeService:
         readiness_service: ReadinessProvider | None = None,
         acp_probe_service: ACPProbes | None = None,
         acp_probe_runner: Runner | None = None,
+        embedded_worker: bool = True,
     ) -> None:
         if kit is not None and store is None:
             raise ValueError("an injected kit requires its matching execution store")
@@ -171,7 +187,7 @@ class AppRuntimeService:
                 secrets=(value for value in credential_values if value)
             )
             self.store = SQLiteExecutionStore(
-                self.settings.database_path, config=redaction
+                _normalized_database_path(self.settings.database_path), config=redaction
             )
         else:
             self.store = store
@@ -179,7 +195,6 @@ class AppRuntimeService:
         self._owns_kit = False
         try:
             self.profiles = ProfileService(self.store)
-            self.profiles.ensure_builtins()
             registry = (
                 adapter_registry
                 if adapter_registry is not None
@@ -191,6 +206,7 @@ class AppRuntimeService:
                 else MCPTestKit(
                     store=self.store,
                     adapter_registry=registry,
+                    embedded_worker=embedded_worker,
                 )
             )
             self._owns_kit = kit is None
@@ -251,6 +267,14 @@ class AppRuntimeService:
         """Return the lifecycle-owned ACP protocol/full probe service."""
         self._ensure_open()
         return self._acp_probes
+
+    @property
+    def owns_store(self) -> bool:
+        return self._owns_store
+
+    @property
+    def owns_kit(self) -> bool:
+        return self._owns_kit
 
     @property
     def readiness(self) -> ReadinessProvider:
@@ -368,7 +392,9 @@ class AppRuntimeService:
         return OneTurnRunDraft(
             profile_id=str(metadata["mcp_profile_id"]),
             profile_revision=self._pinned(
-                str(metadata["mcp_profile_id"]), str(metadata["mcp_revision_id"])
+                str(metadata["mcp_profile_id"]),
+                str(metadata["mcp_revision_id"]),
+                kind="server",
             ),
             enabled_server=str(metadata["enabled_server"]),
             harness={
@@ -382,6 +408,7 @@ class AppRuntimeService:
             harness_revision=self._pinned(
                 str(metadata["harness_profile_id"]),
                 str(metadata["harness_revision_id"]),
+                kind="harness",
             )
             if metadata.get("harness_profile_id")
             and metadata.get("harness_revision_id")
@@ -396,8 +423,14 @@ class AppRuntimeService:
             metadata=user_metadata,
         )
 
-    def _pinned(self, profile_id: str, revision_id: str) -> RevisionSelection:
-        revisions = self.profiles.store.list_profile_revisions(profile_id)
+    def _pinned(
+        self,
+        profile_id: str,
+        revision_id: str,
+        *,
+        kind: Literal["server", "harness"],
+    ) -> RevisionSelection:
+        revisions = self.profiles.store.list_profile_revisions(profile_id, kind=kind)
         revision = next(
             (item for item in revisions if str(item.id.root) == revision_id), None
         )
@@ -488,15 +521,15 @@ class AppRuntimeService:
             return
         self._closed = True
         failure: BaseException | None = None
-        self._acp_probes.close()
-        if self._owns_kit:
+        for resource, owned in (
+            (self._acp_probes, True),
+            (self.kit, self._owns_kit),
+            (self.store, self._owns_store),
+        ):
+            if not owned:
+                continue
             try:
-                self.kit.close()
-            except BaseException as exc:
-                failure = exc
-        if self._owns_store:
-            try:
-                self.store.close()
+                resource.close()
             except BaseException as exc:
                 if failure is None:
                     failure = exc
