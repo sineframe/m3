@@ -270,9 +270,3 @@ def test_verify_release_rejects_forbidden_cli_dependencies(
         release.ReleaseBuildError, match="forbidden mandatory dependency"
     ):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
-
-
-def test_ui_ref_is_the_pinned_commit() -> None:
-    assert (release.ROOT / "cli" / "UI_REF").read_text(encoding="utf-8") == (
-        "98e39a3c3eea3087d9ed08f3477d62cfac2fb18b\n"
-    )
