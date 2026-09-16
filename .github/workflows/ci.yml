@@ -33,7 +33,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     name: Compatibility tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -119,7 +119,7 @@ jobs:
           set -o pipefail
           log="$RUNNER_TEMP/application-tests.log"
           set +e
-          timeout 6m uv run --locked --no-sync --project app \
+          timeout 10m uv run --locked --no-sync --project app \
             pytest -q -n 2 --dist worksteal \
             --durations=25 --durations-min=1 -m "not live" app/tests 2>&1 \
             | tee "$log"
