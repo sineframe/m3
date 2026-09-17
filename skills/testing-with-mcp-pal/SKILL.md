@@ -84,6 +84,9 @@ finalization but does not start or stop a deployed service.
   JSON-compatible public trace view. Use typed fields for assertions and
   do not print whole traces to shared logs; messages, arguments, and results may
   contain sensitive application data.
+- For cost budgets, use finalized `trace_view.summary.usage`, require an
+  observed cost, and check currency when the provider emits it. See
+  [trace metadata](references/test-patterns.md#inspect-trace-metadata).
 - A tool-selection test must inspect finalized wire evidence. The default
   matcher evidence is `"wire"`; request `"reported"` only when comparing sources.
 - If policy exposes only the expected tool, the test proves tool use, not tool

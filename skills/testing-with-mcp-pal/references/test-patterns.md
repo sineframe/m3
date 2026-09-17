@@ -242,6 +242,21 @@ the owning kit or store is open, resolve a `raw_messages` `evidence_ref` with
 `read_raw_evidence(reference, max_bytes=...)`. Do not emit full trace dumps or
 raw evidence to shared CI logs.
 
+For a cost ceiling after a single agent turn, use the finalized view:
+
+```python
+usage = session.result.trace_view.summary.usage.value
+assert usage is not None, "usage was not reported"
+assert usage.cost.value is not None, "cost was not reported"
+assert usage.cost.value < 100.0
+```
+
+Cost and currency may be absent; check `usage.currency.value` if a specific
+currency is required. `summary.usage` is the latest usage entry, not a sum of
+all entries. CLI-selected SQLite stores the underlying usage trace when the
+harness emits it; a plain Python budget assertion is saved only as part of the
+pytest item outcome.
+
 Replace the module, schema, arguments, expected result, model, and prompt with
 facts from the target project. For OpenCode, replace `ClaudeCode` with
 `OpenCode` and reference the provider credential expected by that installation.

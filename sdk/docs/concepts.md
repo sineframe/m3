@@ -177,6 +177,21 @@ partial evidence and limitations without invented provider, usage, reasoning,
 HTTP, or process facts. See
 [`test_typed_trace_view.py`](../examples/tests/test_typed_trace_view.py).
 
+When a harness reports cost, a test can check a budget on the finalized trace:
+
+```python
+usage = session.result.trace_view.summary.usage.value
+assert usage is not None, "harness did not report usage"
+assert usage.cost.value is not None, "harness did not report cost"
+assert usage.cost.value < 100.0
+```
+
+Cost and currency are provider-reported observations; some harnesses omit
+either. `summary.usage` reflects the latest usage entry, so check the source's
+reporting semantics before treating it as a total across turns. The runnable
+single-turn example is
+[`test_live_opencode.py`](../examples/tests/test_live_opencode.py).
+
 An agent `session.send(...)` returns a terminal `TurnResult` for that turn.
 After the session closes, use `session.result` for finalized assertions and
 `session.result.trace_view` for the immutable view. `TurnResult` (and its

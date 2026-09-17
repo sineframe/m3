@@ -110,3 +110,10 @@ def test_live_opencode_uses_shipping_quote_and_captures_wire_evidence() -> None:
         assert call.wire.state.value == "observed"
         assert call.result.value is not None
         assert call.result.value.structured_content.value["currency"] == "USD"
+
+        usage = view.summary.usage.value
+        assert usage is not None, "OpenCode did not report usage"
+        assert usage.cost.value is not None, "OpenCode did not report cost"
+        assert usage.cost.value < 100.0, (
+            f"OpenCode cost exceeded budget: {usage.cost.value}"
+        )
