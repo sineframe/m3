@@ -210,6 +210,22 @@ expect(session.result).to_have_tool_call("shipping_quote", turn=second)
 assert session.result.trace_view.for_turn(first).tool_calls
 ```
 
+For a run that calls `shipping_quote` and `get_order`, use `to_have_tool_calls`
+to check the complete list, including repeated calls. It checks the exact
+sequence by default; set
+`ordered=False` to accept any order while still requiring the same number of
+each tool:
+
+```python
+expect(result).to_have_tool_calls(["shipping_quote", "get_order"])
+expect(result).to_have_tool_calls(
+    ["get_order", "shipping_quote"], ordered=False
+)
+```
+
+The list uses wire-observed calls by default. Pass `server=`, `turn=`, or
+`evidence="reported"` to select calls before comparing the full list.
+
 See the two-turn implementation in
 [`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py).
 

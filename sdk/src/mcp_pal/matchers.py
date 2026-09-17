@@ -756,6 +756,57 @@ class Expectation(_Generic[_SubjectT]):
     def to_have_unordered_content(self, expected: _Any) -> None:
         self.to_have_content(expected, ordered=False)
 
+    def to_have_tool_calls(
+        self,
+        expected: _Sequence[str],
+        *,
+        ordered: bool = True,
+        server: str | None = None,
+        turn: _TurnSelector | None = None,
+        evidence: _Literal["wire", "reported", "any"] = "wire",
+        current_snapshot: bool = False,
+    ) -> None:
+        """Match the complete list of tool names, including repeated calls."""
+        if isinstance(expected, (str, bytes)) or not isinstance(expected, _Sequence):
+            raise TypeError("expected tool calls must be a sequence of tool names")
+        if any(not isinstance(name, str) for name in expected):
+            raise TypeError("expected tool calls must contain only tool names")
+        if evidence not in {"wire", "reported", "any"}:
+            raise ValueError("tool-call evidence must be 'wire', 'reported', or 'any'")
+        if not expected and not _negative_boundary(
+            self.subject, current_snapshot=current_snapshot
+        ):
+            self._fail(
+                "negative tool assertion requires a terminal/frozen boundary or current_snapshot=True"
+            )
+            return
+        requested_turn = _normalize_turn_selector(turn) if turn is not None else None
+        actual: list[_Any] = []
+        for view in self._typed_views():
+            for entry in view.tool_calls:
+                call = (
+                    _resolved_projection(entry)
+                    if evidence == "any"
+                    else _source_projection(entry, evidence)
+                )
+                if call is None:
+                    continue
+                if server is not None and call["server"] != server:
+                    continue
+                if requested_turn is not None:
+                    actual_turn = call["turn"]
+                    if (
+                        actual_turn is _UNAVAILABLE
+                        or actual_turn is None
+                        or _normalize_turn_selector(actual_turn) != requested_turn
+                    ):
+                        continue
+                actual.append(call["tool"])
+        self._require(
+            _matches(actual, expected, unordered=not ordered),
+            f"tool calls mismatch\n{_diff(list(expected), actual, self._redaction_config)}",
+        )
+
     def to_have_tool_call(
         self,
         tool: str | None = None,

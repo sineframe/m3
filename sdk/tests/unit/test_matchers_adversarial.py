@@ -164,6 +164,39 @@ def test_unordered_content_is_a_duplicate_aware_multiset() -> None:
         expect(subject).to_have_unordered_content(({"text": "a"}, {"text": "a"}))
 
 
+def test_tool_call_list_checks_exact_order_and_unordered_multiset() -> None:
+    trace = _trace(second_server="server-a")
+    events = list(trace.events)
+    events[3] = events[3].model_copy(
+        update={"payload": {"params": {"name": "save", "arguments": {}}}}
+    )
+    view = trace.model_copy(update={"events": tuple(events)}).view()
+
+    expect(view).to_have_tool_calls(["lookup", "save"])
+    expect(view).to_have_tool_calls(["save", "lookup"], ordered=False)
+    with pytest.raises(AssertionError, match="tool calls mismatch"):
+        expect(view).to_have_tool_calls(["save", "lookup"])
+    with pytest.raises(AssertionError, match="tool calls mismatch"):
+        expect(view).to_have_tool_calls(["lookup"])
+    with pytest.raises(AssertionError, match="tool calls mismatch"):
+        expect(view).to_have_tool_calls(["lookup", "lookup"], ordered=False)
+
+    duplicate_view = _trace(second_server="server-a").view()
+    expect(duplicate_view).to_have_tool_calls(["lookup", "lookup"], ordered=False)
+    with pytest.raises(AssertionError, match="tool calls mismatch"):
+        expect(duplicate_view).to_have_tool_calls(["lookup"], ordered=False)
+
+
+def test_tool_call_list_filters_server_and_evidence() -> None:
+    view = _trace(second_server="server-b").view()
+    expect(view).to_have_tool_calls(["lookup", "lookup"])
+    expect(view).to_have_tool_calls(["lookup"], server="server-b")
+    expect(view).to_have_tool_calls([], server="missing")
+    expect(view).to_have_tool_calls([], evidence="reported")
+    with pytest.raises(AssertionError, match="terminal/frozen"):
+        expect(SimpleNamespace(wait_for=lambda *_: None)).to_have_tool_calls([])
+
+
 def test_failures_redact_expected_actual_and_predicate_values() -> None:
     with pytest.raises(AssertionError) as failure:
         expect("actual top-secret value", redaction_config=_REDACTION).to_have_text(

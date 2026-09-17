@@ -394,6 +394,7 @@ def _subject_evidence(
         event_refs: list[str] = []
         tool_matchers = {
             "to_have_tool_call",
+            "to_have_tool_calls",
             "to_not_have_tool_call",
             "to_have_no_tool_call",
             "to_have_reported_tool_call",
