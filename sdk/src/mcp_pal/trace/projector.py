@@ -1409,6 +1409,18 @@ def _entry_for_event(
             **kwargs,
             code=code[:128],
             message=message[:4096],
+            stage=payload.get("stage")
+            if isinstance(payload.get("stage"), str)
+            else None,
+            operation=payload.get("operation")
+            if isinstance(payload.get("operation"), str)
+            else None,
+            elapsed_seconds=payload.get("elapsed_seconds")
+            if isinstance(payload.get("elapsed_seconds"), (int, float))
+            else None,
+            timeout_seconds=payload.get("timeout_seconds")
+            if isinstance(payload.get("timeout_seconds"), (int, float))
+            else None,
         )
     if event.raw_evidence_ref is not None:
         return RawMessageEntry(

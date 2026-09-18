@@ -932,12 +932,10 @@ class _AsyncMatrixSessionContext:
                 await self._kit.aclose()
 
 
-__all__ = [
-    "HarnessCase",
-    "HarnessMatrix",
-    "HarnessMatrixCase",
-    "ServerCase",
+# This order is a compatibility contract for the focused wildcard surface.
+__all__ = [  # noqa: RUF022
     "ToolCase",
+    "ServerCase",
     "ToolMatrix",
     "ToolMatrixCase",
 ]

@@ -14,11 +14,12 @@ result or a normal Python assertion as an execution or evaluation result.
 | Source | How it is persisted | How API v2 reads it |
 |---|---|---|
 | API-created execution | `POST /api/v2/executions` sends a `DirectSpec` or `AgentSpec` through `MCPTestKit`. MCPTestKit saves/submits it using the API-selected SQLite file; the configured worker executes it and records results. The standard app configures an embedded worker. | The API can list, read, report, cancel, and delete it. |
-| SDK, CLI, or pytest execution | SDK code uses `SQLiteExecutionStore(path)`. `mcp-pal test` always supplies `--mcp-pal-results-db` (default `.mcp-pal/executions.sqlite`, or the CLI `--results-db` path). Direct pytest can opt in with the same plugin flag. | Point the API at that exact same SQLite file; it can then list, read, and report those MCP Pal executions. |
+| SDK, CLI, or pytest execution | Python code can run `kit.agents([...])` with `SQLiteExecutionStore(path)`. A marked pytest test can request `agent`, while `mcp-pal test --harness KIND=MODEL` selects its harnesses and models and supplies the results database (default `.mcp-pal/executions.sqlite`, or `--results-db`). Direct pytest can opt in with the same plugin flag. | Point the API at that exact same SQLite file; it can then list, read, and report those MCP Pal executions. |
 | In-memory SDK execution | No SQLite store is selected, so data exists only in that SDK process. | Another API process cannot read it. |
 
-These are MCP Pal executions made inside tests. Pytest item outcomes and
-ordinary assertions are not written to this store.
+These are MCP Pal executions made inside tests. The CLI plugin also records
+pytest item outcomes and MCP Pal matcher checks. Ordinary Python assertions
+are test outcomes; they are not automatically saved as evaluation decisions.
 
 ### API-created execution flow
 
@@ -28,8 +29,12 @@ ordinary assertions are not written to this store.
 
 ### SDK/CLI/pytest shared-database flow
 
-1. Run SDK code with `SQLiteExecutionStore(path)`, or run `mcp-pal test` with
-   its default database or `--results-db path`.
+1. Run `kit.agents([...])` with `SQLiteExecutionStore(path)`, or run a marked
+   test with `mcp-pal test --harness KIND=MODEL`, using the CLI's default
+   database or `--results-db path`. Set provider credentials in the process
+   environment or pass `--env-file .env` explicitly; a custom variable source
+   uses `--credential-env TARGET=SOURCE`. The API reads saved references and
+   evidence, not provider key values.
 2. Start the API/UI with that exact SQLite path.
 3. List or report the saved MCP Pal executions through API v2.
 4. Run `kit.evaluate(...)` or an `EvaluationRunner` against the execution
@@ -56,9 +61,10 @@ provenance, then calculates summaries when asked.
 `/openapi.json` is the machine-readable request/response schema, including
 the `ExecutionSpec` and `TraceView` discriminators. This guide explains the
 behavior, persistence effect, and important fields clients use.
-The main public models are `DirectSpec`, `AgentSpec`,
-`ExecutionState`, `ExecutionReport`, `RawEvidence`, and
-`EvaluationReport`.
+The wire schema still names direct and agent execution specifications for API
+clients. SDK test authors can use the smaller marked-test or `kit.agents([...])`
+interfaces. Reports, raw evidence, and evaluation summaries keep their
+existing v2 payload shapes.
 
 Execution, report, evidence, evaluation, feedback, and probe responses carry
 `version: "v2"`. Control-plane profile list/object responses (including
@@ -450,12 +456,19 @@ one execution and one trial. Evaluate the finalized trace after the client
 closes, then group by `case_id` and `evaluator`; health includes all calls in
 that trial.
 
-### Matrix trials
+### Agent and tool trials
 
-`ToolMatrix` and `HarnessMatrix` set one stable case from matrix and cell and
-put the trial number in labels. Run each case several times, evaluate with the
-same evaluator name, and group by `case_id` plus `evaluator` to compare cells.
-Use `trial_id` to open one repetition.
+Mark one pytest test with `@pytest.mark.mcp_pal` and request `agent`. Select
+harnesses/models with repeated `mcp-pal test --harness KIND=MODEL` flags, then
+use `--trials N` for N independent runs of every combination. Ordinary pytest
+parameters or ToolMatrix cases vary servers and tools. The same logical
+test/tool case retains its `case_id` across harnesses and trials, while each
+execution has its own ID and harness/model/trial labels. Evaluate every result
+with the same evaluator name, group by `case_id` and `evaluator`, and use an
+execution ID to open a single report. The UI continues reading
+`GET /api/v2/executions/{execution_id}/report`,
+`POST /api/v2/evaluations/aggregate`, and
+`GET /api/v2/feedback/{run_id}` without a route or envelope change.
 
 ### User-supplied LLM evaluator
 
@@ -479,3 +492,13 @@ pytest -q app/tests/e2e/test_deepwiki_live_evaluation.py
 It submits real executions, reopens SQLite, evaluates saved traces, queries
 run and calendar trends, checks health/latency, and opens one returned trial
 report. Normal CI skips this external test.
+# Authoring executions
+
+Wire responses retain the typed `ExecutionState` model for lifecycle snapshots.
+
+The supported authoring paths are a marked pytest test selected with
+`mcp-pal test --harness ... --trials N`, or a Python loop over
+`kit.agents(...)`. Provider keys are supplied through the process environment
+or an explicit `--env-file`; MCP endpoint keys remain server header
+references. These paths write the same execution records consumed by the
+unchanged report, evaluation aggregate, and feedback routes documented below.

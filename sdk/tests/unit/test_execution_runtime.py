@@ -117,6 +117,25 @@ class _ToolEvidenceHarness:
         return None
 
 
+class _SlowHarness:
+    async def start(self, _spec: AgentSpec) -> None:
+        return None
+
+    async def send(
+        self,
+        _message: object,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TurnResponse:
+        del timeout, metadata
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def close(self) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_async_submit_publishes_only_committed_ordered_events() -> None:
     async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
@@ -478,6 +497,64 @@ async def test_result_wait_timeout_does_not_cancel_background_execution() -> Non
     result = await handle.result(timeout=2)
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
     await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_execution_deadline_finalizes_partial_timeout_trace() -> None:
+    started = asyncio.Event()
+    client = _SlowClient(started)
+    controller = AsyncExecutionController(_SlowKit(client))
+    spec = _spec().model_copy(update={"timeout_seconds": 0.05})
+    handle = controller.submit(spec)
+    await started.wait()
+
+    result = await handle.result(timeout=2)
+
+    assert result.snapshot.outcome is ExecutionOutcome.TIMED_OUT
+    assert result.trace is not None
+    assert "capture_incomplete" in result.trace.limitations
+    diagnostics = result.trace.view().diagnostics
+    timeout = next(item for item in diagnostics if item.code == "operation_timeout")
+    assert timeout.stage == "execution_startup"
+    assert timeout.operation == "execution.startup"
+    assert timeout.timeout_seconds == 0.05
+    assert timeout.elapsed_seconds is not None
+    assert timeout.elapsed_seconds >= 0.05
+    await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_deadline_identifies_harness_response_wait() -> None:
+    adapter = _SlowHarness()
+    registry = HarnessAdapterRegistry({"claude_code": lambda _harness: adapter})
+    spec = AgentSpec(
+        servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
+        harness=ClaudeCode(model="test-model"),
+        message=UserMessage(content=(TextContent(text="wait"),)),
+        timeout_seconds=0.05,
+    )
+    async with AsyncMCPTestKit(
+        env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+    ) as kit:
+        result = await kit.run(spec)
+
+    assert result.snapshot.outcome is ExecutionOutcome.TIMED_OUT
+    assert result.trace is not None
+    timeout = next(
+        item
+        for item in result.trace.view().diagnostics
+        if item.code == "operation_timeout"
+    )
+    assert timeout.stage == "waiting_for_harness_response"
+    assert timeout.operation == "harness.response"
+    assert timeout.timeout_seconds == 0.05
+    diagnostics = result.trace.view().diagnostics
+    started = next(
+        index
+        for index, item in enumerate(diagnostics)
+        if item.code == "stage_started" and item.stage == "waiting_for_harness_response"
+    )
+    assert started < diagnostics.index(timeout)
 
 
 @pytest.mark.asyncio

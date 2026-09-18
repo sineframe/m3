@@ -118,3 +118,41 @@ def test_manifest_only_baseline_is_accepted(tmp_path: Path) -> None:
         tmp_path, "def test_one():\n    pass\n", "--mcp-pal-baseline", run_id
     )
     assert second.returncode == 0
+
+
+def test_cli_filters_legacy_harness_matrix_cases_at_collection(tmp_path: Path) -> None:
+    source = """
+from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
+from mcp_pal.types import OpenCode, StdioServer
+import sys
+server = ServerCase(name="s", server=StdioServer(name="s", command=sys.executable), tools=(ToolCase(name="x"),))
+matrix = HarnessMatrix.each_server(servers=(server,), harnesses=(
+    HarnessCase(name="one", harness=OpenCode(model="provider/one")),
+    HarnessCase(name="two", harness=OpenCode(model="provider/two")),
+))
+@matrix.parametrize()
+def test_case(case):
+    assert case.harness.harness.model == "provider/two"
+"""
+    result, _ = _run(tmp_path, source, "--mcp-pal-harness", "opencode=provider/two")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+    assert "1 deselected" in result.stdout
+
+
+def test_global_credential_mapping_applies_to_marked_agents_without_harness_cli(
+    tmp_path: Path,
+) -> None:
+    source = """
+import os, pytest
+from mcp_pal import StdioServer, UserMessage
+os.environ["MARKED_SOURCE"] = "sentinel"
+pytestmark = pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["vendor/model"]}])
+def test_marked(agent):
+    spec = agent._spec(UserMessage(content="x"), server=StdioServer(name="s", command="echo"))
+    assert spec.harness.credential_references["VENDOR_KEY"].name == "MARKED_SOURCE"
+"""
+    result, _ = _run(
+        tmp_path, source, "--mcp-pal-credential-env", "VENDOR_KEY=MARKED_SOURCE"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

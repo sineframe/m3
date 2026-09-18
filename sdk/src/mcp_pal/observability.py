@@ -618,6 +618,10 @@ class DiagnosticEntry(TraceEntryBase):
     kind: _Literal["diagnostic"] = "diagnostic"
     code: str = _Field(min_length=1, max_length=128)
     message: str = _Field(min_length=1, max_length=4096)
+    stage: str | None = _Field(default=None, max_length=128)
+    operation: str | None = _Field(default=None, max_length=256)
+    elapsed_seconds: float | None = _Field(default=None, ge=0)
+    timeout_seconds: float | None = _Field(default=None, gt=0)
 
 
 class ProviderEntry(TraceEntryBase):
@@ -738,7 +742,10 @@ class TraceSummary(_FrozenModel):
 
 class TraceView(_FrozenModel):
     schema_id: _Literal["mcp_pal.trace_view"] = "mcp_pal.trace_view"
-    schema_version: _Literal["1.1"] = "1.1"
+    # Diagnostic fields are optional additions within the existing trace
+    # contract. Keep emitting 1.1 so deployed report readers remain compatible;
+    # 1.2 is accepted for forward compatibility with newer producers.
+    schema_version: _Literal["1.1", "1.2"] = "1.1"
     trace_id: _TraceId
     execution_id: _ExecutionId
     outcome: _ExecutionOutcome = _ExecutionOutcome.COMPLETED

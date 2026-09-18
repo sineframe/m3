@@ -22,12 +22,7 @@ import pytest
 
 from mcp_pal import MCPTestKit, expect
 from mcp_pal.types import (
-    AgentSpec,
     ExecutionOutcome,
-    OpenCode,
-    RestrictiveToolPolicy,
-    SecretReference,
-    ServerBinding,
     StdioServer,
     TextContent,
     TurnOutcome,
@@ -42,69 +37,31 @@ _MATRIX_SERVER = _SDK_ROOT / "tests" / "fixtures" / "matrix_stdio_server.py"
 _LIVE_ENABLED = os.environ.get("MCP_PAL_RUN_LIVE_OPENCODE") == "1"
 
 
-def _live_spec(executable: str, model: str) -> AgentSpec:
-    provider = model.split("/", 1)[0] if "/" in model else None
-    return AgentSpec(
-        harness=OpenCode(
-            model=model,
-            provider=provider,
-            executable=executable,
-            credential_references={
-                "OPENCODE_API_KEY": SecretReference(
-                    source="environment", name="OPENCODE_API_KEY"
-                )
-            },
-        ),
-        servers=(
-            ServerBinding(
-                server=StdioServer(
-                    name="e2e-mcp",
-                    command=sys.executable,
-                    args=(str(_MATRIX_SERVER),),
-                    cwd=str(_REPOSITORY_ROOT),
-                ),
-                alias="e2e-mcp",
+def _live_selection(executable: str, model: str) -> dict[str, object]:
+    return {
+        "harness": "opencode",
+        "models": [model],
+        "executable": executable,
+        "credential_env": {"OPENCODE_API_KEY": "OPENCODE_API_KEY"},
+    }
+
+
+def _live_servers(
+    server_names: tuple[str, ...], marker_root: Path | None = None
+) -> tuple[StdioServer, ...]:
+    return tuple(
+        StdioServer(
+            name=name,
+            command=sys.executable,
+            args=(str(_MATRIX_SERVER),),
+            cwd=str(_REPOSITORY_ROOT),
+            environment=(
+                {"MCP_PAL_E2E_MCP_MARKER": str(marker_root / f"{name}.jsonl")}
+                if marker_root is not None
+                else {}
             ),
-        ),
-        tool_policy=RestrictiveToolPolicy(allowed_tools=("e2e-mcp:echo",)),
-    )
-
-
-def _live_matrix_spec(
-    executable: str,
-    model: str,
-    server_names: tuple[str, ...],
-    marker_root: Path,
-    allowed_tools: tuple[str, ...],
-) -> AgentSpec:
-    provider = model.split("/", 1)[0] if "/" in model else None
-    return AgentSpec(
-        harness=OpenCode(
-            model=model,
-            provider=provider,
-            executable=executable,
-            credential_references={
-                "OPENCODE_API_KEY": SecretReference(
-                    source="environment", name="OPENCODE_API_KEY"
-                )
-            },
-        ),
-        servers=tuple(
-            ServerBinding(
-                server=StdioServer(
-                    name=name,
-                    command=sys.executable,
-                    args=(str(_MATRIX_SERVER),),
-                    cwd=str(_REPOSITORY_ROOT),
-                    environment={
-                        "MCP_PAL_E2E_MCP_MARKER": str(marker_root / f"{name}.jsonl")
-                    },
-                ),
-                alias=name,
-            )
-            for name in server_names
-        ),
-        tool_policy=RestrictiveToolPolicy(allowed_tools=allowed_tools),
+        )
+        for name in server_names
     )
 
 
@@ -141,18 +98,12 @@ def _contains_text(value: object, expected: str) -> bool:
     return isinstance(value, str) and expected in value
 
 
-def test_live_spec_helper_is_side_effect_free_and_explicit_about_credentials() -> None:
-    spec = _live_spec("/usr/local/bin/opencode", "provider/model")
-    assert spec.harness is not None
-    assert isinstance(spec.harness, OpenCode)
-    assert spec.harness.credential_references == {
-        "OPENCODE_API_KEY": SecretReference(
-            source="environment", name="OPENCODE_API_KEY"
-        ),
-    }
-    assert spec.harness.model == "provider/model"
-    assert isinstance(spec.tool_policy, RestrictiveToolPolicy)
-    assert spec.tool_policy.allowed_tools == ("e2e-mcp:echo",)
+def test_live_selection_helper_is_side_effect_free_and_explicit_about_credentials() -> (
+    None
+):
+    selection = _live_selection("/usr/local/bin/opencode", "opencode/big-pickle")
+    assert selection["credential_env"] == {"OPENCODE_API_KEY": "OPENCODE_API_KEY"}
+    assert selection["models"] == ["opencode/big-pickle"]
 
 
 @pytest.mark.skipif(
@@ -166,10 +117,13 @@ def test_live_opencode_calls_the_mcp_across_two_turns() -> None:
     model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
     nonce_one = "mcp-pal-live-e2e-first"
     nonce_two = "mcp-pal-live-e2e-second"
-    spec = _live_spec(executable, model)
+    selection = _live_selection(executable, model)
 
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(spec) as session:
+        with kit.agents([selection])[0].session(
+            servers=list(_live_servers(("e2e-mcp",))),
+            tools=["e2e-mcp:echo"],
+        ) as session:
             first = session.send(
                 f"Call the e2e-mcp echo tool with text {nonce_one}. Return exactly the tool result.",
                 timeout=90,
@@ -214,16 +168,14 @@ def test_live_opencode_server_search_matrix_chooses_the_right_tool(
         pytest.skip("OpenCode is not installed")
     model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
     nonce = f"live-search-{server_name}"
-    spec = _live_matrix_spec(
-        executable,
-        model,
-        (server_name,),
-        tmp_path,
-        (f"{server_name}:echo", f"{server_name}:failure"),
-    )
+    selection = _live_selection(executable, model)
+    servers = _live_servers((server_name,), tmp_path)
 
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(spec) as session:
+        with kit.agents([selection])[0].session(
+            servers=list(servers),
+            tools=[f"{server_name}:echo", f"{server_name}:failure"],
+        ) as session:
             turn = session.send(
                 f"Use the available MCP server to return the text {nonce}. "
                 "Choose the appropriate available tool yourself, call it exactly "
@@ -273,13 +225,8 @@ def test_live_opencode_server_by_tool_matrix(
     if executable is None:
         pytest.skip("OpenCode is not installed")
     model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
-    spec = _live_matrix_spec(
-        executable,
-        model,
-        (server_name,),
-        tmp_path,
-        (f"{server_name}:{tool}",),
-    )
+    selection = _live_selection(executable, model)
+    servers = _live_servers((server_name,), tmp_path)
     instruction = (
         f"Call the {server_name} MCP server's {tool} tool exactly once with "
         f"these JSON arguments: {arguments!r}. Do not call any other tool and "
@@ -287,7 +234,9 @@ def test_live_opencode_server_by_tool_matrix(
     )
 
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(spec) as session:
+        with kit.agents([selection])[0].session(
+            servers=list(servers), tools=[f"{server_name}:{tool}"]
+        ) as session:
             turn = session.send(instruction, timeout=90)
 
     assert turn.snapshot.outcome is TurnOutcome.COMPLETED, (
@@ -318,16 +267,14 @@ def test_live_opencode_uses_all_servers_in_one_session(tmp_path: Path) -> None:
         pytest.skip("OpenCode is not installed")
     model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
     server_names = ("catalog", "warehouse")
-    spec = _live_matrix_spec(
-        executable,
-        model,
-        server_names,
-        tmp_path,
-        tuple(f"{name}:echo" for name in server_names),
-    )
+    selection = _live_selection(executable, model)
+    servers = _live_servers(server_names, tmp_path)
 
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(spec) as session:
+        with kit.agents([selection])[0].session(
+            servers=list(servers),
+            tools=[f"{name}:echo" for name in server_names],
+        ) as session:
             turns = tuple(
                 session.send(
                     f"Call only the {name} MCP server's echo tool exactly once "

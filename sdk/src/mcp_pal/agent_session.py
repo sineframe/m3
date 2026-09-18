@@ -1058,11 +1058,38 @@ class AsyncAgentSession:
                 raise UnsupportedFeature(
                     "harness adapter does not implement turn sending"
                 )
+            operation_name = (
+                "opencode.session_message"
+                if getattr(self.adapter, "name", "") == "opencode"
+                else "harness.response"
+            )
+            self._emit_event(
+                EventKind.DIAGNOSTIC,
+                {
+                    "code": "stage_started",
+                    "stage": "waiting_for_harness_response",
+                    "operation": operation_name,
+                    "message": "Waiting for the harness response",
+                },
+                turn_id=turn_id,
+                phase=LifecyclePhase.TURN,
+            )
             operation = sender(message, timeout=timeout, metadata=metadata)
             raw = (
                 await asyncio.wait_for(operation, timeout=timeout)
                 if timeout is not None
                 else await operation
+            )
+            self._emit_event(
+                EventKind.DIAGNOSTIC,
+                {
+                    "code": "stage_completed",
+                    "stage": "waiting_for_harness_response",
+                    "operation": operation_name,
+                    "message": "Harness response received",
+                },
+                turn_id=turn_id,
+                phase=LifecyclePhase.TURN,
             )
             captured_tool_calls = self._pending_captured_tool_calls()
             self._emit_captured_wire_events(turn_id)

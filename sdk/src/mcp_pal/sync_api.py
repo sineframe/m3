@@ -1420,6 +1420,14 @@ class MCPTestKit:
         self._ensure_open()
         return self._evaluations.results()
 
+    def agents(self, selections: _Any, *, trials: int = 1) -> tuple[_Any, ...]:
+        """Expand ordered agent dictionaries without starting any I/O."""
+
+        self._ensure_open()
+        from ._agent_selection import expand
+
+        return expand(self, selections, trials)
+
     def _unsupported(self, operation: str) -> _NoReturn:
         self._ensure_open()
         raise _UnsupportedFeature(

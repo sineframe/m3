@@ -25,92 +25,35 @@ MCP Pal is currently an alpha release.
 
 ## Test the behavior that matters
 
-Start with a deployed Streamable HTTP MCP endpoint, exercise it through an
-agent, and assert the captured tool evidence—not just the agent's final prose.
-The same `AgentSpec` flow works with the native Claude Code, OpenCode, and
-Codex adapters:
+Mark one ordinary pytest test and let the CLI supply each harness and model:
 
 ```python
-import os
+import pytest
+from mcp_pal import expect
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import (
-    AgentSpec,
-    ClaudeCode,
-    Codex,
-    HTTPServer,
-    NativeToolPolicy,
-    OpenCode,
-    RestrictiveToolPolicy,
-    ServerBinding,
-    SecretReference,
-    TrustLevel,
-)
-
-server = HTTPServer(
-    name="orders",
-    url="https://your-server.example/mcp",
-    trust=TrustLevel.PUBLIC,
-)
-harness = ClaudeCode(
-    model=os.environ["MCP_PAL_CLAUDE_MODEL"],
-    credential_references={
-        "ANTHROPIC_API_KEY": SecretReference(
-            source="environment", name="ANTHROPIC_API_KEY"
-        )
-    },
-)
-# harness = Codex(
-#     model=os.environ["MCP_PAL_CODEX_MODEL"],
-#     credential_references={
-#         "OPENAI_API_KEY": SecretReference(source="environment", name="OPENAI_API_KEY")
-#     },
-# )
-# harness = OpenCode(
-#     model=os.environ["MCP_PAL_OPENCODE_MODEL"],
-#     credential_references={
-#         "OPENCODE_API_KEY": SecretReference(
-#             source="environment", name="OPENCODE_API_KEY"
-#         )
-#     },
-# )
-# Claude Code requires its native policy shape; Codex and OpenCode use the
-# portable allowlist below.
-tool_policy = (
-    NativeToolPolicy(
-        harness="claude-code",
-        policy={"mode": "mcp_only", "server": "orders"},
-        nonportable_reason="Claude Code native MCP policy",
-    )
-    if isinstance(harness, ClaudeCode)
-    else RestrictiveToolPolicy(allowed_tools=("orders:create_order",))
-)
-spec = AgentSpec(
-    harness=harness,
-    servers=(ServerBinding(server=server, alias="orders"),),
-    tool_policy=tool_policy,
-)
-
-with MCPTestKit(env={}) as kit:
-    with kit.agent_session(spec) as session:
-        turn = session.send("Use the create_order tool for this request")
-
-expect(session.result).to_have_tool_call(
-    "create_order", turn=turn, server="orders", status="success"
-)
+@pytest.mark.mcp_pal
+def test_shipping(agent, shipping_server):
+    result = agent.run("Get a local shipping quote", server=shipping_server)
+    expect(result).to_have_tool_call("shipping_quote", server=shipping_server.name,
+                                     status="success")
 ```
 
-Run the test with the recommended [MCP Pal CLI](cli/README.md) to retain a
-feedback report and inspect the run in the local UI, then compare a later run
-with a baseline. The [SDK HTTP and harness guides](sdk/docs/http.md) cover
-credentials, policies, matrices, and complete configurations. Pi and
-ACP-compatible adapters are supported through the same testing model.
+Set credentials with exported `OPENCODE_API_KEY` and `OPENAI_API_KEY`, or use
+an explicitly requested `.env` file. Then run two selections for two trials:
+
+```bash
+mcp-pal test --env-file .env --harness opencode=opencode/big-pickle \
+  --harness codex=gpt-5.6-sol --trials 2 -- tests/test_shipping.py
+```
+
+This collects four agent items and performs four executions. The fixture
+supplies the selected agent; the test supplies the MCP server and assertion.
 
 ## Bring your own harness
 
 Built-in harnesses are convenient, but you can bring any agent implementing
-Agent Client Protocol (ACP) v1. Provide an `ACPAgent` manifest describing the
-executable, arguments, protocol version, and environment-variable references:
+Agent Client Protocol (ACP) v1. Provide an agent dictionary with a manifest
+describing the executable, arguments, protocol version, and environment-variable references:
 
 ```json
 {

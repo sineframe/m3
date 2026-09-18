@@ -72,6 +72,21 @@ def _parser() -> argparse.ArgumentParser:
         "--baseline", metavar="RUN_ID", help="compare feedback with a previous run"
     )
     test.add_argument(
+        "--harness", action="append", default=[], metavar="KIND=MODEL[,MODEL...]"
+    )
+    test.add_argument("--trials", type=int, default=None, metavar="N")
+    test.add_argument(
+        "--execution-timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="deadline for each selected agent execution",
+    )
+    test.add_argument(
+        "--credential-env", action="append", default=[], metavar="TARGET=SOURCE"
+    )
+    test.add_argument("--env-file", type=Path, default=None, metavar="PATH")
+    test.add_argument(
         "--ui", action="store_true", help="serve the bundled UI after pytest"
     )
     test.add_argument("--port", type=int, default=8000, metavar="PORT", help="UI port")
@@ -109,6 +124,11 @@ def main(argv: list[str] | None = None) -> int:
                 ui=args.ui,
                 port=args.port,
                 baseline=args.baseline,
+                harnesses=args.harness,
+                trials=args.trials,
+                credential_env=args.credential_env,
+                env_file=args.env_file,
+                execution_timeout=args.execution_timeout,
             )
         if args.command == "setup":
             try:

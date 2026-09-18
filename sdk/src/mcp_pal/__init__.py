@@ -7,6 +7,7 @@ settings, databases, transports, workers, or event loops.
 
 from importlib.metadata import version as _distribution_version
 
+from . import types as _types_module
 from .aggregations import (
     EvaluationGroup as EvaluationGroup,
 )
@@ -304,6 +305,30 @@ from .sync_api import (
     load_config as load_config,
 )
 from .types import *  # noqa: F403 - module declares its public exports
+
+# Explicit legacy imports remain supported during the wildcard-surface
+# migration. They are intentionally absent from ``__all__``.
+from .types import (
+    ACPAgent,  # noqa: F401
+    AgentSpec,  # noqa: F401
+    ClaudeCode,  # noqa: F401
+    Codex,  # noqa: F401
+    EvaluationId,  # noqa: F401
+    ExecutionSpec,  # noqa: F401
+    FullToolPolicy,  # noqa: F401
+    HarnessProfileRef,  # noqa: F401
+    HarnessSpec,  # noqa: F401
+    HarnessValue,  # noqa: F401
+    NativeToolPolicy,  # noqa: F401
+    OpenCode,  # noqa: F401
+    Pi,  # noqa: F401
+    RestrictiveToolPolicy,  # noqa: F401
+)
+
+for _compat_name in getattr(_types_module, "_COMPAT_EXPORTS", ()):
+    if _compat_name not in globals() and hasattr(_types_module, _compat_name):
+        globals()[_compat_name] = getattr(_types_module, _compat_name)
+del _compat_name, _types_module
 
 __version__ = _distribution_version("mcp-pal")
 

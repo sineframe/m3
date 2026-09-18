@@ -423,18 +423,14 @@ def test_matrix_accepts_generators_without_reordering_or_side_effects() -> None:
 
 def test_matrix_module_and_root_exports_are_stable() -> None:
     module = importlib.import_module("mcp_pal.matrix")
-    expected = (
-        "HarnessCase",
-        "HarnessMatrix",
-        "HarnessMatrixCase",
-        "ServerCase",
-        "ToolCase",
-        "ToolMatrix",
-        "ToolMatrixCase",
-    )
+    expected = ("ToolCase", "ServerCase", "ToolMatrix", "ToolMatrixCase")
     assert tuple(module.__all__) == expected
     assert all(hasattr(mcp_pal, name) for name in expected)
     assert all(getattr(mcp_pal, name) is getattr(module, name) for name in expected)
+    assert all(
+        hasattr(module, name)
+        for name in ("HarnessCase", "HarnessMatrix", "HarnessMatrixCase")
+    )
 
 
 def test_matrix_parametrize_uses_immutable_cases_and_stable_ids() -> None:

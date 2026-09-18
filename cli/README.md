@@ -115,6 +115,47 @@ mcp-pal doctor --python .venv/bin/python --project-root . --json
 
 ### `test`
 
+Agent selection flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--harness KIND=MODEL[,MODEL...]` | repeatable harness/model selection |
+| `--trials N` | independent executions per combination |
+| `--execution-timeout SECONDS` | full deadline for each selected execution; each case has its own deadline |
+| `--env-file PATH` | explicitly load provider variables for the pytest child |
+| `--credential-env TARGET=SOURCE` | map provider variable names |
+
+For example, two selections and two trials produce four agent executions:
+
+```sh
+mcp-pal test --env-file .env --harness opencode=opencode/big-pickle \
+  --harness codex=gpt-5.6-sol --trials 2 -- tests/test_shipping.py
+```
+
+Mark a test with `@pytest.mark.mcp_pal` and request the `agent` fixture. The
+CLI supplies its harnesses and models. A marker may instead set defaults with
+`@pytest.mark.mcp_pal(agents=[...], trials=2)`. CLI `--harness` replaces those
+defaults; CLI `--trials` replaces the marker's trial count. Ordinary tests
+without an `agent` fixture still run once. For an agent test, the item count is
+ordinary pytest cases × selected harness/model choices × trials.
+
+Known provider variable names are:
+
+| Route | Variable name |
+| --- | --- |
+| OpenCode or Pi with `opencode/` models | `OPENCODE_API_KEY` |
+| Codex, OpenCode, or Pi with `openai/` models | `OPENAI_API_KEY` |
+| Claude Code, OpenCode, or Pi with `anthropic/` models | `ANTHROPIC_API_KEY` |
+| Pi with `openai-codex/` models | `PI_CODING_AGENT_DIR` |
+
+Custom providers use names only, for example
+`--credential-env VENDOR_API_KEY=MY_VENDOR_KEY`; use
+`--credential-env opencode:VENDOR_API_KEY=MY_VENDOR_KEY` to scope a mapping.
+Only names appear in flags and test code. `.env` is read only when
+`--env-file` is supplied, and ambient variables take precedence. `doctor
+--env-file` checks configuration and does not provide credentials to a later
+test command.
+
 The CLI runs pytest using the project Python. It discovers that Python in this
 order:
 
@@ -150,6 +191,15 @@ through the plugin writes `.mcp-pal/reports/<run-id>/feedback.json`; the bundle
 contains the saved test manifest and references to detailed executions and
 catalogs. Existing pytest output, including test prints and logs, remains
 diagnostic output and is not interpreted as a score.
+
+Use `--execution-timeout 30` to bound startup, the harness turn, and cleanup for
+each selected execution. A timeout writes a partial trace with the observed
+stage and operation into the execution and trace JSON files under the feedback
+bundle. `handle.result(timeout=...)` in SDK code remains a wait-only timeout.
+Provider credentials still come from the child test environment: use
+`--env-file .env` or ambient variables, and use `--credential-env TARGET=SOURCE`
+when the provider variable has a project-specific name. Values are never put in
+the timeout summary or feedback paths.
 
 Everything after `--` is passed to pytest unchanged. The CLI adds its storage
 plugin and `--mcp-pal-results-db` option itself. In other words, SQLite

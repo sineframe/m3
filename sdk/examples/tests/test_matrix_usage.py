@@ -11,8 +11,6 @@ import pytest
 from mcp_pal import MCPTestKit, expect
 from mcp_pal.async_api import AsyncMCPTestKit
 from mcp_pal.matrix import (
-    HarnessCase,
-    HarnessMatrix,
     ServerCase,
     ToolCase,
     ToolMatrix,
@@ -20,11 +18,11 @@ from mcp_pal.matrix import (
 )
 from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.types import (
-    ACPAgent,
     CallToolResult,
     ExecutionOutcome,
     StdioServer,
     TurnOutcome,
+    UserMessage,
 )
 
 _EXAMPLES_ROOT = Path(__file__).parents[1]
@@ -45,21 +43,19 @@ def _server_case(name: str, *tools: ToolCase) -> ServerCase:
     return ServerCase(name=name, server=_server(name), tools=tools)
 
 
-def _harness() -> HarnessCase:
-    return HarnessCase(
-        name="acp",
-        harness=ACPAgent(
-            model="deterministic-example",
-            manifest={
-                "schema_version": "mcp-pal.harness.v1",
-                "protocol": "acp",
-                "protocol_version": 1,
-                "command": sys.executable,
-                "args": [str(_ACP_SCRIPT)],
-                "env": {},
-            },
-        ),
-    )
+def _agent_entry() -> dict[str, object]:
+    return {
+        "harness": "acp",
+        "models": ["deterministic-example"],
+        "manifest": {
+            "schema_version": "mcp-pal.harness.v1",
+            "protocol": "acp",
+            "protocol_version": 1,
+            "command": sys.executable,
+            "args": [str(_ACP_SCRIPT)],
+            "env": {},
+        },
+    }
 
 
 def _prompt(zone: str) -> str:
@@ -104,7 +100,7 @@ def test_tool_matrix_parametrization_is_regular_pytest(case: ToolMatrixCase) -> 
         }
 
 
-def test_harness_matrix_each_server_and_each_tool_use_real_acp(
+def test_selected_agent_each_server_and_each_tool_use_real_acp(
     example_server: StdioServer,
 ) -> None:
     server = ServerCase(
@@ -112,12 +108,10 @@ def test_harness_matrix_each_server_and_each_tool_use_real_acp(
         server=example_server,
         tools=(ToolCase(name="shipping_quote", prompt=_prompt("local")),),
     )
-    each_server = HarnessMatrix.each_server(servers=(server,), harnesses=(_harness(),))
-    each_tool = HarnessMatrix.each_tool(servers=(server,), harnesses=(_harness(),))
-
     with MCPTestKit(env={}) as kit:
-        server_result = each_server.cases()[0].run(_prompt("local"), kit=kit)
-        tool_result = each_tool.cases()[0].run(kit=kit)
+        agent = kit.agents([_agent_entry()])[0]
+        server_result = agent.run(_prompt("local"), server=server)
+        tool_result = agent.run(_prompt("local"), server=server)
 
     assert server_result.snapshot.outcome is ExecutionOutcome.COMPLETED
     assert tool_result.snapshot.outcome is ExecutionOutcome.COMPLETED
@@ -125,7 +119,7 @@ def test_harness_matrix_each_server_and_each_tool_use_real_acp(
     assert tool_result.trace_view.tool_calls
 
 
-def test_harness_matrix_all_servers_session_uses_real_output_for_next_prompt(
+def test_selected_agent_all_servers_session_uses_real_output_for_next_prompt(
     example_server: StdioServer,
 ) -> None:
     servers = tuple(
@@ -136,11 +130,9 @@ def test_harness_matrix_all_servers_session_uses_real_output_for_next_prompt(
         )
         for name in ("catalog", "warehouse")
     )
-    case = HarnessMatrix.all_servers(servers=servers, harnesses=(_harness(),)).cases()[
-        0
-    ]
     with MCPTestKit(env={}) as kit:
-        with case.session(kit=kit) as session:
+        agent = kit.agents([_agent_entry()])[0]
+        with agent.session(servers=servers) as session:
             first = session.send(
                 json.dumps(
                     {
@@ -188,26 +180,20 @@ def test_harness_matrix_all_servers_session_uses_real_output_for_next_prompt(
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
 
 
-def test_harness_matrix_trials_are_independent(example_server: StdioServer) -> None:
+def test_selected_agent_trials_are_independent(example_server: StdioServer) -> None:
     server = ServerCase(
         name="example-mcp",
         server=example_server,
         tools=(ToolCase(name="shipping_quote"),),
     )
-    matrix = HarnessMatrix.each_server(
-        servers=(server,), harnesses=(_harness(),), trials=2
-    )
     with MCPTestKit(env={}) as kit:
-        results = tuple(case.run(_prompt("local"), kit=kit) for case in matrix.cases())
-
-    assert [case.id for case in matrix.cases()] == [
-        "example-mcp/acp/trial-1",
-        "example-mcp/acp/trial-2",
-    ]
+        agents = kit.agents([_agent_entry()], trials=2)
+        results = tuple(agent.run(_prompt("local"), server=server) for agent in agents)
+    assert [agent.trial for agent in agents] == [1, 2]
     assert results[0].snapshot.execution_id != results[1].snapshot.execution_id
 
 
-def test_harness_matrix_explicit_id_is_shared_by_trial_cases(
+def test_selected_agent_case_id_is_shared_by_trial_cases(
     example_server: StdioServer,
 ) -> None:
     server = ServerCase(
@@ -215,17 +201,18 @@ def test_harness_matrix_explicit_id_is_shared_by_trial_cases(
         server=example_server,
         tools=(ToolCase(name="shipping_quote"),),
     )
-    matrix = HarnessMatrix.each_tool(
-        id="shipping-quality",
-        servers=(server,),
-        harnesses=(_harness(),),
-        trials=2,
-    )
-    cases = matrix.cases()
-    assert matrix.id == "shipping-quality"
-    assert {case.matrix_id for case in cases} == {"shipping-quality"}
-    assert [case.trial for case in cases] == [1, 2]
-    assert [case.trial_count for case in cases] == [2, 2]
+    with MCPTestKit(env={}) as kit:
+        agents = kit.agents([_agent_entry()], trials=2)
+        specs = [
+            agent._spec(
+                UserMessage(content=_prompt("local")),
+                server=server,
+                case_id="shipping-quality",
+            )
+            for agent in agents
+        ]
+    assert {spec.case_id for spec in specs} == {"shipping-quality"}
+    assert [spec.metadata["trial"] for spec in specs] == [1, 2]
 
 
 def test_tool_matrix_explicit_id_and_trials_are_stable(
@@ -276,7 +263,7 @@ async def test_tool_matrix_supports_the_async_helper(
 
 
 @pytest.mark.asyncio
-async def test_harness_matrix_supports_async_run_and_session(
+async def test_selected_agent_supports_async_run_and_session(
     example_server: StdioServer,
 ) -> None:
     server = ServerCase(
@@ -284,11 +271,9 @@ async def test_harness_matrix_supports_async_run_and_session(
         server=example_server,
         tools=(ToolCase(name="shipping_quote"),),
     )
-    case = HarnessMatrix.each_server(
-        servers=(server,), harnesses=(_harness(),)
-    ).cases()[0]
     async with AsyncMCPTestKit(env={}) as kit:
-        run_result = await case.run_async(
+        agent = kit.agents([_agent_entry()])[0]
+        run_result = await agent.run(
             json.dumps(
                 {
                     "server": "example-mcp",
@@ -296,10 +281,10 @@ async def test_harness_matrix_supports_async_run_and_session(
                     "arguments": {"weight_kg": 2, "zone": "local"},
                 }
             ),
-            kit=kit,
+            server=server,
             timeout=10,
         )
-        async with case.async_session(kit=kit) as session:
+        async with agent.session(server=server) as session:
             turn = await session.send(
                 json.dumps(
                     {

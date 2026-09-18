@@ -32,22 +32,22 @@ MCP_PAL_RUN_LIVE_OPENCODE=1 \
   pytest -q sdk/tests/e2e/test_live_opencode.py
 ```
 
-Set `MCP_PAL_LIVE_OPENCODE_MODEL=provider/model` to characterize another model.
+Set `MCP_PAL_LIVE_OPENCODE_MODEL=opencode/big-pickle` to characterize another model.
 
 Codex and Pi have separate opt-in live tests. Each command requires the
 corresponding native executable, a matching model variable, and an explicit
-credential route; credentials are passed through the public
-`credential_references` API into the isolated child environment. The tests
+credential route; credentials are passed through each selection's public
+`credential_env` mapping into the isolated child environment. The tests
 call the documented DeepWiki Streamable HTTP endpoint
 (`https://mcp.deepwiki.com/mcp`) and invoke `read_wiki_structure` across two
 turns, asserting both tool-call and projected trace evidence:
 
 ```bash
-MCP_PAL_RUN_LIVE_CODEX=1 MCP_PAL_LIVE_CODEX_MODEL=gpt-5-codex \
+MCP_PAL_RUN_LIVE_CODEX=1 MCP_PAL_LIVE_CODEX_MODEL=gpt-5.6-sol \
   uv run --project sdk --all-extras \
   pytest -q sdk/tests/e2e/test_live_codex_pi.py -k codex
 
-MCP_PAL_RUN_LIVE_PI=1 MCP_PAL_LIVE_PI_MODEL=gpt-4o \
+MCP_PAL_RUN_LIVE_PI=1 MCP_PAL_LIVE_PI_MODEL=gpt-5.6-sol \
   uv run --project sdk --all-extras \
   pytest -q sdk/tests/e2e/test_live_codex_pi.py -k pi
 ```

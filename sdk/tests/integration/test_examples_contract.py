@@ -14,10 +14,14 @@ def test_examples_docs_are_goal_oriented_and_not_a_synthetic_catalog() -> None:
     headings = [line for line in text.splitlines() if line.startswith("## ")]
     assert headings[0] == "## 1. Test a deployed MCP endpoint with Streamable HTTP"
     assert headings[1] == "## 2. Discover a direct local server tool before calling it"
-    assert headings[2] == "## 3. Use a native harness with the local stdio server"
+    assert headings[2] == "## 3. Run one test across native harnesses"
     assert "client.list_all_tools()" in text
     assert "example_mcp_server.py" in text
-    assert all(name in text for name in ("ClaudeCode", "OpenCode", "Codex", "Pi"))
+    assert "@pytest.mark.mcp_pal" in text
+    assert "--harness opencode=" in text
+    assert "kit.agents(agents, trials=2)" in text
+    assert "HarnessMatrix" not in text
+    assert "AgentSpec" not in text
     assert "deterministic_acp_agent.py" in text
     assert "test_streamable_http.py" in text
     assert (_EXAMPLES / "nondeterministic" / "test_streamable_http.py").exists()
@@ -39,6 +43,6 @@ def test_live_math_matrix_example_remains_opt_in_and_outside_ci_catalog() -> Non
     assert (_EXAMPLES / "servers" / "math_mcp_server.py").exists()
     assert "pytest.mark.live" in text
     assert "MCP_PAL_RUN_LIVE_MATH_MATRIX" in text
-    assert "FullToolPolicy(acknowledge_risk=True)" in text
+    assert "kit.agents(_agent_selections(opencode), trials=_TRIALS_PER_CASE)" in text
     assert "_TRIALS_PER_CASE = 2" in text
     assert not (_EXAMPLES / "tests" / example.name).exists()

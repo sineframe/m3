@@ -1,5 +1,18 @@
 # MCP Pal test patterns
 
+Preferred agent pattern:
+
+```python
+import pytest
+from mcp_pal import expect
+
+@pytest.mark.mcp_pal
+def test_tool_choice(agent, shipping_server):
+    result = agent.run("Get a quote", server=shipping_server)
+    expect(result).to_have_tool_call("shipping_quote", server=shipping_server.name,
+                                     status="success")
+```
+
 Install project test support with `uv add "mcp-pal[pytest]"`. This installs the
 SDK, not the standalone CLI or UI. When CLI installation or project setup is
 part of the task, read [cli-runner.md](cli-runner.md). Prefer the target
@@ -12,12 +25,22 @@ selected. When the test opens saved data again, install
 `mcp-pal[pytest,storage]` and pass a SQLite store:
 
 ```python
-from mcp_pal import MCPTestKit
+import sys
+from pathlib import Path
+from mcp_pal import MCPTestKit, StdioServer
 from mcp_pal.storage import SQLiteExecutionStore
+
+root = Path("sdk/examples")
+shipping_server = StdioServer(name="example-mcp", command=sys.executable,
+                              args=(str(root / "servers/example_mcp_server.py"),))
+manifest = {"protocol": "acp", "protocol_version": 1,
+            "command": sys.executable,
+            "args": [str(root / "servers/deterministic_acp_agent.py")]}
 
 store = SQLiteExecutionStore(".mcp-pal/executions.sqlite")
 with MCPTestKit(store=store, env={}) as kit:
-    result = kit.run(spec)
+    agent = kit.agents([{"harness": "acp", "models": ["fixture"], "manifest": manifest}])[0]
+    result = agent.run("Get a quote", server=shipping_server)
 execution_id = result.snapshot.execution_id
 store.close()
 
@@ -59,7 +82,8 @@ For a user-supplied LLM evaluator, the client and credentials stay in your
 application:
 
 ```python
-from mcp_pal import EvaluationDecision, EvaluationSource, EvaluationStatus
+from mcp_pal.evaluations import EvaluationDecision
+from mcp_pal.types import EvaluationSource, EvaluationStatus
 
 def answer_quality_with_llm(context):
     verdict = my_llm_client.score(context.subject)  # your client and key
@@ -130,92 +154,78 @@ when the project owns a local command and should test its subprocess boundary.
 
 ## Stdio: local command
 
+Define the server fixture yourself. The plugin supplies only the selected
+`agent` for a marked test:
+
 ```python
-import os
 import sys
-
 import pytest
-from mcp_pal import (
-    AgentSpec,
-    ClaudeCode,
-    MCPTestKit,
-    NativeToolPolicy,
-    SecretReference,
-    ServerBinding,
-    StdioServer,
-    expect,
-)
-
+from mcp_pal import MCPTestKit, StdioServer, expect
 
 @pytest.fixture
-def shipping_server() -> StdioServer:
+def shipping_server():
     return StdioServer(
-        name="shipping",
-        command=sys.executable,
+        name="shipping", command=sys.executable,
         args=("-m", "your_package.mcp_server"),
     )
 
-
-def test_shipping_quote_contract(shipping_server: StdioServer) -> None:
-    with MCPTestKit(env={}) as kit, kit.direct(
+def test_shipping_quote_contract(shipping_server):
+    with MCPTestKit() as kit, kit.direct(
         shipping_server, validate_schemas=True
     ) as client:
-        tool = next(
-            item for item in client.list_all_tools()
-            if item.name == "shipping_quote"
-        )
+        tool = next(item for item in client.list_all_tools()
+                    if item.name == "shipping_quote")
         assert set(tool.input_schema["required"]) == {"weight_kg", "zone"}
         result = client.call_tool(
             "shipping_quote", {"weight_kg": 2, "zone": "local"}
         )
-
     assert result.is_error is False
     assert result.structured_content == {"amount": 9.0, "currency": "USD"}
 
-
-def test_agent_selects_shipping_quote(shipping_server: StdioServer) -> None:
-    with MCPTestKit(env={}) as kit, kit.direct(shipping_server) as client:
-        advertised = {tool.name for tool in client.list_all_tools()}
-    assert "shipping_quote" in advertised
-    assert advertised - {"shipping_quote"}, (
-        "selection requires at least one realistic safe alternative"
+@pytest.mark.mcp_pal
+def test_agent_selects_shipping_quote(agent, shipping_server):
+    result = agent.run(
+        "Get a local shipping quote for a 2 kg parcel.",
+        server=shipping_server,
     )
-
-    spec = AgentSpec(
-        harness=ClaudeCode(
-            model=os.environ["MCP_PAL_CLAUDE_MODEL"],
-            credential_references={
-                "ANTHROPIC_API_KEY": SecretReference(
-                    source="environment", name="ANTHROPIC_API_KEY"
-                )
-            },
-        ),
-        servers=(ServerBinding(server=shipping_server, alias="shipping"),),
-        # Server scope retains choice among this server's safe tools.
-        tool_policy=NativeToolPolicy(
-            harness="claude-code",
-            policy={"mode": "mcp_only", "server": "shipping"},
-            nonportable_reason="Claude Code CLI tool policy",
-        ),
+    expect(result).to_have_tool_call(
+        "shipping_quote", server="shipping", status="success"
     )
-
-    with MCPTestKit(env={}) as kit:
-        with kit.agent_session(spec) as session:
-            turn = session.send(
-                "Get a local shipping quote for a 2 kg parcel.", timeout=120
-            )
-
-    expect(session.result).to_have_tool_call(
-        "shipping_quote",
-        turn=turn,
-        server="shipping",
-        arguments={"weight_kg": 2, "zone": "local"},
-        status="success",
-        count=1,
-    )
-    turn_view = session.result.trace_view.for_turn(turn)
-    assert [call.tool.value for call in turn_view.tool_calls] == ["shipping_quote"]
 ```
+
+Run one test for each CLI-selected harness/model and independent trial:
+
+```bash
+mcp-pal test --env-file .env \
+  --harness opencode=opencode/big-pickle \
+  --harness codex=gpt-5.6-sol --trials 2 -- tests/test_shipping.py
+```
+
+This creates four agent items. The `.env` file contains
+`OPENCODE_API_KEY` and `OPENAI_API_KEY` when those routes need provider keys;
+Codex can also use its existing native login. The CLI reads `.env` only when
+requested. For a custom provider variable, use
+`--credential-env VENDOR_API_KEY=MY_VENDOR_KEY`; add `opencode:` before the
+target when only OpenCode needs that mapping. The values never belong in flags
+or test code.
+
+For a notebook or normal Python file, iterate over a plain list:
+
+```python
+agents = [
+    {"harness": "opencode", "models": ["opencode/big-pickle", "openai/gpt-5.6-sol"]},
+    {"harness": "codex", "models": ["gpt-5.6-sol"]},
+]
+with MCPTestKit() as kit:
+    for agent in kit.agents(agents):
+        result = agent.run("Find the shipping tool", server=shipping_server)
+        print(agent.harness, agent.model,
+              [call.tool.value for call in result.trace_view.tool_calls])
+```
+
+Omitting `tools` leaves the server's advertised MCP tools available.
+`tools=[]` denies them. For choice tests, keep realistic safe alternatives
+available and assert captured wire evidence.
 
 ## Inspect trace metadata
 
@@ -258,94 +268,26 @@ harness emits it; a plain Python budget assertion is saved only as part of the
 pytest item outcome.
 
 Replace the module, schema, arguments, expected result, model, and prompt with
-facts from the target project. For OpenCode, replace `ClaudeCode` with
-`OpenCode` and reference the provider credential expected by that installation.
+facts from the target project. Direct pytest needs `-p mcp_pal.pytest_plugin`
+when using the `agent` fixture; `mcp-pal test` loads it automatically.
 
-Use `AsyncMCPTestKit` with `async with` and `await` when the surrounding test is
-async. Use `ToolMatrix` only for repeated known calls; it does not test agent
-selection. Use `HarnessMatrix` when the same prompt/selection claim must run
-against multiple harnesses or server configurations.
+Use `AsyncMCPTestKit` with `async with` and `await` when the surrounding script
+is async. Use ToolMatrix for repeated known calls; combine
+`@matrix.parametrize()` with a marked `agent` test for tool choice across
+harnesses.
 
 ## Score nondeterministic harness trials
 
-Treat repeated model attempts as data. Set `trials=N` on `HarnessMatrix` and
-retain every passed or failed evaluation; do not rerun only failures and report
-the best attempt. One hundred logical cases across two harnesses with two
-trials produce four hundred independently scored executions.
+`--trials N` creates N independent executions for every selected
+harness/model and ordinary pytest parameter combination. Keep every attempt,
+including failures; never rerun only failures and report the best attempt.
+One hundred logical cases across two harnesses with two trials produce four
+hundred executions.
 
-When logical cases have different prompts or expectations, create one matrix
-per logical case. Its `cell_id` stays stable across trials while each trial has
-its own execution ID:
-
-```python
-for logical_case in cases:
-    matrix = HarnessMatrix.each_server(
-        id=f"quality-{logical_case.id}",
-        servers=(server_case,),
-        harnesses=harnesses,
-        trials=2,
-    )
-    for case in matrix.cases():
-        with case.session(
-            kit=kit,
-            tool_policy=FullToolPolicy(acknowledge_risk=True),
-        ) as session:
-            turn = session.send(logical_case.prompt, timeout=120)
-        execution = session.result
-        kit.evaluate(
-            {
-                "answer": turn.response.text if turn.response else "",
-                "expected": logical_case.expected,
-            },
-            "project.answer-quality.v1",
-            execution_id=execution.snapshot.execution_id,
-            turn_id=turn.turn_id,
-            trace=execution.trace,
-            metadata={"harness_config": case.harness.name},
-        )
-```
-
-This is one pytest orchestration item unless matrix cases are exposed through
-`@matrix.parametrize()`. Describe the inner rows as logical evaluation cases
-or trials rather than pytest items.
-
-`FullToolPolicy` removes the MCP tool allowlist and requires an explicit risk
-acknowledgement. Use it only when unrestricted selection is the behavior under
-test and every bound server/tool is safe. Prefer `RestrictiveToolPolicy` in a
-broader environment; an empty `allowed_tools` tuple denies every tool. When the
-test should avoid hard-coded names but remain restrictive, discover the
-server's advertised tools through a direct client and construct the allowlist
-from those reviewed results.
-
-Register a stable evaluator name once, invoke it for each execution or turn,
-and aggregate afterward with one evaluator and the current run ID selected.
-Pass rate is `passed / (passed + failed)`; error, inconclusive, and not-run
-statuses remain visible but are excluded from that denominator. A score is a
-measurement unless the user has also chosen an explicit pytest/release
-threshold.
-
-Run the narrow test first:
-
-```bash
-# Export ANTHROPIC_API_KEY securely first and follow the target project's
-# nondeterministic-test isolation convention.
-MCP_PAL_CLAUDE_MODEL=your-enabled-model \
-  mcp-pal test -- tests/test_shipping.py
-```
-
-The standalone CLI delegates everything after `--` to pytest and records MCP
-Pal executions. Keep nondeterministic external/provider tests isolated
-according to the target project's convention; do not assume a universal flag.
-When the user wants to inspect the run locally, place `--ui`
-before the separator; the viewer stays open until interrupted:
-
-```bash
-mcp-pal test --ui -- tests/test_shipping.py
-```
-
-If `mcp-pal` is unavailable, `mcp-pal doctor` says the project is not ready,
-or the project defines its own test command, run pytest directly instead:
-
-```bash
-uv run pytest tests/test_shipping.py
-```
+Use ordinary `@pytest.mark.parametrize` for the logical cases, then mark the
+same test with `@pytest.mark.mcp_pal`. The plugin keeps a stable logical case
+ID across harnesses and trials. Call `kit.evaluate(...)` once per completed
+execution or turn and aggregate saved decisions by `metadata.harness_config`.
+In a script, use `kit.agents([...], trials=N)` and pass the same explicit
+`case_id` for every selection of a logical case. See the
+[SDK evaluation guide](../../../sdk/docs/evaluations.md) for a worked example.

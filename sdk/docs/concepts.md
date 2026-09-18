@@ -46,6 +46,13 @@ trusting model prose.
 
 ## Test matrices
 
+Agent tests choose a selected agent through the CLI, a `mcp_pal` marker, or
+`kit.agents(...)`. Keep deterministic calls in `ToolMatrix`; use ordinary
+pytest parameters or Python loops to cross servers and tools with the selected
+agent. `--trials 2` creates two independent executions for every combination.
+Omitting `tools` leaves the bound server's advertised tools available, while
+`tools=[]` denies all MCP tools.
+
 `ToolMatrix` directly invokes known tools with known arguments. It does not
 prompt a harness or test which tool an agent selects. Put each tool under the
 `ServerCase` that owns it; this gives deterministic MCP contract coverage
@@ -63,18 +70,22 @@ as:
 Each case runs through the normal SDK execution boundary and returns the usual
 `ExecutionResult`.
 
-`HarnessMatrix` sends prompts to Claude Code, OpenCode, Codex, Pi, or ACP and tests which
-tool the harness chooses and how it uses that tool. Choose the shape that
-matches the question:
+For agent behavior, write one `@pytest.mark.mcp_pal` test that requests `agent`.
+Pass harnesses and models with repeated `mcp-pal test --harness KIND=MODEL`
+flags, or set defaults with `@pytest.mark.mcp_pal(agents=[...])`. The selected
+agent can run against one server, a ToolMatrix `ServerCase`, or several servers
+with `agent.run(..., servers=[...])`. Ordinary pytest parameters vary servers,
+tools, and prompts. The plugin combines those parameters with every selected
+harness/model and trial.
 
-- `each_server` creates a server × harness case and lets the harness choose
-  from that selected server's listed tools.
-- `each_tool` creates a server-owned-tool × harness case and restricts the
-  harness to that selected tool.
-- `all_servers` creates one all-servers × harness case, useful for workflows
-  that move between servers.
-- `trials=3` repeats each cell as three independent pytest items and SDK
-  executions.
+For scripts and notebooks, iterate over `kit.agents([...], trials=N)` and call
+`agent.run(...)` inside a normal Python loop. No pytest installation is needed.
+`--trials 3` or `kit.agents(..., trials=3)` creates three independent executions
+for **each** combination; it does not retry failures. Omitted `tools` means
+the bound servers advertise their MCP tools to the agent. `tools=[]` denies
+MCP tools. Use an explicit list of qualified `server:tool` names only when a
+test needs that restriction and the selected harness can enforce it. See the
+[quick start](quick-start.md#agent-behavior-tests) for provider credential setup.
 
 Use `@matrix.parametrize()` for ordinary pytest collection, stable case IDs,
 marks, fixtures, and `pytest -k`; use `.cases()` at any other boundary. Matrix
@@ -82,10 +93,11 @@ construction and expansion perform no MCP, harness, subprocess, network, or
 persistence work. Work begins only when a case helper such as `run()` or
 `session()` is called. Sync and async cases use the matching kit helpers.
 
-The SDK derives restrictive tool policies from each case. OpenCode, Codex, Pi, and ACP
-receive qualified `server:tool` allowlists; Claude Code uses its native
-server-scoped MCP policy, so exact tool restriction is not portable. Claude
-Code is therefore not supported for `all_servers` with multiple servers.
+ToolMatrix describes servers, tools, prompts, and ordinary pytest parameters;
+it does not narrow the tools advertised to a selected agent. Omitted `tools`
+leaves all bound MCP tools available. Pass qualified `server:tool` names when
+the selected harness supports exact restrictions, or assert the chosen tool in
+the trace when it does not.
 
 Every cell has stable matrix metadata such as its case ID, mode, servers,
 harness, tool, and trial. Normal one-turn and multi-turn execution traces can
@@ -108,6 +120,14 @@ Transport failures, protocol failures, timeouts, and local validation failures
 are exceptions. Keeping these two paths distinct lets a test say whether the
 server was unreachable or the requested operation produced an expected domain
 error.
+
+For a stalled execution, consume `ExecutionHandle.events()` while waiting and
+log only each event's `sequence`, `kind`, and `lifecycle_phase`. A diagnostic
+event may add `stage`, `operation`, `elapsed_seconds`, and `timeout_seconds`.
+`handle.result(timeout=...)` is wait-only; `agent.submit(..., timeout=...)` and
+`agent.run(..., timeout=...)` set the execution deadline. The CLI equivalent is
+`mcp-pal test --execution-timeout SECONDS`; the live UI gate's
+`--process-timeout` is a separate outer process limit.
 
 ## Structured output and schema validation
 

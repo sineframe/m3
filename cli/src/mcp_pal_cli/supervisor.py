@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import math
 import os
 import re
 import shutil
@@ -25,6 +26,60 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 OPERATIONAL_ERROR = 2
+_HARNESS_KINDS = {"claude", "claude_code", "opencode", "codex", "pi", "acp"}
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_selection_options(
+    harnesses: Sequence[str],
+    trials: int | None,
+    credential_env: Sequence[str],
+    execution_timeout: float | None = None,
+) -> str | None:
+    if execution_timeout is not None and (
+        not math.isfinite(execution_timeout) or execution_timeout <= 0
+    ):
+        return "--execution-timeout must be a positive finite number"
+    if trials is not None and (isinstance(trials, bool) or trials <= 0):
+        return "--trials must be a positive integer"
+    selected: set[tuple[str, str]] = set()
+    for raw in harnesses:
+        if "=" not in raw:
+            return "--harness requires KIND=MODEL[,MODEL...]"
+        kind, models = raw.split("=", 1)
+        kind = kind.strip().lower().replace("-", "_")
+        if kind == "claude":
+            kind = "claude_code"
+        if kind not in _HARNESS_KINDS:
+            return f"unknown harness kind {kind!r}"
+        if not models.strip() or any(not model.strip() for model in models.split(",")):
+            return "--harness contains an empty model"
+        for model in models.split(","):
+            choice = (kind, model.strip())
+            if choice in selected:
+                return f"duplicate harness/model selection {kind}={model.strip()}"
+            selected.add(choice)
+    seen: set[tuple[str | None, str]] = set()
+    for raw in credential_env:
+        if "=" not in raw:
+            return "--credential-env requires TARGET=SOURCE"
+        target, source = raw.split("=", 1)
+        scope: str | None = None
+        if ":" in target:
+            scope, target = target.split(":", 1)
+            scope = scope.strip().lower().replace("-", "_")
+            if scope == "claude":
+                scope = "claude_code"
+            if scope not in _HARNESS_KINDS:
+                return f"unknown credential harness kind {scope!r}"
+        target, source = target.strip(), source.strip()
+        if not _ENV_NAME.fullmatch(target) or not _ENV_NAME.fullmatch(source):
+            return "credential environment names must be Python identifiers"
+        key = (scope, target)
+        if key in seen:
+            return f"duplicate credential target {target!r}"
+        seen.add(key)
+    return None
 
 
 @dataclass(frozen=True)
@@ -283,6 +338,26 @@ def _absolute_database(
     return (
         Path(value).expanduser() if value else root / ".mcp-pal" / "executions.sqlite"
     ).resolve()
+
+
+def _test_environment(env_file: str | os.PathLike[str] | None) -> dict[str, str] | None:
+    """Return a child environment with explicitly requested dotenv values."""
+    if env_file is None:
+        return None
+    path = Path(env_file).expanduser()
+    if not path.is_file():
+        raise ProjectPythonError(f"env file was not found: {path}")
+    try:
+        from dotenv import dotenv_values
+
+        values = dotenv_values(str(path), interpolate=False)
+    except Exception as exc:
+        raise ProjectPythonError(f"could not read env file: {path}") from exc
+    child = dict(os.environ)
+    for key, value in values.items():
+        if key and value is not None and key not in child:
+            child[key] = value
+    return child
 
 
 _STORE_PAGE_SIZE = 100
@@ -566,6 +641,10 @@ def pytest_command(
     *,
     baseline: str | None = None,
     project_root: Path | None = None,
+    harnesses: Sequence[str] = (),
+    trials: int | None = None,
+    credential_env: Sequence[str] = (),
+    execution_timeout: float | None = None,
 ) -> list[str]:
     command = [
         str(python),
@@ -580,6 +659,14 @@ def pytest_command(
         command.extend(("--mcp-pal-baseline", baseline))
     if project_root is not None and not _has_rootdir_option(pytest_args):
         command.extend(("--rootdir", str(project_root)))
+    for value in harnesses:
+        command.extend(("--mcp-pal-harness", value))
+    for value in credential_env:
+        command.extend(("--mcp-pal-credential-env", value))
+    if trials is not None:
+        command.extend(("--mcp-pal-trials", str(trials)))
+    if execution_timeout is not None:
+        command.extend(("--mcp-pal-execution-timeout", str(execution_timeout)))
     command.extend(pytest_args)
     return command
 
@@ -627,6 +714,11 @@ def _run_pytest_process(
     *,
     baseline: str | None = None,
     project_root: Path | None = None,
+    harnesses: Sequence[str] = (),
+    trials: int | None = None,
+    credential_env: Sequence[str] = (),
+    execution_timeout: float | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> int:
     """Run pytest with safe process-group cleanup and return its status."""
 
@@ -649,7 +741,12 @@ def _run_pytest_process(
                     pytest_args,
                     baseline=baseline,
                     project_root=project_root,
+                    harnesses=harnesses,
+                    trials=trials,
+                    credential_env=credential_env,
+                    execution_timeout=execution_timeout,
                 ),
+                env=dict(environment) if environment is not None else None,
                 **kwargs,
             )
             try:
@@ -755,8 +852,20 @@ def run_test_with_runs(
     ui_dir: str | os.PathLike[str] | None = None,
     project_root: Path | None = None,
     baseline: str | None = None,
+    harnesses: Sequence[str] = (),
+    trials: int | None = None,
+    credential_env: Sequence[str] = (),
+    env_file: str | os.PathLike[str] | None = None,
+    execution_timeout: float | None = None,
 ) -> TestRunResult:
     """Run pytest and retain newly stored runs for optional UI serving."""
+
+    option_error = _validate_selection_options(
+        harnesses, trials, credential_env, execution_timeout
+    )
+    if option_error is not None:
+        print(f"mcp-pal test: {option_error}", file=sys.stderr)
+        return TestRunResult(OPERATIONAL_ERROR)
 
     if ui:
         port_error = _validate_port(port)
@@ -793,8 +902,24 @@ def run_test_with_runs(
             OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
         )
 
+    try:
+        child_environment = _test_environment(env_file)
+    except ProjectPythonError as exc:
+        print(f"mcp-pal test: {exc}", file=sys.stderr)
+        return TestRunResult(
+            OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
+        )
     exit_code = _run_pytest_process(
-        selected, database_path, pytest_args, baseline=baseline, project_root=root
+        selected,
+        database_path,
+        pytest_args,
+        baseline=baseline,
+        project_root=root,
+        harnesses=harnesses,
+        trials=trials,
+        credential_env=credential_env,
+        execution_timeout=execution_timeout,
+        environment=child_environment,
     )
     after = list_stored_runs(database_path)
     warnings = tuple(
@@ -823,8 +948,20 @@ def run_test(
     ui_dir: str | os.PathLike[str] | None = None,
     project_root: Path | None = None,
     baseline: str | None = None,
+    harnesses: Sequence[str] = (),
+    trials: int | None = None,
+    credential_env: Sequence[str] = (),
+    env_file: str | os.PathLike[str] | None = None,
+    execution_timeout: float | None = None,
 ) -> int:
     """Run pytest and return its exact exit status."""
+
+    option_error = _validate_selection_options(
+        harnesses, trials, credential_env, execution_timeout
+    )
+    if option_error is not None:
+        print(f"mcp-pal test: {option_error}", file=sys.stderr)
+        return OPERATIONAL_ERROR
 
     if ui:
         return run_test_with_runs(
@@ -836,6 +973,11 @@ def run_test(
             ui_dir=ui_dir,
             project_root=project_root,
             baseline=baseline,
+            harnesses=harnesses,
+            trials=trials,
+            credential_env=credential_env,
+            env_file=env_file,
+            execution_timeout=execution_timeout,
         ).exit_code
     root = (project_root or Path.cwd()).resolve()
     prepared = _prepare_test(python, database, root)
@@ -847,8 +989,22 @@ def run_test(
     ):
         print(f"mcp-pal test: baseline run was not found: {baseline}", file=sys.stderr)
         return OPERATIONAL_ERROR
+    try:
+        child_environment = _test_environment(env_file)
+    except ProjectPythonError as exc:
+        print(f"mcp-pal test: {exc}", file=sys.stderr)
+        return OPERATIONAL_ERROR
     return _run_pytest_process(
-        selected, database_path, pytest_args, baseline=baseline, project_root=root
+        selected,
+        database_path,
+        pytest_args,
+        baseline=baseline,
+        project_root=root,
+        harnesses=harnesses,
+        trials=trials,
+        credential_env=credential_env,
+        execution_timeout=execution_timeout,
+        environment=child_environment,
     )
 
 

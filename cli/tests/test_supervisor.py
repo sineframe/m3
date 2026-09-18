@@ -15,6 +15,36 @@ import pytest
 from mcp_pal_cli import main, supervisor
 
 
+@pytest.mark.parametrize("value", ["codex=", "unknown=model", "opencode=a,,b"])
+def test_selection_options_validate_even_without_agent_tests(value: str) -> None:
+    assert supervisor._validate_selection_options((value,), None, ()) is not None
+
+
+def test_selection_options_reject_duplicate_scoped_credentials() -> None:
+    assert (
+        supervisor._validate_selection_options(
+            (), 1, ("opencode:VENDOR_KEY=SOURCE", "opencode:VENDOR_KEY=OTHER")
+        )
+        == "duplicate credential target 'VENDOR_KEY'"
+    )
+
+
+def test_selection_options_reject_duplicate_harness_models_across_flags() -> None:
+    assert (
+        supervisor._validate_selection_options(
+            ("opencode=provider/a,provider/b", "opencode=provider/b"), None, ()
+        )
+        == "duplicate harness/model selection opencode=provider/b"
+    )
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_selection_options_reject_invalid_execution_timeout(value: float) -> None:
+    assert supervisor._validate_selection_options((), None, (), value) == (
+        "--execution-timeout must be a positive finite number"
+    )
+
+
 class _Process:
     def __init__(self, code: int = 0, wait_error: BaseException | None = None) -> None:
         self.pid = 12345
@@ -590,6 +620,18 @@ def test_command_uses_selected_python_and_absolute_database(tmp_path: Path) -> N
         "-q",
         "tests",
     ]
+
+
+def test_command_forwards_execution_timeout(tmp_path: Path) -> None:
+    command = supervisor.pytest_command(
+        Path("/project/.venv/bin/python"),
+        (tmp_path / "results.sqlite").resolve(),
+        ["-q", "tests"],
+        execution_timeout=12.5,
+    )
+    assert "--mcp-pal-execution-timeout" in command
+    index = command.index("--mcp-pal-execution-timeout")
+    assert command[index + 1] == "12.5"
 
 
 def test_command_pins_project_root_when_supervisor_runs_pytest(tmp_path: Path) -> None:

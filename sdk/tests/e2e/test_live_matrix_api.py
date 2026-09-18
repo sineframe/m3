@@ -1,4 +1,4 @@
-"""Opt-in live-provider coverage through the public HarnessMatrix API."""
+"""Opt-in live-provider coverage through the public agent selection API."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ from pathlib import Path
 import pytest
 
 from mcp_pal import MCPTestKit, expect
-from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
-from mcp_pal.types import ClaudeCode, OpenCode, SecretReference, StdioServer
+from mcp_pal.types import StdioServer
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.process_lifecycle]
 
@@ -20,16 +19,12 @@ _REPOSITORY_ROOT = _SDK_ROOT.parent
 _MCP_SERVER = _SDK_ROOT / "tests" / "fixtures" / "matrix_stdio_server.py"
 
 
-def _server() -> ServerCase:
-    return ServerCase(
+def _server() -> StdioServer:
+    return StdioServer(
         name="live-mcp",
-        server=StdioServer(
-            name="live-mcp",
-            command=sys.executable,
-            args=(str(_MCP_SERVER),),
-            cwd=str(_REPOSITORY_ROOT),
-        ),
-        tools=(ToolCase(name="echo"),),
+        command=sys.executable,
+        args=(str(_MCP_SERVER),),
+        cwd=str(_REPOSITORY_ROOT),
     )
 
 
@@ -44,27 +39,18 @@ def test_live_opencode_matrix_case_uses_real_harness() -> None:
     if not os.environ.get("OPENCODE_API_KEY"):
         pytest.skip("OPENCODE_API_KEY is not available")
     model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
-    case = HarnessMatrix.each_server(
-        servers=(_server(),),
-        harnesses=(
-            HarnessCase(
-                name="opencode",
-                harness=OpenCode(
-                    model=model,
-                    executable=executable,
-                    credential_references={
-                        "OPENCODE_API_KEY": SecretReference(
-                            source="environment", name="OPENCODE_API_KEY"
-                        )
-                    },
-                ),
-            ),
-        ),
-    ).cases()[0]
+    server = _server()
+    selection = {
+        "harness": "opencode",
+        "models": [model],
+        "executable": executable,
+        "credential_env": {"OPENCODE_API_KEY": "OPENCODE_API_KEY"},
+    }
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        result = case.run(
+        agent = kit.agents([selection])[0]
+        result = agent.run(
             "Use the available MCP server to echo the text live-opencode.",
-            kit=kit,
+            server=server,
             timeout=120,
         )
     expect(result).to_have_tool_call("echo", server="live-mcp", status="success")
@@ -80,27 +66,18 @@ def test_live_claude_matrix_case_uses_real_harness() -> None:
         pytest.skip("Claude Code is not installed")
     if not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("ANTHROPIC_API_KEY is not available")
-    case = HarnessMatrix.each_server(
-        servers=(_server(),),
-        harnesses=(
-            HarnessCase(
-                name="claude",
-                harness=ClaudeCode(
-                    model=os.environ.get("MCP_PAL_LIVE_CLAUDE_MODEL", "sonnet"),
-                    executable=executable,
-                    credential_references={
-                        "ANTHROPIC_API_KEY": SecretReference(
-                            source="environment", name="ANTHROPIC_API_KEY"
-                        )
-                    },
-                ),
-            ),
-        ),
-    ).cases()[0]
+    server = _server()
+    selection = {
+        "harness": "claude",
+        "models": [os.environ.get("MCP_PAL_LIVE_CLAUDE_MODEL", "sonnet")],
+        "executable": executable,
+        "credential_env": {"ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY"},
+    }
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        result = case.run(
+        agent = kit.agents([selection])[0]
+        result = agent.run(
             "Use the available MCP server to echo the text live-claude.",
-            kit=kit,
+            server=server,
             timeout=120,
         )
     expect(result).to_have_tool_call("echo", server="live-mcp", status="success")

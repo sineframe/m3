@@ -563,3 +563,37 @@ def test_observability_types_are_root_exports() -> None:
     assert sync_api.TraceView is TraceView
     assert async_api.TraceView is TraceView
     assert observability.TraceView is TraceView
+
+
+def test_diagnostic_fields_are_additive_and_schema_compatible() -> None:
+    base = {
+        "kind": "diagnostic",
+        "entry_id": "diagnostic-compat",
+        "execution_id": "execution-compat",
+        "sequence_start": 1,
+        "sequence_end": 1,
+        "code": "operation_timeout",
+        "message": "execution timed out",
+    }
+    old = DiagnosticEntry.model_validate(base)
+    current = DiagnosticEntry.model_validate(
+        {
+            **base,
+            "stage": "waiting_for_harness_response",
+            "operation": "harness.response",
+            "elapsed_seconds": 1.0,
+            "timeout_seconds": 0.5,
+        }
+    )
+    assert old.stage is None
+    assert current.operation == "harness.response"
+    assert current.model_dump(mode="json")["timeout_seconds"] == 0.5
+    legacy_view = TraceView.model_validate(
+        {
+            "trace_id": "trace-legacy",
+            "execution_id": "execution-compat",
+            "schema_version": "1.1",
+            "timeline": [base],
+        }
+    )
+    assert legacy_view.schema_version == "1.1"

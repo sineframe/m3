@@ -18,6 +18,14 @@ assert _SPEC is not None and _SPEC.loader is not None
 _GATE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_GATE)
 
+_LOOP_SPEC = importlib.util.spec_from_file_location(
+    "live_agent_loop",
+    Path(__file__).parents[2] / "sdk" / "examples" / "live_agent_loop.py",
+)
+assert _LOOP_SPEC is not None and _LOOP_SPEC.loader is not None
+_LOOP = importlib.util.module_from_spec(_LOOP_SPEC)
+_LOOP_SPEC.loader.exec_module(_LOOP)
+
 
 def _report() -> dict[str, Any]:
     return {
@@ -68,8 +76,8 @@ def test_parse_ui_links_preserves_the_complete_encoded_run_id() -> None:
     )
     history, direct, run_id = _GATE.parse_ui_links(output, "http://127.0.0.1:8123")
     assert history.endswith("/history")
-    assert direct.endswith("run%20id%2Fpart")
-    assert run_id == "run id/part"
+    assert direct[0].endswith("run%20id%2Fpart")
+    assert run_id[0] == "run id/part"
 
 
 def test_execution_report_url_quotes_run_id_path_syntax() -> None:
@@ -131,11 +139,117 @@ def test_browser_environment_does_not_receive_provider_credential() -> None:
         {"PATH": "/bin", "OPENCODE_API_KEY": "must-not-leak"},
         "http://127.0.0.1:8123",
         "run id/1",
-        "opencode/big-pickle",
     )
     assert "OPENCODE_API_KEY" not in browser
     assert browser["MCP_PAL_LIVE_UI_BASE_URL"] == "http://127.0.0.1:8123"
     assert browser["MCP_PAL_LIVE_EXECUTION_ID"] == "run id/1"
+    assert "MCP_PAL_LIVE_MODEL" not in browser
+    assert "MCP_PAL_LIVE_HARNESS" not in browser
+
+
+def test_assert_report_uses_selected_harness_for_runtime_kind() -> None:
+    report = _report()
+    report["spec"]["harness"] = {"kind": "codex", "model": "gpt-5.6-sol"}
+    report["trace"]["runtime"] = {
+        "kind": "codex",
+        "model_id": {"state": "observed", "value": "gpt-5.6-sol"},
+    }
+    _GATE.assert_report(report, "gpt-5.6-sol", "run-1", "codex")
+
+
+def test_provider_secret_values_uses_only_selected_provider_keys() -> None:
+    values = _GATE.provider_secret_values(
+        ("opencode", "codex"),
+        {"OPENCODE_API_KEY": "ambient-open", "OTHER_SECRET": "ignored"},
+        {"OPENAI_API_KEY": "file-codex", "OTHER_TOKEN": "ignored"},
+    )
+    assert values == ("ambient-open", "file-codex")
+
+
+def test_normal_python_loop_model_argument_is_explicit() -> None:
+    assert (
+        _LOOP.selected_model(["--model", "opencode/test-model"])
+        == "opencode/test-model"
+    )
+
+
+def test_live_loop_diagnostics_use_only_event_identity_fields() -> None:
+    event = SimpleNamespace(
+        sequence=7,
+        kind=SimpleNamespace(value="diagnostic"),
+        lifecycle_phase=SimpleNamespace(value="turn"),
+        payload={"prompt": "must-not-print", "token": "secret"},
+    )
+    assert _LOOP.event_progress(event) == (
+        "event sequence=7 kind=diagnostic phase=turn"
+    )
+    assert "must-not-print" not in _LOOP.event_progress(event)
+    assert _LOOP.diagnostic_stage([event], "running_turn") == "turn/provider response"
+
+
+def test_live_loop_terminal_summary_is_safe_and_includes_diagnostics() -> None:
+    diagnostic = SimpleNamespace(
+        code="operation_timeout",
+        stage="waiting_for_harness_response",
+        operation="harness.response",
+        elapsed_seconds=1.2,
+        timeout_seconds=1.0,
+    )
+    trace = SimpleNamespace(
+        outcome=SimpleNamespace(value="timed_out"),
+        completeness="partial",
+        diagnostics=(diagnostic,),
+        timeline=(object(),),
+    )
+    lines = _LOOP.trace_summary(trace, event_count=4)
+    assert lines[0] == "final trace outcome=timed_out completeness=partial events=4"
+    assert "stage=waiting_for_harness_response" in lines[1]
+    assert all("prompt" not in line and "token" not in line for line in lines)
+
+
+def test_live_loop_timeout_cancels_and_reports_safe_final_trace() -> None:
+    event = SimpleNamespace(
+        sequence=1,
+        kind=SimpleNamespace(value="turn.state_changed"),
+        lifecycle_phase=SimpleNamespace(value="turn"),
+        payload={"prompt": "private", "secret": "do-not-print"},
+    )
+    trace = SimpleNamespace(
+        outcome=SimpleNamespace(value="timed_out"), completeness="partial"
+    )
+
+    class Handle:
+        def __init__(self) -> None:
+            self.cancelled = False
+            self.waits = 0
+
+        def events(self):
+            yield event
+
+        def result(self, timeout=None):
+            del timeout
+            self.waits += 1
+            if self.waits == 1:
+                raise TimeoutError("wait only")
+            return SimpleNamespace(trace_view=trace)
+
+        def snapshot(self):
+            return SimpleNamespace(lifecycle=SimpleNamespace(value="running_turn"))
+
+        def cancel(self):
+            self.cancelled = True
+
+    handle = Handle()
+    agent = SimpleNamespace(submit=lambda *args, **kwargs: handle)
+    output: list[str] = []
+    with pytest.raises(TimeoutError):
+        _LOOP.run_with_diagnostics(
+            agent, "private prompt", server=object(), emit=output.append
+        )
+    assert handle.cancelled
+    assert any("stage=turn/provider response" in line for line in output)
+    assert any("final trace outcome=timed_out" in line for line in output)
+    assert all("private" not in line and "do-not-print" not in line for line in output)
 
 
 def test_cli_command_runs_only_the_existing_live_target() -> None:
@@ -144,6 +258,7 @@ def test_cli_command_runs_only_the_existing_live_target() -> None:
         Path("/tmp/project/.venv/bin/python"),
         Path("/tmp/project/runs.sqlite"),
         8123,
+        Path("/tmp/project/.env"),
     )
     assert command[-2:] == ["-q", _GATE.TARGET]
     assert command[:2] == ["/tmp/mcp-pal", "test"]
@@ -152,44 +267,169 @@ def test_cli_command_runs_only_the_existing_live_target() -> None:
     assert "--ui-dir" not in command
 
 
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_live_gate_rejects_invalid_process_timeout(value: float) -> None:
+    with pytest.raises(_GATE.GateFailure, match="process-timeout"):
+        _GATE.check(process_timeout=value)
+
+
+def test_cli_command_can_select_only_opencode() -> None:
+    command = _GATE.cli_test_command(
+        Path("/tmp/mcp-pal"),
+        Path("/tmp/python"),
+        Path("/tmp/runs.sqlite"),
+        8123,
+        Path("/tmp/project/.env"),
+        providers=("opencode",),
+    )
+    assert command.count("--harness") == 1
+    assert "opencode=opencode/big-pickle" in command
+    assert not any("codex=" in value for value in command)
+
+
+def test_cli_command_uses_selected_models_for_both_providers() -> None:
+    command = _GATE.cli_test_command(
+        Path("/tmp/mcp-pal"),
+        Path("/tmp/python"),
+        Path("/tmp/runs.sqlite"),
+        8123,
+        Path("/tmp/project/.env"),
+        opencode_model="opencode/cheap",
+        codex_model="gpt-current",
+    )
+    assert "opencode=opencode/cheap" in command
+    assert "codex=gpt-current" in command
+
+
+def test_cli_command_rejects_unknown_live_provider() -> None:
+    with pytest.raises(ValueError, match="unsupported live provider"):
+        _GATE.cli_test_command(
+            Path("/tmp/mcp-pal"),
+            Path("/tmp/python"),
+            Path("/tmp/runs.sqlite"),
+            8123,
+            Path("/tmp/project/.env"),
+            providers=("unknown",),
+        )
+
+
+def test_parse_ui_links_accepts_multiple_distinct_executions() -> None:
+    output = "\n".join(
+        (
+            "MCP-Pal UI: http://127.0.0.1:8123/history",
+            "Run: http://127.0.0.1:8123/playground/run/opencode-run",
+            "Run: http://127.0.0.1:8123/playground/run/codex-run",
+        )
+    )
+    _history, _direct, run_ids = _GATE.parse_ui_links(output, "http://127.0.0.1:8123")
+    assert run_ids == ("opencode-run", "codex-run")
+
+
+def test_copy_live_target_includes_normal_python_loop(tmp_path: Path) -> None:
+    _GATE._copy_live_target(tmp_path)
+    assert (tmp_path / "sdk" / "examples" / "live_agent_loop.py").is_file()
+    assert (
+        tmp_path
+        / "sdk"
+        / "examples"
+        / "nondeterministic"
+        / "test_live_agent_selection.py"
+    ).is_file()
+
+
+def test_ui_probe_uses_activity_tool_filter(tmp_path: Path) -> None:
+    probe = _GATE._write_ui_probe(tmp_path)
+    content = probe.read_text(encoding="utf-8")
+    assert "Filter activity" in content
+    assert ".activity-row--tool_call" in content
+    assert "shipping_quote" in content
+
+
 def test_assert_report_validates_shipping_quote_contract() -> None:
     _GATE.assert_report(_report(), "opencode/big-pickle", "run-1")
 
 
+def test_assert_aggregate_requires_each_selected_provider_configuration() -> None:
+    payload = {
+        "aggregate": {
+            "groups": [
+                {
+                    "key": {"metadata.harness_config": "opencode:opencode/big-pickle"},
+                    "values": {},
+                },
+                {"key": {"metadata.harness_config": "codex:gpt-current"}, "values": {}},
+            ]
+        }
+    }
+    _GATE.assert_aggregate(
+        payload,
+        ("opencode", "codex"),
+        {"opencode": "opencode/big-pickle", "codex": "gpt-current"},
+    )
+    with pytest.raises(_GATE.GateFailure, match="aggregate response is malformed"):
+        _GATE.assert_aggregate(
+            {"aggregate": {"groups": [payload["aggregate"]["groups"][0]]}},
+            ("opencode", "codex"),
+            {"opencode": "opencode/big-pickle", "codex": "gpt-current"},
+        )
+
+
 def _persistence_fixture(path: Path, *, include_events: bool = True) -> None:
+    from datetime import datetime, timezone
+
+    from mcp_pal.storage import SQLiteExecutionStore
+    from mcp_pal.types import (
+        DirectSpec,
+        ExecutionId,
+        ExecutionOutcome,
+        ExecutionState,
+        ExecutionStatus,
+        Ping,
+        ServerBinding,
+        StdioServer,
+    )
+
+    store = SQLiteExecutionStore(path)
+    execution_id = ExecutionId("execution-1")
+    spec = DirectSpec(
+        servers=(ServerBinding(server=StdioServer(name="server", command="echo")),),
+        operation=Ping(server="server"),
+    )
+    state = ExecutionState(
+        execution_id=execution_id,
+        run_id="pytest-1",
+        lifecycle=ExecutionStatus.FINISHED,
+        outcome=ExecutionOutcome.COMPLETED,
+        finished_at=datetime.now(timezone.utc),
+    )
+    store.create(state, specification=spec.model_dump(mode="json"))
+    store.save_test_run("pytest-1", {"run_id": "pytest-1", "status": "finished"})
+    store.save_test_result(
+        "pytest-1", "attempt-1", {"node_id": "test", "execution_ids": ["execution-1"]}
+    )
+    store.close()
     connection = sqlite3.connect(path)
-    connection.executescript(
-        """
-        CREATE TABLE v2_executions (
-            id TEXT PRIMARY KEY,
-            run_id TEXT,
-            snapshot_json TEXT,
-            specification_json TEXT
-        );
-        CREATE TABLE v2_test_runs (run_id TEXT PRIMARY KEY);
-        CREATE TABLE v2_test_results (run_id TEXT);
-        CREATE TABLE v2_sessions (id TEXT PRIMARY KEY, execution_id TEXT);
-        CREATE TABLE v2_turns (
-            id TEXT PRIMARY KEY,
-            session_id TEXT,
-            snapshot_json TEXT,
-            result_json TEXT
-        );
-        CREATE TABLE v2_events (id TEXT PRIMARY KEY, execution_id TEXT);
-        INSERT INTO v2_executions VALUES (
-            'execution-1', 'pytest-1', '{"lifecycle":"finished"}', '{}'
-        );
-        INSERT INTO v2_test_runs VALUES ('pytest-1');
-        INSERT INTO v2_test_results VALUES ('pytest-1');
-        INSERT INTO v2_sessions VALUES ('session-1', 'execution-1');
-        INSERT INTO v2_turns VALUES (
-            'turn-1', 'session-1',
-            '{"lifecycle":"finished","outcome":"completed"}', '{}'
-        );
-        """
+    now = datetime.now(timezone.utc).isoformat()
+    connection.execute(
+        "INSERT INTO v2_sessions(id,execution_id,state,created_at,closed_at) VALUES(?,?,?,?,?)",
+        ("session-1", "execution-1", "finished", now, now),
+    )
+    connection.execute(
+        "INSERT INTO v2_turns(id,session_id,number,snapshot_json,result_json,created_at) VALUES(?,?,?,?,?,?)",
+        (
+            "turn-1",
+            "session-1",
+            1,
+            '{"lifecycle":"finished","outcome":"completed"}',
+            "{}",
+            now,
+        ),
     )
     if include_events:
-        connection.execute("INSERT INTO v2_events VALUES ('event-1', 'execution-1')")
+        connection.execute(
+            "INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)",
+            ("event-1", "execution-1", 0, '{"kind":"execution.created"}', now),
+        )
     connection.commit()
     connection.close()
 
@@ -201,6 +441,7 @@ def test_assert_sqlite_persistence_checks_the_live_execution_graph(
     _persistence_fixture(database)
 
     _GATE.assert_sqlite_persistence(database, "execution-1")
+    assert _GATE._pytest_run_id(database, "execution-1") == "pytest-1"
 
 
 def test_assert_sqlite_persistence_rejects_incomplete_execution_graph(
@@ -302,14 +543,23 @@ def test_run_streaming_emits_and_retains_redacted_output(tmp_path: Path) -> None
 
 
 def test_run_streaming_bounds_a_stalled_command(tmp_path: Path) -> None:
-    with pytest.raises(_GATE.GateFailure, match="fixture timed out after"):
+    output_path = tmp_path / "timeout.log"
+    with pytest.raises(
+        _GATE.GateFailure, match=r"(?s)fixture timed out after.*before-timeout"
+    ):
         _GATE._run_streaming(
-            [sys.executable, "-c", "import time; time.sleep(2)"],
+            [
+                sys.executable,
+                "-c",
+                "import time; print('before-timeout', flush=True); time.sleep(2)",
+            ],
             cwd=tmp_path,
             env={"PATH": "/bin"},
             timeout=0.05,
             label="fixture",
+            output_path=output_path,
         )
+    assert output_path.read_text(encoding="utf-8").strip() == "before-timeout"
 
 
 @pytest.mark.skipif(
@@ -340,6 +590,79 @@ def test_run_streaming_terminates_process_group_on_timeout(tmp_path: Path) -> No
         time.sleep(0.05)
     else:
         raise AssertionError(f"timed-out child process {child_pid} survived")
+
+
+@pytest.mark.skipif(
+    os.name != "posix", reason="detached process assertion is POSIX-specific"
+)
+def test_run_streaming_terminates_detached_descendant_on_timeout(
+    tmp_path: Path,
+) -> None:
+    heartbeat = tmp_path / "detached-heartbeat"
+    child_code = "\n".join(
+        (
+            "import pathlib, time",
+            f"heartbeat = pathlib.Path({str(heartbeat)!r})",
+            "counter = 0",
+            "while True:",
+            "    counter += 1",
+            "    heartbeat.write_text(str(counter))",
+            "    time.sleep(0.03)",
+        )
+    )
+    code = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {child_code!r}], start_new_session=True); "
+        "time.sleep(30)"
+    )
+    with pytest.raises(_GATE.GateFailure, match="fixture timed out after"):
+        _GATE._run_streaming(
+            [sys.executable, "-c", code],
+            cwd=tmp_path,
+            env={"PATH": "/bin"},
+            timeout=0.2,
+            label="fixture",
+        )
+    first = heartbeat.read_text(encoding="utf-8")
+    time.sleep(0.2)
+    assert heartbeat.read_text(encoding="utf-8") == first
+
+
+@pytest.mark.skipif(
+    os.name != "posix", reason="detached process assertion is POSIX-specific"
+)
+def test_run_streaming_kills_detached_descendant_ignoring_sigterm(
+    tmp_path: Path,
+) -> None:
+    heartbeat = tmp_path / "ignoring-heartbeat"
+    child_code = "\n".join(
+        (
+            "import pathlib, signal, time",
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)",
+            f"heartbeat = pathlib.Path({str(heartbeat)!r})",
+            "counter = 0",
+            "while True:",
+            "    counter += 1",
+            "    heartbeat.write_text(str(counter))",
+            "    time.sleep(0.03)",
+        )
+    )
+    code = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {child_code!r}], start_new_session=True); "
+        "time.sleep(30)"
+    )
+    with pytest.raises(_GATE.GateFailure, match="fixture timed out after"):
+        _GATE._run_streaming(
+            [sys.executable, "-c", code],
+            cwd=tmp_path,
+            env={"PATH": "/bin"},
+            timeout=0.2,
+            label="fixture",
+        )
+    first = heartbeat.read_text(encoding="utf-8")
+    time.sleep(0.2)
+    assert heartbeat.read_text(encoding="utf-8") == first
 
 
 def test_child_log_is_redacted_before_it_reaches_disk(tmp_path: Path) -> None:

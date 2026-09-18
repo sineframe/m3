@@ -283,8 +283,61 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
 ]
 
 
+# Keep legacy classes importable while reducing wildcard exports to the focused
+# value surface.  Explicit imports continue to resolve through module globals.
+_COMPAT_EXPORTS = tuple(__all__)
+# This order is a compatibility contract for the focused wildcard surface.
+__all__ = [  # noqa: RUF022
+    "EVENT_SCHEMA_ID",
+    "EVENT_SCHEMA_VERSION",
+    "ExecutionOutcome",
+    "ExecutionResult",
+    "TurnOutcome",
+    "TurnResult",
+    "HTTPServer",
+    "SSEServer",
+    "StdioServer",
+    "InProcessServer",
+    "SecretReference",
+    "ServerBinding",
+    "ServerValue",
+    "ToolPolicy",
+    "UserMessage",
+    "TextContent",
+    "DirectSpec",
+    "DirectOperation",
+    "CallTool",
+    "ListTools",
+    "ListResources",
+    "ListTemplates",
+    "ListPrompts",
+    "ReadResource",
+    "GetPrompt",
+    "Ping",
+    "EvaluationResult",
+    "EvaluationRecord",
+    "EvaluationContext",
+    "EvaluationDecision",
+    "EvaluationStatus",
+    "EvaluationSource",
+    "TraceResult",
+    "EvidenceRef",
+    "ArtifactRef",
+    "ExecutionReport",
+    "ExecutionEvidence",
+    "Capability",
+    "Readiness",
+    "ProtocolConstraint",
+    "WorkspacePolicy",
+    "PermissionPolicy",
+    "ElicitationPolicy",
+    "SamplingPolicy",
+    "FilesystemPolicy",
+    "TerminalPolicy",
+]
+
 # Keep public model metadata and pickle paths stable after moving definitions.
-for _name in __all__:
+for _name in _COMPAT_EXPORTS:
     _value = globals().get(_name)
     if isinstance(_value, type) and _value.__module__.startswith("mcp_pal._types"):
         _value.__module__ = __name__

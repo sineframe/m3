@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math as _math
 import time as _time
 from collections.abc import Iterator as _Iterator
 from contextvars import ContextVar as _ContextVar
@@ -55,31 +56,48 @@ _PLUGIN_CONFIG: _ContextVar[_Any] = _ContextVar(
 
 
 def pytest_addoption(parser: _Any) -> None:
-    parser.getgroup("mcp-pal").addoption(
+    group = parser.getgroup("mcp-pal")
+    group.addoption(
         "--mcp-pal-results-db",
         action="store",
         default=None,
         metavar="PATH",
         help="internal: persist default MCPTestKit executions in PATH",
     )
-    parser.getgroup("mcp-pal").addoption(
+    group.addoption(
         "--mcp-pal-baseline",
         action="store",
         default=None,
         metavar="RUN_ID",
         help="internal: compare the exported feedback with RUN_ID",
     )
-    parser.getgroup("mcp-pal").addoption(
+    group.addoption(
         "--mcp-pal-project-root",
         action="store",
         default=None,
         metavar="PATH",
         help="internal: project root used for feedback output",
     )
+    group.addoption(
+        "--mcp-pal-harness",
+        action="append",
+        default=[],
+        metavar="KIND=MODEL[,MODEL...]",
+    )
+    group.addoption(
+        "--mcp-pal-credential-env", action="append", default=[], metavar="TARGET=SOURCE"
+    )
+    group.addoption("--mcp-pal-trials", action="store", default=None, type=int)
+    group.addoption(
+        "--mcp-pal-execution-timeout", action="store", default=None, type=float
+    )
 
 
 def pytest_configure(config: _Any) -> None:
     config._mcp_pal_config_token = _PLUGIN_CONFIG.set(config)
+    config.addinivalue_line(
+        "markers", "mcp_pal(agents=None, trials=None): select agent executions"
+    )
     raw = config.getoption("--mcp-pal-results-db")
     if not raw:
         return
@@ -147,6 +165,173 @@ def pytest_configure(config: _Any) -> None:
     )
 
 
+@_pytest.fixture
+def mcp_pal_kit(request: _Any) -> _Any:
+    from .sync_api import MCPTestKit
+
+    kit = MCPTestKit()
+    try:
+        yield kit
+    finally:
+        kit.close()
+
+
+@_pytest.fixture
+def agent(request: _Any, mcp_pal_kit: _Any) -> _Any:
+    selected = request.param
+    # The generated logical case ID is stable across agent choices and trials.
+    callspec = getattr(request.node, "callspec", None)
+    import hashlib
+
+    agent_id = f"{selected.harness}-{selected.model or 'profile'}-{selected.name}-trial-{selected.trial}"
+    parameter_ids = list(getattr(callspec, "_idlist", ()))
+    # Pytest's callspec.indices counts the Cartesian product, so a ToolMatrix
+    # case gets a different index for each agent.  The per-parameter IDs retain
+    # the ordinary case identity across those products.
+    if agent_id not in parameter_ids:
+        raise _pytest.UsageError("agent parameter ID is missing from pytest collection")
+    parameter_ids.remove(agent_id)
+    base = request.node.nodeid.split("[", 1)[0] + repr(parameter_ids)
+    digest = hashlib.sha256(base.encode()).hexdigest()[:48]
+    case_id = "case-" + digest
+    from dataclasses import replace
+
+    entry = dict(selected.entry)
+    entry["_case_id"] = case_id
+    entry["_matrix_id"] = request.node.nodeid.split("[", 1)[0]
+    entry["_cell_id"] = "cell-" + digest
+    return replace(selected, kit=mcp_pal_kit, entry=entry)
+
+
+def _parse_cli_harnesses(config: _Any) -> list[dict[str, _Any]]:
+    result: list[dict[str, _Any]] = []
+    for raw in config.getoption("--mcp-pal-harness") or []:
+        if "=" not in raw:
+            raise _pytest.UsageError("--harness requires KIND=MODEL[,MODEL...]")
+        kind, values = raw.split("=", 1)
+        kind = kind.strip()
+        models = [item.strip() for item in values.split(",")]
+        if not kind or any(not item for item in models):
+            raise _pytest.UsageError("--harness contains an empty kind or model")
+        result.append({"harness": kind, "models": models})
+    mappings: dict[str, str] = {}
+    scoped: dict[str, dict[str, str]] = {}
+    for raw in config.getoption("--mcp-pal-credential-env") or []:
+        if "=" not in raw:
+            raise _pytest.UsageError("--credential-env requires TARGET=SOURCE")
+        target, source = raw.split("=", 1)
+        scope = None
+        if ":" in target:
+            scope, target = target.split(":", 1)
+            scope = scope.strip().lower().replace("-", "_")
+            scope = {"claude": "claude_code"}.get(scope, scope)
+        target = target.strip()
+        if (scope, target) in {(None, key) for key in mappings} or (
+            scope is not None and target in scoped.get(scope, {})
+        ):
+            raise _pytest.UsageError(f"duplicate credential target {target!r}")
+        if scope is None:
+            mappings[target] = source.strip()
+        else:
+            scoped.setdefault(scope, {})[target] = source.strip()
+    config._mcp_pal_cli_credentials = (mappings, scoped)
+    for entry in result:
+        kind = str(entry["harness"]).lower().replace("-", "_")
+        kind = {"claude": "claude_code"}.get(kind, kind)
+        values = dict(mappings)
+        values.update(scoped.get(kind, {}))
+        if values and kind != "acp":
+            entry["credential_env"] = values
+    return result
+
+
+def pytest_generate_tests(metafunc: _Any) -> None:
+    if "agent" not in metafunc.fixturenames:
+        return
+    marker = metafunc.definition.get_closest_marker("mcp_pal")
+    if marker is None:
+        # A project may already provide an unrelated fixture named ``agent``.
+        # Leave those tests to pytest's normal fixture resolution.
+        return
+    config = metafunc.config
+    selections = _parse_cli_harnesses(config)
+    if not selections:
+        marked = marker.kwargs.get("agents")
+        if marked is None:
+            # Bare marker is valid only when CLI supplies a selection.
+            raise _pytest.UsageError(
+                "agent test requires --harness or mcp_pal(agents=[...])"
+            )
+        selections = list(marked)
+        credential_config: tuple[dict[str, str], dict[str, dict[str, str]]] = getattr(
+            config, "_mcp_pal_cli_credentials", ({}, {})
+        )
+        mappings, scoped = credential_config
+        if mappings or scoped:
+            updated = []
+            for raw in selections:
+                value: dict[str, _Any] = dict(raw)
+                kind = str(value.get("harness", "")).lower().replace("-", "_")
+                kind = {"claude": "claude_code"}.get(kind, kind)
+                credentials = dict(value.get("credential_env") or {})
+                credentials.update(mappings)
+                if kind in scoped:
+                    credentials.update(scoped[kind])
+                if credentials and kind != "acp":
+                    value["credential_env"] = credentials
+                updated.append(value)
+            selections = updated
+    else:
+        marked = marker.kwargs.get("agents")
+        if marked:
+            by_kind: dict[str, list[_Any]] = {}
+            for item in marked:
+                if isinstance(item, dict) and "harness" in item:
+                    key = str(item["harness"]).lower().replace("-", "_")
+                    key = {"claude": "claude_code"}.get(key, key)
+                    by_kind.setdefault(key, []).append(item)
+            merged: list[dict[str, _Any]] = []
+            for choice in selections:
+                key = str(choice["harness"]).lower().replace("-", "_")
+                key = {"claude": "claude_code"}.get(key, key)
+                matches = by_kind.get(key, [])
+                if len(matches) > 1:
+                    raise _pytest.UsageError(
+                        f"multiple marked agent configurations match harness {key!r}"
+                    )
+                value = dict(matches[0]) if matches else {}
+                marked_credentials = dict(value.get("credential_env") or {})
+                value.update(choice)
+                if marked_credentials and key != "acp":
+                    merged_credentials = dict(marked_credentials)
+                    merged_credentials.update(choice.get("credential_env") or {})
+                    value["credential_env"] = merged_credentials
+                merged.append(value)
+            selections = merged
+    trials = config.getoption("--mcp-pal-trials")
+    if trials is None:
+        trials = marker.kwargs.get("trials", 1)
+    execution_timeout = config.getoption("--mcp-pal-execution-timeout")
+    if execution_timeout is not None:
+        if not _math.isfinite(execution_timeout) or execution_timeout <= 0:
+            raise _pytest.UsageError(
+                "--execution-timeout must be a positive finite number"
+            )
+        selections = [
+            dict(selection, _execution_timeout=execution_timeout)
+            for selection in selections
+        ]
+    from ._agent_selection import expand
+
+    # Expansion is pure and safe during collection.
+    expanded = expand(None, selections, trials)
+    ids = tuple(
+        f"{item.harness}-{item.model or 'profile'}-{item.name}-trial-{item.trial}"
+        for item in expanded
+    )
+    metafunc.parametrize("agent", expanded, indirect=True, ids=ids)
+
+
 def pytest_unconfigure(config: _Any) -> None:
     hooks = getattr(config, "_mcp_pal_manifest_hooks", None)
     if hooks is not None:
@@ -188,6 +373,49 @@ def _pytest_configure_node(node: _Any) -> None:
 def _pytest_collection_modifyitems(
     session: _Any, config: _Any, items: list[_Any]
 ) -> None:
+    # Legacy HarnessMatrix parameter values are generated independently of the
+    # new ``agent`` fixture.  Apply the CLI filter to those values while they
+    # are still collection items, preserving their own trial semantics.
+    cli_choices = _parse_cli_harnesses(config)
+    if cli_choices:
+        allowed = {
+            (
+                str(choice["harness"]).lower().replace("-", "_"),
+                model,
+            )
+            for choice in cli_choices
+            for model in choice["models"]
+        }
+        allowed = {
+            ({"claude": "claude_code"}.get(kind, kind), model)
+            for kind, model in allowed
+        }
+        kept: list[_Any] = []
+        deselected: list[_Any] = []
+        for item in items:
+            callspec = getattr(item, "callspec", None)
+            value = next(
+                (
+                    value
+                    for value in getattr(callspec, "params", {}).values()
+                    if value.__class__.__name__ == "HarnessMatrixCase"
+                ),
+                None,
+            )
+            if value is None:
+                kept.append(item)
+                continue
+            harness = getattr(getattr(value, "harness", None), "harness", None)
+            kind = str(getattr(harness, "kind", "")).lower().replace("-", "_")
+            kind = {"claude": "claude_code"}.get(kind, kind)
+            model = getattr(harness, "model", None)
+            if (kind, model) in allowed:
+                kept.append(item)
+            else:
+                deselected.append(item)
+        if deselected:
+            items[:] = kept
+            config.hook.pytest_deselected(items=deselected)
     if getattr(config, "_mcp_pal_is_worker", False):
         return
     store = getattr(config, "_mcp_pal_manifest_store", None)
@@ -444,12 +672,45 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         # complete successful run when one or more attempts were not persisted.
         if int(exitstatus) == 0:
             session.exitstatus = 2
+    timeout_summaries: list[tuple[str, str, float | None]] = []
     try:
         from .feedback import build_feedback, export_feedback
         from .storage import SQLiteExecutionStore
 
         export_store = SQLiteExecutionStore(path)
         try:
+            timed_out_snapshots = []
+            timeout_offset = 0
+            while True:
+                timeout_page = export_store.list_executions(
+                    run_id=run_id.root,
+                    outcome="timed_out",
+                    limit=100,
+                    offset=timeout_offset,
+                )
+                timed_out_snapshots.extend(timeout_page.items)
+                timeout_offset += len(timeout_page.items)
+                if not timeout_page.items or timeout_offset >= timeout_page.total:
+                    break
+            for snapshot in timed_out_snapshots:
+                operation_timeout: dict[str, _Any] = next(
+                    (
+                        event.payload
+                        for event in reversed(
+                            tuple(export_store.iter_events(snapshot.execution_id))
+                        )
+                        if event.kind.value == "diagnostic"
+                        and event.payload.get("code") == "operation_timeout"
+                    ),
+                    {},
+                )
+                timeout_summaries.append(
+                    (
+                        snapshot.execution_id.root,
+                        str(operation_timeout.get("stage", "unknown")),
+                        operation_timeout.get("elapsed_seconds"),
+                    )
+                )
             feedback = build_feedback(
                 export_store,
                 run_id,
@@ -481,6 +742,15 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         reporter.write_line("")
         reporter.write_line(f"MCP Pal run {run_id.root}")
         reporter.write_line(f"MCP Pal feedback: {output}")
+        for execution_id, stage, elapsed in timeout_summaries:
+            elapsed_text = (
+                f"{elapsed:.3f}s" if isinstance(elapsed, float) else "unknown"
+            )
+            reporter.write_line(
+                "MCP Pal execution timeout: "
+                f"id={execution_id} stage={stage} elapsed={elapsed_text} "
+                f"feedback={output}"
+            )
         if manifest_error:
             reporter.write_line(
                 "MCP Pal test manifest persistence was incomplete", red=True
@@ -650,4 +920,12 @@ class _Progress:
         self.finish()
 
 
-__all__ = ["pytest_addoption", "pytest_configure", "pytest_unconfigure"]
+# This order is a compatibility contract for the focused plugin surface.
+__all__ = [  # noqa: RUF022
+    "pytest_addoption",
+    "pytest_configure",
+    "pytest_unconfigure",
+    "pytest_generate_tests",
+    "mcp_pal_kit",
+    "agent",
+]

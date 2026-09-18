@@ -11,17 +11,17 @@ trace.
 
 Run Codex with::
 
-    MCP_PAL_RUN_LIVE_CODEX=1 MCP_PAL_LIVE_CODEX_MODEL=gpt-5-codex \
+    MCP_PAL_RUN_LIVE_CODEX=1 MCP_PAL_LIVE_CODEX_MODEL=gpt-5.6-sol \
       uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_live_codex_pi.py -k codex
 
 Run Pi with::
 
-    MCP_PAL_RUN_LIVE_PI=1 MCP_PAL_LIVE_PI_MODEL=gpt-4o \
+    MCP_PAL_RUN_LIVE_PI=1 MCP_PAL_LIVE_PI_MODEL=gpt-5.6-sol \
       uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_live_codex_pi.py -k pi
 
 Both commands require the installed native executable and an explicit
 credential route in the invoking environment. The SDK receives only the
-selected value through a ``SecretReference``; it does not copy ambient
+selected value through the selected credential mapping; it does not copy ambient
 credentials into the isolated child.
 """
 
@@ -35,13 +35,7 @@ import pytest
 
 from mcp_pal import MCPTestKit, expect
 from mcp_pal.types import (
-    AgentSpec,
-    Codex,
     HTTPServer,
-    Pi,
-    RestrictiveToolPolicy,
-    SecretReference,
-    ServerBinding,
     TransportKind,
     TrustLevel,
     TurnOutcome,
@@ -56,57 +50,36 @@ _DEEPWIKI_TOOL = "read_wiki_structure"
 _DEEPWIKI_ARGUMENTS = {"repoName": "modelcontextprotocol/python-sdk"}
 
 
-def _server() -> ServerBinding:
+def _server() -> HTTPServer:
     """Return the documented public DeepWiki Streamable HTTP MCP server."""
 
-    return ServerBinding(
-        server=HTTPServer(
-            name="deepwiki",
-            url=_DEEPWIKI_URL,
-            trust=TrustLevel.PUBLIC,
-        ),
-        alias="deepwiki",
-    )
+    return HTTPServer(name="deepwiki", url=_DEEPWIKI_URL, trust=TrustLevel.PUBLIC)
 
 
-def _credential_reference(name: str) -> dict[str, SecretReference]:
-    return {name: SecretReference(source="environment", name=name)}
-
-
-def _codex_spec(
+def _codex_selection(
     executable: str, model: str, credential_name: str = "OPENAI_API_KEY"
-) -> AgentSpec:
-    return AgentSpec(
-        harness=Codex(
-            model=model,
-            executable=executable,
-            credential_references=_credential_reference(credential_name),
-        ),
-        servers=(_server(),),
-        tool_policy=RestrictiveToolPolicy(
-            allowed_tools=(f"deepwiki:{_DEEPWIKI_TOOL}",)
-        ),
-    )
+) -> dict[str, object]:
+    return {
+        "harness": "codex",
+        "models": [model],
+        "executable": executable,
+        "credential_env": {credential_name: credential_name},
+    }
 
 
-def _pi_spec(
+def _pi_selection(
     executable: str,
     model: str,
     provider: str = "openai",
     credential_name: str = "OPENAI_API_KEY",
-) -> AgentSpec:
-    return AgentSpec(
-        harness=Pi(
-            model=model,
-            provider=provider,
-            executable=executable,
-            credential_references=_credential_reference(credential_name),
-        ),
-        servers=(_server(),),
-        tool_policy=RestrictiveToolPolicy(
-            allowed_tools=(f"deepwiki:{_DEEPWIKI_TOOL}",)
-        ),
-    )
+) -> dict[str, object]:
+    return {
+        "harness": "pi",
+        "models": [model],
+        "provider": provider,
+        "executable": executable,
+        "credential_env": {credential_name: credential_name},
+    }
 
 
 def _codex_route() -> tuple[str, str]:
@@ -167,20 +140,16 @@ def _executable(name: str, override_name: str) -> str:
     return executable
 
 
-def test_live_native_specs_are_side_effect_free_and_explicit_about_credentials() -> (
+def test_live_native_selections_are_side_effect_free_and_explicit_about_credentials() -> (
     None
 ):
-    codex = _codex_spec("/usr/local/bin/codex", "gpt-5-codex")
-    pi = _pi_spec("/usr/local/bin/pi", "gpt-4o")
+    codex = _codex_selection("/usr/local/bin/codex", "gpt-5.6-sol")
+    pi = _pi_selection("/usr/local/bin/pi", "gpt-5.6-sol")
 
-    assert isinstance(codex.harness, Codex)
-    assert isinstance(pi.harness, Pi)
-    assert codex.harness.credential_references == _credential_reference(
-        "OPENAI_API_KEY"
-    )
-    assert pi.harness.credential_references == _credential_reference("OPENAI_API_KEY")
-    assert isinstance(codex.tool_policy, RestrictiveToolPolicy)
-    assert codex.tool_policy.allowed_tools == ("deepwiki:read_wiki_structure",)
+    assert codex["credential_env"] == {"OPENAI_API_KEY": "OPENAI_API_KEY"}
+    assert pi["credential_env"] == {"OPENAI_API_KEY": "OPENAI_API_KEY"}
+    assert codex["models"] == ["gpt-5.6-sol"]
+    assert pi["provider"] == "openai"
 
 
 @pytest.mark.skipif(
@@ -191,7 +160,9 @@ def test_live_codex_calls_deepwiki_and_records_trace() -> None:
     executable = _executable("codex", "MCP_PAL_CODEX_EXECUTABLE")
     credential, model = _codex_route()
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(_codex_spec(executable, model, credential)) as session:
+        with kit.agents([_codex_selection(executable, model, credential)])[0].session(
+            server=_server(), tools=[f"deepwiki:{_DEEPWIKI_TOOL}"]
+        ) as session:
             first = session.send(
                 "Use only the deepwiki read_wiki_structure MCP tool to retrieve "
                 "the documentation topic hierarchy for "
@@ -251,9 +222,9 @@ def test_live_pi_calls_deepwiki_and_records_trace() -> None:
     executable = _executable("pi", "MCP_PAL_PI_EXECUTABLE")
     provider, credential, model = _pi_route()
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(
-            _pi_spec(executable, model, provider, credential)
-        ) as session:
+        with kit.agents([_pi_selection(executable, model, provider, credential)])[
+            0
+        ].session(server=_server(), tools=[f"deepwiki:{_DEEPWIKI_TOOL}"]) as session:
             first = session.send(
                 "Use only the deepwiki read_wiki_structure MCP tool to retrieve "
                 "the documentation topic hierarchy for "

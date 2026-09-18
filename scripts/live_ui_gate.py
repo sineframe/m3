@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -33,7 +34,8 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 UI_ROOT = ROOT.parent / "mcppal-ui"
-TARGET = "sdk/examples/tests/test_live_opencode.py::test_live_opencode_uses_shipping_quote_and_captures_wire_evidence"
+TARGET = "sdk/examples/nondeterministic/test_live_agent_selection.py::test_selected_agents_choose_shipping_tool"
+UI_TARGET = "live-opencode.spec.ts"
 DEFAULT_MODEL = "opencode/big-pickle"
 READY_TIMEOUT = 180.0
 PLAYWRIGHT_TIMEOUT = 120.0
@@ -359,14 +361,62 @@ def _copy_live_target(repo: Path) -> None:
     (destination / "tests").mkdir(parents=True)
     (destination / "servers").mkdir()
     for relative in (
-        Path("tests/test_live_opencode.py"),
+        Path("nondeterministic/test_live_agent_selection.py"),
         Path("servers/example_mcp_server.py"),
+        Path("live_agent_loop.py"),
     ):
-        shutil.copy2(source / relative, destination / relative)
+        target = (
+            destination / "live_agent_loop.py"
+            if relative.name == "live_agent_loop.py"
+            else destination / relative
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source / relative, target)
     (repo / "pytest.ini").write_text(
         "[pytest]\nmarkers =\n    e2e: end-to-end tests\n    live: external provider tests\n",
         encoding="utf-8",
     )
+
+
+def _write_ui_probe(destination: Path) -> Path:
+    """Write a provider-neutral UI probe in the disposable gate directory."""
+
+    target = destination / UI_TARGET
+    try:
+        (destination / "node_modules").symlink_to(
+            UI_ROOT / "node_modules", target_is_directory=True
+        )
+    except OSError as exc:
+        raise GateFailure("could not prepare disposable Playwright probe") from exc
+    target.write_text(
+        """import { expect, test } from '@playwright/test';
+const executionId = process.env.MCP_PAL_LIVE_EXECUTION_ID;
+if (!process.env.MCP_PAL_LIVE_UI_BASE_URL || !executionId) throw new Error('live UI variables are required');
+test('renders the persisted selected execution', async ({ page }) => {
+  await page.goto('/history');
+  const row = page.locator('tr').filter({ hasText: executionId });
+  await expect(row).toHaveCount(1);
+  await expect(row.locator('[data-label="Outcome"]')).toHaveText('completed');
+  await expect(page.locator('.history-state--error')).toHaveCount(0);
+  await row.getByRole('button', { name: `Open ${executionId}` }).click();
+  await expect(page).toHaveURL(new RegExp(`/playground/run/${executionId}$`));
+  await expect(page.getByText('Completed', { exact: true }).first()).toBeVisible();
+  const filter = page.getByRole('textbox', { name: 'Filter activity' });
+  await filter.fill('shipping_quote');
+  const toolRow = page.locator('.activity-row--tool_call');
+  await expect(toolRow).toHaveCount(1);
+  await expect(toolRow.first()).toBeVisible();
+  await toolRow.getByRole('button', { name: 'Expand Tool call details' }).click();
+  await expect(toolRow.getByRole('button', { name: 'Load inputs, outputs & evidence' })).toBeVisible();
+});
+""",
+        encoding="utf-8",
+    )
+    (destination / "playwright.config.cjs").write_text(
+        "module.exports = { testDir: '.', use: { baseURL: process.env.MCP_PAL_LIVE_UI_BASE_URL } };\n",
+        encoding="utf-8",
+    )
+    return target
 
 
 def _free_port() -> int:
@@ -384,9 +434,17 @@ def _free_port() -> int:
 
 
 def cli_test_command(
-    executable: Path, project_python: Path, database: Path, port: int
+    executable: Path,
+    project_python: Path,
+    database: Path,
+    port: int,
+    env_file: Path,
+    *,
+    opencode_model: str = DEFAULT_MODEL,
+    codex_model: str = "gpt-5.6-sol",
+    providers: tuple[str, ...] = ("opencode", "codex"),
 ) -> list[str]:
-    return [
+    command = [
         str(executable),
         "test",
         "--ui",
@@ -396,10 +454,100 @@ def cli_test_command(
         str(database),
         "--port",
         str(port),
-        "--",
-        "-q",
-        TARGET,
+        "--env-file",
+        str(env_file),
     ]
+    models = {"opencode": opencode_model, "codex": codex_model}
+    for provider in providers:
+        if provider not in models:
+            raise ValueError(f"unsupported live provider {provider!r}")
+        command.extend(("--harness", f"{provider}={models[provider]}"))
+    command.extend(
+        [
+            "--trials",
+            "1",
+            "--",
+            "-q",
+            TARGET,
+        ]
+    )
+    return command
+
+
+def _dotenv_values(path: Path) -> dict[str, str]:
+    try:
+        from dotenv import dotenv_values
+
+        values = dotenv_values(str(path), interpolate=False)
+    except Exception as exc:
+        raise GateFailure("explicit provider env file could not be read") from exc
+    return {
+        str(key): str(value)
+        for key, value in values.items()
+        if key and value is not None
+    }
+
+
+def _assert_secret_absent(value: Any, secrets: tuple[str, ...], label: str) -> None:
+    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+    if any(secret and secret in text for secret in secrets):
+        raise GateFailure(f"provider credential value leaked into {label}")
+
+
+def provider_secret_values(
+    providers: tuple[str, ...],
+    ambient: Mapping[str, str],
+    dotenv: Mapping[str, str],
+) -> tuple[str, ...]:
+    keys = {"opencode": "OPENCODE_API_KEY", "codex": "OPENAI_API_KEY"}
+    return tuple(
+        dict.fromkeys(
+            value
+            for provider in providers
+            for value in (
+                ambient.get(keys[provider], ""),
+                dotenv.get(keys[provider], ""),
+            )
+            if value
+        )
+    )
+
+
+def _post_json(url: str, payload: Mapping[str, Any]) -> Any:
+    try:
+        request = Request(
+            url,
+            data=json.dumps(dict(payload)).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=10) as response:
+            if not 200 <= response.status < 300:
+                raise GateFailure(f"local API returned HTTP {response.status}")
+            return json.loads(response.read())
+    except HTTPError as exc:
+        raise GateFailure(f"local API returned HTTP {exc.code}") from exc
+    except (OSError, URLError, json.JSONDecodeError) as exc:
+        raise GateFailure("local API returned invalid JSON") from exc
+
+
+def assert_aggregate(
+    payload: Any, providers: tuple[str, ...], models: Mapping[str, str]
+) -> None:
+    aggregate = payload.get("aggregate") if isinstance(payload, dict) else None
+    groups = aggregate.get("groups") if isinstance(aggregate, dict) else None
+    if not isinstance(groups, list) or len(groups) < len(providers):
+        raise GateFailure("evaluation aggregate response is malformed")
+    group_keys = {
+        str(group.get("key", {}).get("metadata.harness_config"))
+        for group in groups
+        if isinstance(group, dict) and isinstance(group.get("key"), dict)
+    }
+    expected_configs = {f"{provider}:{models[provider]}" for provider in providers}
+    if not expected_configs.issubset(group_keys):
+        raise GateFailure(
+            "evaluation aggregate is missing a selected provider configuration"
+        )
 
 
 class Child:
@@ -472,11 +620,80 @@ class Child:
         self._capture_thread.join(timeout)
 
 
+def _descendant_pids(root_pid: int) -> set[int]:
+    """Find descendants before terminating a process group.
+
+    A provider may detach a helper with ``setsid``. Such a process no longer
+    belongs to the parent's process group, but it is still discoverable by its
+    parent PID until the parent exits. Capture the tree first so cleanup can
+    terminate those helpers explicitly.
+    """
+
+    if os.name != "posix":
+        return set()
+    try:
+        listing = subprocess.check_output(
+            ["ps", "-axo", "pid=,ppid="], text=True, stderr=subprocess.DEVNULL
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    children: dict[int, set[int]] = {}
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            continue
+        try:
+            pid, parent = (int(value) for value in fields)
+        except ValueError:
+            continue
+        children.setdefault(parent, set()).add(pid)
+    descendants: set[int] = set()
+    pending = list(children.get(root_pid, ()))
+    while pending:
+        pid = pending.pop()
+        if pid in descendants or pid == root_pid:
+            continue
+        descendants.add(pid)
+        pending.extend(children.get(pid, ()))
+    return descendants
+
+
+def _live_pids(pids: set[int]) -> set[int]:
+    """Return captured PIDs that are still running, excluding zombies."""
+
+    if os.name != "posix" or not pids:
+        return set()
+    try:
+        listing = subprocess.check_output(
+            ["ps", "-axo", "pid=,state="], text=True, stderr=subprocess.DEVNULL
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    live: set[int] = set()
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            continue
+        try:
+            pid = int(fields[0])
+        except ValueError:
+            continue
+        if pid in pids and not fields[1].startswith("Z"):
+            live.add(pid)
+    return live
+
+
 def terminate_process(process: subprocess.Popen[Any] | None) -> None:
     """Terminate a process and all descendants it owns."""
 
     if process is None:
         return
+    descendants = _descendant_pids(process.pid)
+    for pid in descendants:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
     if process.poll() is None:
         try:
             if os.name == "posix":
@@ -498,6 +715,11 @@ def terminate_process(process: subprocess.Popen[Any] | None) -> None:
         try:
             process.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired):
+            pass
+    for pid in _live_pids(descendants):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
             pass
 
 
@@ -522,15 +744,18 @@ def interrupt(child: Child | None) -> None:
         terminate(child)
 
 
-def parse_ui_links(output: str, origin: str) -> tuple[str, str, str]:
+def parse_ui_links(
+    output: str, origin: str
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
     """Return history URL, direct URL, and decoded run ID from CLI output."""
 
     history = re.findall(r"(?m)^MCP-Pal UI: (https?://[^\s]+)$", output)
     if len(history) != 1 or history[0] != f"{origin}/history":
         raise GateFailure("CLI UI history link does not match the selected origin")
     direct = re.findall(r"(?m)^Run: (https?://[^\s]+)$", output)
-    if len(direct) != 1:
-        raise GateFailure("CLI UI process did not print exactly one direct run link")
+    if not direct:
+        raise GateFailure("CLI UI process did not print a direct run link")
+    run_ids: list[str] = []
     selected = urlsplit(origin)
     parsed = urlsplit(direct[0])
     try:
@@ -545,14 +770,17 @@ def parse_ui_links(output: str, origin: str) -> tuple[str, str, str]:
         or parsed.fragment
     ):
         raise GateFailure("CLI direct link does not match the selected origin")
-    prefix = "/playground/run/"
-    if not parsed.path.startswith(prefix):
-        raise GateFailure("CLI direct link does not use the playground run route")
-    encoded_id = parsed.path[len(prefix) :]
-    run_id = unquote(encoded_id)
-    if not encoded_id or not run_id:
-        raise GateFailure("CLI direct link has an empty run ID")
-    return history[0], direct[0], run_id
+    for link in direct:
+        parsed = urlsplit(link)
+        prefix = "/playground/run/"
+        if not parsed.path.startswith(prefix):
+            raise GateFailure("CLI direct link does not use the playground run route")
+        encoded_id = parsed.path[len(prefix) :]
+        run_id = unquote(encoded_id)
+        if not encoded_id or not run_id:
+            raise GateFailure("CLI direct link has an empty run ID")
+        run_ids.append(run_id)
+    return history[0], tuple(direct), tuple(run_ids)
 
 
 def _http(url: str) -> tuple[int, str, bytes]:
@@ -584,9 +812,18 @@ def _assert_execution_in_history(payload: Any, run_id: str) -> None:
         raise GateFailure("executions API returned an invalid page")
     page = payload.get("page", payload)
     items = page.get("items", []) if isinstance(page, dict) else []
-    if not isinstance(items, list) or len(items) != 1:
-        raise GateFailure("expected exactly one persisted live execution")
-    item = items[0] if isinstance(items[0], dict) else {}
+    if not isinstance(items, list):
+        raise GateFailure("executions API returned invalid items")
+    matches = []
+    for candidate in items:
+        if not isinstance(candidate, dict):
+            continue
+        snapshot = candidate.get("snapshot", candidate)
+        if isinstance(snapshot, dict) and snapshot.get("execution_id") == run_id:
+            matches.append(candidate)
+    if len(matches) != 1:
+        raise GateFailure("expected one persisted record for each live execution")
+    item = matches[0]
     snapshot = item.get("snapshot", item)
     execution_id = snapshot.get("execution_id") if isinstance(snapshot, dict) else None
     if execution_id != run_id:
@@ -680,13 +917,33 @@ def assert_sqlite_persistence(
         connection.close()
 
 
+def _pytest_run_id(database: Path, execution_id: str) -> str:
+    try:
+        with sqlite3.connect(
+            f"{database.resolve().as_uri()}?mode=ro", uri=True
+        ) as connection:
+            row = connection.execute(
+                "SELECT run_id FROM v2_executions WHERE id=?", (execution_id,)
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise GateFailure("live execution database could not be inspected") from exc
+    if row is None or not row[0]:
+        raise GateFailure("live execution is missing its pytest run mapping")
+    return str(row[0])
+
+
 def _unwrap(value: Any) -> Any:
     if isinstance(value, dict) and "state" in value:
         return value.get("value") if value.get("state") == "observed" else None
     return value
 
 
-def assert_report(envelope: Any, expected_model: str, expected_id: str) -> None:
+def assert_report(
+    envelope: Any,
+    expected_model: str,
+    expected_id: str,
+    expected_harness: str = "opencode",
+) -> None:
     root = envelope if isinstance(envelope, dict) else {}
     report = root.get("report") if isinstance(root.get("report"), dict) else root
     snapshot = report.get("snapshot") if isinstance(report, dict) else None
@@ -700,14 +957,19 @@ def assert_report(envelope: Any, expected_model: str, expected_id: str) -> None:
         raise GateFailure("report execution ID does not match the direct link")
     trace = root.get("trace") if isinstance(root.get("trace"), dict) else {}
     runtime = trace.get("runtime") if isinstance(trace, dict) else {}
-    if not isinstance(runtime, dict) or runtime.get("kind") != "opencode":
-        raise GateFailure("OpenCode runtime/model context is missing")
+    expected_kind = {
+        "claude": "claude_code",
+        "claude_code": "claude_code",
+        "claude-code": "claude_code",
+    }.get(expected_harness, expected_harness)
+    if not isinstance(runtime, dict) or runtime.get("kind") != expected_kind:
+        raise GateFailure(f"{expected_kind} runtime/model context is missing")
     spec = root.get("spec") if isinstance(root.get("spec"), dict) else {}
     harness = spec.get("harness") if isinstance(spec, dict) else {}
     if (
         harness.get("model") if isinstance(harness, dict) else None
     ) != expected_model and _unwrap(runtime.get("model_id")) != expected_model:
-        raise GateFailure("OpenCode model context is missing")
+        raise GateFailure(f"{expected_kind} model context is missing")
     timeline = trace.get("timeline") if isinstance(trace, dict) else []
     calls = [
         item
@@ -735,7 +997,9 @@ def assert_report(envelope: Any, expected_model: str, expected_id: str) -> None:
 
 
 def browser_environment(
-    source: Mapping[str, str], origin: str, run_id: str, model: str
+    source: Mapping[str, str],
+    origin: str,
+    run_id: str,
 ) -> dict[str, str]:
     """Build Playwright's environment without provider credentials."""
 
@@ -744,16 +1008,26 @@ def browser_environment(
         {
             "MCP_PAL_LIVE_UI_BASE_URL": origin,
             "MCP_PAL_LIVE_EXECUTION_ID": run_id,
-            "MCP_PAL_LIVE_MODEL": model,
         }
     )
     return env
 
 
-def run_playwright(playwright: Path, cwd: Path, env: Mapping[str, str]) -> None:
+def run_playwright(
+    playwright: Path, cwd: Path, env: Mapping[str, str], target: Path | None = None
+) -> None:
     try:
         result = subprocess.run(
-            [str(playwright), "test", "e2e/live-opencode.spec.ts"],
+            [
+                str(playwright),
+                "test",
+                *(
+                    ("--config", str(target.parent / "playwright.config.cjs"))
+                    if target
+                    else ()
+                ),
+                str(target or "e2e/live-opencode.spec.ts"),
+            ],
             cwd=str(cwd),
             env=dict(env),
             capture_output=True,
@@ -811,7 +1085,9 @@ def _check_browser_prerequisites(ui_dir: Path, env: Mapping[str, str]) -> Path:
     return playwright
 
 
-def _wait_for_links(child: Child, origin: str) -> tuple[str, str, str]:
+def _wait_for_links(
+    child: Child, origin: str
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
     deadline = time.monotonic() + READY_TIMEOUT
     while time.monotonic() < deadline:
         output = child.text()
@@ -827,11 +1103,20 @@ def check(
     release_dir: str | os.PathLike[str] | None = None,
     version: str | None = None,
     ui_dir: str | os.PathLike[str] = UI_ROOT,
+    process_timeout: float = PROCESS_TIMEOUT,
 ) -> int:
+    if not math.isfinite(process_timeout) or process_timeout <= 0:
+        raise GateFailure("--process-timeout must be a positive finite number")
     if (release_dir is None) != (version is None):
         raise GateFailure("--release-dir and --version must be provided together")
     selected_ui = Path(ui_dir).expanduser().resolve()
     original_env = dict(os.environ)
+    provider_text = original_env.get("MCP_PAL_LIVE_PROVIDERS", "opencode,codex")
+    providers = tuple(
+        item.strip().lower() for item in provider_text.split(",") if item.strip()
+    )
+    if not providers or any(item not in {"opencode", "codex"} for item in providers):
+        raise GateFailure("MCP_PAL_LIVE_PROVIDERS must contain opencode and/or codex")
     install_env = clean_environment(original_env)
     if not (selected_ui.is_dir() and (selected_ui / "package.json").is_file()):
         raise GateFailure("UI directory or package.json is unavailable")
@@ -839,11 +1124,37 @@ def check(
     uv = shutil.which("uv")
     if uv is None:
         raise GateFailure("uv is required for the isolated live gate")
+    env_file = ROOT.parent / "mcp-pal" / ".env"
+    if not env_file.is_file():
+        raise GateFailure("explicit OpenCode env file is unavailable")
+    dotenv_file_values = _dotenv_values(env_file)
     api_key = os.environ.get("OPENCODE_API_KEY", "").strip()
-    if not api_key:
-        raise GateFailure("OPENCODE_API_KEY is not set in the selected environment")
-    if shutil.which("opencode") is None:
-        raise GateFailure("OpenCode executable is not installed")
+    selected_opencode_model = original_env.get(
+        "MCP_PAL_LIVE_OPENCODE_MODEL", DEFAULT_MODEL
+    )
+    if "opencode" in providers:
+        if not selected_opencode_model.startswith("opencode/"):
+            raise GateFailure(
+                "the live UI gate supports OpenCode models with the opencode/ provider prefix"
+            )
+        if not api_key and not dotenv_file_values.get("OPENCODE_API_KEY", "").strip():
+            raise GateFailure(
+                "OPENCODE_API_KEY is not set in the selected environment or explicit env file"
+            )
+        if shutil.which("opencode") is None:
+            raise GateFailure("OpenCode executable is not installed")
+    if "codex" in providers:
+        if shutil.which("codex") is None:
+            raise GateFailure("Codex executable is not installed")
+        codex_home = Path(original_env.get("CODEX_HOME", Path.home() / ".codex"))
+        if (
+            not os.environ.get("OPENAI_API_KEY", "").strip()
+            and not dotenv_file_values.get("OPENAI_API_KEY", "").strip()
+            and not (codex_home / "auth.json").is_file()
+        ):
+            raise GateFailure(
+                "Codex credentials are unavailable: set OPENAI_API_KEY in the environment or explicit env file, or log in to Codex"
+            )
 
     temp_path: Path | None = None
     child: Child | None = None
@@ -867,7 +1178,7 @@ def check(
                 ["npm", "run", "build", "--", "--outDir", str(ui_dist)],
                 cwd=selected_ui,
                 env=install_env,
-                timeout=PROCESS_TIMEOUT,
+                timeout=process_timeout,
             )
             release = temp_path / "release"
             _run(
@@ -883,7 +1194,7 @@ def check(
                 ],
                 cwd=ROOT,
                 env=install_env,
-                timeout=PROCESS_TIMEOUT,
+                timeout=process_timeout,
             )
             release_dir = release
         assert release_dir is not None and version is not None
@@ -940,28 +1251,102 @@ def check(
         _probe_project(project_python, version, isolated_env, repo)
         database = repo / ".mcp-pal" / "executions.sqlite"
         port = _free_port()
-        model = original_env.get("MCP_PAL_LIVE_OPENCODE_MODEL", DEFAULT_MODEL)
+        model = selected_opencode_model
         live_env = dict(isolated_env)
+        for variable in (
+            "MCP_PAL_RUN_LIVE_UI",
+            "MCP_PAL_RUN_LIVE_OPENCODE",
+            "MCP_PAL_LIVE_PROVIDERS",
+            "MCP_PAL_LIVE_OPENCODE_MODEL",
+            "MCP_PAL_LIVE_CODEX_MODEL",
+        ):
+            live_env.pop(variable, None)
         live_env.update(
             {
                 # The key is needed by the CLI-launched pytest child. It is
                 # explicitly removed from the Playwright environment below.
-                "OPENCODE_API_KEY": api_key,
-                "MCP_PAL_RUN_LIVE_OPENCODE": "1",
-                "MCP_PAL_LIVE_OPENCODE_MODEL": model,
+                "OPENCODE_API_KEY": api_key
+                or dotenv_file_values.get("OPENCODE_API_KEY", ""),
             }
         )
-        command = cli_test_command(executable, project_python, database, port)
+        if "opencode" in providers:
+            _run_streaming(
+                [
+                    str(project_python),
+                    "sdk/examples/live_agent_loop.py",
+                    "--model",
+                    model,
+                ],
+                cwd=repo,
+                env=live_env,
+                timeout=process_timeout,
+                label="normal-python-live-agent",
+                output_path=temp_path / "live-agent-loop.log",
+            )
+        codex_model = original_env.get("MCP_PAL_LIVE_CODEX_MODEL", "gpt-5.6-sol")
+        command = cli_test_command(
+            executable,
+            project_python,
+            database,
+            port,
+            env_file,
+            opencode_model=model,
+            codex_model=codex_model,
+            providers=providers,
+        )
         print(
-            "live-ui-gate: launching exactly one live OpenCode pytest target",
+            "live-ui-gate: launching live pytest targets for the selected providers",
             flush=True,
         )
         child = Child(command, repo, live_env)
         origin = f"http://127.0.0.1:{port}"
-        history_url, direct_url, run_id = _wait_for_links(child, origin)
-        _assert_execution_in_history(_json_get(f"{origin}/api/v2/executions"), run_id)
-        assert_report(_json_get(execution_report_url(origin, run_id)), model, run_id)
-        for route in (history_url, direct_url):
+        history_url, direct_urls, run_ids = _wait_for_links(child, origin)
+        if len(run_ids) != len(providers) or len(set(run_ids)) != len(run_ids):
+            raise GateFailure(
+                "live gate did not produce one distinct execution for each provider"
+            )
+        history_payload = _json_get(f"{origin}/api/v2/executions")
+        expected_models = {"opencode": model, "codex": codex_model}
+        reports: dict[str, Any] = {}
+        for index, run_id in enumerate(run_ids):
+            _assert_execution_in_history(history_payload, run_id)
+            expected_model = expected_models[providers[index]]
+            report_payload = _json_get(execution_report_url(origin, run_id))
+            assert_report(report_payload, expected_model, run_id, providers[index])
+            reports[run_id] = report_payload
+        aggregate = _post_json(
+            f"{origin}/api/v2/evaluations/aggregate",
+            {
+                "group_by": ["metadata.harness_config"],
+                "filters": {"evaluator": "live.shipping.v1"},
+            },
+        )
+        assert_aggregate(aggregate, providers, expected_models)
+        feedback_run_id = _pytest_run_id(database, run_ids[0])
+        feedback = _json_get(
+            f"{origin}/api/v2/feedback/{quote(feedback_run_id, safe='')}"
+        )
+        feedback_body = feedback.get("feedback") if isinstance(feedback, dict) else None
+        if (
+            not isinstance(feedback_body, dict)
+            or feedback.get("version") != "v2"
+            or feedback_body.get("run_id") != feedback_run_id
+            or not feedback_body.get("executions")
+        ):
+            raise GateFailure("feedback API response is malformed")
+        feedback_execution_ids = {
+            str(item.get("execution_id"))
+            for item in feedback_body["executions"]
+            if isinstance(item, dict) and item.get("execution_id")
+        }
+        if not set(run_ids).issubset(feedback_execution_ids):
+            raise GateFailure("feedback API response is missing a selected execution")
+        secrets = provider_secret_values(providers, original_env, dotenv_file_values)
+        for run_id, payload in reports.items():
+            _assert_secret_absent(payload, secrets, f"API report {run_id}")
+        _assert_secret_absent(aggregate, secrets, "API aggregate")
+        _assert_secret_absent(feedback, secrets, "API feedback")
+        for route in (history_url, *direct_urls):
             status, content_type, body = _http(route)
             if (
                 status != 200
@@ -969,17 +1354,27 @@ def check(
                 or b"<html" not in body.lower()
             ):
                 raise GateFailure("CLI UI route did not return the bundled SPA")
-        run_playwright(
-            playwright,
-            selected_ui,
-            browser_environment(original_env, origin, run_id, model),
-        )
+        ui_probe = _write_ui_probe(temp_path)
+        for run_id in run_ids:
+            run_playwright(
+                playwright,
+                selected_ui,
+                browser_environment(
+                    original_env,
+                    origin,
+                    run_id,
+                ),
+                ui_probe,
+            )
         interrupt(child)
         if child.process.returncode != 0:
             raise GateFailure(
                 f"CLI did not preserve pytest success (exit {child.process.returncode})"
             )
-        assert_sqlite_persistence(database, run_id)
+        for run_id in run_ids:
+            assert_sqlite_persistence(database, run_id)
+            raw_database = database.read_bytes().decode("utf-8", errors="ignore")
+            _assert_secret_absent(raw_database, secrets, "SQLite execution store")
         shutil.rmtree(temp_path)
         temp_path = None
         print("live OpenCode and bundled UI gate passed", flush=True)
@@ -1016,9 +1411,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--release-dir", type=Path)
     parser.add_argument("--version")
     parser.add_argument("--ui-dir", type=Path, default=UI_ROOT)
+    parser.add_argument("--process-timeout", type=float, default=PROCESS_TIMEOUT)
     args = parser.parse_args(argv)
     try:
-        return check(args.release_dir, args.version, args.ui_dir)
+        return check(args.release_dir, args.version, args.ui_dir, args.process_timeout)
     except GateFailure as exc:
         print(f"live-ui-gate: {exc}", file=sys.stderr)
         return 2

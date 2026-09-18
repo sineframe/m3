@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -168,6 +169,43 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         config = home / "config.toml"
         config.write_text(render_codex_config(launch), encoding="utf-8")
         config.chmod(0o600)
+        # Preserve an existing native ChatGPT login when no API-key mapping is
+        # configured. The isolated home is temporary and cleaned with the
+        # execution workspace; auth material never enters the serializable spec.
+        if (
+            isinstance(launch.spec.harness, Codex)
+            and not launch.spec.harness.credential_references
+        ):
+            source_home = Path(
+                os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+            )
+            source_auth = source_home / "auth.json"
+            target_auth = home / "auth.json"
+            if source_auth.is_file():
+                try:
+                    if source_auth.is_symlink():
+                        raise OSError
+                    descriptor = os.open(
+                        target_auth, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+                    )
+                    try:
+                        with (
+                            source_auth.open("rb") as source,
+                            os.fdopen(descriptor, "wb") as destination,
+                        ):
+                            descriptor = -1
+                            shutil.copyfileobj(source, destination)
+                    finally:
+                        if descriptor != -1:
+                            os.close(descriptor)
+                except (OSError, ValueError) as exc:
+                    try:
+                        target_auth.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise HarnessStartupError(
+                        "Codex native login is unavailable"
+                    ) from exc
         environment = dict(self.environment)
         runtime_secrets: set[str] = set()
         environment["CODEX_HOME"] = str(home)
@@ -279,7 +317,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         params = {
             "model": getattr(launch.spec.harness, "model", None),
             "cwd": workspace,
-            "approvalPolicy": "never",
+            # MCP tools require Codex's approval-capable mode even when MCP
+            # Pal has already granted the selected tool policy. ``never``
+            # makes the App Server reject otherwise valid tool calls.
+            "approvalPolicy": "on-request",
             "sandbox": sandbox,
             "ephemeral": True,
         }

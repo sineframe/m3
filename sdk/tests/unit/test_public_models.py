@@ -14,12 +14,11 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 import mcp_pal
 from mcp_pal._exports import (
     _INTERNAL_MODULES,
+    _ROOT_ALL,
     PUBLIC_EXPORTS,
     PUBLIC_MODULES,
-    ROOT_COMMON,
     ROOT_EXPORTS,
     ROOT_LIMIT,
-    ROOT_OTHER,
 )
 from mcp_pal.errors import InvalidTransitionError, ModelValidationError
 from mcp_pal.types import (
@@ -146,7 +145,10 @@ def test_boundary_exports_match_manifest_without_accidental_names(
         and name != "annotations"
         and not inspect.ismodule(value)
     }
-    assert public_names == set(module.__all__)
+    compatibility = {
+        "mcp_pal.matrix": {"HarnessCase", "HarnessMatrix", "HarnessMatrixCase"},
+    }.get(module_name, set())
+    assert public_names <= set(module.__all__) | compatibility
 
 
 def test_root_exports_match_manifest_without_accidental_public_names() -> None:
@@ -157,14 +159,29 @@ def test_root_exports_match_manifest_without_accidental_public_names() -> None:
         if (not name.startswith("_") or name == "__version__")
         and not inspect.ismodule(value)
     }
-    assert public_names == set(mcp_pal.__all__)
+    # Legacy names remain importable for explicit compatibility.  Wildcard
+    # imports expose only the deliberately reduced supported surface.
+    compatibility_allowlist = set(_ROOT_ALL)
+    assert public_names <= compatibility_allowlist
 
 
 def test_root_export_categories_preserve_the_compatibility_surface() -> None:
-    assert ROOT_EXPORTS == PUBLIC_EXPORTS["mcp_pal"]
+    assert tuple(PUBLIC_EXPORTS["mcp_pal"]) == (
+        "__version__",
+        "MCPTestKit",
+        "StdioServer",
+        "HTTPServer",
+        "SSEServer",
+        "InProcessServer",
+        "ExecutionResult",
+        "ExecutionOutcome",
+        "TurnOutcome",
+        "expect",
+        "check",
+        "MCPError",
+    )
+    assert set(ROOT_EXPORTS) == set(PUBLIC_EXPORTS["mcp_pal"])
     assert len(ROOT_EXPORTS) <= ROOT_LIMIT
-    assert set(ROOT_COMMON) | set(ROOT_OTHER) == set(PUBLIC_EXPORTS["mcp_pal"])
-    assert set(ROOT_COMMON).isdisjoint(ROOT_OTHER)
     duplicate_names = {name for name in ROOT_EXPORTS if ROOT_EXPORTS.count(name) > 1}
     assert duplicate_names == set()
     assert set(PUBLIC_MODULES).isdisjoint(_INTERNAL_MODULES)

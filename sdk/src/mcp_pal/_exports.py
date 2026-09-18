@@ -628,7 +628,83 @@ ROOT_EXPORTS: tuple[str, ...] = _ROOT_ALL
 # Keep the current root size as a review limit.
 ROOT_LIMIT: int = 276
 
-PUBLIC_EXPORTS["mcp_pal"] = ROOT_EXPORTS
+PUBLIC_EXPORTS["mcp_pal"] = (
+    "__version__",
+    "MCPTestKit",
+    "StdioServer",
+    "HTTPServer",
+    "SSEServer",
+    "InProcessServer",
+    "ExecutionResult",
+    "ExecutionOutcome",
+    "TurnOutcome",
+    "expect",
+    "check",
+    "MCPError",
+)
+PUBLIC_EXPORTS["mcp_pal.matrix"] = (
+    "ToolCase",
+    "ServerCase",
+    "ToolMatrix",
+    "ToolMatrixCase",
+)
+PUBLIC_EXPORTS["mcp_pal.pytest_plugin"] = (
+    "pytest_addoption",
+    "pytest_configure",
+    "pytest_unconfigure",
+    "pytest_generate_tests",
+    "mcp_pal_kit",
+    "agent",
+)
+PUBLIC_EXPORTS["mcp_pal.types"] = (
+    "EVENT_SCHEMA_ID",
+    "EVENT_SCHEMA_VERSION",
+    "ExecutionOutcome",
+    "ExecutionResult",
+    "TurnOutcome",
+    "TurnResult",
+    "HTTPServer",
+    "SSEServer",
+    "StdioServer",
+    "InProcessServer",
+    "SecretReference",
+    "ServerBinding",
+    "ServerValue",
+    "ToolPolicy",
+    "UserMessage",
+    "TextContent",
+    "DirectSpec",
+    "DirectOperation",
+    "CallTool",
+    "ListTools",
+    "ListResources",
+    "ListTemplates",
+    "ListPrompts",
+    "ReadResource",
+    "GetPrompt",
+    "Ping",
+    "EvaluationResult",
+    "EvaluationRecord",
+    "EvaluationContext",
+    "EvaluationDecision",
+    "EvaluationStatus",
+    "EvaluationSource",
+    "TraceResult",
+    "EvidenceRef",
+    "ArtifactRef",
+    "ExecutionReport",
+    "ExecutionEvidence",
+    "Capability",
+    "Readiness",
+    "ProtocolConstraint",
+    "WorkspacePolicy",
+    "PermissionPolicy",
+    "ElicitationPolicy",
+    "SamplingPolicy",
+    "FilesystemPolicy",
+    "TerminalPolicy",
+)
+ROOT_EXPORTS = PUBLIC_EXPORTS["mcp_pal"]
 
 # These modules provide focused, user-facing APIs.  Storage is listed by
 # module name only; its package keeps optional SQLite imports lazy.

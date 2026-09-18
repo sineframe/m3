@@ -6,47 +6,40 @@ import sys
 from pathlib import Path
 
 from mcp_pal import MCPTestKit, StdioServer, expect
-from mcp_pal.types import (
-    ACPAgent,
-    AgentSpec,
-    RestrictiveToolPolicy,
-    ServerBinding,
-    TurnOutcome,
-)
+from mcp_pal.types import TurnOutcome
 
 _EXAMPLES_ROOT = Path(__file__).parents[1]
 _AGENT = _EXAMPLES_ROOT / "servers" / "deterministic_acp_agent.py"
 _SERVER = _EXAMPLES_ROOT / "servers" / "example_mcp_server.py"
 
 
-def _spec() -> AgentSpec:
-    server = StdioServer(
+def _server() -> StdioServer:
+    return StdioServer(
         name="example-mcp",
         command=sys.executable,
         args=(str(_SERVER),),
         cwd=str(_EXAMPLES_ROOT),
     )
-    return AgentSpec(
-        harness=ACPAgent(
-            model="deterministic-fixture",
-            manifest={
-                "command": sys.executable,
-                "args": (str(_AGENT),),
-                "protocol": "acp",
-                "protocol_version": 1,
-            },
-        ),
-        servers=(ServerBinding(server=server, alias="example-mcp"),),
-        tool_policy=RestrictiveToolPolicy(
-            allowed_tools=("example-mcp:shipping_quote",)
-        ),
-    )
+
+
+def _agent_entry() -> dict[str, object]:
+    return {
+        "harness": "acp",
+        "models": ["deterministic-fixture"],
+        "manifest": {
+            "command": sys.executable,
+            "args": (str(_AGENT),),
+            "protocol": "acp",
+            "protocol_version": 1,
+        },
+    }
 
 
 def test_deterministic_harness_turn_scope_uses_real_mcp_calls() -> None:
     """A local ACP process calls the real example server on two turns."""
     with MCPTestKit(env={}, cwd=str(_EXAMPLES_ROOT)) as kit:
-        with kit.agent_session(_spec()) as session:
+        agent = kit.agents([_agent_entry()])[0]
+        with agent.session(server=_server()) as session:
             first = session.send("Get a local quote", timeout=10)
             second = session.send("Get a regional quote", timeout=10)
 

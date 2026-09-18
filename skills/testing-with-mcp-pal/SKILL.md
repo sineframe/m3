@@ -25,9 +25,9 @@ the CLI or UI.
 | Claim | Use |
 |---|---|
 | Server advertises the right schema or returns the right value | `MCPTestKit.direct()` |
-| Agent selects and calls the right tool | `MCPTestKit.agent_session()` + `expect(...).to_have_tool_call()` |
+| Agent selects and calls the right tool | Mark a test with `@pytest.mark.mcp_pal`, request `agent`, then assert captured calls |
 | Known calls should work across tools or servers | `ToolMatrix` |
-| Prompts should work across harnesses or servers | `HarnessMatrix` |
+| Prompts should work across harnesses or servers | Marked `agent` plus CLI selections, or `kit.agents([...])` in Python |
 | Surrounding test is async | `AsyncMCPTestKit` |
 
 ## Choose the transport
@@ -42,7 +42,7 @@ For HTTP, the URL is one MCP protocol endpoint, not a REST route. Keep
 credentials out of URLs and query parameters: static non-secret headers may be
 declared on `HTTPServer`, while direct-client bearer authentication
 uses a `SecretReference` with `kit.direct(..., bearer_token=...)`.
-This is a direct-client option, not an `AgentSpec` option.
+This is a direct-client option; agent tests receive the selected `agent` fixture.
 A public endpoint exposed to an agent requires `TrustLevel.PUBLIC`; private or
 localhost endpoints you own require
 `TrustLevel.TRUSTED_PRIVATE`. These labels describe ownership and exposure,
@@ -57,7 +57,15 @@ finalization but does not start or stop a deployed service.
    than guessing or relying on a plan.
 2. Reuse its fixture and pytest conventions.
 3. Write the smallest test that proves the requested claim.
-4. Choose the runner. Prefer `mcp-pal test -- <pytest arguments>` when the
+4. For an agent test, identify its model provider's required credential
+   variable **name**. Common routes use `OPENCODE_API_KEY`, `OPENAI_API_KEY`,
+   or `ANTHROPIC_API_KEY`. Export the variable or use `mcp-pal test --env-file
+   .env`; the file is never loaded implicitly. A custom source uses
+   `--credential-env TARGET=SOURCE`, optionally
+   `KIND:TARGET=SOURCE` for one harness. Keep MCP server authentication in
+   `HTTPServer.headers` or a direct-client bearer reference. Never request,
+   print, log, or put a secret value into a test, command argument, or report.
+5. Choose the runner. Prefer `mcp-pal test -- <pytest arguments>` when the
    separately installed CLI is available and `mcp-pal doctor` reports that the
    project is ready. It runs the same pytest tests while recording MCP Pal
    executions to SQLite. Use direct pytest when the CLI is unavailable or the
@@ -67,7 +75,7 @@ finalization but does not start or stop a deployed service.
    CLI merely to run one test unless CLI setup is part of the task. Add `--ui`
    only when the user wants the local viewer; it keeps the command open until
    interrupted.
-5. Run the narrow test and report nondeterministic external/provider tests
+6. Run the narrow test and report nondeterministic external/provider tests
    separately from deterministic contract tests. Follow the target project's
    isolation convention; this repository isolates its external example by
    placing it under `examples/nondeterministic/`.
@@ -87,17 +95,27 @@ finalization but does not start or stop a deployed service.
 - For cost budgets, use finalized `trace_view.summary.usage`, require an
   observed cost, and check currency when the provider emits it. See
   [trace metadata](references/test-patterns.md#inspect-trace-metadata).
+- Agent execution `timeout=` is a full startup, turn, and cleanup deadline;
+  `handle.result(timeout=...)` is wait-only. For diagnosis, consume
+  `handle.events()` and log only `sequence`, `kind`, and `lifecycle_phase`.
+  Timeout diagnostics expose safe `stage`, `operation`, elapsed seconds, and
+  configured seconds in the finalized trace. The pytest/CLI path writes the
+  same fields to `.mcp-pal/reports/<run-id>/traces/` and prints the feedback
+  path. Supply provider credentials with `--env-file` or ambient variables;
+  credential values are excluded from summaries and feedback. Do not log event
+  payloads.
 - A tool-selection test must inspect finalized wire evidence. The default
   matcher evidence is `"wire"`; request `"reported"` only when comparing sources.
 - If policy exposes only the expected tool, the test proves tool use, not tool
   choice. Preserve realistic safe alternatives when selection is the claim.
 - Tool failures are results with `is_error=True`; transport and local schema
   failures are exceptions. Schema checking requires `validate_schemas=True`.
-- Reference credentials with `SecretReference`; never embed or log secrets.
+- Use environment variables or explicit `--env-file` for provider credentials;
+  use `SecretReference` for MCP endpoint credentials. Never embed or log values.
   Keep nondeterministic external/provider tests separate from deterministic
   tests because they may change or incur provider usage.
-- There is no hidden `mcp_test` fixture or scenario format. Define the server
-  explicitly with `StdioServer`, `HTTPServer`, `SSEServer`, or an
+- The plugin supplies `agent` for a marked test. It never invents a server;
+  define one explicitly with `StdioServer`, `HTTPServer`, `SSEServer`, or an
   existing project fixture.
 - With the MCP Pal pytest plugin active, SQLite retains internal run records,
   pytest item outcomes, phase diagnostics, and exact execution associations;
@@ -122,20 +140,14 @@ model/rubric source details. Built-ins include
 `--mcp-pal-results-db`, evaluations attached to an execution are saved and can
 be queried after reopening SQLite; in-memory SDK storage remains ephemeral.
 
-Matrix cases expose stable matrix/cell/trial metadata. Use the same evaluator
-name across trials; aggregate statistics are derived later from raw records.
-For nondeterministic harness quality, use `HarnessMatrix(..., trials=N)` as
-independent measured attempts, not retry-until-success. Invoke the evaluator
-once per execution or turn, then aggregate its records. When logical prompts
-have different expectations, build a matrix per logical case so its trials
-share a stable case identity.
-
-Use `FullToolPolicy(acknowledge_risk=True)` only when unrestricted tool access
-is part of the claim and the bound servers/tools are safe. Otherwise use an
-explicit `RestrictiveToolPolicy`; its empty allowlist denies every tool. If an
-evaluator reads the final assistant answer, prefer `case.session()` and the
-completed `TurnResult`, then inspect tool usage on the finalized
-`session.result.trace_view`.
+Use `--trials N`, marker `trials=N`, or `kit.agents(..., trials=N)` for
+independent measured attempts. Invoke the evaluator once per execution or
+turn, then aggregate its records. Ordinary pytest parameters or a Python loop
+vary logical prompts. A marked test's ordinary parameters retain stable case
+identity across harnesses and trials. The bound agent exposes advertised MCP
+tools when `tools` is omitted; `tools=[]` denies MCP tools. When evaluating a
+final answer after several turns, use `agent.session(...)` and inspect the
+finalized `session.result.trace_view`.
 
 Call `store.aggregate_evaluations(EvaluationQuery(...))` for pass rates,
 status counts, run/time trends, case labels, and execution/tool health. Filter
@@ -162,10 +174,10 @@ missing or incomplete evidence as a limitation rather than an improvement.
 | Writing a custom trace serializer | Use `view.model_dump(mode="json")` |
 | Parsing text when structured output exists | Assert `structured_content` |
 | Restricting selection to one possible tool | Include safe competing tools |
-| Assuming a parent CLI login is inherited | Use environment `SecretReference`s |
+| Missing model provider credential | Export the expected variable or pass `--env-file`; use `--credential-env TARGET=SOURCE` for custom names |
 | Assuming the SDK installs the `mcp-pal` command | Install the standalone CLI separately |
 | Passing pytest flags directly to `mcp-pal test` | Put them after `--` |
 | Assuming direct pytest writes run history | Pass `store=SQLiteExecutionStore(...)` or load the plugin with `--mcp-pal-results-db` |
 | Treating a completed persisted execution as a passed test | Record or inspect an explicit test/evaluation verdict |
-| Retrying a failed nondeterministic case until it passes | Keep every attempt as a scored matrix trial |
-| Assuming an empty restrictive allowlist exposes all tools | Use an explicit safe allowlist or an acknowledged full policy |
+| Retrying a failed nondeterministic case until it passes | Keep every attempt as a scored trial |
+| Assuming `tools=[]` exposes all tools | Omit `tools` or pass `tools=None` |

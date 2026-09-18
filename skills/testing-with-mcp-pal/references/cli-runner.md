@@ -1,5 +1,11 @@
 # MCP Pal CLI runner
 
+Use `mcp-pal test --env-file .env --harness opencode=opencode/big-pickle
+--harness codex=gpt-5.6-sol --trials 2 -- tests/test_shipping.py`. Known provider
+variable names are `OPENCODE_API_KEY`, `OPENAI_API_KEY`, and
+`ANTHROPIC_API_KEY`; custom providers use `--credential-env TARGET=SOURCE` or
+the scoped `KIND:TARGET=SOURCE` form. Only names belong in flags and code.
+
 The project SDK and standalone CLI have different installation scopes:
 
 | Component | Install scope | Provides |

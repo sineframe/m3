@@ -1,5 +1,24 @@
 # Quick start
 
+## Agent behavior tests
+
+Use an ordinary marked pytest test; the CLI supplies harness and model:
+
+```python
+import pytest
+from mcp_pal import expect
+
+@pytest.mark.mcp_pal
+def test_shipping(agent, shipping_server):
+    result = agent.run("Get a local quote", server=shipping_server)
+    expect(result).to_have_tool_call("shipping_quote", server=shipping_server.name,
+                                     status="success")
+```
+
+Provider credentials are `OPENCODE_API_KEY`, `OPENAI_API_KEY`, or
+`ANTHROPIC_API_KEY` in the process environment. Use `--env-file .env` to load
+them explicitly. MCP endpoint credentials remain in `HTTPServer.headers`.
+
 For a deployed MCP URL, use `HTTPServer` and assert direct discovery
 and a tool call. The complete external example is
 [`examples/nondeterministic/test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py);
@@ -181,19 +200,10 @@ another path:
 mcp-pal test --results-db /tmp/mcp-pal-runs.sqlite -- tests/test_shipping.py
 ```
 
-Tests can opt into saved storage without the standalone CLI by constructing
-the store explicitly:
-
-```python
-from mcp_pal import MCPTestKit
-from mcp_pal.storage import SQLiteExecutionStore
-
-store = SQLiteExecutionStore(".mcp-pal/executions.sqlite")
-with MCPTestKit(store=store, env={}) as kit:
-    result = kit.run(spec)
-execution_id = result.snapshot.execution_id
-store.close()
-```
+Scripts can opt into saved storage without the standalone CLI by passing
+`SQLiteExecutionStore(".mcp-pal/executions.sqlite")` to `MCPTestKit(store=...)`.
+Run a selected agent as shown below and use `result.snapshot.execution_id` to
+reopen its trace. Close the store after the kit.
 
 Alternatively, a direct pytest invocation can install the same plugin and
 default-store flag used by the CLI:
@@ -241,66 +251,165 @@ def test_catalog_tool(case):
 
 ## Use a native agent harness
 
-MCP Pal supports the built-in `ClaudeCode`, `OpenCode`, `Codex`, and `Pi`
-harness choices. Codex uses its native App Server JSON-RPC process; Pi uses
-native RPC with a private MCP bridge. Neither is routed through ACP. Codex
-supports stdio and Streamable HTTP MCP; Pi's bridge supports stdio, SSE, and
-Streamable HTTP.
-They use the same `agent_session` flow with their normal tool access. Tool
-restrictions can be added later when a test needs tighter control. The complete
-server and harness definitions are in the
-[`built-in harness example`](examples.md#3-use-a-native-harness-with-the-local-stdio-server).
-OpenCode needs its provider credential; the repository's external endpoint
-example shows the explicit command and credential reference.
+The same marked test runs against any native harness and model supplied by the
+CLI. Define the server fixture in your project, then request `agent`:
 
-## Bring your own harness with ACP
+```python
+import pytest
+from mcp_pal import expect
 
-Use this route for an ACP-compatible agent you provide. `session.send` returns
-a completed `TurnResult`; after the session closes, finalized trace assertions
-go through `session.result`:
+@pytest.mark.mcp_pal
+def test_agent_selects_shipping_quote(agent, shipping_server):
+    result = agent.run(
+        "Get a local shipping quote for a 2 kg parcel.",
+        server=shipping_server,
+    )
+    expect(result).to_have_tool_call(
+        "shipping_quote", server=shipping_server.name, status="success"
+    )
+```
+
+```bash
+mcp-pal test --env-file .env \
+  --harness opencode=opencode/big-pickle \
+  --harness codex=gpt-5.6-sol \
+  --trials 2 -- tests/test_shipping.py
+```
+
+This command creates four agent test items. Put `OPENCODE_API_KEY` in `.env` for
+OpenCode and `OPENAI_API_KEY` for Codex when using provider keys. Existing
+native login can also authenticate a harness where supported. Claude Code uses
+`ANTHROPIC_API_KEY`; OpenCode and Pi use the key for their model provider.
+Only variable **names** belong in test code or CLI flags. For a custom provider,
+`--credential-env VENDOR_API_KEY=MY_VENDOR_KEY` maps a source environment
+variable to the variable expected by the harness. Scope it to one kind with
+`--credential-env opencode:VENDOR_API_KEY=MY_VENDOR_KEY` when needed.
+
+To keep defaults in code for direct pytest, use
+`@pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}])`
+and load the plugin with `python -m pytest -p mcp_pal.pytest_plugin`. CLI choices
+replace those defaults. The marker with no arguments is the clean path for
+CLI-selected tests.
+
+A normal Python file or notebook needs no pytest:
+
+Normal Python reads provider credentials from the process environment. Export a
+key before starting the notebook, or launch the file with an explicit dotenv
+file:
+
+```bash
+export OPENCODE_API_KEY='<your provider key>'
+uv run --env-file .env python notebook_example.py
+```
+
+For a provider with a custom source variable, map names in the agent
+dictionary; `vendor/model` below is a placeholder for your configured model,
+and the value stays in the process environment:
+
+```python
+agents = [{
+    "harness": "opencode",
+    "models": ["vendor/model"],
+    "credential_env": {"VENDOR_API_KEY": "MY_VENDOR_KEY"},
+}]
+```
 
 ```python
 import sys
 from pathlib import Path
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import ACPAgent, AgentSpec, RestrictiveToolPolicy, ServerBinding, StdioServer
+from mcp_pal import MCPTestKit, StdioServer
 
-examples = Path("sdk/examples")
+examples = Path("sdk/examples").resolve()
+shipping_server = StdioServer(
+    name="example-mcp",
+    command=sys.executable,
+    args=[str(examples / "servers" / "example_mcp_server.py")],
+    cwd=str(examples),
+)
+agents = [
+    {"harness": "opencode", "models": ["opencode/big-pickle"]},
+    {"harness": "codex", "models": ["gpt-5.6-sol"]},
+]
+with MCPTestKit() as kit:
+    for agent in kit.agents(agents):
+        result = agent.run("Find the shipping tool", server=shipping_server)
+        print(agent.harness, agent.model,
+              [call.tool.value for call in result.trace_view.tool_calls])
+```
+
+For a continuing conversation, open `agent.session(server=shipping_server)`,
+call `session.send(...)` for each turn, then inspect `session.result` after the
+session closes. `agent.submit(...)` is the advanced nonblocking path: it returns
+an execution handle for `snapshot()`, `result(timeout=...)`, events, and
+`cancel()`. Ordinary tests use `run`, which waits and returns the result.
+
+### Diagnose a slow agent safely
+
+`timeout=` on `agent.run(...)` or `agent.submit(...)` is the execution deadline:
+it covers startup, the MCP server, the harness turn, and bounded cleanup. The
+default selected-agent deadline is 180 seconds; pass a positive value for a
+shorter deadline or `timeout=None` to disable it for a deliberately long run.
+`handle.result(timeout=...)` is different: it only limits how long your Python
+code waits and does not cancel the background execution.
+
+Use the handle's committed event stream when diagnosing a timeout. Event
+identity is safe to log because it contains no prompt, tool arguments, provider
+response, or credentials:
+
+```python
+handle = agent.submit("Find the shipping tool", server=shipping_server, timeout=30)
+for event in handle.events():
+    print(event.sequence, event.kind.value, event.lifecycle_phase.value)
+result = handle.result(timeout=35)
+```
+
+For a timeout, inspect `result.trace_view.diagnostics` after finalization. A
+diagnostic includes `code`, `stage`, `operation`, `elapsed_seconds`, and
+`timeout_seconds`. `waiting_for_harness_response` means the trace observed the
+harness response wait; it does not prove why the provider is slow. The trace is
+marked partial when cancellation prevents complete capture. The CLI equivalent
+is `mcp-pal test --execution-timeout 30 -- ...`; its per-execution feedback is
+written under `.mcp-pal/reports/<run-id>/executions/` and `traces/`. The live UI
+gate's `--process-timeout` is a separate outer process limit.
+
+## Bring your own harness with ACP
+
+Provide an ACP manifest in the same plain agent dictionary. The manifest names
+the executable and its protocol; credentials are environment references, never
+literal values. This deterministic local example runs in a plain Python file:
+
+```python
+import sys
+from pathlib import Path
+from mcp_pal import MCPTestKit, expect, StdioServer
+
+examples = Path("sdk/examples").resolve()
 server = StdioServer(
     name="example-mcp", command=sys.executable,
     args=(str(examples / "servers" / "example_mcp_server.py"),),
     cwd=str(examples),
 )
-spec = AgentSpec(
-    harness=ACPAgent(
-        model="deterministic-fixture",
-        manifest={
-            "command": sys.executable,
-            "args": (str(examples / "servers" / "deterministic_acp_agent.py"),),
-            "protocol": "acp", "protocol_version": 1,
-        },
-    ),
-    servers=(ServerBinding(server=server, alias="example-mcp"),),
-    tool_policy=RestrictiveToolPolicy(
-        allowed_tools=("example-mcp:shipping_quote",)
-    ),
-)
-
-with MCPTestKit(env={}) as kit:
-    with kit.agent_session(spec) as session:
+acp = [{
+    "harness": "acp",
+    "models": ["deterministic-fixture"],
+    "manifest": {
+        "schema_version": "mcp-pal.harness.v1",
+        "protocol": "acp", "protocol_version": 1,
+        "command": sys.executable,
+        "args": [str(examples / "servers" / "deterministic_acp_agent.py")],
+        "env": {},
+    },
+}]
+with MCPTestKit() as kit:
+    agent = kit.agents(acp)[0]
+    with agent.session(server=server) as session:
         turn = session.send("Use shipping_quote for a local quote")
-
-expect(session.result).to_have_tool_call("shipping_quote", turn=turn)
-turn_view = session.result.trace_view.for_turn(turn)
-assert turn_view.tool_calls
+    expect(session.result).to_have_tool_call("shipping_quote", turn=turn)
 ```
 
-The `TurnResult` is a supported turn selector and has a `turn_id` convenience
-property; it does not own a `trace_view`. See the deterministic
-[`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py)
-for a complete local harness flow. Direct MCP testing and harness-driven agent
-testing are separate workflows: only the latter has an agent process and
-turn-scoped responses.
+The local ACP example needs no provider key. For an external ACP agent, set the
+variables its manifest references in the process environment. The same
+selection can go in a `mcp_pal(agents=[...])` marker when pytest is preferred.
 
 ## Run the examples from a checkout
 

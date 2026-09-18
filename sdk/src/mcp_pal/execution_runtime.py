@@ -96,6 +96,7 @@ class _PersistentExecutionStore(ExecutionStore, ProfileResolver, Protocol):
 from .workspace import WorkspaceError, WorkspaceManager
 
 _DIRECT_RESULT_ADAPTER: TypeAdapter[DirectResult] = TypeAdapter(DirectResult)
+_CLEANUP_TIMEOUT_SECONDS = 10.0
 
 
 def _direct_result_payload(result: DirectResult | None) -> Mapping[str, Any] | None:
@@ -397,6 +398,8 @@ class AsyncExecutionHandle:
         # local callers.  Keeping this at the execution boundary makes it
         # apply equally to direct MCP waits and agent/native adapter turns.
         self._cancel_watcher: asyncio.Task[None] | None = None
+        self._deadline_task: asyncio.Task[None] | None = None
+        self._timeout_expired = False
         if not persistent:
             self._task = asyncio.create_task(self._run())
 
@@ -569,6 +572,81 @@ class AsyncExecutionHandle:
                 return
             await asyncio.sleep(0.02)
 
+    async def _watch_execution_deadline(self, timeout_seconds: float) -> None:
+        """Cancel the owner task after the full execution deadline."""
+
+        started = asyncio.get_running_loop().time()
+        await asyncio.sleep(timeout_seconds)
+        elapsed_seconds = asyncio.get_running_loop().time() - started
+        async with self._state_lock:
+            if self._terminal.is_set() or self._task is None or self._task.done():
+                return
+            self._timeout_expired = True
+            events = tuple(self._store.iter_events(self._execution_id))
+            phase = next(
+                (
+                    event.lifecycle_phase
+                    for event in reversed(events)
+                    if event.lifecycle_phase is not LifecyclePhase.UNKNOWN
+                ),
+                LifecyclePhase.UNKNOWN,
+            )
+            active_stage: Mapping[str, Any] | None = None
+            open_stages: list[Mapping[str, Any]] = []
+            for event in events:
+                if event.kind is not EventKind.DIAGNOSTIC:
+                    continue
+                payload = event.payload
+                code = payload.get("code")
+                key = (payload.get("stage"), payload.get("operation"))
+                if code == "stage_started":
+                    open_stages.append(payload)
+                elif code == "stage_completed":
+                    for index in range(len(open_stages) - 1, -1, -1):
+                        candidate = open_stages[index]
+                        if (candidate.get("stage"), candidate.get("operation")) == key:
+                            del open_stages[index]
+                            break
+            if open_stages:
+                active_stage = open_stages[-1]
+            harness_kind = (
+                getattr(self._spec.harness, "kind", "harness")
+                if isinstance(self._spec, AgentSpec)
+                else "direct"
+            )
+            if isinstance(active_stage, Mapping):
+                stage = str(active_stage.get("stage", "execution"))
+                operation = str(active_stage.get("operation", "execution"))
+            elif phase in {LifecyclePhase.TURN, LifecyclePhase.MCP_CALL}:
+                operation = (
+                    "opencode.session_message"
+                    if harness_kind == "opencode"
+                    else "harness.response"
+                )
+                stage = "waiting_for_harness_response"
+            elif phase in {LifecyclePhase.STARTUP, LifecyclePhase.INITIALIZATION}:
+                operation = "harness.startup"
+                stage = "harness_startup"
+            elif phase is LifecyclePhase.CLEANUP:
+                operation = "execution.cleanup"
+                stage = "cleanup"
+            else:
+                operation = "execution.startup"
+                stage = "execution_startup"
+            self._recorder.emit(
+                EventKind.DIAGNOSTIC,
+                payload={
+                    "code": "operation_timeout",
+                    "stage": stage,
+                    "operation": operation,
+                    "elapsed_seconds": round(elapsed_seconds, 6),
+                    "timeout_seconds": timeout_seconds,
+                    "message": f"Timed out during {stage}",
+                },
+                lifecycle_phase=phase,
+            )
+            self._task.cancel()
+
     def on_event(self, callback: Callable[[Event], Any]) -> Callable[[], None]:
         """Subscribe after commit; callback failures cannot affect execution."""
 
@@ -628,6 +706,11 @@ class AsyncExecutionHandle:
         trace: TraceResult | None = None
         try:
             await asyncio.sleep(0)
+            timeout_seconds = self._spec.timeout_seconds
+            if timeout_seconds is not None:
+                self._deadline_task = asyncio.create_task(
+                    self._watch_execution_deadline(timeout_seconds)
+                )
             if self._cancel_requested:
                 raise OperationCancelled("execution cancelled")
             if isinstance(self._spec, AgentSpec) and self._spec.message is None:
@@ -656,19 +739,31 @@ class AsyncExecutionHandle:
             else:
                 await self._run_agent(self._spec)
         except asyncio.CancelledError:
-            failure = OperationCancelled("execution cancelled")
+            if self._timeout_expired:
+                failure = OperationTimeout("execution deadline expired")
+                self._agent_outcome = ExecutionOutcome.TIMED_OUT
+                self._agent_error = _error_info(failure)
+            else:
+                failure = OperationCancelled("execution cancelled")
         except BaseException as exc:
             failure = exc
         finally:
             outcome = (
                 ExecutionOutcome.CANCELLED
                 if isinstance(failure, (OperationCancelled, asyncio.CancelledError))
-                else self._agent_outcome or _outcome(failure)
+                else (
+                    ExecutionOutcome.TIMED_OUT
+                    if self._timeout_expired
+                    else self._agent_outcome or _outcome(failure)
+                )
             )
             workspace_cleanup_failed = False
             if self._workspace is not None:
                 try:
-                    capture = await asyncio.to_thread(self._workspace.capture, outcome)
+                    capture = await asyncio.wait_for(
+                        asyncio.to_thread(self._workspace.capture, outcome),
+                        timeout=_CLEANUP_TIMEOUT_SECONDS,
+                    )
                     self._workspace_artifacts = capture.artifacts
                     self._recorder.emit(
                         EventKind.WORKSPACE_CHANGED,
@@ -689,11 +784,16 @@ class AsyncExecutionHandle:
                     # Evidence is best effort; do not expose filesystem errors.
                     workspace_cleanup_failed = True
                 try:
-                    await asyncio.to_thread(self._workspace.cleanup)
-                except (WorkspaceError, OSError):
+                    await asyncio.wait_for(
+                        asyncio.to_thread(self._workspace.cleanup),
+                        timeout=_CLEANUP_TIMEOUT_SECONDS,
+                    )
+                except (WorkspaceError, OSError, asyncio.TimeoutError):
                     workspace_cleanup_failed = True
             trace_limitations = (
-                ("capture_incomplete",) if outcome is ExecutionOutcome.CANCELLED else ()
+                ("capture_incomplete",)
+                if outcome in {ExecutionOutcome.CANCELLED, ExecutionOutcome.TIMED_OUT}
+                else ()
             )
             try:
                 trace = self._finalize(
@@ -767,6 +867,15 @@ class AsyncExecutionHandle:
             ):
                 watcher.cancel()
                 await asyncio.gather(watcher, return_exceptions=True)
+            deadline = self._deadline_task
+            self._deadline_task = None
+            if (
+                deadline is not None
+                and deadline is not asyncio.current_task()
+                and not deadline.done()
+            ):
+                deadline.cancel()
+                await asyncio.gather(deadline, return_exceptions=True)
 
     @staticmethod
     def _direct_binding_selector(binding: ServerBinding) -> str | None:
@@ -986,10 +1095,30 @@ class AsyncExecutionHandle:
         # always carry the durable artifact store through this boundary.
         if self._artifact_store is not None:
             session_options["_artifact_store"] = self._artifact_store
+        self._recorder.emit(
+            EventKind.DIAGNOSTIC,
+            payload={
+                "code": "stage_started",
+                "stage": "harness_startup",
+                "operation": "harness.startup",
+                "message": "Starting the selected harness",
+            },
+            lifecycle_phase=LifecyclePhase.STARTUP,
+        )
         session = self._controller.kit.agent_session(spec, **session_options)
         failure: BaseException | None = None
         try:
             async with session:
+                self._recorder.emit(
+                    EventKind.DIAGNOSTIC,
+                    payload={
+                        "code": "stage_completed",
+                        "stage": "harness_startup",
+                        "operation": "harness.startup",
+                        "message": "Harness session started",
+                    },
+                    lifecycle_phase=LifecyclePhase.STARTUP,
+                )
                 if self._cancel_requested:
                     raise OperationCancelled("execution cancelled")
                 if spec.message is not None:

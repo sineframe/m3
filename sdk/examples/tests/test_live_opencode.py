@@ -3,8 +3,9 @@
 Run this separately from the deterministic catalog:
 
     set -a; source .env; set +a
-    MCP_PAL_RUN_LIVE_OPENCODE=1 uv run --project sdk --all-extras \
-      pytest -q sdk/examples/tests/test_live_opencode.py
+    MCP_PAL_RUN_LIVE_OPENCODE=1 uv run --project cli mcp-pal test \
+      --env-file .env --harness opencode=opencode/big-pickle -- \
+      -q sdk/examples/tests/test_live_opencode.py
 
 The provider response is nondeterministic and may incur cost. The assertion
 is intentionally narrow: the harness must use the allowed tool with the
@@ -20,16 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import (
-    AgentSpec,
-    OpenCode,
-    RestrictiveToolPolicy,
-    SecretReference,
-    ServerBinding,
-    StdioServer,
-    TurnOutcome,
-)
+from mcp_pal import expect
+from mcp_pal.types import StdioServer, TurnOutcome
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live]
 
@@ -38,29 +31,13 @@ _REPOSITORY_ROOT = _EXAMPLES_ROOT.parents[1]
 _LIVE_ENABLED = os.environ.get("MCP_PAL_RUN_LIVE_OPENCODE") == "1"
 
 
-def _spec(executable: str, model: str) -> AgentSpec:
-    provider = model.split("/", 1)[0] if "/" in model else None
-    server = StdioServer(
+@pytest.fixture
+def example_server() -> StdioServer:
+    return StdioServer(
         name="example-mcp",
         command=sys.executable,
         args=(str(_EXAMPLES_ROOT / "servers" / "example_mcp_server.py"),),
         cwd=str(_EXAMPLES_ROOT),
-    )
-    return AgentSpec(
-        harness=OpenCode(
-            model=model,
-            provider=provider,
-            executable=executable,
-            credential_references={
-                "OPENCODE_API_KEY": SecretReference(
-                    source="environment", name="OPENCODE_API_KEY"
-                )
-            },
-        ),
-        servers=(ServerBinding(server=server, alias="example-mcp"),),
-        tool_policy=RestrictiveToolPolicy(
-            allowed_tools=("example-mcp:shipping_quote",)
-        ),
     )
 
 
@@ -68,21 +45,23 @@ def _spec(executable: str, model: str) -> AgentSpec:
     not _LIVE_ENABLED,
     reason="set MCP_PAL_RUN_LIVE_OPENCODE=1 to call OpenCode",
 )
-def test_live_opencode_uses_shipping_quote_and_captures_wire_evidence() -> None:
+@pytest.mark.mcp_pal(
+    agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}]
+)
+def test_live_opencode_uses_shipping_quote_and_captures_wire_evidence(
+    agent, example_server
+) -> None:
     executable = shutil.which("opencode")
     if executable is None:
         pytest.skip("OpenCode is not installed")
     if not os.environ.get("OPENCODE_API_KEY"):
         pytest.skip("OPENCODE_API_KEY is not available")
 
-    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
-    with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
-        with kit.agent_session(_spec(executable, model)) as session:
-            turn = session.send(
-                "Use the example-mcp shipping_quote tool with weight_kg 2 and "
-                "zone local. Return the tool result and do not use any other tool.",
-                timeout=120,
-            )
+    with agent.session(server=example_server, timeout=120) as session:
+        turn = session.send(
+            "Use the example-mcp shipping_quote tool with weight_kg 2 and "
+            "zone local. Return the tool result and do not use any other tool."
+        )
 
         assert turn.snapshot.outcome is TurnOutcome.COMPLETED, turn.error
         view = session.result.trace_view

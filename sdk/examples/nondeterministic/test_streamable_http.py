@@ -21,18 +21,11 @@ from pathlib import Path
 import pytest
 
 from mcp_pal import MCPTestKit, expect
-from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
+from mcp_pal.matrix import ServerCase, ToolCase
 from mcp_pal.sync_api import ToolCallResult
 from mcp_pal.types import (
-    ACPAgent,
-    AgentSpec,
     ExecutionOutcome,
     HTTPServer,
-    NativeToolPolicy,
-    OpenCode,
-    RestrictiveToolPolicy,
-    SecretReference,
-    ServerBinding,
     TransportKind,
     TrustLevel,
     TurnOutcome,
@@ -92,25 +85,15 @@ def test_streamable_http_discovers_and_calls_documented_tool() -> None:
         )
 
 
-def _opencode(executable: str, model: str) -> OpenCode:
-    provider = model.split("/", 1)[0] if "/" in model else None
-    return OpenCode(
-        model=model,
-        provider=provider,
-        executable=executable,
-        credential_references={
-            "OPENCODE_API_KEY": SecretReference(
-                source="environment", name="OPENCODE_API_KEY"
-            )
-        },
-    )
+def _opencode_entry(executable: str, model: str) -> dict[str, object]:
+    return {"harness": "opencode", "models": [model], "executable": executable}
 
 
 def _deepwiki_server() -> HTTPServer:
     return HTTPServer(name="deepwiki", url=_DEEPWIKI_URL, trust=TrustLevel.PUBLIC)
 
 
-def _codex_acp(codex_acp: str, codex: str, codex_home: Path) -> ACPAgent:
+def _codex_acp(codex_acp: str, codex: str, codex_home: Path) -> dict[str, object]:
     model = os.environ.get("MCP_PAL_CODEX_MODEL")
     runtime_paths = {str(Path(codex_acp).parent), str(Path(codex).parent)}
     if node := shutil.which("node"):
@@ -127,16 +110,17 @@ def _codex_acp(codex_acp: str, codex: str, codex_home: Path) -> ACPAgent:
     for name in ("CODEX_API_KEY", "OPENAI_API_KEY"):
         if os.environ.get(name):
             environment[name] = f"${{{name}}}"
-    return ACPAgent(
-        model=model or "codex-default",
-        manifest={
+    return {
+        "harness": "acp",
+        "models": [model or "codex-default"],
+        "manifest": {
             "command": codex_acp,
             "protocol": "acp",
             "protocol_version": 1,
             "env": environment,
         },
-        session_config={"model": model} if model else {},
-    )
+        "session_config": {"model": model} if model else {},
+    }
 
 
 def _require_codex_acp() -> tuple[str, str, Path]:
@@ -171,17 +155,9 @@ def _require_opencode() -> tuple[str, str]:
 def test_opencode_selects_read_wiki_structure() -> None:
     executable, model = _require_opencode()
     server = _deepwiki_server()
-    spec = AgentSpec(
-        harness=_opencode(executable, model),
-        servers=(ServerBinding(server=server, alias="deepwiki"),),
-        tool_policy=RestrictiveToolPolicy(
-            allowed_tools=tuple(
-                f"deepwiki:{name}" for name in _DOCUMENTED_DEEPWIKI_TOOLS
-            )
-        ),
-    )
     with MCPTestKit(env={}) as kit:
-        with kit.agent_session(spec) as session:
+        agent = kit.agents([_opencode_entry(executable, model)])[0]
+        with agent.session(server=server) as session:
             turn = session.send(
                 "For documentation topics in modelcontextprotocol/python-sdk, "
                 "retrieve the available documentation topic hierarchy and report "
@@ -212,17 +188,9 @@ def test_opencode_selects_read_wiki_structure() -> None:
 def test_codex_acp_selects_read_wiki_structure() -> None:
     codex_acp, codex, codex_home = _require_codex_acp()
     server = _deepwiki_server()
-    spec = AgentSpec(
-        harness=_codex_acp(codex_acp, codex, codex_home),
-        servers=(ServerBinding(server=server, alias="deepwiki"),),
-        tool_policy=NativeToolPolicy(
-            harness="acp",
-            policy={"mode": "agent_default", "server": "deepwiki"},
-            nonportable_reason="Codex ACP controls MCP tool selection",
-        ),
-    )
     with MCPTestKit(env={}) as kit:
-        with kit.agent_session(spec) as session:
+        agent = kit.agents([_codex_acp(codex_acp, codex, codex_home)])[0]
+        with agent.session(server=server) as session:
             turn = session.send(
                 "Use only the deepwiki read_wiki_structure MCP tool to retrieve "
                 "the documentation topic hierarchy for "
@@ -252,7 +220,7 @@ def test_codex_acp_selects_read_wiki_structure() -> None:
         )
 
 
-def test_opencode_harness_matrix_calls_read_wiki_structure() -> None:
+def test_opencode_agent_calls_read_wiki_structure() -> None:
     executable, model = _require_opencode()
     server = ServerCase(
         name="deepwiki",
@@ -268,14 +236,14 @@ def test_opencode_harness_matrix_calls_read_wiki_structure() -> None:
             ),
         ),
     )
-    matrix = HarnessMatrix.each_tool(
-        servers=(server,),
-        harnesses=(HarnessCase(name="opencode", harness=_opencode(executable, model)),),
-    )
-    case = matrix.cases()[0]
-    assert case.id == "deepwiki/read_wiki_structure/opencode"
     with MCPTestKit(env={}) as kit:
-        result = case.run(kit=kit, timeout=120)
+        agent = kit.agents([_opencode_entry(executable, model)])[0]
+        result = agent.run(
+            "For modelcontextprotocol/python-sdk, inspect the wiki structure and "
+            "report its top-level documentation sections.",
+            server=server,
+            timeout=120,
+        )
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
     expect(result).to_have_tool_call(

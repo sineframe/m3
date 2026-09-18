@@ -27,11 +27,7 @@ from mcp_pal import (
     EvaluationDecision,
     EvaluationStatus,
     ExecutionResult,
-    FullToolPolicy,
-    HarnessCase,
-    HarnessMatrix,
     MCPTestKit,
-    OpenCode,
     # SecretReference,
     # RestrictiveToolPolicy,
     ServerCase,
@@ -73,31 +69,9 @@ _TEST_CASES: tuple[MathTestCase, ...] = (
 )
 
 
-def _harnesses(opencode: str) -> tuple[HarnessCase, ...]:
+def _agent_selections(opencode: str) -> list[dict[str, object]]:
     model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
-    provider = model.split("/", 1)[0] if "/" in model else None
-    return (
-        HarnessCase(
-            name="opencode",
-            harness=OpenCode(
-                model=model,
-                provider=provider,
-                executable=opencode,
-            ),
-        ),
-        # Enable when Claude Code and its credentials are available:
-        # HarnessCase(
-        #     name="claude-sonnet",
-        #     harness=ClaudeCode(
-        #         model=os.environ["MCP_PAL_LIVE_CLAUDE_MODEL"],
-        #         credential_references={
-        #             "ANTHROPIC_API_KEY": SecretReference(
-        #                 source="environment", name="ANTHROPIC_API_KEY"
-        #             )
-        #         },
-        #     ),
-        # ),
-    )
+    return [{"harness": "opencode", "models": [model], "executable": opencode}]
 
 
 def _contains_number(answer: str, expected: int) -> bool:
@@ -185,16 +159,11 @@ def test_ten_math_cases_across_harnesses_with_repeated_trials(
             )
 
             for test_case in _TEST_CASES:
-                matrix = HarnessMatrix.each_server(
-                    id=f"math-{test_case.id}",
-                    servers=(server_case,),
-                    harnesses=_harnesses(opencode),
-                    trials=_TRIALS_PER_CASE,
-                )
-                for matrix_case in matrix.cases():
-                    with matrix_case.session(
-                        kit=kit,
-                        tool_policy=FullToolPolicy(acknowledge_risk=True),
+                for agent in kit.agents(
+                    _agent_selections(opencode), trials=_TRIALS_PER_CASE
+                ):
+                    with agent.session(
+                        server=server_case,
                         # To expose only known safe tools instead, replace the
                         # preceding line with:
                         # tool_policy=RestrictiveToolPolicy(
@@ -205,10 +174,8 @@ def test_ten_math_cases_across_harnesses_with_repeated_trials(
                         #         "math:divide_tool",
                         #     ),
                         # ),
-                        metadata={
-                            "logical_case": test_case.id,
-                            "harness_config": matrix_case.harness.name,
-                        },
+                        case_id=f"math-{test_case.id}",
+                        metadata={"logical_case": test_case.id},
                     ) as session:
                         turn = session.send(
                             "Use one of the available math MCP tools to answer this "
@@ -228,15 +195,12 @@ def test_ten_math_cases_across_harnesses_with_repeated_trials(
                         _EVALUATOR,
                         execution_id=execution.snapshot.execution_id,
                         turn_id=turn.turn_id,
-                        case_id=(
-                            f"{matrix_case.matrix_id}:"
-                            f"{matrix_case.cell_id or matrix_case.id}"
-                        ),
+                        case_id=f"math-{test_case.id}",
                         trace=execution.trace,
                         metadata={
                             "logical_case": test_case.id,
-                            "harness_config": matrix_case.harness.name,
-                            "trial": matrix_case.trial,
+                            "harness_config": f"{agent.harness}:{agent.model}",
+                            "trial": agent.trial,
                         },
                     )
 
@@ -247,7 +211,7 @@ def test_ten_math_cases_across_harnesses_with_repeated_trials(
             )
         )
         expected_trials = (
-            len(_TEST_CASES) * len(_harnesses(opencode)) * _TRIALS_PER_CASE
+            len(_TEST_CASES) * len(_agent_selections(opencode)) * _TRIALS_PER_CASE
         )
         assert report.totals.evaluation_count == expected_trials
         assert report.totals.measured_count == expected_trials

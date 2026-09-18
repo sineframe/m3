@@ -1,5 +1,9 @@
 # Streamable HTTP
 
+Agent behavior tests pass an `HTTPServer` directly to `agent.run` or
+`agent.session`. Put MCP bearer references in `HTTPServer.headers`; provider
+credentials are configured separately with the CLI environment.
+
 Use `HTTPServer` when the MCP server is already available at an HTTP
 endpoint. The concrete server value selects Streamable HTTP; there is no
 separate transport argument. Its URL identifies one MCP protocol endpoint, not
@@ -110,144 +114,105 @@ in the server definition or assertions.
 
 ## Expose the endpoint to an agent
 
-An agent binding makes the endpoint available to a harness under a stable
-alias. A public endpoint exposed to an agent requires explicit `PUBLIC` trust:
+An agent can use an HTTP MCP endpoint through the same selected `agent`
+fixture as a local server. Mark the test and pass the server explicitly. A
+public endpoint exposed to an agent requires `TrustLevel.PUBLIC`:
 
 ```python
-import os
-import shutil
+import pytest
+from mcp_pal import expect
+from mcp_pal.types import HTTPServer, TrustLevel
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import (
-    AgentSpec,
-    OpenCode,
-    RestrictiveToolPolicy,
-    SecretReference,
-    ServerBinding,
-    HTTPServer,
-    TrustLevel,
-)
-
-server = HTTPServer(
-    name="deepwiki",
-    url="https://mcp.deepwiki.com/mcp",
-    trust=TrustLevel.PUBLIC,
-)
-model = os.environ.get("MCP_PAL_OPENCODE_MODEL", "opencode/big-pickle")
-provider = model.split("/", 1)[0] if "/" in model else None
-spec = AgentSpec(
-    harness=OpenCode(
-        model=model,
-        provider=provider,
-        executable=shutil.which("opencode") or "opencode",
-        credential_references={
-            "OPENCODE_API_KEY": SecretReference(
-                source="environment", name="OPENCODE_API_KEY"
-            )
-        },
-    ),
-    servers=(ServerBinding(server=server, alias="deepwiki"),),
-    tool_policy=RestrictiveToolPolicy(
-        allowed_tools=(
-            "deepwiki:ask_question",
-            "deepwiki:read_wiki_contents",
-            "deepwiki:read_wiki_structure",
-        )
-    ),
-)
-
-with MCPTestKit(env={}) as kit:
-    with kit.agent_session(spec) as session:
-        turn = session.send(
-            "Retrieve the documentation topic hierarchy for "
-            "modelcontextprotocol/python-sdk.",
-            timeout=120,
-        )
-
-expect(session.result).to_have_tool_call(
-    "read_wiki_structure",
-    turn=turn,
-    server="deepwiki",
-    arguments={"repoName": "modelcontextprotocol/python-sdk"},
-    status="success",
-    count=1,
-)
-```
-
-Keep realistic safe alternatives available when the claim is tool selection.
-Exposing only the expected tool proves that the tool can be used; it does not
-prove that the agent selected it. The finalized `session.result` is the place
-for assertions after the session closes.
-
-## Use a harness matrix for a known tool
-
-`HarnessMatrix.each_tool` describes a server-owned tool and expands it across
-harness configurations. It intentionally tests a known call through each
-configured harness; it does not test free tool selection:
-
-```python
-import os
-import shutil
-
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
-from mcp_pal.types import (
-    ExecutionOutcome,
-    OpenCode,
-    SecretReference,
-    HTTPServer,
-    TrustLevel,
-)
-
-model = os.environ.get("MCP_PAL_OPENCODE_MODEL", "opencode/big-pickle")
-provider = model.split("/", 1)[0] if "/" in model else None
-opencode = OpenCode(
-    model=model,
-    provider=provider,
-    executable=shutil.which("opencode") or "opencode",
-    credential_references={
-        "OPENCODE_API_KEY": SecretReference(
-            source="environment", name="OPENCODE_API_KEY"
-        )
-    },
-)
-
-server = ServerCase(
-    name="deepwiki",
-    server=HTTPServer(
+@pytest.fixture
+def deepwiki_server():
+    return HTTPServer(
         name="deepwiki",
         url="https://mcp.deepwiki.com/mcp",
         trust=TrustLevel.PUBLIC,
-    ),
-    tools=(
-        ToolCase(
-            name="read_wiki_structure",
-            arguments={"repoName": "modelcontextprotocol/python-sdk"},
-            prompt=(
-                "For modelcontextprotocol/python-sdk, inspect the wiki "
-                "structure and report its top-level documentation sections."
-            ),
+    )
+
+@pytest.mark.mcp_pal
+def test_agent_reads_wiki_structure(agent, deepwiki_server):
+    result = agent.run(
+        "Inspect the wiki structure for modelcontextprotocol/python-sdk.",
+        server=deepwiki_server,
+    )
+    expect(result).to_have_tool_call(
+        "read_wiki_structure", server="deepwiki", status="success"
+    )
+```
+
+Set the model provider key in the process environment, or use an explicitly
+loaded `.env` file:
+
+```bash
+mcp-pal test --env-file .env \
+  --harness opencode=opencode/big-pickle -- tests/test_deepwiki.py
+```
+
+The OpenCode route above uses `OPENCODE_API_KEY`; Codex uses `OPENAI_API_KEY`
+when authenticating with a provider key. A custom source can be mapped by
+variable **name** with `--credential-env TARGET=SOURCE`. Keep realistic safe
+alternatives available when the claim is which tool the agent chooses.
+
+An MCP endpoint token is separate from the model provider key. Put its
+reference on the HTTP server's headers, never in a URL or a CLI value:
+
+```python
+from mcp_pal.types import HTTPServer, SecretReference, TrustLevel
+
+private_server = HTTPServer(
+    name="catalog",
+    url="https://catalog.example.com/mcp",
+    trust=TrustLevel.TRUSTED_PRIVATE,
+    headers={
+        "Authorization": SecretReference(
+            source="environment", name="CATALOG_MCP_AUTHORIZATION"
         ),
-    ),
-)
-matrix = HarnessMatrix.each_tool(
-    servers=(server,),
-    harnesses=(HarnessCase(name="opencode", harness=opencode),),
-)
-case = matrix.cases()[0]
-
-with MCPTestKit(env={}) as kit:
-    result = case.run(kit=kit, timeout=120)
-
-assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
-expect(result).to_have_tool_call(
-    "read_wiki_structure",
-    server="deepwiki",
-    arguments={"repoName": "modelcontextprotocol/python-sdk"},
-    status="success",
-    count=1,
+    },
 )
 ```
+
+`CATALOG_MCP_AUTHORIZATION` contains the complete header value in the process
+environment. The direct-client `bearer_token=SecretReference(...)` option
+remains available when testing the endpoint without an agent.
+
+## Combine an HTTP server with ToolMatrix
+
+A ToolMatrix case can directly call a known HTTP tool, or supply the server and
+prompt to a marked agent test. Both forms retain its server alias:
+
+```python
+import pytest
+from mcp_pal import expect
+from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
+
+matrix = ToolMatrix(servers=(ServerCase(
+    name="deepwiki",
+    server=deepwiki_server,
+    tools=(ToolCase(
+        name="read_wiki_structure",
+        arguments={"repoName": "modelcontextprotocol/python-sdk"},
+        prompt="Read the wiki structure for modelcontextprotocol/python-sdk.",
+    ),),
+),))
+
+@matrix.parametrize()
+def test_http_tool_contract(case):
+    assert case.run().direct_result is not None
+
+@pytest.mark.mcp_pal
+@matrix.parametrize()
+def test_agent_chooses_http_tool(case, agent):
+    result = agent.run(case.tool.prompt, server=case.server)
+    expect(result).to_have_tool_call(
+        case.tool.name, server=case.server.name, status="success"
+    )
+```
+
+CLI-selected harnesses/models and `--trials` combine with each ToolMatrix case
+as ordinary pytest parameters. The declared tool does not narrow what the
+agent can see.
 
 ## Trust and lifecycle
 
