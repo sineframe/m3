@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 _SDK = Path(__file__).parents[2]
@@ -43,6 +44,12 @@ def test_live_math_matrix_example_remains_opt_in_and_outside_ci_catalog() -> Non
     assert (_EXAMPLES / "servers" / "math_mcp_server.py").exists()
     assert "pytest.mark.live" in text
     assert "MCP_PAL_RUN_LIVE_MATH_MATRIX" in text
-    assert "kit.agents(_agent_selections(opencode), trials=_TRIALS_PER_CASE)" in text
+    expected_call = ast.parse(
+        "kit.agents(_agent_selections(opencode), trials=_TRIALS_PER_CASE)", mode="eval"
+    ).body
+    assert any(
+        isinstance(node, ast.Call) and ast.dump(node) == ast.dump(expected_call)
+        for node in ast.walk(ast.parse(text))
+    )
     assert "_TRIALS_PER_CASE = 2" in text
     assert not (_EXAMPLES / "tests" / example.name).exists()
