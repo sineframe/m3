@@ -84,12 +84,23 @@ class V2ExecutionEnvelope(BaseModel):
         )
 
 
+class V2TestResultSummary(BaseModel):
+    """Pytest attempt summary associated with an execution."""
+
+    attempt_id: str
+    node_id: str
+    description: str
+    outcome: str
+    duration_seconds: float | None = None
+
+
 class V2ExecutionReportEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     execution_id: ExecutionId
     spec: ExecutionSpec | None
     report: ExecutionReport
     trace: TraceView
+    test_results: tuple[V2TestResultSummary, ...] = ()
 
     @classmethod
     def from_values(
@@ -98,8 +109,15 @@ class V2ExecutionReportEnvelope(BaseModel):
         spec: ExecutionSpec | None,
         report: ExecutionReport,
         trace: TraceView,
+        test_results: tuple[V2TestResultSummary, ...] = (),
     ) -> V2ExecutionReportEnvelope:
-        return cls(execution_id=execution_id, spec=spec, report=report, trace=trace)
+        return cls(
+            execution_id=execution_id,
+            spec=spec,
+            report=report,
+            trace=trace,
+            test_results=test_results,
+        )
 
 
 class V2ExecutionPageEnvelope(BaseModel):
@@ -1030,8 +1048,18 @@ def install_v2(
         )
         trace = service.trace_view(execution_id)
         spec = service.specification(execution_id)
+        test_results = tuple(
+            V2TestResultSummary(
+                attempt_id=item.attempt_id,
+                node_id=item.node_id,
+                description=item.description,
+                outcome=item.outcome,
+                duration_seconds=item.duration_seconds,
+            )
+            for item in service.test_results(report)
+        )
         return V2ExecutionReportEnvelope.from_values(
-            report.snapshot.execution_id, spec, report, trace
+            report.snapshot.execution_id, spec, report, trace, test_results
         )
 
     application.include_router(router)

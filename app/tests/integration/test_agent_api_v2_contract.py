@@ -34,6 +34,7 @@ import pytest, sys
 from mcp_pal import EvaluationDecision, EvaluationStatus, StdioServer, expect
 pytestmark = pytest.mark.mcp_pal(agents=[{{"harness": "acp", "models": ["fixture-a", "fixture-b"], "manifest": {{"command": sys.executable, "args": [r"{agent}"], "protocol": "acp", "protocol_version": 1}}}}], trials=2)
 def test_selected(agent):
+    """Checks that the agent selects the shipping quote tool."""
     result = agent.run("Get a local shipping quote.", server=StdioServer(name="example-mcp", command=sys.executable, args=[r"{server}"]))
     expect(result).to_have_tool_call("shipping_quote", server="example-mcp", status="success")
     agent.kit.register_evaluator("fixture.v1", lambda _context: EvaluationDecision(status=EvaluationStatus.PASSED, score=1.0))
@@ -99,6 +100,13 @@ def test_cli_agent_run_is_readable_through_every_v2_envelope(tmp_path: Path) -> 
         for execution_id in execution_ids:
             report = client.get(f"/api/v2/executions/{execution_id}/report")
             assert report.status_code == 200
+            assert len(report.json()["test_results"]) == 1
+            test_result = report.json()["test_results"][0]
+            assert "test_selected.py::test_selected[" in test_result["node_id"]
+            assert test_result["description"] == (
+                "Checks that the agent selects the shipping quote tool."
+            )
+            assert test_result["outcome"] == "passed"
             assert {
                 "version",
                 "execution_id",

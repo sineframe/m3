@@ -84,6 +84,48 @@ def test_two_files_share_catalog_suite_and_persist_setup_failure(
     assert any(row[1] == "other" for row in suites)
 
 
+def test_pytest_docstrings_are_cleaned_into_attempt_records(tmp_path: Path) -> None:
+    test_file = tmp_path / "descriptions.py"
+    test_file.write_text(
+        "import pytest\n"
+        "pytestmark=pytest.mark.mcp_pal(suite_name='docs')\n"
+        "def test_multiline():\n"
+        "    '''\n    A useful summary.\n\n    With detail.\n    '''\n"
+        "    pass\n"
+        "@pytest.fixture\n"
+        "def broken(): raise RuntimeError('setup')\n"
+        "def test_setup_failure(broken):\n"
+        "    '''Setup still has a description.'''\n"
+        "    pass\n"
+        "@pytest.mark.parametrize('value', [1, 2])\n"
+        "def test_parameterized(value):\n"
+        "    '''Each parameter gets this description.'''\n"
+        "    assert value > 0\n"
+        "def test_without_docstring(): pass\n"
+    )
+    result = _run(tmp_path, test_file)
+    assert result.returncode != 0
+    db = sqlite3.connect(tmp_path / "results.sqlite")
+    rows = [
+        json.loads(value)
+        for (value,) in db.execute("select record_json from v2_test_results")
+    ]
+    by_node = {row["node_id"].split("::")[-1]: row for row in rows}
+    assert (
+        by_node["test_multiline"]["description"] == "A useful summary.\n\nWith detail."
+    )
+    assert (
+        by_node["test_setup_failure"]["description"] == "Setup still has a description."
+    )
+    assert by_node["test_setup_failure"]["outcome"] == "error"
+    parameterized = [row for row in rows if "::test_parameterized[" in row["node_id"]]
+    assert len(parameterized) == 2
+    assert {row["description"] for row in parameterized} == {
+        "Each parameter gets this description."
+    }
+    assert by_node["test_without_docstring"]["description"] == ""
+
+
 def test_old_schema_rows_survive_suite_migration(tmp_path: Path) -> None:
     path = tmp_path / "old.sqlite"
     db = sqlite3.connect(path)

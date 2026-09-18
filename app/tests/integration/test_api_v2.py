@@ -227,6 +227,88 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         reopened.close()
 
 
+def test_v2_execution_report_links_saved_pytest_results(tmp_path):
+    database = Path(tmp_path).resolve() / "test-results.sqlite"
+    application = create_app(Settings(database_path=str(database)))
+    with TestClient(application) as client:
+        ids = []
+        for _ in range(2):
+            created = client.post(
+                "/api/v2/executions", json=_payload(run_id="pytest-run")
+            )
+            assert created.status_code == 202
+            execution_id = created.json()["execution_id"]
+            _wait_finished(client, execution_id)
+            ids.append(execution_id)
+
+        first_url = f"/api/v2/executions/{ids[0]}/report"
+        second_url = f"/api/v2/executions/{ids[1]}/report"
+        assert client.get(first_url).json()["test_results"] == []
+
+        store = application.state.v2_store
+        store.save_test_result(
+            "pytest-run",
+            "attempt-a",
+            {
+                "attempt_id": "attempt-a",
+                "node_id": "tests/test_catalog.py::test_a",
+                "description": "Checks the catalog entry.",
+                "outcome": "failed",
+                "duration_seconds": 0.42,
+                "execution_ids": ids,
+            },
+        )
+        store.save_test_result(
+            "pytest-run",
+            "attempt-b",
+            {
+                "attempt_id": "attempt-b",
+                "node_id": "tests/test_catalog.py::test_b",
+                "outcome": "passed",
+                "duration_seconds": None,
+                "execution_ids": [ids[0]],
+            },
+        )
+        store.save_test_result(
+            "pytest-run",
+            "attempt-unrelated",
+            {
+                "attempt_id": "attempt-unrelated",
+                "node_id": "tests/test_catalog.py::test_unrelated",
+                "description": "Unrelated test.",
+                "outcome": "passed",
+                "execution_ids": ["another-execution"],
+            },
+        )
+
+        first = client.get(first_url)
+        assert first.status_code == 200
+        assert first.json()["report"]["snapshot"]["outcome"] == "completed"
+        assert first.json()["test_results"] == [
+            {
+                "attempt_id": "attempt-a",
+                "node_id": "tests/test_catalog.py::test_a",
+                "description": "Checks the catalog entry.",
+                "outcome": "failed",
+                "duration_seconds": 0.42,
+            },
+            {
+                "attempt_id": "attempt-b",
+                "node_id": "tests/test_catalog.py::test_b",
+                "description": "",
+                "outcome": "passed",
+                "duration_seconds": None,
+            },
+        ]
+        assert client.get(second_url).json()["test_results"] == [
+            first.json()["test_results"][0]
+        ]
+        assert (
+            client.get(first_url, params={"event_limit": 1}).json()["test_results"]
+            == first.json()["test_results"]
+        )
+
+
 def test_v2_finalized_direct_report_has_nullable_spec_and_suite_identity(tmp_path):
     from mcp.server.lowlevel import Server
     from mcp.types import ListToolsResult, Tool

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect as _inspect
 import math as _math
 import time as _time
 from collections.abc import Iterator as _Iterator
@@ -593,11 +594,15 @@ def _pytest_runtest_protocol(item: _Any, nextitem: _Any) -> _Iterator[_Any]:
     if run_id is None:
         yield
         return
+    function = item if isinstance(item, _pytest.Function) else None
+    raw_description = getattr(getattr(function, "function", None), "__doc__", "")
+    description = raw_description if isinstance(raw_description, str) else ""
     state = _test_attempt(
         run_id.root,
         str(item.nodeid),
         worker_id=str(getattr(config, "_mcp_pal_worker_id", "master")),
         suite_name=_merged_mcp_pal_marker(item).get("suite_name"),
+        description=_inspect.cleandoc(description).strip(),
     )
     token = _activate_test(state)
     try:

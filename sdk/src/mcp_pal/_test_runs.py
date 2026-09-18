@@ -52,6 +52,7 @@ def test_attempt(
     worker_id: str,
     suite_name: str | None = None,
     suite_id: str | None = None,
+    description: str = "",
 ) -> dict[str, Any]:
     # worker-qualified identity prevents xdist attempts from overwriting one
     # another while preserving the normal pytest node id for comparison.
@@ -61,6 +62,7 @@ def test_attempt(
         "attempt_id": attempt_id,
         "run_id": str(run_id),
         "node_id": str(node_id),
+        "description": str(description),
         "worker_id": str(worker_id),
         "suite_id": suite_id,
         "suite_name": suite_name,

@@ -8,7 +8,10 @@ or response-envelope dependencies.
 
 from __future__ import annotations
 
+import math
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Protocol, cast
 
 from mcp_pal import (
@@ -51,6 +54,17 @@ class AppExecutionError(RuntimeError):
         super().__init__(message)
 
 
+@dataclass(frozen=True, slots=True)
+class TestResultSummary:
+    """Typed projection of a pytest attempt linked to an execution."""
+
+    attempt_id: str
+    node_id: str
+    description: str
+    outcome: str
+    duration_seconds: float | None
+
+
 class AppExecutionStore(Protocol):
     """Minimal public SDK store surface required by the app."""
 
@@ -83,6 +97,7 @@ class AppExecutionStore(Protocol):
     ) -> ExecutionPage: ...
 
     def get_suite(self, suite_id: int | str) -> Suite | None: ...
+    def list_test_results(self, run_id: str) -> tuple[Mapping[str, object], ...]: ...
 
     def request_cancel(
         self, execution_id: ExecutionId | str, reason: str | None = None
@@ -281,6 +296,56 @@ class AppExecutionService:
         if report is None:
             raise AppExecutionError("execution_not_found", "execution was not found")
         return report
+
+    def test_results(self, report: ExecutionReport) -> tuple[TestResultSummary, ...]:
+        """Return linked pytest attempts from the execution's run."""
+        self._ensure_open()
+        identifier = report.snapshot.execution_id
+        run_id = report.snapshot.run_id
+        if run_id is None:
+            return ()
+        try:
+            records = self.store.list_test_results(run_id.root)
+        except (StorageError, TypeError, ValueError, AttributeError) as exc:
+            raise AppExecutionError(
+                "execution_data_unavailable", "execution data is unavailable"
+            ) from exc
+        summaries: list[TestResultSummary] = []
+        for record in records:
+            attempt_id = record.get("attempt_id")
+            node_id = record.get("node_id")
+            if not isinstance(attempt_id, str) or not attempt_id:
+                continue
+            if not isinstance(node_id, str) or not node_id:
+                continue
+            execution_ids = record.get("execution_ids", ())
+            if not isinstance(execution_ids, (list, tuple, set)):
+                continue
+            if identifier.root not in {str(value) for value in execution_ids}:
+                continue
+            raw_duration = record.get("duration_seconds")
+            duration = (
+                float(raw_duration)
+                if isinstance(raw_duration, (int, float))
+                and not isinstance(raw_duration, bool)
+                and math.isfinite(raw_duration)
+                else None
+            )
+            raw_description = record.get("description")
+            raw_outcome = record.get("outcome")
+            summaries.append(
+                TestResultSummary(
+                    attempt_id=attempt_id,
+                    node_id=node_id,
+                    description=raw_description
+                    if isinstance(raw_description, str)
+                    else "",
+                    outcome=raw_outcome if isinstance(raw_outcome, str) else "",
+                    duration_seconds=duration,
+                )
+            )
+        summaries.sort(key=lambda item: (item.node_id, item.attempt_id))
+        return tuple(summaries)
 
     def cancel(
         self, execution_id: ExecutionId | str, reason: str | None = None

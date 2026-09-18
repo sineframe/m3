@@ -101,7 +101,7 @@ JSON `session_config` query parameter to retrieve the same history.
 | `GET /api/v2/executions/{execution_id}` | Read one execution and spec. |
 | `POST /api/v2/executions/{execution_id}/cancel` | Cancel an active execution. |
 | `DELETE /api/v2/executions/{execution_id}` | Delete a terminal execution. |
-| `GET /api/v2/executions/{execution_id}/report` | Read report, trace, turns, evidence, and evaluations. |
+| `GET /api/v2/executions/{execution_id}/report` | Read report, trace, turns, evidence, evaluations, and linked pytest test results. |
 | `POST /api/v2/evidence/read` | Read one bounded evidence value. |
 | `POST /api/v2/evaluations/aggregate` | Calculate pass-rate trends and health. |
 | `GET /api/v2/feedback/{run_id}` | Read saved test feedback, optionally compared with `baseline_run_id`. |
@@ -548,6 +548,23 @@ and `GET /api/v2/feedback/{run_id}` include suite ID/name on the suite list,
 execution entries, test entries, and baseline/current comparison inventories.
 
 Wire responses retain the typed `ExecutionState` model for lifecycle snapshots.
+
+Execution reports include a `test_results` array for pytest attempts linked to
+the execution. Each entry contains `attempt_id`, `node_id`, the cleaned test
+`description`, pytest `outcome`, and `duration_seconds`. Older records without
+a description return an empty string, and executions without linked attempts
+return an empty array. The execution snapshot's `outcome` remains the runtime
+execution outcome.
+
+Pytest descriptions come from the test function docstring:
+
+```python
+def test_catalog_lookup():
+    """Returns the catalog entry for a known identifier."""
+    ...
+```
+
+The report entry keeps that description beside the pytest node ID and outcome.
 
 The supported authoring paths are a marked pytest test selected with
 `mcp-pal test --harness ... --trials N`, or a Python loop over
