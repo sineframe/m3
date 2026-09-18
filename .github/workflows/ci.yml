@@ -27,8 +27,8 @@ env:
 jobs:
   test:
     # Compatibility is intentionally scheduled rather than attached to pushes.
-    # Developers run the same complete suite through the repository pre-push
-    # hook, while workflow_dispatch keeps an explicit remote escape hatch.
+    # The local pre-push hook runs Ruff and mypy; workflow_dispatch allows an
+    # explicit remote compatibility run.
     needs: quality
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     name: Compatibility tests (Python ${{ matrix.python-version }})

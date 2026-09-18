@@ -26,7 +26,7 @@ test:
     PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test --group typecheck pytest -q app/tests
     PYTHONDONTWRITEBYTECODE=1 uv run --project cli pytest -q cli/tests
 
-# Complete non-live suite used by the pre-push hook.
+# Complete non-live suite for an explicit local run.
 test-all:
     bash scripts/run_full_tests.sh
 
