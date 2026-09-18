@@ -82,6 +82,24 @@ Once the project is ready, run a narrow test with normal pytest feedback:
 mcp-pal test -- tests/test_shipping.py
 ```
 
+Select a named suite using the existing marker in each suite file:
+
+```python
+import pytest
+pytestmark = pytest.mark.mcp_pal(suite_name="catalog")
+```
+
+```bash
+mcp-pal test --suite=catalog -- tests
+mcp-pal test --suite catalog -- tests/catalog_tools.py tests/catalog_prompts.py
+```
+
+Suite selection is intersected with paths, `-k`, `-m`, harnesses, and trials
+before agent expansion. Add `--harness` and `--trials` to select agent
+combinations when the marked tests provide the required agent configuration.
+An unknown suite exits 5; blank suite input exits 2.
+The printed run ID can be reused with `--baseline RUN_ID`.
+
 `mcp-pal test` always adds both `-p mcp_pal.pytest_plugin` and
 `--mcp-pal-results-db PATH` to the child pytest command. The plugin installs a
 default `SQLiteExecutionStore` for `MCPTestKit` instances that did not receive

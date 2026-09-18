@@ -88,6 +88,7 @@ def pytest_addoption(parser: _Any) -> None:
         "--mcp-pal-credential-env", action="append", default=[], metavar="TARGET=SOURCE"
     )
     group.addoption("--mcp-pal-trials", action="store", default=None, type=int)
+    group.addoption("--mcp-pal-suite", action="store", default=None, metavar="NAME")
     group.addoption(
         "--mcp-pal-execution-timeout", action="store", default=None, type=float
     )
@@ -96,8 +97,12 @@ def pytest_addoption(parser: _Any) -> None:
 def pytest_configure(config: _Any) -> None:
     config._mcp_pal_config_token = _PLUGIN_CONFIG.set(config)
     config.addinivalue_line(
-        "markers", "mcp_pal(agents=None, trials=None): select agent executions"
+        "markers",
+        "mcp_pal(agents=None, trials=None, suite_name=None): select agent executions",
     )
+    suite = config.getoption("--mcp-pal-suite")
+    if suite is not None and not str(suite).strip():
+        raise _pytest.UsageError("--suite must not be blank")
     raw = config.getoption("--mcp-pal-results-db")
     if not raw:
         return
@@ -169,7 +174,9 @@ def pytest_configure(config: _Any) -> None:
 def mcp_pal_kit(request: _Any) -> _Any:
     from .sync_api import MCPTestKit
 
-    kit = MCPTestKit()
+    marker = _merged_mcp_pal_marker(request.node)
+    suite_name = marker.get("suite_name")
+    kit = MCPTestKit(suite_name=str(suite_name) if suite_name else None)
     try:
         yield kit
     finally:
@@ -201,6 +208,17 @@ def agent(request: _Any, mcp_pal_kit: _Any) -> _Any:
     entry["_matrix_id"] = request.node.nodeid.split("[", 1)[0]
     entry["_cell_id"] = "cell-" + digest
     return replace(selected, kit=mcp_pal_kit, entry=entry)
+
+
+def _merged_mcp_pal_marker(node: _Any) -> dict[str, _Any]:
+    """Merge inherited markers, with the closest marker taking precedence."""
+    merged: dict[str, _Any] = {}
+    markers = list(node.iter_markers(name="mcp_pal"))
+    for marker in reversed(markers):
+        merged.update(marker.kwargs)
+    if merged.get("suite_name") is not None:
+        merged["suite_name"] = str(merged["suite_name"]).strip()
+    return merged
 
 
 def _parse_cli_harnesses(config: _Any) -> list[dict[str, _Any]]:
@@ -254,9 +272,17 @@ def pytest_generate_tests(metafunc: _Any) -> None:
         # Leave those tests to pytest's normal fixture resolution.
         return
     config = metafunc.config
+    marker_kwargs = _merged_mcp_pal_marker(metafunc.definition)
+    selected_suite = config.getoption("--mcp-pal-suite")
+    if (
+        selected_suite is not None
+        and marker_kwargs.get("suite_name") != str(selected_suite).strip()
+    ):
+        metafunc.parametrize("agent", [], indirect=True)
+        return
     selections = _parse_cli_harnesses(config)
     if not selections:
-        marked = marker.kwargs.get("agents")
+        marked = marker_kwargs.get("agents")
         if marked is None:
             # Bare marker is valid only when CLI supplies a selection.
             raise _pytest.UsageError(
@@ -282,7 +308,7 @@ def pytest_generate_tests(metafunc: _Any) -> None:
                 updated.append(value)
             selections = updated
     else:
-        marked = marker.kwargs.get("agents")
+        marked = marker_kwargs.get("agents")
         if marked:
             by_kind: dict[str, list[_Any]] = {}
             for item in marked:
@@ -310,7 +336,7 @@ def pytest_generate_tests(metafunc: _Any) -> None:
             selections = merged
     trials = config.getoption("--mcp-pal-trials")
     if trials is None:
-        trials = marker.kwargs.get("trials", 1)
+        trials = marker_kwargs.get("trials", 1)
     execution_timeout = config.getoption("--mcp-pal-execution-timeout")
     if execution_timeout is not None:
         if not _math.isfinite(execution_timeout) or execution_timeout <= 0:
@@ -330,6 +356,24 @@ def pytest_generate_tests(metafunc: _Any) -> None:
         for item in expanded
     )
     metafunc.parametrize("agent", expanded, indirect=True, ids=ids)
+
+
+def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
+    selected = config.getoption("--mcp-pal-suite")
+    if selected is None:
+        return
+    selected = str(selected).strip()
+    kept: list[_Any] = []
+    deselected: list[_Any] = []
+    for item in items:
+        marker = _merged_mcp_pal_marker(item)
+        if marker.get("suite_name") == selected:
+            kept.append(item)
+        else:
+            deselected.append(item)
+    items[:] = kept
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
 
 
 def pytest_unconfigure(config: _Any) -> None:
@@ -553,6 +597,7 @@ def _pytest_runtest_protocol(item: _Any, nextitem: _Any) -> _Iterator[_Any]:
         run_id.root,
         str(item.nodeid),
         worker_id=str(getattr(config, "_mcp_pal_worker_id", "master")),
+        suite_name=_merged_mcp_pal_marker(item).get("suite_name"),
     )
     token = _activate_test(state)
     try:
@@ -928,4 +973,5 @@ __all__ = [  # noqa: RUF022
     "pytest_generate_tests",
     "mcp_pal_kit",
     "agent",
+    "pytest_collection_modifyitems",
 ]

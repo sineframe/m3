@@ -75,6 +75,7 @@ def _parser() -> argparse.ArgumentParser:
         "--harness", action="append", default=[], metavar="KIND=MODEL[,MODEL...]"
     )
     test.add_argument("--trials", type=int, default=None, metavar="N")
+    test.add_argument("--suite", type=str, default=None, metavar="NAME")
     test.add_argument(
         "--execution-timeout",
         type=float,
@@ -126,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
                 baseline=args.baseline,
                 harnesses=args.harness,
                 trials=args.trials,
+                suite=args.suite,
                 credential_env=args.credential_env,
                 env_file=args.env_file,
                 execution_timeout=args.execution_timeout,

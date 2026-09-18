@@ -14,6 +14,7 @@ from .base import (
     ExecutionId,
     FrozenModel,
     RunId,
+    SuiteId,
     TurnId,
     _utc_now,
 )
@@ -24,6 +25,8 @@ class EvaluationContext(FrozenModel):
     subject: _Any = None
     subject_kind: str = "unknown"
     execution_id: ExecutionId | None = None
+    suite_id: SuiteId | None = None
+    suite_name: str | None = None
     case_id: str | None = _Field(default=None, min_length=1, max_length=256)
     turn_id: TurnId | None = None
     goal: str | None = None
@@ -119,6 +122,8 @@ class EvaluationRecord(FrozenModel):
 
     evaluation_id: EvaluationId
     execution_id: ExecutionId
+    suite_id: SuiteId | None = None
+    suite_name: str | None = None
     case_id: str | None = _Field(default=None, min_length=1, max_length=256)
     turn_id: TurnId | None = None
     name: str

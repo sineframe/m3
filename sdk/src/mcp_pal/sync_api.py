@@ -317,6 +317,7 @@ class _PortalRuntime:
         embedded_worker: bool = True,
         adapter_registry: _HarnessAdapterRegistry | None = None,
         run_id: _RunId | str | None = None,
+        suite_name: str | None = None,
         record_checks: bool = False,
     ) -> None:
         from .async_api import AsyncMCPTestKit
@@ -329,6 +330,7 @@ class _PortalRuntime:
             embedded_worker=embedded_worker,
             adapter_registry=adapter_registry,
             run_id=run_id,
+            suite_name=suite_name,
             record_checks=record_checks,
         )
         self.clients: dict[int, _AsyncDirectClient] = {}
@@ -572,6 +574,7 @@ class _SyncPortal:
         embedded_worker: bool = True,
         adapter_registry: _HarnessAdapterRegistry | None = None,
         run_id: _RunId | str | None = None,
+        suite_name: str | None = None,
         record_checks: bool = False,
     ) -> None:
         self._lock = _RLock()
@@ -587,6 +590,7 @@ class _SyncPortal:
                 embedded_worker,
                 adapter_registry,
                 run_id,
+                suite_name,
                 record_checks,
             )
         except BaseException:
@@ -1179,6 +1183,7 @@ class MCPTestKit:
         embedded_worker: bool = True,
         adapter_registry: _HarnessAdapterRegistry | None = None,
         run_id: _RunId | str | None = None,
+        suite_name: str | None = None,
         record_checks: bool = False,
     ) -> None:
         self._state_lock = _RLock()
@@ -1189,6 +1194,7 @@ class MCPTestKit:
             if isinstance(scoped_run_id, _RunId)
             else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
         )
+        self._suite_name = suite_name
         self._record_checks = _record_checks_enabled(record_checks)
         self._context_depth = 0
         self._closing = False
@@ -1253,7 +1259,26 @@ class MCPTestKit:
         return self._run_id
 
     def _with_run_id(self, spec: _ExecutionSpec) -> _ExecutionSpec:
-        return spec
+        if spec is None:
+            return spec
+        from ._test_runs import active_test
+
+        active = active_test()
+        marker_name = active.get("suite_name") if active else None
+        if (
+            marker_name
+            and spec.suite_name
+            and str(marker_name).strip() != str(spec.suite_name).strip()
+        ):
+            raise ValueError(
+                "pytest marker suite_name conflicts with execution spec suite_name"
+            )
+        values: dict[str, _Any] = {}
+        if self._suite_name is not None and spec.suite_name is None:
+            values["suite_name"] = self._suite_name
+        if marker_name and spec.suite_name is None and self._suite_name is None:
+            values["suite_name"] = str(marker_name).strip()
+        return spec.model_copy(update=values)
 
     def get_trace(self, execution_id: _ExecutionId | str) -> _TraceResult:
         """Return the finalized stable trace for an execution."""
@@ -1450,6 +1475,20 @@ class MCPTestKit:
             portal = self._portal
             new_portal = portal is None
             if portal is None:
+                from ._test_runs import active_test
+
+                active_marker = active_test()
+                marker_suite = (
+                    active_marker.get("suite_name") if active_marker else None
+                )
+                if (
+                    marker_suite
+                    and self._suite_name
+                    and str(marker_suite).strip() != str(self._suite_name).strip()
+                ):
+                    raise ValueError(
+                        "pytest marker suite_name conflicts with kit suite_name"
+                    )
                 portal = _SyncPortal(
                     self.config,
                     self._probe_timeout_seconds,
@@ -1458,6 +1497,8 @@ class MCPTestKit:
                     self._embedded_worker,
                     self._adapter_registry,
                     self._run_id,
+                    self._suite_name
+                    or (str(marker_suite).strip() if marker_suite else None),
                     self._record_checks,
                 )
                 self._portal = portal
@@ -1501,6 +1542,28 @@ class MCPTestKit:
         trace_owner: bool = True,
         workspace_root: str | None = None,
     ) -> DirectClient:
+        from ._test_runs import active_test
+
+        active_marker = active_test()
+        marker_suite = active_marker.get("suite_name") if active_marker else None
+        if (
+            marker_suite
+            and self._suite_name
+            and str(marker_suite).strip() != str(self._suite_name).strip()
+        ):
+            raise ValueError("pytest marker suite_name conflicts with kit suite_name")
+        if marker_suite and self._portal is not None and self._suite_name is None:
+            runtime_suite = getattr(
+                getattr(self._portal, "_runtime", None), "kit", None
+            )
+            if (
+                runtime_suite is not None
+                and getattr(runtime_suite, "_suite_name", None)
+                != str(marker_suite).strip()
+            ):
+                raise ValueError(
+                    "pytest marker suite_name conflicts with existing portal suite_name"
+                )
         if timeout is not None and (not _math.isfinite(timeout) or timeout <= 0):
             raise ValueError("timeout must be positive and finite")
         selected = server.server if hasattr(server, "server") else server
@@ -1556,6 +1619,8 @@ class MCPTestKit:
                     self._embedded_worker,
                     self._adapter_registry,
                     self._run_id,
+                    self._suite_name
+                    or (str(marker_suite).strip() if marker_suite else None),
                     self._record_checks,
                 )
                 self._portal = portal
@@ -1635,6 +1700,7 @@ class MCPTestKit:
                     self._embedded_worker,
                     self._adapter_registry,
                     self._run_id,
+                    self._suite_name,
                     self._record_checks,
                 )
                 self._portal = portal

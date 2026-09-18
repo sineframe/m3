@@ -418,6 +418,7 @@ DirectOperation = _Annotated[
 
 class _ExecutionSpecBase(FrozenModel):
     run_id: RunId | None = None
+    suite_name: str | None = _Field(default=None, min_length=1, max_length=256)
     # Optional logical case identity. It is stable across repeated trials;
     # execution_id remains the identity of one attempt.
     case_id: str | None = _Field(default=None, min_length=1, max_length=256)

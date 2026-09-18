@@ -112,6 +112,7 @@ class ExecutionTraceRecorder:
         redaction_config: RedactionConfig | None = None,
         specification: Mapping[str, Any] | None = None,
         run_id: str | None = None,
+        suite_name: str | None = None,
         server_bindings: Sequence[Mapping[str, Any]] = (),
         harness_binding: Mapping[str, Any] | None = None,
         provenance: Mapping[str, Any] | None = None,
@@ -146,6 +147,12 @@ class ExecutionTraceRecorder:
         self._runtime_limitations: list[str] = []
         if store.get_snapshot(self._execution_id) is None:
             self._trace_id = requested_trace_id or TraceId(f"trace-{uuid4().hex}")
+            suite_name = suite_name or (
+                str(specification.get("suite_name"))
+                if isinstance(specification, Mapping)
+                and specification.get("suite_name")
+                else None
+            )
             effective_run_id = run_id or (
                 str(specification.get("run_id"))
                 if isinstance(specification, Mapping) and specification.get("run_id")
@@ -155,6 +162,7 @@ class ExecutionTraceRecorder:
                 ExecutionState(
                     execution_id=self._execution_id,
                     run_id=RunId(effective_run_id) if effective_run_id else None,
+                    suite_name=suite_name,
                 ),
                 specification=specification,
                 provenance=provenance,
@@ -645,8 +653,11 @@ class ExecutionTraceRecorder:
                     outcome = _enum_or_none(ExecutionOutcome, value)
                 lifecycle = ExecutionStatus.FINISHED
                 finished_at = event.timestamp
+        saved = self._store.get_snapshot(self._execution_id)
         return ExecutionState(
             execution_id=self._execution_id,
+            suite_id=saved.suite_id if saved is not None else None,
+            suite_name=saved.suite_name if saved is not None else None,
             lifecycle=lifecycle,
             outcome=outcome,
             sequence=highest,

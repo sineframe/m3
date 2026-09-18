@@ -128,6 +128,24 @@ finalization but does not start or stop a deployed service.
 
 ## Evaluations and saved history
 
+### Named suites
+
+Use the existing `mcp_pal` marker with `suite_name` at module or class scope;
+pytest inheritance applies it to collected tests, including tests in separate
+files:
+
+```python
+import pytest
+pytestmark = pytest.mark.mcp_pal(suite_name="catalog")
+```
+
+Run one suite with `mcp-pal test --suite catalog` or
+`mcp-pal test --suite=catalog`. The selection intersects with paths, `-k`,
+`-m`, `--harness`, and `--trials` before agent expansion. Unknown suite names
+exit 5. Suite IDs are generated per results database, and feedback/baseline
+comparisons include suite identity. Pytest attempt verdicts remain separate
+from evaluator outcomes.
+
 Evaluators are explicit runtime callbacks. Register them on the kit and invoke
 `kit.evaluate(...)`; `ExecutionSpec.evaluations` is retained as portable
 metadata and is intentionally not executed across worker-process boundaries.

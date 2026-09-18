@@ -166,3 +166,27 @@ MCP_PAL_RUN_LIVE_MATH_MATRIX=1 \
 
 Without the opt-in variable the example is skipped. The normal OpenCode live
 selection is documented in [`test_live_agent_selection.py`](../examples/nondeterministic/test_live_agent_selection.py).
+
+### Group by suite
+
+Filter and group evaluation outcomes by suite with the `suite_name` label. Keep
+an evaluator filter so unrelated evaluators do not share a denominator:
+
+```python
+report = store.aggregate_evaluations(EvaluationQuery(
+    filters={"suite_name": ("catalog",), "evaluator": ("quality.v1",)},
+    group_by=("time.day",),
+))
+```
+
+To compare all suites, group without a suite filter:
+
+```python
+report = store.aggregate_evaluations(EvaluationQuery(
+    filters={"evaluator": ("quality.v1",)},
+    group_by=("suite_name",),
+))
+```
+
+These pass rates describe evaluator outcomes. Pytest attempt outcomes remain in
+test run records and are not included in evaluation rates.

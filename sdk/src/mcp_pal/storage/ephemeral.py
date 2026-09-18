@@ -35,6 +35,7 @@ from ..observability import (
     TraceView,
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
+from ..suites import Suite, generated_suite_id, normalize_suite_name
 from ..trace.redaction import (
     RedactionConfig,
     redact_artifact_bytes,
@@ -65,6 +66,7 @@ from ..types import (
     ExecutionStatus,
     RevisionSelection,
     RunId,
+    SuiteId,
     TraceId,
     TraceResult,
     TurnId,
@@ -183,6 +185,7 @@ class ExecutionStore(Protocol):
         lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
         run_id: RunId | str | None = None,
+        suite_id: int | None = None,
     ) -> ExecutionPage: ...
 
     def get_report(
@@ -424,6 +427,7 @@ class InMemoryExecutionStore:
         self._raw_refcounts: dict[str, int] = {}
         self._acp_probes: dict[str, ACPProbeResult] = {}
         self._evaluations: dict[str, list[EvaluationRecord]] = {}
+        self._suites: dict[str, Suite] = {}
         self._turns: dict[str, list[tuple[TurnState, TurnResult | None]]] = {}
         self._test_runs: dict[str, dict[str, Any]] = {}
         self._test_results: dict[str, dict[str, dict[str, Any]]] = {}
@@ -511,6 +515,14 @@ class InMemoryExecutionStore:
                 validated = _EXECUTION_SPEC_ADAPTER.validate_python(specification)
             except ValidationError as exc:
                 raise StorageError("execution specification is invalid") from exc
+        suite_name = (
+            validated.suite_name
+            if validated is not None and validated.suite_name is not None
+            else snapshot.suite_name
+        )
+        suite = self.ensure_suite(suite_name) if suite_name else None
+        suite_id = suite.id if suite is not None else snapshot.suite_id
+        suite_name = suite.name if suite is not None else suite_name
         with self._lock:
             if key in self._snapshots:
                 raise StorageConflict("execution already exists")
@@ -522,12 +534,46 @@ class InMemoryExecutionStore:
                 else None
             )
             self._snapshots[key] = snapshot.model_copy(
-                update={"run_id": effective_run_id}
+                update={
+                    "run_id": effective_run_id,
+                    "suite_id": suite_id,
+                    "suite_name": suite_name,
+                }
             )
             self._events[key] = ()
             self._reserved_sequences[key] = set()
             if validated is not None:
                 self._specifications[key] = _copy_execution_spec(validated)
+
+    def ensure_suite(self, suite_name: str) -> Suite:
+        normalized = normalize_suite_name(suite_name)
+        with self._lock:
+            existing = self._suites.get(normalized)
+            if existing is not None:
+                return existing
+            value = Suite(
+                generated_suite_id(len(self._suites) + 1), normalized, normalized
+            )
+            self._suites[normalized] = value
+            return value
+
+    def get_suite(self, suite_id: SuiteId | str) -> Suite | None:
+        raw_id = suite_id.root if isinstance(suite_id, SuiteId) else suite_id
+        key = int(raw_id)
+        with self._lock:
+            return next(
+                (item for item in self._suites.values() if item.id.root == key), None
+            )
+
+    def get_suite_by_name(self, suite_name: str) -> Suite | None:
+        with self._lock:
+            return self._suites.get(normalize_suite_name(suite_name))
+
+    def list_suites(self) -> tuple[Suite, ...]:
+        with self._lock:
+            return tuple(
+                sorted(self._suites.values(), key=lambda item: item.normalized_name)
+            )
 
     # Friendly aliases are intentionally kept on the concrete store while the
     # protocol stays small and framework-neutral.
@@ -566,6 +612,11 @@ class InMemoryExecutionStore:
             dict(value), config=self._redaction_config, path="$.test_result"
         )
         with self._lock:
+            if isinstance(safe, Mapping) and safe.get("suite_name"):
+                suite = self.ensure_suite(str(safe["suite_name"]))
+                safe = dict(safe)
+                safe["suite_id"] = suite.id.root
+                safe["suite_name"] = suite.name
             self._test_results.setdefault(str(run_id), {})[str(attempt_id)] = (
                 copy.deepcopy(dict(safe)) if isinstance(safe, Mapping) else {}
             )
@@ -609,6 +660,7 @@ class InMemoryExecutionStore:
         lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
         run_id: RunId | str | None = None,
+        suite_id: int | None = None,
     ) -> ExecutionPage:
         page = ExecutionPage(limit=limit, offset=offset)
         lifecycle_value = ExecutionStatus(lifecycle) if lifecycle is not None else None
@@ -624,6 +676,12 @@ class InMemoryExecutionStore:
                 run_id is None
                 or snapshot.run_id
                 == (run_id if isinstance(run_id, RunId) else RunId(str(run_id)))
+            )
+            and (
+                suite_id is None
+                or (
+                    snapshot.suite_id is not None and snapshot.suite_id.root == suite_id
+                )
             )
         ]
         filtered.sort(
@@ -721,6 +779,8 @@ class InMemoryExecutionStore:
             record = EvaluationRecord(
                 evaluation_id=EvaluationId(identifier),
                 execution_id=ExecutionId(key),
+                suite_id=self._snapshots[key].suite_id,
+                suite_name=self._snapshots[key].suite_name,
                 case_id=str(value.get("case_id") or context.get("case_id"))
                 if (value.get("case_id") or context.get("case_id")) is not None
                 else None,
@@ -1139,6 +1199,8 @@ class InMemoryExecutionStore:
         return ExecutionState(
             execution_id=ExecutionId(execution_id),
             run_id=previous.run_id,
+            suite_id=previous.suite_id,
+            suite_name=previous.suite_name,
             lifecycle=lifecycle,
             outcome=outcome,
             sequence=highest,

@@ -80,6 +80,7 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "EvaluationSource",
         "EvaluationRecord",
         "RunId",
+        "SuiteId",
         "ElicitationPolicy",
         "EvaluationId",
         "EvaluationRegistration",
@@ -274,6 +275,7 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "EvaluationStatus",
         "EvaluationRecord",
         "RunId",
+        "SuiteId",
         "EventId",
         "ExecutionId",
         "ExecutionEvidence",
@@ -655,6 +657,7 @@ PUBLIC_EXPORTS["mcp_pal.pytest_plugin"] = (
     "pytest_generate_tests",
     "mcp_pal_kit",
     "agent",
+    "pytest_collection_modifyitems",
 )
 PUBLIC_EXPORTS["mcp_pal.types"] = (
     "EVENT_SCHEMA_ID",

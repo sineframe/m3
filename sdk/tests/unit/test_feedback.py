@@ -26,6 +26,7 @@ from mcp_pal.types import (
     ExecutionState,
     ExecutionStatus,
     RequestLink,
+    SuiteId,
 )
 
 
@@ -150,6 +151,8 @@ def _report(
     connection="connection",
     pages=None,
     wire_tools=None,
+    suite_id=None,
+    suite_name=None,
 ):
     factory = EventFactory(
         execution_id,
@@ -208,6 +211,8 @@ def _report(
     snapshot = ExecutionState(
         execution_id=execution_id,
         run_id=run_id,
+        suite_id=SuiteId(suite_id) if suite_id is not None else None,
+        suite_name=suite_name,
         lifecycle=ExecutionStatus.FINISHED,
         outcome=ExecutionOutcome.COMPLETED,
         finished_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -276,6 +281,96 @@ def test_export_keeps_current_and_baseline_supporting_reports(tmp_path):
     assert set(payload["execution_files"]) == {"old", "new"}
     for ref in payload["execution_files"].values():
         assert (tmp_path / ref).is_file()
+
+
+def test_feedback_exports_suite_inventory_entries_and_comparison_identity(tmp_path):
+    baseline = _report("old", "baseline", "old", suite_id=1, suite_name="catalog")
+    current = _report("new", "current", "new", suite_id=2, suite_name="other")
+    store = _Store(
+        (baseline, current),
+        tests={
+            "baseline": (
+                {
+                    "attempt_id": "a",
+                    "node_id": "test.py::case",
+                    "outcome": "passed",
+                    "execution_ids": ["old"],
+                },
+            ),
+            "current": (
+                {
+                    "attempt_id": "b",
+                    "node_id": "test.py::case",
+                    "outcome": "failed",
+                    "execution_ids": ["new"],
+                },
+            ),
+        },
+    )
+    feedback = build_feedback(store, "current", baseline_run_id="baseline")
+    assert feedback.suites == ({"suite_id": 2, "suite_name": "other"},)
+    assert feedback.executions[0]["suite_id"] == 2
+    assert feedback.tests[0]["suite_name"] == "other"
+    comparison = feedback.comparison.model_dump(mode="json")
+    assert comparison["baseline_suites"] == [{"suite_id": 1, "suite_name": "catalog"}]
+    assert comparison["current_suites"] == [{"suite_id": 2, "suite_name": "other"}]
+    assert {item["suite_id"] for item in comparison["test_changes"]} == {1, 2}
+    path = export_feedback(feedback, store, tmp_path)
+    exported = json.loads(path.read_text())
+    assert exported["suites"] == [{"suite_id": 2, "suite_name": "other"}]
+    sidecar = json.loads((tmp_path / exported["test_result_files"]["b"]).read_text())
+    assert sidecar["suite_id"] == 2
+    assert sidecar["suite_name"] == "other"
+
+
+def test_feedback_suite_inventory_includes_pytest_only_suite():
+    store = _Store(
+        (),
+        tests={
+            "run": (
+                {
+                    "attempt_id": "pytest-only",
+                    "node_id": "test.py::case",
+                    "outcome": "passed",
+                    "suite_id": 9,
+                    "suite_name": "pytest-only",
+                },
+            )
+        },
+    )
+    feedback = build_feedback(store, "run")
+    assert feedback.suites == ({"suite_id": 9, "suite_name": "pytest-only"},)
+
+
+def test_feedback_preserves_attempt_suite_when_execution_has_none(tmp_path):
+    execution = _report("unlabelled", "run", "unlabelled")
+    store = _Store(
+        (execution,),
+        tests={
+            "run": (
+                {
+                    "attempt_id": "attempt",
+                    "node_id": "test.py::case",
+                    "outcome": "failed",
+                    "execution_ids": ["unlabelled"],
+                    "suite_id": 7,
+                    "suite_name": "catalog",
+                },
+            )
+        },
+    )
+    feedback = build_feedback(store, "run")
+    assert feedback.tests[0]["suite_name"] == "catalog"
+    assert feedback.tests[0]["suite_id"] == 7
+    assert feedback.failures[0]["suite_name"] == "catalog"
+    assert feedback.suites == ({"suite_id": 7, "suite_name": "catalog"},)
+    exported = export_feedback(feedback, store, tmp_path)
+    payload = json.loads(exported.read_text())
+    attempt = json.loads(
+        (tmp_path / payload["test_result_files"]["attempt"]).read_text()
+    )
+    assert attempt["suite_id"] == 7
+    assert attempt["suite_name"] == "catalog"
 
 
 def test_repeated_trials_compare_distributions_without_matching_trial_ids():

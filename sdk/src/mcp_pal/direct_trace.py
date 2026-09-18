@@ -172,6 +172,7 @@ class DirectTraceBridge:
         server_binding: str | None = None,
         server_bindings: Sequence[Mapping[str, Any]] = (),
         run_id: str | None = None,
+        suite_name: str | None = None,
         redaction_config: RedactionConfig | None = None,
     ) -> None:
         self._store = store if store is not None else InMemoryExecutionStore()
@@ -208,6 +209,7 @@ class DirectTraceBridge:
             self._execution_id,
             trace_id=trace_id,
             run_id=run_id,
+            suite_name=suite_name,
             server_bindings=self._server_bindings,
             redaction_config=self._redaction_config,
         )

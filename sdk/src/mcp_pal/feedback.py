@@ -35,6 +35,8 @@ class Comparison(FrozenModel):
 
     baseline_run_id: str
     current_run_id: str
+    baseline_suites: tuple[Mapping[str, Any], ...] = ()
+    current_suites: tuple[Mapping[str, Any], ...] = ()
     interface_changes: tuple[Mapping[str, Any], ...] = ()
     test_changes: tuple[Mapping[str, Any], ...] = ()
     evaluation_changes: tuple[Mapping[str, Any], ...] = ()
@@ -48,6 +50,7 @@ class Feedback(FrozenModel):
 
     schema_version: int = 1
     run_id: str
+    suites: tuple[Mapping[str, Any], ...] = ()
     tests: tuple[Mapping[str, Any], ...] = ()
     executions: tuple[Mapping[str, Any], ...] = ()
     failures: tuple[Mapping[str, Any], ...] = ()
@@ -524,11 +527,58 @@ def _catalog_versions(entry: _Entry) -> tuple[Mapping[str, Any], ...]:
     return tuple(versions)
 
 
+def _suite_value(value: Any) -> int | None:
+    raw = getattr(value, "root", value)
+    return int(raw) if raw is not None else None
+
+
+def _suite(entry: _Entry, record: Any = None) -> Mapping[str, Any]:
+    snapshot = entry.report.snapshot
+    suite_id = _suite_value(getattr(record, "suite_id", None)) or _suite_value(
+        getattr(snapshot, "suite_id", None)
+    )
+    suite_name = getattr(record, "suite_name", None) or getattr(
+        snapshot, "suite_name", None
+    )
+    return {"suite_id": suite_id, "suite_name": suite_name}
+
+
+def _suites(
+    entries: Sequence[_Entry], results: Sequence[Mapping[str, Any]] = ()
+) -> tuple[Mapping[str, Any], ...]:
+    values = {
+        _canonical(suite): suite
+        for entry in entries
+        if (suite := _suite(entry))["suite_id"] is not None
+        or suite["suite_name"] is not None
+    }
+    for result in results:
+        if result.get("suite_id") is not None or result.get("suite_name") is not None:
+            value = {
+                "suite_id": _suite_value(result.get("suite_id")),
+                "suite_name": result.get("suite_name"),
+            }
+            values[_canonical(value)] = value
+    return tuple(values[key] for key in sorted(values))
+
+
+def _identity_sort_key(value: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Sort identities containing nullable integer suite IDs deterministically."""
+    suite_id = value[0] if value else None
+    return (
+        suite_id is None,
+        suite_id if suite_id is not None else 0,
+        *tuple(str(item) for item in value[1:]),
+    )
+
+
 def _catalogs(
     entries: tuple[_Entry, ...],
     contexts: Mapping[str, Mapping[str, Any]] | None = None,
-) -> Mapping[tuple[str, str, str], list[Mapping[str, Any]]]:
-    values: dict[tuple[str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
+) -> Mapping[tuple[int | None, str, str, str], list[Mapping[str, Any]]]:
+    values: dict[tuple[int | None, str, str, str], list[Mapping[str, Any]]] = (
+        defaultdict(list)
+    )
     for entry in entries:
         for version in _catalog_versions(entry):
             case = _case(entry, contexts=contexts)
@@ -537,12 +587,14 @@ def _catalogs(
             # across runs.  The comparison layer reports that identity gap;
             # export must never erase actual tools/list evidence.
             key = (
+                _suite_value(getattr(entry.report.snapshot, "suite_id", None)),
                 str(case) if case is not None else "<unknown>",
                 config or "<unknown>",
                 str(version["server"]),
             )
             enriched = dict(version)
             enriched["execution_id"] = _id(entry.report.snapshot.execution_id)
+            enriched.update(_suite(entry))
             enriched["configuration_label"] = label
             enriched["catalog_fingerprint"] = sha256(
                 _canonical(
@@ -557,10 +609,10 @@ def _catalogs(
 
 
 def _matched_catalogs(
-    values: Mapping[tuple[str, str, str], list[Mapping[str, Any]]],
-) -> Mapping[tuple[str, str, str], list[Mapping[str, Any]]]:
+    values: Mapping[tuple[int | None, str, str, str], list[Mapping[str, Any]]],
+) -> Mapping[tuple[int | None, str, str, str], list[Mapping[str, Any]]]:
     return {
-        key: catalogs for key, catalogs in values.items() if "<unknown>" not in key[:2]
+        key: catalogs for key, catalogs in values.items() if "<unknown>" not in key[1:3]
     }
 
 
@@ -575,7 +627,7 @@ def _interface_changes(
         _matched_catalogs(_catalogs(new, new_contexts)),
     )
     changes: list[Mapping[str, Any]] = []
-    for key in sorted(set(before) & set(after)):
+    for key in sorted(set(before) & set(after), key=_identity_sort_key):
         left_values, right_values = before[key], after[key]
         left_dist = defaultdict(list)
         right_dist = defaultdict(list)
@@ -603,9 +655,12 @@ def _interface_changes(
                 if left_tools.get(name) != right_tools.get(name):
                     changes.append(
                         {
-                            "case_id": key[0],
-                            "configuration": key[1],
-                            "server": key[2],
+                            "suite_id": key[0],
+                            "case_id": key[1],
+                            "configuration": key[2],
+                            "server": key[3],
+                            "suite_name": left.get("suite_name")
+                            or right.get("suite_name"),
                             "tool": name,
                             "before": left_tools.get(name),
                             "after": right_tools.get(name),
@@ -625,9 +680,10 @@ def _interface_changes(
             if left["complete"] != right["complete"]:
                 changes.append(
                     {
-                        "case_id": key[0],
-                        "configuration": key[1],
-                        "server": key[2],
+                        "suite_id": key[0],
+                        "case_id": key[1],
+                        "configuration": key[2],
+                        "server": key[3],
                         "kind": "catalog_completeness",
                         "before": left["complete"],
                         "after": right["complete"],
@@ -637,9 +693,10 @@ def _interface_changes(
             changes.append(
                 {
                     "kind": "catalog_distribution",
-                    "case_id": key[0],
-                    "configuration": key[1],
-                    "server": key[2],
+                    "suite_id": key[0],
+                    "case_id": key[1],
+                    "configuration": key[2],
+                    "server": key[3],
                     "comparable": False,
                     "before": {
                         "counts": left_counts,
@@ -663,9 +720,13 @@ def _interface_changes(
                 "baseline": len(before),
                 "current": len(after),
                 "baseline_only": [
-                    list(key) for key in sorted(before_keys - after_keys)
+                    list(key)
+                    for key in sorted(before_keys - after_keys, key=_identity_sort_key)
                 ],
-                "current_only": [list(key) for key in sorted(after_keys - before_keys)],
+                "current_only": [
+                    list(key)
+                    for key in sorted(after_keys - before_keys, key=_identity_sort_key)
+                ],
                 "complete": False,
             }
         )
@@ -675,15 +736,28 @@ def _interface_changes(
 def _evaluation_entries(
     entries: tuple[_Entry, ...],
     contexts: Mapping[str, Mapping[str, Any]] | None = None,
-) -> tuple[tuple[tuple[str, str, str], EvaluationRecord], ...]:
-    values: list[tuple[tuple[str, str, str], EvaluationRecord]] = []
+) -> tuple[tuple[tuple[int | None, str, str, str], EvaluationRecord], ...]:
+    values: list[tuple[tuple[int | None, str, str, str], EvaluationRecord]] = []
     for entry in entries:
         for record in entry.report.evaluations:
             case = _case(entry, record, contexts)
             _, config = _config(entry, record, contexts)
             if case is None or config is None:
                 continue
-            values.append(((str(case), record.name, config), record))
+            values.append(
+                (
+                    (
+                        _suite_value(getattr(record, "suite_id", None))
+                        or _suite_value(
+                            getattr(entry.report.snapshot, "suite_id", None)
+                        ),
+                        str(case),
+                        record.name,
+                        config,
+                    ),
+                    record,
+                )
+            )
     return tuple(values)
 
 
@@ -693,8 +767,12 @@ def _evaluation_changes(
     old_contexts: Mapping[str, Mapping[str, Any]] | None = None,
     new_contexts: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
-    before: dict[tuple[str, str, str], list[EvaluationRecord]] = defaultdict(list)
-    after: dict[tuple[str, str, str], list[EvaluationRecord]] = defaultdict(list)
+    before: dict[tuple[int | None, str, str, str], list[EvaluationRecord]] = (
+        defaultdict(list)
+    )
+    after: dict[tuple[int | None, str, str, str], list[EvaluationRecord]] = defaultdict(
+        list
+    )
     unmatched: list[Mapping[str, Any]] = []
     for key, record in _evaluation_entries(old, old_contexts):
         before[key].append(record)
@@ -710,6 +788,10 @@ def _evaluation_changes(
                     {
                         "execution_id": _id(record.execution_id),
                         "evaluator": record.name,
+                        "suite_id": _suite_value(getattr(record, "suite_id", None))
+                        or _suite_value(
+                            getattr(entry.report.snapshot, "suite_id", None)
+                        ),
                         "case_id": case,
                         "configuration": config,
                         "status": record.status.value,
@@ -719,7 +801,7 @@ def _evaluation_changes(
     changes: list[Mapping[str, Any]] = []
     old_by_execution = {_id(entry.report.snapshot.execution_id): entry for entry in old}
     new_by_execution = {_id(entry.report.snapshot.execution_id): entry for entry in new}
-    for key in sorted(set(before) | set(after)):
+    for key in sorted(set(before) | set(after), key=_identity_sort_key):
         left, right = before.get(key, []), after.get(key, [])
         left_values = sorted(
             [(record.status.value, record.score) for record in left],
@@ -796,9 +878,19 @@ def _evaluation_changes(
         if left_values != right_values or not comparable:
             changes.append(
                 {
-                    "case_id": key[0],
-                    "evaluator": key[1],
-                    "configuration": key[2],
+                    "suite_id": key[0],
+                    "case_id": key[1],
+                    "evaluator": key[2],
+                    "configuration": key[3],
+                    "suite_name": (
+                        _suite(left_entries[0], left[0]).get("suite_name")
+                        if left_entries and left_entries[0] is not None
+                        else (
+                            _suite(right_entries[0], right[0]).get("suite_name")
+                            if right_entries and right_entries[0] is not None
+                            else None
+                        )
+                    ),
                     "configuration_label_before": left_labels,
                     "configuration_label_after": right_labels,
                     "comparable": comparable,
@@ -968,13 +1060,29 @@ def build_feedback(
             limitations.append("some test manifest data could not be persisted")
         if manifest.get("not_run_node_ids"):
             limitations.append("some collected tests did not produce an attempt")
-    tests = tuple(dict(value) for value in results)
+    execution_by_id = {
+        _id(entry.report.snapshot.execution_id): _suite(entry) for entry in current
+    }
+    tests = tuple(
+        {
+            **dict(value),
+            **(
+                execution_by_id.get(str(value.get("execution_ids", ())[0]), {})
+                if value.get("execution_ids")
+                and value.get("suite_id") is None
+                and value.get("suite_name") is None
+                else {}
+            ),
+        }
+        for value in results
+    )
     failures = _failure_values(current, tests, current_contexts) + _manifest_failures(
         manifest
     )
     executions = tuple(
         {
             "execution_id": _id(entry.report.snapshot.execution_id),
+            **_suite(entry),
             "outcome": entry.report.snapshot.outcome.value
             if entry.report.snapshot.outcome is not None
             else None,
@@ -999,27 +1107,44 @@ def build_feedback(
         def outcomes(
             values: Sequence[Mapping[str, Any]],
             manifest_value: Mapping[str, Any] | None,
-        ) -> dict[str, list[Mapping[str, Any]]]:
-            grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+            entries_value: Sequence[_Entry],
+        ) -> dict[tuple[int | None, str], list[Mapping[str, Any]]]:
+            grouped: dict[tuple[int | None, str], list[Mapping[str, Any]]] = (
+                defaultdict(list)
+            )
+            suite_lookup = {
+                _id(entry.report.snapshot.execution_id): _suite_value(
+                    getattr(entry.report.snapshot, "suite_id", None)
+                )
+                for entry in entries_value
+            }
             for value in values:
                 if value.get("node_id") is not None:
                     node_id = _normalise_node_id(str(value["node_id"]), manifest_value)
-                    grouped[node_id].append({"outcome": value.get("outcome")})
-            for node_id in grouped:
-                grouped[node_id].sort(key=lambda value: str(value.get("outcome")))
+                    suite_id = _suite_value(value.get("suite_id"))
+                    if suite_id is None and value.get("execution_ids"):
+                        suite_id = suite_lookup.get(str(value["execution_ids"][0]))
+                    grouped[(suite_id, node_id)].append(
+                        {"outcome": value.get("outcome")}
+                    )
+            for grouped_key in grouped:
+                grouped[grouped_key].sort(key=lambda value: str(value.get("outcome")))
             return grouped
 
         left_outcomes, right_outcomes = (
-            outcomes(baseline_results, baseline_manifest),
-            outcomes(results, manifest),
+            outcomes(baseline_results, baseline_manifest, baseline),
+            outcomes(results, manifest, current),
         )
         test_changes = tuple(
             {
-                "node_id": key,
+                "suite_id": key[0],
+                "node_id": key[1],
                 "baseline": left_outcomes.get(key, []),
                 "current": right_outcomes.get(key, []),
             }
-            for key in sorted(set(left_outcomes) | set(right_outcomes))
+            for key in sorted(
+                set(left_outcomes) | set(right_outcomes), key=_identity_sort_key
+            )
             if _canonical(left_outcomes.get(key, []))
             != _canonical(right_outcomes.get(key, []))
         )
@@ -1082,6 +1207,8 @@ def build_feedback(
         comparison = Comparison(
             baseline_run_id=baseline_id,
             current_run_id=current_id,
+            baseline_suites=_suites(baseline, baseline_results),
+            current_suites=_suites(current, results),
             interface_changes=_interface_changes(
                 baseline, current, baseline_contexts, current_contexts
             ),
@@ -1111,6 +1238,7 @@ def build_feedback(
         summary["run_status"] = manifest.get("status")
     return Feedback(
         run_id=current_id,
+        suites=_suites(current, results),
         tests=tests,
         executions=executions,
         failures=failures,
@@ -1129,6 +1257,7 @@ def export_feedback(
     if feedback.comparison is not None:
         entries.extend(_entries(store, feedback.comparison.baseline_run_id))
     reports = {_id(entry.report.snapshot.execution_id): entry for entry in entries}
+    execution_suites = {key: _suite(entry) for key, entry in reports.items()}
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     for name in (
@@ -1301,8 +1430,16 @@ def export_feedback(
             if not isinstance(attempt_id, str):
                 continue
             diagnostic_name = _safe_filename(attempt_id, ".json")
+            test_payload = dict(test)
+            execution_ids = test_payload.get("execution_ids") or ()
+            if (
+                execution_ids
+                and test_payload.get("suite_id") is None
+                and test_payload.get("suite_name") is None
+            ):
+                test_payload.update(execution_suites.get(str(execution_ids[0]), {}))
             (root / "diagnostics" / diagnostic_name).write_text(
-                json.dumps(_jsonable(test), sort_keys=True, indent=2) + "\n",
+                json.dumps(_jsonable(test_payload), sort_keys=True, indent=2) + "\n",
                 encoding="utf-8",
             )
             test_result_files[attempt_id] = f"diagnostics/{diagnostic_name}"

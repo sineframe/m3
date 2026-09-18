@@ -19,9 +19,11 @@ from mcp.server.lowlevel.server import (
 )
 from mcp.types import ListToolsResult
 
+from mcp_pal._test_runs import activate_test, reset_test
 from mcp_pal.async_api import AsyncMCPTestKit, InputRequiredResult
 from mcp_pal.errors import KitClosed, ProtocolError, UnsupportedFeature
 from mcp_pal.services.profiles import ProfileResolutionError
+from mcp_pal.storage import SQLiteExecutionStore
 from mcp_pal.transport.local import TransportProcessError, TransportStartupError
 from mcp_pal.types import (
     HTTPServer,
@@ -209,6 +211,27 @@ async def test_kit_direct_owns_in_process_client_and_closes_it() -> None:
     with pytest.raises(RuntimeError, match="direct client must be entered"):
         await client.list_tools()
     await kit.aclose()
+
+
+@pytest.mark.asyncio
+async def test_async_direct_uses_active_pytest_suite(tmp_path) -> None:
+    store = SQLiteExecutionStore(tmp_path / "async-suite.sqlite")
+    kit = AsyncMCPTestKit(store=store, env={}, cwd="/tmp/mcp-pal-no-project")
+    token = activate_test({"run_id": kit.run_id.root, "suite_name": "catalog"})
+    try:
+        async with kit.direct(
+            InProcessServer(name="fixture", factory=_server)
+        ) as client:
+            assert (await client.list_tools()).tools == ()
+        assert client.trace is not None
+        snapshot = store.get_snapshot(client.trace.execution_id)
+        assert snapshot is not None
+        assert snapshot.suite_name == "catalog"
+        assert snapshot.suite_id == store.get_suite_by_name("catalog").id
+    finally:
+        reset_test(token)
+        await kit.aclose()
+        store.close()
 
 
 @pytest.mark.asyncio

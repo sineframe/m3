@@ -1,5 +1,15 @@
 # Concepts
 
+## Run, suite, case, and execution identity
+
+A run groups one pytest invocation or explicit run ID. A suite is a named slice
+of that run, registered in the selected database with a generated integer ID;
+the ID is local to that database. A case is the stable logical scenario name.
+An execution is one concrete trial and has its own execution ID. Moving a case
+between suites changes comparison membership while preserving case identity for
+aggregation. Pytest attempt outcomes and MCP evaluation outcomes are stored
+separately and are different verdicts.
+
 ## Server definition, kit, and client
 
 A server definition such as `HTTPServer` or `StdioServer` describes
@@ -43,6 +53,10 @@ For an agent-driven local workflow, see the deterministic ACP harness example
 [`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py).
 Harness assertions verify typed finalized `TraceView` tool calls rather than
 trusting model prose.
+
+The existing `mcp_pal` marker accepts `suite_name` and is inherited from module
+or class markers by collected tests. Use the same exact trimmed name in every
+file belonging to a suite; no new marker is required.
 
 ## Test matrices
 

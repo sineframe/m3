@@ -33,6 +33,7 @@ from mcp_pal import (
 )
 from mcp_pal.services.profiles import ProfileResolutionError
 from mcp_pal.storage import ExecutionStore, StorageConflict, StorageError
+from mcp_pal.suites import Suite
 
 _CANCEL_SETTLE_TIMEOUT_SECONDS = 2.0
 _CANCEL_SETTLE_POLL_SECONDS = 0.01
@@ -78,7 +79,10 @@ class AppExecutionStore(Protocol):
         lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
         run_id: str | None = None,
+        suite_id: int | None = None,
     ) -> ExecutionPage: ...
+
+    def get_suite(self, suite_id: int | str) -> Suite | None: ...
 
     def request_cancel(
         self, execution_id: ExecutionId | str, reason: str | None = None
@@ -183,7 +187,7 @@ class AppExecutionService:
         self._ensure_open()
         return self._report(self._id(execution_id))
 
-    def specification(self, execution_id: ExecutionId | str) -> ExecutionSpec:
+    def specification(self, execution_id: ExecutionId | str) -> ExecutionSpec | None:
         self._ensure_open()
         identifier = self._id(execution_id)
         self._report(identifier)
@@ -193,10 +197,6 @@ class AppExecutionService:
             raise AppExecutionError(
                 "execution_data_unavailable", "execution data is unavailable"
             ) from exc
-        if spec is None:
-            raise AppExecutionError(
-                "execution_data_unavailable", "execution data is unavailable"
-            )
         return spec
 
     def trace_view(self, execution_id: ExecutionId | str) -> TraceView:

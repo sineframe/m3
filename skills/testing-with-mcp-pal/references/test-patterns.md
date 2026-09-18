@@ -13,6 +13,22 @@ def test_tool_choice(agent, shipping_server):
                                      status="success")
 ```
 
+## Same suite across files
+
+Use the existing `mcp_pal` marker; do not add another marker:
+
+```python
+# tests/catalog_tools.py and tests/catalog_prompts.py
+import pytest
+pytestmark = pytest.mark.mcp_pal(suite_name="catalog")
+```
+
+Run both files with `mcp-pal test --suite catalog -- tests/catalog_tools.py
+tests/catalog_prompts.py`. Combine this with `--harness`, `--trials`, `-k`, and
+`-m`; all filters apply together. The results database assigns one suite ID to
+the exact trimmed name. For a standalone SDK run, pass `suite_name` to
+`MCPTestKit` or the execution specification instead.
+
 Install project test support with `uv add "mcp-pal[pytest]"`. This installs the
 SDK, not the standalone CLI or UI. When CLI installation or project setup is
 part of the task, read [cli-runner.md](cli-runner.md). Prefer the target

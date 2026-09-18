@@ -45,6 +45,7 @@ from ..observability import (
     TraceView,
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
+from ..suites import Suite, generated_suite_id, normalize_suite_name
 from ..trace.redaction import (
     RedactionConfig,
     redact_artifact_bytes,
@@ -72,6 +73,7 @@ from ..types import (
     RevisionSelection,
     RunId,
     SessionId,
+    SuiteId,
     TraceId,
     TraceResult,
     TurnId,
@@ -358,10 +360,13 @@ CREATE TABLE IF NOT EXISTS v2_acp_probes (
   finished_at TEXT, duration_ms REAL
 );
 CREATE INDEX IF NOT EXISTS v2_acp_probes_dimension ON v2_acp_probes(dimension_key, created_at DESC, id DESC);
+CREATE TABLE IF NOT EXISTS v2_suites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, suite_name TEXT NOT NULL UNIQUE
+);
 CREATE TABLE IF NOT EXISTS v2_executions (
   id TEXT PRIMARY KEY, snapshot_json TEXT NOT NULL, specification_json TEXT,
   provenance_json TEXT, parent_execution_id TEXT REFERENCES v2_executions(id),
-  created_at TEXT NOT NULL, deleted_at TEXT, run_id TEXT
+  created_at TEXT NOT NULL, deleted_at TEXT, run_id TEXT, suite_id INTEGER REFERENCES v2_suites(id)
 );
 CREATE TABLE IF NOT EXISTS v2_execution_server_bindings (
   execution_id TEXT NOT NULL REFERENCES v2_executions(id) ON DELETE CASCADE,
@@ -435,7 +440,7 @@ CREATE TABLE IF NOT EXISTS v2_test_runs (
 );
 CREATE TABLE IF NOT EXISTS v2_test_results (
   run_id TEXT NOT NULL REFERENCES v2_test_runs(run_id) ON DELETE CASCADE,
-  attempt_id TEXT NOT NULL, record_json TEXT NOT NULL,
+  attempt_id TEXT NOT NULL, record_json TEXT NOT NULL, suite_id INTEGER REFERENCES v2_suites(id),
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   PRIMARY KEY(run_id, attempt_id)
 );
@@ -555,10 +560,12 @@ class _SqliteBase:
                 for table, column, definition in (
                     ("v2_executions", "run_id", "TEXT"),
                     ("v2_executions", "deleted_at", "TEXT"),
+                    ("v2_executions", "suite_id", "INTEGER"),
                     ("v2_evaluations", "evaluator_name", "TEXT"),
                     ("v2_evaluations", "status", "TEXT"),
                     ("v2_evaluations", "score", "REAL"),
                     ("v2_evaluations", "run_id", "TEXT"),
+                    ("v2_test_results", "suite_id", "INTEGER"),
                 ):
                     columns = connection.execute(
                         f"PRAGMA table_info({table})"
@@ -578,6 +585,12 @@ class _SqliteBase:
                 )
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS v2_executions_created_at ON v2_executions(created_at, id)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_executions_suite ON v2_executions(suite_id, created_at, id)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_test_results_suite ON v2_test_results(suite_id, run_id, attempt_id)"
                 )
                 migrate = getattr(self, "_migrate_legacy_evaluations", None)
                 if callable(migrate):
@@ -1237,6 +1250,90 @@ class SQLiteExecutionStore(_SqliteBase):
         self._callbacks: dict[str, list[EventCallback]] = {}
         self._callback_lock = threading.RLock()
 
+    def ensure_suite(self, suite_name: str) -> Suite:
+        normalized = normalize_suite_name(suite_name)
+        connection = self._connect()
+        try:
+            self._begin(connection, immediate=True)
+            row = connection.execute(
+                "SELECT id,suite_name FROM v2_suites WHERE suite_name=?",
+                (normalized,),
+            ).fetchone()
+            if row is None:
+                row_max = connection.execute(
+                    "SELECT COALESCE(MAX(id),0)+1 FROM v2_suites"
+                ).fetchone()
+                suite_id = generated_suite_id(int(row_max[0]))
+                connection.execute(
+                    "INSERT INTO v2_suites(id,suite_name) VALUES(?,?)",
+                    (suite_id.root, normalized),
+                )
+                result = Suite(suite_id, normalized, normalized)
+            else:
+                result = Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]))
+            self._commit(connection)
+            return result
+        except BaseException:
+            self._rollback(connection)
+            raise
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _ensure_suite_connection(
+        connection: _CompatConnection, suite_name: str
+    ) -> Suite:
+        normalized = normalize_suite_name(suite_name)
+        row = connection.execute(
+            "SELECT id,suite_name FROM v2_suites WHERE suite_name=?", (normalized,)
+        ).fetchone()
+        if row is not None:
+            return Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]))
+        next_id = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(id),0)+1 FROM v2_suites"
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT INTO v2_suites(id,suite_name) VALUES(?,?)", (next_id, normalized)
+        )
+        return Suite(SuiteId(next_id), normalized, normalized)
+
+    def get_suite(self, suite_id: SuiteId | str) -> Suite | None:
+        raw_id = suite_id.root if isinstance(suite_id, SuiteId) else suite_id
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id,suite_name FROM v2_suites WHERE id=?",
+                (int(raw_id),),
+            ).fetchone()
+        return (
+            None
+            if row is None
+            else Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]))
+        )
+
+    def get_suite_by_name(self, suite_name: str) -> Suite | None:
+        normalized = normalize_suite_name(suite_name)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id,suite_name FROM v2_suites WHERE suite_name=?",
+                (normalized,),
+            ).fetchone()
+        return (
+            None
+            if row is None
+            else Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]))
+        )
+
+    def list_suites(self) -> tuple[Suite, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id,suite_name FROM v2_suites ORDER BY suite_name"
+            ).fetchall()
+        return tuple(
+            Suite(SuiteId(int(row[0])), str(row[1]), str(row[1])) for row in rows
+        )
+
     def create(
         self,
         snapshot: ExecutionState,
@@ -1248,6 +1345,12 @@ class SQLiteExecutionStore(_SqliteBase):
         parent_execution_id: ExecutionId | str | None = None,
         run_id: RunId | str | None = None,
     ) -> None:
+        suite_id = None
+        suite_name = (
+            str(specification["suite_name"]).strip()
+            if specification is not None and specification.get("suite_name")
+            else snapshot.suite_name
+        )
         key = _execution_key(snapshot.execution_id)
         try:
             from .._test_runs import associate_execution
@@ -1285,13 +1388,27 @@ class SQLiteExecutionStore(_SqliteBase):
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
+            suite = (
+                self._ensure_suite_connection(connection, suite_name)
+                if suite_name
+                else None
+            )
+            suite_id = suite.id.root if suite else None
+            if suite is not None or snapshot.suite_id is not None:
+                snapshot = snapshot.model_copy(
+                    update={
+                        "suite_id": suite.id if suite else None,
+                        "suite_name": suite.name if suite else suite_name,
+                    }
+                )
+                safe_snapshot = snapshot.model_dump(mode="json")
             parent_key = (
                 _execution_key(parent_execution_id)
                 if parent_execution_id is not None
                 else None
             )
             connection.execute(
-                "INSERT INTO v2_executions(id,snapshot_json,specification_json,provenance_json,parent_execution_id,created_at,run_id) VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO v2_executions(id,snapshot_json,specification_json,provenance_json,parent_execution_id,created_at,run_id,suite_id) VALUES(?,?,?,?,?,?,?,?)",
                 (
                     key,
                     _json(safe_snapshot),
@@ -1300,6 +1417,7 @@ class SQLiteExecutionStore(_SqliteBase):
                     parent_key,
                     _iso(snapshot.created_at),
                     run_key,
+                    suite_id,
                 ),
             )
             for ordinal, binding in enumerate(server_bindings):
@@ -1406,10 +1524,21 @@ class SQLiteExecutionStore(_SqliteBase):
         )
         if not isinstance(safe, Mapping):
             raise StorageError("test result could not be redacted")
+        suite_ref = None
         now = _iso(_utcnow())
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
+            suite = (
+                self._ensure_suite_connection(connection, str(safe["suite_name"]))
+                if safe.get("suite_name")
+                else None
+            )
+            suite_ref = suite.id.root if suite else None
+            if suite is not None:
+                safe = dict(safe)
+                safe["suite_id"] = suite.id.root
+                safe["suite_name"] = suite.name
             # xdist workers can publish their first attempt before the
             # controller's manifest update reaches the database.
             if (
@@ -1436,9 +1565,9 @@ class SQLiteExecutionStore(_SqliteBase):
                     ),
                 )
             connection.execute(
-                "INSERT INTO v2_test_results(run_id,attempt_id,record_json,created_at,updated_at) VALUES(?,?,?,?,?) "
-                "ON CONFLICT(run_id,attempt_id) DO UPDATE SET record_json=excluded.record_json,updated_at=excluded.updated_at",
-                (key, str(attempt_id), _json(safe), now, now),
+                "INSERT INTO v2_test_results(run_id,attempt_id,record_json,created_at,updated_at,suite_id) VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(run_id,attempt_id) DO UPDATE SET record_json=excluded.record_json,updated_at=excluded.updated_at,suite_id=excluded.suite_id",
+                (key, str(attempt_id), _json(safe), now, now, suite_ref),
             )
             self._commit(connection)
         except BaseException:
@@ -1496,6 +1625,7 @@ class SQLiteExecutionStore(_SqliteBase):
         lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
         run_id: str | None = None,
+        suite_id: int | None = None,
     ) -> ExecutionPage:
         page = ExecutionPage(limit=limit, offset=offset)
         lifecycle_value = ExecutionStatus(lifecycle) if lifecycle is not None else None
@@ -1511,6 +1641,9 @@ class SQLiteExecutionStore(_SqliteBase):
         if run_id is not None:
             clauses.append("run_id=?")
             parameters.append(str(getattr(run_id, "root", run_id)))
+        if suite_id is not None:
+            clauses.append("suite_id=?")
+            parameters.append(int(suite_id))
         where = " AND ".join(clauses)
         with self._connect() as connection:
             total_row = connection.execute(
@@ -1777,6 +1910,8 @@ class SQLiteExecutionStore(_SqliteBase):
         return ExecutionState(
             execution_id=ExecutionId(execution_id),
             run_id=existing.run_id,
+            suite_id=existing.suite_id,
+            suite_name=existing.suite_name,
             lifecycle=lifecycle,
             outcome=outcome,
             sequence=values[-1].sequence if values else existing.sequence,
@@ -2418,6 +2553,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 if snapshot is not None and snapshot.run_id is not None
                 else None
             )
+        snapshot = self.get_snapshot(execution_id)
         compact = {
             "evaluation_id": identifier,
             "name": value.get("name", ""),
@@ -2432,6 +2568,14 @@ class SQLiteExecutionStore(_SqliteBase):
             "context": {
                 "execution_id": context.get("execution_id")
                 or _execution_key(execution_id),
+                "suite_id": context.get("suite_id")
+                or (
+                    snapshot.suite_id.root
+                    if snapshot is not None and snapshot.suite_id is not None
+                    else None
+                ),
+                "suite_name": context.get("suite_name")
+                or (snapshot.suite_name if snapshot is not None else None),
                 "turn_id": context.get("turn_id")
                 or (
                     str(turn_id.root if isinstance(turn_id, TurnId) else turn_id)
@@ -2558,6 +2702,8 @@ class SQLiteExecutionStore(_SqliteBase):
             projected = dict(value)
             projected["execution_id"] = _execution_key(execution_id)
             projected["turn_id"] = context.get("turn_id")
+            projected["suite_id"] = context.get("suite_id")
+            projected["suite_name"] = context.get("suite_name")
             projected["case_id"] = context.get("case_id") or projected.get("case_id")
             projected["goal"] = context.get("goal")
             projected["metadata"] = context.get("metadata", {})
@@ -2586,6 +2732,7 @@ class SQLiteExecutionStore(_SqliteBase):
         for label, column in (
             ("evaluator", "e.evaluator_name"),
             ("run_id", "COALESCE(e.run_id, x.run_id)"),
+            ("suite_name", "s.suite_name"),
         ):
             values = query.filters.get(label)
             if values:
@@ -2595,7 +2742,7 @@ class SQLiteExecutionStore(_SqliteBase):
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT e.execution_id,e.result_json,x.snapshot_json,x.specification_json "
-                "FROM v2_evaluations e JOIN v2_executions x ON x.id=e.execution_id WHERE "
+                "FROM v2_evaluations e JOIN v2_executions x ON x.id=e.execution_id LEFT JOIN v2_suites s ON s.id=x.suite_id WHERE "
                 + " AND ".join(where)
                 + " ORDER BY x.created_at,e.created_at,e.id",
                 params,

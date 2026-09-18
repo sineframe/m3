@@ -124,6 +124,19 @@ Agent selection flags:
 | `--execution-timeout SECONDS` | full deadline for each selected execution; each case has its own deadline |
 | `--env-file PATH` | explicitly load provider variables for the pytest child |
 | `--credential-env TARGET=SOURCE` | map provider variable names |
+| `--suite NAME` or `--suite=NAME` | select tests whose inherited `mcp_pal` marker has this suite name |
+
+Suite selection happens during pytest collection, before agent expansion. Put
+the same existing marker in each file belonging to one suite:
+
+```python
+import pytest
+pytestmark = pytest.mark.mcp_pal(suite_name="catalog")
+```
+
+Combine `--suite` with `--harness`, `--trials`, paths, `-k`, and `-m`; every
+selector must match. An unknown suite exits 5 and a blank value exits 2. The
+selected run ID is printed and can be passed to `--baseline RUN_ID`.
 
 For example, two selections and two trials produce four agent executions:
 

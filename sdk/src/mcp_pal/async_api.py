@@ -506,11 +506,25 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
         self._redaction_config = _RedactionConfig.from_environment()
         # Keep the bridge private: it observes the official decoded session
         # streams, while the public client exposes only immutable snapshots.
+        from ._test_runs import active_test
+
+        active = active_test()
+        marker_suite = active.get("suite_name") if active else None
+        if (
+            marker_suite
+            and kit._suite_name
+            and str(marker_suite).strip() != str(kit._suite_name).strip()
+        ):
+            raise ValueError("pytest marker suite_name conflicts with kit suite_name")
+        suite_name = kit._suite_name or (
+            str(marker_suite).strip() if marker_suite else None
+        )
         self._trace_observer = trace_bridge or _DirectTraceBridge(
             store=kit.store,
             server_binding=str(getattr(server, "name", None) or type(server).__name__),
             server_bindings=tuple(server_bindings),
             run_id=kit.run_id.root,
+            suite_name=suite_name,
             redaction_config=self._redaction_config,
         )
         if kit._record_checks:
@@ -887,6 +901,7 @@ class AsyncMCPTestKit:
         store: _ExecutionStore | None = None,
         embedded_worker: bool = True,
         run_id: _RunId | str | None = None,
+        suite_name: str | None = None,
         record_checks: bool = False,
     ) -> None:
         self._closed = False
@@ -896,6 +911,7 @@ class AsyncMCPTestKit:
             if isinstance(scoped_run_id, _RunId)
             else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
         )
+        self._suite_name = suite_name
         self._record_checks = _record_checks_enabled(record_checks)
         self.config = (
             config
@@ -965,7 +981,24 @@ class AsyncMCPTestKit:
         return self._run_id
 
     def _with_run_id(self, spec: _ExecutionSpec) -> _ExecutionSpec:
-        return spec
+        from ._test_runs import active_test
+
+        active = active_test()
+        marker_name = active.get("suite_name") if active else None
+        if (
+            marker_name
+            and spec.suite_name
+            and str(marker_name).strip() != str(spec.suite_name).strip()
+        ):
+            raise ValueError(
+                "pytest marker suite_name conflicts with execution spec suite_name"
+            )
+        values: dict[str, _Any] = {}
+        if self._suite_name is not None and spec.suite_name is None:
+            values["suite_name"] = self._suite_name
+        if marker_name and spec.suite_name is None and self._suite_name is None:
+            values["suite_name"] = str(marker_name).strip()
+        return spec.model_copy(update=values)
 
     async def get_trace(self, execution_id: _ExecutionId | str) -> _TraceResult:
         """Return the finalized stable trace for an execution.

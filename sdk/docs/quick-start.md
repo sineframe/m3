@@ -176,6 +176,19 @@ need CLI-managed result storage or the UI:
 uv run pytest tests/test_shipping.py
 ```
 
+Use the existing marker across files to name one suite:
+
+```python
+import pytest
+pytestmark = pytest.mark.mcp_pal(suite_name="catalog")
+```
+
+Select it with `mcp-pal test --suite catalog -- tests`; combine it
+with `--harness`, `--trials`, paths, `-k`, and `-m`. A standalone kit or
+execution specification can set `suite_name="catalog"` directly. An explicit
+specification name overrides the kit default; the effective name must still
+match the pytest marker when one is active.
+
 ## Choose whether test executions persist
 
 Persistence is optional when the SDK is used directly. An `MCPTestKit` with no

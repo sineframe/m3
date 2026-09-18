@@ -237,6 +237,19 @@ class RunId(Identifier):
     pass
 
 
+class SuiteId(_RootModel[int]):
+    """Database integer identity for a logical test suite."""
+
+    model_config = _ConfigDict(frozen=True)
+
+    @_field_validator("root")
+    @classmethod
+    def _valid_suite_id(cls, value: int) -> int:
+        if isinstance(value, bool) or value < 1:
+            raise ValueError("suite id must be a positive integer")
+        return value
+
+
 class Metadata(FrozenModel):
     """Non-secret descriptive metadata carried by public values."""
 

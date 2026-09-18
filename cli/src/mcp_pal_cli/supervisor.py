@@ -643,6 +643,7 @@ def pytest_command(
     project_root: Path | None = None,
     harnesses: Sequence[str] = (),
     trials: int | None = None,
+    suite: str | None = None,
     credential_env: Sequence[str] = (),
     execution_timeout: float | None = None,
 ) -> list[str]:
@@ -665,6 +666,8 @@ def pytest_command(
         command.extend(("--mcp-pal-credential-env", value))
     if trials is not None:
         command.extend(("--mcp-pal-trials", str(trials)))
+    if suite is not None:
+        command.extend(("--mcp-pal-suite", suite))
     if execution_timeout is not None:
         command.extend(("--mcp-pal-execution-timeout", str(execution_timeout)))
     command.extend(pytest_args)
@@ -716,6 +719,7 @@ def _run_pytest_process(
     project_root: Path | None = None,
     harnesses: Sequence[str] = (),
     trials: int | None = None,
+    suite: str | None = None,
     credential_env: Sequence[str] = (),
     execution_timeout: float | None = None,
     environment: Mapping[str, str] | None = None,
@@ -743,6 +747,7 @@ def _run_pytest_process(
                     project_root=project_root,
                     harnesses=harnesses,
                     trials=trials,
+                    suite=suite,
                     credential_env=credential_env,
                     execution_timeout=execution_timeout,
                 ),
@@ -854,6 +859,7 @@ def run_test_with_runs(
     baseline: str | None = None,
     harnesses: Sequence[str] = (),
     trials: int | None = None,
+    suite: str | None = None,
     credential_env: Sequence[str] = (),
     env_file: str | os.PathLike[str] | None = None,
     execution_timeout: float | None = None,
@@ -863,6 +869,9 @@ def run_test_with_runs(
     option_error = _validate_selection_options(
         harnesses, trials, credential_env, execution_timeout
     )
+    if suite is not None and not suite.strip():
+        print("mcp-pal test: --suite must not be blank", file=sys.stderr)
+        return TestRunResult(2)
     if option_error is not None:
         print(f"mcp-pal test: {option_error}", file=sys.stderr)
         return TestRunResult(OPERATIONAL_ERROR)
@@ -919,6 +928,7 @@ def run_test_with_runs(
         trials=trials,
         credential_env=credential_env,
         execution_timeout=execution_timeout,
+        suite=suite,
         environment=child_environment,
     )
     after = list_stored_runs(database_path)
@@ -950,11 +960,16 @@ def run_test(
     baseline: str | None = None,
     harnesses: Sequence[str] = (),
     trials: int | None = None,
+    suite: str | None = None,
     credential_env: Sequence[str] = (),
     env_file: str | os.PathLike[str] | None = None,
     execution_timeout: float | None = None,
 ) -> int:
     """Run pytest and return its exact exit status."""
+
+    if suite is not None and not suite.strip():
+        print("mcp-pal test: --suite must not be blank", file=sys.stderr)
+        return 2
 
     option_error = _validate_selection_options(
         harnesses, trials, credential_env, execution_timeout
@@ -975,6 +990,7 @@ def run_test(
             baseline=baseline,
             harnesses=harnesses,
             trials=trials,
+            suite=suite,
             credential_env=credential_env,
             env_file=env_file,
             execution_timeout=execution_timeout,
@@ -1004,6 +1020,7 @@ def run_test(
         trials=trials,
         credential_env=credential_env,
         execution_timeout=execution_timeout,
+        suite=suite,
         environment=child_environment,
     )
 

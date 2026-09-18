@@ -20,6 +20,7 @@ from mcp_pal import (
     ExecutionReport,
     ExecutionSpec,
     ExecutionState,
+    InProcessServer,
     MCPTestKit,
     OpenCode,
     RawEvidenceIntegrityError,
@@ -35,7 +36,7 @@ from mcp_pal_app.api.app import create_app
 from mcp_pal_app.settings import Settings
 
 
-def _payload(run_id=None):
+def _payload(run_id=None, suite_name=None):
     spec = DirectSpec(
         servers=(
             ServerBinding(
@@ -48,6 +49,7 @@ def _payload(run_id=None):
         ),
         operation=CallTool(server="echo", name="echo", arguments={"text": "hello"}),
         run_id=run_id,
+        suite_name=suite_name,
     )
     return {"spec": spec.model_dump(mode="json")}
 
@@ -98,7 +100,7 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
     database = Path(tmp_path).resolve() / "v2.sqlite"
     application = create_app(Settings(database_path=str(database)))
     with TestClient(application) as client:
-        payload = _payload(run_id="api-run")
+        payload = _payload(run_id="api-run", suite_name="catalog")
         created = client.post("/api/v2/executions", json=payload)
         assert created.status_code == 202
         body = created.json()
@@ -207,6 +209,8 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         assert saved_evaluation["provenance"]["provider"] == "test-suite"
         assert saved_evaluation["provenance"]["rubric_id"] == "echo-quality"
         assert saved_evaluation["run_id"] == "api-run"
+        assert saved_evaluation["suite_id"] == finished["snapshot"]["suite_id"]
+        assert saved_evaluation["suite_name"] == "catalog"
         assert "subject" not in saved_evaluation
         assert "context" not in saved_evaluation
         assert "callback" not in saved_evaluation
@@ -221,6 +225,37 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         assert reopened.get_trace_view(execution_id) == full_trace
     finally:
         reopened.close()
+
+
+def test_v2_finalized_direct_report_has_nullable_spec_and_suite_identity(tmp_path):
+    from mcp.server.lowlevel import Server
+    from mcp.types import ListToolsResult, Tool
+
+    database = Path(tmp_path).resolve() / "direct-suite.sqlite"
+    store = SQLiteExecutionStore(database)
+
+    def server_factory():
+        async def list_tools(_context, _params):
+            return ListToolsResult(
+                tools=[Tool(name="lookup", inputSchema={"type": "object"})]
+            )
+
+        return Server("catalog", on_list_tools=list_tools)
+
+    with MCPTestKit(store=store, suite_name="catalog") as kit:
+        client = kit.direct(InProcessServer(name="catalog", factory=server_factory))
+        with client:
+            client.list_tools()
+        execution_id = client.final_trace.execution_id
+    app = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(app) as http:
+        response = http.get(f"/api/v2/executions/{execution_id.root}/report")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["spec"] is None
+        assert body["report"]["snapshot"]["suite_name"] == "catalog"
+        assert body["report"]["snapshot"]["suite_id"] is not None
+    store.close()
 
 
 def test_v2_feedback_reads_manifest_and_optional_baseline(tmp_path):
@@ -256,6 +291,7 @@ def test_v2_feedback_reads_real_two_run_interface_and_score_changes(tmp_path):
 
     source = """
 import os
+import pytest
 
 from mcp.server.lowlevel import Server
 from mcp.types import ListToolsResult, Tool
@@ -268,6 +304,7 @@ from mcp_pal import (
     expect,
 )
 
+pytestmark = pytest.mark.mcp_pal(suite_name="catalog")
 
 def _server():
     async def list_tools(_context, _params):
@@ -290,7 +327,7 @@ def _server():
 
 def test_order_tool_catalog():
     score = float(os.environ["TEST_EVAL_SCORE"])
-    with MCPTestKit() as kit:
+    with MCPTestKit(suite_name="catalog") as kit:
         kit.register_evaluator(
             "project.tool-description-quality.v1",
             lambda _context: EvaluationDecision(
@@ -383,6 +420,11 @@ def test_order_tool_catalog():
     store.close()
 
     assert feedback["run_id"] == current_run_id
+    assert feedback["suites"] == [
+        {"suite_id": feedback["executions"][0]["suite_id"], "suite_name": "catalog"}
+    ]
+    assert feedback["executions"][0]["suite_name"] == "catalog"
+    assert feedback["tests"][0]["suite_name"] == "catalog"
     assert feedback["summary"] == {
         "executions": 1,
         "tests": 1,
@@ -394,6 +436,8 @@ def test_order_tool_catalog():
         feedback["executions"][0]["execution_id"]
     ]
     comparison = feedback["comparison"]
+    assert comparison["baseline_suites"] == feedback["suites"]
+    assert comparison["current_suites"] == feedback["suites"]
     assert comparison["baseline_run_id"] == baseline_run_id
     assert comparison["current_run_id"] == current_run_id
     assert comparison["test_changes"] == []

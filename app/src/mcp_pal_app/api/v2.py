@@ -71,11 +71,11 @@ class V2ExecutionEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     execution_id: ExecutionId
     snapshot: ExecutionState
-    spec: ExecutionSpec
+    spec: ExecutionSpec | None
 
     @classmethod
     def from_report(
-        cls, report: ExecutionReport, spec: ExecutionSpec
+        cls, report: ExecutionReport, spec: ExecutionSpec | None
     ) -> V2ExecutionEnvelope:
         return cls(
             execution_id=report.snapshot.execution_id,
@@ -87,7 +87,7 @@ class V2ExecutionEnvelope(BaseModel):
 class V2ExecutionReportEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     execution_id: ExecutionId
-    spec: ExecutionSpec
+    spec: ExecutionSpec | None
     report: ExecutionReport
     trace: TraceView
 
@@ -95,7 +95,7 @@ class V2ExecutionReportEnvelope(BaseModel):
     def from_values(
         cls,
         execution_id: ExecutionId,
-        spec: ExecutionSpec,
+        spec: ExecutionSpec | None,
         report: ExecutionReport,
         trace: TraceView,
     ) -> V2ExecutionReportEnvelope:
@@ -109,6 +109,12 @@ class V2ExecutionPageEnvelope(BaseModel):
     @classmethod
     def from_page(cls, page: ExecutionPage) -> V2ExecutionPageEnvelope:
         return cls(page=page)
+
+
+class V2SuiteExecutionPageEnvelope(BaseModel):
+    version: Literal["v2"] = "v2"
+    suite: dict[str, int | str]
+    page: ExecutionPage
 
 
 class V2EvidenceRead(BaseModel):
@@ -956,6 +962,30 @@ def install_v2(
             )
         )
 
+    def _list_suite_executions(
+        suite_id: int,
+        limit: int = Query(50, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+        run_id: str | None = None,
+        lifecycle: ExecutionStatus | None = None,
+        outcome: ExecutionOutcome | None = None,
+        service: AppExecutionService = Depends(get_service),
+    ) -> V2SuiteExecutionPageEnvelope:
+        suite = service.store.get_suite(suite_id)
+        if suite is None:
+            raise V2Fault(404, "suite_not_found", "suite was not found")
+        page = service.store.list_executions(
+            limit=limit,
+            offset=offset,
+            suite_id=suite_id,
+            run_id=run_id,
+            lifecycle=lifecycle,
+            outcome=outcome,
+        )
+        return V2SuiteExecutionPageEnvelope(
+            suite={"suite_id": suite.id.root, "suite_name": suite.name}, page=page
+        )
+
     @router.get("/{execution_id}", response_model=V2ExecutionEnvelope)
     def get_execution(
         execution_id: str,
@@ -1005,6 +1035,14 @@ def install_v2(
         )
 
     application.include_router(router)
+    suite_router = APIRouter(prefix="/api/v2/suites", tags=["suites-v2"])
+    suite_router.add_api_route(
+        "/{suite_id}/executions",
+        _list_suite_executions,
+        methods=["GET"],
+        response_model=V2SuiteExecutionPageEnvelope,
+    )
+    application.include_router(suite_router)
     aggregate_router = APIRouter(prefix="/api/v2/evaluations", tags=["evaluations-v2"])
 
     @aggregate_router.post("/aggregate", response_model=V2EvaluationAggregateEnvelope)

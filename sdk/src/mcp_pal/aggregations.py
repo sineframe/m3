@@ -18,6 +18,7 @@ Scalar = str | int | float | bool | None
 _TIME_GROUPS = {"time.hour", "time.day", "time.week"}
 _SYSTEM_LABELS = {
     "run_id",
+    "suite_name",
     "trial_id",
     "turn_id",
     "evaluator",
@@ -206,6 +207,7 @@ def _labels(
         metadata.update(record.metadata)
     run = record.run_id or getattr(snapshot, "run_id", None)
     labels["run_id"] = str(getattr(run, "root", run)) if run is not None else None
+    labels["suite_name"] = record.suite_name or getattr(snapshot, "suite_name", None)
     labels["trial_id"] = str(record.execution_id.root)
     labels["turn_id"] = str(record.turn_id.root) if record.turn_id is not None else None
     labels["evaluator"] = record.name
@@ -298,7 +300,15 @@ def _labels(
         )
         if labels["case_id"] is None:
             normalized = spec.model_dump(
-                mode="json", exclude={"run_id", "case_id", "metadata", "evaluations"}
+                mode="json",
+                exclude={
+                    "run_id",
+                    "case_id",
+                    "suite_id",
+                    "suite_name",
+                    "metadata",
+                    "evaluations",
+                },
             )
             labels["case_id"] = (
                 "spec:"

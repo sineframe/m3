@@ -18,6 +18,7 @@ from .base import (
     FrozenModel,
     RunId,
     SessionId,
+    SuiteId,
     TurnId,
     TurnOutcome,
     TurnStatus,
@@ -29,6 +30,8 @@ from .specs import SessionSource
 class ExecutionState(FrozenModel):
     execution_id: ExecutionId
     run_id: RunId | None = None
+    suite_id: SuiteId | None = None
+    suite_name: str | None = _Field(default=None, min_length=1, max_length=256)
     lifecycle: ExecutionStatus = ExecutionStatus.CREATED
     outcome: ExecutionOutcome | None = None
     sequence: int = _Field(default=0, ge=0)

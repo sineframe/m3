@@ -97,6 +97,7 @@ JSON `session_config` query parameter to retrieve the same history.
 |---|---|
 | `POST /api/v2/executions` | Start a direct or agent execution. |
 | `GET /api/v2/executions` | List saved executions with paging and filters. |
+| `GET /api/v2/suites/{suite_id}/executions` | List executions belonging to one suite with paging and run/lifecycle/outcome filters. |
 | `GET /api/v2/executions/{execution_id}` | Read one execution and spec. |
 | `POST /api/v2/executions/{execution_id}/cancel` | Cancel an active execution. |
 | `DELETE /api/v2/executions/{execution_id}` | Delete a terminal execution. |
@@ -354,6 +355,35 @@ and does not change execution state.
 `POST /api/v2/evaluations/aggregate` calculates a report from saved raw
 evaluations. It does not write summary rows.
 
+For example, filter one evaluator and group all runs by suite:
+
+```json
+{"filters":{"evaluator":["quality.v1"]},"group_by":["suite_name"]}
+```
+
+The response groups evaluation outcomes by `suite_name`, with each group's
+`values.pass_rate` representing passed evaluation decisions for that suite.
+To inspect daily outcomes for one suite and evaluator:
+
+```json
+{"filters":{"suite_name":["catalog"],"evaluator":["quality.v1"]},"group_by":["time.day"]}
+```
+
+Those `pass_rate` values describe saved evaluation outcomes, rather than
+execution lifecycle completion.
+
+Example grouped response:
+
+```json
+{"version":"v2","aggregate":{"groups":[{"key":{"suite_name":"catalog"},"values":{"evaluation_count":2,"measured_count":2,"pass_rate":0.5}},{"key":{"suite_name":"other"},"values":{"evaluation_count":1,"measured_count":1,"pass_rate":1.0}}],"total_groups":2}}
+```
+
+The daily query returns two exact groups:
+
+```json
+{"version":"v2","aggregate":{"groups":[{"key":{"time.day":"2026-08-01"},"values":{"evaluation_count":1,"measured_count":1,"pass_rate":1.0}},{"key":{"time.day":"2026-08-02"},"values":{"evaluation_count":1,"measured_count":1,"pass_rate":0.0}}],"total_groups":2}}
+```
+
 ```json
 {
   "from": "2026-08-01T00:00:00Z",
@@ -370,7 +400,7 @@ The request fields are:
 | Field | Type and rules |
 |---|---|
 | `from`, `to` | Optional timezone-aware ISO timestamps. The range is half-open: execution snapshot `created_at >= from` and `< to`; when both are present, `from < to`. These bounds use execution time, not later evaluation time. |
-| `group_by` | Optional unique labels. Supported system labels are `run_id`, `trial_id`, `turn_id`, `evaluator`, `evaluation_status`, `subject_kind`, `case_id`, `execution_kind`, `server`, `tool`, `transport`, `harness`, `model`, `evaluation_kind`, `judge_provider`, `judge_model`, `rubric_id`, `matrix.id`, `matrix.cell`, `trial.number`, and one of `time.hour`, `time.day`, `time.week`. User labels use `metadata.<key>`. |
+| `group_by` | Optional unique labels. Supported system labels are `run_id`, `suite_name`, `trial_id`, `turn_id`, `evaluator`, `evaluation_status`, `subject_kind`, `case_id`, `execution_kind`, `server`, `tool`, `transport`, `harness`, `model`, `evaluation_kind`, `judge_provider`, `judge_model`, `rubric_id`, `matrix.id`, `matrix.cell`, `trial.number`, and one of `time.hour`, `time.day`, `time.week`. User labels use `metadata.<key>`. |
 | `filters` | Optional map from those non-time labels to one value or a non-empty list of values. `time.*` cannot be filtered. |
 | `limit`, `offset` | Group paging; `limit` defaults to 200 and is 1-1000, `offset` defaults to 0 and is non-negative. |
 
@@ -493,6 +523,29 @@ It submits real executions, reopens SQLite, evaluates saved traces, queries
 run and calendar trends, checks health/latency, and opens one returned trial
 report. Normal CI skips this external test.
 # Authoring executions
+
+## Suites and feedback identity
+
+`GET /api/v2/suites/{suite_id}/executions` uses the integer `suite_id` from the
+database registry and returns the same paging shape as the execution list:
+
+```json
+{
+  "version": "v2",
+  "suite": {"suite_id": 7, "suite_name": "catalog"},
+  "page": {"items": [], "limit": 50, "offset": 0, "total": 0}
+}
+```
+
+Use `limit` and `offset` for paging; `run_id`, `lifecycle`, and `outcome` are
+optional query filters. An unknown suite ID returns 404. Suite names are used
+in `POST /api/v2/evaluations/aggregate` filters and group keys, while execution
+responses expose the canonical suite ID and name from the registry.
+
+Execution reads and reports may contain `"spec": null` for direct-client
+traces. The create request still requires a non-null `spec`. Feedback exports
+and `GET /api/v2/feedback/{run_id}` include suite ID/name on the suite list,
+execution entries, test entries, and baseline/current comparison inventories.
 
 Wire responses retain the typed `ExecutionState` model for lifecycle snapshots.
 

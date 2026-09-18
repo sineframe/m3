@@ -45,7 +45,14 @@ def run_record(
     }
 
 
-def test_attempt(run_id: str, node_id: str, *, worker_id: str) -> dict[str, Any]:
+def test_attempt(
+    run_id: str,
+    node_id: str,
+    *,
+    worker_id: str,
+    suite_name: str | None = None,
+    suite_id: str | None = None,
+) -> dict[str, Any]:
     # worker-qualified identity prevents xdist attempts from overwriting one
     # another while preserving the normal pytest node id for comparison.
     attempt_id = f"{run_id}:{worker_id}:{node_id}:{uuid4().hex}"
@@ -55,6 +62,8 @@ def test_attempt(run_id: str, node_id: str, *, worker_id: str) -> dict[str, Any]
         "run_id": str(run_id),
         "node_id": str(node_id),
         "worker_id": str(worker_id),
+        "suite_id": suite_id,
+        "suite_name": suite_name,
         "phases": {},
         "outcome": "running",
         "duration_seconds": None,
