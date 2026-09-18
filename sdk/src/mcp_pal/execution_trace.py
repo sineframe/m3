@@ -29,6 +29,7 @@ from .types import (
     ExecutionState,
     ExecutionStatus,
     LifecyclePhase,
+    ProjectId,
     RequestLink,
     RunId,
     SessionId,
@@ -113,6 +114,7 @@ class ExecutionTraceRecorder:
         specification: Mapping[str, Any] | None = None,
         run_id: str | None = None,
         suite_name: str | None = None,
+        project_id: ProjectId | str | None = None,
         server_bindings: Sequence[Mapping[str, Any]] = (),
         harness_binding: Mapping[str, Any] | None = None,
         provenance: Mapping[str, Any] | None = None,
@@ -158,9 +160,38 @@ class ExecutionTraceRecorder:
                 if isinstance(specification, Mapping) and specification.get("run_id")
                 else None
             )
+            effective_project_id = (
+                project_id.root
+                if isinstance(project_id, ProjectId)
+                else str(project_id)
+                if project_id is not None
+                else (
+                    str(specification.get("project_id"))
+                    if isinstance(specification, Mapping)
+                    and specification.get("project_id")
+                    else None
+                )
+            )
+            if effective_project_id:
+                register_project = getattr(store, "ensure_project", None)
+                get_project = getattr(store, "get_project", None)
+                if callable(register_project) and (
+                    not callable(get_project)
+                    or get_project(effective_project_id) is None
+                ):
+                    project_name = (
+                        str(specification.get("project_name"))
+                        if isinstance(specification, Mapping)
+                        and specification.get("project_name")
+                        else effective_project_id
+                    )
+                    register_project(effective_project_id, project_name)
             store.create(
                 ExecutionState(
                     execution_id=self._execution_id,
+                    project_id=ProjectId(effective_project_id)
+                    if effective_project_id
+                    else None,
                     run_id=RunId(effective_run_id) if effective_run_id else None,
                     suite_name=suite_name,
                 ),
@@ -656,6 +687,7 @@ class ExecutionTraceRecorder:
         saved = self._store.get_snapshot(self._execution_id)
         return ExecutionState(
             execution_id=self._execution_id,
+            project_id=saved.project_id if saved is not None else None,
             suite_id=saved.suite_id if saved is not None else None,
             suite_name=saved.suite_name if saved is not None else None,
             lifecycle=lifecycle,

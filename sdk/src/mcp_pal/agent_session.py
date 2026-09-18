@@ -234,7 +234,9 @@ class AsyncAgentSession:
         self._session_id = SessionId(str(uuid4()))
         self._session_created_emitted = False
         self._snapshot = ExecutionState(
-            execution_id=self._execution_id, provenance=provenance
+            execution_id=self._execution_id,
+            project_id=spec.project_id,
+            provenance=provenance,
         )
         self._turns: list[TurnResult] = []
         self._tool_outcomes: list[bool] = []

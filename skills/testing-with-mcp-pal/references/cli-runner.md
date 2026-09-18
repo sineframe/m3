@@ -67,9 +67,19 @@ environment.
 From the project root, run:
 
 ```bash
+mcp-pal init --project-name YOUR_REPOSITORY --suite mcp-behavior
 mcp-pal setup
 mcp-pal doctor
 ```
+
+`init` creates a committed `mcp-pal.toml` identity and one skipped starter test
+at `tests/test_mcp_pal_starter.py`; it does not install the SDK or create the
+results database. Replace the method's TODO with a test grounded in the real
+server contract and remove its skip before treating the run as a behavior
+check. Both name flags suppress interactive questions for an agent. A person
+running `mcp-pal init` without flags receives the questions one by one.
+Repeating it on a complete project reports the existing identity and changes
+nothing.
 
 `mcp-pal setup` installs the exact matching `mcp-pal[pytest,storage]` SDK into
 the selected project environment. It does not install the CLI there and does

@@ -19,6 +19,7 @@ from .base import (
     HarnessProfileId,
     ImageContent,
     OpaqueContent,
+    ProjectId,
     ProtocolConstraint,
     ResourceLink,
     RevisionSelection,
@@ -418,6 +419,8 @@ DirectOperation = _Annotated[
 
 class _ExecutionSpecBase(FrozenModel):
     run_id: RunId | None = None
+    project_id: ProjectId | None = None
+    project_name: str | None = _Field(default=None, min_length=1, max_length=256)
     suite_name: str | None = _Field(default=None, min_length=1, max_length=256)
     # Optional logical case identity. It is stable across repeated trials;
     # execution_id remains the identity of one attempt.

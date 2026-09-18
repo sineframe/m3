@@ -36,7 +36,7 @@ from mcp_pal_app.api.app import create_app
 from mcp_pal_app.settings import Settings
 
 
-def _payload(run_id=None, suite_name=None):
+def _payload(run_id=None, suite_name=None, project_id=None, project_name=None):
     spec = DirectSpec(
         servers=(
             ServerBinding(
@@ -50,11 +50,13 @@ def _payload(run_id=None, suite_name=None):
         operation=CallTool(server="echo", name="echo", arguments={"text": "hello"}),
         run_id=run_id,
         suite_name=suite_name,
+        project_id=project_id,
+        project_name=project_name,
     )
     return {"spec": spec.model_dump(mode="json")}
 
 
-def _slow_payload():
+def _slow_payload(project_id=None):
     # Keep the child alive well beyond the cancellation request so scheduling
     # cannot make this fixture finish before cancellation is exercised.
     spec = DirectSpec(
@@ -69,6 +71,7 @@ def _slow_payload():
         ),
         operation=ListTools(server="echo"),
         timeout_seconds=300.0,
+        project_id=project_id,
     )
     return {"spec": spec.model_dump(mode="json")}
 
@@ -963,3 +966,65 @@ def test_v2_module_has_no_legacy_orm_or_run_manager_imports():
     assert "RunManager" not in text
     assert "mcp_pal_app.persistence" not in text
     assert "v2_executions" not in text
+
+
+def test_v2_project_name_is_returned_on_execution_envelopes(tmp_path):
+    project_id = "11111111-1111-4111-8111-111111111111"
+    database = Path(tmp_path).resolve() / "project-api.sqlite"
+    store = SQLiteExecutionStore(database)
+    store.ensure_project(project_id, "Orders")
+    kit = MCPTestKit(store=store, embedded_worker=False)
+    app = create_app(
+        Settings(database_path=str(tmp_path / "unused.sqlite")),
+        v2_store=store,
+        v2_kit=kit,
+    )
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v2/executions",
+            json=_payload(run_id="project-api-run", project_id=project_id),
+        )
+        assert created.status_code == 202
+        execution_id = created.json()["execution_id"]
+        assert created.json()["project_name"] == "Orders"
+        assert (
+            client.get(f"/api/v2/executions/{execution_id}").json()["project_name"]
+            == "Orders"
+        )
+        slow = client.post(
+            "/api/v2/executions",
+            json=_slow_payload(project_id=project_id),
+        )
+        assert slow.status_code == 202
+        cancelled = client.post(
+            f"/api/v2/executions/{slow.json()['execution_id']}/cancel"
+        )
+        assert cancelled.status_code == 200
+        assert cancelled.json()["project_name"] == "Orders"
+    kit.close()
+    store.close()
+
+
+def test_v2_create_registers_project_on_fresh_store(tmp_path):
+    project_id = "55555555-5555-4555-8555-555555555555"
+    store = SQLiteExecutionStore(Path(tmp_path) / "fresh-project-api.sqlite")
+    kit = MCPTestKit(store=store, embedded_worker=False)
+    app = create_app(
+        Settings(database_path=str(tmp_path / "unused.sqlite")),
+        v2_store=store,
+        v2_kit=kit,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v2/executions",
+            json=_payload(
+                run_id="fresh-project-api-run",
+                project_id=project_id,
+                project_name="Fresh Orders",
+            ),
+        )
+        assert response.status_code == 202
+        assert response.json()["project_name"] == "Fresh Orders"
+    assert store.get_project(project_id) == (project_id, "Fresh Orders")
+    kit.close()
+    store.close()

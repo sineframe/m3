@@ -29,6 +29,8 @@ def run_record(
     selection: tuple[str, ...],
     capture: Mapping[str, Any],
     worker_id: str = "master",
+    project_id: str | None = None,
+    project_name: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -42,6 +44,8 @@ def run_record(
         "finished_at": None,
         "exit_status": None,
         "worker_id": str(worker_id),
+        "project_id": project_id,
+        "project_name": project_name,
     }
 
 
@@ -53,6 +57,8 @@ def test_attempt(
     suite_name: str | None = None,
     suite_id: str | None = None,
     description: str = "",
+    project_id: str | None = None,
+    project_name: str | None = None,
 ) -> dict[str, Any]:
     # worker-qualified identity prevents xdist attempts from overwriting one
     # another while preserving the normal pytest node id for comparison.
@@ -66,6 +72,8 @@ def test_attempt(
         "worker_id": str(worker_id),
         "suite_id": suite_id,
         "suite_name": suite_name,
+        "project_id": project_id,
+        "project_name": project_name,
         "phases": {},
         "outcome": "running",
         "duration_seconds": None,

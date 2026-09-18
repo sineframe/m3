@@ -16,6 +16,7 @@ from .base import (
     ExecutionOutcome,
     ExecutionStatus,
     FrozenModel,
+    ProjectId,
     RunId,
     SessionId,
     SuiteId,
@@ -29,6 +30,7 @@ from .specs import SessionSource
 
 class ExecutionState(FrozenModel):
     execution_id: ExecutionId
+    project_id: ProjectId | None = None
     run_id: RunId | None = None
     suite_id: SuiteId | None = None
     suite_name: str | None = _Field(default=None, min_length=1, max_length=256)

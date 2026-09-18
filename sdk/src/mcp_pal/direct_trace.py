@@ -38,6 +38,7 @@ from .types import (
     ExecutionId,
     ExecutionOutcome,
     LifecyclePhase,
+    ProjectId,
     RequestLink,
     TraceId,
     TraceResult,
@@ -173,6 +174,7 @@ class DirectTraceBridge:
         server_bindings: Sequence[Mapping[str, Any]] = (),
         run_id: str | None = None,
         suite_name: str | None = None,
+        project_id: ProjectId | str | None = None,
         redaction_config: RedactionConfig | None = None,
     ) -> None:
         self._store = store if store is not None else InMemoryExecutionStore()
@@ -210,6 +212,7 @@ class DirectTraceBridge:
             trace_id=trace_id,
             run_id=run_id,
             suite_name=suite_name,
+            project_id=project_id,
             server_bindings=self._server_bindings,
             redaction_config=self._redaction_config,
         )

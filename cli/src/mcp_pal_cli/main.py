@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-from . import doctor, setup
+from . import doctor, init, setup
 from .errors import CLIError
 
 
@@ -53,6 +53,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     setup_parser.add_argument(
         "--project-root", type=Path, help="project root used for environment setup"
+    )
+
+    init_parser = subparsers.add_parser(
+        "init", help="create a project identity and pytest starter test"
+    )
+    init_parser.add_argument("--project-root", type=Path, help="project root")
+    init_parser.add_argument(
+        "--project-name", help="project name (prompts when omitted)"
+    )
+    init_parser.add_argument(
+        "--suite", help="starter suite name (prompts when omitted)"
     )
     setup_parser.add_argument(
         "--python",
@@ -102,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     effective_argv = list(sys.argv[1:] if argv is None else argv)
     command_name = (
         effective_argv[0]
-        if effective_argv and effective_argv[0] in {"doctor", "setup", "test"}
+        if effective_argv and effective_argv[0] in {"doctor", "setup", "test", "init"}
         else "doctor"
     )
     pytest_args: list[str] = []
@@ -138,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
             except setup.SetupError as exc:
                 print(f"mcp-pal setup: {exc}", file=sys.stderr)
                 return 2
+        if args.command == "init":
+            return init.run(args)
         code, report = doctor.run(args)
         if args.json:
             print(json.dumps(report, indent=2, sort_keys=True))

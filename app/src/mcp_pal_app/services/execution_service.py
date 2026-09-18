@@ -94,6 +94,7 @@ class AppExecutionStore(Protocol):
         outcome: ExecutionOutcome | str | None = None,
         run_id: str | None = None,
         suite_id: int | None = None,
+        project_id: str | None = None,
     ) -> ExecutionPage: ...
 
     def get_suite(self, suite_id: int | str) -> Suite | None: ...
@@ -258,9 +259,18 @@ class AppExecutionService:
         offset: int = 0,
         lifecycle: ExecutionStatus | str | None = None,
         outcome: ExecutionOutcome | str | None = None,
+        project_id: str | None = None,
     ) -> ExecutionPage:
         self._ensure_open()
         try:
+            if project_id is not None:
+                return self.store.list_executions(
+                    limit=limit,
+                    offset=offset,
+                    lifecycle=lifecycle,
+                    outcome=outcome,
+                    project_id=project_id,
+                )
             return self.store.list_executions(
                 limit=limit,
                 offset=offset,

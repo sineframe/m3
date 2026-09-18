@@ -99,6 +99,8 @@ If this repository is available only as a local checkout, read
 skills/testing-with-mcp-pal/SKILL.md and its references/ directory instead.
 Read its testing patterns, then add and run the smallest tests that verify
 <the behavior I care about> against <my MCP server or agent workflow>.
+If this project has no MCP Pal test yet, run mcp-pal init first and replace
+its skipped starter test after inspecting the real server contract.
 Keep direct server checks separate from agent tool-selection checks, and use
 the MCP Pal CLI to run the tests and inspect the resulting report or UI.
 ```
@@ -116,6 +118,10 @@ and troubleshooting.
 
 Start with the [CLI installation guide](cli/README.md#install), then follow the
 [project setup and testing guide](cli/README.md#set-up-a-project).
+
+From the project root, run `mcp-pal init` to answer the project and suite name
+questions and create a skipped starter test. Then run `mcp-pal setup`, fill in
+the test, and use `mcp-pal test` to record its result.
 
 CLI-managed runs use `.mcp-pal/executions.sqlite` by default and write an
 agent-readable report to `.mcp-pal/reports/<run-id>/feedback.json`. The CLI

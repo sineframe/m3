@@ -50,6 +50,8 @@ class Feedback(FrozenModel):
 
     schema_version: int = 1
     run_id: str
+    project_id: str | None = None
+    project_name: str | None = None
     suites: tuple[Mapping[str, Any], ...] = ()
     tests: tuple[Mapping[str, Any], ...] = ()
     executions: tuple[Mapping[str, Any], ...] = ()
@@ -1047,6 +1049,16 @@ def build_feedback(
         raise ValueError("run_id is required")
     current = _entries(store, current_id)
     results, manifest = _test_values(store, current_id)
+    project_id = (
+        str(manifest.get("project_id"))
+        if manifest and manifest.get("project_id")
+        else None
+    )
+    if project_id is None and current:
+        value = current[0].report.snapshot.project_id
+        project_id = value.root if value is not None else None
+    get_project = getattr(store, "get_project", None)
+    project = get_project(project_id) if project_id and callable(get_project) else None
     current_contexts = _contexts(results, manifest)
     limitations: list[str] = []
     if not current and not results:
@@ -1238,6 +1250,8 @@ def build_feedback(
         summary["run_status"] = manifest.get("status")
     return Feedback(
         run_id=current_id,
+        project_id=project_id,
+        project_name=project[1] if project else None,
         suites=_suites(current, results),
         tests=tests,
         executions=executions,

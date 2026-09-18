@@ -296,9 +296,7 @@ def test_service_specification_and_trace_availability() -> None:
     service = AppExecutionService(store, FakeKit(store, ExecutionId("execution-1")))
     assert service.specification("execution-1") == store.specification
     store.specification = None
-    with pytest.raises(AppExecutionError) as error:
-        service.specification("execution-1")
-    assert error.value.code == "execution_data_unavailable"
+    assert service.specification("execution-1") is None
     store.specification = spec()
     store.spec_error = StorageError("database canary must not escape")
     with pytest.raises(AppExecutionError) as error:

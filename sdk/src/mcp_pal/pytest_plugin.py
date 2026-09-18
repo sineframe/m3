@@ -132,8 +132,41 @@ def pytest_configure(config: _Any) -> None:
         .expanduser()
         .resolve()
     )
+    config._mcp_pal_project_id = None
+    config._mcp_pal_project_name = None
+    project_file = config._mcp_pal_project_root / "mcp-pal.toml"
+    if project_file.is_file():
+        try:
+            try:
+                from importlib import import_module
+
+                toml_parser = import_module("tomllib")
+            except ModuleNotFoundError:
+                from importlib import import_module
+
+                toml_parser = import_module("tomli")
+            identity = toml_parser.loads(project_file.read_text(encoding="utf-8"))
+            from .types import ProjectId
+
+            if identity.get("schema_version") != 1:
+                raise ValueError("unsupported schema_version")
+            name = identity.get("project_name")
+            if not isinstance(name, str) or not name.strip() or len(name) > 256:
+                raise ValueError(
+                    "project_name must be non-empty and at most 256 characters"
+                )
+            config._mcp_pal_project_id = ProjectId(str(identity["project_id"]))
+            config._mcp_pal_project_name = name.strip()
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            raise _pytest.UsageError(
+                "mcp-pal.toml must contain a valid project_id and project_name"
+            ) from exc
 
     config._mcp_pal_manifest_store = SQLiteExecutionStore(path)
+    if config._mcp_pal_project_id is not None:
+        config._mcp_pal_manifest_store.ensure_project(
+            config._mcp_pal_project_id.root, config._mcp_pal_project_name
+        )
     config._mcp_pal_checks_token = _set_default_record_checks(True)
     if not config._mcp_pal_is_worker:
         config._mcp_pal_manifest_store.save_test_run(
@@ -149,6 +182,12 @@ def pytest_configure(config: _Any) -> None:
                     "show_capture": bool(getattr(config.option, "showcapture", False)),
                     "verbose": int(getattr(config.option, "verbose", 0) or 0),
                 },
+                project_id=(
+                    config._mcp_pal_project_id.root
+                    if config._mcp_pal_project_id is not None
+                    else None
+                ),
+                project_name=getattr(config, "_mcp_pal_project_name", None),
             ),
         )
     config._mcp_pal_run_id_previous = _install_default_run_id_factory(lambda: run_id)
@@ -177,7 +216,10 @@ def mcp_pal_kit(request: _Any) -> _Any:
 
     marker = _merged_mcp_pal_marker(request.node)
     suite_name = marker.get("suite_name")
-    kit = MCPTestKit(suite_name=str(suite_name) if suite_name else None)
+    kit = MCPTestKit(
+        suite_name=str(suite_name) if suite_name else None,
+        project_id=getattr(request.config, "_mcp_pal_project_id", None),
+    )
     try:
         yield kit
     finally:
@@ -603,6 +645,12 @@ def _pytest_runtest_protocol(item: _Any, nextitem: _Any) -> _Iterator[_Any]:
         worker_id=str(getattr(config, "_mcp_pal_worker_id", "master")),
         suite_name=_merged_mcp_pal_marker(item).get("suite_name"),
         description=_inspect.cleandoc(description).strip(),
+        project_id=(
+            project.root
+            if (project := getattr(config, "_mcp_pal_project_id", None)) is not None
+            else None
+        ),
+        project_name=getattr(config, "_mcp_pal_project_name", None),
     )
     token = _activate_test(state)
     try:

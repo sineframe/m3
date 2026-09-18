@@ -237,6 +237,21 @@ class RunId(Identifier):
     pass
 
 
+class ProjectId(Identifier):
+    """Stable identity for a repository project."""
+
+    @_field_validator("root")
+    @classmethod
+    def _valid_project_uuid(cls, value: str) -> str:
+        import uuid
+
+        try:
+            parsed = uuid.UUID(value)
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ValueError("project id must be a UUID") from exc
+        return str(parsed)
+
+
 class SuiteId(_RootModel[int]):
     """Database integer identity for a logical test suite."""
 

@@ -30,6 +30,7 @@ from mcp_pal.types import (
     EventKind,
     ExecutionOutcome,
     ExecutionResult,
+    ProjectId,
     ServerBinding,
     StdioServer,
     TextContent,
@@ -42,7 +43,9 @@ from mcp_pal.types import (
 pytestmark = pytest.mark.process_lifecycle
 
 
-def _spec(*, message: str | None = None) -> AgentSpec:
+def _spec(
+    *, message: str | None = None, project_id: ProjectId | None = None
+) -> AgentSpec:
     return AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ACPAgent(model="fixture"),
@@ -51,6 +54,7 @@ def _spec(*, message: str | None = None) -> AgentSpec:
             if message is not None
             else None
         ),
+        project_id=project_id,
     )
 
 
@@ -238,6 +242,25 @@ async def test_direct_async_agent_session_result_owns_one_finalized_trace() -> N
     assert result.trace is not None
     assert result.trace.execution_id == session._execution_id
     assert result.trace.events[-1].kind is EventKind.EXECUTION_FINISHED
+
+
+@pytest.mark.asyncio
+async def test_async_agent_session_snapshots_preserve_project_identity(
+    tmp_path: Path,
+) -> None:
+    project = ProjectId("33333333-3333-4333-8333-333333333333")
+    store = SQLiteExecutionStore(tmp_path / "async-project.sqlite")
+    async with AsyncMCPTestKit(
+        env={}, cwd="/tmp/mcp-pal-no-project", store=store, embedded_worker=False
+    ) as kit:
+        session = kit.agent_session(_spec(project_id=project), adapter=_TraceHarness())
+        async with session:
+            assert (await session.snapshot()).project_id == project
+            await session.send("hello")
+        result = session.result
+        assert result.snapshot.project_id == project
+        assert store.get_snapshot(result.snapshot.execution_id).project_id == project
+    store.close()
 
 
 def test_direct_sync_agent_session_result_owns_one_finalized_trace() -> None:

@@ -400,6 +400,7 @@ class AsyncExecutionHandle:
         self._cancel_watcher: asyncio.Task[None] | None = None
         self._deadline_task: asyncio.Task[None] | None = None
         self._timeout_expired = False
+        self._run_started_at: float | None = None
         if not persistent:
             self._task = asyncio.create_task(self._run())
 
@@ -706,6 +707,7 @@ class AsyncExecutionHandle:
         trace: TraceResult | None = None
         try:
             await asyncio.sleep(0)
+            self._run_started_at = asyncio.get_running_loop().time()
             timeout_seconds = self._spec.timeout_seconds
             if timeout_seconds is not None:
                 self._deadline_task = asyncio.create_task(
@@ -739,14 +741,32 @@ class AsyncExecutionHandle:
             else:
                 await self._run_agent(self._spec)
         except asyncio.CancelledError:
-            if self._timeout_expired:
+            elapsed_timeout = (
+                self._run_started_at is not None
+                and self._spec.timeout_seconds is not None
+                and asyncio.get_running_loop().time() - self._run_started_at
+                >= self._spec.timeout_seconds
+            )
+            if self._timeout_expired or elapsed_timeout:
+                self._timeout_expired = True
                 failure = OperationTimeout("execution deadline expired")
                 self._agent_outcome = ExecutionOutcome.TIMED_OUT
                 self._agent_error = _error_info(failure)
             else:
                 failure = OperationCancelled("execution cancelled")
         except BaseException as exc:
-            failure = exc
+            elapsed_timeout = (
+                isinstance(exc, OperationCancelled)
+                and self._run_started_at is not None
+                and self._spec.timeout_seconds is not None
+                and asyncio.get_running_loop().time() - self._run_started_at
+                >= self._spec.timeout_seconds
+            )
+            if elapsed_timeout:
+                self._timeout_expired = True
+                failure = OperationTimeout("execution deadline expired")
+            else:
+                failure = exc
         finally:
             outcome = (
                 ExecutionOutcome.CANCELLED

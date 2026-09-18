@@ -236,6 +236,7 @@ from .types import (
 from .types import (
     InProcessServer as _InProcessServer,
 )
+from .types import ProjectId as _ProjectId
 from .types import (
     ProtocolConstraint as _ProtocolConstraint,
 )
@@ -525,6 +526,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
             server_bindings=tuple(server_bindings),
             run_id=kit.run_id.root,
             suite_name=suite_name,
+            project_id=kit._project_id,
             redaction_config=self._redaction_config,
         )
         if kit._record_checks:
@@ -902,8 +904,25 @@ class AsyncMCPTestKit:
         embedded_worker: bool = True,
         run_id: _RunId | str | None = None,
         suite_name: str | None = None,
+        project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
     ) -> None:
+        from ._test_runs import active_test
+
+        active = active_test()
+        active_project = active.get("project_id") if active else None
+        if project_id is not None and active_project is not None:
+            requested = (
+                project_id.root
+                if isinstance(project_id, _ProjectId)
+                else str(project_id)
+            )
+            if requested != str(active_project):
+                raise ValueError(
+                    "kit project_id conflicts with active pytest project_id"
+                )
+        if project_id is None and active_project is not None:
+            project_id = active_project
         self._closed = False
         scoped_run_id = run_id or _make_default_run_id()
         self._run_id = (
@@ -912,6 +931,15 @@ class AsyncMCPTestKit:
             else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
         )
         self._suite_name = suite_name
+        self._project_id = (
+            None
+            if project_id is None
+            else (
+                project_id
+                if isinstance(project_id, _ProjectId)
+                else _ProjectId(project_id)
+            )
+        )
         self._record_checks = _record_checks_enabled(record_checks)
         self.config = (
             config
@@ -924,6 +952,20 @@ class AsyncMCPTestKit:
             if scoped_store is not None:
                 store = scoped_store
                 self._owns_store = True
+        if store is not None and self._project_id is not None:
+            register = getattr(store, "ensure_project", None)
+            get_project = getattr(store, "get_project", None)
+            if callable(register):
+                existing = (
+                    get_project(self._project_id.root)
+                    if callable(get_project)
+                    else None
+                )
+                active_name = active.get("project_name") if active else None
+                if existing is None or active_name:
+                    register(
+                        self._project_id.root, str(active_name or self._project_id.root)
+                    )
         self._close_lock = asyncio.Lock()
         self._active_direct: set[AsyncDirectClient] = set()
         self._active_sessions: set[AsyncAgentSession] = set()
@@ -994,6 +1036,14 @@ class AsyncMCPTestKit:
                 "pytest marker suite_name conflicts with execution spec suite_name"
             )
         values: dict[str, _Any] = {}
+        if self._project_id is not None and spec.project_id is None:
+            values["project_id"] = self._project_id
+        if (
+            self._project_id is not None
+            and spec.project_id is not None
+            and spec.project_id != self._project_id
+        ):
+            raise ValueError("execution spec project_id conflicts with kit project_id")
         if self._suite_name is not None and spec.suite_name is None:
             values["suite_name"] = self._suite_name
         if marker_name and spec.suite_name is None and self._suite_name is None:

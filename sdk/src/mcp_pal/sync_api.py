@@ -185,6 +185,7 @@ from .types import (
 from .types import (
     InProcessServer as _InProcessServer,
 )
+from .types import ProjectId as _ProjectId
 from .types import (
     ProtocolConstraint as _ProtocolConstraint,
 )
@@ -318,6 +319,7 @@ class _PortalRuntime:
         adapter_registry: _HarnessAdapterRegistry | None = None,
         run_id: _RunId | str | None = None,
         suite_name: str | None = None,
+        project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
     ) -> None:
         from .async_api import AsyncMCPTestKit
@@ -331,6 +333,7 @@ class _PortalRuntime:
             adapter_registry=adapter_registry,
             run_id=run_id,
             suite_name=suite_name,
+            project_id=project_id,
             record_checks=record_checks,
         )
         self.clients: dict[int, _AsyncDirectClient] = {}
@@ -575,6 +578,7 @@ class _SyncPortal:
         adapter_registry: _HarnessAdapterRegistry | None = None,
         run_id: _RunId | str | None = None,
         suite_name: str | None = None,
+        project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
     ) -> None:
         self._lock = _RLock()
@@ -591,6 +595,7 @@ class _SyncPortal:
                 adapter_registry,
                 run_id,
                 suite_name,
+                project_id,
                 record_checks,
             )
         except BaseException:
@@ -1184,8 +1189,25 @@ class MCPTestKit:
         adapter_registry: _HarnessAdapterRegistry | None = None,
         run_id: _RunId | str | None = None,
         suite_name: str | None = None,
+        project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
     ) -> None:
+        from ._test_runs import active_test
+
+        active = active_test()
+        active_project = active.get("project_id") if active else None
+        if project_id is not None and active_project is not None:
+            requested = (
+                project_id.root
+                if isinstance(project_id, _ProjectId)
+                else str(project_id)
+            )
+            if requested != str(active_project):
+                raise ValueError(
+                    "kit project_id conflicts with active pytest project_id"
+                )
+        if project_id is None and active_project is not None:
+            project_id = active_project
         self._state_lock = _RLock()
         self._closed = False
         scoped_run_id = run_id or _make_default_run_id()
@@ -1195,6 +1217,15 @@ class MCPTestKit:
             else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
         )
         self._suite_name = suite_name
+        self._project_id = (
+            None
+            if project_id is None
+            else (
+                project_id
+                if isinstance(project_id, _ProjectId)
+                else _ProjectId(project_id)
+            )
+        )
         self._record_checks = _record_checks_enabled(record_checks)
         self._context_depth = 0
         self._closing = False
@@ -1218,6 +1249,20 @@ class MCPTestKit:
                 store = scoped_store
                 self._owns_store = True
         self._store = store
+        if self._store is not None and self._project_id is not None:
+            register = getattr(self._store, "ensure_project", None)
+            get_project = getattr(self._store, "get_project", None)
+            if callable(register):
+                existing = (
+                    get_project(self._project_id.root)
+                    if callable(get_project)
+                    else None
+                )
+                active_name = active.get("project_name") if active else None
+                if existing is None or active_name:
+                    register(
+                        self._project_id.root, str(active_name or self._project_id.root)
+                    )
         # Evaluation persistence follows the selected execution store.  Keep
         # the runner runtime-only registry, while detached evaluations remain
         # kit-local inside the runner.
@@ -1274,6 +1319,14 @@ class MCPTestKit:
                 "pytest marker suite_name conflicts with execution spec suite_name"
             )
         values: dict[str, _Any] = {}
+        if self._project_id is not None and spec.project_id is None:
+            values["project_id"] = self._project_id
+        if (
+            self._project_id is not None
+            and spec.project_id is not None
+            and spec.project_id != self._project_id
+        ):
+            raise ValueError("execution spec project_id conflicts with kit project_id")
         if self._suite_name is not None and spec.suite_name is None:
             values["suite_name"] = self._suite_name
         if marker_name and spec.suite_name is None and self._suite_name is None:
@@ -1499,6 +1552,7 @@ class MCPTestKit:
                     self._run_id,
                     self._suite_name
                     or (str(marker_suite).strip() if marker_suite else None),
+                    self._project_id,
                     self._record_checks,
                 )
                 self._portal = portal
@@ -1621,6 +1675,7 @@ class MCPTestKit:
                     self._run_id,
                     self._suite_name
                     or (str(marker_suite).strip() if marker_suite else None),
+                    self._project_id,
                     self._record_checks,
                 )
                 self._portal = portal
@@ -1701,6 +1756,7 @@ class MCPTestKit:
                     self._adapter_registry,
                     self._run_id,
                     self._suite_name,
+                    self._project_id,
                     self._record_checks,
                 )
                 self._portal = portal

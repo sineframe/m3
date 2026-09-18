@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any, Literal, cast
@@ -72,15 +73,20 @@ class V2ExecutionEnvelope(BaseModel):
     execution_id: ExecutionId
     snapshot: ExecutionState
     spec: ExecutionSpec | None
+    project_name: str | None = None
 
     @classmethod
     def from_report(
-        cls, report: ExecutionReport, spec: ExecutionSpec | None
+        cls,
+        report: ExecutionReport,
+        spec: ExecutionSpec | None,
+        project_name: str | None = None,
     ) -> V2ExecutionEnvelope:
         return cls(
             execution_id=report.snapshot.execution_id,
             snapshot=report.snapshot,
             spec=spec,
+            project_name=project_name,
         )
 
 
@@ -123,6 +129,7 @@ class V2ExecutionReportEnvelope(BaseModel):
 class V2ExecutionPageEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     page: ExecutionPage
+    project_names: dict[str, str] = Field(default_factory=dict)
 
     @classmethod
     def from_page(cls, page: ExecutionPage) -> V2ExecutionPageEnvelope:
@@ -954,6 +961,16 @@ def install_v2(
     def get_service(request: Request) -> AppExecutionService:
         return cast(AppExecutionService, request.app.state.v2_service)
 
+    def project_name(
+        service: AppExecutionService, report: ExecutionReport
+    ) -> str | None:
+        project = report.snapshot.project_id
+        resolver = getattr(service.store, "get_project", None)
+        if project is None or not callable(resolver):
+            return None
+        value = resolver(project.root)
+        return value[1] if value is not None else None
+
     @router.post(
         "", response_model=V2ExecutionEnvelope, status_code=status.HTTP_202_ACCEPTED
     )
@@ -963,7 +980,9 @@ def install_v2(
     ) -> V2ExecutionEnvelope:
         report = service.create(body.spec)
         return V2ExecutionEnvelope.from_report(
-            report, service.specification(report.snapshot.execution_id)
+            report,
+            service.specification(report.snapshot.execution_id),
+            project_name(service, report),
         )
 
     @router.get("", response_model=V2ExecutionPageEnvelope)
@@ -972,13 +991,29 @@ def install_v2(
         offset: int = Query(0, ge=0),
         lifecycle: ExecutionStatus | None = None,
         outcome: ExecutionOutcome | None = None,
+        project_id: uuid.UUID | None = Query(
+            None, description="filter by project identity"
+        ),
         service: AppExecutionService = Depends(get_service),
     ) -> V2ExecutionPageEnvelope:
-        return V2ExecutionPageEnvelope.from_page(
-            service.list(
-                limit=limit, offset=offset, lifecycle=lifecycle, outcome=outcome
-            )
+        page = service.list(
+            limit=limit,
+            offset=offset,
+            lifecycle=lifecycle,
+            outcome=outcome,
+            project_id=str(project_id) if project_id is not None else None,
         )
+        get_project = getattr(service.store, "get_project", None)
+        names: dict[str, str] = {}
+        if callable(get_project):
+            for snapshot in page.items:
+                if snapshot.project_id is not None:
+                    identifier = snapshot.project_id.root
+                    if identifier not in names:
+                        project = get_project(identifier)
+                        if project is not None:
+                            names[identifier] = project[1]
+        return V2ExecutionPageEnvelope(page=page, project_names=names)
 
     def _list_suite_executions(
         suite_id: int,
@@ -1001,7 +1036,12 @@ def install_v2(
             outcome=outcome,
         )
         return V2SuiteExecutionPageEnvelope(
-            suite={"suite_id": suite.id.root, "suite_name": suite.name}, page=page
+            suite={
+                "suite_id": suite.id.root,
+                "suite_name": suite.name,
+                **({"project_id": suite.project_id.root} if suite.project_id else {}),
+            },
+            page=page,
         )
 
     @router.get("/{execution_id}", response_model=V2ExecutionEnvelope)
@@ -1011,7 +1051,9 @@ def install_v2(
     ) -> V2ExecutionEnvelope:
         report = service.get(execution_id)
         return V2ExecutionEnvelope.from_report(
-            report, service.specification(report.snapshot.execution_id)
+            report,
+            service.specification(report.snapshot.execution_id),
+            project_name(service, report),
         )
 
     @router.post("/{execution_id}/cancel", response_model=V2ExecutionEnvelope)
@@ -1022,7 +1064,9 @@ def install_v2(
     ) -> V2ExecutionEnvelope:
         report = service.cancel(execution_id, reason)
         return V2ExecutionEnvelope.from_report(
-            report, service.specification(report.snapshot.execution_id)
+            report,
+            service.specification(report.snapshot.execution_id),
+            project_name(service, report),
         )
 
     @router.delete("/{execution_id}", response_model=V2DeletedEnvelope)

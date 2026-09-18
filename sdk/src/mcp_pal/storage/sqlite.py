@@ -69,6 +69,7 @@ from ..types import (
     ExecutionState,
     ExecutionStatus,
     PayloadRef,
+    ProjectId,
     RevisionId,
     RevisionSelection,
     RunId,
@@ -330,6 +331,10 @@ CREATE TABLE IF NOT EXISTS v2_server_profiles (
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   FOREIGN KEY(current_revision_id) REFERENCES v2_server_profile_revisions(id)
 );
+CREATE TABLE IF NOT EXISTS v2_projects (
+  id TEXT PRIMARY KEY, project_name TEXT NOT NULL,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS v2_server_profile_revisions (
   id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES v2_server_profiles(id) ON DELETE CASCADE,
   revision_number INTEGER NOT NULL CHECK (revision_number > 0), value_json TEXT NOT NULL,
@@ -361,12 +366,14 @@ CREATE TABLE IF NOT EXISTS v2_acp_probes (
 );
 CREATE INDEX IF NOT EXISTS v2_acp_probes_dimension ON v2_acp_probes(dimension_key, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS v2_suites (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, suite_name TEXT NOT NULL UNIQUE
+  id INTEGER PRIMARY KEY AUTOINCREMENT, suite_name TEXT NOT NULL,
+  project_id TEXT REFERENCES v2_projects(id)
 );
 CREATE TABLE IF NOT EXISTS v2_executions (
   id TEXT PRIMARY KEY, snapshot_json TEXT NOT NULL, specification_json TEXT,
   provenance_json TEXT, parent_execution_id TEXT REFERENCES v2_executions(id),
-  created_at TEXT NOT NULL, deleted_at TEXT, run_id TEXT, suite_id INTEGER REFERENCES v2_suites(id)
+  created_at TEXT NOT NULL, deleted_at TEXT, run_id TEXT, suite_id INTEGER REFERENCES v2_suites(id),
+  project_id TEXT REFERENCES v2_projects(id)
 );
 CREATE TABLE IF NOT EXISTS v2_execution_server_bindings (
   execution_id TEXT NOT NULL REFERENCES v2_executions(id) ON DELETE CASCADE,
@@ -436,7 +443,8 @@ CREATE TABLE IF NOT EXISTS v2_commands (
 );
 CREATE TABLE IF NOT EXISTS v2_test_runs (
   run_id TEXT PRIMARY KEY, record_json TEXT NOT NULL,
-  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  project_id TEXT REFERENCES v2_projects(id)
 );
 CREATE TABLE IF NOT EXISTS v2_test_results (
   run_id TEXT NOT NULL REFERENCES v2_test_runs(run_id) ON DELETE CASCADE,
@@ -554,6 +562,7 @@ class _SqliteBase:
         try:
             with self._init_lock, self._connect() as connection:
                 connection.executescript(SCHEMA)
+                self._migrate_suite_uniqueness(connection)
                 # CREATE TABLE IF NOT EXISTS deliberately does not evolve an
                 # existing database.  Keep migrations small, idempotent, and
                 # local to the store so old SDK databases remain readable.
@@ -566,6 +575,9 @@ class _SqliteBase:
                     ("v2_evaluations", "score", "REAL"),
                     ("v2_evaluations", "run_id", "TEXT"),
                     ("v2_test_results", "suite_id", "INTEGER"),
+                    ("v2_suites", "project_id", "TEXT"),
+                    ("v2_executions", "project_id", "TEXT"),
+                    ("v2_test_runs", "project_id", "TEXT"),
                 ):
                     columns = connection.execute(
                         f"PRAGMA table_info({table})"
@@ -590,6 +602,18 @@ class _SqliteBase:
                     "CREATE INDEX IF NOT EXISTS v2_executions_suite ON v2_executions(suite_id, created_at, id)"
                 )
                 connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_executions_project ON v2_executions(project_id, created_at, id)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_suites_project ON v2_suites(project_id, suite_name)"
+                )
+                connection.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS v2_suites_project_name ON v2_suites(project_id, suite_name) WHERE project_id IS NOT NULL"
+                )
+                connection.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS v2_suites_legacy_name ON v2_suites(suite_name) WHERE project_id IS NULL"
+                )
+                connection.execute(
                     "CREATE INDEX IF NOT EXISTS v2_test_results_suite ON v2_test_results(suite_id, run_id, attempt_id)"
                 )
                 migrate = getattr(self, "_migrate_legacy_evaluations", None)
@@ -604,6 +628,50 @@ class _SqliteBase:
             if _is_database_error(exc):
                 raise StorageError("database initialization failed") from None
             raise
+
+    @staticmethod
+    def _migrate_suite_uniqueness(connection: _CompatConnection) -> None:
+        """Remove the legacy database-wide suite-name constraint safely."""
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='v2_suites'"
+        ).fetchone()
+        definition = "" if row is None else str(row[0] or "")
+        if "suite_name text not null unique" not in definition.lower():
+            return
+        connection.execute("PRAGMA foreign_keys=OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "CREATE TABLE v2_suites_mcp_pal_new ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, suite_name TEXT NOT NULL, "
+                "project_id TEXT REFERENCES v2_projects(id))"
+            )
+            columns = connection.execute("PRAGMA table_info(v2_suites)").fetchall()
+            has_project = any(str(item[1]) == "project_id" for item in columns)
+            if has_project:
+                connection.execute(
+                    "INSERT INTO v2_suites_mcp_pal_new(id,suite_name,project_id) "
+                    "SELECT id,suite_name,project_id FROM v2_suites"
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO v2_suites_mcp_pal_new(id,suite_name) "
+                    "SELECT id,suite_name FROM v2_suites"
+                )
+            connection.execute("DROP TABLE v2_suites")
+            connection.execute("ALTER TABLE v2_suites_mcp_pal_new RENAME TO v2_suites")
+            connection.execute("COMMIT")
+        except BaseException:
+            try:
+                connection.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys=ON")
+        foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if foreign_keys:
+            raise StorageError("suite schema migration left invalid foreign keys")
 
     def _migrate_legacy_evaluations(self, connection: _CompatConnection) -> None:
         """Best-effort projection of pre-v2.1 evaluation JSON."""
@@ -1250,14 +1318,48 @@ class SQLiteExecutionStore(_SqliteBase):
         self._callbacks: dict[str, list[EventCallback]] = {}
         self._callback_lock = threading.RLock()
 
-    def ensure_suite(self, suite_name: str) -> Suite:
+    def ensure_project(self, project_id: str, project_name: str) -> tuple[str, str]:
+        """Register a stable project identity and refresh its display name."""
+        from .._types.base import ProjectId
+
+        identifier = ProjectId(project_id).root
+        name = str(project_name).strip()
+        if not name or len(name) > 256:
+            raise ValueError("project_name must contain 1-256 characters")
+        now = _iso(_utcnow())
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO v2_projects(id,project_name,created_at,updated_at) VALUES(?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET project_name=excluded.project_name, updated_at=excluded.updated_at",
+                (identifier, name, now, now),
+            )
+        return identifier, name
+
+    def get_project(self, project_id: str) -> tuple[str, str] | None:
+        from .._types.base import ProjectId
+
+        identifier = ProjectId(project_id).root
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id,project_name FROM v2_projects WHERE id=?", (identifier,)
+            ).fetchone()
+        return None if row is None else (str(row[0]), str(row[1]))
+
+    def ensure_suite(self, suite_name: str, project_id: str | None = None) -> Suite:
         normalized = normalize_suite_name(suite_name)
+        from ..types import ProjectId
+
+        project = None if project_id is None else ProjectId(project_id)
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
             row = connection.execute(
-                "SELECT id,suite_name FROM v2_suites WHERE suite_name=?",
-                (normalized,),
+                "SELECT id,suite_name,project_id FROM v2_suites WHERE suite_name=? AND (project_id IS ? OR project_id=?)",
+                (
+                    normalized,
+                    None if project is None else project.root,
+                    None if project is None else project.root,
+                ),
             ).fetchone()
             if row is None:
                 row_max = connection.execute(
@@ -1265,12 +1367,16 @@ class SQLiteExecutionStore(_SqliteBase):
                 ).fetchone()
                 suite_id = generated_suite_id(int(row_max[0]))
                 connection.execute(
-                    "INSERT INTO v2_suites(id,suite_name) VALUES(?,?)",
-                    (suite_id.root, normalized),
+                    "INSERT INTO v2_suites(id,suite_name,project_id) VALUES(?,?,?)",
+                    (
+                        suite_id.root,
+                        normalized,
+                        None if project is None else project.root,
+                    ),
                 )
-                result = Suite(suite_id, normalized, normalized)
+                result = Suite(suite_id, normalized, normalized, project)
             else:
-                result = Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]))
+                result = Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]), project)
             self._commit(connection)
             return result
         except BaseException:
@@ -1281,57 +1387,85 @@ class SQLiteExecutionStore(_SqliteBase):
 
     @staticmethod
     def _ensure_suite_connection(
-        connection: _CompatConnection, suite_name: str
+        connection: _CompatConnection, suite_name: str, project_id: str | None = None
     ) -> Suite:
         normalized = normalize_suite_name(suite_name)
+        from ..types import ProjectId
+
+        project = None if project_id is None else ProjectId(project_id)
         row = connection.execute(
-            "SELECT id,suite_name FROM v2_suites WHERE suite_name=?", (normalized,)
+            "SELECT id,suite_name,project_id FROM v2_suites WHERE suite_name=? AND (project_id IS ? OR project_id=?)",
+            (
+                normalized,
+                None if project is None else project.root,
+                None if project is None else project.root,
+            ),
         ).fetchone()
         if row is not None:
-            return Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]))
+            return Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]), project)
         next_id = int(
             connection.execute(
                 "SELECT COALESCE(MAX(id),0)+1 FROM v2_suites"
             ).fetchone()[0]
         )
         connection.execute(
-            "INSERT INTO v2_suites(id,suite_name) VALUES(?,?)", (next_id, normalized)
+            "INSERT INTO v2_suites(id,suite_name,project_id) VALUES(?,?,?)",
+            (next_id, normalized, None if project is None else project.root),
         )
-        return Suite(SuiteId(next_id), normalized, normalized)
+        return Suite(SuiteId(next_id), normalized, normalized, project)
 
     def get_suite(self, suite_id: SuiteId | str) -> Suite | None:
         raw_id = suite_id.root if isinstance(suite_id, SuiteId) else suite_id
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT id,suite_name FROM v2_suites WHERE id=?",
+                "SELECT id,suite_name,project_id FROM v2_suites WHERE id=?",
                 (int(raw_id),),
             ).fetchone()
         return (
             None
             if row is None
-            else Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]))
+            else Suite(
+                SuiteId(int(row[0])),
+                str(row[1]),
+                str(row[1]),
+                ProjectId(str(row[2])) if row[2] else None,
+            )
         )
 
-    def get_suite_by_name(self, suite_name: str) -> Suite | None:
+    def get_suite_by_name(
+        self, suite_name: str, project_id: str | None = None
+    ) -> Suite | None:
         normalized = normalize_suite_name(suite_name)
+        project = ProjectId(project_id).root if project_id is not None else None
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT id,suite_name FROM v2_suites WHERE suite_name=?",
-                (normalized,),
+                "SELECT id,suite_name,project_id FROM v2_suites WHERE suite_name=? AND project_id IS ?",
+                (normalized, project),
             ).fetchone()
         return (
             None
             if row is None
-            else Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]))
+            else Suite(
+                SuiteId(int(row[0])),
+                str(row[1]),
+                str(row[1]),
+                ProjectId(str(row[2])) if row[2] else None,
+            )
         )
 
     def list_suites(self) -> tuple[Suite, ...]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT id,suite_name FROM v2_suites ORDER BY suite_name"
+                "SELECT id,suite_name,project_id FROM v2_suites ORDER BY suite_name,project_id"
             ).fetchall()
         return tuple(
-            Suite(SuiteId(int(row[0])), str(row[1]), str(row[1])) for row in rows
+            Suite(
+                SuiteId(int(row[0])),
+                str(row[1]),
+                str(row[1]),
+                ProjectId(str(row[2])) if row[2] else None,
+            )
+            for row in rows
         )
 
     def create(
@@ -1389,7 +1523,13 @@ class SQLiteExecutionStore(_SqliteBase):
         try:
             self._begin(connection, immediate=True)
             suite = (
-                self._ensure_suite_connection(connection, suite_name)
+                self._ensure_suite_connection(
+                    connection,
+                    suite_name,
+                    snapshot.project_id.root
+                    if snapshot.project_id is not None
+                    else None,
+                )
                 if suite_name
                 else None
             )
@@ -1408,7 +1548,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 else None
             )
             connection.execute(
-                "INSERT INTO v2_executions(id,snapshot_json,specification_json,provenance_json,parent_execution_id,created_at,run_id,suite_id) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO v2_executions(id,snapshot_json,specification_json,provenance_json,parent_execution_id,created_at,run_id,suite_id,project_id) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
                     key,
                     _json(safe_snapshot),
@@ -1418,6 +1558,9 @@ class SQLiteExecutionStore(_SqliteBase):
                     _iso(snapshot.created_at),
                     run_key,
                     suite_id,
+                    snapshot.project_id.root
+                    if snapshot.project_id is not None
+                    else None,
                 ),
             )
             for ordinal, binding in enumerate(server_bindings):
@@ -1460,6 +1603,10 @@ class SQLiteExecutionStore(_SqliteBase):
             self._rollback(connection)
             if not _is_integrity_error(exc):
                 raise
+            if "foreign key" in str(exc).lower():
+                raise StorageError(
+                    "execution references an unregistered project or parent"
+                ) from exc
             raise StorageConflict("execution already exists") from exc
         except BaseException:
             self._rollback(connection)
@@ -1481,9 +1628,9 @@ class SQLiteExecutionStore(_SqliteBase):
         try:
             self._begin(connection, immediate=True)
             connection.execute(
-                "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at) VALUES(?,?,?,?) "
-                "ON CONFLICT(run_id) DO UPDATE SET record_json=excluded.record_json,updated_at=excluded.updated_at",
-                (key, _json(safe), now, now),
+                "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at,project_id) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(run_id) DO UPDATE SET record_json=excluded.record_json,updated_at=excluded.updated_at,project_id=excluded.project_id",
+                (key, _json(safe), now, now, safe.get("project_id")),
             )
             self._commit(connection)
         except BaseException:
@@ -1530,7 +1677,11 @@ class SQLiteExecutionStore(_SqliteBase):
         try:
             self._begin(connection, immediate=True)
             suite = (
-                self._ensure_suite_connection(connection, str(safe["suite_name"]))
+                self._ensure_suite_connection(
+                    connection,
+                    str(safe["suite_name"]),
+                    str(safe.get("project_id")) if safe.get("project_id") else None,
+                )
                 if safe.get("suite_name")
                 else None
             )
@@ -1548,7 +1699,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 is None
             ):
                 connection.execute(
-                    "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at) VALUES(?,?,?,?)",
+                    "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at,project_id) VALUES(?,?,?,?,?)",
                     (
                         key,
                         _json(
@@ -1562,6 +1713,7 @@ class SQLiteExecutionStore(_SqliteBase):
                         ),
                         now,
                         now,
+                        safe.get("project_id"),
                     ),
                 )
             connection.execute(
@@ -1626,6 +1778,7 @@ class SQLiteExecutionStore(_SqliteBase):
         outcome: ExecutionOutcome | str | None = None,
         run_id: str | None = None,
         suite_id: int | None = None,
+        project_id: str | None = None,
     ) -> ExecutionPage:
         page = ExecutionPage(limit=limit, offset=offset)
         lifecycle_value = ExecutionStatus(lifecycle) if lifecycle is not None else None
@@ -1644,6 +1797,9 @@ class SQLiteExecutionStore(_SqliteBase):
         if suite_id is not None:
             clauses.append("suite_id=?")
             parameters.append(int(suite_id))
+        if project_id is not None:
+            clauses.append("project_id=?")
+            parameters.append(str(project_id))
         where = " AND ".join(clauses)
         with self._connect() as connection:
             total_row = connection.execute(
@@ -1909,6 +2065,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 lifecycle, finished_at = ExecutionStatus.FINISHED, event.timestamp
         return ExecutionState(
             execution_id=ExecutionId(execution_id),
+            project_id=existing.project_id,
             run_id=existing.run_id,
             suite_id=existing.suite_id,
             suite_name=existing.suite_name,
@@ -2733,6 +2890,8 @@ class SQLiteExecutionStore(_SqliteBase):
             ("evaluator", "e.evaluator_name"),
             ("run_id", "COALESCE(e.run_id, x.run_id)"),
             ("suite_name", "s.suite_name"),
+            ("project_id", "x.project_id"),
+            ("project_name", "p.project_name"),
         ):
             values = query.filters.get(label)
             if values:
@@ -2741,8 +2900,8 @@ class SQLiteExecutionStore(_SqliteBase):
                 params.extend(str(value) for value in values)
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT e.execution_id,e.result_json,x.snapshot_json,x.specification_json "
-                "FROM v2_evaluations e JOIN v2_executions x ON x.id=e.execution_id LEFT JOIN v2_suites s ON s.id=x.suite_id WHERE "
+                "SELECT e.execution_id,e.result_json,x.snapshot_json,x.specification_json,x.project_id,p.project_name "
+                "FROM v2_evaluations e JOIN v2_executions x ON x.id=e.execution_id LEFT JOIN v2_suites s ON s.id=x.suite_id LEFT JOIN v2_projects p ON p.id=x.project_id WHERE "
                 + " AND ".join(where)
                 + " ORDER BY x.created_at,e.created_at,e.id",
                 params,
@@ -2761,6 +2920,10 @@ class SQLiteExecutionStore(_SqliteBase):
                     snapshots[execution_id] = ExecutionState.model_validate(
                         _loads(row[2])
                     )
+                    if row[4] and snapshots[execution_id].project_id is None:
+                        snapshots[execution_id] = snapshots[execution_id].model_copy(
+                            update={"project_id": ProjectId(str(row[4]))}
+                        )
                     if row[3] is not None:
                         specifications[execution_id] = TypeAdapter(
                             ExecutionSpec
@@ -2779,7 +2942,14 @@ class SQLiteExecutionStore(_SqliteBase):
                         "turn_id": context.get("turn_id"),
                         "case_id": context.get("case_id") or projected.get("case_id"),
                         "goal": context.get("goal"),
-                        "metadata": context.get("metadata", {}),
+                        "metadata": {
+                            **(
+                                dict(context.get("metadata", {}))
+                                if isinstance(context.get("metadata", {}), Mapping)
+                                else {}
+                            ),
+                            "project_name": row[5],
+                        },
                     }
                 )
                 projected.pop("context", None)

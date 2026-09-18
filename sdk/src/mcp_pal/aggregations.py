@@ -18,6 +18,8 @@ Scalar = str | int | float | bool | None
 _TIME_GROUPS = {"time.hour", "time.day", "time.week"}
 _SYSTEM_LABELS = {
     "run_id",
+    "project_id",
+    "project_name",
     "suite_name",
     "trial_id",
     "turn_id",
@@ -207,6 +209,9 @@ def _labels(
         metadata.update(record.metadata)
     run = record.run_id or getattr(snapshot, "run_id", None)
     labels["run_id"] = str(getattr(run, "root", run)) if run is not None else None
+    project = getattr(snapshot, "project_id", None)
+    labels["project_id"] = getattr(project, "root", project)
+    labels["project_name"] = metadata.get("project_name")
     labels["suite_name"] = record.suite_name or getattr(snapshot, "suite_name", None)
     labels["trial_id"] = str(record.execution_id.root)
     labels["turn_id"] = str(record.turn_id.root) if record.turn_id is not None else None

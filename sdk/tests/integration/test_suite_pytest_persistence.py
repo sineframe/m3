@@ -126,6 +126,40 @@ def test_pytest_docstrings_are_cleaned_into_attempt_records(tmp_path: Path) -> N
     assert by_node["test_without_docstring"]["description"] == ""
 
 
+def test_manual_kit_inherits_project_identity_from_pytest_manifest(
+    tmp_path: Path,
+) -> None:
+    project_id = "44444444-4444-4444-8444-444444444444"
+    (tmp_path / "mcp-pal.toml").write_text(
+        f' schema_version = 1\nproject_id = "{project_id}"\nproject_name = "Manual Kit"\n',
+        encoding="utf-8",
+    )
+    test_file = tmp_path / "manual.py"
+    test_file.write_text(
+        "import sys\n"
+        "from mcp_pal import MCPTestKit\n"
+        "from mcp_pal.types import CallTool, DirectSpec, ServerBinding, StdioServer\n"
+        "def test_manual_kit():\n"
+        "    spec = DirectSpec(servers=(ServerBinding(server=StdioServer(name='echo', command=sys.executable, args=('-m', 'mcp_pal.fixtures.echo_server'))),), operation=CallTool(server='echo', name='echo', arguments={'text': 'ok'}))\n"
+        "    with MCPTestKit() as kit:\n"
+        "        result = kit.run(spec)\n"
+        "    assert result.snapshot.project_id.root == '" + project_id + "'\n",
+        encoding="utf-8",
+    )
+    result = _run(tmp_path, test_file)
+    assert result.returncode == 0, result.stdout + result.stderr
+    db = sqlite3.connect(tmp_path / "results.sqlite")
+    run_id = db.execute("select run_id from v2_test_runs").fetchone()[0]
+    row = db.execute("select id,run_id,project_id from v2_executions").fetchone()
+    assert row == (row[0], run_id, project_id)
+    assert (
+        db.execute(
+            "select count(*) from v2_executions where project_id=?", (project_id,)
+        ).fetchone()[0]
+        == 1
+    )
+
+
 def test_old_schema_rows_survive_suite_migration(tmp_path: Path) -> None:
     path = tmp_path / "old.sqlite"
     db = sqlite3.connect(path)
@@ -155,6 +189,42 @@ def test_old_schema_rows_survive_suite_migration(tmp_path: Path) -> None:
             ).fetchone()[0]
             is None
         )
+    store.close()
+
+
+def test_legacy_unique_suite_table_rebuild_preserves_foreign_keys(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy-unique.sqlite"
+    db = sqlite3.connect(path)
+    db.executescript(
+        "PRAGMA foreign_keys=ON;"
+        "create table v2_suites(id integer primary key autoincrement, suite_name text not null unique);"
+        "create table v2_executions(id text primary key,snapshot_json text not null,specification_json text,provenance_json text,parent_execution_id text,created_at text,deleted_at text,run_id text,suite_id integer references v2_suites(id));"
+        "create table v2_test_runs(run_id text primary key,record_json text,created_at text,updated_at text);"
+        "create table v2_test_results(run_id text,attempt_id text,record_json text,created_at text,updated_at text,suite_id integer references v2_suites(id),primary key(run_id,attempt_id));"
+        "insert into v2_suites(suite_name) values ('catalog');"
+        "insert into v2_executions values ('old','{}',null,null,null,'now',null,'run',1);"
+        "insert into v2_test_runs values ('run','{}','now','now');"
+        "insert into v2_test_results values ('run','attempt','{}','now','now',1);"
+    )
+    db.close()
+    from mcp_pal.storage import SQLiteExecutionStore
+
+    store = SQLiteExecutionStore(path)
+    store.ensure_project("11111111-1111-4111-8111-111111111111", "one")
+    store.ensure_project("22222222-2222-4222-8222-222222222222", "two")
+    first = store.ensure_suite("catalog", "11111111-1111-4111-8111-111111111111")
+    second = store.ensure_suite("catalog", "22222222-2222-4222-8222-222222222222")
+    assert first.id != second.id
+    with store._connect() as connection:
+        assert (
+            connection.execute(
+                "select suite_id from v2_executions where id='old'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert connection.execute("pragma foreign_key_check").fetchall() == []
     store.close()
 
 

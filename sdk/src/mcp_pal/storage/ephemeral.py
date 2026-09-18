@@ -64,6 +64,7 @@ from ..types import (
     ExecutionSpec,
     ExecutionState,
     ExecutionStatus,
+    ProjectId,
     RevisionSelection,
     RunId,
     SuiteId,
@@ -186,6 +187,7 @@ class ExecutionStore(Protocol):
         outcome: ExecutionOutcome | str | None = None,
         run_id: RunId | str | None = None,
         suite_id: int | None = None,
+        project_id: str | None = None,
     ) -> ExecutionPage: ...
 
     def get_report(
@@ -427,7 +429,8 @@ class InMemoryExecutionStore:
         self._raw_refcounts: dict[str, int] = {}
         self._acp_probes: dict[str, ACPProbeResult] = {}
         self._evaluations: dict[str, list[EvaluationRecord]] = {}
-        self._suites: dict[str, Suite] = {}
+        self._suites: dict[tuple[str | None, str], Suite] = {}
+        self._projects: dict[str, str] = {}
         self._turns: dict[str, list[tuple[TurnState, TurnResult | None]]] = {}
         self._test_runs: dict[str, dict[str, Any]] = {}
         self._test_results: dict[str, dict[str, dict[str, Any]]] = {}
@@ -520,7 +523,13 @@ class InMemoryExecutionStore:
             if validated is not None and validated.suite_name is not None
             else snapshot.suite_name
         )
-        suite = self.ensure_suite(suite_name) if suite_name else None
+        suite = (
+            self.ensure_suite(
+                suite_name, snapshot.project_id.root if snapshot.project_id else None
+            )
+            if suite_name
+            else None
+        )
         suite_id = suite.id if suite is not None else snapshot.suite_id
         suite_name = suite.name if suite is not None else suite_name
         with self._lock:
@@ -545,16 +554,36 @@ class InMemoryExecutionStore:
             if validated is not None:
                 self._specifications[key] = _copy_execution_spec(validated)
 
-    def ensure_suite(self, suite_name: str) -> Suite:
-        normalized = normalize_suite_name(suite_name)
+    def ensure_project(self, project_id: str, project_name: str) -> tuple[str, str]:
+        identifier = ProjectId(project_id).root
+        name = project_name.strip()
+        if not name or len(name) > 256:
+            raise ValueError("project_name must contain 1-256 characters")
         with self._lock:
-            existing = self._suites.get(normalized)
+            self._projects[identifier] = name
+        return identifier, name
+
+    def get_project(self, project_id: str) -> tuple[str, str] | None:
+        identifier = ProjectId(project_id).root
+        with self._lock:
+            name = self._projects.get(identifier)
+        return (identifier, name) if name is not None else None
+
+    def ensure_suite(self, suite_name: str, project_id: str | None = None) -> Suite:
+        normalized = normalize_suite_name(suite_name)
+        project = ProjectId(project_id) if project_id is not None else None
+        key = (project.root if project else None, normalized)
+        with self._lock:
+            existing = self._suites.get(key)
             if existing is not None:
                 return existing
             value = Suite(
-                generated_suite_id(len(self._suites) + 1), normalized, normalized
+                generated_suite_id(len(self._suites) + 1),
+                normalized,
+                normalized,
+                project,
             )
-            self._suites[normalized] = value
+            self._suites[key] = value
             return value
 
     def get_suite(self, suite_id: SuiteId | str) -> Suite | None:
@@ -565,14 +594,27 @@ class InMemoryExecutionStore:
                 (item for item in self._suites.values() if item.id.root == key), None
             )
 
-    def get_suite_by_name(self, suite_name: str) -> Suite | None:
+    def get_suite_by_name(
+        self, suite_name: str, project_id: str | None = None
+    ) -> Suite | None:
         with self._lock:
-            return self._suites.get(normalize_suite_name(suite_name))
+            return self._suites.get(
+                (
+                    ProjectId(project_id).root if project_id else None,
+                    normalize_suite_name(suite_name),
+                )
+            )
 
     def list_suites(self) -> tuple[Suite, ...]:
         with self._lock:
             return tuple(
-                sorted(self._suites.values(), key=lambda item: item.normalized_name)
+                sorted(
+                    self._suites.values(),
+                    key=lambda item: (
+                        item.normalized_name,
+                        item.project_id.root if item.project_id else "",
+                    ),
+                )
             )
 
     # Friendly aliases are intentionally kept on the concrete store while the
@@ -613,7 +655,10 @@ class InMemoryExecutionStore:
         )
         with self._lock:
             if isinstance(safe, Mapping) and safe.get("suite_name"):
-                suite = self.ensure_suite(str(safe["suite_name"]))
+                suite = self.ensure_suite(
+                    str(safe["suite_name"]),
+                    str(safe["project_id"]) if safe.get("project_id") else None,
+                )
                 safe = dict(safe)
                 safe["suite_id"] = suite.id.root
                 safe["suite_name"] = suite.name
@@ -661,6 +706,7 @@ class InMemoryExecutionStore:
         outcome: ExecutionOutcome | str | None = None,
         run_id: RunId | str | None = None,
         suite_id: int | None = None,
+        project_id: str | None = None,
     ) -> ExecutionPage:
         page = ExecutionPage(limit=limit, offset=offset)
         lifecycle_value = ExecutionStatus(lifecycle) if lifecycle is not None else None
@@ -681,6 +727,14 @@ class InMemoryExecutionStore:
                 suite_id is None
                 or (
                     snapshot.suite_id is not None and snapshot.suite_id.root == suite_id
+                )
+            )
+            and (
+                project_id is None
+                or (
+                    getattr(snapshot, "project_id", None) is not None
+                    and getattr(snapshot.project_id, "root", snapshot.project_id)
+                    == str(project_id)
                 )
             )
         ]
@@ -881,6 +935,23 @@ class InMemoryExecutionStore:
             ]
             snapshots = {key: value for key, value in self._snapshots.items()}
             specifications = {key: value for key, value in self._specifications.items()}
+            projects = dict(self._projects)
+        enriched_records = []
+        for record in records:
+            snapshot = snapshots.get(record.execution_id.root)
+            project = snapshot.project_id if snapshot is not None else None
+            project_name = projects.get(project.root) if project is not None else None
+            enriched_records.append(
+                record.model_copy(
+                    update={
+                        "metadata": {
+                            **dict(record.metadata),
+                            "project_name": project_name,
+                        }
+                    }
+                )
+            )
+        records = enriched_records
         traces = {}
         for execution_id in {record.execution_id.root for record in records}:
             try:
@@ -1198,6 +1269,7 @@ class InMemoryExecutionStore:
                 finished_at = event.timestamp
         return ExecutionState(
             execution_id=ExecutionId(execution_id),
+            project_id=previous.project_id,
             run_id=previous.run_id,
             suite_id=previous.suite_id,
             suite_name=previous.suite_name,

@@ -38,14 +38,24 @@ download` only downloads files from an existing release and does not create or m
 
 ## Set up a project
 
-After installing the CLI, project setup is one explicit command:
+After installing the CLI, initialize the project and answer its two short
+questions:
 
 ```sh
 cd my-project
+mcp-pal init
 mcp-pal setup
 mcp-pal doctor
-mcp-pal test --ui
+# Replace the starter TODO with a real assertion and remove its skip.
+mcp-pal test --suite mcp-behavior -- tests/test_mcp_pal_starter.py
 ```
+
+`init` defaults the project name to the repository name and the suite name to
+`mcp-behavior`. It creates `mcp-pal.toml` (the stable project identity) and a
+single skipped starter test at `tests/test_mcp_pal_starter.py`. Running `init`
+again after a complete initialization reports the existing project and leaves
+both files alone. The first skipped run confirms collection; it does not check
+server behavior.
 
 `mcp-pal setup` installs only `mcp-pal[pytest,storage]` into the project
 environment. It selects `--python`, then an active `VIRTUAL_ENV` or
@@ -89,9 +99,10 @@ Remove-Item -Recurse -Force .mcp-pal-download
 
 ## Commands
 
-There are three public commands:
+There are four public commands:
 
 ```text
+mcp-pal init
 mcp-pal setup [options]
 mcp-pal doctor
 mcp-pal test [options] -- [pytest arguments]
@@ -99,6 +110,14 @@ mcp-pal test [options] -- [pytest arguments]
 
 There is no `mcp-pal ui` command. The UI is a mode of `mcp-pal test` because it
 shows the runs produced by that test command.
+
+### `init`
+
+Run `mcp-pal init` from the repository you want to test. It asks for the
+project name, then the suite name, showing a default for each. It creates only
+the identity file and skipped pytest starter. If both files are already
+present, it reports the existing project and changes nothing. If one file is
+missing or the identity is invalid, it reports the partial state for repair.
 
 ### `doctor`
 

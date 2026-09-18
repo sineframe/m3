@@ -219,9 +219,14 @@ Route details:
 
 - `GET /api/v2/executions` accepts integer `limit` (1-100), integer `offset`
   (0 or greater),
-  `lifecycle`, and `outcome` query parameters. It returns `200` with
-  `{version, page:{items, total, limit, offset}}`; each item is an execution
-  snapshot, newest-created first. `lifecycle` and `outcome` use the enum
+  `lifecycle`, `outcome`, and optional `project_id` query parameters. For
+  example, call this route with `project_id=01234567-89ab-4cde-8012-3456789abcde`
+  as a query parameter to filter results to that project; omitting it preserves
+  the all-project listing. It returns `200` with
+  `{version, page:{items, total, limit, offset}, project_names}`; `project_names`
+  maps each returned project UUID to its canonical registry display name.
+  Unassigned legacy records remain readable and are omitted from that map.
+  Each item is an execution snapshot, newest-created first. `lifecycle` and `outcome` use the enum
   values above. It reads saved snapshots and has no write effect. Invalid
   values return `422 invalid_request` or `invalid_execution_filter`.
 - `POST /api/v2/executions` accepts the body above and returns `202` with the
@@ -544,7 +549,8 @@ responses expose the canonical suite ID and name from the registry.
 
 Execution reads and reports may contain `"spec": null` for direct-client
 traces. The create request still requires a non-null `spec`. Feedback exports
-and `GET /api/v2/feedback/{run_id}` include suite ID/name on the suite list,
+and `GET /api/v2/feedback/{run_id}` include `project_id` and `project_name`
+when the run is associated with a registered project. They also include suite ID/name on the suite list,
 execution entries, test entries, and baseline/current comparison inventories.
 
 Wire responses retain the typed `ExecutionState` model for lifecycle snapshots.
@@ -565,6 +571,10 @@ def test_catalog_lookup():
 ```
 
 The report entry keeps that description beside the pytest node ID and outcome.
+
+Evaluation aggregation accepts `project_id` and `project_name` as filter or
+group labels. These values come from the persisted project registry, while
+legacy unassigned executions have null project labels.
 
 The supported authoring paths are a marked pytest test selected with
 `mcp-pal test --harness ... --trials N`, or a Python loop over

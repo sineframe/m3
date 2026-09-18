@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import typing
 from collections import deque
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
@@ -24,6 +25,13 @@ from typing import Any, cast
 from urllib.error import URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+
+if typing.TYPE_CHECKING:
+    import tomli as _tomllib
+elif sys.version_info >= (3, 11):
+    import tomllib as _tomllib
+else:  # pragma: no cover
+    import tomli as _tomllib
 
 OPERATIONAL_ERROR = 2
 _HARNESS_KINDS = {"claude", "claude_code", "opencode", "codex", "pi", "acp"}
@@ -418,9 +426,16 @@ from mcp_pal.storage import SQLiteExecutionStore
 store = SQLiteExecutionStore(sys.argv[1])
 try:
     run_id = sys.argv[2]
-    found = store.get_test_run(run_id) is not None
-    if not found:
-        found = bool(store.list_executions(limit=1, offset=0, run_id=run_id).items)
+    expected_project = sys.argv[3] or None
+    manifest = store.get_test_run(run_id)
+    page = store.list_executions(limit=1, offset=0, run_id=run_id)
+    found = manifest is not None or bool(page.items)
+    actual_project = manifest.get("project_id") if manifest else None
+    if actual_project is None and page.items:
+        project = page.items[0].project_id
+        actual_project = project.root if project is not None else None
+    if expected_project is not None:
+        found = found and actual_project == expected_project
 finally:
     close = getattr(store, "close", None)
     if callable(close):
@@ -429,12 +444,27 @@ print(json.dumps({"found": bool(found)}))
 """
 
 
+def _project_id(root: Path) -> str | None:
+    path = root / "mcp-pal.toml"
+    if not path.is_file():
+        return None
+    try:
+        value = _tomllib.loads(path.read_text(encoding="utf-8"))
+        from uuid import UUID
+
+        identifier = str(value["project_id"])
+        return identifier if str(UUID(identifier)) == identifier else None
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError):
+        return None
+
+
 def baseline_exists(
     database: Path,
     run_id: str,
     *,
     python: Path | None = None,
     project_root: Path | None = None,
+    project_id: str | None = None,
 ) -> bool:
     """Validate an explicit baseline before starting project pytest.
 
@@ -444,7 +474,14 @@ def baseline_exists(
     if python is not None:
         try:
             result = subprocess.run(
-                [str(python), "-c", _BASELINE_SCRIPT, str(database), str(run_id)],
+                [
+                    str(python),
+                    "-c",
+                    _BASELINE_SCRIPT,
+                    str(database),
+                    str(run_id),
+                    project_id or "",
+                ],
                 cwd=str((project_root or Path.cwd()).resolve()),
                 capture_output=True,
                 text=True,
@@ -465,10 +502,17 @@ def baseline_exists(
     try:
         store = _execution_store_type()(database)
         get_manifest = getattr(store, "get_test_run", None)
-        if callable(get_manifest) and get_manifest(run_id) is not None:
-            return True
+        manifest = get_manifest(run_id) if callable(get_manifest) else None
         page = store.list_executions(limit=1, offset=0, run_id=run_id)
-        return bool(page.items)
+        if manifest is None and not page.items:
+            return False
+        if project_id is None:
+            return True
+        actual = manifest.get("project_id") if manifest else None
+        if actual is None and page.items:
+            value = page.items[0].project_id
+            actual = value.root if value is not None else None
+        return actual == project_id
     except Exception:
         return False
     finally:
@@ -904,7 +948,11 @@ def run_test_with_runs(
         )
     selected, database_path = prepared
     if baseline is not None and not baseline_exists(
-        database_path, baseline, python=selected, project_root=root
+        database_path,
+        baseline,
+        python=selected,
+        project_root=root,
+        project_id=_project_id(root),
     ):
         print(f"mcp-pal test: baseline run was not found: {baseline}", file=sys.stderr)
         return TestRunResult(
@@ -1001,7 +1049,11 @@ def run_test(
         return OPERATIONAL_ERROR
     selected, database_path = prepared
     if baseline is not None and not baseline_exists(
-        database_path, baseline, python=selected, project_root=root
+        database_path,
+        baseline,
+        python=selected,
+        project_root=root,
+        project_id=_project_id(root),
     ):
         print(f"mcp-pal test: baseline run was not found: {baseline}", file=sys.stderr)
         return OPERATIONAL_ERROR

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ._types.base import SuiteId
+from ._types.base import ProjectId, SuiteId
 
 
 def normalize_suite_name(value: str) -> str:
@@ -28,3 +28,4 @@ class Suite:
     id: SuiteId
     name: str
     normalized_name: str
+    project_id: ProjectId | None = None

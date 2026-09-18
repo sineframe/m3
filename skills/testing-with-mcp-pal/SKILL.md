@@ -20,6 +20,23 @@ to use the CLI and the `mcp-pal` command is missing, read
 are separate installations; never assume `uv add "mcp-pal[pytest]"` provides
 the CLI or UI.
 
+## Start a new project
+
+When the target project has no MCP Pal test, use the CLI starter before writing
+test code. From its repository root, run `mcp-pal init --project-name NAME --suite
+NAME`; supplying both names makes the command usable by an agent without
+interactive prompts. Use the repository name and `mcp-behavior` unless the user
+has supplied better names. Then run `mcp-pal setup` and `mcp-pal doctor`.
+
+The command creates `mcp-pal.toml` with a stable project ID and one skipped
+test at `tests/test_mcp_pal_starter.py`. Continue with the workflow below:
+inspect the real server, replace the starter method with a direct or agent
+test, remove its skip, and run `mcp-pal test --suite NAME --
+tests/test_mcp_pal_starter.py`. A fresh run with one skip confirms collection;
+it does not verify behavior. Repeating `init` on a complete project reports
+the existing files and changes nothing. Keep `project_id` when renaming the
+project.
+
 ## Choose the Boundary
 
 | Claim | Use |
