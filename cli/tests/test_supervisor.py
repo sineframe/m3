@@ -365,6 +365,17 @@ def test_cli_module_help() -> None:
     assert "mcp-pal" in result.stdout
 
 
+def test_cli_test_help_documents_scoped_credential_mapping() -> None:
+    result = supervisor.subprocess.run(
+        [sys.executable, "-m", "mcp_pal_cli", "test", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "--credential-env [KIND:]TARGET=SOURCE" in result.stdout
+
+
 def test_posix_termination_handlers_are_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
     if os.name != "posix":
         pytest.skip("POSIX signal behavior")

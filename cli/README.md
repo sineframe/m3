@@ -142,7 +142,7 @@ Agent selection flags:
 | `--trials N` | independent executions per combination |
 | `--execution-timeout SECONDS` | full deadline for each selected execution; each case has its own deadline |
 | `--env-file PATH` | explicitly load provider variables for the pytest child |
-| `--credential-env TARGET=SOURCE` | map provider variable names |
+| `--credential-env [KIND:]TARGET=SOURCE` | map provider variable names, optionally scoped to a harness kind |
 | `--suite NAME` or `--suite=NAME` | select tests whose inherited `mcp_pal` marker has this suite name |
 
 Suite selection happens during pytest collection, before agent expansion. Put

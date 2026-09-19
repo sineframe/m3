@@ -95,7 +95,10 @@ def _parser() -> argparse.ArgumentParser:
         help="deadline for each selected agent execution",
     )
     test.add_argument(
-        "--credential-env", action="append", default=[], metavar="TARGET=SOURCE"
+        "--credential-env",
+        action="append",
+        default=[],
+        metavar="[KIND:]TARGET=SOURCE",
     )
     test.add_argument("--env-file", type=Path, default=None, metavar="PATH")
     test.add_argument(
