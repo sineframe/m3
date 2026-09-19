@@ -578,6 +578,7 @@ class DirectTraceBridge:
         persistence_succeeded: bool = True,
         limitations: tuple[str, ...] = (),
         direct_result: Mapping[str, Any] | None = None,
+        error: Mapping[str, Any] | None = None,
     ) -> TraceResult:
         with self._lock:
             if self._final is not None:
@@ -608,6 +609,8 @@ class DirectTraceBridge:
             }
             if direct_result is not None:
                 terminal_payload["direct_result"] = dict(direct_result)
+            if error is not None:
+                terminal_payload["error"] = dict(error)
             terminal = self._recorder.emit(
                 EventKind.EXECUTION_FINISHED,
                 payload=terminal_payload,

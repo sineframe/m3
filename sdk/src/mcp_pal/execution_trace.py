@@ -448,6 +448,7 @@ class ExecutionTraceRecorder:
         persistence_succeeded: bool = True,
         limitations: Sequence[str] = (),
         direct_result: Mapping[str, Any] | None = None,
+        error: Mapping[str, Any] | None = None,
     ) -> TraceResult:
         """Commit terminal evidence and return an idempotent terminal trace."""
         with self._record_lock:
@@ -473,6 +474,8 @@ class ExecutionTraceRecorder:
             }
             if direct_result is not None:
                 terminal_payload["direct_result"] = dict(direct_result)
+            if error is not None:
+                terminal_payload["error"] = dict(error)
             terminal_event = self.emit(
                 EventKind.EXECUTION_FINISHED,
                 payload=terminal_payload,

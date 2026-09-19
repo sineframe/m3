@@ -629,20 +629,34 @@ class AsyncDirectClient:
             return
 
     def _protocol_failure(self, operation: str, error: BaseException) -> ProtocolError:
+        official_error = isinstance(error, _OfficialMCPError)
         details: dict[str, Any] = {
             "operation": operation,
             "phase": "protocol",
             "partial_evidence": self._evidence(operation, "failed"),
-            "error_kind": "mcp_protocol",
+            "error_kind": "mcp_protocol" if official_error else "client_exception",
         }
         trace_evidence = self._trace_evidence()
         if trace_evidence is not None:
             details["trace_evidence"] = trace_evidence
         if isinstance(error, _OfficialMCPError):
             details["protocol_code"] = int(error.code)
+        else:
+            if isinstance(error, TypeError):
+                details["exception_type"] = "TypeError"
+            elif isinstance(error, ValueError):
+                details["exception_type"] = "ValueError"
+            elif isinstance(error, RuntimeError):
+                details["exception_type"] = "RuntimeError"
+            else:
+                details["exception_type"] = "Exception"
         self._emit_event(operation, "failed", error_kind="protocol")
         return ProtocolError(
-            f"MCP protocol operation failed: {operation}",
+            (
+                f"MCP protocol operation failed: {operation}"
+                if official_error
+                else f"MCP client operation failed: {operation}"
+            ),
             details=details,
         )
 
@@ -762,7 +776,7 @@ class AsyncDirectClient:
             return self._initialized
         try:
             raw = await self._execute("initialize", self._session.initialize())
-        except (TransportError, OperationTimeout, OperationCancelled):
+        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
         info = _dump(_attribute(raw, "server_info", {}))
         result = InitializationResult(
@@ -786,7 +800,7 @@ class AsyncDirectClient:
                 tools=tuple(_tool(item) for item in _attribute(raw, "tools", ())),
                 next_cursor=_attribute(raw, "next_cursor"),
             )
-        except (TransportError, OperationTimeout, OperationCancelled):
+        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
             raise self._protocol_failure("tools/list", exc) from exc
@@ -810,7 +824,7 @@ class AsyncDirectClient:
                 ),
                 next_cursor=_attribute(raw, "next_cursor"),
             )
-        except (TransportError, OperationTimeout, OperationCancelled):
+        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
             raise self._protocol_failure("resources/list", exc) from exc
@@ -838,7 +852,7 @@ class AsyncDirectClient:
                 ),
                 next_cursor=_attribute(raw, "next_cursor"),
             )
-        except (TransportError, OperationTimeout, OperationCancelled):
+        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
             raise
         except Exception as exc:
             raise self._protocol_failure("resources/templates/list", exc) from exc

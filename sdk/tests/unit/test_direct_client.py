@@ -609,6 +609,63 @@ async def test_official_mcp_errors_are_protocol_errors_without_provider_text() -
             await client.ping()
     assert "provider-secret" not in str(error.value)
     assert error.value.details["protocol_code"] == -32602
+    assert error.value.details["error_kind"] == "mcp_protocol"
+
+
+@pytest.mark.asyncio
+async def test_unexpected_client_failure_keeps_safe_cause_metadata() -> None:
+    class BrokenSession(FakeSession):
+        async def call_tool(
+            self,
+            name: str,
+            arguments: dict[str, object] | None = None,
+            **kwargs: object,
+        ) -> types.CallToolResult:
+            raise TypeError(
+                "Object of type _FrozenMapping is not JSON serializable: secret"
+            )
+
+    async with _client(BrokenSession()) as client:
+        with pytest.raises(ProtocolError) as error:
+            await client.call_tool("create_element", {"points": []})
+
+    assert error.value.details["operation"] == "tools/call"
+    assert error.value.details["error_kind"] == "client_exception"
+    assert error.value.details["exception_type"] == "TypeError"
+    assert str(error.value) == "MCP client operation failed: tools/call"
+    assert "secret" not in repr(error.value.details)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method_name", ("list_tools", "list_resources", "list_resource_templates")
+)
+async def test_official_list_error_is_not_rewrapped_as_a_client_exception(
+    method_name: str,
+) -> None:
+    from mcp.shared.exceptions import MCPError
+
+    class BrokenSession(FakeSession):
+        async def list_tools(self, *, params: object = None) -> types.ListToolsResult:
+            raise MCPError(code=-32602, message="provider-secret")
+
+        async def list_resources(
+            self, *, params: object = None
+        ) -> types.ListResourcesResult:
+            raise MCPError(code=-32602, message="provider-secret")
+
+        async def list_resource_templates(
+            self, *, params: object = None
+        ) -> types.ListResourceTemplatesResult:
+            raise MCPError(code=-32602, message="provider-secret")
+
+    async with _client(BrokenSession()) as client:
+        with pytest.raises(ProtocolError) as error:
+            await getattr(client, method_name)()
+
+    assert error.value.details["error_kind"] == "mcp_protocol"
+    assert error.value.details["protocol_code"] == -32602
+    assert "provider-secret" not in repr(error.value.details)
 
 
 @pytest.mark.asyncio

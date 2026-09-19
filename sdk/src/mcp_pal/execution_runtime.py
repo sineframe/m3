@@ -96,6 +96,7 @@ class _PersistentExecutionStore(ExecutionStore, ProfileResolver, Protocol):
 from .workspace import WorkspaceError, WorkspaceManager
 
 _DIRECT_RESULT_ADAPTER: TypeAdapter[DirectResult] = TypeAdapter(DirectResult)
+_ERROR_INFO_ADAPTER: TypeAdapter[ErrorInfo] = TypeAdapter(ErrorInfo)
 _CLEANUP_TIMEOUT_SECONDS = 10.0
 
 
@@ -129,6 +130,28 @@ def _direct_result_from_events(events: Sequence[Event]) -> DirectResult | None:
         return None
 
 
+def _error_from_trace(trace: TraceResult | None) -> ErrorInfo | None:
+    return _error_from_events(trace.events if trace is not None else ())
+
+
+def _error_from_events(events: Sequence[Event]) -> ErrorInfo | None:
+    terminal = next(
+        (
+            event
+            for event in reversed(events)
+            if event.kind is EventKind.EXECUTION_FINISHED
+        ),
+        None,
+    )
+    payload = terminal.payload.get("error") if terminal is not None else None
+    if not isinstance(payload, Mapping):
+        return None
+    try:
+        return _ERROR_INFO_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return None
+
+
 class DirectExecutionKit(Protocol):
     def direct(self, server: Any, **options: Any) -> Any: ...
 
@@ -141,6 +164,20 @@ class AgentRunner(Protocol):
         on_event: Callable[[Event], None] | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> Any: ...
+
+
+def _protocol_error_details(error: ProtocolError) -> dict[str, Any]:
+    """Keep bounded diagnostic metadata without exposing exception messages."""
+
+    details: dict[str, Any] = {}
+    for key in ("operation", "phase", "error_kind", "exception_type"):
+        value = error.details.get(key)
+        if isinstance(value, str) and len(value) <= 256:
+            details[key] = value
+    protocol_code = error.details.get("protocol_code")
+    if isinstance(protocol_code, int) and not isinstance(protocol_code, bool):
+        details["protocol_code"] = protocol_code
+    return details
 
 
 def _error_info(error: BaseException) -> ErrorInfo:
@@ -171,10 +208,15 @@ def _error_info(error: BaseException) -> ErrorInfo:
             retryable=False,
         )
     if isinstance(error, ProtocolError):
+        details = _protocol_error_details(error)
+        message = {
+            "client_exception": "MCP client operation failed",
+        }.get(str(details.get("error_kind")), "MCP protocol operation failed")
         return ErrorInfo(
             code=ErrorCode.PROTOCOL_ERROR,
-            message="MCP protocol operation failed",
+            message=message,
             retryable=False,
+            details=details,
         )
     if isinstance(error, TransportError):
         return ErrorInfo(
@@ -500,6 +542,11 @@ class AsyncExecutionHandle:
             if trace is not None
             else _direct_result_from_events(events)
         )
+        persisted_error = (
+            _error_from_trace(trace)
+            if trace is not None
+            else _error_from_events(events)
+        )
         if self._artifact_store is not None:
             # Artifact refs are part of the durable terminal result.  Do not
             # replace a storage failure with an empty tuple: that would make
@@ -514,9 +561,12 @@ class AsyncExecutionHandle:
             artifacts=self._workspace_artifacts,
             direct_result=self._direct_result,
             activity_health=_activity_health(trace),
-            error=_error_info(OperationCancelled("execution cancelled"))
-            if outcome is ExecutionOutcome.CANCELLED
-            else None,
+            error=persisted_error
+            or (
+                _error_info(OperationCancelled("execution cancelled"))
+                if outcome is ExecutionOutcome.CANCELLED
+                else None
+            ),
         )
         self._terminal.set()
         self._controller._finished(self)
@@ -815,11 +865,24 @@ class AsyncExecutionHandle:
                 if outcome in {ExecutionOutcome.CANCELLED, ExecutionOutcome.TIMED_OUT}
                 else ()
             )
+            result_error = (
+                _error_info(failure)
+                if isinstance(failure, (OperationCancelled, asyncio.CancelledError))
+                else self._agent_error
+                or (_error_info(failure) if failure is not None else None)
+            )
+            if workspace_cleanup_failed and result_error is None:
+                result_error = ErrorInfo(
+                    code=ErrorCode.CLEANUP_FAILED,
+                    message="execution cleanup failed",
+                    retryable=False,
+                )
             try:
                 trace = self._finalize(
                     outcome,
                     cleanup_succeeded=not workspace_cleanup_failed,
                     limitations=trace_limitations,
+                    error=result_error,
                 )
             except BaseException:
                 # Preserve a terminal result if secondary finalization fails.
@@ -830,23 +893,16 @@ class AsyncExecutionHandle:
                         outcome,
                         cleanup_succeeded=False,
                         limitations=trace_limitations,
+                        error=(
+                            result_error.model_dump(mode="json")
+                            if result_error is not None
+                            else None
+                        ),
                     )
                 except BaseException:
                     trace = None
             snapshot = self._store.get_snapshot(self._execution_id)
             if snapshot is not None and snapshot.lifecycle is ExecutionStatus.FINISHED:
-                result_error = (
-                    _error_info(failure)
-                    if isinstance(failure, (OperationCancelled, asyncio.CancelledError))
-                    else self._agent_error
-                    or (_error_info(failure) if failure is not None else None)
-                )
-                if workspace_cleanup_failed and result_error is None:
-                    result_error = ErrorInfo(
-                        code=ErrorCode.CLEANUP_FAILED,
-                        message="execution cleanup failed",
-                        retryable=False,
-                    )
                 self._result = ExecutionResult(
                     snapshot=snapshot,
                     trace=trace,
@@ -1250,20 +1306,24 @@ class AsyncExecutionHandle:
         *,
         cleanup_succeeded: bool = True,
         limitations: Sequence[str] = (),
+        error: ErrorInfo | None = None,
     ) -> TraceResult:
         direct_result = _direct_result_payload(self._direct_result)
+        error_payload = error.model_dump(mode="json") if error is not None else None
         if self._bridge is not None:
             return self._bridge.finalize(
                 outcome,
                 cleanup_succeeded=cleanup_succeeded,
                 limitations=tuple(limitations),
                 direct_result=direct_result,
+                error=error_payload,
             )
         return self._recorder.finalize(
             outcome,
             cleanup_succeeded=cleanup_succeeded,
             limitations=tuple(limitations),
             direct_result=direct_result,
+            error=error_payload,
         )
 
 
