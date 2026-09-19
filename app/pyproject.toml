@@ -1,8 +1,10 @@
 [project]
 name = "mcp-pal-app"
 version = "0.2.0a3"
-description = "Private MCP Pal web application"
+description = "Local web application for viewing MCP Pal test runs"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 dependencies = [
   "mcp-pal[storage]",
   "fastapi>=0.115,<1",
