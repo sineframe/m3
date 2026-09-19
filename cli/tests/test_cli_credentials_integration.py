@@ -30,7 +30,7 @@ def _cli_case(
         "PAL_MARKED",
         "PAL_GLOBAL",
         "PAL_SCOPED",
-        "MCP_PAL_BENIGN_SETTING",
+        "MCP_PAL_CLAUDE_MODEL",
     ):
         environment.pop(key, None)
     if ambient:
@@ -114,21 +114,22 @@ def test_child(agent):
     _assert_no_secret(result, database, tmp_path)
 
 
-def test_env_file_passes_benign_mcp_pal_setting_only_to_pytest_child(
+def test_env_file_passes_unknown_prefixed_variable_through_fixture_setup(
     tmp_path: Path,
 ) -> None:
     source = """
 import os
-def test_child():
-    assert os.environ["MCP_PAL_BENIGN_SETTING"] == "from-file"
+def test_child(mcp_pal_kit):
+    assert os.environ["MCP_PAL_CLAUDE_MODEL"] == "claude-sonnet-5"
+    assert mcp_pal_kit.config.telemetry_enabled is False
 """
     result, database = _cli_case(
         tmp_path,
         source,
-        "MCP_PAL_BENIGN_SETTING=from-file\n",
+        "MCP_PAL_CLAUDE_MODEL=claude-sonnet-5\n",
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert os.environ.get("MCP_PAL_BENIGN_SETTING") is None
+    assert os.environ.get("MCP_PAL_CLAUDE_MODEL") is None
     _assert_no_secret(result, database, tmp_path)
 
 

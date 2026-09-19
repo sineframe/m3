@@ -138,7 +138,9 @@ def test_invalid_values_report_field_and_origin_without_value(
     assert field in message and "argument" in message and str(value) not in message
 
 
-def test_unknown_settings_are_rejected_without_echoing_values(tmp_path: Path) -> None:
+def test_unknown_project_settings_are_rejected_without_echoing_values(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[tool.mcp-pal]\nunknown_secret_setting = "TOP-SECRET"\n', encoding="utf-8"
     )
@@ -146,10 +148,17 @@ def test_unknown_settings_are_rejected_without_echoing_values(tmp_path: Path) ->
         load_config(env={}, cwd=tmp_path)
     assert "unknown_secret_setting" in str(caught.value)
     assert "TOP-SECRET" not in str(caught.value)
-    with pytest.raises(ConfigError):
-        load_config(
-            env={"MCP_PAL_UNKNOWN": "TOP-SECRET"}, cwd=Path("/tmp/mcp-pal-no-project")
-        )
+
+
+def test_unknown_prefixed_environment_variables_are_ignored() -> None:
+    config = load_config(
+        env={
+            "MCP_PAL_CLAUDE_MODEL": "claude-sonnet-5",
+            "MCP_PAL_TELEMETRY_ENABLED": "true",
+        },
+        cwd=Path("/tmp/mcp-pal-no-project"),
+    )
+    assert config.telemetry_enabled is True
 
 
 def test_configuration_json_round_trip_and_aliases() -> None:

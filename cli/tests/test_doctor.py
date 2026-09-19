@@ -97,13 +97,6 @@ def test_doctor_rejects_unknown_option_without_echoing_input(capsys) -> None:
             "env:MCP_PAL_ARTIFACT_POLICY",
             "must be one of failed, always, or never",
         ),
-        (
-            "MCP_PAL_UNKNOWN_SETTING",
-            "secret-unknown-value",
-            "MCP_PAL_UNKNOWN_SETTING",
-            "environment",
-            "unknown setting",
-        ),
     ),
 )
 def test_doctor_configuration_errors_are_actionable_and_value_free(
@@ -120,14 +113,21 @@ def test_doctor_configuration_errors_are_actionable_and_value_free(
     payload = json.loads(capsys.readouterr().out)
     assert payload["ready"] is False
     assert payload["error"] == {
-        "code": "unknown_setting"
-        if variable == "MCP_PAL_UNKNOWN_SETTING"
-        else "invalid_configuration",
+        "code": "invalid_configuration",
         "field": field,
         "origin": origin,
         "reason": reason,
     }
     assert value not in json.dumps(payload)
+
+
+def test_doctor_ignores_unknown_prefixed_environment_variables(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("MCP_PAL_CLAUDE_MODEL", "claude-sonnet-5")
+    assert main(["doctor", "--require", "config", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is True
 
 
 def test_doctor_configuration_error_human_output_has_structured_diagnostic(

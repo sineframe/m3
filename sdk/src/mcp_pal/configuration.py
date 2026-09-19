@@ -262,15 +262,6 @@ def _project_values(start: str | _Path | None) -> tuple[dict[str, _Any], str]:
 
 
 def _environment_values(environment: _Mapping[str, str]) -> dict[str, _Any]:
-    unknown = sorted(
-        key
-        for key in environment
-        if key.startswith("MCP_PAL_") and key not in _ENV_FIELDS
-    )
-    if unknown:
-        raise _error(
-            ", ".join(unknown), "environment", "unknown setting", code="unknown_setting"
-        )
     values: dict[str, _Any] = {}
     for name, field in _ENV_FIELDS.items():
         if name in environment:
