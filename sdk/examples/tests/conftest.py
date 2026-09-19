@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import StdioServer
+from m3 import StdioServer
 
 EXAMPLES_ROOT = Path(__file__).parents[1]
 SERVER_SCRIPT = EXAMPLES_ROOT / "servers" / "example_mcp_server.py"

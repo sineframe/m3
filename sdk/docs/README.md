@@ -1,12 +1,12 @@
-# MCP Pal Python SDK
+# M3 Python SDK
 
 Use these pages to start writing tests for MCP servers and agent harnesses.
-Tests are ordinary executable pytest tests; run them through the MCP Pal CLI
+Tests are ordinary executable pytest tests; run them through the M3 CLI
 for persisted results and an optional local UI, or invoke pytest directly.
 Native harness choices include Claude Code, OpenCode, Codex App Server, and Pi
 RPC; ACP remains the bring-your-own protocol path.
 The project SDK and standalone CLI are separate installations; adding the SDK
-to a project does not install the `mcp-pal` command or its bundled UI.
+to a project does not install the `m3` command or its bundled UI.
 
 - [Streamable HTTP](http.md) — test a deployed MCP endpoint
   directly, through an agent session, or with a harness matrix.
@@ -28,4 +28,4 @@ For harness-driven tool assertions, start with
 
 The examples run against the deterministic stdio server in
 [`example_mcp_server.py`](../examples/servers/example_mcp_server.py). They use
-only public MCP Pal SDK APIs, so the same tests work with either runner.
+only public M3 SDK APIs, so the same tests work with either runner.

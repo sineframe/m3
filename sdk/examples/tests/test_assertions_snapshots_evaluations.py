@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from mcp_pal import (
+from m3 import (
     ArtifactId,
     ArtifactRef,
     CallTool,
@@ -29,8 +29,8 @@ from mcp_pal import (
     expect,
     snapshot,
 )
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.storage import SQLiteExecutionStore
+from m3.async_api import AsyncMCPTestKit
+from m3.storage import SQLiteExecutionStore
 
 _QUOTE_CONTENT = {"type": "text", "text": '{"amount": 7.0, "currency": "USD"}'}
 _QUOTE_CONTENT_RESULT = {**_QUOTE_CONTENT, "annotations": None, "_meta": None}
@@ -243,7 +243,7 @@ def test_sqlite_evaluations_reopen_with_builtin_and_structured_custom(
                 metrics={"has_currency": 1.0},
             ),
         )
-        builtin = kit.evaluate(execution, "mcp_pal.output.has_text.v1")
+        builtin = kit.evaluate(execution, "m3.output.has_text.v1")
         custom = kit.evaluate(execution, "example.structured.v1")
         execution_id = execution.snapshot.execution_id
     store.close()
@@ -251,7 +251,7 @@ def test_sqlite_evaluations_reopen_with_builtin_and_structured_custom(
     try:
         records = reopened.evaluations(execution_id)
         assert {record.name for record in records} == {
-            "mcp_pal.output.has_text.v1",
+            "m3.output.has_text.v1",
             "example.structured.v1",
         }
         assert custom.score == 1.0 and builtin.status is EvaluationStatus.PASSED

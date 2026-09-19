@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from mcp_pal.harness import manifest
-from mcp_pal.harness.manifest import (
+from m3.harness import manifest
+from m3.harness.manifest import (
     ManifestValidationError,
     export_manifest,
     validate_manifest,

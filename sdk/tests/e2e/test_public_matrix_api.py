@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase, ToolMatrix
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import (
+from m3 import MCPTestKit, expect
+from m3.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase, ToolMatrix
+from m3.storage import SQLiteExecutionStore
+from m3.types import (
     ACPAgent,
     CallToolResult,
     ExecutionOutcome,
@@ -39,7 +39,7 @@ def _server(name: str, marker: Path) -> StdioServer:
         command=sys.executable,
         args=(str(_MCP_SERVER),),
         cwd=str(_REPOSITORY_ROOT),
-        environment={"MCP_PAL_E2E_MCP_MARKER": str(marker)},
+        environment={"M3_E2E_MCP_MARKER": str(marker)},
     )
 
 
@@ -49,7 +49,7 @@ def _harness() -> HarnessCase:
         harness=ACPAgent(
             model="matrix-fixture",
             manifest={
-                "schema_version": "mcp-pal.harness.v1",
+                "schema_version": "m3.harness.v1",
                 "protocol": "acp",
                 "protocol_version": 1,
                 "command": sys.executable,
@@ -119,8 +119,8 @@ def test_tool_matrix_calls_owned_tools_and_persists_each_cell(tmp_path: Path) ->
                 assert persisted is not None
                 report = store.get_report(result.snapshot.execution_id)
                 assert report is not None
-                assert persisted.metadata["mcp_pal.matrix.case_id"] == case.id
-                assert persisted.metadata["mcp_pal.matrix.servers"] == case.server.name
+                assert persisted.metadata["m3.matrix.case_id"] == case.id
+                assert persisted.metadata["m3.matrix.servers"] == case.server.name
         assert [case.id for case in matrix.cases()] == [
             "catalog/echo",
             "warehouse/failure",
@@ -273,8 +273,8 @@ def test_harness_matrix_all_servers_chains_real_turns_and_persists_one_execution
         assert sum(event.kind.value == "turn.created" for event in report.events) == 2
         spec = store.get_execution_spec(result.snapshot.execution_id)
         assert spec is not None
-        assert spec.metadata["mcp_pal.matrix.mode"] == "all_servers"
-        assert spec.metadata["mcp_pal.matrix.servers"] == "catalog,warehouse"
+        assert spec.metadata["m3.matrix.mode"] == "all_servers"
+        assert spec.metadata["m3.matrix.servers"] == "catalog,warehouse"
         _assert_processes_exited(markers["catalog"])
         _assert_processes_exited(markers["warehouse"])
     finally:
@@ -292,7 +292,7 @@ async def test_tool_matrix_async_run_helpers_use_real_processes_and_are_independ
     matrix = ToolMatrix(servers=(server,))
     store = SQLiteExecutionStore(tmp_path / "async.sqlite")
     try:
-        from mcp_pal.async_api import AsyncMCPTestKit
+        from m3.async_api import AsyncMCPTestKit
 
         async with AsyncMCPTestKit(
             store=store, env={}, cwd=str(_REPOSITORY_ROOT)
@@ -318,7 +318,7 @@ async def test_harness_matrix_async_run_and_session_use_real_processes(
     ).cases()[0]
     store = SQLiteExecutionStore(tmp_path / "async-harness.sqlite")
     try:
-        from mcp_pal.async_api import AsyncMCPTestKit
+        from m3.async_api import AsyncMCPTestKit
 
         async with AsyncMCPTestKit(
             store=store, env={}, cwd=str(_REPOSITORY_ROOT)
@@ -366,8 +366,8 @@ async def test_harness_matrix_async_run_and_session_use_real_processes(
         )
         spec = store.get_execution_spec(session_result.snapshot.execution_id)
         assert spec is not None
-        assert spec.metadata["mcp_pal.matrix.mode"] == "each_server"
-        assert spec.metadata["mcp_pal.matrix.case_id"] == case.id
+        assert spec.metadata["m3.matrix.mode"] == "each_server"
+        assert spec.metadata["m3.matrix.case_id"] == case.id
         assert len(_calls(marker)) == 2
         _assert_processes_exited(marker)
     finally:

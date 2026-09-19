@@ -11,8 +11,8 @@ from typing import get_type_hints
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-import mcp_pal
-from mcp_pal._exports import (
+import m3
+from m3._exports import (
     _INTERNAL_MODULES,
     _ROOT_ALL,
     PUBLIC_EXPORTS,
@@ -20,8 +20,8 @@ from mcp_pal._exports import (
     ROOT_EXPORTS,
     ROOT_LIMIT,
 )
-from mcp_pal.errors import InvalidTransitionError, ModelValidationError
-from mcp_pal.types import (
+from m3.errors import InvalidTransitionError, ModelValidationError
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ArtifactId,
@@ -104,13 +104,13 @@ class Mutable:
 
 def test_public_modules_import_without_application_layers() -> None:
     for module_name in (
-        "mcp_pal",
-        "mcp_pal.sync_api",
-        "mcp_pal.async_api",
-        "mcp_pal.types",
-        "mcp_pal.matchers",
-        "mcp_pal.testing",
-        "mcp_pal.pytest_plugin",
+        "m3",
+        "m3.sync_api",
+        "m3.async_api",
+        "m3.types",
+        "m3.matchers",
+        "m3.testing",
+        "m3.pytest_plugin",
     ):
         module = importlib.import_module(module_name)
         assert module.__name__ == module_name
@@ -118,9 +118,9 @@ def test_public_modules_import_without_application_layers() -> None:
 
 def test_implementation_modules_are_explicitly_internal() -> None:
     assert _INTERNAL_MODULES == (
-        "mcp_pal.events",
-        "mcp_pal.execution_trace",
-        "mcp_pal.trace.redaction",
+        "m3.events",
+        "m3.execution_trace",
+        "m3.trace.redaction",
     )
     assert not set(_INTERNAL_MODULES).intersection(PUBLIC_EXPORTS)
 
@@ -128,9 +128,7 @@ def test_implementation_modules_are_explicitly_internal() -> None:
 @pytest.mark.parametrize(
     "module_name",
     tuple(
-        name
-        for name in PUBLIC_EXPORTS
-        if name not in {"mcp_pal", "mcp_pal.types", "mcp_pal.errors"}
+        name for name in PUBLIC_EXPORTS if name not in {"m3", "m3.types", "m3.errors"}
     ),
 )
 def test_boundary_exports_match_manifest_without_accidental_names(
@@ -146,16 +144,16 @@ def test_boundary_exports_match_manifest_without_accidental_names(
         and not inspect.ismodule(value)
     }
     compatibility = {
-        "mcp_pal.matrix": {"HarnessCase", "HarnessMatrix", "HarnessMatrixCase"},
+        "m3.matrix": {"HarnessCase", "HarnessMatrix", "HarnessMatrixCase"},
     }.get(module_name, set())
     assert public_names <= set(module.__all__) | compatibility
 
 
 def test_root_exports_match_manifest_without_accidental_public_names() -> None:
-    assert tuple(mcp_pal.__all__) == PUBLIC_EXPORTS["mcp_pal"]
+    assert tuple(m3.__all__) == PUBLIC_EXPORTS["m3"]
     public_names = {
         name
-        for name, value in vars(mcp_pal).items()
+        for name, value in vars(m3).items()
         if (not name.startswith("_") or name == "__version__")
         and not inspect.ismodule(value)
     }
@@ -166,7 +164,7 @@ def test_root_exports_match_manifest_without_accidental_public_names() -> None:
 
 
 def test_root_export_categories_preserve_the_compatibility_surface() -> None:
-    assert tuple(PUBLIC_EXPORTS["mcp_pal"]) == (
+    assert tuple(PUBLIC_EXPORTS["m3"]) == (
         "__version__",
         "MCPTestKit",
         "StdioServer",
@@ -180,34 +178,34 @@ def test_root_export_categories_preserve_the_compatibility_surface() -> None:
         "check",
         "MCPError",
     )
-    assert set(ROOT_EXPORTS) == set(PUBLIC_EXPORTS["mcp_pal"])
+    assert set(ROOT_EXPORTS) == set(PUBLIC_EXPORTS["m3"])
     assert len(ROOT_EXPORTS) <= ROOT_LIMIT
     duplicate_names = {name for name in ROOT_EXPORTS if ROOT_EXPORTS.count(name) > 1}
     assert duplicate_names == set()
     assert set(PUBLIC_MODULES).isdisjoint(_INTERNAL_MODULES)
-    assert set(PUBLIC_EXPORTS) - {"mcp_pal"} <= set(PUBLIC_MODULES)
-    assert "mcp_pal.storage" in PUBLIC_MODULES
+    assert set(PUBLIC_EXPORTS) - {"m3"} <= set(PUBLIC_MODULES)
+    assert "m3.storage" in PUBLIC_MODULES
     assert set(_INTERNAL_MODULES) == {
-        "mcp_pal.events",
-        "mcp_pal.execution_trace",
-        "mcp_pal.trace.redaction",
+        "m3.events",
+        "m3.execution_trace",
+        "m3.trace.redaction",
     }
     assert not set(_INTERNAL_MODULES) & set(PUBLIC_MODULES)
 
 
 def test_public_reexports_keep_the_same_objects() -> None:
-    types_module = importlib.import_module("mcp_pal.types")
+    types_module = importlib.import_module("m3.types")
 
     for name in types_module.__all__:
         value = getattr(types_module, name)
-        if hasattr(mcp_pal, name):
-            assert getattr(mcp_pal, name) is value
+        if hasattr(m3, name):
+            assert getattr(m3, name) is value
 
 
 def test_direct_client_aliases_keep_the_same_objects() -> None:
-    direct_module = importlib.import_module("mcp_pal.direct_client")
-    sync_module = importlib.import_module("mcp_pal.sync_api")
-    async_module = importlib.import_module("mcp_pal.async_api")
+    direct_module = importlib.import_module("m3.direct_client")
+    sync_module = importlib.import_module("m3.sync_api")
+    async_module = importlib.import_module("m3.async_api")
     for module in (sync_module, async_module):
         assert module.Tool is module.ToolInfo
         assert module.Resource is module.ResourceInfo
@@ -240,9 +238,9 @@ def test_direct_client_aliases_keep_the_same_objects() -> None:
 
 
 def test_direct_results_stay_distinct_from_durable_results() -> None:
-    types_module = importlib.import_module("mcp_pal.types")
-    sync_module = importlib.import_module("mcp_pal.sync_api")
-    async_module = importlib.import_module("mcp_pal.async_api")
+    types_module = importlib.import_module("m3.types")
+    sync_module = importlib.import_module("m3.sync_api")
+    async_module = importlib.import_module("m3.async_api")
     for name in (
         "CallToolResult",
         "GetPromptResult",
@@ -259,16 +257,16 @@ def test_direct_results_stay_distinct_from_durable_results() -> None:
 
 
 def test_public_model_metadata_stays_in_the_types_module() -> None:
-    types_module = importlib.import_module("mcp_pal.types")
-    for name in PUBLIC_EXPORTS["mcp_pal.types"]:
+    types_module = importlib.import_module("m3.types")
+    for name in PUBLIC_EXPORTS["m3.types"]:
         value = getattr(types_module, name)
         if inspect.isclass(value):
-            assert value.__module__ == "mcp_pal.types"
-    assert types_module._FrozenMapping.__module__ == "mcp_pal.types"
+            assert value.__module__ == "m3.types"
+    assert types_module._FrozenMapping.__module__ == "m3.types"
 
 
 def test_public_model_annotations_resolve_through_the_types_facade() -> None:
-    types_module = importlib.import_module("mcp_pal.types")
+    types_module = importlib.import_module("m3.types")
     for name in types_module.__all__:
         value = getattr(types_module, name)
         if inspect.isclass(value):
@@ -295,13 +293,13 @@ def test_public_values_keep_stable_pickle_paths() -> None:
 
 
 def test_types_manifest_contains_only_public_model_or_alias_names() -> None:
-    types_module = importlib.import_module("mcp_pal.types")
-    assert tuple(types_module.__all__) == PUBLIC_EXPORTS["mcp_pal.types"]
+    types_module = importlib.import_module("m3.types")
+    assert tuple(types_module.__all__) == PUBLIC_EXPORTS["m3.types"]
     for name in types_module.__all__:
         assert hasattr(types_module, name)
 
 
-@pytest.mark.parametrize("module_name", ("mcp_pal.types", "mcp_pal.errors"))
+@pytest.mark.parametrize("module_name", ("m3.types", "m3.errors"))
 def test_every_manifest_model_has_json_schema(module_name: str) -> None:
     module = importlib.import_module(module_name)
     for name in PUBLIC_EXPORTS[module_name]:
@@ -315,7 +313,7 @@ def test_every_manifest_model_has_json_schema(module_name: str) -> None:
     ("ContentBlock", "ExecutionSpec", "HarnessSpec", "ServerValue", "ToolPolicy"),
 )
 def test_every_public_serializable_alias_has_json_schema(alias_name: str) -> None:
-    alias = getattr(importlib.import_module("mcp_pal.types"), alias_name)
+    alias = getattr(importlib.import_module("m3.types"), alias_name)
     assert TypeAdapter(alias).json_schema()
 
 
@@ -728,7 +726,7 @@ def test_workspace_risk_and_execution_transitions_are_validated() -> None:
 
 
 def test_runtime_only_in_process_factory_is_excluded_from_serialization() -> None:
-    from mcp_pal.types import InProcessServer
+    from m3.types import InProcessServer
 
     server = InProcessServer(name="local", factory=lambda: object())
     assert "factory" not in server.model_dump()

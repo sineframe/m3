@@ -25,20 +25,20 @@ from typing import IO
 import pytest
 from pydantic import TypeAdapter
 
-from mcp_pal import MCPTestKit
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import UnsupportedFeature
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.observability import ObservationState, TransportEntry
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.sync_api import (
+from m3 import MCPTestKit
+from m3.async_api import AsyncMCPTestKit
+from m3.errors import UnsupportedFeature
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.observability import ObservationState, TransportEntry
+from m3.storage import SQLiteExecutionStore
+from m3.sync_api import (
     InitializationResult,
     PromptResult,
     ResourceReadResult,
     ToolCallResult,
 )
-from mcp_pal.testing import FaultInjector
-from mcp_pal.types import (
+from m3.testing import FaultInjector
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ArtifactPolicy,
@@ -85,7 +85,7 @@ _SDK_ROOT = Path(__file__).parents[2]
 _REPOSITORY_ROOT = _SDK_ROOT.parent
 _FIXTURES = _SDK_ROOT / "tests" / "fixtures"
 _MATRIX_SERVER = _FIXTURES / "matrix_stdio_server.py"
-_OBSERVING_ACP_BRIDGE = _FIXTURES / "observing_acp_bridge.py"
+_OBSERVING_ACP_AGENT = _FIXTURES / "observing_acp_agent.py"
 _PERSISTENT_WORKER = _FIXTURES / "persistent_sdk_worker.py"
 _HANGING_SERVER = _FIXTURES / "hanging_stdio_server.py"
 _WORKER_READY_TIMEOUT = 30.0
@@ -109,18 +109,18 @@ def _stdio_server(
 
 def _acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentSpec:
     manifest = {
-        "schema_version": "mcp-pal.harness.v1",
+        "schema_version": "m3.harness.v1",
         "protocol": "acp",
         "protocol_version": 1,
         "command": sys.executable,
         "args": [
-            str(_OBSERVING_ACP_BRIDGE),
+            str(_OBSERVING_ACP_AGENT),
             "--observation-marker",
             str(acp_marker),
             "--target",
             sys.executable,
             "--target-args-json",
-            '["-m","mcp_pal.fixtures.structured_cli"]',
+            '["-m","m3.fixtures.structured_cli"]',
         ],
         "env": {},
     }
@@ -129,7 +129,7 @@ def _acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentSpec:
         servers=(
             ServerBinding(
                 server=_stdio_server(
-                    environment={"MCP_PAL_E2E_MCP_MARKER": str(mcp_marker)},
+                    environment={"M3_E2E_MCP_MARKER": str(mcp_marker)},
                 ),
                 alias="e2e-mcp",
             ),
@@ -146,7 +146,7 @@ def _scenario_acp_spec(mode: str, *, mcp_marker: Path) -> AgentSpec:
         harness=ACPAgent(
             model="fixture",
             manifest={
-                "schema_version": "mcp-pal.harness.v1",
+                "schema_version": "m3.harness.v1",
                 "protocol": "acp",
                 "protocol_version": 1,
                 "command": sys.executable,
@@ -157,7 +157,7 @@ def _scenario_acp_spec(mode: str, *, mcp_marker: Path) -> AgentSpec:
         servers=(
             ServerBinding(
                 server=_stdio_server(
-                    environment={"MCP_PAL_E2E_MCP_MARKER": str(mcp_marker)}
+                    environment={"M3_E2E_MCP_MARKER": str(mcp_marker)}
                 ),
                 alias="e2e-mcp",
             ),
@@ -176,19 +176,19 @@ def _scenario_acp_cancel_spec(
         harness=ACPAgent(
             model="fixture",
             manifest={
-                "schema_version": "mcp-pal.harness.v1",
+                "schema_version": "m3.harness.v1",
                 "protocol": "acp",
                 "protocol_version": 1,
                 "command": sys.executable,
                 "args": [str(fixture), "hang"],
-                "env": {"MCP_PAL_ACP_PID_FILE": str(acp_pid_marker)},
+                "env": {"M3_ACP_PID_FILE": str(acp_pid_marker)},
             },
         ),
         servers=(
             ServerBinding(
                 server=_stdio_server(
                     _HANGING_SERVER,
-                    environment={"MCP_PAL_E2E_PID_FILE": str(mcp_pid_marker)},
+                    environment={"M3_E2E_PID_FILE": str(mcp_pid_marker)},
                 ),
                 alias="e2e-mcp",
             ),
@@ -205,12 +205,12 @@ def _authenticated_acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentSpec:
         harness=ACPAgent(
             model="fixture",
             manifest={
-                "schema_version": "mcp-pal.harness.v1",
+                "schema_version": "m3.harness.v1",
                 "protocol": "acp",
                 "protocol_version": 1,
                 "command": sys.executable,
                 "args": [str(_FIXTURES / "acp_scenario_agent.py"), "auth"],
-                "env": {"MCP_PAL_ACP_MARKER": str(acp_marker)},
+                "env": {"M3_ACP_MARKER": str(acp_marker)},
             },
         ),
         servers=(
@@ -221,10 +221,10 @@ def _authenticated_acp_spec(*, acp_marker: Path, mcp_marker: Path) -> AgentSpec:
                     args=(str(_FIXTURES / "auth_stdio_server.py"),),
                     cwd=str(_REPOSITORY_ROOT),
                     environment={
-                        "MCP_PAL_AUTH_TOKEN": SecretReference(
-                            source="environment", name="MCP_PAL_AUTH_TOKEN"
+                        "M3_AUTH_TOKEN": SecretReference(
+                            source="environment", name="M3_AUTH_TOKEN"
                         ),
-                        "MCP_PAL_E2E_MCP_MARKER": str(mcp_marker),
+                        "M3_E2E_MCP_MARKER": str(mcp_marker),
                     },
                 ),
                 alias="auth-mcp",
@@ -337,13 +337,13 @@ def _persistent_worker(
     stdout_reader = threading.Thread(
         target=_capture_stream,
         args=(process.stdout, stdout_output, stdout_done, stdout_lines),
-        name="mcp-pal-worker-stdout",
+        name="m3-worker-stdout",
         daemon=True,
     )
     stderr_reader = threading.Thread(
         target=_capture_stream,
         args=(process.stderr, stderr_output, stderr_done),
-        name="mcp-pal-worker-stderr",
+        name="m3-worker-stderr",
         daemon=True,
     )
     stdout_reader.start()
@@ -655,9 +655,7 @@ async def test_async_run_real_stdio_startup_failure_is_failed_and_traced() -> No
     spec = DirectSpec(
         servers=(
             ServerBinding(
-                server=StdioServer(
-                    name="missing", command="mcp-pal-no-such-executable"
-                ),
+                server=StdioServer(name="missing", command="m3-no-such-executable"),
                 alias="missing",
             ),
         ),
@@ -975,7 +973,7 @@ async def test_acp_secret_reference_reaches_only_stdio_handoff_and_persists_reda
     """Public ACP execution authenticates MCP without exposing its credential."""
 
     canary = "acp-auth-server-canary"
-    monkeypatch.setenv("MCP_PAL_AUTH_TOKEN", canary)
+    monkeypatch.setenv("M3_AUTH_TOKEN", canary)
     acp_marker = tmp_path / "acp-secret-config.json"
     mcp_marker = tmp_path / "mcp-auth.json"
     database = (tmp_path / "acp-secret.sqlite").resolve()
@@ -1227,7 +1225,7 @@ async def test_separate_worker_cancel_interrupts_owned_stdio_process(
     database = (tmp_path / f"cancel-{iteration}.sqlite").resolve()
     server = _stdio_server(
         _HANGING_SERVER,
-        environment={"MCP_PAL_E2E_PID_FILE": str(pid_file)},
+        environment={"M3_E2E_PID_FILE": str(pid_file)},
     )
 
     with _persistent_worker(database):

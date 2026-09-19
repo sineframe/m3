@@ -18,9 +18,9 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "mcp-pal",
-    "mcp-pal-app",
-    "mcp-pal-cli",
+    "m3",
+    "m3-app",
+    "m3-cli",
 ]
 
 [manifest.dependency-groups]
@@ -1021,6 +1021,168 @@ wheels = [
 ]
 
 [[package]]
+name = "m3"
+version = "0.2.0a13"
+source = { editable = "sdk" }
+dependencies = [
+    { name = "agent-client-protocol" },
+    { name = "anyio" },
+    { name = "httpcore" },
+    { name = "httpcore2" },
+    { name = "httpx" },
+    { name = "httpx2" },
+    { name = "idna" },
+    { name = "jsonschema" },
+    { name = "mcp" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "starlette" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "httpx" },
+    { name = "hypothesis" },
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "sqlalchemy" },
+]
+docs = [
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+]
+property = [
+    { name = "hypothesis" },
+]
+pytest = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-xdist" },
+]
+storage = [
+    { name = "sqlalchemy" },
+]
+
+[package.dev-dependencies]
+typecheck = [
+    { name = "hypothesis" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "sqlalchemy" },
+    { name = "tomli" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-client-protocol", specifier = "==0.12.1" },
+    { name = "anyio", specifier = ">=4.5,<5" },
+    { name = "httpcore", specifier = ">=1,<2" },
+    { name = "httpcore2", specifier = ">=2.5,<3" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27,<1" },
+    { name = "httpx2", specifier = ">=2.5,<3" },
+    { name = "hypothesis", marker = "extra == 'all'", specifier = ">=6.100,<7" },
+    { name = "hypothesis", marker = "extra == 'property'", specifier = ">=6.100,<7" },
+    { name = "idna", specifier = ">=3,<4" },
+    { name = "jsonschema", specifier = ">=4.20,<5" },
+    { name = "mcp", specifier = ">=2,<3" },
+    { name = "mkdocs-material", marker = "extra == 'all'", specifier = ">=9.5,<10" },
+    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5,<10" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'all'", specifier = ">=0.25,<2" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.25,<2" },
+    { name = "pydantic", specifier = ">=2.8,<3" },
+    { name = "pytest", marker = "extra == 'all'", specifier = ">=8,<10" },
+    { name = "pytest", marker = "extra == 'pytest'", specifier = ">=8,<10" },
+    { name = "pytest-asyncio", marker = "extra == 'all'", specifier = ">=0.23,<2" },
+    { name = "pytest-asyncio", marker = "extra == 'pytest'", specifier = ">=0.23,<2" },
+    { name = "pytest-xdist", marker = "extra == 'pytest'", specifier = ">=3.6,<4" },
+    { name = "python-dotenv", specifier = ">=1,<2" },
+    { name = "sqlalchemy", marker = "extra == 'all'", specifier = ">=2.0,<3" },
+    { name = "sqlalchemy", marker = "extra == 'storage'", specifier = ">=2.0,<3" },
+    { name = "starlette", specifier = ">=0.40,<2" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2,<3" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
+]
+provides-extras = ["pytest", "storage", "property", "docs", "all"]
+
+[package.metadata.requires-dev]
+typecheck = [
+    { name = "hypothesis", specifier = ">=6.100,<7" },
+    { name = "mypy", specifier = ">=1.11,<2" },
+    { name = "pytest", specifier = ">=8,<10" },
+    { name = "sqlalchemy", specifier = ">=2.0,<3" },
+    { name = "tomli", specifier = ">=2,<3" },
+]
+
+[[package]]
+name = "m3-app"
+version = "0.2.0a13"
+source = { editable = "app" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "m3", extra = ["storage"] },
+    { name = "pydantic-settings" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-xdist" },
+]
+typecheck = [
+    { name = "mypy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "m3", extras = ["storage"], editable = "sdk" },
+    { name = "pydantic-settings", specifier = ">=2.4,<3" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
+]
+
+[package.metadata.requires-dev]
+test = [
+    { name = "pytest", specifier = ">=8,<10" },
+    { name = "pytest-asyncio", specifier = ">=0.23,<2" },
+    { name = "pytest-xdist", specifier = ">=3.6,<4" },
+]
+typecheck = [{ name = "mypy", specifier = ">=1.11,<2" }]
+
+[[package]]
+name = "m3-cli"
+version = "0.2.0a13"
+source = { editable = "cli" }
+dependencies = [
+    { name = "m3", extra = ["storage"] },
+    { name = "m3-app" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "pytest" },
+]
+typecheck = [
+    { name = "mypy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "m3", extras = ["storage"], editable = "sdk" },
+    { name = "m3-app", editable = "app" },
+]
+
+[package.metadata.requires-dev]
+test = [{ name = "pytest", specifier = ">=8,<10" }]
+typecheck = [{ name = "mypy", specifier = ">=1.11,<2" }]
+
+[[package]]
 name = "markdown"
 version = "3.10.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1138,168 +1300,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/74/33/32d4dff2c95bb5d89
 wheels = [
     { url = "https://files.pythonhosted.org/packages/67/72/7d7897418912c1d12e87556630dfb7bf0eac71160e9bef8b447960804ee3/mcp-2.0.0-py3-none-any.whl", hash = "sha256:1cb4c75d2d2c7b8c1d756355e5d82a39f2822cc7f13e22a2051d7ca3592349d6", size = 349980, upload-time = "2026-07-28T13:45:28.853Z" },
 ]
-
-[[package]]
-name = "mcp-pal"
-version = "0.2.0a3"
-source = { editable = "sdk" }
-dependencies = [
-    { name = "agent-client-protocol" },
-    { name = "anyio" },
-    { name = "httpcore" },
-    { name = "httpcore2" },
-    { name = "httpx" },
-    { name = "httpx2" },
-    { name = "idna" },
-    { name = "jsonschema" },
-    { name = "mcp" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "starlette" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "httpx" },
-    { name = "hypothesis" },
-    { name = "mkdocs-material" },
-    { name = "mkdocstrings", extra = ["python"] },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "sqlalchemy" },
-]
-docs = [
-    { name = "mkdocs-material" },
-    { name = "mkdocstrings", extra = ["python"] },
-]
-property = [
-    { name = "hypothesis" },
-]
-pytest = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-xdist" },
-]
-storage = [
-    { name = "sqlalchemy" },
-]
-
-[package.dev-dependencies]
-typecheck = [
-    { name = "hypothesis" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "sqlalchemy" },
-    { name = "tomli" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-client-protocol", specifier = "==0.12.1" },
-    { name = "anyio", specifier = ">=4.5,<5" },
-    { name = "httpcore", specifier = ">=1,<2" },
-    { name = "httpcore2", specifier = ">=2.5,<3" },
-    { name = "httpx", specifier = ">=0.27,<1" },
-    { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27,<1" },
-    { name = "httpx2", specifier = ">=2.5,<3" },
-    { name = "hypothesis", marker = "extra == 'all'", specifier = ">=6.100,<7" },
-    { name = "hypothesis", marker = "extra == 'property'", specifier = ">=6.100,<7" },
-    { name = "idna", specifier = ">=3,<4" },
-    { name = "jsonschema", specifier = ">=4.20,<5" },
-    { name = "mcp", specifier = ">=2,<3" },
-    { name = "mkdocs-material", marker = "extra == 'all'", specifier = ">=9.5,<10" },
-    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5,<10" },
-    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'all'", specifier = ">=0.25,<2" },
-    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.25,<2" },
-    { name = "pydantic", specifier = ">=2.8,<3" },
-    { name = "pytest", marker = "extra == 'all'", specifier = ">=8,<10" },
-    { name = "pytest", marker = "extra == 'pytest'", specifier = ">=8,<10" },
-    { name = "pytest-asyncio", marker = "extra == 'all'", specifier = ">=0.23,<2" },
-    { name = "pytest-asyncio", marker = "extra == 'pytest'", specifier = ">=0.23,<2" },
-    { name = "pytest-xdist", marker = "extra == 'pytest'", specifier = ">=3.6,<4" },
-    { name = "python-dotenv", specifier = ">=1,<2" },
-    { name = "sqlalchemy", marker = "extra == 'all'", specifier = ">=2.0,<3" },
-    { name = "sqlalchemy", marker = "extra == 'storage'", specifier = ">=2.0,<3" },
-    { name = "starlette", specifier = ">=0.40,<2" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2,<3" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
-]
-provides-extras = ["pytest", "storage", "property", "docs", "all"]
-
-[package.metadata.requires-dev]
-typecheck = [
-    { name = "hypothesis", specifier = ">=6.100,<7" },
-    { name = "mypy", specifier = ">=1.11,<2" },
-    { name = "pytest", specifier = ">=8,<10" },
-    { name = "sqlalchemy", specifier = ">=2.0,<3" },
-    { name = "tomli", specifier = ">=2,<3" },
-]
-
-[[package]]
-name = "mcp-pal-app"
-version = "0.2.0a3"
-source = { editable = "app" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "mcp-pal", extra = ["storage"] },
-    { name = "pydantic-settings" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.dev-dependencies]
-test = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-xdist" },
-]
-typecheck = [
-    { name = "mypy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115,<1" },
-    { name = "mcp-pal", extras = ["storage"], editable = "sdk" },
-    { name = "pydantic-settings", specifier = ">=2.4,<3" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
-]
-
-[package.metadata.requires-dev]
-test = [
-    { name = "pytest", specifier = ">=8,<10" },
-    { name = "pytest-asyncio", specifier = ">=0.23,<2" },
-    { name = "pytest-xdist", specifier = ">=3.6,<4" },
-]
-typecheck = [{ name = "mypy", specifier = ">=1.11,<2" }]
-
-[[package]]
-name = "mcp-pal-cli"
-version = "0.2.0a3"
-source = { editable = "cli" }
-dependencies = [
-    { name = "mcp-pal", extra = ["storage"] },
-    { name = "mcp-pal-app" },
-]
-
-[package.dev-dependencies]
-test = [
-    { name = "pytest" },
-]
-typecheck = [
-    { name = "mypy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "mcp-pal", extras = ["storage"], editable = "sdk" },
-    { name = "mcp-pal-app", editable = "app" },
-]
-
-[package.metadata.requires-dev]
-test = [{ name = "pytest", specifier = ">=8,<10" }]
-typecheck = [{ name = "mypy", specifier = ">=1.11,<2" }]
 
 [[package]]
 name = "mcp-types"

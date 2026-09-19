@@ -12,22 +12,22 @@ from typing import Any, Literal, cast
 import httpx
 import pytest
 
-from mcp_pal.agent_session import AsyncAgentSession
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import UnsupportedFeature
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.harness import default_adapters
-from mcp_pal.harness.acp import AcpHarnessAdapter
-from mcp_pal.harness.claude import ClaudeCodeHarnessAdapter
-from mcp_pal.harness.contracts import (
+from m3.agent_session import AsyncAgentSession
+from m3.async_api import AsyncMCPTestKit
+from m3.errors import UnsupportedFeature
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.harness import default_adapters
+from m3.harness.acp import AcpHarnessAdapter
+from m3.harness.claude import ClaudeCodeHarnessAdapter
+from m3.harness.contracts import (
     HarnessLaunch,
     HarnessStartupError,
     HarnessTurnRequest,
     HarnessTurnResult,
 )
-from mcp_pal.harness.native import MAX_FRAME_BYTES, _server_configuration, write_config
-from mcp_pal.harness.observation_sink import HarnessObservationSink
-from mcp_pal.harness.observations import (
+from m3.harness.native import MAX_FRAME_BYTES, _server_configuration, write_config
+from m3.harness.observation_sink import HarnessObservationSink
+from m3.harness.observations import (
     MessageChunkObservation,
     MetadataObservedObservation,
     RawFrameObservation,
@@ -36,14 +36,14 @@ from mcp_pal.harness.observations import (
     ToolResultObservedObservation,
     UsageObservedObservation,
 )
-from mcp_pal.harness.opencode import OpenCodeHarnessAdapter, opencode_configuration
-from mcp_pal.server_group import (
+from m3.harness.opencode import OpenCodeHarnessAdapter, opencode_configuration
+from m3.server_group import (
     HarnessServerConfig,
     ServerGroupSnapshot,
     ServerRecord,
 )
-from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.types import (
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ClaudeCode,
@@ -351,7 +351,7 @@ async def test_opencode_startup_sends_selected_model_without_catalog_preflight(
         executable=str(
             Path(__file__).parents[1] / "fixtures" / "opencode_serve_fixture.py"
         ),
-        environment={"MCP_PAL_MARKER": str(marker), "MCP_PAL_OPENCODE_MODE": mode},
+        environment={"M3_MARKER": str(marker), "M3_OPENCODE_MODE": mode},
     )
     observed: dict[str, Any] = {}
     try:
@@ -551,8 +551,8 @@ async def test_opencode_canary_is_absent_from_public_turn_result_trace_and_captu
             adapter = OpenCodeHarnessAdapter(
                 executable=fixture,
                 environment={
-                    "MCP_PAL_MARKER": str(run_marker),
-                    "MCP_PAL_OPENCODE_MODE": "redaction",
+                    "M3_MARKER": str(run_marker),
+                    "M3_OPENCODE_MODE": "redaction",
                 },
             )
             session = kit.agent_session(spec, adapter=adapter)
@@ -1057,7 +1057,7 @@ async def test_opencode_history_get_records_request_interval(
         def monotonic() -> float:
             return next(ticks)
 
-    import mcp_pal.harness.opencode as opencode_module
+    import m3.harness.opencode as opencode_module
 
     monkeypatch.setattr(opencode_module, "time", Clock)
     history = _HTTPResponse([])
@@ -1495,7 +1495,7 @@ if "--help" in sys.argv:
     monkeypatch.setenv("OPENROUTER_API_KEY", "ambient-openrouter")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "ambient-anthropic")
     adapter = OpenCodeHarnessAdapter(
-        executable=executable, environment={"MCP_PAL_PROBE_MARKER": str(marker)}
+        executable=executable, environment={"M3_PROBE_MARKER": str(marker)}
     )
     readiness = await adapter.preflight(_launch())
     assert readiness.ready
@@ -1516,8 +1516,8 @@ async def test_opencode_open_uses_cached_dialect_without_second_version_probe(
     adapter = OpenCodeHarnessAdapter(
         executable=fixture,
         environment={
-            "MCP_PAL_MARKER": str(marker),
-            "MCP_PAL_VERSION_MARKER": str(version_marker),
+            "M3_MARKER": str(marker),
+            "M3_VERSION_MARKER": str(version_marker),
         },
     )
     try:
@@ -1573,7 +1573,7 @@ import json, os, sys
 if "--help" in sys.argv:
     print("--input-format stream-json --output-format stream-json")
     raise SystemExit(0)
-marker = os.environ.get("MCP_PAL_MARKER")
+marker = os.environ.get("M3_MARKER")
 if marker:
     with open(marker, "w") as output:
         json.dump(sys.argv, output)
@@ -1605,7 +1605,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(data)
     def do_POST(self):
         if self.path == "/session":
-            with open(os.environ["MCP_PAL_MARKER"], "w") as output:
+            with open(os.environ["M3_MARKER"], "w") as output:
                 json.dump({"cwd": os.getcwd(), "home": os.environ["HOME"], "directory": self.headers.get("x-opencode-directory"), "config": os.environ["OPENCODE_CONFIG"]}, output)
             self.send_json({"id": session}); return
         if self.path == "/session/" + session + "/message":
@@ -1633,7 +1633,7 @@ for line in sys.stdin:
     if method == "initialize":
         send({"jsonrpc":"2.0", "id":ident, "result":{"protocolVersion":1}})
     elif method == "session/new":
-        with open(os.environ["MCP_PAL_MARKER"], "w") as output:
+        with open(os.environ["M3_MARKER"], "w") as output:
             json.dump({"cwd":os.getcwd(), "home":os.environ["HOME"], "session_cwd":request["params"]["cwd"], "servers":request["params"]["mcpServers"]}, output)
         send({"jsonrpc":"2.0", "id":ident, "result":{"sessionId":"workspace-session"}})
     elif method == "session/prompt":
@@ -1693,7 +1693,7 @@ async def test_claude_rich_stream_maps_to_typed_observations_and_runtime() -> No
         update={"harness": ClaudeCode(model="fixture", executable=executable)}
     )
     adapter = ClaudeCodeHarnessAdapter(executable=executable)
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(spec, adapter=adapter)
         async with session:
             result = await session.send("nonce")
@@ -1872,7 +1872,7 @@ async def test_claude_native_policy_is_preflighted_and_applied_to_argv(
             }
         )
         adapter = ClaudeCodeHarnessAdapter(
-            executable=executable, environment={"MCP_PAL_MARKER": str(marker)}
+            executable=executable, environment={"M3_MARKER": str(marker)}
         )
         configuration = HarnessServerConfig(
             key="stdio",
@@ -1948,7 +1948,7 @@ async def test_opencode_native_policy_is_preflighted_and_rendered_for_each_mode(
         )
         launch = HarnessLaunch(spec, servers, (configuration,), policy)
         adapter = OpenCodeHarnessAdapter(
-            executable=executable, environment={"MCP_PAL_OPENCODE_MODE": "legacy"}
+            executable=executable, environment={"M3_OPENCODE_MODE": "legacy"}
         )
         readiness = await adapter.preflight(launch)
         assert readiness.ready and adapter.last_policy_evidence is not None
@@ -2077,7 +2077,7 @@ async def _open_opencode_fixture(
     executable = str(
         Path(__file__).parents[1] / "fixtures" / "opencode_serve_fixture.py"
     )
-    environment = {"MCP_PAL_MARKER": str(marker), "MCP_PAL_OPENCODE_MODE": mode}
+    environment = {"M3_MARKER": str(marker), "M3_OPENCODE_MODE": mode}
     adapter = OpenCodeHarnessAdapter(executable=executable, environment=environment)
     session = await adapter.open(launch or _launch())
     return adapter, session
@@ -2302,7 +2302,7 @@ async def test_opencode_referenced_environment_credential_reaches_isolated_child
         }
     )
     adapter = OpenCodeHarnessAdapter(
-        executable=fixture, environment={"MCP_PAL_MARKER": str(marker)}
+        executable=fixture, environment={"M3_MARKER": str(marker)}
     )
     try:
         await adapter.open(HarnessLaunch(spec, base.servers, (), base.tool_policy))
@@ -2327,14 +2327,14 @@ async def test_opencode_referenced_environment_credential_reaches_isolated_child
 async def test_opencode_missing_environment_credential_fails_safely(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("MCP_PAL_MISSING", raising=False)
+    monkeypatch.delenv("M3_MISSING", raising=False)
     base = _launch()
     spec = base.spec.model_copy(
         update={
             "harness": OpenCode(
                 model="fixture",
                 credential_references={
-                    "KEY": SecretReference(source="environment", name="MCP_PAL_MISSING")
+                    "KEY": SecretReference(source="environment", name="M3_MISSING")
                 },
             )
         }
@@ -2388,7 +2388,7 @@ def test_opencode_invalid_target_environment_name_fails_closed() -> None:
 
 @pytest.mark.asyncio
 async def test_missing_native_executable_is_not_ready() -> None:
-    adapter = ClaudeCodeHarnessAdapter(executable="mcp-pal-no-such-claude")
+    adapter = ClaudeCodeHarnessAdapter(executable="m3-no-such-claude")
     readiness = await adapter.preflight(_launch())
     assert readiness.ready is False
 
@@ -2461,7 +2461,7 @@ def test_native_mcp_config_redacts_credential_keys() -> None:
 def test_native_mcp_config_resolves_environment_reference_only_in_0600_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("MCP_PAL_NATIVE_SECRET", "native-secret-value")
+    monkeypatch.setenv("M3_NATIVE_SECRET", "native-secret-value")
     base = _launch()
     launch = HarnessLaunch(
         base.spec,
@@ -2476,7 +2476,7 @@ def test_native_mcp_config_resolves_environment_reference_only_in_0600_file(
                 command="fixture",
                 environment={
                     "TOKEN": SecretReference(
-                        source="environment", name="MCP_PAL_NATIVE_SECRET"
+                        source="environment", name="M3_NATIVE_SECRET"
                     )
                 },
             ),
@@ -2526,7 +2526,7 @@ async def test_public_kit_preserves_native_claude_conversation_for_three_turns()
         Path(__file__).parents[1] / "fixtures" / "claude_stream_fixture.py"
     )
     adapter = ClaudeCodeHarnessAdapter(executable=executable)
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(_spec(), adapter=adapter)
         async with session:
             for text in ("one", "two", "three"):
@@ -2549,7 +2549,7 @@ async def test_public_kit_default_registry_uses_real_claude_adapter() -> None:
     spec = _spec().model_copy(
         update={"harness": ClaudeCode(model="fixture", executable=executable)}
     )
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(spec)
         async with session:
             for text in ("one", "two", "three"):
@@ -2567,7 +2567,7 @@ async def test_public_kit_exposes_opencode_usage_evidence() -> None:
     spec = _spec().model_copy(
         update={"harness": OpenCode(model="fixture", executable=executable)}
     )
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(spec)
         async with session:
             results = [await session.send(text) for text in ("one", "two")]
@@ -2691,7 +2691,7 @@ async def test_opencode_uses_workspace_cwd_and_directory_header(tmp_path: Path) 
     marker = tmp_path / "opencode-marker.json"
     executable = _opencode_workspace_fixture(tmp_path / "opencode-workspace.py")
     adapter = OpenCodeHarnessAdapter(
-        executable=executable, environment={"MCP_PAL_MARKER": str(marker)}
+        executable=executable, environment={"M3_MARKER": str(marker)}
     )
     try:
         session = await adapter.open(_workspace_launch(workspace))
@@ -2716,7 +2716,7 @@ async def test_acp_uses_workspace_cwd_session_and_explicit_mcp_cwd(
     explicit.mkdir()
     marker = tmp_path / "acp-marker.json"
     executable = _acp_workspace_fixture(tmp_path / "acp-workspace.py")
-    monkeypatch.setenv("MCP_PAL_MARKER", str(marker))
+    monkeypatch.setenv("M3_MARKER", str(marker))
     spec = AgentSpec(
         harness=ACPAgent(
             model="fixture",
@@ -2724,7 +2724,7 @@ async def test_acp_uses_workspace_cwd_session_and_explicit_mcp_cwd(
                 "command": executable,
                 "protocol": "acp",
                 "protocol_version": 1,
-                "env": {"MCP_PAL_MARKER": "${MCP_PAL_MARKER}"},
+                "env": {"M3_MARKER": "${M3_MARKER}"},
             },
         ),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
@@ -2737,7 +2737,7 @@ async def test_acp_uses_workspace_cwd_session_and_explicit_mcp_cwd(
             available=True,
             connection_id="default",
             command=sys.executable,
-            args=("-m", "mcp_pal.transport.stdio_proxy", "--", "fixture"),
+            args=("-m", "m3.transport.stdio_proxy", "--", "fixture"),
         ),
         HarnessServerConfig(
             key="explicit",
@@ -2748,7 +2748,7 @@ async def test_acp_uses_workspace_cwd_session_and_explicit_mcp_cwd(
             command=sys.executable,
             args=(
                 "-m",
-                "mcp_pal.transport.stdio_proxy",
+                "m3.transport.stdio_proxy",
                 "--cwd",
                 str(explicit),
                 "--",
@@ -2783,9 +2783,9 @@ async def test_acp_uses_workspace_cwd_session_and_explicit_mcp_cwd(
     servers = {item["name"]: item for item in observed["servers"]}
     assert servers["default"]["command"] == sys.executable
     assert servers["explicit"]["command"] == sys.executable
-    assert servers["default"]["args"].count("mcp_pal.transport.stdio_proxy") == 1
+    assert servers["default"]["args"].count("m3.transport.stdio_proxy") == 1
     assert "--cwd" not in servers["default"]["args"]
-    assert servers["explicit"]["args"].count("mcp_pal.transport.stdio_proxy") == 1
+    assert servers["explicit"]["args"].count("m3.transport.stdio_proxy") == 1
     assert servers["explicit"]["args"][
         servers["explicit"]["args"].index("--cwd") + 1
     ] == str(explicit)
@@ -2799,7 +2799,7 @@ async def test_acp_registers_server_canary_before_startup_and_omits_it_from_conf
     """A startup frame cannot race registration, and ACP never gets the credential."""
 
     canary = "acp-server-secret-canary"
-    monkeypatch.setenv("MCP_PAL_ACP_SERVER_SECRET", canary)
+    monkeypatch.setenv("M3_ACP_SERVER_SECRET", canary)
     marker = tmp_path / "acp-secret-config.json"
     executable = _acp_startup_secret_fixture(tmp_path / "acp-secret.py", marker)
     base = _launch()
@@ -2824,7 +2824,7 @@ async def test_acp_registers_server_canary_before_startup_and_omits_it_from_conf
         command="fixture",
         environment={
             "API_KEY": SecretReference(
-                source="environment", name="MCP_PAL_ACP_SERVER_SECRET"
+                source="environment", name="M3_ACP_SERVER_SECRET"
             )
         },
     )
@@ -2871,7 +2871,7 @@ from pathlib import Path
 Path({str(marker)!r}).write_text("spawned", encoding="utf-8")
 """,
     )
-    monkeypatch.delenv("MCP_PAL_ACP_MISSING", raising=False)
+    monkeypatch.delenv("M3_ACP_MISSING", raising=False)
     base = _launch()
     spec = base.spec.model_copy(
         update={
@@ -2893,7 +2893,7 @@ Path({str(marker)!r}).write_text("spawned", encoding="utf-8")
         connection_id="missing",
         command="fixture",
         environment={
-            "TOKEN": SecretReference(source="environment", name="MCP_PAL_ACP_MISSING")
+            "TOKEN": SecretReference(source="environment", name="M3_ACP_MISSING")
         },
     )
 

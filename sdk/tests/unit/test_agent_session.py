@@ -9,16 +9,16 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.agent_session import AdapterTurn, AsyncAgentSession, HarnessTurnError
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import (
+from m3.agent_session import AdapterTurn, AsyncAgentSession, HarnessTurnError
+from m3.async_api import AsyncMCPTestKit
+from m3.errors import (
     CleanupError,
     SessionBusy,
     SessionStillOpen,
     UnsupportedFeature,
 )
-from mcp_pal.sync_api import MCPTestKit
-from mcp_pal.types import (
+from m3.sync_api import MCPTestKit
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ArtifactPolicy,
@@ -35,7 +35,7 @@ from mcp_pal.types import (
     WorkspaceKind,
     WorkspacePolicy,
 )
-from mcp_pal.workspace import WorkspaceManager
+from m3.workspace import WorkspaceManager
 
 
 def _spec() -> AgentSpec:
@@ -245,7 +245,7 @@ async def test_workspace_is_captured_before_adapter_teardown() -> None:
 async def test_public_turn_result_preserves_redacted_evidence_and_roundtrips(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("MCP_PAL_EVIDENCE_TOKEN", "evidence-canary")
+    monkeypatch.setenv("M3_EVIDENCE_TOKEN", "evidence-canary")
     session = AsyncAgentSession(_spec(), EvidenceHarness())
     async with session:
         result = await session.send("capture")
@@ -521,7 +521,7 @@ async def test_concurrent_close_attempts_are_serialized_and_retry_cleanup() -> N
 
 def test_sync_kit_close_retries_a_failed_session_cleanup() -> None:
     adapter = TransientCloseHarness()
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     session = kit.agent_session(_spec(), adapter=adapter)
     session.__enter__()
     with pytest.raises(CleanupError):
@@ -536,7 +536,7 @@ def test_sync_kit_close_retries_a_failed_session_cleanup() -> None:
 @pytest.mark.asyncio
 async def test_async_kit_close_retries_a_failed_session_cleanup() -> None:
     adapter = TransientCloseHarness()
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     session = kit.agent_session(_spec(), adapter=adapter)
     await session.__aenter__()
     with pytest.raises(CleanupError):
@@ -549,7 +549,7 @@ async def test_async_kit_close_retries_a_failed_session_cleanup() -> None:
 
 def test_concurrent_sync_kit_close_has_one_retryable_failure() -> None:
     adapter = TransientCloseHarness()
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     session = kit.agent_session(_spec(), adapter=adapter)
     session.__enter__()
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -623,7 +623,7 @@ async def test_permanent_preflight_cleanup_failure_is_retryable_and_kit_owned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     adapter = PreflightFailureHarness()
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     session = kit.agent_session(_spec(), adapter=adapter)
     original_cleanup = WorkspaceManager.cleanup
 
@@ -649,7 +649,7 @@ def test_sync_kit_retries_cleanup_after_preflight_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     adapter = PreflightFailureHarness()
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     session = kit.agent_session(_spec(), adapter=adapter)
     original_cleanup = WorkspaceManager.cleanup
     attempts = 0

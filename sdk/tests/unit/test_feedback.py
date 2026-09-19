@@ -11,10 +11,10 @@ from typing import ClassVar
 import pytest
 from mcp import types as mcp_types
 
-from mcp_pal.events import EventFactory, EventSequence
-from mcp_pal.feedback import build_feedback, export_feedback
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import (
+from m3.events import EventFactory, EventSequence
+from m3.feedback import build_feedback, export_feedback
+from m3.storage import SQLiteExecutionStore
+from m3.types import (
     EvaluationId,
     EvaluationRecord,
     EvaluationStatus,
@@ -565,7 +565,7 @@ def test_changed_matcher_expectation_is_explicitly_not_comparable():
         evaluation_id=EvaluationId("old-eval"),
         execution_id=old.snapshot.execution_id,
         case_id="lookup",
-        name="mcp_pal.matcher.to_have_tool",
+        name="m3.matcher.to_have_tool",
         status=EvaluationStatus.PASSED,
         score=1.0,
         details={"matcher": "to_have_tool", "arguments": {"name": "lookup"}},
@@ -574,7 +574,7 @@ def test_changed_matcher_expectation_is_explicitly_not_comparable():
         evaluation_id=EvaluationId("new-eval"),
         execution_id=current.snapshot.execution_id,
         case_id="lookup",
-        name="mcp_pal.matcher.to_have_tool",
+        name="m3.matcher.to_have_tool",
         status=EvaluationStatus.PASSED,
         score=1.0,
         details={"matcher": "to_have_tool", "arguments": {"name": "different"}},
@@ -587,7 +587,7 @@ def test_changed_matcher_expectation_is_explicitly_not_comparable():
     change = next(
         item
         for item in feedback.comparison.evaluation_changes
-        if item.get("evaluator") == "mcp_pal.matcher.to_have_tool"
+        if item.get("evaluator") == "m3.matcher.to_have_tool"
     )
     assert change["comparable"] is False
     assert "expected_or_provenance" in change["changed_fields"]
@@ -755,26 +755,26 @@ def test_real_direct_plugin_sqlite_two_runs_capture_tool_description_change(
 import os
 from mcp import types
 from mcp.server.lowlevel import Server
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import InProcessServer
+from m3 import MCPTestKit, expect
+from m3.storage import SQLiteExecutionStore
+from m3.types import InProcessServer
 
 def _server():
     async def list_tools(_context, _params):
         return types.ListToolsResult(tools=[types.Tool(
             name="lookup",
-            description=os.environ["MCP_PAL_DESCRIPTION"],
+            description=os.environ["M3_DESCRIPTION"],
             inputSchema={"type": "object"},
         )])
     return Server("feedback-fixture", on_list_tools=list_tools)
 
 def test_server_catalog():
-    store = SQLiteExecutionStore(os.environ["MCP_PAL_DATABASE"])
+    store = SQLiteExecutionStore(os.environ["M3_DATABASE"])
     try:
         with MCPTestKit(store=store, env={}, cwd=os.getcwd(), record_checks=True) as kit:
             with kit.direct(InProcessServer(name="orders", factory=_server)) as client:
                 page = client.list_tools()
-                assert page.tools[0].description == os.environ["MCP_PAL_DESCRIPTION"]
+                assert page.tools[0].description == os.environ["M3_DESCRIPTION"]
             trace = client.final_trace
             expect(trace).to_have_trace()
     finally:
@@ -788,20 +788,20 @@ def test_server_catalog():
     def run(description: str, baseline_id: str | None = None):
         env = os.environ.copy()
         env["PYTHONPATH"] = sdk_source + os.pathsep + env.get("PYTHONPATH", "")
-        env["MCP_PAL_DATABASE"] = str(database)
-        env["MCP_PAL_DESCRIPTION"] = description
+        env["M3_DATABASE"] = str(database)
+        env["M3_DESCRIPTION"] = description
         command = [
             sys.executable,
             "-m",
             "pytest",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
-            "--mcp-pal-results-db",
+            "m3.pytest_plugin",
+            "--results-db",
             str(database),
         ]
         if baseline_id is not None:
-            command.extend(["--mcp-pal-baseline", baseline_id])
+            command.extend(["--baseline", baseline_id])
         command.append(str(test_file))
         return subprocess.run(
             command,
@@ -819,9 +819,7 @@ def test_server_catalog():
         runs = store.list_test_runs()
         assert len(runs) == 1
         baseline_id = str(runs[0]["run_id"])
-        baseline_report = (
-            tmp_path / ".mcp-pal" / "reports" / baseline_id / "feedback.json"
-        )
+        baseline_report = tmp_path / ".m3" / "reports" / baseline_id / "feedback.json"
         baseline_payload = json.loads(baseline_report.read_text(encoding="utf-8"))
         executions = store.list_executions(run_id=baseline_id).items
         assert len(executions) == 1
@@ -833,7 +831,7 @@ def test_server_catalog():
             for event in baseline_execution_report.events
         )
         assert [record.name for record in store.evaluations(baseline_execution)] == [
-            "mcp_pal.matcher.to_have_trace.v1"
+            "m3.matcher.to_have_trace.v1"
         ]
         assert len(store.list_test_results(baseline_id)) == 1
     finally:
@@ -848,9 +846,7 @@ def test_server_catalog():
         current_id = str(
             next(item["run_id"] for item in runs if str(item["run_id"]) != baseline_id)
         )
-        current_report = (
-            tmp_path / ".mcp-pal" / "reports" / current_id / "feedback.json"
-        )
+        current_report = tmp_path / ".m3" / "reports" / current_id / "feedback.json"
         payload = json.loads(current_report.read_text(encoding="utf-8"))
         executions = store.list_executions(run_id=current_id).items
         assert len(executions) == 1
@@ -862,7 +858,7 @@ def test_server_catalog():
             for event in current_execution_report.events
         )
         assert [record.name for record in store.evaluations(current_execution)] == [
-            "mcp_pal.matcher.to_have_trace.v1"
+            "m3.matcher.to_have_trace.v1"
         ]
         assert len(store.list_test_results(current_id)) == 1
     finally:

@@ -1,7 +1,7 @@
-# Releasing MCP Pal
+# Releasing M3
 
-MCP Pal releases contain three version-matched wheels—`mcp-pal`,
-`mcp-pal-app`, and `mcp-pal-cli`—plus `SHA256SUMS` and the rendered macOS/Linux
+M3 releases contain three version-matched wheels—`m3`,
+`m3-app`, and `m3-cli`—plus `SHA256SUMS` and the rendered macOS/Linux
 and Windows installers. PyPI publication is currently deferred; GitHub Releases
 is the supported distribution channel.
 

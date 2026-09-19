@@ -8,19 +8,19 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.agent_session import (
+from m3.agent_session import (
     AdapterTurn,
     AsyncAgentSession,
     HarnessAdapter,
     HarnessTurnError,
 )
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import CleanupError, TransportError
-from mcp_pal.harness import HarnessAdapterRegistry
-from mcp_pal.server_group import ServerStartupError
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.sync_api import MCPTestKit
-from mcp_pal.types import (
+from m3.async_api import AsyncMCPTestKit
+from m3.errors import CleanupError, TransportError
+from m3.harness import HarnessAdapterRegistry
+from m3.server_group import ServerStartupError
+from m3.storage import SQLiteExecutionStore
+from m3.sync_api import MCPTestKit
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ArtifactPolicy,
@@ -231,7 +231,7 @@ async def _wait_for(predicate: Callable[[], bool], *, attempts: int = 50) -> Non
 
 @pytest.mark.asyncio
 async def test_direct_async_agent_session_result_owns_one_finalized_trace() -> None:
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(_spec(), adapter=_TraceHarness())
         async with session:
             await session.send("hello")
@@ -251,7 +251,7 @@ async def test_async_agent_session_snapshots_preserve_project_identity(
     project = ProjectId("33333333-3333-4333-8333-333333333333")
     store = SQLiteExecutionStore(tmp_path / "async-project.sqlite")
     async with AsyncMCPTestKit(
-        env={}, cwd="/tmp/mcp-pal-no-project", store=store, embedded_worker=False
+        env={}, cwd="/tmp/m3-no-project", store=store, embedded_worker=False
     ) as kit:
         session = kit.agent_session(_spec(project_id=project), adapter=_TraceHarness())
         async with session:
@@ -264,7 +264,7 @@ async def test_async_agent_session_snapshots_preserve_project_identity(
 
 
 def test_direct_sync_agent_session_result_owns_one_finalized_trace() -> None:
-    with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(_spec(), adapter=_TraceHarness())
         with session:
             session.send("hello")
@@ -282,7 +282,7 @@ async def test_caller_async_agent_session_uses_configured_store_for_all_turns(
     try:
         async with AsyncMCPTestKit(
             env={},
-            cwd="/tmp/mcp-pal-no-project",
+            cwd="/tmp/m3-no-project",
             store=store,
             embedded_worker=False,
         ) as kit:
@@ -351,7 +351,7 @@ def test_caller_sync_agent_session_uses_configured_store_for_all_turns(
     try:
         with MCPTestKit(
             env={},
-            cwd="/tmp/mcp-pal-no-project",
+            cwd="/tmp/m3-no-project",
             store=store,
             embedded_worker=False,
         ) as kit:
@@ -392,7 +392,7 @@ async def test_caller_async_agent_session_startup_failure_is_terminal_and_persis
     try:
         async with AsyncMCPTestKit(
             env={},
-            cwd="/tmp/mcp-pal-no-project",
+            cwd="/tmp/m3-no-project",
             store=store,
             embedded_worker=False,
         ) as kit:
@@ -439,7 +439,7 @@ async def test_caller_async_agent_session_uses_store_artifact_backend(
         )
         async with AsyncMCPTestKit(
             env={},
-            cwd="/tmp/mcp-pal-no-project",
+            cwd="/tmp/m3-no-project",
             store=store,
             embedded_worker=False,
         ) as kit:
@@ -460,7 +460,7 @@ async def test_submitted_agent_execution_reuses_outer_execution_trace_authority(
 ):
     registry = HarnessAdapterRegistry({"acp": lambda _harness: _TraceHarness()})
     async with AsyncMCPTestKit(
-        env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+        env={}, cwd="/tmp/m3-no-project", adapter_registry=registry
     ) as kit:
         handle = kit.submit(_spec(message="hello"))
         result = await handle.result(timeout=5)
@@ -485,7 +485,7 @@ async def test_submitted_agent_execution_persists_one_outer_trace_in_sqlite(
         registry = HarnessAdapterRegistry({"acp": lambda _harness: _TraceHarness()})
         async with AsyncMCPTestKit(
             env={},
-            cwd="/tmp/mcp-pal-no-project",
+            cwd="/tmp/m3-no-project",
             adapter_registry=registry,
             store=store,
         ) as kit:
@@ -520,7 +520,7 @@ async def test_caller_async_agent_session_persists_prior_turn_before_terminal_fa
     try:
         async with AsyncMCPTestKit(
             env={},
-            cwd="/tmp/mcp-pal-no-project",
+            cwd="/tmp/m3-no-project",
             store=store,
             embedded_worker=False,
         ) as kit:
@@ -708,7 +708,7 @@ async def test_submitted_terminal_failure_has_outer_trace_without_duplicate_ids(
         {"acp": lambda _harness: _TerminalFailureHarness()}
     )
     async with AsyncMCPTestKit(
-        env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+        env={}, cwd="/tmp/m3-no-project", adapter_registry=registry
     ) as kit:
         handle = kit.submit(_spec(message="fail"))
         result = await handle.result(timeout=5)
@@ -730,7 +730,7 @@ async def test_submitted_active_cancellation_overrides_session_close_outcome() -
     adapter = _ActiveCancellationHarness()
     registry = HarnessAdapterRegistry({"acp": lambda _harness: adapter})
     async with AsyncMCPTestKit(
-        env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+        env={}, cwd="/tmp/m3-no-project", adapter_registry=registry
     ) as kit:
         handle = kit.submit(_spec(message="cancel-me"))
         await adapter.started.wait()
@@ -752,7 +752,7 @@ def test_submitted_agent_trace_reopens_with_identical_stable_events(
         registry = HarnessAdapterRegistry({"acp": lambda _harness: _TraceHarness()})
         async with AsyncMCPTestKit(
             env={},
-            cwd="/tmp/mcp-pal-no-project",
+            cwd="/tmp/m3-no-project",
             adapter_registry=registry,
             store=store,
         ) as kit:

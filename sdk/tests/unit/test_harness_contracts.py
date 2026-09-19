@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from mcp_pal.harness.contracts import (
+from m3.harness.contracts import (
     DeterministicHarnessAdapter,
     HarnessAdapterCapabilities,
     HarnessLaunch,
@@ -12,8 +12,8 @@ from mcp_pal.harness.contracts import (
     HarnessTurnRequest,
     UnsupportedHarnessFeature,
 )
-from mcp_pal.server_group import ServerGroupManager
-from mcp_pal.types import (
+from m3.server_group import ServerGroupManager
+from m3.types import (
     ACPAgent,
     AgentSpec,
     RestrictiveToolPolicy,
@@ -71,7 +71,7 @@ async def test_fake_adapter_rejects_unsupported_attachment_before_handler() -> N
         )
     )
     session = await adapter.open(_launch(manager))
-    from mcp_pal.types import ImageContent, UserMessage
+    from m3.types import ImageContent, UserMessage
 
     with pytest.raises(UnsupportedHarnessFeature):
         await session.send(

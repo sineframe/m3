@@ -18,7 +18,7 @@ for line in sys.stdin:
     except json.JSONDecodeError:
         continue
     if frame.get("type") == "get_state":
-        if os.environ.get("MCP_PAL_PI_FIXTURE_STARTUP_EVENT") == "1":
+        if os.environ.get("M3_PI_FIXTURE_STARTUP_EVENT") == "1":
             print(
                 json.dumps(
                     {
@@ -46,7 +46,7 @@ for line in sys.stdin:
             flush=True,
         )
     elif frame.get("type") == "prompt":
-        if os.environ.get("MCP_PAL_PI_FIXTURE_BLOCK") == "1":
+        if os.environ.get("M3_PI_FIXTURE_BLOCK") == "1":
             time.sleep(2)
         print(
             json.dumps(
@@ -59,7 +59,7 @@ for line in sys.stdin:
             ),
             flush=True,
         )
-        if os.environ.get("MCP_PAL_PI_FIXTURE_ERROR") == "1":
+        if os.environ.get("M3_PI_FIXTURE_ERROR") == "1":
             print(
                 json.dumps(
                     {

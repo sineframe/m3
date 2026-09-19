@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.events import EventFactory
-from mcp_pal.storage import (
+from m3.events import EventFactory
+from m3.storage import (
     ArtifactNotFound,
     InMemoryArtifactStore,
     InMemoryExecutionStore,
@@ -21,8 +21,8 @@ from mcp_pal.storage import (
     StorageConflict,
     StorageError,
 )
-from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import (
+from m3.trace.redaction import RedactionConfig
+from m3.types import (
     DirectSpec,
     EventKind,
     ExecutionId,
@@ -41,9 +41,7 @@ from mcp_pal.types import (
 
 
 def _store(tmp_path: Path) -> SQLiteExecutionStore:
-    return SQLiteExecutionStore(
-        tmp_path / "mcp-pal.sqlite", blob_root=tmp_path / "blobs"
-    )
+    return SQLiteExecutionStore(tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs")
 
 
 def _created(
@@ -94,12 +92,12 @@ def deny_sqlalchemy(name, *args, **kwargs):
         raise ModuleNotFoundError('blocked for optional-dependency test')
     return real_import(name, *args, **kwargs)
 builtins.__import__ = deny_sqlalchemy
-import mcp_pal.storage
-from mcp_pal.storage import SQLiteExecutionStore
+import m3.storage
+from m3.storage import SQLiteExecutionStore
 try:
     SQLiteExecutionStore('optional-dependency-test.sqlite')
 except ModuleNotFoundError as error:
-    assert str(error) == 'SQLite storage requires the optional dependency; install mcp-pal[storage]'
+    assert str(error) == 'SQLite storage requires the optional dependency; install m3[storage]'
 else:
     raise AssertionError('SQLite storage unexpectedly initialized without SQLAlchemy')
 """
@@ -127,7 +125,7 @@ def test_events_are_commit_gated_and_snapshots_reload(tmp_path: Path) -> None:
         )
     assert tuple(store.iter_events(execution_id))[-1].payload["message"] == "safe"
     reloaded = SQLiteExecutionStore(
-        tmp_path / "mcp-pal.sqlite", blob_root=tmp_path / "blobs"
+        tmp_path / "m3.sqlite", blob_root=tmp_path / "blobs"
     )
     assert reloaded.get_snapshot(execution_id) == store.get_snapshot(execution_id)
 
@@ -155,7 +153,7 @@ def test_profile_revisions_archive_and_explicit_latest_clone(tmp_path: Path) -> 
     clone = store.clone_execution(execution_id, use_latest=True)
     assert clone != execution_id
     assert store.resolved_bindings(clone)["servers"][0]["revision_id"] == second.id.root
-    with sqlite3.connect(tmp_path / "mcp-pal.sqlite") as connection:
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
         connection.execute("PRAGMA foreign_keys=ON")
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
@@ -199,7 +197,7 @@ def test_profile_listing_is_kind_scoped_archived_filtered_and_revision_ordered(
 
 def test_profile_metadata_update_conflict_and_durable_redaction(tmp_path: Path) -> None:
     store = SQLiteExecutionStore(
-        tmp_path / "mcp-pal.sqlite",
+        tmp_path / "m3.sqlite",
         blob_root=tmp_path / "blobs",
         config=RedactionConfig(
             secrets=frozenset({"super-secret"}), include_environment=False
@@ -302,13 +300,13 @@ def test_sqlite_sequence_reservations_are_consumed_and_released(tmp_path: Path) 
     event = factory.create(EventKind.DIAGNOSTIC, payload={"n": 1})
     assert event.sequence == reserved[0]
     store.append_events([event])
-    with sqlite3.connect(tmp_path / "mcp-pal.sqlite") as connection:
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
         assert connection.execute(
             "SELECT sequence FROM v2_sequence_reservations WHERE execution_id=?",
             (execution_id.root,),
         ).fetchall() == [(reserved[1],)]
     store.release(execution_id, [reserved[1]])
-    with sqlite3.connect(tmp_path / "mcp-pal.sqlite") as connection:
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
         assert (
             connection.execute(
                 "SELECT COUNT(*) FROM v2_sequence_reservations"
@@ -390,7 +388,7 @@ def test_clone_records_parent_and_keeps_original_revision_after_profile_edit(
     store.add_revision(profile.id, {"version": 2})
     clone = store.clone_execution(original)
     assert store.resolved_bindings(clone)["servers"][0]["revision_id"] == first.id.root
-    with sqlite3.connect(tmp_path / "mcp-pal.sqlite") as connection:
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
         assert (
             connection.execute(
                 "SELECT parent_execution_id FROM v2_executions WHERE id=?",
@@ -404,7 +402,7 @@ def test_large_event_payload_is_blob_backed_without_semantic_truncation(
     tmp_path: Path,
 ) -> None:
     store = SQLiteExecutionStore(
-        tmp_path / "mcp-pal.sqlite",
+        tmp_path / "m3.sqlite",
         blob_root=tmp_path / "blobs",
         payload_blob_threshold=128,
     )
@@ -412,7 +410,7 @@ def test_large_event_payload_is_blob_backed_without_semantic_truncation(
     payload = {"items": ["payload-value-" * 20] * 20, "metadata": {"nested": [1, 2, 3]}}
     event = factory.create(EventKind.DIAGNOSTIC, payload=payload)
     store.append_events([event])
-    with sqlite3.connect(tmp_path / "mcp-pal.sqlite") as connection:
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
         stored = connection.execute(
             "SELECT event_json FROM v2_events WHERE id=?", (event.event_id.root,)
         ).fetchone()[0]
@@ -439,7 +437,7 @@ def test_large_event_payload_is_blob_backed_without_semantic_truncation(
         ]
     )
     store.delete_execution(execution_id)
-    with sqlite3.connect(tmp_path / "mcp-pal.sqlite") as connection:
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
         assert (
             connection.execute("SELECT COUNT(*) FROM v2_event_blobs").fetchone()[0] == 0
         )
@@ -487,7 +485,7 @@ def test_persisted_execution_spec_upgrades_legacy_profile_selector(
         {"mcpServers": {"echo": {"command": "echo"}}},
         profile_id="legacy-profile",
     )
-    from mcp_pal.types import ServerProfileRef
+    from m3.types import ServerProfileRef
 
     spec = DirectSpec(
         servers=(
@@ -519,7 +517,7 @@ def test_event_and_artifact_references_share_refcount_and_gc_after_terminal_dele
     tmp_path: Path,
 ) -> None:
     store = SQLiteExecutionStore(
-        tmp_path / "mcp-pal.sqlite",
+        tmp_path / "m3.sqlite",
         blob_root=tmp_path / "blobs",
         payload_blob_threshold=1,
     )
@@ -534,7 +532,7 @@ def test_event_and_artifact_references_share_refcount_and_gc_after_terminal_dele
     stored_event = store.events(execution_id)[-1]
     assert stored_event.payload_ref is not None
     assert artifact.sha256 == stored_event.payload_ref.sha256
-    with sqlite3.connect(tmp_path / "mcp-pal.sqlite") as connection:
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
         assert (
             connection.execute(
                 "SELECT ref_count FROM v2_blobs WHERE sha256=?", (artifact.sha256,)
@@ -550,7 +548,7 @@ def test_event_and_artifact_references_share_refcount_and_gc_after_terminal_dele
         ]
     )
     store.delete_execution(execution_id)
-    with sqlite3.connect(tmp_path / "mcp-pal.sqlite") as connection:
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
         assert connection.execute("SELECT COUNT(*) FROM v2_blobs").fetchone()[0] == 0
 
 
@@ -558,7 +556,7 @@ def test_failed_large_event_append_leaves_only_explicitly_collectable_orphan(
     tmp_path: Path,
 ) -> None:
     store = SQLiteExecutionStore(
-        tmp_path / "mcp-pal.sqlite",
+        tmp_path / "m3.sqlite",
         blob_root=tmp_path / "blobs",
         payload_blob_threshold=128,
     )

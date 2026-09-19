@@ -22,7 +22,7 @@ def test_usage_examples_compile() -> None:
 def _run_mypy(example: Path) -> subprocess.CompletedProcess[str]:
     uv = shutil.which("uv")
     assert uv is not None, "uv is required to run the isolated typecheck environment"
-    with tempfile.TemporaryDirectory(prefix="mcp-pal-mypy-") as cache_dir:
+    with tempfile.TemporaryDirectory(prefix="m3-mypy-") as cache_dir:
         return subprocess.run(
             [
                 uv,

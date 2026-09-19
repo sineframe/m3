@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from mcp_pal import AgentSpec, MCPTestKit
-from mcp_pal.harness import HarnessAdapterContract
+from m3 import AgentSpec, MCPTestKit
+from m3.harness import HarnessAdapterContract
 
 
 def session_only_contract_is_rejected(

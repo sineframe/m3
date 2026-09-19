@@ -1,16 +1,16 @@
-# MCP Pal
+# M3
 
 Test MCP servers and the agents that use them.
 
-MCP Pal turns MCP interactions into ordinary, repeatable Python tests. Discover
+M3 turns MCP interactions into ordinary, repeatable Python tests. Discover
 tools and schemas, exercise real calls, capture typed traces and evidence, and
 compare a new run with a saved baseline. The standalone CLI is the recommended
 starting point: it runs your existing pytest suite, records managed runs, and
 opens a local browser viewer when you need one.
 
-MCP Pal is currently an alpha release.
+M3 is currently an alpha release.
 
-[![CI](https://github.com/mcppal/mcp-pal/actions/workflows/ci.yml/badge.svg)](https://github.com/mcppal/mcp-pal/actions/workflows/ci.yml)
+[![CI](https://github.com/sineframe/m3/actions/workflows/ci.yml/badge.svg)](https://github.com/sineframe/m3/actions/workflows/ci.yml)
 
 ## What you can do
 
@@ -29,9 +29,9 @@ Mark one ordinary pytest test and let the CLI supply each harness and model:
 
 ```python
 import pytest
-from mcp_pal import expect
+from m3 import expect
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 def test_shipping(agent, shipping_server):
     result = agent.run("Get a local shipping quote", server=shipping_server)
     expect(result).to_have_tool_call("shipping_quote", server=shipping_server.name,
@@ -42,7 +42,7 @@ Set credentials with exported `OPENCODE_API_KEY` and `OPENAI_API_KEY`, or use
 an explicitly requested `.env` file. Then run two selections for two trials:
 
 ```bash
-mcp-pal test --env-file .env --harness opencode=opencode/big-pickle \
+m3 test --env-file .env --harness opencode=opencode/big-pickle \
   --harness codex=gpt-5.6-sol --trials 2 -- tests/test_shipping.py
 ```
 
@@ -57,7 +57,7 @@ describing the executable, arguments, protocol version, and environment-variable
 
 ```json
 {
-  "schema_version": "mcp-pal.harness.v1",
+  "schema_version": "m3.harness.v1",
   "protocol": "acp",
   "protocol_version": 1,
   "command": "your-agent",
@@ -67,7 +67,7 @@ describing the executable, arguments, protocol version, and environment-variable
 ```
 
 Bind the MCP server using a transport the agent advertises and supports;
-Streamable HTTP, stdio, and SSE are available where applicable. MCP Pal
+Streamable HTTP, stdio, and SSE are available where applicable. M3
 validates the manifest, can check local readiness and probe the configured
 process, then records the agent turn and captured MCP tool evidence using the
 same assertions as native harnesses.
@@ -78,13 +78,13 @@ for the manifest shape, probes, and executable test.
 
 ## Ask your coding agent to get started
 
-If you use a coding agent, MCP Pal includes a reusable
-[`testing-with-mcp-pal`](skills/testing-with-mcp-pal/SKILL.md) skill. Ask your
+If you use a coding agent, M3 includes a reusable
+[`testing-with-m3`](skills/testing-with-m3/SKILL.md) skill. Ask your
 preferred agent to install the skill from this repository and use it to create
 tests for your server or agent workflow. This repository is private, so the
 agent needs authenticated Git access or `GITHUB_TOKEN`/`GH_TOKEN`. If it cannot
 access GitHub, use a local checkout and point it to
-`skills/testing-with-mcp-pal/SKILL.md` and that directory's `references/` files.
+`skills/testing-with-m3/SKILL.md` and that directory's `references/` files.
 
 The skill helps an agent inspect the real MCP contract, choose direct server
 tests or agent-behavior tests, assert captured tool evidence, and iterate using
@@ -92,25 +92,25 @@ feedback reports and baselines. The recommended workflow is to use the CLI to
 run the tests and inspect persistent history or the local UI.
 
 ```text
-Install and use the MCP Pal skill from
-https://github.com/mcppal/mcp-pal/tree/main/skills/testing-with-mcp-pal
+Install and use the M3 skill from
+https://github.com/sineframe/m3/tree/main/skills/testing-with-m3
 (authenticated GitHub access or GITHUB_TOKEN/GH_TOKEN may be required).
 If this repository is available only as a local checkout, read
-skills/testing-with-mcp-pal/SKILL.md and its references/ directory instead.
+skills/testing-with-m3/SKILL.md and its references/ directory instead.
 Read its testing patterns, then add and run the smallest tests that verify
 <the behavior I care about> against <my MCP server or agent workflow>.
-If this project has no MCP Pal test yet, run mcp-pal init first and replace
+If this project has no M3 test yet, run m3 init first and replace
 its skipped starter test after inspecting the real server contract.
 Keep direct server checks separate from agent tool-selection checks, and use
-the MCP Pal CLI to run the tests and inspect the resulting report or UI.
+the M3 CLI to run the tests and inspect the resulting report or UI.
 ```
 
-This is one onboarding workflow; MCP Pal works with any agent and any ordinary
+This is one onboarding workflow; M3 works with any agent and any ordinary
 Python and pytest workflow.
 
 ## Start with the CLI
 
-The standalone `mcp-pal` command runs your existing pytest suite in its project
+The standalone `m3` command runs your existing pytest suite in its project
 environment and includes the local browser viewer. No Node.js or frontend
 checkout is needed in the project under test. The CLI guide covers installation,
 project setup, environment checks, test selection, persistent results, UI use,
@@ -119,12 +119,12 @@ and troubleshooting.
 Start with the [CLI installation guide](cli/README.md#install), then follow the
 [project setup and testing guide](cli/README.md#set-up-a-project).
 
-From the project root, run `mcp-pal init` to answer the project and suite name
-questions and create a skipped starter test. Then run `mcp-pal setup`, fill in
-the test, and use `mcp-pal test` to record its result.
+From the project root, run `m3 init` to answer the project and suite name
+questions and create a skipped starter test. Then run `m3 setup`, fill in
+the test, and use `m3 test` to record its result.
 
-CLI-managed runs use `.mcp-pal/executions.sqlite` by default and write an
-agent-readable report to `.mcp-pal/reports/<run-id>/feedback.json`. The CLI
+CLI-managed runs use `.m3/executions.sqlite` by default and write an
+agent-readable report to `.m3/reports/<run-id>/feedback.json`. The CLI
 guide explains how to select pytest arguments, compare a run with a baseline,
 and open the bundled viewer.
 
@@ -146,7 +146,7 @@ environment; these are two ways to run the same test style.
 | Understand traces, storage, and evaluations | [SDK concepts](sdk/docs/concepts.md) |
 | Score repeated agent trials | [Evaluation guide](sdk/docs/evaluations.md) |
 | Test a deployed Streamable HTTP server | [HTTP guide](sdk/docs/http.md) |
-| Give a coding agent MCP Pal instructions | [Testing skill](skills/testing-with-mcp-pal/SKILL.md) |
+| Give a coding agent M3 instructions | [Testing skill](skills/testing-with-m3/SKILL.md) |
 | Contribute to the implementation | [Architecture](docs/architecture.md) |
 
 ## Development

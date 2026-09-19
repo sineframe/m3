@@ -6,8 +6,8 @@ specification. Provider setup is described in the [quick start](quick-start.md#a
 
 ```python
 import pytest
-from mcp_pal.evaluations import EvaluationDecision
-from mcp_pal.types import EvaluationStatus
+from m3.evaluations import EvaluationDecision
+from m3.types import EvaluationStatus
 
 
 def answer_and_tool(context):
@@ -25,9 +25,9 @@ def answer_and_tool(context):
     )
 
 
-@pytest.mark.mcp_pal
-def test_answer_and_tool(agent, mcp_pal_kit, math_server):
-    mcp_pal_kit.register_evaluator("project.answer-and-tool.v1", answer_and_tool)
+@pytest.mark.m3
+def test_answer_and_tool(agent, m3_kit, math_server):
+    m3_kit.register_evaluator("project.answer-and-tool.v1", answer_and_tool)
     with agent.session(server=math_server) as session:
         turn = session.send("What is 2 + 3? Use the math tool.")
     result = session.result
@@ -35,7 +35,7 @@ def test_answer_and_tool(agent, mcp_pal_kit, math_server):
         "answer": turn.response.text if turn.response else "",
         "used_tools": [call.tool.value for call in result.trace_view.tool_calls],
     }
-    mcp_pal_kit.evaluate(
+    m3_kit.evaluate(
         subject,
         "project.answer-and-tool.v1",
         execution_id=result.snapshot.execution_id,
@@ -46,13 +46,13 @@ def test_answer_and_tool(agent, mcp_pal_kit, math_server):
 
 The callback checks both the answer and captured tool evidence. A callback can
 also be async. Built-in evaluators include
-`mcp_pal.execution.completed.v1`, `mcp_pal.tool_call.succeeded.v1`, and
-`mcp_pal.output.has_text.v1`.
+`m3.execution.completed.v1`, `m3.tool_call.succeeded.v1`, and
+`m3.output.has_text.v1`.
 
 Use `MCPTestKit(store=SQLiteExecutionStore(path))` to persist evaluations in a
 plain Python program. Pytest runs persist them with
-`--mcp-pal-results-db PATH`. The CLI also writes feedback to
-`.mcp-pal/reports/<run-id>/feedback.json`; use `--baseline RUN_ID` for a
+`--results-db PATH`. The CLI also writes feedback to
+`.m3/reports/<run-id>/feedback.json`; use `--baseline RUN_ID` for a
 comparison with an earlier run.
 
 ## Evaluate repeated agent trials
@@ -68,9 +68,9 @@ The marked test can use the public agent API:
 
 ```python
 import pytest
-from mcp_pal.evaluations import EvaluationDecision
-from mcp_pal.types import EvaluationStatus
-from mcp_pal import expect
+from m3.evaluations import EvaluationDecision
+from m3.types import EvaluationStatus
+from m3 import expect
 
 CASES = [
     ("add", "What is 2 + 3? Use the math tool.", 5, "add_tool"),
@@ -90,15 +90,15 @@ def evaluate_math(context):
     )
 
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 @pytest.mark.parametrize("case_id,prompt,expected,expected_tool", CASES)
-def test_math_agent(agent, mcp_pal_kit, math_server, case_id, prompt, expected, expected_tool):
-    mcp_pal_kit.register_evaluator("example.math.v1", evaluate_math)
+def test_math_agent(agent, m3_kit, math_server, case_id, prompt, expected, expected_tool):
+    m3_kit.register_evaluator("example.math.v1", evaluate_math)
     with agent.session(server=math_server, case_id=f"math-{case_id}") as session:
         turn = session.send(prompt)
     result = session.result
     expect(result).to_have_tool_call(expected_tool, status="success")
-    mcp_pal_kit.evaluate(
+    m3_kit.evaluate(
         {
             "answer": turn.response.text if turn.response else "",
             "expected": expected,
@@ -117,7 +117,7 @@ Run two independent trials of every case for each selected configuration. Follow
 environment or an explicit `.env` file; only variable names appear in this command:
 
 ```bash
-mcp-pal test --env-file .env \
+m3 test --env-file .env \
   --harness opencode=opencode/big-pickle \
   --harness codex=gpt-5.6-sol --trials 2 -- tests/test_math_agent.py
 ```
@@ -133,7 +133,7 @@ Filter by both evaluator and run so older rows in the same database do not enter
 the result. Group by the selected configuration:
 
 ```python
-from mcp_pal.aggregations import EvaluationQuery
+from m3.aggregations import EvaluationQuery
 
 report = store.aggregate_evaluations(EvaluationQuery(
     filters={
@@ -159,7 +159,7 @@ summaries.
 The full live math example is opt-in and may use provider resources:
 
 ```bash
-MCP_PAL_RUN_LIVE_MATH_MATRIX=1 \
+M3_RUN_LIVE_MATH_MATRIX=1 \
   uv run --project sdk --all-extras pytest -s -q \
   sdk/examples/nondeterministic/test_math_harness_matrix.py
 ```

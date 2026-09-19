@@ -17,7 +17,7 @@ def test_release_workflow_runs_the_exact_built_release_through_standalone_gate()
     gate = """      - name: Run the isolated two-environment standalone gate
         run: |
           set -euo pipefail
-          release_dir="$RUNNER_TEMP/mcp-pal-release"
+          release_dir="$RUNNER_TEMP/m3-release"
           python scripts/check_cli_standalone.py \\
             --release-dir "$release_dir" \\
             --version '${{ steps.version.outputs.version }}'

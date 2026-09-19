@@ -1,4 +1,4 @@
-# MCP Pal v0.2 — Python SDK for Testing MCP Servers
+# M3 v0.2 — Python SDK for Testing MCP Servers
 
 > Historical note: Streamlit sections in this plan describe a retired
 > implementation and are superseded by the [authoritative Streamlit removal
@@ -8,16 +8,16 @@
 
 ## Summary
 
-Build MCP Pal around a published, framework-neutral Python SDK that becomes the single source of truth for direct MCP protocol testing, agent-driven multi-turn testing, execution management, tracing, persistence, assertions, and evaluation.
+Build M3 around a published, framework-neutral Python SDK that becomes the single source of truth for direct MCP protocol testing, agent-driven multi-turn testing, execution management, tracing, persistence, assertions, and evaluation.
 
 The existing FastAPI application becomes a thin serialization adapter over the SDK. Streamlit uses the SDK directly and retains its current behavior, including complete traces for successful, failed, timed-out, cancelled, and interrupted runs.
 
-SDK users write normal Python and pytest tests. There will be no JSON/YAML scenario authoring format. A thin `mcp-pal test` command will wrap pytest without replacing its discovery, fixtures, parametrization, plugins, reporting, or exit codes.
+SDK users write normal Python and pytest tests. There will be no JSON/YAML scenario authoring format. A thin `m3 test` command will wrap pytest without replacing its discovery, fixtures, parametrization, plugins, reporting, or exit codes.
 
 Deliver the work through runnable milestones:
 
 1. `0.2.0a1`: package foundation, domain models, direct MCP testing, tracing, persistence, assertions, pytest foundation.
-2. `0.2.0a2`: multi-turn agent runtime, multiple servers, harness adapters, policies, workspace isolation, capture.
+2. `0.2.0a13`: multi-turn agent runtime, multiple servers, harness adapters, policies, workspace isolation, capture.
 3. `0.2.0a3`: `/api/v2` adapter, execution workers, Streamlit migration to direct SDK use, fresh database schema.
 4. `0.2.0rc1`: complete documentation, reference pytest corpus, deterministic and live E2E suites, packaging and release validation.
 5. `0.2.0`: stable only after all acceptance gates pass.
@@ -30,7 +30,7 @@ Each milestone must leave the repository installable, testable, and runnable. Pr
 
 Convert the repository into a uv workspace with one published project under `sdk/`:
 
-- `sdk/src/mcp_pal`: the complete published package.
+- `sdk/src/m3`: the complete published package.
 - `sdk/tests`: unit, integration, contract, API, UI-support, packaging, and deterministic E2E tests.
 - `sdk/examples`: real pytest files that MCP authors can copy and that CI executes against an installed wheel.
 - `sdk/docs`: versioned Diátaxis documentation, ADRs, API reference, schemas, and executable examples.
@@ -40,44 +40,44 @@ Use Hatchling for builds and one authoritative version in package metadata. Runt
 
 ### Dependency boundaries
 
-Publish `mcp-pal` with Python `>=3.10` and conservative upper bounds for dependencies that expose unstable public APIs.
+Publish `m3` with Python `>=3.10` and conservative upper bounds for dependencies that expose unstable public APIs.
 
 Dependency extras:
 
 - Base package: core SDK, official MCP v2 client, direct testing, built-in Claude Code/OpenCode/ACP adapters, capture, typed models, assertions, in-memory operation.
-- `mcp-pal[pytest]`: pytest plugin and test-report integrations.
-- `mcp-pal[storage]`: SQLAlchemy-backed SQLite persistence and filesystem blob storage.
-- `mcp-pal[app]`: storage plus FastAPI, Uvicorn, Streamlit, and application dependencies.
-- `mcp-pal[property]`: Hypothesis schema-driven strategies.
-- `mcp-pal[docs]`: MkDocs Material, mkdocstrings, and documentation validation.
-- `mcp-pal[all]`: all supported optional capabilities.
+- `m3[pytest]`: pytest plugin and test-report integrations.
+- `m3[storage]`: SQLAlchemy-backed SQLite persistence and filesystem blob storage.
+- `m3[app]`: storage plus FastAPI, Uvicorn, Streamlit, and application dependencies.
+- `m3[property]`: Hypothesis schema-driven strategies.
+- `m3[docs]`: MkDocs Material, mkdocstrings, and documentation validation.
+- `m3[all]`: all supported optional capabilities.
 
-Use the official MCP Python SDK as `mcp>=2,<3`. Importing `mcp_pal` must not initialize databases, inspect binaries, load `.env`, create event loops, start workers, or perform network access.
+Use the official MCP Python SDK as `mcp>=2,<3`. Importing `m3` must not initialize databases, inspect binaries, load `.env`, create event loops, start workers, or perform network access.
 
 Support and document both uv and pip:
 
 ```bash
-uv add "mcp-pal[pytest]"
+uv add "m3[pytest]"
 uv run pytest
-uv run mcp-pal test
+uv run m3 test
 
-pip install "mcp-pal[pytest]"
+pip install "m3[pytest]"
 pytest
-mcp-pal test
+m3 test
 ```
 
 Ship `py.typed`, runtime schemas, and the Apache-2.0 license in the wheel. Include examples and documentation in the source distribution and repository, but not in the wheel.
 
 ### Public module organization
 
-Expose common synchronous symbols from `mcp_pal`, with complete explicit surfaces under:
+Expose common synchronous symbols from `m3`, with complete explicit surfaces under:
 
-- `mcp_pal.sync_api`
-- `mcp_pal.async_api`
-- `mcp_pal.types`
-- `mcp_pal.matchers`
-- `mcp_pal.testing`
-- `mcp_pal.pytest_plugin`
+- `m3.sync_api`
+- `m3.async_api`
+- `m3.types`
+- `m3.matchers`
+- `m3.testing`
+- `m3.pytest_plugin`
 
 Use frozen Pydantic models for public specifications, snapshots, events, results, evaluations, and errors. Controllers such as kits, clients, sessions, handles, and workers remain mutable lifecycle objects.
 
@@ -90,7 +90,7 @@ All public exports must be tracked in a manifest checked by CI and represented i
 Provide synchronous and asynchronous twin APIs:
 
 ```python
-from mcp_pal import MCPTestKit, expect
+from m3 import MCPTestKit, expect
 
 with MCPTestKit() as kit:
     with kit.direct(server) as client:
@@ -100,7 +100,7 @@ with MCPTestKit() as kit:
 ```
 
 ```python
-from mcp_pal.async_api import AsyncMCPTestKit
+from m3.async_api import AsyncMCPTestKit
 
 async with AsyncMCPTestKit() as kit:
     async with kit.direct(server) as client:
@@ -112,8 +112,8 @@ async with AsyncMCPTestKit() as kit:
 Config precedence is:
 
 1. Explicit constructor or method arguments.
-2. MCP Pal environment variables.
-3. `[tool.mcp-pal]` in `pyproject.toml`.
+2. M3 environment variables.
+3. `[tool.m3]` in `pyproject.toml`.
 4. SDK defaults.
 
 Library imports never load `.env`. The application and CLI may load a user-selected `.env` explicitly.
@@ -244,7 +244,7 @@ Workspace policies:
 - Read-only source view.
 - Explicit in-place execution with a risk acknowledgement.
 
-Copies and worktrees exclude `.git`, virtual environments, caches, `.env*`, credentials, and MCP Pal artifact directories by default. Risky inclusion requires an explicit override.
+Copies and worktrees exclude `.git`, virtual environments, caches, `.env*`, credentials, and M3 artifact directories by default. Risky inclusion requires an explicit override.
 
 Capture a structured workspace diff and declared output artifacts at execution completion.
 
@@ -315,7 +315,7 @@ Stable snapshot normalization removes run IDs, timestamps, durations, costs, pat
 
 ### Testing utilities
 
-Publish `mcp_pal.testing` with:
+Publish `m3.testing` with:
 
 - A decorator-based and stateful `MockMCPServer`.
 - Scripted expected request/response sequences.
@@ -506,19 +506,19 @@ On failure, attach concise trace/artifact locations and identifiers to pytest te
 
 Support pytest-xdist through isolated per-worker ephemeral directories, unique portals and ports, and database leases for persistent tests.
 
-### `mcp-pal test`
+### `m3 test`
 
 Implement:
 
 ```bash
-uv run mcp-pal test [PYTEST_ARGS...]
+uv run m3 test [PYTEST_ARGS...]
 ```
 
 The command:
 
 - Verifies that the pytest plugin is installed and loadable.
 - Prints a concise SDK/plugin/artifact readiness summary.
-- Applies only MCP Pal artifact/reporting defaults.
+- Applies only M3 artifact/reporting defaults.
 - Passes all remaining arguments to pytest unchanged.
 - Preserves pytest discovery, fixtures, hooks, parametrization, plugins, coverage, JUnit, xdist, output, and exact exit code.
 
@@ -534,7 +534,7 @@ It must not:
 
 `uv run pytest` remains stable and behaviorally equivalent.
 
-Add strict `mcp-pal doctor` preflight for users who want to validate all requested harnesses, binaries, transports, persistence, and configuration before a test run. Preserve existing operational CLI capabilities under the consolidated CLI.
+Add strict `m3 doctor` preflight for users who want to validate all requested harnesses, binaries, transports, persistence, and configuration before a test run. Preserve existing operational CLI capabilities under the consolidated CLI.
 
 ## 5. Documentation and examples
 
@@ -614,7 +614,7 @@ Cover:
 - Install each extra independently in clean environments.
 - Install `[all]`.
 - Install with uv and pip.
-- `import mcp_pal` with no filesystem, database, process, event-loop, or network side effects.
+- `import m3` with no filesystem, database, process, event-loop, or network side effects.
 - Import sync and async APIs independently.
 - Import pytest plugin only when its extra is installed.
 - Runtime version equals wheel metadata.
@@ -631,7 +631,7 @@ Cover:
 Cover:
 
 - Defaults with no configuration.
-- `[tool.mcp-pal]` discovery.
+- `[tool.m3]` discovery.
 - Environment override.
 - Explicit argument override.
 - Full precedence across all four levels.
@@ -1076,7 +1076,7 @@ Cover:
 - Terminal failure summary.
 - JUnit properties contain identifiers/paths but no trace payload or secrets.
 - xdist isolation.
-- `mcp-pal test` forwards file selection.
+- `m3 test` forwards file selection.
 - Forwards `-k`, `-m`, parametrization, verbosity, capture, maxfail, and plugin options.
 - Works with coverage.
 - Works with JUnit.
@@ -1086,7 +1086,7 @@ Cover:
 - Readiness summary does not fail due to unused harnesses.
 - No scenario-file discovery.
 - No implicit retry, skip, or harness selection.
-- `uv run pytest` and `uv run mcp-pal test` execute equivalent tests.
+- `uv run pytest` and `uv run m3 test` execute equivalent tests.
 - `doctor` strict success/failure behavior.
 
 ### O. Documentation and public-reference E2E corpus
@@ -1216,10 +1216,10 @@ Work through this list in order. Each checkbox should be completed as a small re
 ### Phase 1 — Create the uv workspace and distributable SDK
 
 - [x] Convert the root project to a uv workspace containing the `sdk` project.
-- [x] Move the Python package beneath `sdk/src/mcp_pal` without changing runtime behavior yet.
+- [x] Move the Python package beneath `sdk/src/m3` without changing runtime behavior yet.
 - [x] Move and reorganize tests beneath `sdk/tests` while preserving baseline coverage.
 - [x] Configure Hatchling to build only the intended SDK package and runtime data.
-- [x] Set package metadata for `mcp-pal`, Python `>=3.10`, Apache-2.0, README, authors, classifiers, keywords, and project URLs.
+- [x] Set package metadata for `m3`, Python `>=3.10`, Apache-2.0, README, authors, classifiers, keywords, and project URLs.
 - [x] Add the Apache-2.0 license file and PEP 639-compatible license metadata.
 - [x] Define base, `pytest`, `storage`, `app`, `property`, `docs`, and `all` dependency extras.
 - [x] Add `mcp>=2,<3` and validate the actual official SDK API used by the implementation.
@@ -1228,13 +1228,13 @@ Work through this list in order. Each checkbox should be completed as a small re
 - [x] Configure wheel contents to include runtime schemas and license only where appropriate.
 - [x] Configure the sdist to include docs, examples, tests needed for source validation, and legal files without unrelated research/build artifacts.
 - [x] Obtain the runtime version exclusively through `importlib.metadata`.
-- [x] Verify that `import mcp_pal` has no database, subprocess, filesystem-write, network, or event-loop side effects.
+- [x] Verify that `import m3` has no database, subprocess, filesystem-write, network, or event-loop side effects.
 - [x] Build wheel and sdist and run metadata/content validation.
 - [x] Install the wheel into a clean environment and smoke-test imports and entry points.
 
 ### Phase 2 — Define the public domain model
 
-- [x] Establish `mcp_pal`, `sync_api`, `async_api`, `types`, `matchers`, `testing`, and `pytest_plugin` module boundaries.
+- [x] Establish `m3`, `sync_api`, `async_api`, `types`, `matchers`, `testing`, and `pytest_plugin` module boundaries.
 - [x] Define the public export manifest and a test that rejects undocumented or accidental exports.
 - [x] Implement frozen identifiers and metadata types for executions, sessions, turns, servers, connections, artifacts, and events.
 - [x] Implement execution lifecycle and outcome enums with validated transitions.
@@ -1255,7 +1255,7 @@ Phase 2 boundary note: profile references represent either a submission-time `la
 
 ### Phase 3 — Implement configuration and capability discovery
 
-- [x] Define all supported `[tool.mcp-pal]` settings and environment-variable names.
+- [x] Define all supported `[tool.m3]` settings and environment-variable names.
 - [x] Implement configuration precedence: explicit arguments, environment, project config, defaults.
 - [x] Track the source of every effective configuration value for diagnostics.
 - [x] Keep `.env` loading out of library code.
@@ -1264,7 +1264,7 @@ Phase 2 boundary note: profile references represent either a submission-time `la
 - [x] Record detected versions and individual capability results without version allowlists.
 - [x] Ensure probing one harness does not initialize or fail unrelated harnesses.
 - [x] Implement `kit.capabilities()` and namespaced probe services.
-- [x] Implement strict `mcp-pal doctor` behavior for explicitly requested capabilities.
+- [x] Implement strict `m3 doctor` behavior for explicitly requested capabilities.
 - [x] Add redaction tests for configuration errors, probe output, reprs, and serialized snapshots.
 
 ### Phase 4 — Build stable tracing and ephemeral execution storage
@@ -1321,7 +1321,7 @@ engine or silently claiming unsupported coverage.
 
 Phase 5 escalation resolution: the pinned `mcp==2.0.0` public API was
 validated directly. It does not expose an arbitrary handshake-revision
-selector, so MCP Pal accepts automatic/current negotiation and rejects other
+selector, so M3 accepts automatic/current negotiation and rejects other
 explicit revision constraints before startup. Revision-matrix coverage is not
 claimed. Remote transports validate all resolved addresses and disable
 redirects, but connection-level DNS pinning is unavailable through the pinned
@@ -1431,7 +1431,7 @@ MCP messages and explicitly report raw-wire capture as incomplete.
 - [x] Run the common harness contract against deterministic adapters on every change.
 - [x] Define separate live characterization commands for real installed harnesses.
 
-### Phase 12 — Complete the `0.2.0a2` gate
+### Phase 12 — Complete the `0.2.0a13` gate
 
 - [x] Run deterministic one-turn and multi-turn harness contracts.
 - [x] Prove state persists across at least three turns in the same agent and MCP session.
@@ -1440,7 +1440,7 @@ MCP messages and explicitly report raw-wire capture as incomplete.
 - [x] Prove all policy, permission, attachment, timeout, cancellation, and cleanup behaviors.
 - [x] Run explicitly configured live characterization without making it a deterministic CI dependency.
 - [x] Confirm no harness silently falls back to another harness or weaker multi-turn mechanism.
-- [x] Mark the package internally as `0.2.0a2` only when this gate passes.
+- [x] Mark the package internally as `0.2.0a13` only when this gate passes.
 
 ### Phase 13 — Implement persistent storage, leases, and workers
 
@@ -1521,12 +1521,12 @@ MCP messages and explicitly report raw-wire capture as incomplete.
 - [ ] Implement failure-only artifact export by default and `always`/`never` settings.
 - [ ] Add concise trace and artifact references to failure output.
 - [ ] Add safe identifiers and paths, but not trace bodies, to JUnit properties.
-- [ ] Implement `mcp-pal test` as a transparent pytest argument and exit-code wrapper.
+- [ ] Implement `m3 test` as a transparent pytest argument and exit-code wrapper.
 - [ ] Verify compatibility with selection, markers, parametrization, coverage, JUnit, and xdist.
 - [ ] Fail with an installation hint when the pytest extra is missing.
 - [ ] Ensure unused unavailable harnesses do not make the wrapper fail globally.
 - [ ] Ensure selected tests requesting missing prerequisites fail rather than auto-skip.
-- [ ] Prove `pytest` and `mcp-pal test` execute equivalent suites.
+- [ ] Prove `pytest` and `m3 test` execute equivalent suites.
 - [ ] Confirm no JSON/YAML scenario discovery or custom runner behavior exists.
 
 ### Phase 18 — Build the industry-standard documentation set
@@ -2010,8 +2010,8 @@ Idempotency applies only when a key is supplied. Reuse with an identical normali
 
 - The plugin registers fixtures, markers, reporting hooks, and artifact policy only.
 - Pytest owns collection, selection, parametrization, fixture scheduling, assertion rewriting, plugin loading, reporting, and exit codes.
-- `mcp-pal test` invokes pytest in-process or through its official entry point and returns the exact pytest exit code.
-- Wrapper arguments are not re-parsed except MCP Pal’s own non-conflicting wrapper options.
+- `m3 test` invokes pytest in-process or through its official entry point and returns the exact pytest exit code.
+- Wrapper arguments are not re-parsed except M3’s own non-conflicting wrapper options.
 - Markers never cause automatic skip or retry.
 - Deterministic repository CI explicitly excludes the separate live-test location/selection.
 - When a live test is explicitly selected, readiness failure fails that test with diagnostics.

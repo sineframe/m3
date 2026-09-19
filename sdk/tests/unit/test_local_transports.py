@@ -13,20 +13,20 @@ from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import MCPError
 from mcp.types import ListToolsResult
 
-from mcp_pal.transport.local import (
+from m3.transport.local import (
     InProcessMCPTransport,
     StdioMCPTransport,
     TransportProcessError,
     TransportStartupError,
 )
-from mcp_pal.types import InProcessServer, SecretReference, StdioServer
+from m3.types import InProcessServer, SecretReference, StdioServer
 
 
 def _server() -> Server:
     async def list_tools(_context: object, _params: object) -> ListToolsResult:
         return ListToolsResult(tools=[])
 
-    return Server("mcp-pal-test", on_list_tools=list_tools)
+    return Server("m3-test", on_list_tools=list_tools)
 
 
 @pytest.mark.asyncio
@@ -37,7 +37,7 @@ async def test_in_process_connection_uses_official_client_and_closes_cleanly() -
             connection.read_stream, connection.write_stream
         ) as client:
             initialized = await client.initialize()
-            assert initialized.server_info.name == "mcp-pal-test"
+            assert initialized.server_info.name == "m3-test"
     assert connection.evidence.closed is True
 
 
@@ -101,7 +101,7 @@ async def test_stdio_connection_uses_argv_only_and_owned_cleanup() -> None:
     server = StdioServer(
         name="echo",
         command=sys.executable,
-        args=("-m", "mcp_pal.fixtures.echo_server"),
+        args=("-m", "m3.fixtures.echo_server"),
     )
     transport = StdioMCPTransport(server)
     async with transport as connection:
@@ -109,7 +109,7 @@ async def test_stdio_connection_uses_argv_only_and_owned_cleanup() -> None:
             connection.read_stream, connection.write_stream
         ) as client:
             initialized = await client.initialize()
-            assert initialized.server_info.name == "mcp-pal-echo"
+            assert initialized.server_info.name == "echo-server"
     assert connection.evidence.closed is True
     await connection.close()
 
@@ -155,7 +155,7 @@ async def test_stdio_connection_accepts_an_existing_absolute_cwd(
     server = StdioServer(
         name="echo",
         command=sys.executable,
-        args=("-m", "mcp_pal.fixtures.echo_server"),
+        args=("-m", "m3.fixtures.echo_server"),
         cwd=str(tmp_path),
     )
     async with StdioMCPTransport(server) as connection:
@@ -163,7 +163,7 @@ async def test_stdio_connection_accepts_an_existing_absolute_cwd(
             connection.read_stream, connection.write_stream
         ) as client:
             initialized = await client.initialize()
-            assert initialized.server_info.name == "mcp-pal-echo"
+            assert initialized.server_info.name == "echo-server"
 
 
 @pytest.mark.asyncio
@@ -193,7 +193,7 @@ async def test_stdio_cleanup_rejects_cross_task_scope_exit() -> None:
     server = StdioServer(
         name="echo",
         command=sys.executable,
-        args=("-m", "mcp_pal.fixtures.echo_server"),
+        args=("-m", "m3.fixtures.echo_server"),
     )
     transport = StdioMCPTransport(server)
     async with transport as connection:
@@ -207,7 +207,7 @@ async def test_stdio_cleanup_rejects_cross_task_scope_exit() -> None:
 @pytest.mark.asyncio
 @pytest.mark.process_lifecycle
 async def test_stdio_startup_errors_are_sanitized() -> None:
-    server = StdioServer(name="missing", command="mcp-pal-no-such-executable")
+    server = StdioServer(name="missing", command="m3-no-such-executable")
     with pytest.raises(TransportStartupError) as error:
         await StdioMCPTransport(server).open()
     assert str(error.value) == "stdio MCP server startup failed"

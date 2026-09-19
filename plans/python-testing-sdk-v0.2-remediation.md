@@ -1,4 +1,4 @@
-# MCP Pal v0.2 remediation and completion plan
+# M3 v0.2 remediation and completion plan
 
 Status: proposed implementation plan, 2026-08-25
 
@@ -62,14 +62,14 @@ Use two uv workspace projects:
 pyproject.toml                 # workspace and project-wide test orchestration
 justfile                       # development commands only
 sdk/
-  pyproject.toml               # published mcp-pal distribution
-  src/mcp_pal/                 # SDK only
+  pyproject.toml               # published m3 distribution
+  src/m3/                 # SDK only
   tests/
   examples/                    # copyable pytest modules
   docs/                        # complete SDK documentation
 app/
   pyproject.toml               # private/non-published application project
-  src/mcp_pal_app/
+  src/m3_app/
     api/                       # /api/v2 adapter over SDK services
     ui/                        # Streamlit client using SDK services directly
     settings.py                # explicit application configuration/.env entry
@@ -78,16 +78,16 @@ app/
 
 Required moves and dependency changes:
 
-- Move `mcp_pal.api`, `mcp_pal.ui`, `mcp_pal.main`, legacy application settings,
-  and application-only persistence helpers into `mcp_pal_app`.
+- Move `m3.api`, `m3.ui`, `m3.main`, legacy application settings,
+  and application-only persistence helpers into `m3_app`.
 - Remove FastAPI, Streamlit, requests, Uvicorn, and application-specific settings
   dependencies from the SDK base and SDK extras.
-- Keep `mcp-pal[storage]`, `[pytest]`, `[property]`, `[docs]`, and `[all]`.
+- Keep `m3[storage]`, `[pytest]`, `[property]`, `[docs]`, and `[all]`.
   `[all]` means all SDK capabilities, not the separate application.
-- Make the private app project depend on `mcp-pal[storage]` through the uv
+- Make the private app project depend on `m3[storage]` through the uv
   workspace during development.
-- Build the SDK wheel and assert that it contains no `mcp_pal/api`,
-  `mcp_pal/ui`, application entry point, Streamlit import, FastAPI import, or
+- Build the SDK wheel and assert that it contains no `m3/api`,
+  `m3/ui`, application entry point, Streamlit import, FastAPI import, or
   requests import.
 - Keep root orchestration able to run `just api`, `just ui`, and combined tests.
 - Do not preserve `/api/v1` compatibility. This repository is pre-production;
@@ -581,7 +581,7 @@ bounded redacted diagnostics and complete without a pipe deadlock
 now records the group leader identity, validates `getpgid(child) == pgid`,
 rejects pgid-only/mismatched/self-group targets, tolerates permission and
 already-reaped races, and passes the child PID when ACP cleanup has a captured
-pgid (`sdk/src/mcp_pal/harness/process_group.py`,
+pgid (`sdk/src/m3/harness/process_group.py`,
 `sdk/tests/unit/test_process_group.py`). Focused existing native/ACP cancellation
 and descendant cleanup tests plus the new ownership tests passed; strict mypy
 passed for the typed touched modules and new tests, and `git diff --check`
@@ -715,7 +715,7 @@ Gate:
 
 #### Application configuration
 
-- [ ] Create `mcp_pal_app.settings` with one explicit application `.env` loading
+- [ ] Create `m3_app.settings` with one explicit application `.env` loading
   entry point.
 - [x] Define one database setting name and use it consistently in API, UI,
   workers, reset tooling, `.env.example`, README, tests, and Just recipes.
@@ -729,7 +729,7 @@ Gate:
   projects; the lock contains both projects.
 - [x] UI, API, application entrypoint, application settings, legacy ORM
   persistence, run orchestration, and one-shot native
-  runners live under `app/src/mcp_pal_app`.
+  runners live under `app/src/m3_app`.
 - [x] Legacy application event normalization and its regression tests live in
   the app; modern SDK adapters, ACP contracts, stable trace/storage, and
   proxy modules remain in the SDK.
@@ -767,8 +767,8 @@ tests passed; strict mypy, compile, and diff checks are clean.
 #### R6 progress evidence — typed profile and spec boundary
 
 The direct-client migration now has an application-owned, transport-neutral
-foundation in `mcp_pal_app.services.profile_service` and
-`mcp_pal_app.services.spec_builder`. `ProfileService` manages
+foundation in `m3_app.services.profile_service` and
+`m3_app.services.spec_builder`. `ProfileService` manages
 server and harness profile lifecycle through the SDK's fresh `v2_*` profile
 tables, including deterministic listing, immutable revisions, archive/restore,
 metadata updates, harness import/export, manifest validation, and explicit
@@ -861,7 +861,7 @@ Streamlit SDK consumption, `/api/v1` removal, or unrelated R6 work.
 
 #### Streamlit
 
-- [ ] Remove `requests`, `MCP_PAL_API_URL`, and every local HTTP call.
+- [ ] Remove `requests`, `M3_API_URL`, and every local HTTP call.
 - [ ] Construct/cache one SDK toolkit and use SDK services directly.
 - [ ] Preserve one-turn UI behavior, browser-session draft isolation, profile
   forms, clone, cancel, history, deletion, and reports.
@@ -912,13 +912,13 @@ outcome; `/api/v1` is absent.
   configuration.
 - [ ] Print concise safe trace/artifact references in pytest failure output.
 - [ ] Put only safe IDs and paths—not trace bodies—in JUnit properties.
-- [ ] Implement `mcp-pal test` as a transparent `pytest` wrapper that passes
+- [ ] Implement `m3 test` as a transparent `pytest` wrapper that passes
   through arguments and exact exit codes.
 - [ ] Do not implement separate discovery, fixtures, parametrization, scenario
   files, or result semantics.
 - [ ] Test selection, `-k`, markers, parametrization, xfail, coverage, JUnit,
   xdist, Ctrl-C, missing extras, and missing explicitly selected harnesses.
-- [ ] Prove `pytest ...` and `mcp-pal test ...` collect and execute the same tests.
+- [ ] Prove `pytest ...` and `m3 test ...` collect and execute the same tests.
 
 Gate: clean-wheel consumers can use either command with equivalent behavior.
 
@@ -1082,7 +1082,7 @@ Release candidate acceptance:
 - SDK wheel contains SDK only and works on Python 3.10–3.13;
 - UI uses SDK services directly and displays successful and unsuccessful traces;
 - API v2 shares the same SDK store/worker/models;
-- pytest and `mcp-pal test` remain equivalent;
+- pytest and `m3 test` remain equivalent;
 - documentation and installed-wheel examples pass; and
 - no scenario system, conformance wrapper, legacy DB compatibility, hidden judge,
   or unauthorized publication is present.
@@ -1137,7 +1137,7 @@ Additional explicit gates:
 ```bash
 uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_sdk_workflows.py
 uv build --project sdk --no-sources
-MCP_PAL_RUN_LIVE_OPENCODE=1 \
+M3_RUN_LIVE_OPENCODE=1 \
   uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_live_opencode.py
 ```
 
@@ -1172,7 +1172,7 @@ than importing from repository `PYTHONPATH`.
 | SDK docs are placeholders | R9 | strict docs/snippet gate |
 | Copyable pytest examples are absent | R9 | installed-wheel example corpus |
 | Pytest plugin is empty | R7 | fixture/isolation tests |
-| `mcp-pal test` is absent | R7 | pytest equivalence tests |
+| `m3 test` is absent | R7 | pytest equivalence tests |
 | Full suite/status claims are inaccurate | R0/R10 | truthful recorded green gates |
 
 ## 8. Definition of done

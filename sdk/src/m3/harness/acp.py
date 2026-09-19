@@ -1,0 +1,2889 @@
+"""ACP v1 subprocess runner backed by the official ``agent-client-protocol`` SDK."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import shutil
+import sys
+import tempfile
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import replace
+from datetime import datetime, timezone
+from math import isfinite
+from pathlib import Path
+from typing import Any, cast
+from urllib.parse import parse_qsl, urlsplit
+
+from acp.client.connection import ClientSideConnection
+from acp.connection import StreamDirection
+from acp.schema import (
+    AcceptElicitationResponse,
+    AllowedOutcome,
+    ClientCapabilities,
+    CreateElicitationResponse,
+    CreateTerminalResponse,
+    DeclineElicitationResponse,
+    DeniedOutcome,
+    EnvVariable,
+    HttpHeader,
+    HttpMcpServer,
+    Implementation,
+    KillTerminalResponse,
+    McpServerStdio,
+    ReadTextFileResponse,
+    ReleaseTerminalResponse,
+    RequestPermissionResponse,
+    SseMcpServer,
+    TerminalOutputResponse,
+    TextContentBlock,
+    WaitForTerminalExitResponse,
+    WriteTextFileResponse,
+)
+from pydantic import JsonValue
+
+from ..interaction_handlers import (
+    ElicitationRequest,
+    FilesystemRequest,
+    Interactions,
+    PermissionRequest,
+    SamplingRequest,
+    TerminalRequest,
+)
+from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
+from ..trace.redaction import is_sensitive_key, known_secret_values
+from ..transport.capture_proxy import McpCaptureManager
+from ..types import (
+    ACPAgent,
+    AgentSpec,
+    FullToolPolicy,
+    HTTPServer,
+    NativeToolPolicy,
+    RestrictiveToolPolicy,
+    SecretReference,
+    ServerBinding,
+    SSEServer,
+    StdioServer,
+    TransportKind,
+)
+from .native import workspace_for_launch
+from .observations import (
+    HarnessObservation,
+    InteractionObservedObservation,
+    MessageChunkObservation,
+    MetadataObservedObservation,
+    PlanObservedObservation,
+    ProcessObservedObservation,
+    RawEvidenceInput,
+    RawFrameObservation,
+    ReasoningChunkObservation,
+    StateObservedObservation,
+    ToolCallObservedObservation,
+    ToolResultObservedObservation,
+    TurnEvidence,
+)
+from .process_group import terminate_process_group
+
+_STDERR_LIMIT = 64 * 1024
+_STDOUT_LIMIT = 4 * 1024 * 1024
+_ACP_MAX_TEXT = 8_388_608
+
+
+class _AcpMalformedStdout(RuntimeError):
+    pass
+
+
+class _AcpEarlyExit(RuntimeError):
+    pass
+
+
+class _AcpCancelled(RuntimeError):
+    pass
+
+
+class _AcpTimedOut(RuntimeError):
+    pass
+
+
+class _AcpTransport:
+    """Small bounded NDJSON transport with parse/EOF visibility.
+
+    The SDK's stock transport intentionally logs and skips malformed lines,
+    which makes a broken agent indistinguishable from a hung one.  Keeping
+    this transport local still uses the official ClientSideConnection while
+    allowing the runtime to classify malformed stdout and early exits.
+    """
+
+    def __init__(
+        self,
+        process: Any,
+        on_malformed: Callable[[str], None],
+        on_fault: Callable[[BaseException], None] | None = None,
+    ) -> None:
+        self.process = process
+        self.on_malformed = on_malformed
+        self.on_fault = on_fault
+        self.closed = False
+        self._frame_buffer = bytearray()
+
+    async def send(self, message: Mapping[str, Any]) -> None:
+        if self.closed or self.process.stdin is None:
+            raise ConnectionError("ACP stdin closed")
+        data = (
+            json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
+        ).encode()
+        if len(data) > _STDOUT_LIMIT:
+            raise _AcpMalformedStdout("ACP outbound frame exceeds bounded limit")
+        self.process.stdin.write(data)
+        await self.process.stdin.drain()
+
+    async def receive(self) -> dict[str, Any] | None:
+        if self.process.stdout is None:
+            return None
+        while True:
+            newline = self._frame_buffer.find(b"\n")
+            if newline >= 0:
+                line = bytes(self._frame_buffer[:newline])
+                del self._frame_buffer[: newline + 1]
+                break
+            if len(self._frame_buffer) >= _STDOUT_LIMIT:
+                raise _AcpMalformedStdout("ACP stdout frame exceeds bounded limit")
+            chunk = await self.process.stdout.read(
+                min(8192, _STDOUT_LIMIT - len(self._frame_buffer))
+            )
+            if not chunk:
+                # EOF before the caller completes its expected lifecycle is
+                # an early exit even when the child chose status 0.
+                try:
+                    await self.process.wait()
+                except Exception:
+                    pass
+                if self._frame_buffer:
+                    raise _AcpMalformedStdout("ACP stdout frame is missing a newline")
+                error: BaseException = _AcpEarlyExit(
+                    f"process exited with code {self.process.returncode}"
+                )
+                if self.on_fault:
+                    self.on_fault(error)
+                raise error
+            self._frame_buffer.extend(chunk)
+        try:
+            value = json.loads(line)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            self.on_malformed(line[:512].decode("utf-8", errors="replace"))
+            error = _AcpMalformedStdout("malformed ACP stdout")
+            if self.on_fault:
+                self.on_fault(error)
+            raise error from exc
+        if not isinstance(value, dict):
+            self.on_malformed(line[:512].decode("utf-8", errors="replace"))
+            error = _AcpMalformedStdout("ACP stdout frame must be an object")
+            if self.on_fault:
+                self.on_fault(error)
+            raise error
+        return value
+
+    async def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        if self.process.stdin is not None:
+            try:
+                self.process.stdin.close()
+                await self.process.stdin.wait_closed()
+            except (AttributeError, OSError, RuntimeError):
+                pass
+
+
+async def _drain_stderr(reader: Any, limit: int = _STDERR_LIMIT) -> bytes:
+    # Keep the historical private helper for callers/tests while sharing the
+    # drain-to-EOF implementation with the native process owner.
+    from .native import drain_bounded
+
+    return await drain_bounded(reader, maximum=limit)
+
+
+def _redact(value: Any, secrets: set[str], *, env_context: bool = False) -> Any:
+    """Redact resolved env values from all persisted/raw ACP evidence."""
+    if isinstance(value, dict):
+        output: Any = {}
+        for key, item in value.items():
+            if env_context and str(key).lower() == "value":
+                output[key] = "[REDACTED]"
+                continue
+            if env_context and str(key).lower() == "name":
+                output[key] = item
+                continue
+            child_env = env_context or str(key).lower() in {
+                "env",
+                "environment",
+                "headers",
+            }
+            output[key] = _redact(item, secrets, env_context=child_env)
+        return output
+    if isinstance(value, list):
+        return [_redact(item, secrets, env_context=env_context) for item in value]
+    if isinstance(value, str):
+        if env_context:
+            # ACP env is a list of {name,value}; redact every value while
+            # preserving names and shape. Header/url secrets are redacted by
+            # exact or embedded literal matching below.
+            return "[REDACTED]"
+        output = value
+        for secret in sorted((s for s in secrets if s), key=len, reverse=True):
+            output = output.replace(secret, "[REDACTED]")
+        return output
+    return value
+
+
+def _redact_payload(payload: Any, secrets: set[str]) -> Any:
+    if isinstance(payload, dict) and isinstance(payload.get("params"), dict):
+        # Avoid treating arbitrary protocol fields named `headers` as env
+        # context; only the session/new MCP server env list needs structural
+        # redaction. Literal/reference matching handles the rest.
+        payload = dict(payload)
+        params = dict(payload["params"])
+        servers = params.get("mcpServers")
+        if isinstance(servers, list):
+            safe_servers = []
+            for server in servers:
+                safe = dict(server) if isinstance(server, dict) else server
+                if isinstance(safe, dict) and isinstance(safe.get("env"), list):
+                    safe["env"] = [
+                        {**entry, "value": "[REDACTED]"}
+                        if isinstance(entry, dict) and "value" in entry
+                        else entry
+                        for entry in safe["env"]
+                    ]
+                safe_servers.append(safe)
+            params["mcpServers"] = safe_servers
+        payload["params"] = params
+    return _redact(payload, secrets)
+
+
+class _Client:
+    def __init__(
+        self,
+        frames: list[dict[str, Any]],
+        output: list[Any],
+        callback: Callable[..., Any] | None = None,
+        interaction_fault: list[BaseException] | None = None,
+        secrets: set[str] | None = None,
+        interactions: Interactions | None = None,
+    ) -> None:
+        self.frames, self.output, self.callback, self.interaction_fault = (
+            frames,
+            output,
+            callback,
+            interaction_fault,
+        )
+        self.secrets = secrets if secrets is not None else set()
+        self.interactions: Interactions | None = interactions
+        self._terminals: dict[str, Any] = {}
+        self.interaction_events: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+
+    def _record_interaction(self, kind: str, request: Any, response: Any) -> None:
+        self.interaction_events.append(
+            (kind, _safe_json_value(request), _safe_json_value(response))
+        )
+
+    async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
+        self.output.append(update)
+        if self.callback:
+            serial = _redact(self._json(update), self.secrets)
+            value = self.callback(
+                serial, "acp_update", {"session_id": session_id, "update": serial}
+            )
+            if asyncio.iscoroutine(value):
+                await value
+
+    @staticmethod
+    def _json(value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        return value
+
+    def _interaction(self, kind: str) -> RuntimeError:
+        error = RuntimeError(f"acp_interaction_required: {kind}")
+        if self.interaction_fault is not None:
+            self.interaction_fault.append(error)
+        return error
+
+    async def request_permission(
+        self, session_id: str, tool_call: Any, options: list[Any], **kwargs: Any
+    ) -> RequestPermissionResponse:
+        del session_id, kwargs
+        if self.interactions is None:
+            raise self._interaction("permission")
+        title = getattr(tool_call, "title", None)
+        request = PermissionRequest("mcp_tool", title if isinstance(title, str) else "")
+        result = await self.interactions.permission(request)
+        if not result.allowed:
+            response = RequestPermissionResponse(
+                outcome=DeniedOutcome(outcome="cancelled")
+            )
+            self._record_interaction("permission", tool_call, response)
+            return response
+        selected = next(
+            (
+                option
+                for option in options
+                if getattr(option, "kind", "").startswith("allow_")
+            ),
+            None,
+        )
+        option_id = getattr(selected, "option_id", None) or "allow_once"
+        response = RequestPermissionResponse(
+            outcome=AllowedOutcome(outcome="selected", option_id=str(option_id))
+        )
+        self._record_interaction("permission", tool_call, response)
+        return response
+
+    async def create_elicitation(
+        self, message: str, mode: Any, **kwargs: Any
+    ) -> CreateElicitationResponse:
+        del mode, kwargs
+        if self.interactions is None:
+            raise self._interaction("elicitation")
+        result = await self.interactions.elicit(ElicitationRequest(str(message)))
+        if not result.accepted:
+            response: AcceptElicitationResponse | DeclineElicitationResponse = (
+                DeclineElicitationResponse(action="decline")
+            )
+            self._record_interaction("elicitation", {"message": message}, response)
+            return response
+        value = result.value if isinstance(result.value, dict) else None
+        response = AcceptElicitationResponse(action="accept", content=value)
+        self._record_interaction("elicitation", {"message": message}, response)
+        return response
+
+    async def read_text_file(
+        self,
+        session_id: str,
+        path: str,
+        line: int | None = None,
+        limit: int | None = None,
+        **kwargs: Any,
+    ) -> ReadTextFileResponse:
+        del session_id, line, kwargs
+        if self.interactions is None:
+            raise self._interaction("filesystem")
+        result = await self.interactions.filesystem(
+            FilesystemRequest(
+                "read", str(path), max_bytes=min(int(limit or (1 << 20)), 1 << 20)
+            )
+        )
+        if not result.allowed or not isinstance(result.data, bytes):
+            self._record_interaction(
+                "filesystem.read", {"path": path}, {"error": "denied"}
+            )
+            raise self._interaction("filesystem")
+        response = ReadTextFileResponse(
+            content=result.data.decode("utf-8", errors="replace")
+        )
+        self._record_interaction("filesystem.read", {"path": path}, response)
+        return response
+
+    async def write_text_file(
+        self, session_id: str, path: str, content: str, **kwargs: Any
+    ) -> WriteTextFileResponse:
+        del session_id, kwargs
+        if self.interactions is None:
+            raise self._interaction("filesystem")
+        result = await self.interactions.filesystem(
+            FilesystemRequest("write", str(path), str(content).encode("utf-8"))
+        )
+        if not result.allowed:
+            self._record_interaction(
+                "filesystem.write", {"path": path}, {"error": "denied"}
+            )
+            raise self._interaction("filesystem")
+        response = WriteTextFileResponse()
+        self._record_interaction(
+            "filesystem.write", {"path": path, "content": content}, response
+        )
+        return response
+
+    async def create_terminal(
+        self,
+        session_id: str,
+        command: str,
+        args: list[str] | None = None,
+        env: Any = None,
+        cwd: str | None = None,
+        output_byte_limit: int | None = None,
+        **kwargs: Any,
+    ) -> CreateTerminalResponse:
+        del session_id, kwargs
+        if self.interactions is None:
+            raise self._interaction("terminal")
+        if isinstance(env, Mapping):
+            terminal_env = {str(key): str(value) for key, value in env.items()}
+        else:
+            terminal_env = {
+                str(getattr(item, "name", "")): str(getattr(item, "value", ""))
+                for item in (env or [])
+                if getattr(item, "name", None)
+            }
+        result = await self.interactions.terminal(
+            TerminalRequest(
+                (str(command), *(str(item) for item in (args or []))),
+                cwd=str(cwd) if cwd is not None else None,
+                environment=terminal_env,
+                max_output_bytes=min(int(output_byte_limit or (1 << 20)), 1 << 20),
+            )
+        )
+        if not result.allowed:
+            self._record_interaction(
+                "terminal.create", {"command": command}, {"error": "denied"}
+            )
+            raise self._interaction("terminal")
+        terminal_id = "acp-terminal-" + str(len(self._terminals) + 1)
+        self._terminals[terminal_id] = result
+        response = CreateTerminalResponse(terminal_id=terminal_id)
+        self._record_interaction(
+            "terminal.create", {"command": command, "args": args or []}, response
+        )
+        return response
+
+    async def terminal_output(
+        self, session_id: str, terminal_id: str, **kwargs: Any
+    ) -> TerminalOutputResponse:
+        del session_id, kwargs
+        result = self._terminals.get(str(terminal_id))
+        if result is None:
+            self._record_interaction(
+                "terminal.output",
+                {"terminal_id": terminal_id},
+                {"error": "unavailable"},
+            )
+            raise self._interaction("terminal")
+        output = (result.stdout + result.stderr).decode("utf-8", errors="replace")
+        response = TerminalOutputResponse(output=output, truncated=result.truncated)
+        self._record_interaction(
+            "terminal.output", {"terminal_id": terminal_id}, response
+        )
+        return response
+
+    async def wait_for_terminal_exit(
+        self, session_id: str, terminal_id: str, **kwargs: Any
+    ) -> WaitForTerminalExitResponse:
+        del session_id, kwargs
+        result = self._terminals.get(str(terminal_id))
+        if result is None:
+            self._record_interaction(
+                "terminal.wait", {"terminal_id": terminal_id}, {"error": "unavailable"}
+            )
+            raise self._interaction("terminal")
+        response = WaitForTerminalExitResponse(
+            exit_code=result.returncode
+            if result.returncode is not None and result.returncode >= 0
+            else None
+        )
+        self._record_interaction(
+            "terminal.wait", {"terminal_id": terminal_id}, response
+        )
+        return response
+
+    async def release_terminal(
+        self, session_id: str, terminal_id: str, **kwargs: Any
+    ) -> ReleaseTerminalResponse:
+        del session_id, kwargs
+        self._terminals.pop(str(terminal_id), None)
+        response = ReleaseTerminalResponse()
+        self._record_interaction(
+            "terminal.release", {"terminal_id": terminal_id}, response
+        )
+        return response
+
+    async def kill_terminal(
+        self, session_id: str, terminal_id: str, **kwargs: Any
+    ) -> KillTerminalResponse:
+        del session_id, kwargs
+        self._terminals.pop(str(terminal_id), None)
+        response = KillTerminalResponse()
+        self._record_interaction(
+            "terminal.kill", {"terminal_id": terminal_id}, response
+        )
+        return response
+
+    async def authenticate(self, *args: Any, **kwargs: Any) -> None:
+        # Authentication is never delegated to a generic user handler. An ACP
+        # auth flow must be explicitly implemented by a future adapter.
+        del args, kwargs
+        raise RuntimeError("acp_auth_required: out-of-band authentication")
+
+    async def ext_method(
+        self, method: str, params: dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
+        del kwargs
+        if "sampling" not in str(method).lower() or self.interactions is None:
+            return {}
+        prompt = (
+            params.get("prompt", params.get("message", ""))
+            if isinstance(params, Mapping)
+            else ""
+        )
+        result = await self.interactions.sample(SamplingRequest(str(prompt)))
+        if not result.accepted:
+            raise self._interaction("sampling")
+        response = {"content": [{"type": "text", "text": result.content or ""}]}
+        self._record_interaction("sampling", params, response)
+        return response
+
+    async def ext_notification(
+        self, method: str, params: dict[str, Any], **kwargs: Any
+    ) -> None:
+        del method, params, kwargs
+        return None
+
+    async def complete_elicitation(self, elicitation_id: str, **kwargs: Any) -> None:
+        del elicitation_id, kwargs
+
+    def on_connect(self, conn: Any) -> None:
+        del conn
+
+
+def _safe_json_value(value: Any) -> Any:
+    """Convert an ACP model to a plain value without invoking unsafe repr().
+
+    ACP evidence is an observation boundary.  A malformed third-party model
+    must not make its exception text part of a result or a log.  Returning a
+    small marker is preferable to persisting an object whose serializer we do
+    not control.
+    """
+
+    try:
+        if hasattr(value, "model_dump"):
+            return _safe_json_value(value.model_dump(mode="python"))
+        if isinstance(value, Mapping):
+            return {str(key): _safe_json_value(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_safe_json_value(item) for item in value]
+        if isinstance(value, float) and not isfinite(value):
+            return {"capture": "unavailable", "reason": "malformed_source"}
+        if isinstance(value, str) and len(value) > _ACP_MAX_TEXT:
+            return {"capture": "unavailable", "reason": "malformed_source"}
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+    except Exception:
+        return {"kind": "unserializable_acp_value"}
+    return {"kind": "unsupported_acp_value", "type": type(value).__name__}
+
+
+def _malformed_source() -> dict[str, str]:
+    return {"capture": "unavailable", "reason": "malformed_source"}
+
+
+def _acp_error(exc: BaseException, *, phase: str) -> tuple[str, str]:
+    """Map arbitrary ACP failures to value-free stable categories."""
+
+    del exc
+    if phase == "initialize":
+        return "acp_initialize_failed", "ACP initialization failed"
+    if phase == "session/new":
+        return "acp_session_failed", "ACP session creation failed"
+    if phase == "prompt":
+        return "acp_prompt_failed", "ACP prompt failed"
+    if phase == "cancel":
+        return "acp_cancel_failed", "ACP cancellation failed"
+    return "acp_protocol_error", "ACP protocol operation failed"
+
+
+def _acp_identifier(value: Any) -> str | None:
+    """Return only bounded printable ACP identifiers."""
+
+    if not isinstance(value, str) or not value or len(value) > 256:
+        return None
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        return None
+    return value
+
+
+def _acp_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value if len(value) <= _ACP_MAX_TEXT else None
+    if isinstance(value, Mapping):
+        text = value.get("text", value.get("value"))
+        return text if isinstance(text, str) and len(text) <= _ACP_MAX_TEXT else None
+    if isinstance(value, list):
+        parts = [_acp_text(item) for item in value]
+        if any(item is None for item in parts):
+            return None
+        joined = "".join(cast(str, item) for item in parts)
+        return joined if len(joined) <= _ACP_MAX_TEXT else None
+    return None
+
+
+def _acp_update_dict(update: Any) -> dict[str, Any]:
+    value = _safe_json_value(update)
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _acp_tool_identity(name: Any, aliases: set[str]) -> tuple[str | None, str]:
+    """Classify only explicit MCP names; built-in ACP tools stay serverless."""
+
+    value = _acp_identifier(name)
+    if value is None:
+        return None, "unavailable"
+    parts = value.split("__", 2)
+    if len(parts) == 3 and parts[0] == "mcp" and parts[1] in aliases and parts[2]:
+        return parts[1], parts[2]
+    # The ACP bridge historically reports ``MCP tool · server:tool``.  This is
+    # accepted only when both sides name a configured server; arbitrary
+    # underscore/colon names remain provider/built-in tools.
+    if value.startswith("MCP tool · "):
+        value = value.removeprefix("MCP tool · ")
+    if ":" in value:
+        server, tool = value.split(":", 1)
+        if server in aliases and _acp_identifier(tool) is not None:
+            return server, tool
+    return None, value
+
+
+def _credential_query(url: str) -> bool:
+    """Reject credential-shaped URL query parameters before ACP startup."""
+
+    try:
+        names = {
+            name.lower().replace("-", "_")
+            for name, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True)
+        }
+    except ValueError:
+        return True
+    parsed = urlsplit(url)
+    return bool(
+        parsed.username
+        or parsed.password
+        or names
+        & {
+            "token",
+            "access_token",
+            "api_key",
+            "apikey",
+            "secret",
+            "password",
+            "credential",
+            "auth",
+        }
+    )
+
+
+class _AcpContractSession:
+    """One ACP process, connection, and session for the generic harness API."""
+
+    def __init__(
+        self,
+        launch: Any,
+        manifest: Mapping[str, Any],
+        executable: str,
+        secret_resolver: Callable[[Any], str] | None = None,
+        environment: Mapping[str, str] | None = None,
+    ) -> None:
+        from .contracts import HarnessAdapterCapabilities
+
+        self._launch = launch
+        self._manifest = dict(manifest)
+        self._executable = executable
+        self._secret_resolver = secret_resolver
+        self._environment = None if environment is None else dict(environment)
+        self._capabilities = HarnessAdapterCapabilities(
+            name="acp",
+            supports_multiturn=True,
+            supports_cancellation=True,
+            supports_timeout=True,
+            # ACP itself has no portable tool allowlist primitive. Until an
+            # adapter-side enforcement bridge is supplied, requested
+            # portable policies must fail preflight rather than be implied.
+            supports_tool_policy=False,
+            supports_streaming=True,
+            supported_content_kinds=frozenset({"text"}),
+        )
+        self._session_id = "acp-pending"
+        self._process: Any = None
+        self._connection: Any = None
+        self._transport: _AcpTransport | None = None
+        self._stderr_task: asyncio.Task[bytes] | None = None
+        self._workdir: str | None = None
+        self._workspace_root: str | None = None
+        self._capture_path: str | None = None
+        self._pgid: int | None = None
+        self._frames: list[dict[str, Any]] = []
+        self._updates: list[Any] = []
+        self._secrets: set[str] = set()
+        self._turns = 0
+        self._closed = False
+        self._cancel_requested = False
+        self._prompt_task: asyncio.Task[Any] | None = None
+        self._send_lock = asyncio.Lock()
+        self._cleanup_failure = False
+        self._transport_fault: BaseException | None = None
+        self._prepared_servers: list[Any] | None = None
+        self._client: _Client | None = None
+        self._initialize_value: dict[str, Any] = {}
+        self._session_value: dict[str, Any] = {}
+        self._process_started_emitted = False
+        # Register ambient credential-shaped values before the child can emit
+        # even its first byte.  Explicit server values are added by
+        # ``_prepare_servers`` below, still in this process.
+        self._secrets.update(known_secret_values())
+        self._baseline = time.monotonic()
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
+    def capabilities(self) -> Any:
+        return self._capabilities
+
+    @staticmethod
+    def _message_blocks(message: Any) -> list[Any]:
+        from ..types import TextContent
+
+        blocks = list(getattr(message, "content", ()))
+        if any(not isinstance(block, TextContent) for block in blocks):
+            raise ValueError("acp_attachment_unsupported")
+        return [TextContentBlock(type="text", text=block.text) for block in blocks]
+
+    def _observe(self, event: Any) -> None:
+        direction = (
+            "client_to_server"
+            if event.direction == StreamDirection.OUTGOING
+            else "server_to_client"
+        )
+        self._frames.append(
+            {
+                "direction": direction,
+                "received_at": datetime.now(timezone.utc).isoformat(),
+                "offset_ms": max(0.0, (time.monotonic() - self._baseline) * 1000.0),
+                "payload": _redact_payload(
+                    _safe_json_value(event.message), self._secrets
+                ),
+            }
+        )
+
+    def _server_value(self, name: str, value: Any) -> tuple[str, bool]:
+        """Resolve one server value and report whether ACP must omit it.
+
+        MCP credentials belong to the owned proxy/stdio handoff.  ACP only
+        needs the non-sensitive portion of the server descriptor; sending a
+        resolved header or environment value in ``session/new`` would expose
+        it to the harness process itself.
+        """
+
+        if isinstance(value, SecretReference):
+            resolved = self._config_value(value)
+            self._secrets.update((resolved, value.name))
+            return resolved, True
+        if not isinstance(value, str):
+            raise ValueError("secret_reference_unresolved")
+        if value.startswith("${") and value.endswith("}"):
+            reference = value[2:-1]
+            environment_value = (
+                self._environment.get(reference)
+                if self._environment is not None
+                else os.environ.get(reference)
+            )
+            if environment_value is None:
+                environment_value = os.environ.get(reference)
+            if not environment_value:
+                raise ValueError("secret_reference_unresolved")
+            resolved = environment_value
+            self._secrets.update((value, resolved))
+            return resolved, True
+        resolved = value
+        classified = is_sensitive_key(name) or resolved in known_secret_values()
+        if classified and resolved:
+            self._secrets.add(resolved)
+        return resolved, classified
+
+    def _prepare_servers(self) -> list[Any]:
+        servers: list[Any] = []
+        for config in self._launch.configurations:
+            if not config.available:
+                if config.required:
+                    raise ValueError("required_mcp_server_unavailable")
+                continue
+            name = str(config.key)
+            if config.transport.value == "stdio":
+                if not config.command:
+                    raise ValueError("stdio_mcp_command_missing")
+                env: list[EnvVariable] = []
+                for key, value in config.environment.items():
+                    resolved, classified = self._server_value(str(key), value)
+                    if not classified:
+                        env.append(EnvVariable(name=str(key), value=resolved))
+                servers.append(
+                    McpServerStdio(
+                        name=name,
+                        command=config.command,
+                        args=list(config.args),
+                        env=env,
+                    )
+                )
+            elif config.transport.value in {"streamable_http", "sse"}:
+                if not config.endpoint:
+                    raise ValueError("http_mcp_endpoint_missing")
+                headers: list[HttpHeader] = []
+                for key, value in config.headers.items():
+                    resolved, classified = self._server_value(str(key), value)
+                    if not classified:
+                        headers.append(HttpHeader(name=str(key), value=resolved))
+                if config.transport.value == "streamable_http":
+                    servers.append(
+                        HttpMcpServer(
+                            name=name, url=config.endpoint, headers=headers, type="http"
+                        )
+                    )
+                else:
+                    servers.append(
+                        SseMcpServer(
+                            name=name, url=config.endpoint, headers=headers, type="sse"
+                        )
+                    )
+            elif config.endpoint:
+                # SDK-hosted in-process servers are exposed as loopback HTTP
+                # endpoints by ServerGroupManager before the adapter opens.
+                servers.append(
+                    HttpMcpServer(
+                        name=name, url=config.endpoint, headers=[], type="http"
+                    )
+                )
+            else:
+                raise ValueError("mcp_transport_unsupported")
+        return servers
+
+    def _servers(self) -> list[Any]:
+        # ``open`` prepares this before subprocess creation.  Keep the lazy
+        # fallback for narrow adapter/unit callers, but never resolve values
+        # while the ACP process is already emitting protocol evidence.
+        if self._prepared_servers is None:
+            self._prepared_servers = self._prepare_servers()
+        return self._prepared_servers
+
+    def _config_value(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        try:
+            resolver = self._secret_resolver or (
+                lambda ref: _resolve_environment_secret(ref, self._environment)
+            )
+            resolved = resolver(value)
+        except Exception as exc:
+            del exc
+            raise ValueError("secret_reference_unresolved") from None
+        if not isinstance(resolved, str) or not resolved:
+            raise ValueError("secret_reference_unresolved")
+        return resolved
+
+    def _record_transport_fault(self, error: BaseException) -> None:
+        self._transport_fault = error
+
+    @staticmethod
+    def _field(value: Mapping[str, Any], *names: str) -> Any:
+        for name in names:
+            if name in value:
+                return value[name]
+        return None
+
+    def _process_observation(
+        self,
+        sequence: int,
+        wall_time: datetime,
+        started: float,
+        phase: str,
+    ) -> ProcessObservedObservation | None:
+        process = self._process
+        if process is None:
+            return None
+        kwargs: dict[str, Any] = {}
+        if self._stderr_task is not None and self._stderr_task.done():
+            try:
+                stderr = self._stderr_task.result().decode("utf-8", errors="replace")
+                kwargs.update(stderr=stderr, stderr_state="observed")
+            except Exception:
+                kwargs["stderr_state"] = "unavailable"
+        if phase != "started" and process.returncode is not None:
+            kwargs["exit_code"] = process.returncode
+        return ProcessObservedObservation(
+            observation_id=f"acp-{sequence}-process-{phase}",
+            harness_kind="acp",
+            turn_sequence=sequence,
+            wall_time=wall_time,
+            monotonic_offset_ms=max(0.0, (time.monotonic() - started) * 1000.0),
+            phase=cast(Any, phase),
+            executable=self._executable,
+            pid=process.pid,
+            **kwargs,
+        )
+
+    async def _terminate_owned_process(self) -> None:
+        process = self._process
+        if process is None or process.returncode is not None:
+            return
+        if self._pgid is not None:
+            await asyncio.to_thread(
+                terminate_process_group,
+                pid=process.pid,
+                pgid=self._pgid,
+                grace_seconds=0.25,
+            )
+        else:
+            try:
+                process.terminate()
+            except (ProcessLookupError, PermissionError, OSError):
+                return
+        try:
+            await asyncio.wait_for(process.wait(), timeout=1.0)
+        except Exception:
+            return
+
+    def _observations_for_turn(
+        self,
+        sequence: int,
+        updates: list[Any],
+        frames: list[dict[str, Any]],
+        wall_time: datetime,
+        started: float,
+        *,
+        include_started: bool,
+        terminal_phase: str | None = None,
+    ) -> tuple[list[HarnessObservation], list[Mapping[str, Any]], list[str]]:
+        observations: list[HarnessObservation] = []
+        reported: list[Mapping[str, Any]] = []
+        limitations: list[str] = []
+
+        def offset() -> float:
+            return max(0.0, (time.monotonic() - started) * 1000.0)
+
+        def limit() -> None:
+            if "capture_incomplete" not in limitations:
+                limitations.append("capture_incomplete")
+
+        if include_started:
+            process = self._process_observation(sequence, wall_time, started, "started")
+            if process is not None:
+                observations.append(process)
+        for index, frame in enumerate(frames):
+            payload = frame.get("payload")
+            safe = _redact_payload(_safe_json_value(payload), self._secrets)
+            try:
+                frame_wall_time = wall_time
+                raw_timestamp = frame.get("received_at")
+                if isinstance(raw_timestamp, str):
+                    try:
+                        parsed = datetime.fromisoformat(raw_timestamp)
+                        if parsed.tzinfo is not None and parsed.utcoffset() is not None:
+                            frame_wall_time = parsed.astimezone(timezone.utc)
+                        else:
+                            limit()
+                    except ValueError:
+                        limit()
+                elif raw_timestamp is not None:
+                    limit()
+                raw_offset = frame.get("offset_ms")
+                frame_offset = offset()
+                if (
+                    isinstance(raw_offset, (int, float))
+                    and not isinstance(raw_offset, bool)
+                    and isfinite(raw_offset)
+                    and raw_offset >= 0
+                ):
+                    frame_offset = float(raw_offset)
+                elif raw_offset is not None:
+                    limit()
+                observations.append(
+                    RawFrameObservation(
+                        observation_id=f"acp-{sequence}-frame-{index}",
+                        harness_kind="acp",
+                        turn_sequence=sequence,
+                        wall_time=frame_wall_time,
+                        monotonic_offset_ms=frame_offset,
+                        direction="inbound"
+                        if frame.get("direction") == "server_to_client"
+                        else "outbound",
+                        media_type="application/json",
+                        payload=cast(JsonValue, safe),
+                        raw_evidence=RawEvidenceInput(
+                            content=json.dumps(
+                                safe, ensure_ascii=False, separators=(",", ":")
+                            ),
+                            media_type="application/json",
+                        ),
+                    )
+                )
+            except (TypeError, ValueError):
+                limit()
+        seen_message: set[tuple[str, str, int]] = set()
+        seen_reasoning: set[tuple[str, int]] = set()
+        call_info: dict[str, tuple[str | None, str]] = getattr(self, "_call_info", {})
+        emitted_call_ids: set[str] = set()
+        emitted_result_ids: set[str] = set()
+        call_observation_index: dict[str, int] = {}
+        for update in updates:
+            value = _acp_update_dict(update)
+            kind_value = self._field(value, "sessionUpdate", "session_update", "type")
+            kind = str(kind_value or "").lower()
+            content = self._field(value, "content", "message")
+            text = _acp_text(content)
+            message_id = self._field(value, "messageId", "message_id")
+            message_key = (_acp_identifier(message_id) or "", kind, len(observations))
+            if "message" in kind and "thought" not in kind and "reason" not in kind:
+                if text is None and content is not None:
+                    limit()
+                elif text is not None and (message_key not in seen_message):
+                    seen_message.add(message_key)
+                    message_kwargs: dict[str, Any] = {}
+                    if "messageId" in value or "message_id" in value:
+                        message_kwargs["message_id"] = _acp_identifier(message_id)
+                    observations.append(
+                        MessageChunkObservation(
+                            observation_id=f"acp-{sequence}-message-{len(seen_message)}",
+                            harness_kind="acp",
+                            turn_sequence=sequence,
+                            wall_time=wall_time,
+                            monotonic_offset_ms=offset(),
+                            text=text,
+                            complete=False,
+                            **message_kwargs,
+                        )
+                    )
+                continue
+            if "thought" in kind or "reason" in kind:
+                visibility = "visible" if text is not None else "provider_hidden"
+                if any(token in kind for token in ("encrypted", "redacted", "hidden")):
+                    visibility = (
+                        "encrypted"
+                        if "encrypt" in kind or "redact" in kind
+                        else "provider_hidden"
+                    )
+                reasoning_key = (_acp_identifier(message_id) or "", len(seen_reasoning))
+                if reasoning_key in seen_reasoning:
+                    continue
+                seen_reasoning.add(reasoning_key)
+                observations.append(
+                    ReasoningChunkObservation(
+                        observation_id=f"acp-{sequence}-reasoning-{len(seen_reasoning)}",
+                        harness_kind="acp",
+                        turn_sequence=sequence,
+                        wall_time=wall_time,
+                        monotonic_offset_ms=offset(),
+                        text=text,
+                        visibility=cast(Any, visibility),
+                        complete=False,
+                    )
+                )
+                continue
+            if "tool_call" in kind:
+                call_id = self._field(
+                    value, "toolCallId", "tool_call_id", "callId", "call_id"
+                )
+                call_id = _acp_identifier(call_id)
+                if call_id is None:
+                    limit()
+                    continue
+                title = self._field(value, "title", "name", "tool")
+                aliases = {
+                    str(getattr(item, "key", ""))
+                    for item in (self._launch.configurations if self._launch else ())
+                    if getattr(item, "key", None)
+                }
+                if self._launch is not None:
+                    aliases.update(
+                        str(getattr(item, "key", ""))
+                        for item in getattr(self._launch.servers, "records", ())
+                        if getattr(item, "key", None)
+                    )
+                    aliases.update(
+                        str(
+                            getattr(item, "alias", None)
+                            or getattr(getattr(item, "server", None), "name", "")
+                        )
+                        for item in getattr(self._launch.spec, "servers", ())
+                        if getattr(item, "alias", None)
+                        or getattr(getattr(item, "server", None), "name", None)
+                    )
+                if title is None and call_id in call_info:
+                    server, tool = call_info[call_id]
+                else:
+                    server, tool = _acp_tool_identity(title, aliases)
+                if tool == "unavailable":
+                    limit()
+                    continue
+                if server is None and self._launch is not None:
+                    configured_aliases = tuple(
+                        str(item.alias)
+                        for item in getattr(self._launch.spec, "servers", ())
+                        if getattr(item, "alias", None)
+                    )
+                    advertised = [
+                        str(getattr(item, "key", ""))
+                        for item in getattr(self._launch.servers, "records", ())
+                        if tool in getattr(item, "tools", ())
+                        and getattr(item, "key", None)
+                    ]
+                    if len(advertised) == 1:
+                        server = advertised[0]
+                    elif (
+                        isinstance(self._launch.tool_policy, FullToolPolicy)
+                        and len(aliases) == 1
+                    ):
+                        # A full-policy ACP turn may report an unqualified
+                        # name (the ACP fixture agent does this). With exactly
+                        # one configured server, retain that configured
+                        # identity; built-in tools under restrictive policy
+                        # remain serverless.
+                        server = next(iter(aliases))
+                    elif len(configured_aliases) == 1 and "_" not in tool:
+                        server = configured_aliases[0]
+                call_info[call_id] = (server, tool)
+                self._call_info = call_info
+                args = self._field(value, "rawInput", "raw_input", "input", "arguments")
+                args_present = any(
+                    key in value
+                    for key in ("rawInput", "raw_input", "input", "arguments")
+                )
+                status_value = str(self._field(value, "status") or "").lower()
+                finished = status_value in {
+                    "completed",
+                    "complete",
+                    "success",
+                    "succeeded",
+                    "failed",
+                    "error",
+                }
+                if call_id not in emitted_call_ids:
+                    call_observation_index[call_id] = len(observations)
+                    call_kwargs: dict[str, Any] = {
+                        "observation_id": f"acp-{sequence}-tool-call-{call_id}",
+                        "harness_kind": "acp",
+                        "turn_sequence": sequence,
+                        "wall_time": wall_time,
+                        "monotonic_offset_ms": offset(),
+                        "call_id": call_id,
+                        "server": server,
+                        "tool": tool,
+                        "status": "success"
+                        if finished and status_value not in {"failed", "error"}
+                        else "tool_error"
+                        if status_value in {"failed", "error"}
+                        else "incomplete",
+                    }
+                    if args_present:
+                        call_kwargs["arguments"] = cast(
+                            JsonValue,
+                            _safe_json_value(args)
+                            if args is not None
+                            else _malformed_source(),
+                        )
+                    observations.append(
+                        ToolCallObservedObservation(
+                            **call_kwargs,
+                        )
+                    )
+                    reported.append(
+                        {"call_id": call_id, "server": server, "tool": tool}
+                    )
+                    emitted_call_ids.add(call_id)
+                elif call_id in call_observation_index:
+                    current = observations[call_observation_index[call_id]]
+                    if isinstance(current, ToolCallObservedObservation):
+                        update_kwargs: dict[str, Any] = {}
+                        if args_present:
+                            update_kwargs["arguments"] = cast(
+                                JsonValue,
+                                _safe_json_value(args)
+                                if args is not None
+                                else _malformed_source(),
+                            )
+                        if finished:
+                            update_kwargs["status"] = (
+                                "tool_error"
+                                if status_value in {"failed", "error"}
+                                else "success"
+                            )
+                        if update_kwargs:
+                            observations[call_observation_index[call_id]] = (
+                                current.model_copy(update=update_kwargs)
+                            )
+                result = self._field(
+                    value, "rawOutput", "raw_output", "output", "result", "content"
+                )
+                result_present = any(
+                    key in value
+                    for key in (
+                        "rawOutput",
+                        "raw_output",
+                        "output",
+                        "result",
+                        "content",
+                    )
+                )
+                is_error = self._field(value, "isError", "is_error")
+                if finished and call_id not in emitted_result_ids:
+                    if is_error is not None and not isinstance(is_error, bool):
+                        limit()
+                        is_error = None
+                    result_kwargs: dict[str, Any] = {
+                        "observation_id": f"acp-{sequence}-tool-result-{call_id}",
+                        "harness_kind": "acp",
+                        "turn_sequence": sequence,
+                        "wall_time": wall_time,
+                        "monotonic_offset_ms": offset(),
+                        "call_id": call_id,
+                        "status": "tool_error"
+                        if is_error is True or status_value in {"failed", "error"}
+                        else "success",
+                    }
+                    if "isError" in value or "is_error" in value:
+                        result_kwargs["is_error"] = is_error
+                    if result_present:
+                        result_kwargs["result"] = cast(
+                            JsonValue,
+                            _safe_json_value(result)
+                            if result is not None
+                            else _malformed_source(),
+                        )
+                    observations.append(
+                        ToolResultObservedObservation(
+                            **result_kwargs,
+                        )
+                    )
+                    emitted_result_ids.add(call_id)
+                continue
+            if "plan" in kind:
+                plan = self._field(value, "entries", "plan")
+                status = str(self._field(value, "status") or "updated")
+                if not status or len(status) > 128:
+                    limit()
+                    continue
+                try:
+                    observations.append(
+                        PlanObservedObservation(
+                            observation_id=f"acp-{sequence}-plan-{len(observations)}",
+                            harness_kind="acp",
+                            turn_sequence=sequence,
+                            wall_time=wall_time,
+                            monotonic_offset_ms=offset(),
+                            plan=cast(JsonValue, _safe_json_value(plan))
+                            if plan is not None
+                            else None,
+                            status=status,
+                        )
+                    )
+                except (TypeError, ValueError):
+                    limit()
+                continue
+            if any(token in kind for token in ("mode", "config", "state")):
+                state = str(
+                    self._field(
+                        value, "currentModeId", "current_mode_id", "modeId", "state"
+                    )
+                    or kind
+                )
+                if not state or len(state) > 128:
+                    limit()
+                    continue
+                try:
+                    observations.append(
+                        StateObservedObservation(
+                            observation_id=f"acp-{sequence}-state-{len(observations)}",
+                            harness_kind="acp",
+                            turn_sequence=sequence,
+                            wall_time=wall_time,
+                            monotonic_offset_ms=offset(),
+                            state=state,
+                            detail=cast(JsonValue, _safe_json_value(value)),
+                        )
+                    )
+                except (TypeError, ValueError):
+                    limit()
+        if terminal_phase is not None:
+            process = self._process_observation(
+                sequence, wall_time, started, terminal_phase
+            )
+            if process is not None:
+                observations.append(process)
+        return observations, reported, limitations
+
+    async def open(self) -> None:
+        if self._process is not None:
+            return
+        # Resolve and register every selected server credential before the
+        # ACP process exists.  In particular, do not defer this until the
+        # session/new request: a fixture may emit startup output immediately.
+        self._prepared_servers = self._prepare_servers()
+        self._workdir = tempfile.mkdtemp(prefix="m3-acp-control-")
+        self._capture_path = os.path.join(self._workdir, "acp-capture.jsonl")
+        try:
+            self._workspace_root = str(
+                workspace_for_launch(self._launch, Path(self._workdir))
+            )
+            env = _isolated_acp_env(
+                self._manifest,
+                self._executable,
+                self._secrets,
+                root=self._workdir,
+                environment=self._environment,
+            )
+            self._process = await asyncio.create_subprocess_exec(
+                self._executable,
+                *(str(item) for item in (self._manifest.get("args") or [])),
+                cwd=self._workspace_root,
+                env=env,
+                start_new_session=(os.name != "nt"),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            self._stderr_task = asyncio.create_task(_drain_stderr(self._process.stderr))
+            if os.name != "nt":
+                # Native ACP launches use ``start_new_session``; retain the
+                # group identity even when an immediately exiting process is
+                # already unreapable by ``getpgid``.
+                self._pgid = self._process.pid
+                try:
+                    self._pgid = os.getpgid(self._process.pid)
+                except (ProcessLookupError, OSError):
+                    pass
+            client = _Client(
+                self._frames,
+                self._updates,
+                secrets=self._secrets,
+                # Missing callbacks are an explicit default-deny controller,
+                # not an implicit provider-side allow or an unhandled method.
+                interactions=self._launch.interactions or Interactions(),
+            )
+            self._client = client
+            self._transport = _AcpTransport(
+                self._process,
+                lambda _: None,
+                on_fault=self._record_transport_fault,
+            )
+            self._connection = ClientSideConnection(
+                client, self._transport, observers=[self._observe]
+            )
+            init = await self._connection.initialize(
+                1, ClientCapabilities(), Implementation(name="m3", version="0.2")
+            )
+            if getattr(init, "protocol_version", None) != 1:
+                raise ValueError("acp_protocol_version_mismatch")
+            self._initialize_value = _acp_update_dict(init)
+            response = await self._connection.new_session(
+                self._workspace_root, mcp_servers=self._servers()
+            )
+            self._session_id = str(response.session_id)
+            self._session_value = _acp_update_dict(response)
+            # Some ACP SDK releases intentionally drop unknown/forward
+            # compatible configuration entries while decoding ``session/new``.
+            # Keep the redacted wire response as the compatibility source for
+            # validating immutable probe/runtime selections.
+            session_wire: Mapping[str, Any] = next(
+                (
+                    frame.get("payload", {}).get("result", {})
+                    for frame in reversed(self._frames)
+                    if frame.get("direction") == "server_to_client"
+                    and frame.get("payload", {}).get("result", {}).get("sessionId")
+                    == self._session_id
+                ),
+                {},
+            )
+            # ACP exposes session modes and configuration options only after
+            # session/new. Apply the immutable public request before the
+            # first prompt, and fail closed when a saved option is stale.
+            harness = getattr(self._launch.spec, "harness", None)
+            mode_id = getattr(harness, "agent_mode_id", None)
+            if mode_id:
+                modes = (
+                    getattr(getattr(response, "modes", None), "available_modes", None)
+                    or ()
+                )
+                available = {
+                    str(getattr(item, "id", ""))
+                    for item in modes
+                    if getattr(item, "id", None)
+                }
+                if not available:
+                    raw_modes = self._field(self._session_value, "modes") or {}
+                    available = {
+                        str(item.get("id"))
+                        for item in (
+                            self._field(raw_modes, "availableModes", "available_modes")
+                            or ()
+                        )
+                        if isinstance(item, Mapping) and item.get("id")
+                    }
+                if not available:
+                    raw_modes = self._field(session_wire, "modes") or {}
+                    available = {
+                        str(item.get("id"))
+                        for item in (
+                            self._field(raw_modes, "availableModes", "available_modes")
+                            or ()
+                        )
+                        if isinstance(item, Mapping) and item.get("id")
+                    }
+                if not available:
+                    raise ValueError("acp_stale_option: mode")
+                if mode_id not in available:
+                    raise ValueError("acp_stale_option: mode")
+                await self._connection.set_session_mode(self._session_id, mode_id)
+                self._session_value["currentModeId"] = mode_id
+            session_config = getattr(harness, "session_config", {}) or {}
+            options = getattr(response, "config_options", None) or ()
+            raw_options = (
+                self._field(self._session_value, "configOptions", "config_options")
+                or ()
+            )
+            if not options:
+                options = raw_options
+            if not options:
+                options = (
+                    self._field(session_wire, "configOptions", "config_options") or ()
+                )
+            option_ids = {
+                str(
+                    (item.get("id") or item.get("configId"))
+                    if isinstance(item, Mapping)
+                    else (getattr(item, "id", None) or getattr(item, "config_id", None))
+                )
+                for item in options
+                if (
+                    (item.get("id") or item.get("configId")) is not None
+                    if isinstance(item, Mapping)
+                    else getattr(item, "id", None) is not None
+                    or getattr(item, "config_id", None) is not None
+                )
+            }
+            for key, value in dict(session_config).items():
+                if str(key) not in option_ids:
+                    raise ValueError("acp_stale_option: config")
+                await self._connection.set_config_option(
+                    str(key), self._session_id, value
+                )
+        except (asyncio.CancelledError, SystemExit, KeyboardInterrupt):
+            await self.close()
+            raise
+        except Exception:
+            await self.close()
+            raise
+
+    async def send(self, request: Any) -> Any:
+        from ..types import ErrorCode, ErrorInfo, TextContent, TurnResponse
+        from .contracts import HarnessTurnResult
+
+        async with self._send_lock:
+            if self._closed:
+                return HarnessTurnResult(
+                    self._turns + 1,
+                    "failed",
+                    error=ErrorInfo(
+                        code=ErrorCode.TRANSPORT_ERROR, message="ACP session is closed"
+                    ),
+                )
+            self._turns += 1
+            sequence = self._turns
+            self._cancel_requested = False
+            before = len(self._updates)
+            # Initialization/session negotiation precedes the first prompt;
+            # retain that lifecycle evidence exactly once with turn one.
+            frame_before = 0 if sequence == 1 else len(self._frames)
+            interaction_before = (
+                len(self._client.interaction_events) if self._client is not None else 0
+            )
+            turn_started = time.monotonic()
+            turn_wall_time = datetime.now(timezone.utc)
+            try:
+                blocks = self._message_blocks(request.message)
+                operation = self._connection.prompt(self._session_id, blocks)
+                self._prompt_task = asyncio.create_task(operation)
+                if request.timeout_seconds is None:
+                    await self._prompt_task
+                else:
+                    await asyncio.wait_for(self._prompt_task, request.timeout_seconds)
+                updates = self._updates[before:]
+                text = _redact(_updates_text(updates), self._secrets)
+                response = TurnResponse(content=(TextContent(text=text),))
+                observations, calls, limitations = self._observations_for_turn(
+                    sequence,
+                    updates,
+                    self._frames[frame_before:],
+                    turn_wall_time,
+                    turn_started,
+                    include_started=not self._process_started_emitted,
+                )
+                if not self._process_started_emitted:
+                    self._process_started_emitted = True
+                # Initialization/session metadata is observed once and kept
+                # separate from ACP message updates in the stable trace.
+                if sequence == 1:
+                    metadata = {
+                        "session_id": self._session_id,
+                        "protocol_version": self._field(
+                            self._initialize_value,
+                            "protocolVersion",
+                            "protocol_version",
+                        ),
+                        "agent_identity": self._field(
+                            self._initialize_value,
+                            "agentInfo",
+                            "agent_info",
+                            "implementation",
+                        ),
+                        "agent_capabilities": self._field(
+                            self._initialize_value,
+                            "agentCapabilities",
+                            "agent_capabilities",
+                        ),
+                        "available_modes": self._field(
+                            self._field(self._session_value, "modes") or {},
+                            "availableModes",
+                            "available_modes",
+                        ),
+                        "current_mode": self._field(
+                            self._session_value, "currentModeId", "current_mode_id"
+                        )
+                        or self._field(
+                            self._field(self._session_value, "modes") or {},
+                            "currentModeId",
+                            "current_mode_id",
+                        ),
+                        "config_options": self._field(
+                            self._session_value, "configOptions", "config_options"
+                        ),
+                    }
+                    for name, value in metadata.items():
+                        if value is None:
+                            continue
+                        if name == "protocol_version":
+                            value = str(value)
+                        observations.append(
+                            MetadataObservedObservation(
+                                observation_id=f"acp-{sequence}-metadata-{name}",
+                                harness_kind="acp",
+                                turn_sequence=sequence,
+                                wall_time=turn_wall_time,
+                                monotonic_offset_ms=0.0,
+                                name=name,
+                                value=cast(JsonValue, _safe_json_value(value)),
+                            )
+                        )
+                    if (
+                        getattr(self._launch.spec.harness, "session_config", {})
+                        if self._launch is not None
+                        else {}
+                    ):
+                        config = getattr(
+                            self._launch.spec.harness, "session_config", {}
+                        )
+                        observations.append(
+                            MetadataObservedObservation(
+                                observation_id=f"acp-{sequence}-metadata-selected_config",
+                                harness_kind="acp",
+                                turn_sequence=sequence,
+                                wall_time=turn_wall_time,
+                                monotonic_offset_ms=0.0,
+                                name="selected_config",
+                                value=cast(JsonValue, _safe_json_value(config)),
+                            )
+                        )
+                for interaction_index, (
+                    kind,
+                    request_value,
+                    response_value,
+                ) in enumerate(
+                    self._client.interaction_events[interaction_before:]
+                    if self._client is not None
+                    else ()
+                ):
+                    observations.append(
+                        InteractionObservedObservation(
+                            observation_id=f"acp-{sequence}-interaction-{interaction_index}",
+                            harness_kind="acp",
+                            turn_sequence=sequence,
+                            wall_time=turn_wall_time,
+                            monotonic_offset_ms=max(
+                                0.0, (time.monotonic() - turn_started) * 1000.0
+                            ),
+                            interaction_kind=cast(Any, f"{kind}.request"),
+                            request=cast(JsonValue, request_value),
+                        )
+                    )
+                    observations.append(
+                        InteractionObservedObservation(
+                            observation_id=f"acp-{sequence}-interaction-response-{interaction_index}",
+                            harness_kind="acp",
+                            turn_sequence=sequence,
+                            wall_time=turn_wall_time,
+                            monotonic_offset_ms=max(
+                                0.0, (time.monotonic() - turn_started) * 1000.0
+                            ),
+                            interaction_kind=cast(Any, f"{kind}.response"),
+                            response=cast(JsonValue, response_value),
+                        )
+                    )
+                usage_observed = any(
+                    "usage" in update.__class__.__name__.lower() for update in updates
+                )
+                evidence: dict[str, str | int | float | bool | None] = {
+                    "transport": "acp",
+                    "updates": len(updates),
+                    "session_id": self._session_id,
+                    # ACP does not provide a portable budget/cost control.
+                    # Keep usage truthfully unavailable instead of estimating.
+                    "usage_requested": False,
+                    "usage_enforced": False,
+                    "usage_observed": usage_observed,
+                    "usage_unavailable": not usage_observed,
+                    "usage_unavailable_reason": None
+                    if usage_observed
+                    else "provider_did_not_emit_usage",
+                }
+                return HarnessTurnResult(
+                    sequence,
+                    "completed",
+                    response=response,
+                    tool_calls=tuple(calls),
+                    evidence=evidence,
+                    trace_limitations=tuple(limitations),
+                    turn_evidence=TurnEvidence(
+                        sequence=sequence,
+                        status="completed",
+                        observations=tuple(observations),
+                        limitations=tuple(limitations),
+                    ),
+                )
+            except asyncio.TimeoutError:
+                await self.cancel()
+                await self._terminate_owned_process()
+                observations, calls, limitations = self._observations_for_turn(
+                    sequence,
+                    self._updates[before:],
+                    self._frames[frame_before:],
+                    turn_wall_time,
+                    turn_started,
+                    include_started=not self._process_started_emitted,
+                    terminal_phase="exited"
+                    if self._process is not None
+                    and self._process.returncode is not None
+                    else None,
+                )
+                if not self._process_started_emitted:
+                    self._process_started_emitted = True
+                if "capture_incomplete" not in limitations:
+                    limitations.append("capture_incomplete")
+                return HarnessTurnResult(
+                    sequence,
+                    "timed_out",
+                    error=ErrorInfo(
+                        code=ErrorCode.TIMEOUT, message="ACP turn timed out"
+                    ),
+                    evidence={"transport": "acp"},
+                    trace_limitations=tuple(limitations),
+                    turn_evidence=TurnEvidence(
+                        sequence=sequence,
+                        status="timed_out",
+                        observations=tuple(observations),
+                        limitations=tuple(limitations),
+                    ),
+                )
+            except asyncio.CancelledError:
+                if self._cancel_requested:
+                    await self._terminate_owned_process()
+                    observations, calls, limitations = self._observations_for_turn(
+                        sequence,
+                        self._updates[before:],
+                        self._frames[frame_before:],
+                        turn_wall_time,
+                        turn_started,
+                        include_started=not self._process_started_emitted,
+                        terminal_phase="exited"
+                        if self._process is not None
+                        and self._process.returncode is not None
+                        else None,
+                    )
+                    if not self._process_started_emitted:
+                        self._process_started_emitted = True
+                    if "capture_incomplete" not in limitations:
+                        limitations.append("capture_incomplete")
+                    return HarnessTurnResult(
+                        sequence,
+                        "cancelled",
+                        error=ErrorInfo(
+                            code=ErrorCode.CANCELLED, message="ACP turn cancelled"
+                        ),
+                        evidence={"transport": "acp"},
+                        trace_limitations=tuple(limitations),
+                        turn_evidence=TurnEvidence(
+                            sequence=sequence,
+                            status="cancelled",
+                            observations=tuple(observations),
+                            limitations=tuple(limitations),
+                        ),
+                    )
+                raise
+            except Exception as exc:
+                code, message = _acp_error(exc, phase="prompt")
+                error_code = (
+                    ErrorCode.TRANSPORT_ERROR
+                    if code == "acp_prompt_failed"
+                    else ErrorCode.PROTOCOL_ERROR
+                )
+                observations, calls, limitations = self._observations_for_turn(
+                    sequence,
+                    self._updates[before:],
+                    self._frames[frame_before:],
+                    turn_wall_time,
+                    turn_started,
+                    include_started=not self._process_started_emitted,
+                    terminal_phase="exited"
+                    if self._process is not None
+                    and self._process.returncode is not None
+                    else None,
+                )
+                if not self._process_started_emitted:
+                    self._process_started_emitted = True
+                if isinstance(exc, _AcpEarlyExit) or isinstance(
+                    self._transport_fault, _AcpEarlyExit
+                ):
+                    if "partial_trace" not in limitations:
+                        limitations.append("partial_trace")
+                return HarnessTurnResult(
+                    sequence,
+                    "failed",
+                    error=ErrorInfo(code=error_code, message=message),
+                    evidence={"transport": "acp", "error_code": code},
+                    tool_calls=tuple(calls),
+                    trace_limitations=tuple(limitations),
+                    turn_evidence=TurnEvidence(
+                        sequence=sequence,
+                        status="failed",
+                        observations=tuple(observations),
+                        limitations=tuple(limitations),
+                    ),
+                )
+            finally:
+                self._prompt_task = None
+
+    async def cancel(self) -> None:
+        if self._closed:
+            return
+        self._cancel_requested = True
+        if self._connection is not None and self._session_id != "acp-pending":
+            try:
+                await asyncio.wait_for(
+                    self._connection.cancel(self._session_id), timeout=0.5
+                )
+            except Exception:
+                pass
+        task = self._prompt_task
+        if task is not None and not task.done():
+            task.cancel()
+
+    def snapshot(self) -> Any:
+        from .contracts import HarnessSessionSnapshot
+
+        return HarnessSessionSnapshot(
+            session_id=self._session_id,
+            turns=self._turns,
+            server_configuration_count=len(self._launch.configurations),
+            closed=self._closed,
+            evidence={
+                "transport": "acp",
+                "capture": "acp_frames",
+                "cleanup_failure": self._cleanup_failure,
+            },
+        )
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        await self.cancel()
+        if self._connection is not None:
+            try:
+                await asyncio.wait_for(self._connection.close(), timeout=0.75)
+            except Exception:
+                # A receive-loop fault is already terminal when the ACP
+                # child has exited.  The official connection's close may
+                # re-raise that fault; it is not an ownership leak and must
+                # not turn an otherwise successful process-group reap into a
+                # cleanup failure.  Keep treating a live-child close error
+                # as a real cleanup failure.
+                if not isinstance(self._transport_fault, _AcpEarlyExit):
+                    self._cleanup_failure = True
+        process = self._process
+        if process is not None:
+            if self._pgid is not None:
+                # Pass both identities.  A pgid without its owned child is
+                # not enough evidence because process-group ids can be
+                # reused after a leader exits.
+                await asyncio.to_thread(
+                    terminate_process_group,
+                    pid=process.pid,
+                    pgid=self._pgid,
+                    grace_seconds=0.25,
+                )
+            elif process.returncode is None:
+                try:
+                    process.terminate()
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+        if process is not None:
+            try:
+                await asyncio.wait_for(process.wait(), timeout=1.0)
+            except Exception:
+                self._cleanup_failure = True
+                try:
+                    process.kill()
+                    await asyncio.wait_for(process.wait(), timeout=1.0)
+                except Exception:
+                    pass
+        if self._stderr_task is not None:
+            try:
+                await asyncio.wait_for(self._stderr_task, timeout=0.75)
+            except asyncio.TimeoutError:
+                self._cleanup_failure = True
+                self._stderr_task.cancel()
+                await asyncio.gather(self._stderr_task, return_exceptions=True)
+            except Exception:
+                self._cleanup_failure = True
+        self._process = None
+        if self._workdir is not None:
+            shutil.rmtree(self._workdir, ignore_errors=True)
+        self._workspace_root = None
+        # Raw ACP model updates may contain values that were only safe to
+        # retain while the redaction set was alive.  Keep only the already
+        # redacted frame projection after terminal cleanup.
+        self._updates.clear()
+        self._secrets.clear()
+        # Set this only after every await above has completed.  If a caller
+        # cancels during connection shutdown, a later close() must be able to
+        # resume process and workspace cleanup rather than returning early.
+        self._closed = True
+
+
+def _updates_text(updates: list[Any]) -> str:
+    chunks: list[str] = []
+    for update in updates:
+        name = update.__class__.__name__.lower()
+        if "agentmessagechunk" not in name:
+            continue
+        content = getattr(update, "content", None)
+        text = getattr(content, "text", None)
+        if isinstance(text, str):
+            chunks.append(text)
+    return "".join(chunks)
+
+
+def _updates_tool_calls(updates: list[Any]) -> list[Mapping[str, Any]]:
+    calls: list[Mapping[str, Any]] = []
+    for update in updates:
+        name = update.__class__.__name__.lower()
+        if "toolcall" not in name:
+            continue
+        tool_name = getattr(update, "title", None) or getattr(update, "name", None)
+        if isinstance(tool_name, str) and tool_name:
+            calls.append({"name": tool_name})
+        else:
+            calls.append({"kind": "tool_call"})
+    return calls
+
+
+def _resolve_environment_secret(
+    value: Any, environment: Mapping[str, str] | None = None
+) -> str:
+    """Resolve only environment-backed references for the ACP child."""
+
+    if not isinstance(value, SecretReference) or value.source != "environment":
+        raise ValueError("secret_reference_unresolved")
+    resolved = (
+        environment[value.name]
+        if environment is not None and value.name in environment
+        else os.environ.get(value.name)
+    )
+    if not resolved:
+        raise ValueError("secret_reference_unresolved")
+    return resolved
+
+
+def _isolated_acp_env(
+    manifest: Mapping[str, Any],
+    executable: str,
+    secrets: set[str],
+    *,
+    root: str | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Build an allowlisted ACP environment from named manifest references."""
+
+    home = (
+        os.path.join(root, "home")
+        if root is not None
+        else tempfile.mkdtemp(prefix="m3-acp-home-")
+    )
+    os.makedirs(home, exist_ok=True)
+    env = {
+        "PATH": os.pathsep.join((os.path.dirname(executable), os.defpath)),
+        "HOME": home,
+        "XDG_CONFIG_HOME": os.path.join(home, "config"),
+        "XDG_DATA_HOME": os.path.join(home, "data"),
+        "XDG_CACHE_HOME": os.path.join(home, "cache"),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "TZ": "UTC",
+        "NO_COLOR": "1",
+        "CI": "1",
+    }
+    raw_env = manifest.get("env") or {}
+    if not isinstance(raw_env, Mapping):
+        raise ValueError("acp_manifest_invalid")
+    for key, raw in raw_env.items():
+        name = str(key)
+        if not name or "=" in name or "\x00" in name:
+            raise ValueError("acp_manifest_invalid")
+        if isinstance(raw, str) and raw.startswith("${") and raw.endswith("}"):
+            ref = raw[2:-1]
+            value = (
+                environment[ref]
+                if environment is not None and ref in environment
+                else os.environ.get(ref)
+            )
+            if value is None:
+                raise ValueError("acp_environment_missing")
+            secrets.update((value, raw))
+        elif isinstance(raw, str):
+            value = raw
+            secrets.add(value)
+        else:
+            raise ValueError("acp_manifest_invalid")
+        env[name] = value
+    return env
+
+
+class AcpHarnessAdapter:
+    """Real ACP-v1 adapter with one process and session per opened launch."""
+
+    def __init__(
+        self,
+        manifest: Mapping[str, Any] | None = None,
+        *,
+        secret_resolver: Callable[[Any], str] | None = None,
+        environment: Mapping[str, str] | None = None,
+    ) -> None:
+        self._manifest = dict(manifest or {})
+        self._secret_resolver = secret_resolver
+        self._environment = None if environment is None else dict(environment)
+        self._active: _AcpContractSession | None = None
+        self._capabilities: Any = None
+        self.last_policy_evidence: Any = None
+
+    @property
+    def name(self) -> str:
+        return "acp"
+
+    @property
+    def capabilities(self) -> Any:
+        from .contracts import HarnessAdapterCapabilities
+
+        if self._capabilities is None:
+            self._capabilities = HarnessAdapterCapabilities(
+                name="acp",
+                supports_multiturn=True,
+                supports_cancellation=True,
+                supports_timeout=True,
+                supports_tool_policy=False,
+                supports_streaming=True,
+                supported_content_kinds=frozenset({"text"}),
+            )
+        return self._capabilities
+
+    @property
+    def supported_content_kinds(self) -> frozenset[str]:
+        return frozenset(self.capabilities.supported_content_kinds)
+
+    def _effective_manifest(self, launch: Any) -> dict[str, Any]:
+        harness = getattr(launch.spec, "harness", None)
+        value = getattr(harness, "manifest", None)
+        return dict(value or self._manifest)
+
+    async def preflight(self, launch: Any) -> Any:
+        manifest = self._effective_manifest(launch)
+
+        command = manifest.get("command")
+        executable = (
+            command
+            if isinstance(command, str)
+            and os.path.isabs(command)
+            and os.access(command, os.X_OK)
+            else shutil.which(str(command or ""))
+        )
+        if not executable or not os.access(executable, os.X_OK):
+            return self.capabilities.readiness(
+                ready=False, reason="acp_executable_missing"
+            )
+        if (
+            manifest.get("protocol", "acp") != "acp"
+            or manifest.get("protocol_version", 1) != 1
+        ):
+            return self.capabilities.readiness(
+                ready=False, reason="acp_manifest_invalid"
+            )
+        probe_home: str | None = None
+        self.last_policy_evidence = None
+        self._capabilities = replace(self.capabilities, supports_tool_policy=False)
+        try:
+            probe_env = _isolated_acp_env(
+                manifest, executable, set(), environment=self._environment
+            )
+            probe_home = probe_env["HOME"]
+            for config in launch.configurations:
+                if config.endpoint and _credential_query(config.endpoint):
+                    return self.capabilities.readiness(
+                        ready=False, reason="credential_query_unsupported"
+                    )
+                for value in tuple(config.environment.values()) + tuple(
+                    config.headers.values()
+                ):
+                    if not isinstance(value, str):
+                        try:
+                            (
+                                self._secret_resolver
+                                or (
+                                    lambda ref: _resolve_environment_secret(
+                                        ref, self._environment
+                                    )
+                                )
+                            )(value)
+                        except Exception:
+                            return self.capabilities.readiness(
+                                ready=False, reason="credential_unavailable"
+                            )
+            for block in getattr(launch.spec.message, "content", ()):
+                if getattr(block, "kind", "text") not in self.supported_content_kinds:
+                    return self.capabilities.readiness(
+                        ready=False, reason="attachment_unsupported"
+                    )
+            if isinstance(launch.tool_policy, NativeToolPolicy):
+                native = launch.tool_policy
+                if (
+                    native.harness != self.name
+                    or native.policy.get("mode") != "agent_default"
+                ):
+                    return self.capabilities.readiness(
+                        ready=False, reason="tool_policy_unsupported"
+                    )
+                server = native.policy.get("server")
+                if not isinstance(server, str) or server not in {
+                    record.key for record in launch.servers.records
+                }:
+                    return self.capabilities.readiness(
+                        ready=False, reason="tool_policy_unsupported"
+                    )
+                # ACP owns its tool/permission negotiation. This evidence is
+                # explicitly non-portable; interaction callbacks remain the
+                # default-deny boundary for terminal/filesystem/permission
+                # requests.
+                self.last_policy_evidence = ToolPolicyEvidence(
+                    requested="native",
+                    enforced="native",
+                    observed="preflight",
+                    portable=False,
+                    nonportable_reason="ACP agent_default MCP selection",
+                )
+                return self.capabilities.readiness()
+            if not isinstance(
+                launch.tool_policy, (RestrictiveToolPolicy, FullToolPolicy)
+            ):
+                return self.capabilities.readiness(
+                    ready=False, reason="tool_policy_unsupported"
+                )
+            available_connections = tuple(
+                str(config.connection_id)
+                for config in launch.configurations
+                if getattr(config, "available", False)
+            )
+            capture = getattr(launch, "capture", None)
+            enforcement = getattr(capture, "enforces_portable_policy", None)
+            if not callable(enforcement) or not enforcement(available_connections):
+                return self.capabilities.readiness(
+                    ready=False, reason="tool_policy_unsupported"
+                )
+            self._capabilities = replace(self.capabilities, supports_tool_policy=True)
+            descriptors = tuple(
+                ToolDescriptor(server=record.key, name=tool)
+                for record in getattr(launch.servers, "records", ())
+                if getattr(record, "available", False)
+                for tool in getattr(record, "tools", ())
+            )
+            self.last_policy_evidence = ToolPolicyEvaluator(descriptors).preflight(
+                launch.tool_policy,
+                harness_name=self.name,
+                supports_enforcement=self.capabilities.supports_tool_policy,
+            )
+        except ValueError as exc:
+            del exc
+            return self.capabilities.readiness(
+                ready=False, reason="acp_environment_unavailable"
+            )
+        except Exception:
+            self.last_policy_evidence = None
+            return self.capabilities.readiness(
+                ready=False, reason="tool_policy_unsupported"
+            )
+        finally:
+            if probe_home is not None:
+                shutil.rmtree(probe_home, ignore_errors=True)
+        return self.capabilities.readiness()
+
+    async def open(self, launch: Any) -> Any:
+        readiness = await self.preflight(launch)
+        if not readiness.ready:
+            from .contracts import HarnessStartupError
+
+            raise HarnessStartupError("ACP harness is not ready")
+        manifest = self._effective_manifest(launch)
+        command = manifest.get("command")
+        executable = (
+            command
+            if isinstance(command, str)
+            and os.path.isabs(command)
+            and os.access(command, os.X_OK)
+            else shutil.which(str(command or ""))
+        )
+        if not executable or not os.access(executable, os.X_OK):
+            from .contracts import HarnessStartupError
+
+            raise HarnessStartupError("ACP harness executable is unavailable")
+        if self._active is not None:
+            await self.close()
+        session = _AcpContractSession(
+            launch, manifest, executable, self._secret_resolver, self._environment
+        )
+        try:
+            await session.open()
+        except Exception as exc:
+            from .contracts import HarnessStartupError
+
+            del exc
+            raise HarnessStartupError("ACP harness could not start") from None
+        self._active = session
+        return session
+
+    async def start(self, spec: Any) -> None:
+        from ..server_group import ServerGroupSnapshot
+        from .contracts import HarnessLaunch
+
+        await self.open(
+            HarnessLaunch(spec, ServerGroupSnapshot(), (), spec.tool_policy)
+        )
+
+    async def send(
+        self,
+        message: Any,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Any:
+        from ..agent_session import AdapterTurn
+        from ..types import TurnOutcome
+        from .contracts import HarnessTurnRequest
+
+        if self._active is None:
+            from .contracts import HarnessAdapterError
+
+            raise HarnessAdapterError("ACP harness session is not open")
+        request = HarnessTurnRequest.from_message(
+            message,
+            timeout_seconds=timeout,
+            metadata={
+                str(k): v
+                for k, v in (metadata or {}).items()
+                if isinstance(v, (str, int, float, bool)) or v is None
+            },
+        )
+        result = await self._active.send(request)
+        outcome = {
+            "completed": TurnOutcome.COMPLETED,
+            "timed_out": TurnOutcome.TIMED_OUT,
+            "cancelled": TurnOutcome.CANCELLED,
+        }.get(result.status, TurnOutcome.FAILED)
+        return AdapterTurn(
+            response=result.response,
+            error=result.error,
+            terminal=result.status != "completed",
+            outcome=outcome,
+            tool_calls=result.tool_calls,
+            evidence=result.evidence,
+            trace_limitations=result.trace_limitations,
+            turn_evidence=result.turn_evidence,
+        )
+
+    async def cancel(self) -> None:
+        if self._active is not None:
+            await self._active.cancel()
+
+    async def close(self) -> None:
+        if self._active is not None:
+            session = self._active
+            await session.close()
+            self._active = None
+
+
+# Short alias used by integrations that call the adapter ``ACP``.
+ACPAdapter = AcpHarnessAdapter
+ACPAgentAdapter = AcpHarnessAdapter
+
+
+def _probe_launch(
+    manifest: Mapping[str, Any],
+    server: Mapping[str, Any],
+    *,
+    mode_id: str | None = None,
+    session_config: Mapping[str, Any] | None = None,
+) -> tuple[Any, McpCaptureManager, str]:
+    """Build a contract launch and its owned MCP capture boundary.
+
+    ACP probes are production callers of the same adapter used by execution
+    runtime.  The capture manager is intentionally included in this launch so
+    full probes retain wire-level MCP evidence while all child processes are
+    still started by the adapter with an explicit environment.
+    """
+    from ..server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
+    from .contracts import HarnessLaunch
+
+    name = "echo"
+    connection_id = "acp-probe-echo"
+    transport_name = str(server.get("type", "stdio"))
+    if transport_name == "http":
+        transport = TransportKind.STREAMABLE_HTTP
+    elif transport_name == "sse":
+        transport = TransportKind.SSE
+    else:
+        transport = TransportKind.STDIO
+        transport_name = "stdio"
+
+    command = server.get("command")
+    args = tuple(str(item) for item in server.get("args") or ())
+    endpoint = server.get("url")
+    config = HarnessServerConfig(
+        key=name,
+        transport=transport,
+        required=True,
+        available=True,
+        connection_id=connection_id,
+        command=str(command) if isinstance(command, str) else None,
+        args=args,
+        endpoint=str(endpoint) if isinstance(endpoint, str) else None,
+        environment={str(k): v for k, v in (server.get("env") or {}).items()},
+        headers={str(k): v for k, v in (server.get("headers") or {}).items()},
+    )
+    if transport is TransportKind.STDIO:
+        binding_server: Any = StdioServer(
+            name=name,
+            command=str(command or "m3-probe-server"),
+            args=args,
+            environment=config.environment,
+        )
+    elif transport is TransportKind.SSE:
+        binding_server = SSEServer(name=name, url=str(endpoint or ""))
+    else:
+        binding_server = HTTPServer(name=name, url=str(endpoint or ""))
+    record = ServerRecord(
+        key=name,
+        server=binding_server,
+        required=True,
+        available=True,
+        connection_id=connection_id,
+        transport=transport,
+        endpoint=config.endpoint,
+    )
+    tool_policy = NativeToolPolicy(
+        harness="acp",
+        policy={"mode": "agent_default", "server": name},
+        nonportable_reason="ACP packaged probe uses agent-owned tool selection",
+    )
+    spec = AgentSpec(
+        harness=ACPAgent(
+            model="agent-default",
+            manifest=dict(manifest),
+            agent_mode_id=mode_id,
+            session_config=dict(session_config or {}),
+        ),
+        servers=(ServerBinding(server=binding_server),),
+        message=None,
+        tool_policy=tool_policy,
+    )
+    capture_root = tempfile.mkdtemp(prefix="m3-probe-capture-")
+    capture = McpCaptureManager(
+        capture_root,
+        trusted_private_keys=(connection_id,),
+        server_aliases=(name,),
+    )
+    launch = HarnessLaunch(
+        spec,
+        ServerGroupSnapshot(records=(record,)),
+        (config,),
+        tool_policy,
+        interactions=Interactions(),
+        capture=capture,
+    )
+    return launch, capture, transport_name
+
+
+def _probe_frame_payload(frame: Mapping[str, Any]) -> dict[str, Any]:
+    value = frame.get("payload")
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _probe_initialize_response(
+    frames: list[Mapping[str, Any]],
+) -> Mapping[str, Any]:
+    """Return the wire result paired with the ACP initialize request.
+
+    The SDK decodes ``InitializeResponse`` into snake_case fields, while the
+    stream observer records the wire-shaped camelCase payload.  Pairing the
+    response by JSON-RPC ID keeps metadata from an unrelated response from
+    being mistaken for initialize metadata (for example, another response
+    that happens to include ``protocolVersion``).
+    """
+
+    initialize_ids: list[Any] = []
+    for frame in frames:
+        if frame.get("direction") != "client_to_server":
+            continue
+        payload = _probe_frame_payload(frame)
+        if payload.get("method") == "initialize" and "id" in payload:
+            initialize_ids.append(payload["id"])
+
+    for initialize_id in initialize_ids:
+        for frame in frames:
+            if frame.get("direction") != "server_to_client":
+                continue
+            payload = _probe_frame_payload(frame)
+            if "id" not in payload or type(payload["id"]) is not type(initialize_id):
+                continue
+            if payload["id"] != initialize_id:
+                continue
+            result = payload.get("result")
+            if isinstance(result, Mapping):
+                return result
+    return {}
+
+
+def _probe_executable(manifest: Mapping[str, Any]) -> tuple[str | None, str]:
+    """Resolve a probe command before creating any child process.
+
+    Probe callers need a stable diagnostic for a locally unavailable command;
+    an adapter startup exception is intentionally too generic (and could
+    expose arbitrary provider details).
+    """
+
+    command = manifest.get("command")
+    command_text = str(command) if command is not None else ""
+    if not isinstance(command, str) or not command:
+        return None, command_text
+    executable = (
+        command
+        if os.path.isabs(command) and os.access(command, os.X_OK)
+        else shutil.which(command)
+    )
+    return executable, command
+
+
+def _probe_value(value: Mapping[str, Any], *names: str) -> Any:
+    """Read a typed (snake_case) or wire (camelCase) field without reprs."""
+
+    for name in names:
+        candidate = value.get(name)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _probe_camelize(value: Any) -> Any:
+    """Keep typed values while projecting their field names to ACP wire form."""
+
+    if isinstance(value, Mapping):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            name = str(key)
+            if name == "field_meta":
+                name = "_meta"
+            elif "_" in name:
+                head, *tail = name.split("_")
+                name = head + "".join(part[:1].upper() + part[1:] for part in tail)
+            result[name] = _probe_camelize(item)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [_probe_camelize(item) for item in value]
+    return value
+
+
+def _probe_snake_case(name: str) -> str:
+    if name == "_meta":
+        return "field_meta"
+    result = ""
+    for char in name:
+        result += "_" + char.lower() if char.isupper() else char
+    return result
+
+
+def _probe_prefer_typed(typed: Any, wire: Any) -> Any:
+    """Use typed values while retaining the fields advertised on the wire."""
+
+    if typed is None:
+        return _probe_camelize(wire)
+    if wire is None:
+        return _probe_camelize(typed)
+    if isinstance(typed, Mapping) and isinstance(wire, Mapping):
+        result: dict[str, Any] = {}
+        for wire_key, wire_value in wire.items():
+            key = str(wire_key)
+            typed_key = _probe_snake_case(key)
+            candidate = typed.get(typed_key)
+            if candidate is None:
+                candidate = typed.get(key, wire_value)
+            result[key] = _probe_prefer_typed(candidate, wire_value)
+        return result
+    if isinstance(typed, (list, tuple)) and isinstance(wire, (list, tuple)):
+        return [
+            _probe_prefer_typed(
+                typed[index] if index < len(typed) else None, wire_value
+            )
+            for index, wire_value in enumerate(wire)
+        ]
+    return typed
+
+
+def _capture_probe_frames(snapshot: Any) -> list[dict[str, Any]]:
+    """Project typed MCP capture events to the bounded probe evidence shape."""
+    frames: list[dict[str, Any]] = []
+    for event in getattr(snapshot, "events", ()):
+        payload: dict[str, Any] = {"jsonrpc": "2.0"}
+        if event.method is not None and event.kind in {"request", "notification"}:
+            payload["method"] = event.method
+            params: dict[str, Any] = {}
+            if event.tool is not None:
+                params["name"] = event.tool
+            if event.arguments is not None:
+                params["arguments"] = dict(event.arguments)
+            payload["params"] = params
+        elif event.kind in {"response", "error"}:
+            if event.result is not None:
+                payload["result"] = event.result
+            if event.error is not None:
+                payload["error"] = event.error
+        if event.jsonrpc_id is not None:
+            payload["id"] = event.jsonrpc_id
+        frames.append(
+            {
+                "direction": event.direction,
+                "offset_ms": event.offset_ms,
+                "payload": payload,
+            }
+        )
+    return frames
+
+
+async def _instrument_probe_launch(launch: Any, capture: McpCaptureManager) -> Any:
+    """Install owned MCP capture proxies before the ACP child is created."""
+    configurations = await capture.instrument(launch.configurations)
+    return replace(launch, configurations=configurations)
+
+
+async def _cleanup_probe_resources(
+    session: Any,
+    capture: McpCaptureManager | None,
+    echo_service: Any,
+    capture_root: Path | None,
+) -> None:
+    """Release one-shot probe resources, continuing after individual failures."""
+    if session is not None:
+        try:
+            await session.close()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+    if capture is not None:
+        try:
+            await capture.close()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+    if echo_service is not None:
+        try:
+            await echo_service.stop()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+    if capture_root is not None:
+        shutil.rmtree(capture_root, ignore_errors=True)
+
+
+async def protocol_probe(
+    manifest: dict[str, Any], timeout_seconds: float = 5.0
+) -> dict[str, Any]:
+    """Complete ACP initialize/session negotiation using ``AcpHarnessAdapter``."""
+    resolved, command = _probe_executable(manifest)
+    if not resolved:
+        return {
+            "status": "failed",
+            "local_ready": False,
+            "error": f"acp_executable_missing: {command}",
+        }
+    server = {
+        "command": sys.executable,
+        "args": ["-m", "m3.fixtures.echo_server"],
+    }
+    launch, capture, _ = _probe_launch(manifest, server)
+    adapter = AcpHarnessAdapter()
+    session: Any = None
+    capture_root = capture.root
+    try:
+        launch = await _instrument_probe_launch(launch, capture)
+        session = await asyncio.wait_for(adapter.open(launch), timeout_seconds)
+        frames = list(getattr(session, "_frames", ()))
+        init = dict(getattr(session, "_initialize_value", {}))
+        session_value = getattr(session, "_session_value", {})
+        wire_initialize = _probe_initialize_response(frames)
+        session_wire: Mapping[str, Any] = next(
+            (
+                _probe_frame_payload(frame).get("result", {})
+                for frame in reversed(frames)
+                if frame.get("direction") == "server_to_client"
+                and _probe_frame_payload(frame).get("result", {}).get("sessionId")
+                is not None
+            ),
+            {},
+        )
+        protocol_version = _probe_value(init, "protocol_version", "protocolVersion")
+        if protocol_version is None:
+            protocol_version = _probe_value(
+                wire_initialize, "protocolVersion", "protocol_version"
+            )
+        agent_info = _probe_value(init, "agent_info", "agentInfo")
+        if agent_info is None:
+            agent_info = _probe_value(wire_initialize, "agentInfo", "agent_info")
+        agent_capabilities = _probe_value(
+            init, "agent_capabilities", "agentCapabilities"
+        )
+        if agent_capabilities is None:
+            agent_capabilities = _probe_value(
+                wire_initialize, "agentCapabilities", "agent_capabilities"
+            )
+        wire_capabilities = _probe_value(
+            wire_initialize, "agentCapabilities", "agent_capabilities"
+        )
+        auth_methods = _probe_value(init, "auth_methods", "authMethods")
+        if auth_methods is None:
+            auth_methods = _probe_value(wire_initialize, "authMethods", "auth_methods")
+        session_id = _probe_value(session_value, "session_id", "sessionId")
+        if session_id is None:
+            session_id = _probe_value(session_wire, "sessionId", "session_id")
+        modes = _probe_value(session_value, "modes")
+        if modes is None:
+            modes = _probe_value(session_wire, "modes")
+        config_options = _probe_value(session_value, "config_options", "configOptions")
+        if config_options is None:
+            config_options = _probe_value(
+                session_wire, "configOptions", "config_options"
+            )
+        wire_modes = _probe_value(session_wire, "modes")
+        wire_config_options = _probe_value(
+            session_wire, "configOptions", "config_options"
+        )
+        session_id_value = session_id if session_id is not None else session.session_id
+        snapshot = capture.snapshot("acp-probe-echo")
+        return {
+            "status": "verified",
+            "local_ready": True,
+            "protocol_version": protocol_version if protocol_version is not None else 1,
+            "agent_info": _probe_prefer_typed(
+                agent_info, _probe_value(wire_initialize, "agentInfo", "agent_info")
+            ),
+            "auth_methods": _probe_camelize(auth_methods),
+            "agent_capabilities": _probe_prefer_typed(
+                agent_capabilities, wire_capabilities
+            )
+            or {},
+            "session_id": session_id_value,
+            "modes": _probe_prefer_typed(modes, wire_modes),
+            "config_options": _probe_prefer_typed(config_options, wire_config_options),
+            "frames": frames,
+            "mcp_frames": _capture_probe_frames(snapshot),
+        }
+    except asyncio.TimeoutError:
+        return {
+            "status": "timed_out",
+            "local_ready": True,
+            "error": "ACP protocol probe timed out",
+        }
+    except Exception as exc:
+        return {"status": "failed", "local_ready": True, "error": str(exc)}
+    finally:
+        cleanup_task = asyncio.create_task(
+            _cleanup_probe_resources(session, capture, None, capture_root)
+        )
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            await asyncio.shield(cleanup_task)
+            raise
+
+
+async def full_probe(
+    manifest: dict[str, Any],
+    mode_id: str | None = None,
+    session_config: dict[str, Any] | None = None,
+    transport: str = "stdio",
+    allow_private_upstream: bool = False,
+    timeout_seconds: float = 30.0,
+) -> dict[str, Any]:
+    """Run a nonce-verified ACP turn through the modern contract adapter."""
+    import secrets
+
+    from ..fixtures.echo_http import EchoMcpHttpServer
+    from .contracts import HarnessTurnRequest
+
+    nonce = "m3-probe-" + secrets.token_hex(8)
+    executable, command = _probe_executable(manifest)
+    if not executable:
+        return {
+            "status": "failed",
+            "local_ready": False,
+            "error": f"acp_executable_missing: {command}",
+            "transport": transport,
+            "calls": [],
+            "nonce": nonce,
+        }
+    if transport not in {"stdio", "http", "sse"}:
+        return {
+            "status": "failed",
+            "error": "unsupported_transport",
+            "transport": transport,
+            "calls": [],
+            "nonce": nonce,
+        }
+    echo_service: Any = None
+    capture: McpCaptureManager | None = None
+    capture_root: Path | None = None
+    session: Any = None
+    try:
+        if transport == "stdio":
+            server: dict[str, Any] = {
+                "command": sys.executable,
+                "args": ["-m", "m3.fixtures.echo_server"],
+            }
+        else:
+            echo_service = EchoMcpHttpServer(transport)
+            server = {"type": transport, "url": await echo_service.start()}
+        launch, capture, configured_transport = _probe_launch(
+            manifest,
+            server,
+            mode_id=mode_id,
+            session_config=session_config,
+        )
+        capture_root = capture.root
+        # The packaged loopback service is created by this function, so its
+        # private endpoint is explicitly trusted only by this capture proxy.
+        # ``allow_private_upstream`` is retained for API compatibility; probe
+        # endpoints are owned ephemeral loopback services, never user URLs.
+        del allow_private_upstream
+        launch = await _instrument_probe_launch(launch, capture)
+        adapter = AcpHarnessAdapter()
+        session = await adapter.open(launch)
+        turn = await session.send(
+            HarnessTurnRequest.from_message(
+                "Call the echo tool with the exact nonce in the text argument: "
+                + nonce,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+        frames = list(getattr(session, "_frames", ()))
+        snapshot = capture.snapshot("acp-probe-echo")
+        mcp_frames = _capture_probe_frames(snapshot)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "error": str(exc),
+            "transport": transport,
+            "calls": [],
+            "nonce": nonce,
+        }
+    finally:
+        cleanup_task = asyncio.create_task(
+            _cleanup_probe_resources(session, capture, echo_service, capture_root)
+        )
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            # Shield prevents the caller's cancellation from interrupting
+            # cleanup, but does not wait for the shielded task.  Wait for it
+            # before re-raising so cancellation cannot return with a trusted
+            # ACP process still alive.
+            await asyncio.shield(cleanup_task)
+            raise
+
+    protocol = [frame for frame in mcp_frames if _probe_frame_payload(frame)]
+
+    def id_key(value: Any) -> tuple[str, str]:
+        return type(value).__name__, json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+
+    pending: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    calls: list[dict[str, Any]] = []
+    for frame in protocol:
+        value = _probe_frame_payload(frame)
+        if (
+            frame.get("direction") == "client_to_server"
+            and value.get("method") == "tools/call"
+            and value.get("id") is not None
+        ):
+            pending.setdefault(id_key(value["id"]), []).append(frame)
+            continue
+        key = id_key(value["id"]) if value.get("id") is not None else None
+        if frame.get("direction") == "server_to_client" and key in pending:
+            request = pending[key].pop(0)
+            if not pending[key]:
+                pending.pop(key)
+            request_payload = _probe_frame_payload(request)
+            calls.append(
+                {
+                    "request": request,
+                    "response": frame,
+                    "nonce": nonce,
+                    "arguments": (request_payload.get("params") or {}).get("arguments"),
+                    "result": value.get("result"),
+                    "latency_ms": max(
+                        0.0,
+                        float(frame.get("offset_ms", 0))
+                        - float(request.get("offset_ms", 0)),
+                    ),
+                }
+            )
+
+    payload = _probe_frame_payload
+    prompt_ids = {
+        str(value.get("id"))
+        for frame in frames
+        if (value := payload(frame))
+        and frame.get("direction") == "client_to_server"
+        and value.get("method") == "session/prompt"
+    }
+    prompt_completed = any(
+        (value := payload(frame))
+        and frame.get("direction") == "server_to_client"
+        and str(value.get("id")) in prompt_ids
+        and isinstance(value.get("result"), dict)
+        and value["result"].get("stopReason") == "end_turn"
+        for frame in frames
+    )
+    updates = [
+        value.get("params", {}).get("update")
+        for frame in frames
+        if (value := payload(frame)) and value.get("method") == "session/update"
+    ]
+
+    def update_has_nonce(update: Any) -> bool:
+        if (
+            not isinstance(update, dict)
+            or update.get("sessionUpdate") != "tool_call_update"
+        ):
+            return False
+        for item in update.get("content") or []:
+            content = item.get("content") if isinstance(item, dict) else None
+            if isinstance(content, dict) and content.get("text") == nonce:
+                return True
+        return False
+
+    tool_update = any(update_has_nonce(update) for update in updates)
+    message_text = "".join(
+        str(update.get("content", {}).get("text", ""))
+        for update in updates
+        if isinstance(update, dict)
+        and update.get("sessionUpdate") == "agent_message_chunk"
+    )
+    message_update = message_text == nonce
+    mode_frames = [
+        payload(frame)
+        for frame in frames
+        if payload(frame).get("method") == "session/set_mode"
+    ]
+    config_frames = [
+        payload(frame)
+        for frame in frames
+        if payload(frame).get("method") == "session/set_config_option"
+    ]
+    config = dict(session_config or {})
+    applied_mode = mode_id is None or any(
+        (frame.get("params") or {}).get("modeId") == mode_id for frame in mode_frames
+    )
+    applied_config = {
+        key: any(
+            (frame.get("params") or {}).get("configId") == key
+            and (frame.get("params") or {}).get("value") == value
+            for frame in config_frames
+        )
+        for key, value in config.items()
+    }
+    valid = bool(
+        turn.status == "completed"
+        and prompt_completed
+        and len(calls) == 1
+        and calls[0].get("arguments") == {"text": nonce}
+        and isinstance(calls[0].get("result"), dict)
+        and calls[0]["result"].get("isError") is False
+        and calls[0]["result"].get("content") == [{"type": "text", "text": nonce}]
+        and tool_update
+        and message_update
+        and applied_mode
+        and all(applied_config.values())
+    )
+    identity = next(
+        (
+            payload(frame).get("result", {}).get("agentInfo")
+            for frame in frames
+            if payload(frame).get("result", {}).get("agentInfo") is not None
+        ),
+        None,
+    )
+    return {
+        "status": (
+            "verified"
+            if valid
+            else "timed_out"
+            if turn.status == "timed_out"
+            else "failed"
+        ),
+        "nonce": nonce,
+        "calls": calls,
+        "agent_identity": identity,
+        "identity_available": identity is not None,
+        "mode_id": mode_id,
+        "session_config": config,
+        "applied_mode": applied_mode,
+        "applied_config": applied_config,
+        "transport": transport,
+        "configured_transport": configured_transport,
+        "instrumented_transport": configured_transport,
+        "frames": frames,
+        "mcp_frames": mcp_frames,
+        "updates": updates,
+        "prompt_completed": prompt_completed,
+        "tool_update": tool_update,
+        "message_update": message_update,
+        "error": (
+            None
+            if turn.status == "completed"
+            else "ACP turn timed out"
+            if turn.status == "timed_out"
+            else "ACP turn failed"
+        ),
+    }

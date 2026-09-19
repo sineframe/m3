@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from mcp_pal import AgentSpec, Config, MCPTestKit, ServerValue
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.sync_api import ProbeKind, ProbeRequest
+from m3 import AgentSpec, Config, MCPTestKit, ServerValue
+from m3.async_api import AsyncMCPTestKit
+from m3.sync_api import ProbeKind, ProbeRequest
 
 
 def sync_usage(kit: MCPTestKit) -> None:
@@ -61,7 +61,7 @@ async def async_runtime_usage(
 def sync_pytest_usage() -> None:
     """Ordinary pytest tests use the blocking twin without an event loop."""
 
-    with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         report = kit.capabilities()
         assert report.readiness.ready
 
@@ -69,6 +69,6 @@ def sync_pytest_usage() -> None:
 async def async_pytest_usage() -> None:
     """pytest-asyncio tests use the async twin and await blocking work."""
 
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         report = await kit.capabilities()
         assert report.readiness.ready

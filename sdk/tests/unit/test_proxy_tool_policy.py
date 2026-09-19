@@ -10,11 +10,11 @@ from typing import Any
 import pytest
 from starlette.requests import Request
 
-from mcp_pal.server_group import HarnessServerConfig
-from mcp_pal.transport.capture_proxy import McpCaptureManager
-from mcp_pal.transport.http_proxy import McpHttpProxy
-from mcp_pal.transport.tool_policy import ProxyToolPolicy
-from mcp_pal.types import RestrictiveToolPolicy, TransportKind
+from m3.server_group import HarnessServerConfig
+from m3.transport.capture_proxy import McpCaptureManager
+from m3.transport.http_proxy import McpHttpProxy
+from m3.transport.tool_policy import ProxyToolPolicy
+from m3.types import RestrictiveToolPolicy, TransportKind
 
 
 def test_proxy_gate_qualifies_and_denies_without_arguments() -> None:
@@ -42,7 +42,7 @@ def test_empty_restrictive_policy_is_deny_all() -> None:
 
 
 def test_full_and_native_policies_are_separate() -> None:
-    from mcp_pal.types import FullToolPolicy, NativeToolPolicy
+    from m3.types import FullToolPolicy, NativeToolPolicy
 
     allowed, _ = ProxyToolPolicy(
         FullToolPolicy(acknowledge_risk=True), server="one"
@@ -465,7 +465,7 @@ async def test_redirect_followup_stays_captured_and_policy_gated(
 ) -> None:
     import httpx
 
-    from mcp_pal.trace.capture import read_capture
+    from m3.trace.capture import read_capture
 
     seen: list[str] = []
 

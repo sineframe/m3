@@ -18,15 +18,15 @@ def _run(
         "-m",
         "pytest",
         "-p",
-        "mcp_pal.pytest_plugin",
-        "--mcp-pal-results-db",
+        "m3.pytest_plugin",
+        "--results-db",
         str(db),
         "-q",
     ]
     if xdist:
         args += ["-n", "2"]
     if suite is not None:
-        args += [f"--mcp-pal-suite={suite}"]
+        args += [f"--suite={suite}"]
     args += [str(path) for path in files]
     env = {
         "PYTHONPATH": str(Path(__file__).parents[2].resolve() / "src"),
@@ -42,16 +42,16 @@ def test_two_files_share_catalog_suite_and_persist_setup_failure(
     second = tmp_path / "catalog_two.py"
     other = tmp_path / "other.py"
     first.write_text(
-        "import pytest\nfrom mcp_pal.storage import SQLiteExecutionStore\nfrom mcp_pal.types import ExecutionId, ExecutionState\npytestmark=pytest.mark.mcp_pal(suite_name='catalog')\n"
+        "import pytest\nfrom m3.storage import SQLiteExecutionStore\nfrom m3.types import ExecutionId, ExecutionState\npytestmark=pytest.mark.m3(suite_name='catalog')\n"
         "def test_one():\n s=SQLiteExecutionStore(__import__('os').environ['SUITE_DB']); s.create(ExecutionState(execution_id=ExecutionId('catalog-one'), suite_name='catalog')); s.close()\n"
         "@pytest.fixture\ndef broken(): raise RuntimeError('setup')\n"
         "def test_setup_failure(broken): pass\n"
     )
     second.write_text(
-        "import pytest\nfrom mcp_pal.storage import SQLiteExecutionStore\nfrom mcp_pal.types import ExecutionId, ExecutionState\npytestmark=pytest.mark.mcp_pal(suite_name='catalog')\ndef test_two():\n s=SQLiteExecutionStore(__import__('os').environ['SUITE_DB']); s.create(ExecutionState(execution_id=ExecutionId('catalog-two'), suite_name='catalog')); s.close()\n"
+        "import pytest\nfrom m3.storage import SQLiteExecutionStore\nfrom m3.types import ExecutionId, ExecutionState\npytestmark=pytest.mark.m3(suite_name='catalog')\ndef test_two():\n s=SQLiteExecutionStore(__import__('os').environ['SUITE_DB']); s.create(ExecutionState(execution_id=ExecutionId('catalog-two'), suite_name='catalog')); s.close()\n"
     )
     other.write_text(
-        "import pytest\nfrom mcp_pal.storage import SQLiteExecutionStore\nfrom mcp_pal.types import ExecutionId, ExecutionState\npytestmark=pytest.mark.mcp_pal(suite_name='other')\ndef test_other():\n s=SQLiteExecutionStore(__import__('os').environ['SUITE_DB']); s.create(ExecutionState(execution_id=ExecutionId('other-one'), suite_name='other')); s.close()\n"
+        "import pytest\nfrom m3.storage import SQLiteExecutionStore\nfrom m3.types import ExecutionId, ExecutionState\npytestmark=pytest.mark.m3(suite_name='other')\ndef test_other():\n s=SQLiteExecutionStore(__import__('os').environ['SUITE_DB']); s.create(ExecutionState(execution_id=ExecutionId('other-one'), suite_name='other')); s.close()\n"
     )
     result = _run(tmp_path, first, second, other)
     assert result.returncode != 0
@@ -88,7 +88,7 @@ def test_pytest_docstrings_are_cleaned_into_attempt_records(tmp_path: Path) -> N
     test_file = tmp_path / "descriptions.py"
     test_file.write_text(
         "import pytest\n"
-        "pytestmark=pytest.mark.mcp_pal(suite_name='docs')\n"
+        "pytestmark=pytest.mark.m3(suite_name='docs')\n"
         "def test_multiline():\n"
         "    '''\n    A useful summary.\n\n    With detail.\n    '''\n"
         "    pass\n"
@@ -130,17 +130,17 @@ def test_manual_kit_inherits_project_identity_from_pytest_manifest(
     tmp_path: Path,
 ) -> None:
     project_id = "44444444-4444-4444-8444-444444444444"
-    (tmp_path / "mcp-pal.toml").write_text(
+    (tmp_path / "m3.toml").write_text(
         f' schema_version = 1\nproject_id = "{project_id}"\nproject_name = "Manual Kit"\n',
         encoding="utf-8",
     )
     test_file = tmp_path / "manual.py"
     test_file.write_text(
         "import sys\n"
-        "from mcp_pal import MCPTestKit\n"
-        "from mcp_pal.types import CallTool, DirectSpec, ServerBinding, StdioServer\n"
+        "from m3 import MCPTestKit\n"
+        "from m3.types import CallTool, DirectSpec, ServerBinding, StdioServer\n"
         "def test_manual_kit():\n"
-        "    spec = DirectSpec(servers=(ServerBinding(server=StdioServer(name='echo', command=sys.executable, args=('-m', 'mcp_pal.fixtures.echo_server'))),), operation=CallTool(server='echo', name='echo', arguments={'text': 'ok'}))\n"
+        "    spec = DirectSpec(servers=(ServerBinding(server=StdioServer(name='echo', command=sys.executable, args=('-m', 'm3.fixtures.echo_server'))),), operation=CallTool(server='echo', name='echo', arguments={'text': 'ok'}))\n"
         "    with MCPTestKit() as kit:\n"
         "        result = kit.run(spec)\n"
         "    assert result.snapshot.project_id.root == '" + project_id + "'\n",
@@ -173,7 +173,7 @@ def test_old_schema_rows_survive_suite_migration(tmp_path: Path) -> None:
     )
     db.commit()
     db.close()
-    from mcp_pal.storage import SQLiteExecutionStore
+    from m3.storage import SQLiteExecutionStore
 
     store = SQLiteExecutionStore(path)
     with store._connect() as connection:
@@ -209,7 +209,7 @@ def test_legacy_unique_suite_table_rebuild_preserves_foreign_keys(
         "insert into v2_test_results values ('run','attempt','{}','now','now',1);"
     )
     db.close()
-    from mcp_pal.storage import SQLiteExecutionStore
+    from m3.storage import SQLiteExecutionStore
 
     store = SQLiteExecutionStore(path)
     store.ensure_project("11111111-1111-4111-8111-111111111111", "one")
@@ -232,7 +232,7 @@ def test_xdist_suite_rows_when_available(tmp_path: Path) -> None:
     pytest.importorskip("xdist")
     test_file = tmp_path / "many.py"
     test_file.write_text(
-        "import pytest\npytestmark=pytest.mark.mcp_pal(suite_name='catalog')\n"
+        "import pytest\npytestmark=pytest.mark.m3(suite_name='catalog')\n"
         + "\n".join(f"def test_{i}(): pass" for i in range(8))
     )
     result = _run(tmp_path, test_file, xdist=True)
@@ -247,14 +247,14 @@ def test_suite_selection_normalizes_marker_for_plain_and_agent_tests(
 ) -> None:
     selected = tmp_path / "selected.py"
     selected.write_text(
-        "import pytest\npytestmark=pytest.mark.mcp_pal(suite_name=' catalog ')\n"
+        "import pytest\npytestmark=pytest.mark.m3(suite_name=' catalog ')\n"
         "def test_plain(): pass\n"
-        "@pytest.mark.mcp_pal(agents=[{'harness':'opencode','models':['model']}])\n"
+        "@pytest.mark.m3(agents=[{'harness':'opencode','models':['model']}])\n"
         "def test_agent(agent): assert agent.model == 'model'\n"
     )
     other = tmp_path / "other.py"
     other.write_text(
-        "import pytest\npytestmark=pytest.mark.mcp_pal(suite_name='other')\n"
+        "import pytest\npytestmark=pytest.mark.m3(suite_name='other')\n"
         "def test_other(): pass\n"
     )
     result = _run(tmp_path, selected, other, suite="catalog")

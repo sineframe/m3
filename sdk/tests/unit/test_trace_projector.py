@@ -4,17 +4,17 @@ from datetime import datetime, timezone
 
 import pytest
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import (
+from m3.async_api import AsyncMCPTestKit
+from m3.errors import (
     ExecutionNotFound,
     KitClosed,
     RawEvidenceUnavailable,
     TraceNotFinalized,
     TraceUnavailable,
 )
-from mcp_pal.events import EventFactory, EventSequence
-from mcp_pal.execution_trace import ExecutionTraceRecorder, TraceRecorderError
-from mcp_pal.observability import (
+from m3.events import EventFactory, EventSequence
+from m3.execution_trace import ExecutionTraceRecorder, TraceRecorderError
+from m3.observability import (
     ArtifactEntry,
     EvaluationEntry,
     InitializationEntry,
@@ -33,10 +33,10 @@ from mcp_pal.observability import (
     TraceStatus,
     TransportEntry,
 )
-from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.sync_api import MCPTestKit
-from mcp_pal.trace.projector import _entry_for_event
-from mcp_pal.types import (
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from m3.sync_api import MCPTestKit
+from m3.trace.projector import _entry_for_event
+from m3.types import (
     ConnectionId,
     EvaluationStatus,
     EventDirection,

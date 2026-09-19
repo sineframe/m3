@@ -5,9 +5,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-import mcp_pal
-from mcp_pal import async_api, observability, sync_api
-from mcp_pal.observability import (
+import m3
+from m3 import async_api, observability, sync_api
+from m3.observability import (
     CorrelationState,
     DiagnosticEntry,
     DirectTrace,
@@ -33,7 +33,7 @@ from mcp_pal.observability import (
     TransportEntry,
     UsageValue,
 )
-from mcp_pal.types import (
+from m3.types import (
     EvidenceRef,
     TransportKind,
     TurnOutcome,
@@ -557,9 +557,9 @@ def test_sync_and_async_exports_share_turn_selector_contract() -> None:
 
 
 def test_observability_types_are_root_exports() -> None:
-    assert mcp_pal.TraceView is TraceView
-    assert mcp_pal.ObservationState is ObservationState
-    assert mcp_pal.ToolCallEntry is ToolCallEntry
+    assert m3.TraceView is TraceView
+    assert m3.ObservationState is ObservationState
+    assert m3.ToolCallEntry is ToolCallEntry
     assert sync_api.TraceView is TraceView
     assert async_api.TraceView is TraceView
     assert observability.TraceView is TraceView

@@ -1,12 +1,12 @@
 [project]
-name = "mcp-pal"
-version = "0.2.0a3"
+name = "m3"
+version = "0.2.0a13"
 description = "Python SDK for testing MCP servers and agent harnesses"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "MCP Pal contributors" }]
+authors = [{ name = "M3 contributors" }]
 keywords = ["mcp", "model-context-protocol", "testing", "pytest", "agents"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -38,9 +38,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mcppal/mcp-pal"
-Repository = "https://github.com/mcppal/mcp-pal"
-Issues = "https://github.com/mcppal/mcp-pal/issues"
+Homepage = "https://github.com/sineframe/m3"
+Repository = "https://github.com/sineframe/m3"
+Issues = "https://github.com/sineframe/m3/issues"
 
 [project.optional-dependencies]
 pytest = [
@@ -67,10 +67,6 @@ all = [
   "pytest-asyncio>=0.23,<2",
   "sqlalchemy>=2.0,<3",
 ]
-
-[project.scripts]
-mcp-pal-harness = "mcp_pal.harness.cli:main"
-mcp-pal-reference-bridge = "mcp_pal.bridge.reference:main"
 
 [dependency-groups]
 typecheck = [
@@ -102,11 +98,11 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mcp_pal"]
+packages = ["src/m3"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/mcp_pal/py.typed" = "mcp_pal/py.typed"
-"src/mcp_pal/harness/pi_extension/extension.ts" = "mcp_pal/harness/pi_extension/extension.ts"
+"src/m3/py.typed" = "m3/py.typed"
+"src/m3/harness/pi_extension/extension.ts" = "m3/harness/pi_extension/extension.ts"
 
 [tool.hatch.build.targets.sdist]
 include = [

@@ -7,20 +7,29 @@ not load dotenv implicitly; use ``uv run --env-file .env ...`` when needed.
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import StdioServer
+from m3 import MCPTestKit, expect
+from m3.types import StdioServer
+
+
+def _options(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", default="opencode/big-pickle")
+    parser.add_argument("--execution-timeout", type=float, default=120.0)
+    options = parser.parse_args(argv)
+    if not math.isfinite(options.execution_timeout) or options.execution_timeout <= 0:
+        parser.error("--execution-timeout must be a positive finite number")
+    return options
 
 
 def selected_model(argv: list[str] | None = None) -> str:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="opencode/big-pickle")
-    return parser.parse_args(argv).model
+    return _options(argv).model
 
 
 def event_progress(event: Any) -> str:
@@ -101,9 +110,7 @@ def run_with_diagnostics(
         except Exception as exc:  # pragma: no cover - defensive shutdown path
             emit(f"event stream ended with {type(exc).__name__}")
 
-    watcher = threading.Thread(
-        target=consume_events, name="mcp-pal-events", daemon=True
-    )
+    watcher = threading.Thread(target=consume_events, name="m3-events", daemon=True)
     watcher.start()
     try:
         result = handle.result(timeout=result_timeout)
@@ -137,6 +144,7 @@ def run_with_diagnostics(
 
 
 def main(argv: list[str] | None = None) -> None:
+    options = _options(argv)
     root = Path(__file__).parent
     server = StdioServer(
         name="example-mcp",
@@ -144,11 +152,15 @@ def main(argv: list[str] | None = None) -> None:
         args=(str(root / "servers" / "example_mcp_server.py"),),
         cwd=str(root),
     )
-    agents = [{"harness": "opencode", "models": [selected_model(argv)]}]
+    agents = [{"harness": "opencode", "models": [options.model]}]
     with MCPTestKit() as kit:
         for agent in kit.agents(agents, trials=1):
             result = run_with_diagnostics(
-                agent, "Use shipping_quote for a local quote", server=server
+                agent,
+                "Use shipping_quote for a local quote",
+                server=server,
+                turn_timeout=options.execution_timeout,
+                result_timeout=options.execution_timeout + 15,
             )
             trace = result.trace_view
             for line in trace_summary(trace, event_count=len(trace.timeline)):

@@ -9,8 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-_test_state_dir = Path(tempfile.mkdtemp(prefix="mcp-pal-pytest-"))
-_test_database = _test_state_dir / "mcp_pal.db"
+_test_state_dir = Path(tempfile.mkdtemp(prefix="m3-pytest-"))
+_test_database = _test_state_dir / "m3.db"
 os.environ["DATABASE_PATH"] = str(_test_database)
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.dont_write_bytecode = True

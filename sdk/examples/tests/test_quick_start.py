@@ -1,7 +1,7 @@
 """The smallest useful synchronous MCP server test."""
 
-from mcp_pal import MCPTestKit, StdioServer
-from mcp_pal.sync_api import ToolCallResult
+from m3 import MCPTestKit, StdioServer
+from m3.sync_api import ToolCallResult
 
 
 def test_discover_and_call_a_tool(example_server: StdioServer) -> None:

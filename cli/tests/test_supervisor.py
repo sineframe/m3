@@ -12,7 +12,7 @@ from typing import ClassVar
 
 import pytest
 
-from mcp_pal_cli import main, supervisor
+from m3_cli import main, supervisor
 
 
 @pytest.mark.parametrize("value", ["codex=", "unknown=model", "opencode=a,,b"])
@@ -64,7 +64,7 @@ class _Process:
 
 def test_only_doctor_and_test_commands_are_public() -> None:
     parser = main.__module__
-    assert parser == "mcp_pal_cli.main"
+    assert parser == "m3_cli.main"
     assert main(["ui"]) == 2
 
 
@@ -95,7 +95,7 @@ def test_ui_preflight_rejects_missing_bundle_before_pytest(
     monkeypatch.setattr(
         supervisor,
         "_ui_prerequisite_error",
-        lambda _ui_dir: "bundled MCP Pal UI assets are unavailable",
+        lambda _ui_dir: "bundled M3 UI assets are unavailable",
     )
     monkeypatch.setattr(
         supervisor,
@@ -103,7 +103,7 @@ def test_ui_preflight_rejects_missing_bundle_before_pytest(
         lambda *_args, **_kwargs: pytest.fail("pytest started"),
     )
     assert supervisor.run_test(ui=True, port=8123) == 2
-    assert "bundled MCP Pal UI assets are unavailable" in capsys.readouterr().err
+    assert "bundled M3 UI assets are unavailable" in capsys.readouterr().err
 
 
 def test_ui_server_prints_links_and_returns_original_failure(
@@ -127,7 +127,7 @@ def test_ui_server_prints_links_and_returns_original_failure(
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 1, runs, ()) == 1
     output = capsys.readouterr().out
     assert output.splitlines() == [
-        "MCP-Pal UI: http://127.0.0.1:8123/history",
+        "M3 UI: http://127.0.0.1:8123/history",
         "Run: http://127.0.0.1:8123/playground/run/run%20id%2F1",
         "Run: http://127.0.0.1:8123/playground/run/run-two",
     ]
@@ -152,7 +152,7 @@ def test_ui_server_zero_runs_prints_message(
     )
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 0, (), ()) == 0
     assert capsys.readouterr().out.splitlines() == [
-        "MCP-Pal UI: http://127.0.0.1:8123/history",
+        "M3 UI: http://127.0.0.1:8123/history",
         "No new stored runs.",
     ]
 
@@ -237,8 +237,8 @@ def test_ui_server_environment_excludes_project_settings_and_credentials() -> No
         "HOME": "/tmp/home",
         "VIRTUAL_ENV": "/project/.venv",
         "PYTHONPATH": "/project/src",
-        "MCP_PAL_RUN_LIVE_OPENCODE": "1",
-        "MCP_PAL_LIVE_OPENCODE_MODEL": "opencode/model",
+        "M3_RUN_LIVE_OPENCODE": "1",
+        "M3_LIVE_OPENCODE_MODEL": "opencode/model",
         "OPENCODE_API_KEY": "provider-secret",
     }
 
@@ -251,7 +251,7 @@ def test_ui_server_environment_excludes_project_settings_and_credentials() -> No
 def test_server_command_never_starts_node_or_npm() -> None:
     command = supervisor._server_command(Path("results.sqlite"), 8123)
     assert all(Path(part).name not in {"node", "npm", "vite"} for part in command)
-    assert command[:3] == [sys.executable, "-m", "mcp_pal_cli.web"]
+    assert command[:3] == [sys.executable, "-m", "m3_cli.web"]
 
 
 def _run(run_id: str, second: int) -> supervisor.StoredRun:
@@ -342,7 +342,7 @@ def test_cli_forwards_exact_args_after_separator(
         lambda *_args, **_kwargs: Path(sys.executable),
     )
     monkeypatch.setattr(
-        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a2"
+        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a13"
     )
 
     def spawn(command: list[str], **_: object) -> _Process:
@@ -354,20 +354,45 @@ def test_cli_forwards_exact_args_after_separator(
     assert seen["command"][-3:] == ["-q", "--maxfail=1", "suite/test.py"]
 
 
+def test_cli_forwards_project_root_to_pytest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        supervisor,
+        "resolve_project_python",
+        lambda *_args, **_kwargs: Path(sys.executable),
+    )
+    monkeypatch.setattr(
+        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a13"
+    )
+
+    def spawn(command: list[str], **_: object) -> _Process:
+        seen["command"] = command
+        return _Process(0)
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", spawn)
+    assert main(["test", "--project-root", str(tmp_path), "--", "-q"]) == 0
+    command = seen["command"]
+    assert isinstance(command, list)
+    index = command.index("--project-root")
+    assert command[index + 1] == str(tmp_path.resolve())
+
+
 def test_cli_module_help() -> None:
     result = supervisor.subprocess.run(
-        [sys.executable, "-m", "mcp_pal_cli", "--help"],
+        [sys.executable, "-m", "m3_cli", "--help"],
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0
-    assert "mcp-pal" in result.stdout
+    assert "m3" in result.stdout
 
 
 def test_cli_test_help_documents_scoped_credential_mapping() -> None:
     result = supervisor.subprocess.run(
-        [sys.executable, "-m", "mcp_pal_cli", "test", "--help"],
+        [sys.executable, "-m", "m3_cli", "test", "--help"],
         capture_output=True,
         text=True,
         check=False,
@@ -407,7 +432,7 @@ def test_sigterm_child_cleanup_returns_signal_status(
         lambda *_args, **_kwargs: Path(sys.executable),
     )
     monkeypatch.setattr(
-        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a2"
+        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a13"
     )
     monkeypatch.setattr(
         supervisor.subprocess, "Popen", lambda *_args, **_kwargs: process
@@ -430,7 +455,7 @@ def test_keyboard_interrupt_cleans_child_and_returns_interrupt_status(
         lambda *_args, **_kwargs: Path(sys.executable),
     )
     monkeypatch.setattr(
-        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a2"
+        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a13"
     )
     monkeypatch.setattr(
         supervisor.subprocess, "Popen", lambda *_args, **_kwargs: process
@@ -580,7 +605,7 @@ def test_rejected_candidate_does_not_fall_back(
         supervisor,
         "validate_project_python",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            supervisor.ProjectPythonError("missing required MCP Pal packages")
+            supervisor.ProjectPythonError("missing required M3 packages")
         ),
     )
     assert supervisor.run_test(python=candidate, project_root=tmp_path) == 2
@@ -598,11 +623,11 @@ def test_validation_requires_exact_sdk_version(
                 {
                     "checks": {
                         "pytest": True,
-                        "mcp_pal": True,
-                        "mcp_pal.pytest_plugin": True,
+                        "m3": True,
+                        "m3.pytest_plugin": True,
                         "SQLiteExecutionStore": True,
                     },
-                    "version": "0.2.0a1",
+                    "version": "0.2.0a12",
                 }
             ),
         },
@@ -610,7 +635,7 @@ def test_validation_requires_exact_sdk_version(
     monkeypatch.setattr(supervisor.subprocess, "run", lambda *_args, **_kwargs: result)
     with pytest.raises(supervisor.ProjectPythonError, match="does not match"):
         supervisor.validate_project_python(
-            Path(sys.executable), cli_sdk_version="0.2.0a2", project_root=tmp_path
+            Path(sys.executable), cli_sdk_version="0.2.0a13", project_root=tmp_path
         )
 
 
@@ -625,8 +650,8 @@ def test_command_uses_selected_python_and_absolute_database(tmp_path: Path) -> N
         "-m",
         "pytest",
         "-p",
-        "mcp_pal.pytest_plugin",
-        "--mcp-pal-results-db",
+        "m3.pytest_plugin",
+        "--results-db",
         str((tmp_path / "results.sqlite").resolve()),
         "-q",
         "tests",
@@ -640,8 +665,8 @@ def test_command_forwards_execution_timeout(tmp_path: Path) -> None:
         ["-q", "tests"],
         execution_timeout=12.5,
     )
-    assert "--mcp-pal-execution-timeout" in command
-    index = command.index("--mcp-pal-execution-timeout")
+    assert "--execution-timeout" in command
+    index = command.index("--execution-timeout")
     assert command[index + 1] == "12.5"
 
 
@@ -652,7 +677,14 @@ def test_command_pins_project_root_when_supervisor_runs_pytest(tmp_path: Path) -
         ["-q", "tests"],
         project_root=tmp_path,
     )
-    assert command[-4:] == ["--rootdir", str(tmp_path), "-q", "tests"]
+    assert command[-6:] == [
+        "--project-root",
+        str(tmp_path),
+        "--rootdir",
+        str(tmp_path),
+        "-q",
+        "tests",
+    ]
 
 
 def test_default_database_parent_is_created(
@@ -667,13 +699,13 @@ def test_default_database_parent_is_created(
         lambda *_args, **_kwargs: Path(sys.executable),
     )
     monkeypatch.setattr(
-        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a2"
+        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a13"
     )
     monkeypatch.setattr(
         supervisor.subprocess, "Popen", lambda *_args, **_kwargs: process
     )
     assert supervisor.run_test(project_root=tmp_path) == 0
-    assert (tmp_path / ".mcp-pal").is_dir()
+    assert (tmp_path / ".m3").is_dir()
 
 
 def test_real_subprocess_runs_plugin_and_keeps_pytest_summary(
@@ -681,7 +713,7 @@ def test_real_subprocess_runs_plugin_and_keeps_pytest_summary(
 ) -> None:
     test_file = tmp_path / "test_one.py"
     test_file.write_text(
-        "from mcp_pal import MCPTestKit\n"
+        "from m3 import MCPTestKit\n"
         "def test_one():\n"
         "    with MCPTestKit() as kit:\n"
         "        assert kit.store is not None\n",
@@ -716,12 +748,12 @@ def test_two_runs_keep_project_root_and_feedback_location_stable(
         )
         == 0
     )
-    from mcp_pal.storage import SQLiteExecutionStore
+    from m3.storage import SQLiteExecutionStore
 
     history = SQLiteExecutionStore(database)
     run_id = str(history.list_test_runs()[0]["run_id"])
     history.close()
-    assert (tmp_path / ".mcp-pal" / "reports" / run_id / "feedback.json").is_file()
+    assert (tmp_path / ".m3" / "reports" / run_id / "feedback.json").is_file()
     assert (
         supervisor.run_test(
             python=sys.executable,
@@ -736,7 +768,7 @@ def test_two_runs_keep_project_root_and_feedback_location_stable(
     run_ids = [str(item["run_id"]) for item in history.list_test_runs()]
     history.close()
     second_run = next(item for item in run_ids if item != run_id)
-    report = tmp_path / ".mcp-pal" / "reports" / second_run / "feedback.json"
+    report = tmp_path / ".m3" / "reports" / second_run / "feedback.json"
     assert report.is_file()
     assert second_run != run_id
 
@@ -759,7 +791,7 @@ def test_run_result_keeps_pytest_status_when_history_listing_fails(
         lambda *_args, **_kwargs: Path(sys.executable),
     )
     monkeypatch.setattr(
-        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a2"
+        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a13"
     )
     monkeypatch.setattr(
         supervisor.subprocess, "Popen", lambda *_args, **_kwargs: process
@@ -786,7 +818,7 @@ def test_plain_test_does_not_scan_results_database(
         lambda *_args, **_kwargs: Path(sys.executable),
     )
     monkeypatch.setattr(
-        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a2"
+        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a13"
     )
     monkeypatch.setattr(
         supervisor.subprocess, "Popen", lambda *_args, **_kwargs: process
@@ -795,8 +827,8 @@ def test_plain_test_does_not_scan_results_database(
 
 
 def test_real_store_listing_excludes_deleted_runs(tmp_path: Path) -> None:
-    from mcp_pal.storage import SQLiteExecutionStore
-    from mcp_pal.types import (
+    from m3.storage import SQLiteExecutionStore
+    from m3.types import (
         ExecutionId,
         ExecutionOutcome,
         ExecutionState,
@@ -836,7 +868,7 @@ def test_pytest_exit_code_is_forwarded(
         lambda *_args, **_kwargs: Path(sys.executable),
     )
     monkeypatch.setattr(
-        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a2"
+        supervisor, "validate_project_python", lambda *_args, **_kwargs: "0.2.0a13"
     )
     monkeypatch.setattr(
         supervisor.subprocess, "Popen", lambda *_args, **_kwargs: process

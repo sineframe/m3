@@ -18,7 +18,9 @@ def test_examples_docs_are_goal_oriented_and_not_a_synthetic_catalog() -> None:
     assert headings[2] == "## 3. Run one test across native harnesses"
     assert "client.list_all_tools()" in text
     assert "example_mcp_server.py" in text
-    assert "@pytest.mark.mcp_pal" in text
+    # The examples documentation is migrated with the broad documentation
+    # cleanup checkpoint; keep this contract aligned with the current docs.
+    assert "@pytest.mark.m3" in text
     assert "--harness opencode=" in text
     assert "kit.agents(agents, trials=2)" in text
     assert "HarnessMatrix" not in text
@@ -43,7 +45,7 @@ def test_live_math_matrix_example_remains_opt_in_and_outside_ci_catalog() -> Non
 
     assert (_EXAMPLES / "servers" / "math_mcp_server.py").exists()
     assert "pytest.mark.live" in text
-    assert "MCP_PAL_RUN_LIVE_MATH_MATRIX" in text
+    assert "M3_RUN_LIVE_MATH_MATRIX" in text
     expected_call = ast.parse(
         "kit.agents(_agent_selections(opencode), trials=_TRIALS_PER_CASE)", mode="eval"
     ).body

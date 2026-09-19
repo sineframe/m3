@@ -1,0 +1,15 @@
+{
+  "schema_version": "m3.harness.v1",
+  "protocol": "acp",
+  "protocol_version": 1,
+  "command": "python",
+  "args": [
+    "-m",
+    "m3.fixtures.acp_agent",
+    "--target",
+    "python",
+    "--target-args-json",
+    "[\"-m\", \"m3.fixtures.structured_cli\"]"
+  ],
+  "env": {}
+}

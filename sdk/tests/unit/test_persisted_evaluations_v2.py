@@ -7,10 +7,10 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-from mcp_pal import EvaluationQuery, MCPTestKit
-from mcp_pal.evaluations import EvaluationRunner
-from mcp_pal.storage.sqlite import SQLiteExecutionStore
-from mcp_pal.types import (
+from m3 import EvaluationQuery, MCPTestKit
+from m3.evaluations import EvaluationRunner
+from m3.storage.sqlite import SQLiteExecutionStore
+from m3.types import (
     EvaluationContext,
     EvaluationDecision,
     EvaluationId,
@@ -156,11 +156,11 @@ def test_legacy_evaluation_row_is_backfilled_and_malformed_row_is_skipped(
 
 def test_kit_run_id_is_stable_and_explicit_store_is_independent() -> None:
     with (
-        MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as first,
-        MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as second,
+        MCPTestKit(env={}, cwd="/tmp/m3-no-project") as first,
+        MCPTestKit(env={}, cwd="/tmp/m3-no-project") as second,
     ):
         assert first.run_id != second.run_id
-        from mcp_pal.types import RunId
+        from m3.types import RunId
 
         explicit = _snapshot_spec().model_copy(update={"run_id": RunId("caller-run")})
         handle = first.submit(explicit)
@@ -169,8 +169,8 @@ def test_kit_run_id_is_stable_and_explicit_store_is_independent() -> None:
 
 
 def test_recorder_propagates_spec_run_id_into_snapshot(tmp_path) -> None:
-    from mcp_pal.execution_trace import ExecutionTraceRecorder
-    from mcp_pal.storage.ephemeral import InMemoryExecutionStore
+    from m3.execution_trace import ExecutionTraceRecorder
+    from m3.storage.ephemeral import InMemoryExecutionStore
 
     store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(
@@ -184,7 +184,7 @@ def test_recorder_propagates_spec_run_id_into_snapshot(tmp_path) -> None:
 
 
 def _snapshot_spec():
-    from mcp_pal.types import DirectSpec, Ping, ServerBinding, StdioServer
+    from m3.types import DirectSpec, Ping, ServerBinding, StdioServer
 
     return DirectSpec(
         servers=(ServerBinding(server=StdioServer(name="server", command="server")),),
@@ -201,17 +201,17 @@ def test_builtins_use_redacted_mapping_view() -> None:
             "finished_at": datetime.now(timezone.utc),
         }
     )
-    from mcp_pal.types import ExecutionResult
+    from m3.types import ExecutionResult
 
     result = ExecutionResult(
         snapshot=completed, direct_result={"kind": "call_tool", "is_error": False}
     )
     assert (
-        runner.evaluate(result, "mcp_pal.execution.completed.v1").status
+        runner.evaluate(result, "m3.execution.completed.v1").status
         is EvaluationStatus.PASSED
     )
     assert (
-        runner.evaluate(result.direct_result, "mcp_pal.tool_call.succeeded.v1").status
+        runner.evaluate(result.direct_result, "m3.tool_call.succeeded.v1").status
         is EvaluationStatus.PASSED
     )
 
@@ -239,8 +239,8 @@ def test_async_user_llm_evaluator_uses_structured_decision_without_network() -> 
 
 
 def test_tool_matrix_trials_have_stable_ids_and_reserved_metadata() -> None:
-    from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
-    from mcp_pal.types import StdioServer
+    from m3.matrix import ServerCase, ToolCase, ToolMatrix
+    from m3.types import StdioServer
 
     server = StdioServer(name="server", command="server")
     matrix = ToolMatrix(
@@ -262,12 +262,12 @@ def test_tool_matrix_trials_have_stable_ids_and_reserved_metadata() -> None:
     ]
     assert {case.matrix_id for case in cases} == {"quality-matrix"}
     assert [case.trial for case in cases] == [1, 2, 3]
-    assert cases[0]._metadata(None)["mcp_pal.matrix.cell_id"] == "server/echo"
+    assert cases[0]._metadata(None)["m3.matrix.cell_id"] == "server/echo"
 
 
 def test_direct_trace_bridge_persists_one_terminal_event_and_binding(tmp_path) -> None:
-    from mcp_pal.direct_trace import DirectTraceBridge
-    from mcp_pal.types import TransportKind
+    from m3.direct_trace import DirectTraceBridge
+    from m3.types import TransportKind
 
     store = SQLiteExecutionStore(tmp_path / "direct.sqlite")
     bridge = DirectTraceBridge(

@@ -6,14 +6,14 @@ import pytest
 from mcp import types as mcp_types
 from mcp.server.lowlevel import Server
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.harness import (
+from m3.async_api import AsyncMCPTestKit
+from m3.harness import (
     DeterministicHarnessAdapter,
     HarnessAdapterRegistry,
     HarnessStartupError,
 )
-from mcp_pal.sync_api import MCPTestKit
-from mcp_pal.types import (
+from m3.sync_api import MCPTestKit
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ClaudeCode,
@@ -60,7 +60,7 @@ def _loopback_server() -> Server:
 async def test_ordinary_async_factory_preserves_multiturn_and_closes_completed() -> (
     None
 ):
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         with pytest.raises(HarnessStartupError):
             kit.agent_session(_spec())
 
@@ -73,7 +73,7 @@ async def test_registered_deterministic_adapter_preserves_multiturn_and_closes_c
         {"acp": lambda _harness: DeterministicHarnessAdapter(name="test-acp")}
     )
     async with AsyncMCPTestKit(
-        env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+        env={}, cwd="/tmp/m3-no-project", adapter_registry=registry
     ) as kit:
         session = kit.agent_session(_spec())
         async with session:
@@ -92,7 +92,7 @@ async def test_agent_transport_evidence_is_distinct_deduplicated_and_normalized(
     None
 ):
     adapter = DeterministicHarnessAdapter()
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.agent_session(_spec(), adapter=adapter) as session:
             # A second startup attempt must not duplicate lifecycle evidence.
             await session._start_adapter()
@@ -109,7 +109,7 @@ async def test_agent_transport_evidence_is_distinct_deduplicated_and_normalized(
             assert len({event.connection_id for event in transports}) == 2
             assert all(
                 event.provenance.origin is EventOrigin.NORMALIZED
-                and event.provenance.source == "mcp_pal.server_group"
+                and event.provenance.source == "m3.server_group"
                 for event in transports
             )
             assert all(
@@ -133,7 +133,7 @@ async def test_agent_transport_evidence_excludes_unavailable_optional_server() -
         )
     )
     spec = _spec().model_copy(update={"servers": (_spec().servers[0], invalid)})
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.agent_session(
             spec, adapter=DeterministicHarnessAdapter()
         ) as session:
@@ -161,7 +161,7 @@ async def test_agent_transport_is_present_across_harness_contracts(
     harness: object,
 ) -> None:
     spec = _spec().model_copy(update={"harness": harness})
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.agent_session(
             spec, adapter=DeterministicHarnessAdapter()
         ) as session:
@@ -175,7 +175,7 @@ async def test_agent_transport_is_present_across_harness_contracts(
 @pytest.mark.asyncio
 async def test_injected_adapter_receives_one_server_launch_for_all_turns() -> None:
     adapter = DeterministicHarnessAdapter()
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.agent_session(_spec(), adapter=adapter) as session:
             await session.send("one")
             await session.send("two")
@@ -207,7 +207,7 @@ async def test_optional_server_preflight_reaches_adapter_as_unavailable() -> Non
         update={"servers": (_spec().servers[0], invalid_optional)}
     )
     adapter = DeterministicHarnessAdapter()
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.agent_session(spec, adapter=adapter):
             pass
     assert adapter.last_launch is not None
@@ -221,7 +221,7 @@ async def test_public_runtime_server_registration_exposes_one_persistent_loopbac
 ):
     runtime_server = InProcessServer(name="runtime-loopback", factory=_loopback_server)
     adapter = DeterministicHarnessAdapter()
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(
             _spec(), adapter=adapter, runtime_servers=(runtime_server,)
         )
@@ -248,7 +248,7 @@ async def test_public_runtime_server_registration_exposes_one_persistent_loopbac
 def test_sync_runtime_server_registration_is_closed_with_session() -> None:
     runtime_server = InProcessServer(name="runtime-loopback", factory=_loopback_server)
     adapter = DeterministicHarnessAdapter()
-    with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         with kit.agent_session(
             _spec(), adapter=adapter, runtime_servers=(runtime_server,)
         ) as session:
@@ -259,7 +259,7 @@ def test_sync_runtime_server_registration_is_closed_with_session() -> None:
 
 @pytest.mark.asyncio
 async def test_explicit_cancel_remains_cancelled() -> None:
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(_spec(), adapter=DeterministicHarnessAdapter())
         await session.__aenter__()
         await session.cancel()
@@ -267,7 +267,7 @@ async def test_explicit_cancel_remains_cancelled() -> None:
 
 
 def test_sync_factory_rejects_unregistered_harness_without_fallback() -> None:
-    with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         with pytest.raises(HarnessStartupError):
             kit.agent_session(_spec())
 
@@ -281,7 +281,7 @@ async def test_execution_controller_uses_the_same_agent_session_path() -> None:
         {"acp": lambda _harness: DeterministicHarnessAdapter()}
     )
     async with AsyncMCPTestKit(
-        env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+        env={}, cwd="/tmp/m3-no-project", adapter_registry=registry
     ) as kit:
         result = await kit.run(spec)
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED

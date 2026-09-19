@@ -14,15 +14,15 @@ import pytest
 from mcp.shared.message import SessionMessage
 from mcp_types import JSONRPCRequest, JSONRPCResponse
 
-from mcp_pal.agent_session import AdapterTurn
-from mcp_pal.async_api import AsyncExecutionHandle, AsyncMCPTestKit
-from mcp_pal.errors import OperationTimeout
-from mcp_pal.execution_runtime import AsyncExecutionController, _activity_health
-from mcp_pal.harness import HarnessAdapterRegistry
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.sync_api import ExecutionHandle, MCPTestKit
-from mcp_pal.testing import FaultInjector
-from mcp_pal.types import (
+from m3.agent_session import AdapterTurn
+from m3.async_api import AsyncExecutionHandle, AsyncMCPTestKit
+from m3.errors import OperationTimeout
+from m3.execution_runtime import AsyncExecutionController, _activity_health
+from m3.harness import HarnessAdapterRegistry
+from m3.storage import SQLiteExecutionStore
+from m3.sync_api import ExecutionHandle, MCPTestKit
+from m3.testing import FaultInjector
+from m3.types import (
     AgentSpec,
     ClaudeCode,
     DirectSpec,
@@ -40,7 +40,7 @@ from mcp_pal.types import (
     TurnResponse,
     UserMessage,
 )
-from mcp_pal.workspace import WorkspaceError, WorkspaceManager
+from m3.workspace import WorkspaceError, WorkspaceManager
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -53,7 +53,7 @@ def _spec() -> DirectSpec:
 
 
 async def test_normal_async_submit_retains_typed_spec_in_memory() -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     handle = kit.submit(_spec())
     assert handle._store.get_execution_spec(handle.execution_id) == _spec()
     await kit.aclose()
@@ -138,7 +138,7 @@ class _SlowHarness:
 
 @pytest.mark.asyncio
 async def test_async_submit_publishes_only_committed_ordered_events() -> None:
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         handle = kit.submit(_spec())
         assert isinstance(handle, AsyncExecutionHandle)
         observed: list[int] = []
@@ -158,7 +158,7 @@ async def test_async_submit_publishes_only_committed_ordered_events() -> None:
 
 @pytest.mark.asyncio
 async def test_async_cancel_is_terminal_and_idempotent() -> None:
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         handle = kit.submit(_spec())
         await handle.cancel()
         await handle.cancel()
@@ -401,7 +401,7 @@ async def test_workspace_cleanup_failure_keeps_execution_terminal_and_trace_part
         raise WorkspaceError("workspace cleanup failed")
 
     monkeypatch.setattr(WorkspaceManager, "cleanup", fail_cleanup)
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         result = await kit.run(_spec())
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
@@ -414,7 +414,7 @@ async def test_workspace_cleanup_failure_keeps_execution_terminal_and_trace_part
 
 @pytest.mark.asyncio
 async def test_event_iterator_can_resume_after_sequence_and_abandon_cleanly() -> None:
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         handle = kit.submit(_spec())
         await handle.result(timeout=10)
         first = handle.events(after_sequence=-1)
@@ -435,10 +435,10 @@ async def test_event_iterator_can_resume_after_sequence_and_abandon_cleanly() ->
 async def test_agent_without_registered_adapter_returns_typed_unavailable() -> None:
     spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
-        harness=ClaudeCode(model="test-model", executable="mcp-pal-missing-claude"),
+        harness=ClaudeCode(model="test-model", executable="m3-missing-claude"),
         message=UserMessage(content=(TextContent(text="run"),)),
     )
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         result = await kit.run(spec)
 
     assert result.snapshot.outcome is ExecutionOutcome.FAILED
@@ -452,9 +452,9 @@ async def test_submitted_agent_execution_requires_message_and_is_terminal_invali
 ):
     spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
-        harness=ClaudeCode(model="test-model", executable="mcp-pal-missing-claude"),
+        harness=ClaudeCode(model="test-model", executable="m3-missing-claude"),
     )
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         result = await kit.run(spec)
 
     assert result.snapshot.outcome is ExecutionOutcome.FAILED
@@ -473,7 +473,7 @@ async def test_submitted_agent_execution_sends_exactly_one_message() -> None:
         message=UserMessage(content=(TextContent(text="once"),)),
     )
     async with AsyncMCPTestKit(
-        env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+        env={}, cwd="/tmp/m3-no-project", adapter_registry=registry
     ) as kit:
         result = await kit.run(spec)
 
@@ -534,7 +534,7 @@ async def test_agent_deadline_identifies_harness_response_wait() -> None:
         timeout_seconds=0.05,
     )
     async with AsyncMCPTestKit(
-        env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+        env={}, cwd="/tmp/m3-no-project", adapter_registry=registry
     ) as kit:
         result = await kit.run(spec)
 
@@ -564,7 +564,7 @@ async def test_agent_tool_errors_do_not_change_lifecycle_but_do_change_health() 
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ClaudeCode(model="test-model"),
     )
-    from mcp_pal.agent_session import AsyncAgentSession
+    from m3.agent_session import AsyncAgentSession
 
     async with AsyncAgentSession(spec, adapter) as session:
         first = await session.send("first")
@@ -578,13 +578,13 @@ async def test_agent_tool_errors_do_not_change_lifecycle_but_do_change_health() 
 
 
 def test_sync_agent_session_result_survives_external_kit_close() -> None:
-    from mcp_pal.sync_api import MCPTestKit
+    from m3.sync_api import MCPTestKit
 
     spec = AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ClaudeCode(model="test-model"),
     )
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     session = kit.agent_session(spec, adapter=_ToolEvidenceHarness())
     session.__enter__()
     kit.close()
@@ -603,7 +603,7 @@ def test_sync_agent_session_result_survives_external_kit_close() -> None:
 def test_direct_activity_health_is_independent_of_execution_outcome(
     results: tuple[bool, ...], expected: str
 ) -> None:
-    from mcp_pal.direct_trace import DirectTraceBridge
+    from m3.direct_trace import DirectTraceBridge
 
     bridge = DirectTraceBridge(execution_id="execution-health")
     for identifier, is_error in enumerate(results, start=1):
@@ -632,7 +632,7 @@ def test_direct_activity_health_is_independent_of_execution_outcome(
 
 
 def test_sync_handle_is_a_blocking_twin_without_async_values() -> None:
-    with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         handle = kit.submit(_spec())
         assert isinstance(handle, ExecutionHandle)
         result = handle.result(timeout=10)
@@ -645,6 +645,6 @@ def test_sync_handle_is_a_blocking_twin_without_async_values() -> None:
 
 
 def test_sync_run_delegates_to_submit_and_result() -> None:
-    with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         result = kit.run(_spec())
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED

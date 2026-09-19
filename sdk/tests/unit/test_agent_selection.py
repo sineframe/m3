@@ -5,8 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from mcp_pal import MCPTestKit, ServerBinding, StdioServer
-from mcp_pal.types import (
+from m3 import MCPTestKit, ServerBinding, StdioServer
+from m3.types import (
     FullToolPolicy,
     NativeToolPolicy,
     RestrictiveToolPolicy,
@@ -192,7 +192,7 @@ def test_profile_selection_preserves_server_alias_and_profile_metadata(
     )
     assert spec.harness_profile.profile_id.root == "profile-1"
     assert spec.servers[0].alias == "orders"
-    assert spec.metadata["mcp_pal.matrix.harness"] == "profile"
+    assert spec.metadata["m3.matrix.harness"] == "profile"
 
 
 def test_run_builder_uses_full_policy_and_identity_metadata(kit: MCPTestKit) -> None:
@@ -391,9 +391,7 @@ def test_public_method_defaults_and_async_expansion(kit: MCPTestKit) -> None:
     assert inspect.signature(agent.run).parameters["tools"].default is None
     assert inspect.signature(agent.submit).parameters["tools"].default is None
     assert inspect.signature(agent.session).parameters["tools"].default is None
-    async_kit = __import__(
-        "mcp_pal.async_api", fromlist=["AsyncMCPTestKit"]
-    ).AsyncMCPTestKit
+    async_kit = __import__("m3.async_api", fromlist=["AsyncMCPTestKit"]).AsyncMCPTestKit
     async_value = async_kit(embedded_worker=False)
     try:
         assert (
@@ -414,7 +412,7 @@ def test_public_selection_methods_preserve_run_submit_and_session_semantics() ->
             self.agent_session = Mock(return_value="session")
 
     fake = FakeKit()
-    from mcp_pal._agent_selection import expand
+    from m3._agent_selection import expand
 
     agent = expand(fake, [{"harness": "opencode", "models": ["vendor/model"]}])[0]
     server = _server()
@@ -432,7 +430,7 @@ def test_selection_session_forwards_runtime_controls() -> None:
             self.agent_session = Mock(return_value="session")
 
     fake = FakeKit()
-    from mcp_pal._agent_selection import expand
+    from m3._agent_selection import expand
 
     agent = expand(fake, [{"harness": "opencode", "models": ["vendor/model"]}])[0]
     adapter, runtime, handlers = object(), (object(),), object()
@@ -478,7 +476,7 @@ def test_public_submit_exposes_cancellable_handle_lifecycle() -> None:
         def submit(self, _spec):
             return self.handle
 
-    from mcp_pal._agent_selection import expand
+    from m3._agent_selection import expand
 
     handle = expand(FakeKit(), [{"harness": "opencode", "models": ["m"]}])[0].submit(
         "x", server=_server()

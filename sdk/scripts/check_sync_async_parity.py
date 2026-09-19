@@ -135,8 +135,8 @@ def _validate_exports(
     if not isinstance(modules, dict):
         errors.append("modules must be an object")
         return (
-            "mcp_pal.sync_api",
-            "mcp_pal.async_api",
+            "m3.sync_api",
+            "m3.async_api",
             set(),
             set(),
             set(),
@@ -147,8 +147,8 @@ def _validate_exports(
     if not isinstance(sync_module, str) or not isinstance(async_module, str):
         errors.append("modules.sync and modules.async must be strings")
         return (
-            "mcp_pal.sync_api",
-            "mcp_pal.async_api",
+            "m3.sync_api",
+            "m3.async_api",
             set(),
             set(),
             set(),

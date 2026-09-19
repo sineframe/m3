@@ -9,19 +9,19 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.events import EventFactory
-from mcp_pal.execution_trace import (
+from m3.events import EventFactory
+from m3.execution_trace import (
     ExecutionTraceRecorder,
     TraceFinalizationConflict,
     TraceRecorderError,
 )
-from mcp_pal.storage import (
+from m3.storage import (
     InMemoryExecutionStore,
     SQLiteExecutionStore,
     StorageConflict,
 )
-from mcp_pal.trace.redaction import REDACTED, RedactionConfig, RedactionError
-from mcp_pal.types import (
+from m3.trace.redaction import REDACTED, RedactionConfig, RedactionError
+from m3.types import (
     Event,
     EventId,
     EventKind,

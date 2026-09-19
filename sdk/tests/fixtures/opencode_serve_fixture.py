@@ -21,9 +21,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
 
-mode = os.environ.get("MCP_PAL_OPENCODE_MODE", "normal")
+mode = os.environ.get("M3_OPENCODE_MODE", "normal")
 if "--version" in sys.argv:
-    version_marker = os.environ.get("MCP_PAL_VERSION_MARKER")
+    version_marker = os.environ.get("M3_VERSION_MARKER")
     if version_marker:
         marker_path = Path(version_marker)
         try:
@@ -40,7 +40,7 @@ if "--help" in sys.argv:
     raise SystemExit(0)
 
 
-marker_name = os.environ.get("MCP_PAL_MARKER")
+marker_name = os.environ.get("M3_MARKER")
 marker = Path(marker_name) if marker_name else None
 state_lock = threading.Lock()
 session_id = uuid.uuid4().hex

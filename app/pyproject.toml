@@ -1,12 +1,12 @@
 [project]
-name = "mcp-pal-app"
-version = "0.2.0a3"
-description = "Local web application for viewing MCP Pal test runs"
+name = "m3-app"
+version = "0.2.0a13"
+description = "Local web application for viewing M3 test runs"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-  "mcp-pal[storage]",
+  "m3[storage]",
   "fastapi>=0.115,<1",
   "pydantic-settings>=2.4,<3",
   "uvicorn[standard]>=0.30,<1",
@@ -28,7 +28,7 @@ strict = true
 pretty = true
 
 [tool.uv.sources]
-mcp-pal = { workspace = true }
+m3 = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -42,4 +42,4 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mcp_pal_app"]
+packages = ["src/m3_app"]

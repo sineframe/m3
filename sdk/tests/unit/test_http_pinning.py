@@ -15,17 +15,17 @@ import httpx
 import httpx2
 import pytest
 
-import mcp_pal.transport.http_proxy as http_proxy_module
-from mcp_pal.transport._http_pinning import (
+import m3.transport.http_proxy as http_proxy_module
+from m3.transport._http_pinning import (
     MAX_ADDRESS_CANDIDATES,
     MAX_PARALLEL_CONNECTS,
     ValidatingHTTPX2Transport,
     ValidatingHTTPXTransport,
     _ValidatingNetworkBackend,
 )
-from mcp_pal.transport.direct import EndpointTrustError, _validated_transport_policy
-from mcp_pal.transport.http_proxy import McpHttpProxy, UnsafeUpstreamError
-from mcp_pal.types import HTTPServer, TrustLevel
+from m3.transport.direct import EndpointTrustError, _validated_transport_policy
+from m3.transport.http_proxy import McpHttpProxy, UnsafeUpstreamError
+from m3.types import HTTPServer, TrustLevel
 
 CLIENTS = (
     (httpx, ValidatingHTTPXTransport),

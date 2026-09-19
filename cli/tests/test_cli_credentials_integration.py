@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SECRET = "mcp-pal-cli-secret-sentinel-7f2c"
+SECRET = "m3-cli-secret-sentinel-7f2c"
 
 
 def _cli_case(
@@ -30,7 +30,7 @@ def _cli_case(
         "PAL_MARKED",
         "PAL_GLOBAL",
         "PAL_SCOPED",
-        "MCP_PAL_CLAUDE_MODEL",
+        "M3_CLAUDE_MODEL",
     ):
         environment.pop(key, None)
     if ambient:
@@ -39,7 +39,7 @@ def _cli_case(
     command = [
         sys.executable,
         "-m",
-        "mcp_pal_cli",
+        "m3_cli",
         "test",
         "--python",
         sys.executable,
@@ -79,7 +79,7 @@ def _assert_no_secret(result, database: Path, root: Path) -> None:
     assert SECRET not in result.stderr
     if database.exists():
         assert SECRET not in database.read_bytes().decode("utf-8", errors="ignore")
-    reports = root / ".mcp-pal" / "reports"
+    reports = root / ".m3" / "reports"
     if reports.exists():
         for path in reports.rglob("*"):
             if path.is_file():
@@ -92,8 +92,8 @@ def test_env_file_reaches_child_without_interpolation_or_ambient_leak(
     source = """
 import os
 import pytest
-from mcp_pal import StdioServer, UserMessage
-pytestmark = pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["mystery/model"]}])
+from m3 import StdioServer, UserMessage
+pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["mystery/model"]}])
 def test_child(agent):
     assert os.environ["PAL_FILE_ONLY"] == "file-value"
     assert os.environ["PAL_AMBIENT"] == "ambient-value"
@@ -119,25 +119,25 @@ def test_env_file_passes_unknown_prefixed_variable_through_fixture_setup(
 ) -> None:
     source = """
 import os
-def test_child(mcp_pal_kit):
-    assert os.environ["MCP_PAL_CLAUDE_MODEL"] == "claude-sonnet-5"
-    assert mcp_pal_kit.config.telemetry_enabled is False
+def test_child(m3_kit):
+    assert os.environ["M3_CLAUDE_MODEL"] == "claude-sonnet-5"
+    assert m3_kit.config.telemetry_enabled is False
 """
     result, database = _cli_case(
         tmp_path,
         source,
-        "MCP_PAL_CLAUDE_MODEL=claude-sonnet-5\n",
+        "M3_CLAUDE_MODEL=claude-sonnet-5\n",
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert os.environ.get("MCP_PAL_CLAUDE_MODEL") is None
+    assert os.environ.get("M3_CLAUDE_MODEL") is None
     _assert_no_secret(result, database, tmp_path)
 
 
 def test_cli_and_marker_credential_precedence_is_scoped(tmp_path: Path) -> None:
     source = """
 import pytest
-from mcp_pal import StdioServer, UserMessage
-pytestmark = pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["vendor/model"], "credential_env": {"VENDOR_API_KEY": "PAL_MARKED"}}])
+from m3 import StdioServer, UserMessage
+pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["vendor/model"], "credential_env": {"VENDOR_API_KEY": "PAL_MARKED"}}])
 def test_child(agent):
     spec = agent._spec(UserMessage(content="probe"), server=StdioServer(name="s", command="echo"))
     assert spec.harness.credential_references["VENDOR_API_KEY"].name == "PAL_SCOPED"
@@ -160,8 +160,8 @@ def test_known_mapping_and_unknown_provider_do_not_guess_credentials(
 ) -> None:
     source = """
 import pytest
-from mcp_pal import StdioServer, UserMessage
-pytestmark = pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["openai/gpt"]}])
+from m3 import StdioServer, UserMessage
+pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["openai/gpt"]}])
 def test_known(agent):
     spec = agent._spec(UserMessage(content="probe"), server=StdioServer(name="s", command="echo"))
     assert spec.harness.credential_references["OPENAI_API_KEY"].name == "PAL_FILE_ONLY"
@@ -192,8 +192,8 @@ def test_known(agent):
 def test_missing_explicit_credential_names_source_without_value(tmp_path: Path) -> None:
     source = """
 import pytest
-from mcp_pal import StdioServer, UserMessage
-pytestmark = pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["vendor/model"]}])
+from m3 import StdioServer, UserMessage
+pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["vendor/model"]}])
 def test_missing(agent):
     agent._spec(UserMessage(content="probe"), server=StdioServer(name="s", command="echo"))
 """
@@ -216,10 +216,10 @@ def test_selected_native_credential_is_used_and_redacted_from_persisted_run(
     source = """
 import json
 import pytest
-from mcp_pal import StdioServer, UserMessage
-from mcp_pal.agent_session import HarnessAdapter
-from mcp_pal.harness import HarnessAdapterRegistry
-from mcp_pal.types import TextContent, TurnResponse
+from m3 import StdioServer, UserMessage
+from m3.agent_session import HarnessAdapter
+from m3.harness import HarnessAdapterRegistry
+from m3.types import TextContent, TurnResponse
 
 class EchoAdapter(HarnessAdapter):
     async def start(self, _spec):
@@ -229,12 +229,12 @@ class EchoAdapter(HarnessAdapter):
     async def close(self):
         return None
 
-pytestmark = pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["vendor/model"]}])
-def test_native(agent, mcp_pal_kit):
-    mcp_pal_kit._adapter_registry = HarnessAdapterRegistry({"opencode": lambda _harness: EchoAdapter()})
+pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["vendor/model"]}])
+def test_native(agent, m3_kit):
+    m3_kit._adapter_registry = HarnessAdapterRegistry({"opencode": lambda _harness: EchoAdapter()})
     spec = agent._spec(UserMessage(content="probe"), server=StdioServer(name="s", command="echo"), tools=[])
     assert spec.harness.credential_references["VENDOR_API_KEY"].name == "PAL_SECRET"
-    result = mcp_pal_kit.run(spec)
+    result = m3_kit.run(spec)
     assert result.snapshot.outcome.value == "completed"
 """
     result, database = _cli_case(
@@ -246,7 +246,7 @@ def test_native(agent, mcp_pal_kit):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     _assert_no_secret(result, database, tmp_path)
-    from mcp_pal.storage import SQLiteExecutionStore
+    from m3.storage import SQLiteExecutionStore
 
     store = SQLiteExecutionStore(database)
     try:
@@ -272,8 +272,8 @@ def test_native(agent, mcp_pal_kit):
             )
         from fastapi.testclient import TestClient
 
-        from mcp_pal_app.api.app import create_app
-        from mcp_pal_app.settings import Settings
+        from m3_app.api.app import create_app
+        from m3_app.settings import Settings
 
         with TestClient(
             create_app(Settings(database_path=str(database))),

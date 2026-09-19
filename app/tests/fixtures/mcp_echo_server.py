@@ -26,7 +26,7 @@ for line in sys.stdin:
             {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "mcp-pal-echo", "version": "0.1"},
+                "serverInfo": {"name": "echo-server", "version": "0.1"},
             },
         )
     elif method == "tools/list":

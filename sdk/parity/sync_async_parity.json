@@ -1,8 +1,8 @@
 {
   "version": 2,
   "modules": {
-    "sync": "mcp_pal.sync_api",
-    "async": "mcp_pal.async_api"
+    "sync": "m3.sync_api",
+    "async": "m3.async_api"
   },
   "exports": {
     "renamed": [

@@ -34,7 +34,7 @@ def test_cli_execution_timeout_persists_partial_trace_and_feedback(
     )
     test_file = tmp_path / "test_timeout.py"
     test_file.write_text(
-        f"""import sys\nimport pytest\nfrom mcp_pal import StdioServer\n\npytestmark = pytest.mark.mcp_pal(agents=[{{"harness": "acp", "models": ["fixture"], "manifest": {{"command": sys.executable, "args": [{str(acp)!r}], "protocol": "acp", "protocol_version": 1}}}}])\n\ndef test_stalls(agent):\n    result = agent.run("stall", server=StdioServer(name="unused", command="echo"))\n    assert result.snapshot.outcome.value == "completed"\n""",
+        f"""import sys\nimport pytest\nfrom m3 import StdioServer\n\npytestmark = pytest.mark.m3(agents=[{{"harness": "acp", "models": ["fixture"], "manifest": {{"command": sys.executable, "args": [{str(acp)!r}], "protocol": "acp", "protocol_version": 1}}}}])\n\ndef test_stalls(agent):\n    result = agent.run("stall", server=StdioServer(name="unused", command="echo"))\n    assert result.snapshot.outcome.value == "completed"\n""",
         encoding="utf-8",
     )
     database = tmp_path / "results.sqlite"
@@ -46,7 +46,7 @@ def test_cli_execution_timeout_persists_partial_trace_and_feedback(
     command = [
         sys.executable,
         "-m",
-        "mcp_pal_cli",
+        "m3_cli",
         "test",
         "--python",
         sys.executable,
@@ -68,10 +68,10 @@ def test_cli_execution_timeout_persists_partial_trace_and_feedback(
     )
     assert barrier.read_text(encoding="utf-8") == "entered"
     assert result.returncode != 0
-    assert "MCP Pal execution timeout:" in result.stdout
+    assert "M3 execution timeout:" in result.stdout
     assert "stage=waiting_for_harness_response" in result.stdout
     assert "feedback=" in result.stdout
-    reports = list((tmp_path / ".mcp-pal" / "reports").glob("*/feedback.json"))
+    reports = list((tmp_path / ".m3" / "reports").glob("*/feedback.json"))
     assert reports
     feedback = json.loads(reports[0].read_text(encoding="utf-8"))
     execution_files = list(reports[0].parent.glob("executions/*.json"))

@@ -1,12 +1,12 @@
-# MCP Pal app
+# M3 app
 
-`mcp-pal-app` is the repository's internal application package. It contains the
+`m3-app` is the repository's internal application package. It contains the
 FastAPI viewer API, application services, and persistence adapters. It is not a
-public package that MCP Pal users install directly.
+public package that M3 users install directly.
 
-The standalone [`mcp-pal-cli`](../cli/README.md) installs the matching app
+The standalone [`m3-cli`](../cli/README.md) installs the matching app
 runtime in its isolated environment and bundles the production frontend. The
-[`mcp-pal` SDK](../sdk/README.md) remains the public testing API and owns the
+[`m3` SDK](../sdk/README.md) remains the public testing API and owns the
 execution, trace, and assertion contracts used by the app.
 
 ## Develop the app
@@ -43,7 +43,7 @@ The application does not implicitly load a working-directory `.env`; the
 explicitly, run:
 
 ```bash
-uv run --env-file .env --project app uvicorn mcp_pal_app.main:app --host 127.0.0.1 --reload
+uv run --env-file .env --project app uvicorn m3_app.main:app --host 127.0.0.1 --reload
 ```
 
 The exported ASGI application is an unauthenticated local service. It rejects

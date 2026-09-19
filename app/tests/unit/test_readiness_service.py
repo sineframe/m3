@@ -4,20 +4,20 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.storage import (
+from m3.storage import (
     ProfileRecord,
     ProfileRevisionRecord,
     SQLiteExecutionStore,
     StorageError,
 )
-from mcp_pal_app.services.app_service import AppRuntimeService
-from mcp_pal_app.services.readiness_service import (
+from m3_app.services.app_service import AppRuntimeService
+from m3_app.services.readiness_service import (
     REQUIRED_CLAUDE_FLAGS,
     ReadinessService,
     ReadinessView,
     StorageHealthView,
 )
-from mcp_pal_app.settings import Settings
+from m3_app.settings import Settings
 
 
 def _settings(database: Path, **kwargs: object) -> Settings:

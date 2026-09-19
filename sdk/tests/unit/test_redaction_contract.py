@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, SecretStr, model_serializer
 
-from mcp_pal.trace.redaction import (
+from m3.trace.redaction import (
     REDACTED,
     ArtifactBytesResult,
     RedactionConfig,
@@ -218,7 +218,7 @@ def test_model_json_helper_redacts_before_json_validation_and_rejects_constructe
     )
     assert projected == {"api_key": REDACTED, "note": REDACTED}
 
-    from mcp_pal.types import Event, EventId, EventKind, ExecutionId
+    from m3.types import Event, EventId, EventKind, ExecutionId
 
     malformed = Event.model_construct(
         event_id=EventId("malformed-json"),

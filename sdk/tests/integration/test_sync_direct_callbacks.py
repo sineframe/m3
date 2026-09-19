@@ -11,24 +11,24 @@ import pytest
 from mcp import types
 from mcp.server.lowlevel import Server
 
-from mcp_pal import MCPTestKit
-from mcp_pal.async_api import (
+from m3 import MCPTestKit
+from m3.async_api import (
     AsyncMCPTestKit,
 )
-from mcp_pal.async_api import (
+from m3.async_api import (
     InputRequiredResult as AsyncInputRequiredResult,
 )
-from mcp_pal.async_api import (
+from m3.async_api import (
     _adapt_callback as _async_adapt_callback,
 )
-from mcp_pal.errors import ProtocolError
-from mcp_pal.sync_api import (
+from m3.errors import ProtocolError
+from m3.sync_api import (
     InputRequiredResult,
 )
-from mcp_pal.sync_api import (
+from m3.sync_api import (
     _adapt_callback as _sync_adapt_callback,
 )
-from mcp_pal.types import InProcessServer
+from m3.types import InProcessServer
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore::mcp.shared.exceptions.MCPDeprecationWarning"
@@ -123,7 +123,7 @@ def test_plain_sync_callbacks_run_on_portal_thread_and_return_typed_values() -> 
         callback_threads.append(threading.get_ident())
         seen["messages"].append(message)
 
-    with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         with kit.direct(
             InProcessServer(name="sync-callback", factory=_callback_server),
             sampling_callback=sampling,
@@ -154,7 +154,7 @@ def test_sync_callback_exception_is_typed_and_value_free(
     def sampling(context: object, params: object) -> types.CreateMessageResult:
         raise RuntimeError(secret)
 
-    with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         with kit.direct(
             InProcessServer(name="sync-callback", factory=_callback_server),
             sampling_callback=sampling,
@@ -178,7 +178,7 @@ def test_sync_notification_callback_failure_does_not_log_secret(
         raise RuntimeError(secret)
 
     with caplog.at_level(logging.ERROR):
-        with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
             with kit.direct(
                 InProcessServer(
                     name="sync-callback",
@@ -238,7 +238,7 @@ async def test_async_notification_callback_failure_does_not_log_secret(
         raise RuntimeError(secret)
 
     with caplog.at_level(logging.ERROR):
-        kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+        kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
         async with kit:
             async with kit.direct(
                 InProcessServer(
@@ -274,7 +274,7 @@ async def test_async_callbacks_remain_explicitly_supported_on_async_twin() -> No
             stop_reason="endTurn",
         )
 
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     async with kit:
         async with kit.direct(
             InProcessServer(

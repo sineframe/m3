@@ -8,11 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcp_pal.errors import ProtocolError
-from mcp_pal.execution_runtime import AsyncExecutionController, AsyncExecutionHandle
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import (
+from m3.errors import ProtocolError
+from m3.execution_runtime import AsyncExecutionController, AsyncExecutionHandle
+from m3.storage import SQLiteExecutionStore
+from m3.trace.redaction import RedactionConfig
+from m3.types import (
     CallTool,
     CallToolResult,
     DirectSpec,
@@ -23,7 +23,7 @@ from mcp_pal.types import (
     ServerBinding,
     StdioServer,
 )
-from mcp_pal.workspace import WorkspaceError, WorkspaceManager
+from m3.workspace import WorkspaceError, WorkspaceManager
 
 
 def _spec(

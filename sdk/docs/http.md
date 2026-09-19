@@ -21,8 +21,8 @@ client has closed:
 ```python
 from collections.abc import Mapping
 
-from mcp_pal import MCPTestKit
-from mcp_pal.types import ExecutionOutcome, HTTPServer, TransportKind
+from m3 import MCPTestKit
+from m3.types import ExecutionOutcome, HTTPServer, TransportKind
 
 server = HTTPServer(
     name="deepwiki",
@@ -92,8 +92,8 @@ credential through a `SecretReference`; the resolved secret is sent as a
 header, not recorded as a literal in test code:
 
 ```python
-from mcp_pal import MCPTestKit
-from mcp_pal.types import SecretReference, HTTPServer
+from m3 import MCPTestKit
+from m3.types import SecretReference, HTTPServer
 
 server = HTTPServer(
     name="catalog",
@@ -120,8 +120,8 @@ public endpoint exposed to an agent requires `TrustLevel.PUBLIC`:
 
 ```python
 import pytest
-from mcp_pal import expect
-from mcp_pal.types import HTTPServer, TrustLevel
+from m3 import expect
+from m3.types import HTTPServer, TrustLevel
 
 @pytest.fixture
 def deepwiki_server():
@@ -131,7 +131,7 @@ def deepwiki_server():
         trust=TrustLevel.PUBLIC,
     )
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 def test_agent_reads_wiki_structure(agent, deepwiki_server):
     result = agent.run(
         "Inspect the wiki structure for modelcontextprotocol/python-sdk.",
@@ -146,7 +146,7 @@ Set the model provider key in the process environment, or use an explicitly
 loaded `.env` file:
 
 ```bash
-mcp-pal test --env-file .env \
+m3 test --env-file .env \
   --harness opencode=opencode/big-pickle -- tests/test_deepwiki.py
 ```
 
@@ -159,7 +159,7 @@ An MCP endpoint token is separate from the model provider key. Put its
 reference on the HTTP server's headers, never in a URL or a CLI value:
 
 ```python
-from mcp_pal.types import HTTPServer, SecretReference, TrustLevel
+from m3.types import HTTPServer, SecretReference, TrustLevel
 
 private_server = HTTPServer(
     name="catalog",
@@ -184,8 +184,8 @@ prompt to a marked agent test. Both forms retain its server alias:
 
 ```python
 import pytest
-from mcp_pal import expect
-from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
+from m3 import expect
+from m3.matrix import ServerCase, ToolCase, ToolMatrix
 
 matrix = ToolMatrix(servers=(ServerCase(
     name="deepwiki",
@@ -201,7 +201,7 @@ matrix = ToolMatrix(servers=(ServerCase(
 def test_http_tool_contract(case):
     assert case.run().direct_result is not None
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 @matrix.parametrize()
 def test_agent_chooses_http_tool(case, agent):
     result = agent.run(case.tool.prompt, server=case.server)

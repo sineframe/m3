@@ -2,11 +2,11 @@
 
 Run with:
 
-    MCP_PAL_RUN_LIVE_OPENCODE=1 uv run --project sdk --all-extras \
+    M3_RUN_LIVE_OPENCODE=1 uv run --project sdk --all-extras \
       pytest -q sdk/tests/e2e/test_live_opencode.py
 
 The default model is intentionally a free OpenCode model. Override it with
-MCP_PAL_LIVE_OPENCODE_MODEL when validating another configured provider.
+M3_LIVE_OPENCODE_MODEL when validating another configured provider.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import (
+from m3 import MCPTestKit, expect
+from m3.types import (
     ExecutionOutcome,
     StdioServer,
     TextContent,
@@ -34,7 +34,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.process_lifecycle]
 _SDK_ROOT = Path(__file__).parents[2]
 _REPOSITORY_ROOT = _SDK_ROOT.parent
 _MATRIX_SERVER = _SDK_ROOT / "tests" / "fixtures" / "matrix_stdio_server.py"
-_LIVE_ENABLED = os.environ.get("MCP_PAL_RUN_LIVE_OPENCODE") == "1"
+_LIVE_ENABLED = os.environ.get("M3_RUN_LIVE_OPENCODE") == "1"
 
 
 def _live_selection(executable: str, model: str) -> dict[str, object]:
@@ -56,7 +56,7 @@ def _live_servers(
             args=(str(_MATRIX_SERVER),),
             cwd=str(_REPOSITORY_ROOT),
             environment=(
-                {"MCP_PAL_E2E_MCP_MARKER": str(marker_root / f"{name}.jsonl")}
+                {"M3_E2E_MCP_MARKER": str(marker_root / f"{name}.jsonl")}
                 if marker_root is not None
                 else {}
             ),
@@ -107,16 +107,16 @@ def test_live_selection_helper_is_side_effect_free_and_explicit_about_credential
 
 
 @pytest.mark.skipif(
-    not _LIVE_ENABLED, reason="set MCP_PAL_RUN_LIVE_OPENCODE=1 to call OpenCode"
+    not _LIVE_ENABLED, reason="set M3_RUN_LIVE_OPENCODE=1 to call OpenCode"
 )
 def test_live_opencode_calls_the_mcp_across_two_turns() -> None:
     executable = shutil.which("opencode")
     if executable is None:
         pytest.skip("OpenCode is not installed")
 
-    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
-    nonce_one = "mcp-pal-live-e2e-first"
-    nonce_two = "mcp-pal-live-e2e-second"
+    model = os.environ.get("M3_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
+    nonce_one = "m3-live-e2e-first"
+    nonce_two = "m3-live-e2e-second"
     selection = _live_selection(executable, model)
 
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
@@ -155,7 +155,7 @@ def test_live_opencode_calls_the_mcp_across_two_turns() -> None:
 
 
 @pytest.mark.skipif(
-    not _LIVE_ENABLED, reason="set MCP_PAL_RUN_LIVE_OPENCODE=1 to call OpenCode"
+    not _LIVE_ENABLED, reason="set M3_RUN_LIVE_OPENCODE=1 to call OpenCode"
 )
 @pytest.mark.parametrize("server_name", ("catalog", "warehouse"))
 def test_live_opencode_server_search_matrix_chooses_the_right_tool(
@@ -166,7 +166,7 @@ def test_live_opencode_server_search_matrix_chooses_the_right_tool(
     executable = shutil.which("opencode")
     if executable is None:
         pytest.skip("OpenCode is not installed")
-    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
+    model = os.environ.get("M3_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
     nonce = f"live-search-{server_name}"
     selection = _live_selection(executable, model)
     servers = _live_servers((server_name,), tmp_path)
@@ -202,7 +202,7 @@ def test_live_opencode_server_search_matrix_chooses_the_right_tool(
 
 
 @pytest.mark.skipif(
-    not _LIVE_ENABLED, reason="set MCP_PAL_RUN_LIVE_OPENCODE=1 to call OpenCode"
+    not _LIVE_ENABLED, reason="set M3_RUN_LIVE_OPENCODE=1 to call OpenCode"
 )
 @pytest.mark.parametrize("server_name", ("catalog", "warehouse"))
 @pytest.mark.parametrize(
@@ -224,7 +224,7 @@ def test_live_opencode_server_by_tool_matrix(
     executable = shutil.which("opencode")
     if executable is None:
         pytest.skip("OpenCode is not installed")
-    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
+    model = os.environ.get("M3_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
     selection = _live_selection(executable, model)
     servers = _live_servers((server_name,), tmp_path)
     instruction = (
@@ -257,7 +257,7 @@ def test_live_opencode_server_by_tool_matrix(
 
 
 @pytest.mark.skipif(
-    not _LIVE_ENABLED, reason="set MCP_PAL_RUN_LIVE_OPENCODE=1 to call OpenCode"
+    not _LIVE_ENABLED, reason="set M3_RUN_LIVE_OPENCODE=1 to call OpenCode"
 )
 def test_live_opencode_uses_all_servers_in_one_session(tmp_path: Path) -> None:
     """Real OpenCode receives N servers and uses each across multiple turns."""
@@ -265,7 +265,7 @@ def test_live_opencode_uses_all_servers_in_one_session(tmp_path: Path) -> None:
     executable = shutil.which("opencode")
     if executable is None:
         pytest.skip("OpenCode is not installed")
-    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
+    model = os.environ.get("M3_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
     server_names = ("catalog", "warehouse")
     selection = _live_selection(executable, model)
     servers = _live_servers(server_names, tmp_path)

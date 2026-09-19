@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from mcp_pal.execution_runtime import AsyncExecutionController
-from mcp_pal.types import (
+from m3.execution_runtime import AsyncExecutionController
+from m3.types import (
     CallTool,
     CallToolResult,
     DirectSpec,

@@ -9,11 +9,11 @@ from typing import cast
 import pytest
 from mcp.server.lowlevel import Server
 
-from mcp_pal.agent_session import AdapterTurn, AsyncAgentSession
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import KitClosed
-from mcp_pal.harness import DeterministicHarnessAdapter, HarnessAdapterRegistry
-from mcp_pal.types import (
+from m3.agent_session import AdapterTurn, AsyncAgentSession
+from m3.async_api import AsyncMCPTestKit
+from m3.errors import KitClosed
+from m3.harness import DeterministicHarnessAdapter, HarnessAdapterRegistry
+from m3.types import (
     ACPAgent,
     ActivityHealth,
     AgentSpec,
@@ -83,7 +83,7 @@ class _SlowStartupAdapter:
 @pytest.mark.asyncio
 async def test_startup_cancellation_reaps_adapter_and_loopback_manager_once() -> None:
     adapter = _SlowStartupAdapter()
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(
             _spec(),
             adapter=adapter,
@@ -110,7 +110,7 @@ async def test_startup_cancellation_reaps_adapter_and_loopback_manager_once() ->
 @pytest.mark.asyncio
 async def test_close_during_startup_has_no_late_enter_or_duplicate_cleanup() -> None:
     adapter = _SlowStartupAdapter()
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(_spec(), adapter=adapter)
         entering = asyncio.create_task(session.__aenter__())
         await adapter.started.wait()
@@ -138,7 +138,7 @@ async def test_repeated_startup_cancel_races_leave_no_tasks_or_open_managers() -
     baseline = {
         task for task in asyncio.all_tasks() if task is not asyncio.current_task()
     }
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         for _ in range(12):
             adapter = _SlowStartupAdapter()
             session = kit.agent_session(_spec(), adapter=adapter)
@@ -164,7 +164,7 @@ async def test_fork_preserves_runtime_loopback_registration_and_fresh_identity()
     runtime_server = InProcessServer(name="loopback", factory=_loopback_server)
     # Public construction is required for the runtime-only registration; use
     # the kit session so the source manager is the one being forked.
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         source = kit.agent_session(
             _spec(), adapter=source_adapter, runtime_servers=(runtime_server,)
         )
@@ -227,7 +227,7 @@ async def test_agent_trace_contains_turn_tool_evidence_and_activity_health() -> 
         {"acp": lambda _harness: _ToolEvidenceAdapter((False,))}
     )
     async with AsyncMCPTestKit(
-        env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+        env={}, cwd="/tmp/m3-no-project", adapter_registry=registry
     ) as kit:
         result = await kit.run(spec)
 

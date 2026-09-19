@@ -4,25 +4,25 @@ set -eu
 # This file is rendered into a release asset.  Keep the version placeholder
 # unique: scripts/render_cli_installers.py rejects templates that do not have
 # exactly one occurrence.
-VERSION='@MCP_PAL_VERSION@'
-REPOSITORY='mcppal/mcp-pal'
+VERSION='@M3_VERSION@'
+REPOSITORY='sineframe/m3'
 RELEASE_TAG="v${VERSION}"
 HAS_BASE_URL=0
-[ -n "${MCP_PAL_RELEASE_BASE_URL:-}" ] && HAS_BASE_URL=1
-BASE_URL=${MCP_PAL_RELEASE_BASE_URL:-"https://github.com/${REPOSITORY}/releases/download/v${VERSION}"}
+[ -n "${M3_RELEASE_BASE_URL:-}" ] && HAS_BASE_URL=1
+BASE_URL=${M3_RELEASE_BASE_URL:-"https://github.com/${REPOSITORY}/releases/download/v${VERSION}"}
 BASE_URL=${BASE_URL%/}
 
-CLI_WHEEL="mcp_pal_cli-${VERSION}-py3-none-any.whl"
-SDK_WHEEL="mcp_pal-${VERSION}-py3-none-any.whl"
-APP_WHEEL="mcp_pal_app-${VERSION}-py3-none-any.whl"
+CLI_WHEEL="m3_cli-${VERSION}-py3-none-any.whl"
+SDK_WHEEL="m3-${VERSION}-py3-none-any.whl"
+APP_WHEEL="m3_app-${VERSION}-py3-none-any.whl"
 CHECKSUMS='SHA256SUMS'
 
 die() {
-    printf '%s\n' "mcp-pal install failed: $*" >&2
+    printf '%s\n' "m3 install failed: $*" >&2
     exit 1
 }
 
-TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/mcp-pal-install.XXXXXX") || die 'could not create a temporary directory'
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/m3-install.XXXXXX") || die 'could not create a temporary directory'
 cleanup() {
     rm -rf "$TMP_DIR"
 }
@@ -32,7 +32,7 @@ trap cleanup EXIT
 trap on_interrupt INT
 trap on_terminate TERM
 
-printf '%s\n' "Installing MCP Pal CLI ${VERSION}"
+printf '%s\n' "Installing M3 CLI ${VERSION}"
 
 download() {
     artifact=$1
@@ -112,7 +112,7 @@ for artifact in "$CLI_WHEEL" "$SDK_WHEEL" "$APP_WHEEL"; do
     [ "$actual" = "$expected" ] || die "checksum mismatch for ${artifact}"
 done
 
-ui_check='from importlib import resources; root = resources.files("mcp_pal_cli").joinpath("ui"); assert root.joinpath("index.html").is_file(); assert any(item.is_file() for item in root.joinpath("assets").iterdir())'
+ui_check='from importlib import resources; root = resources.files("m3_cli").joinpath("ui"); assert root.joinpath("index.html").is_file(); assert any(item.is_file() for item in root.joinpath("assets").iterdir())'
 
 printf '%s\n' '[3/4] Installing into isolated tool storage'
 if command -v uv >/dev/null 2>&1; then
@@ -121,25 +121,25 @@ if command -v uv >/dev/null 2>&1; then
         --with "${TMP_DIR}/${APP_WHEEL}" \
         || die 'uv tool install failed'
     UV_BIN=$(uv tool dir --bin 2>/dev/null || true)
-    if [ -n "$UV_BIN" ] && [ -x "${UV_BIN}/mcp-pal" ]; then
+    if [ -n "$UV_BIN" ] && [ -x "${UV_BIN}/m3" ]; then
         printf '%s\n' '[4/4] Verifying command and bundled UI'
-        "${UV_BIN}/mcp-pal" --help >/dev/null || die 'installed mcp-pal command failed'
+        "${UV_BIN}/m3" --help >/dev/null || die 'installed m3 command failed'
     else
-        die 'uv installed mcp-pal but its tool bin directory is missing the command'
+        die 'uv installed m3 but its tool bin directory is missing the command'
     fi
     UV_TOOL_ROOT=$(uv tool dir 2>/dev/null || true)
     [ -n "$UV_TOOL_ROOT" ] || die 'could not locate the installed uv tool environment'
-    UV_TOOL_PYTHON="${UV_TOOL_ROOT}/mcp-pal-cli/bin/python"
+    UV_TOOL_PYTHON="${UV_TOOL_ROOT}/m3-cli/bin/python"
     [ -x "$UV_TOOL_PYTHON" ] || die 'uv tool environment Python is missing'
     "$UV_TOOL_PYTHON" -c "$ui_check" || die 'packaged UI could not be imported from the CLI wheel'
-    printf '%s\n' 'mcp-pal installed with uv in isolated tool storage.'
-    printf '%s\n' "Command: ${UV_BIN}/mcp-pal"
-    printf '%s\n' 'Next: cd <project> && mcp-pal setup'
+    printf '%s\n' 'm3 installed with uv in isolated tool storage.'
+    printf '%s\n' "Command: ${UV_BIN}/m3"
+    printf '%s\n' 'Next: cd <project> && m3 setup'
     exit 0
 fi
 
 find_python() {
-    for candidate in "${MCP_PAL_PYTHON:-}" python3 python; do
+    for candidate in "${M3_PYTHON:-}" python3 python; do
         [ -n "$candidate" ] || continue
         executable=$(command -v "$candidate" 2>/dev/null || true)
         [ -n "$executable" ] || continue
@@ -152,18 +152,18 @@ find_python() {
 }
 
 PYTHON=$(find_python) || die 'Python 3.10 or newer is required when uv is unavailable'
-INSTALL_ROOT=${MCP_PAL_INSTALL_ROOT:-"${XDG_DATA_HOME:-$HOME/.local/share}/mcp-pal"}
-BIN_DIR=${MCP_PAL_BIN_DIR:-"${XDG_BIN_HOME:-$HOME/.local/bin}"}
+INSTALL_ROOT=${M3_INSTALL_ROOT:-"${XDG_DATA_HOME:-$HOME/.local/share}/m3"}
+BIN_DIR=${M3_BIN_DIR:-"${XDG_BIN_HOME:-$HOME/.local/bin}"}
 [ -n "$INSTALL_ROOT" ] && [ -n "$BIN_DIR" ] || die 'installation paths must not be empty'
 
 mkdir -p "$(dirname "$INSTALL_ROOT")" "$BIN_DIR"
-COMMAND_PATH="${BIN_DIR}/mcp-pal"
+COMMAND_PATH="${BIN_DIR}/m3"
 if [ -e "$COMMAND_PATH" ] || [ -L "$COMMAND_PATH" ]; then
     target=$(readlink "$COMMAND_PATH" 2>/dev/null || true)
-    [ "$target" = "${INSTALL_ROOT}/bin/mcp-pal" ] || die "refusing to overwrite existing ${COMMAND_PATH}"
+    [ "$target" = "${INSTALL_ROOT}/bin/m3" ] || die "refusing to overwrite existing ${COMMAND_PATH}"
 fi
 if [ -e "$INSTALL_ROOT" ]; then
-    [ -f "${INSTALL_ROOT}/.mcp-pal-install" ] || die "refusing to overwrite existing ${INSTALL_ROOT}"
+    [ -f "${INSTALL_ROOT}/.m3-install" ] || die "refusing to overwrite existing ${INSTALL_ROOT}"
 fi
 
 BACKUP="${INSTALL_ROOT}.backup.$$"
@@ -197,7 +197,7 @@ cleanup_fallback() {
 trap cleanup_fallback EXIT
 
 if [ -e "$INSTALL_ROOT" ]; then
-    mv "$INSTALL_ROOT" "$BACKUP" || die 'could not stage the previous MCP Pal environment'
+    mv "$INSTALL_ROOT" "$BACKUP" || die 'could not stage the previous M3 environment'
     had_root=1
 fi
 new_root=1
@@ -207,21 +207,21 @@ VENV_PYTHON="${INSTALL_ROOT}/bin/python"
     "${TMP_DIR}/${CLI_WHEEL}" "${TMP_DIR}/${SDK_WHEEL}" "${TMP_DIR}/${APP_WHEEL}" \
     || die 'could not install the release wheels in the dedicated virtual environment'
 "$VENV_PYTHON" -c "$ui_check" || die 'packaged UI could not be imported from the CLI wheel'
-printf '%s\n' "$VERSION" > "${INSTALL_ROOT}/.mcp-pal-install"
+printf '%s\n' "$VERSION" > "${INSTALL_ROOT}/.m3-install"
 
 if [ ! -e "$COMMAND_PATH" ] && [ ! -L "$COMMAND_PATH" ]; then
-    ln -s "${INSTALL_ROOT}/bin/mcp-pal" "$LINK_TMP" || die 'could not prepare the MCP Pal command'
-    mv "$LINK_TMP" "$COMMAND_PATH" || die 'could not activate the MCP Pal command'
+    ln -s "${INSTALL_ROOT}/bin/m3" "$LINK_TMP" || die 'could not prepare the M3 command'
+    mv "$LINK_TMP" "$COMMAND_PATH" || die 'could not activate the M3 command'
     created_link=1
 fi
 
 printf '%s\n' '[4/4] Verifying command and bundled UI'
-"$COMMAND_PATH" --help >/dev/null || die 'installed mcp-pal command failed'
+"$COMMAND_PATH" --help >/dev/null || die 'installed m3 command failed'
 transaction_done=1
-printf '%s\n' "mcp-pal installed in ${INSTALL_ROOT}."
+printf '%s\n' "m3 installed in ${INSTALL_ROOT}."
 printf '%s\n' "Command: ${COMMAND_PATH}"
-printf '%s\n' 'Next: cd <project> && mcp-pal setup'
+printf '%s\n' 'Next: cd <project> && m3 setup'
 case ":${PATH}:" in
     *:"${BIN_DIR}":*) ;;
-    *) printf '%s\n' "Add ${BIN_DIR} to PATH to run mcp-pal." ;;
+    *) printf '%s\n' "Add ${BIN_DIR} to PATH to run m3." ;;
 esac

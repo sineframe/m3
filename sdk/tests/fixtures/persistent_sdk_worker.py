@@ -7,8 +7,8 @@ import asyncio
 import sys
 from pathlib import Path
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.storage import SQLiteExecutionStore
+from m3.async_api import AsyncMCPTestKit
+from m3.storage import SQLiteExecutionStore
 
 
 async def _run(database: Path) -> None:

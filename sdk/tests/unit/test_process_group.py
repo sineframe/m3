@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from mcp_pal.harness.process_group import terminate_process_group
+from m3.harness.process_group import terminate_process_group
 
 
 def test_group_id_alone_cannot_be_signalled(monkeypatch: pytest.MonkeyPatch) -> None:

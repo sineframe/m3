@@ -14,12 +14,12 @@ from pathlib import Path
 import pytest
 from acp_fixture import probe_agent
 
-from mcp_pal.harness.acp import full_probe, protocol_probe
-from mcp_pal.services.acp_probes import ACPProbeKind, ACPProbeRequest, ACPProbeStatus
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal_app.services.app_service import AppRuntimeService
-from mcp_pal_app.services.profile_service import HarnessProfileInput
-from mcp_pal_app.settings import Settings
+from m3.harness.acp import full_probe, protocol_probe
+from m3.services.acp_probes import ACPProbeKind, ACPProbeRequest, ACPProbeStatus
+from m3.storage import SQLiteExecutionStore
+from m3_app.services.app_service import AppRuntimeService
+from m3_app.services.profile_service import HarnessProfileInput
+from m3_app.settings import Settings
 
 
 class _ReopenedKit:
@@ -44,7 +44,7 @@ def send(value):
 for line in sys.stdin:
     request = json.loads(line); method = request.get('method'); ident = request.get('id')
     if method == 'initialize':
-        marker.write_text(os.environ.get('MCP_PAL_UNRELATED_CANARY', '<missing>'), encoding='utf-8')
+        marker.write_text(os.environ.get('M3_UNRELATED_CANARY', '<missing>'), encoding='utf-8')
         send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':1}})
     elif method == 'session/new':
         send({'jsonrpc':'2.0','id':ident,'result':{'sessionId':'canary-session'}})
@@ -106,7 +106,7 @@ def test_acp_probes_do_not_inherit_unrelated_ambient_environment(
 ) -> None:
     """Both probe entry points launch a real child with an allowlisted env."""
     canary = "ambient-probe-canary"
-    monkeypatch.setenv("MCP_PAL_UNRELATED_CANARY", canary)
+    monkeypatch.setenv("M3_UNRELATED_CANARY", canary)
     agent = _ambient_canary_agent(tmp_path / "canary-agent.py")
     protocol_marker = tmp_path / "protocol-marker"
     full_marker = tmp_path / "full-marker"
@@ -151,7 +151,7 @@ def test_runtime_sdk_acp_protocol_full_persists_and_reopens(tmp_path: Path) -> N
     protocol = asyncio.run(runtime.acp_probes.run(protocol_request))
     assert protocol.status is ACPProbeStatus.VERIFIED
     assert protocol.agent_identity is not None
-    assert protocol.agent_identity.name == "probe-fixture"
+    assert protocol.agent_identity.name == "probe-echo"
     assert protocol.agent_capabilities["mcpCapabilities"] == {
         "http": True,
         "sse": True,
@@ -169,7 +169,7 @@ def test_runtime_sdk_acp_protocol_full_persists_and_reopens(tmp_path: Path) -> N
     full = asyncio.run(runtime.acp_probes.run(full_request))
     assert full.status is ACPProbeStatus.VERIFIED
     assert full.agent_identity is not None
-    assert full.agent_identity.name == "probe-fixture"
+    assert full.agent_identity.name == "probe-echo"
     nonce = full.evidence["nonce"]
     calls = full.evidence["calls"]
     assert isinstance(nonce, str)
@@ -191,7 +191,7 @@ def test_runtime_sdk_acp_protocol_full_persists_and_reopens(tmp_path: Path) -> N
     descriptor = next(item for item in view if item.profile_id == profile.record.id)
     assert descriptor.protocol_verified and descriptor.full_verified
     assert descriptor.agent_identity is not None
-    assert descriptor.agent_identity["name"] == "probe-fixture"
+    assert descriptor.agent_identity["name"] == "probe-echo"
     assert descriptor.agent_modes[0].id == "mode-a"
     assert descriptor.session_config_options[0].id == "quality"
     assert descriptor.protocol_verification is not None

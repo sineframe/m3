@@ -12,8 +12,8 @@ import pytest
 from mcp import ClientSession as OfficialClientSession
 from mcp.types import Implementation, SamplingCapability
 
-import mcp_pal.transport.direct as direct_module
-from mcp_pal.transport.direct import (
+import m3.transport.direct as direct_module
+from m3.transport.direct import (
     EndpointTrustError,
     EnvironmentSecretResolver,
     SSEConnection,
@@ -23,7 +23,7 @@ from mcp_pal.transport.direct import (
     resolve_headers,
     validate_endpoint_trust,
 )
-from mcp_pal.types import HTTPServer, SecretReference, SSEServer, TrustLevel
+from m3.types import HTTPServer, SecretReference, SSEServer, TrustLevel
 
 
 def test_secret_references_resolve_only_into_headers_and_never_evidence(

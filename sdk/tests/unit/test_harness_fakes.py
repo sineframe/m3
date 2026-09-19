@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 import pytest
 
-from mcp_pal.harness import (
+from m3.harness import (
     DeterministicACPAdapter,
     FakeClaudeCodeAdapter,
     FakeOpenCodeAdapter,
@@ -18,13 +18,13 @@ from mcp_pal.harness import (
     UnsupportedHarnessFeature,
     default_adapters,
 )
-from mcp_pal.interaction_handlers import (
+from m3.interaction_handlers import (
     InteractionHandlers,
     Interactions,
     PermissionRequest,
 )
-from mcp_pal.server_group import ServerGroupManager
-from mcp_pal.types import (
+from m3.server_group import ServerGroupManager
+from m3.types import (
     ACPAgent,
     AgentSpec,
     AudioContent,

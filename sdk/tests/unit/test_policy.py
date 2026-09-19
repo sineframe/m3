@@ -7,16 +7,16 @@ from collections.abc import Mapping
 import pytest
 from pydantic import ValidationError
 
-from mcp_pal.agent_session import AsyncAgentSession
-from mcp_pal.errors import UnsupportedFeature
-from mcp_pal.harness.contracts import (
+from m3.agent_session import AsyncAgentSession
+from m3.errors import UnsupportedFeature
+from m3.harness.contracts import (
     DeterministicHarnessAdapter,
     HarnessAdapterCapabilities,
     HarnessLaunch,
 )
-from mcp_pal.policy import ToolDescriptor, ToolPolicyEvaluator
-from mcp_pal.server_group import ServerGroupManager, ServerGroupSnapshot, ServerRecord
-from mcp_pal.types import (
+from m3.policy import ToolDescriptor, ToolPolicyEvaluator
+from m3.server_group import ServerGroupManager, ServerGroupSnapshot, ServerRecord
+from m3.types import (
     ACPAgent,
     AgentSpec,
     FullToolPolicy,

@@ -24,9 +24,9 @@ def _reply(request: dict[str, Any], result: dict[str, Any]) -> None:
 def main() -> int:
     # The stdio proxy must supply this from its protected handoff.  A direct
     # launch without the credential cannot initialize or answer tools.
-    if os.environ.get("MCP_PAL_AUTH_TOKEN") != EXPECTED_TOKEN:
+    if os.environ.get("M3_AUTH_TOKEN") != EXPECTED_TOKEN:
         return 17
-    marker = os.environ.get("MCP_PAL_E2E_MCP_MARKER")
+    marker = os.environ.get("M3_E2E_MCP_MARKER")
     observations: list[str] = []
     if marker:
         Path(marker).write_text(

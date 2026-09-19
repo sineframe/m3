@@ -1,9 +1,9 @@
 """Run the manual live OpenCode and bundled-UI merge gate.
 
-This gate performs one paid provider call. It installs the production CLI
-wheel into an isolated uv tool environment and runs the selected real pytest
-target in a separate project virtual environment. The checkout is never
-installed as an editable package.
+This gate can perform paid provider calls in its Python and pytest stages.
+It installs the production CLI wheel into an isolated uv tool environment
+and runs the selected real pytest target in a separate project virtual
+environment. The checkout is never installed as an editable package.
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ def wheel_paths(
         raise GateFailure("release directory is unavailable")
     paths = tuple(
         release / f"{prefix}-{version}-py3-none-any.whl"
-        for prefix in ("mcp_pal_cli", "mcp_pal", "mcp_pal_app")
+        for prefix in ("m3_cli", "m3", "m3_app")
     )
     if any(not path.is_file() for path in paths):
         raise GateFailure(
@@ -112,8 +112,8 @@ def assert_bundled_ui(wheel: Path) -> None:
             names = set(archive.namelist())
     except (OSError, zipfile.BadZipFile) as exc:
         raise GateFailure("CLI wheel is not a readable wheel archive") from exc
-    if "mcp_pal_cli/ui/index.html" not in names or not any(
-        name.startswith("mcp_pal_cli/ui/assets/") and not name.endswith("/")
+    if "m3_cli/ui/index.html" not in names or not any(
+        name.startswith("m3_cli/ui/assets/") and not name.endswith("/")
         for name in names
     ):
         raise GateFailure("CLI wheel does not contain the bundled production UI")
@@ -256,14 +256,14 @@ def _python_path(venv: Path) -> Path:
 
 
 def _tool_command(tool_bin: Path) -> Path:
-    path = tool_bin / ("mcp-pal.exe" if os.name == "nt" else "mcp-pal")
+    path = tool_bin / ("m3.exe" if os.name == "nt" else "m3")
     if not path.is_file():
-        raise GateFailure("uv did not create the standalone mcp-pal command")
+        raise GateFailure("uv did not create the standalone m3 command")
     return path
 
 
 def _tool_python(tool_dir: Path) -> Path:
-    directory = tool_dir / "mcp-pal-cli" / ("Scripts" if os.name == "nt" else "bin")
+    directory = tool_dir / "m3-cli" / ("Scripts" if os.name == "nt" else "bin")
     path = directory / ("python.exe" if os.name == "nt" else "python")
     if not path.is_file():
         raise GateFailure("uv tool environment Python is missing")
@@ -279,10 +279,10 @@ import importlib.util
 import json
 from importlib import resources
 
-required = {name: importlib.util.find_spec(name) is not None for name in ("mcp_pal_cli", "mcp_pal", "mcp_pal_app")}
+required = {name: importlib.util.find_spec(name) is not None for name in ("m3_cli", "m3", "m3_app")}
 forbidden = {name: importlib.util.find_spec(name) is None for name in ("pytest", "streamlit", "requests")}
-ui = resources.files("mcp_pal_cli").joinpath("ui")
-print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("mcp-pal-cli"), "ui": ui.joinpath("index.html").is_file() and any(item.is_file() for item in ui.joinpath("assets").iterdir())}, sort_keys=True))
+ui = resources.files("m3_cli").joinpath("ui")
+print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("m3-cli"), "ui": ui.joinpath("index.html").is_file() and any(item.is_file() for item in ui.joinpath("assets").iterdir())}, sort_keys=True))
 """
     result = _run([str(tool_python), "-c", code], cwd=cwd, env=env)
     try:
@@ -292,13 +292,11 @@ print(json.dumps({"required": required, "forbidden": forbidden, "version": metad
             "CLI tool environment returned an invalid package check"
         ) from exc
     if payload.get("required") != {
-        "mcp_pal_cli": True,
-        "mcp_pal": True,
-        "mcp_pal_app": True,
+        "m3_cli": True,
+        "m3": True,
+        "m3_app": True,
     }:
-        raise GateFailure(
-            "CLI tool environment is missing a production MCP Pal package"
-        )
+        raise GateFailure("CLI tool environment is missing a production M3 package")
     if payload.get("forbidden") != {
         "pytest": True,
         "streamlit": True,
@@ -317,15 +315,15 @@ import importlib.metadata as metadata
 import importlib.util
 import json
 
-required = {name: importlib.util.find_spec(name) is not None for name in ("pytest", "mcp_pal", "mcp_pal.pytest_plugin")}
+required = {name: importlib.util.find_spec(name) is not None for name in ("pytest", "m3", "m3.pytest_plugin")}
 try:
-    from mcp_pal.storage import SQLiteExecutionStore
+    from m3.storage import SQLiteExecutionStore
 except Exception:
     required["SQLiteExecutionStore"] = False
 else:
     required["SQLiteExecutionStore"] = True
-forbidden = {name: importlib.util.find_spec(name) is None for name in ("mcp_pal_cli", "mcp_pal_app")}
-print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("mcp-pal")}, sort_keys=True))
+forbidden = {name: importlib.util.find_spec(name) is None for name in ("m3_cli", "m3_app")}
+print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("m3")}, sort_keys=True))
 """
     result = _run([str(project_python), "-c", code], cwd=cwd, env=env)
     try:
@@ -337,8 +335,8 @@ print(json.dumps({"required": required, "forbidden": forbidden, "version": metad
     required = payload.get("required")
     expected_required = (
         "pytest",
-        "mcp_pal",
-        "mcp_pal.pytest_plugin",
+        "m3",
+        "m3.pytest_plugin",
         "SQLiteExecutionStore",
     )
     if not isinstance(required, dict) or not all(
@@ -347,7 +345,7 @@ print(json.dumps({"required": required, "forbidden": forbidden, "version": metad
         raise GateFailure(
             "project environment is missing pytest, SDK, plugin, or SQLite storage"
         )
-    if payload.get("forbidden") != {"mcp_pal_cli": True, "mcp_pal_app": True}:
+    if payload.get("forbidden") != {"m3_cli": True, "m3_app": True}:
         raise GateFailure("project environment contains the standalone CLI or app")
     if payload.get("version") != version:
         raise GateFailure("project SDK version does not match the release")
@@ -443,6 +441,7 @@ def cli_test_command(
     opencode_model: str = DEFAULT_MODEL,
     codex_model: str = "gpt-5.6-sol",
     providers: tuple[str, ...] = ("opencode", "codex"),
+    execution_timeout: float = 300.0,
 ) -> list[str]:
     command = [
         str(executable),
@@ -456,6 +455,8 @@ def cli_test_command(
         str(port),
         "--env-file",
         str(env_file),
+        "--execution-timeout",
+        str(execution_timeout),
     ]
     models = {"opencode": opencode_model, "codex": codex_model}
     for provider in providers:
@@ -749,7 +750,7 @@ def parse_ui_links(
 ) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
     """Return history URL, direct URL, and decoded run ID from CLI output."""
 
-    history = re.findall(r"(?m)^MCP-Pal UI: (https?://[^\s]+)$", output)
+    history = re.findall(r"(?m)^M3 UI: (https?://[^\s]+)$", output)
     if len(history) != 1 or history[0] != f"{origin}/history":
         raise GateFailure("CLI UI history link does not match the selected origin")
     direct = re.findall(r"(?m)^Run: (https?://[^\s]+)$", output)
@@ -1091,7 +1092,7 @@ def _wait_for_links(
     deadline = time.monotonic() + READY_TIMEOUT
     while time.monotonic() < deadline:
         output = child.text()
-        if "MCP-Pal UI:" in output and re.search(r"(?m)^Run: https?://", output):
+        if "M3 UI:" in output and re.search(r"(?m)^Run: https?://", output):
             return parse_ui_links(output, origin)
         if not child.alive():
             break
@@ -1104,19 +1105,24 @@ def check(
     version: str | None = None,
     ui_dir: str | os.PathLike[str] = UI_ROOT,
     process_timeout: float = PROCESS_TIMEOUT,
+    execution_timeout: float = 240.0,
 ) -> int:
     if not math.isfinite(process_timeout) or process_timeout <= 0:
         raise GateFailure("--process-timeout must be a positive finite number")
+    if not math.isfinite(execution_timeout) or execution_timeout <= 0:
+        raise GateFailure("--execution-timeout must be a positive finite number")
+    if process_timeout <= execution_timeout + 15:
+        raise GateFailure("--process-timeout must exceed --execution-timeout by 15s")
     if (release_dir is None) != (version is None):
         raise GateFailure("--release-dir and --version must be provided together")
     selected_ui = Path(ui_dir).expanduser().resolve()
     original_env = dict(os.environ)
-    provider_text = original_env.get("MCP_PAL_LIVE_PROVIDERS", "opencode,codex")
+    provider_text = original_env.get("M3_LIVE_PROVIDERS", "opencode,codex")
     providers = tuple(
         item.strip().lower() for item in provider_text.split(",") if item.strip()
     )
     if not providers or any(item not in {"opencode", "codex"} for item in providers):
-        raise GateFailure("MCP_PAL_LIVE_PROVIDERS must contain opencode and/or codex")
+        raise GateFailure("M3_LIVE_PROVIDERS must contain opencode and/or codex")
     install_env = clean_environment(original_env)
     if not (selected_ui.is_dir() and (selected_ui / "package.json").is_file()):
         raise GateFailure("UI directory or package.json is unavailable")
@@ -1124,14 +1130,12 @@ def check(
     uv = shutil.which("uv")
     if uv is None:
         raise GateFailure("uv is required for the isolated live gate")
-    env_file = ROOT.parent / "mcp-pal" / ".env"
+    env_file = ROOT / ".env"
     if not env_file.is_file():
         raise GateFailure("explicit OpenCode env file is unavailable")
     dotenv_file_values = _dotenv_values(env_file)
     api_key = os.environ.get("OPENCODE_API_KEY", "").strip()
-    selected_opencode_model = original_env.get(
-        "MCP_PAL_LIVE_OPENCODE_MODEL", DEFAULT_MODEL
-    )
+    selected_opencode_model = original_env.get("M3_LIVE_OPENCODE_MODEL", DEFAULT_MODEL)
     if "opencode" in providers:
         if not selected_opencode_model.startswith("opencode/"):
             raise GateFailure(
@@ -1160,7 +1164,7 @@ def check(
     child: Child | None = None
     failure: str | None = None
     try:
-        temp_path = Path(tempfile.mkdtemp(prefix="mcp-pal-live-ui-")).resolve()
+        temp_path = Path(tempfile.mkdtemp(prefix="m3-live-ui-")).resolve()
         if release_dir is None:
             version_result = _run(
                 [
@@ -1242,23 +1246,23 @@ def check(
         project_python = _python_path(project_venv)
         # Put extras on the package name in a PEP 508 direct reference so the
         # requirement remains portable across uv and pip.
-        sdk_requirement = f"mcp-pal[pytest,storage] @ {sdk_wheel.as_uri()}"
+        sdk_requirement = f"m3[pytest,storage] @ {sdk_wheel.as_uri()}"
         _run(
             [uv, "pip", "install", "--python", str(project_python), sdk_requirement],
             cwd=repo,
             env=isolated_env,
         )
         _probe_project(project_python, version, isolated_env, repo)
-        database = repo / ".mcp-pal" / "executions.sqlite"
+        database = repo / ".m3" / "executions.sqlite"
         port = _free_port()
         model = selected_opencode_model
         live_env = dict(isolated_env)
         for variable in (
-            "MCP_PAL_RUN_LIVE_UI",
-            "MCP_PAL_RUN_LIVE_OPENCODE",
-            "MCP_PAL_LIVE_PROVIDERS",
-            "MCP_PAL_LIVE_OPENCODE_MODEL",
-            "MCP_PAL_LIVE_CODEX_MODEL",
+            "M3_RUN_LIVE_UI",
+            "M3_RUN_LIVE_OPENCODE",
+            "M3_LIVE_PROVIDERS",
+            "M3_LIVE_OPENCODE_MODEL",
+            "M3_LIVE_CODEX_MODEL",
         ):
             live_env.pop(variable, None)
         live_env.update(
@@ -1276,6 +1280,8 @@ def check(
                     "sdk/examples/live_agent_loop.py",
                     "--model",
                     model,
+                    "--execution-timeout",
+                    str(execution_timeout),
                 ],
                 cwd=repo,
                 env=live_env,
@@ -1283,7 +1289,7 @@ def check(
                 label="normal-python-live-agent",
                 output_path=temp_path / "live-agent-loop.log",
             )
-        codex_model = original_env.get("MCP_PAL_LIVE_CODEX_MODEL", "gpt-5.6-sol")
+        codex_model = original_env.get("M3_LIVE_CODEX_MODEL", "gpt-5.6-sol")
         command = cli_test_command(
             executable,
             project_python,
@@ -1293,6 +1299,7 @@ def check(
             opencode_model=model,
             codex_model=codex_model,
             providers=providers,
+            execution_timeout=execution_timeout,
         )
         print(
             "live-ui-gate: launching live pytest targets for the selected providers",
@@ -1412,9 +1419,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version")
     parser.add_argument("--ui-dir", type=Path, default=UI_ROOT)
     parser.add_argument("--process-timeout", type=float, default=PROCESS_TIMEOUT)
+    parser.add_argument("--execution-timeout", type=float, default=240.0)
     args = parser.parse_args(argv)
     try:
-        return check(args.release_dir, args.version, args.ui_dir, args.process_timeout)
+        return check(
+            args.release_dir,
+            args.version,
+            args.ui_dir,
+            args.process_timeout,
+            args.execution_timeout,
+        )
     except GateFailure as exc:
         print(f"live-ui-gate: {exc}", file=sys.stderr)
         return 2

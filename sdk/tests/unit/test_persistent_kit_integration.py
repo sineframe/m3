@@ -4,11 +4,11 @@ import asyncio
 
 import pytest
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.sync_api import MCPTestKit
-from mcp_pal.testing import FaultInjector
-from mcp_pal.types import DirectSpec, ExecutionOutcome, Ping, PingResult, ServerBinding
+from m3.async_api import AsyncMCPTestKit
+from m3.storage import SQLiteExecutionStore
+from m3.sync_api import MCPTestKit
+from m3.testing import FaultInjector
+from m3.types import DirectSpec, ExecutionOutcome, Ping, PingResult, ServerBinding
 
 pytestmark = pytest.mark.process_lifecycle
 

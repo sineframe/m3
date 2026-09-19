@@ -94,7 +94,7 @@ def test_reset_rejects_extra_arguments_even_with_environment_confirmation(tmp_pa
 
 
 def test_reset_then_fresh_sqlite_startup_recreates_schema(tmp_path):
-    from mcp_pal.storage import SQLiteExecutionStore
+    from m3.storage import SQLiteExecutionStore
 
     database = tmp_path / "state.sqlite"
     store = SQLiteExecutionStore(database, blob_root=tmp_path / "blobs")

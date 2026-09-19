@@ -22,25 +22,25 @@ def _write_executable(path: Path, contents: str) -> None:
 
 
 def test_renderer_writes_versioned_executable_installers(tmp_path: Path) -> None:
-    shell, powershell = renderer.render_installers("0.2.0a2", tmp_path)
+    shell, powershell = renderer.render_installers("0.2.0a13", tmp_path)
     assert shell.name == "install.sh"
     assert powershell.name == "install.ps1"
     assert shell.stat().st_mode & 0o111
     for path in (shell, powershell):
         contents = path.read_text(encoding="utf-8")
-        assert "@MCP_PAL_VERSION@" not in contents
-        assert "0.2.0a2" in contents
+        assert "@M3_VERSION@" not in contents
+        assert "0.2.0a13" in contents
         assert (
-            "mcp_pal-${VERSION}-py3-none-any.whl" in contents
-            or "mcp_pal-$Version-py3-none-any.whl" in contents
+            "m3-${VERSION}-py3-none-any.whl" in contents
+            or "m3-$Version-py3-none-any.whl" in contents
         )
         assert (
-            "mcp_pal_app-${VERSION}-py3-none-any.whl" in contents
-            or "mcp_pal_app-$Version-py3-none-any.whl" in contents
+            "m3_app-${VERSION}-py3-none-any.whl" in contents
+            or "m3_app-$Version-py3-none-any.whl" in contents
         )
         assert (
-            "mcp_pal_cli-${VERSION}-py3-none-any.whl" in contents
-            or "mcp_pal_cli-$Version-py3-none-any.whl" in contents
+            "m3_cli-${VERSION}-py3-none-any.whl" in contents
+            or "m3_cli-$Version-py3-none-any.whl" in contents
         )
 
 
@@ -55,11 +55,11 @@ def test_renderer_requires_one_placeholder(
     template = ROOT / "scripts" / "install.sh.in"
     monkeypatch.setattr(renderer, "PLACEHOLDER", "not-in-template")
     with pytest.raises(renderer.InstallerRenderError, match="exactly one"):
-        renderer.render_template(template, "0.2.0a2")
+        renderer.render_template(template, "0.2.0a13")
 
 
 def test_rendered_posix_installer_has_valid_shell_syntax(tmp_path: Path) -> None:
-    shell, _ = renderer.render_installers("0.2.0a2", tmp_path)
+    shell, _ = renderer.render_installers("0.2.0a13", tmp_path)
     result = subprocess.run(
         ["sh", "-n", str(shell)], check=False, capture_output=True, text=True
     )
@@ -71,7 +71,7 @@ def test_installers_use_isolated_paths_and_local_wheels() -> None:
     shell = (ROOT / "scripts" / "install.sh.in").read_text(encoding="utf-8")
     powershell = (ROOT / "scripts" / "install.ps1.in").read_text(encoding="utf-8")
     for contents in (shell, powershell):
-        assert "MCP_PAL_RELEASE_BASE_URL" in contents
+        assert "M3_RELEASE_BASE_URL" in contents
         assert "SHA256SUMS" in contents
         assert "--with" in contents or "Get-FileHash" in contents
         assert "pip --user" not in contents
@@ -80,29 +80,29 @@ def test_installers_use_isolated_paths_and_local_wheels() -> None:
     assert "tool install --force" in powershell
     assert "uv tool run" not in shell
     assert "tool run" not in powershell
-    assert "elif command -v mcp-pal" not in shell
+    assert "elif command -v m3" not in shell
     assert "ExistingCommand" not in powershell
-    assert "MCP_PAL_INSTALL_ROOT" in shell
-    assert "MCP_PAL_INSTALL_ROOT" in powershell
-    assert "MCP_PAL_BIN_DIR" in shell
-    assert "MCP_PAL_BIN_DIR" in powershell
+    assert "M3_INSTALL_ROOT" in shell
+    assert "M3_INSTALL_ROOT" in powershell
+    assert "M3_BIN_DIR" in shell
+    assert "M3_BIN_DIR" in powershell
     assert "-m pip install" in shell
     assert "-m pip install" in powershell
-    assert ".mcp-pal-install" in shell
-    assert ".mcp-pal-install" in powershell
+    assert ".m3-install" in shell
+    assert ".m3-install" in powershell
     for contents in (shell, powershell):
         assert "[1/4] Downloading release assets" in contents
         assert "[2/4] Verifying checksums" in contents
         assert "[3/4] Installing into isolated tool storage" in contents
         assert "[4/4] Verifying command and bundled UI" in contents
-        assert "Next:" in contents and "mcp-pal setup" in contents
+        assert "Next:" in contents and "m3 setup" in contents
         assert "Command:" in contents
     assert "STAGE=" not in shell
     assert "$Stage" not in powershell
     assert "created_link=1" in shell
     assert 'if [ "$created_link" -eq 1 ]' in shell
     assert shell.index('"$COMMAND_PATH" --help') < shell.index("transaction_done=1")
-    assert "mcp-pal-bin" in powershell
+    assert "m3-bin" in powershell
     assert "if (-not (Test-Path -LiteralPath $Marker))" in powershell
     assert (
         "-and -not (Test-Path (Join-Path $InstallRoot 'Scripts/python.exe'))"
@@ -141,19 +141,19 @@ def test_installers_support_authenticated_private_release_downloads() -> None:
 def test_posix_installer_fetches_exact_private_assets_into_isolated_uv_tool(
     tmp_path: Path,
 ) -> None:
-    version = "0.2.0a2"
+    version = "0.2.0a13"
     release = tmp_path / "release"
     fake_bin = tmp_path / "bin"
     uv_root = tmp_path / "uv-tools"
     uv_bin = tmp_path / "uv-bin"
     log = tmp_path / "calls.log"
-    for directory in (release, fake_bin, uv_bin, uv_root / "mcp-pal-cli" / "bin"):
+    for directory in (release, fake_bin, uv_bin, uv_root / "m3-cli" / "bin"):
         directory.mkdir(parents=True)
 
     assets = (
-        f"mcp_pal_cli-{version}-py3-none-any.whl",
-        f"mcp_pal-{version}-py3-none-any.whl",
-        f"mcp_pal_app-{version}-py3-none-any.whl",
+        f"m3_cli-{version}-py3-none-any.whl",
+        f"m3-{version}-py3-none-any.whl",
+        f"m3_app-{version}-py3-none-any.whl",
     )
     checksums: list[str] = []
     for index, name in enumerate(assets):
@@ -166,7 +166,7 @@ def test_posix_installer_fetches_exact_private_assets_into_isolated_uv_tool(
         fake_bin / "gh",
         """#!/bin/sh
 set -eu
-printf 'gh %s\\n' "$*" >> "$MCP_PAL_TEST_LOG"
+printf 'gh %s\\n' "$*" >> "$M3_TEST_LOG"
 if [ "$1 $2" = 'auth status' ]; then exit 0; fi
 [ "$1 $2" = 'release download' ] || exit 20
 tag=$3
@@ -175,40 +175,40 @@ pattern=
 output=
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --repo) [ "$2" = 'mcppal/mcp-pal' ] || exit 21; shift 2 ;;
+    --repo) [ "$2" = 'sineframe/m3' ] || exit 21; shift 2 ;;
     --pattern) pattern=$2; shift 2 ;;
     --output) output=$2; shift 2 ;;
     *) exit 22 ;;
   esac
 done
-[ "$tag" = 'v0.2.0a2' ] && [ -n "$pattern" ] && [ -n "$output" ] || exit 23
-cp "$MCP_PAL_TEST_RELEASE/$pattern" "$output"
+[ "$tag" = 'v0.2.0a13' ] && [ -n "$pattern" ] && [ -n "$output" ] || exit 23
+cp "$M3_TEST_RELEASE/$pattern" "$output"
 """,
     )
     _write_executable(
         fake_bin / "uv",
         """#!/bin/sh
 set -eu
-printf 'uv %s\\n' "$*" >> "$MCP_PAL_TEST_LOG"
+printf 'uv %s\\n' "$*" >> "$M3_TEST_LOG"
 if [ "$1 $2" = 'tool install' ]; then exit 0; fi
-if [ "$1 $2 ${3:-}" = 'tool dir --bin' ]; then printf '%s\\n' "$MCP_PAL_TEST_UV_BIN"; exit 0; fi
-if [ "$1 $2" = 'tool dir' ]; then printf '%s\\n' "$MCP_PAL_TEST_UV_ROOT"; exit 0; fi
+if [ "$1 $2 ${3:-}" = 'tool dir --bin' ]; then printf '%s\\n' "$M3_TEST_UV_BIN"; exit 0; fi
+if [ "$1 $2" = 'tool dir' ]; then printf '%s\\n' "$M3_TEST_UV_ROOT"; exit 0; fi
 exit 30
 """,
     )
-    for executable in (uv_bin / "mcp-pal", uv_root / "mcp-pal-cli" / "bin" / "python"):
+    for executable in (uv_bin / "m3", uv_root / "m3-cli" / "bin" / "python"):
         _write_executable(executable, "#!/bin/sh\nexit 0\n")
 
     shell, _ = renderer.render_installers(version, tmp_path / "rendered")
     environment = os.environ.copy()
-    environment.pop("MCP_PAL_RELEASE_BASE_URL", None)
+    environment.pop("M3_RELEASE_BASE_URL", None)
     environment.update(
         {
             "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
-            "MCP_PAL_TEST_LOG": str(log),
-            "MCP_PAL_TEST_RELEASE": str(release),
-            "MCP_PAL_TEST_UV_BIN": str(uv_bin),
-            "MCP_PAL_TEST_UV_ROOT": str(uv_root),
+            "M3_TEST_LOG": str(log),
+            "M3_TEST_RELEASE": str(release),
+            "M3_TEST_UV_BIN": str(uv_bin),
+            "M3_TEST_UV_ROOT": str(uv_root),
         }
     )
     result = subprocess.run(
@@ -238,14 +238,14 @@ def test_private_install_docs_use_exact_authenticated_assets() -> None:
     contents = (ROOT / "cli" / "README.md").read_text(encoding="utf-8")
     assert "gh auth login" in contents
     assert (
-        "gh release download vX.Y.Z --repo mcppal/mcp-pal "
+        "gh release download vX.Y.Z --repo sineframe/m3 "
         "--pattern install.sh --output install.sh"
     ) in contents
     assert "--pattern install.sh --output install.sh" in contents
     assert "sh install.sh\nrm install.sh" in contents
     assert "--pattern install.ps1 --output install.ps1" in contents
     assert ".\\install.ps1\nRemove-Item install.ps1" in contents
-    assert "mcp-pal[pytest,storage] @ ./.mcp-pal-download/$SDK_WHEEL" in contents
+    assert "m3[pytest,storage] @ ./.m3-download/$SDK_WHEEL" in contents
     assert "only downloads files" in contents
     assert "does not create or modify a" in contents
 

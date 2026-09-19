@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcp_pal.direct_client import ToolCallResult
-from mcp_pal.matchers import check, expect
+from m3.direct_client import ToolCallResult
+from m3.matchers import check, expect
 
 
 def test_text_structured_regex_negative_and_ordered_content_matchers() -> None:

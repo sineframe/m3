@@ -3,7 +3,7 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 
-from mcp_pal.harness.characterize import MAX_PROBE_OUTPUT, _run_probe
+from m3.harness.characterize import MAX_PROBE_OUTPUT, _run_probe
 
 
 def _executable(path: Path, body: str) -> str:

@@ -19,7 +19,7 @@ prepare-release VERSION:
     uv run --no-project --with packaging python scripts/prepare_release.py {{VERSION}}
 
 api:
-    uv run --project app uvicorn mcp_pal_app.main:app --host 127.0.0.1 --reload
+    uv run --project app uvicorn m3_app.main:app --host 127.0.0.1 --reload
 
 test:
     PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests
@@ -56,17 +56,17 @@ typecheck-sdk-usage:
     PYTHONDONTWRITEBYTECODE=1 uv run --locked --project sdk --extra pytest --group typecheck pytest -q sdk/tests/unit/test_typecheck_examples.py
 
 typecheck-sdk-public:
-    uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/mcp_pal/types.py sdk/src/mcp_pal/errors.py sdk/src/mcp_pal/policy.py sdk/src/mcp_pal/interaction_handlers.py sdk/src/mcp_pal/configuration.py
+    uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/m3/types.py sdk/src/m3/errors.py sdk/src/m3/policy.py sdk/src/m3/interaction_handlers.py sdk/src/m3/configuration.py
 
 # This checks the complete SDK without a baseline and is required by CI.
 typecheck-sdk:
-    uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/mcp_pal
+    uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/m3
 
 typecheck-app:
-    uv run --isolated --python 3.10 --locked --project app --group typecheck mypy --config-file app/pyproject.toml --strict app/src/mcp_pal_app
+    uv run --isolated --python 3.10 --locked --project app --group typecheck mypy --config-file app/pyproject.toml --strict app/src/m3_app
 
 typecheck-cli:
-    uv run --isolated --python 3.10 --locked --project cli --group typecheck mypy --config-file cli/pyproject.toml --strict cli/src/mcp_pal_cli
+    uv run --isolated --python 3.10 --locked --project cli --group typecheck mypy --config-file cli/pyproject.toml --strict cli/src/m3_cli
 
 typecheck-production: typecheck-sdk typecheck-app typecheck-cli
 
@@ -81,31 +81,31 @@ format-check:
 
 # Validate a local ACP manifest. Set MANIFEST to a JSON file (or - for stdin).
 harness-validate MANIFEST="harness.json":
-    uv run --project sdk mcp-pal-harness validate {{MANIFEST}} --check-local
+    uv run --project sdk python -m m3.harness.cli validate {{MANIFEST}} --check-local
 
 # Run an explicitly requested protocol probe against a local manifest.
 harness-probe MANIFEST="harness.json":
-    uv run --project sdk mcp-pal-harness probe {{MANIFEST}} --kind protocol
+    uv run --project sdk python -m m3.harness.cli probe {{MANIFEST}} --kind protocol
 
 # Run the opt-in one-turn full probe. MODE_ID and SESSION_CONFIG are the exact
-# values advertised by the protocol probe (the defaults suit the reference kit).
+# values advertised by the protocol probe (the defaults suit the ACP fixture).
 harness-full-probe MANIFEST="harness.json" TRANSPORT="stdio" MODE_ID="default" SESSION_CONFIG="{}":
-    uv run --project sdk mcp-pal-harness probe {{MANIFEST}} --kind full --transport {{TRANSPORT}} --mode-id {{MODE_ID}} --session-config '{{SESSION_CONFIG}}'
+    uv run --project sdk python -m m3.harness.cli probe {{MANIFEST}} --kind full --transport {{TRANSPORT}} --mode-id {{MODE_ID}} --session-config '{{SESSION_CONFIG}}'
 
-# Launch the direct reference bridge demonstration command shown in README.
-reference-bridge:
-    uv run --project sdk mcp-pal-reference-bridge --target uv --target-args-json '["run", "python", "-m", "mcp_pal.fixtures.structured_cli"]'
+# Launch the direct ACP fixture agent command.
+acp-fixture-agent:
+    uv run --project sdk python -m m3.fixtures.acp_agent --target uv --target-args-json '["run", "python", "-m", "m3.fixtures.structured_cli"]'
 
-# Run the deterministic bridge demonstration without network access.
-bridge-demo:
-    uv run --project sdk mcp-pal-harness probe sdk/examples/reference-harness.json --kind full --transport stdio
+# Run the deterministic ACP fixture demonstration without network access.
+acp-fixture:
+    uv run --project sdk python -m m3.harness.cli probe sdk/examples/acp-fixture-harness.json --kind full --transport stdio
 
 compile:
     uv run --project sdk python -m compileall -q sdk/src
     uv run --project app python -m compileall -q app/src
-    uv run --project app python -c 'from mcp_pal_app.main import app; print(app.title)'
+    uv run --project app python -c 'from m3_app.main import app; print(app.title)'
     uv run --project cli python -m compileall -q cli/src
-    uv run --project cli python -c 'import mcp_pal_cli; print(mcp_pal_cli.__name__)'
+    uv run --project cli python -c 'import m3_cli; print(m3_cli.__name__)'
 
 check: lint compile
 

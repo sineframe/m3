@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 def main() -> int:
-    marker = os.environ.get("MCP_PAL_E2E_PID_FILE")
+    marker = os.environ.get("M3_E2E_PID_FILE")
     if not marker:
         return 2
     Path(marker).write_text(str(os.getpid()), encoding="utf-8")

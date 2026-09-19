@@ -11,12 +11,12 @@ trace.
 
 Run Codex with::
 
-    MCP_PAL_RUN_LIVE_CODEX=1 MCP_PAL_LIVE_CODEX_MODEL=gpt-5.6-sol \
+    M3_RUN_LIVE_CODEX=1 M3_LIVE_CODEX_MODEL=gpt-5.6-sol \
       uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_live_codex_pi.py -k codex
 
 Run Pi with::
 
-    MCP_PAL_RUN_LIVE_PI=1 MCP_PAL_LIVE_PI_MODEL=gpt-5.6-sol \
+    M3_RUN_LIVE_PI=1 M3_LIVE_PI_MODEL=gpt-5.6-sol \
       uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_live_codex_pi.py -k pi
 
 Both commands require the installed native executable and an explicit
@@ -33,8 +33,8 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import (
+from m3 import MCPTestKit, expect
+from m3.types import (
     HTTPServer,
     TransportKind,
     TrustLevel,
@@ -87,10 +87,10 @@ def _codex_route() -> tuple[str, str]:
 
     if os.environ.get("OPENAI_API_KEY"):
         credential = "OPENAI_API_KEY"
-        model_name = "MCP_PAL_LIVE_CODEX_MODEL"
+        model_name = "M3_LIVE_CODEX_MODEL"
     else:
         pytest.skip("set OPENAI_API_KEY explicitly for live Codex")
-    model = os.environ.get(model_name) or os.environ.get("MCP_PAL_LIVE_CODEX_MODEL")
+    model = os.environ.get(model_name) or os.environ.get("M3_LIVE_CODEX_MODEL")
     if not model:
         pytest.skip(f"{model_name} is not available for the selected Codex route")
     return credential, model
@@ -100,16 +100,16 @@ def _pi_route() -> tuple[str, str, str]:
     """Return Pi's provider, credential target, and matching model."""
 
     generic_route = (
-        os.environ.get("MCP_PAL_LIVE_PI_PROVIDER"),
-        os.environ.get("MCP_PAL_LIVE_PI_CREDENTIAL_ENV"),
-        os.environ.get("MCP_PAL_LIVE_PI_MODEL"),
+        os.environ.get("M3_LIVE_PI_PROVIDER"),
+        os.environ.get("M3_LIVE_PI_CREDENTIAL_ENV"),
+        os.environ.get("M3_LIVE_PI_MODEL"),
     )
     if any(generic_route):
         provider, credential, model = generic_route
         if not provider or not credential or not model:
             pytest.skip(
-                "set MCP_PAL_LIVE_PI_PROVIDER, MCP_PAL_LIVE_PI_CREDENTIAL_ENV, "
-                "and MCP_PAL_LIVE_PI_MODEL together"
+                "set M3_LIVE_PI_PROVIDER, M3_LIVE_PI_CREDENTIAL_ENV, "
+                "and M3_LIVE_PI_MODEL together"
             )
         if not os.environ.get(credential):
             pytest.skip(f"{credential} is not available for the selected Pi route")
@@ -117,17 +117,17 @@ def _pi_route() -> tuple[str, str, str]:
     if os.environ.get("OPENAI_API_KEY"):
         provider = "openai"
         credential = "OPENAI_API_KEY"
-        model_name = "MCP_PAL_LIVE_PI_MODEL"
+        model_name = "M3_LIVE_PI_MODEL"
     elif os.environ.get("PI_CODING_AGENT_DIR"):
         provider = "openai-codex"
         credential = "PI_CODING_AGENT_DIR"
-        model_name = "MCP_PAL_LIVE_PI_CODEX_MODEL"
+        model_name = "M3_LIVE_PI_CODEX_MODEL"
     else:
         pytest.skip(
             "set the generic Pi route, OPENAI_API_KEY, or PI_CODING_AGENT_DIR "
             "explicitly for live Pi"
         )
-    model = os.environ.get(model_name) or os.environ.get("MCP_PAL_LIVE_PI_MODEL")
+    model = os.environ.get(model_name) or os.environ.get("M3_LIVE_PI_MODEL")
     if not model:
         pytest.skip(f"{model_name} is not available for the selected Pi route")
     return provider, credential, model
@@ -153,11 +153,11 @@ def test_live_native_selections_are_side_effect_free_and_explicit_about_credenti
 
 
 @pytest.mark.skipif(
-    os.environ.get("MCP_PAL_RUN_LIVE_CODEX") != "1",
-    reason="set MCP_PAL_RUN_LIVE_CODEX=1 to call Codex",
+    os.environ.get("M3_RUN_LIVE_CODEX") != "1",
+    reason="set M3_RUN_LIVE_CODEX=1 to call Codex",
 )
 def test_live_codex_calls_deepwiki_and_records_trace() -> None:
-    executable = _executable("codex", "MCP_PAL_CODEX_EXECUTABLE")
+    executable = _executable("codex", "M3_CODEX_EXECUTABLE")
     credential, model = _codex_route()
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
         with kit.agents([_codex_selection(executable, model, credential)])[0].session(
@@ -215,11 +215,11 @@ def test_live_codex_calls_deepwiki_and_records_trace() -> None:
 
 
 @pytest.mark.skipif(
-    os.environ.get("MCP_PAL_RUN_LIVE_PI") != "1",
-    reason="set MCP_PAL_RUN_LIVE_PI=1 to call Pi",
+    os.environ.get("M3_RUN_LIVE_PI") != "1",
+    reason="set M3_RUN_LIVE_PI=1 to call Pi",
 )
 def test_live_pi_calls_deepwiki_and_records_trace() -> None:
-    executable = _executable("pi", "MCP_PAL_PI_EXECUTABLE")
+    executable = _executable("pi", "M3_PI_EXECUTABLE")
     provider, credential, model = _pi_route()
     with MCPTestKit(env={}, cwd=str(_REPOSITORY_ROOT)) as kit:
         with kit.agents([_pi_selection(executable, model, provider, credential)])[

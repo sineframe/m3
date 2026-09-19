@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import Config, MCPTestKit
-from mcp_pal._exports import PUBLIC_EXPORTS
-from mcp_pal.async_api import AsyncMCPTestKit, AsyncProbes
-from mcp_pal.errors import KitClosed, UnsupportedFeature
-from mcp_pal.services.probes import Probes
-from mcp_pal.sync_api import ProbeKind, ProbeRequest
-from mcp_pal.types import CapabilityStatus
+from m3 import Config, MCPTestKit
+from m3._exports import PUBLIC_EXPORTS
+from m3.async_api import AsyncMCPTestKit, AsyncProbes
+from m3.errors import KitClosed, UnsupportedFeature
+from m3.services.probes import Probes
+from m3.sync_api import ProbeKind, ProbeRequest
+from m3.types import CapabilityStatus
 
 
 def test_sync_kit_resolves_config_and_baseline_without_harness_probes(
@@ -24,7 +24,7 @@ def test_sync_kit_resolves_config_and_baseline_without_harness_probes(
 ) -> None:
     kit = MCPTestKit(
         {"artifact_policy": "always"},
-        env={"MCP_PAL_TELEMETRY_ENABLED": "true"},
+        env={"M3_TELEMETRY_ENABLED": "true"},
         cwd=tmp_path,
     )
 
@@ -42,7 +42,7 @@ def test_sync_kit_resolves_config_and_baseline_without_harness_probes(
 
 
 def test_sync_kit_nonempty_capability_requests_are_exactly_scoped() -> None:
-    kit = MCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
+    kit = MCPTestKit(env={}, cwd=Path("/tmp/m3-no-project"))
 
     report = kit.capabilities([ProbeRequest(ProbeKind.STORAGE, "memory")])
 
@@ -54,7 +54,7 @@ def test_sync_kit_nonempty_capability_requests_are_exactly_scoped() -> None:
 
 
 def test_sync_kit_lifecycle_and_unsupported_operations_are_explicit() -> None:
-    kit = MCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
+    kit = MCPTestKit(env={}, cwd=Path("/tmp/m3-no-project"))
     for operation in (
         lambda: kit.run(None),
         lambda: kit.submit(None),
@@ -82,7 +82,7 @@ def test_sync_kit_lifecycle_and_unsupported_operations_are_explicit() -> None:
 
 
 def test_sync_probe_namespace_is_the_sync_service_and_checks_lifecycle() -> None:
-    kit = MCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
+    kit = MCPTestKit(env={}, cwd=Path("/tmp/m3-no-project"))
     assert isinstance(kit.probes, Probes)
     assert not inspect.iscoroutinefunction(kit.probes.probe_storage)
     kit.close()
@@ -109,15 +109,15 @@ def test_async_probe_namespace_is_async_only_and_matches_sync_surface() -> None:
         assert inspect.iscoroutinefunction(getattr(AsyncProbes, method_name))
         assert not hasattr(AsyncProbes, f"sync_{method_name}")
 
-    kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
+    kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/m3-no-project"))
     assert isinstance(kit.probes, AsyncProbes)
-    assert "AsyncProbes" in PUBLIC_EXPORTS["mcp_pal.async_api"]
-    assert "Probes" not in PUBLIC_EXPORTS["mcp_pal.async_api"]
+    assert "AsyncProbes" in PUBLIC_EXPORTS["m3.async_api"]
+    assert "Probes" not in PUBLIC_EXPORTS["m3.async_api"]
 
 
 def test_async_closed_namespace_raises_stable_error() -> None:
     async def scenario() -> None:
-        kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
+        kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/m3-no-project"))
         await kit.aclose()
         await kit.aclose()
         with pytest.raises(KitClosed) as caught:
@@ -131,7 +131,7 @@ def test_async_closed_namespace_raises_stable_error() -> None:
 
 def test_async_direct_probe_offloads_without_blocking_event_loop() -> None:
     async def scenario() -> None:
-        kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
+        kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/m3-no-project"))
         ticked = False
 
         async def ticker() -> None:
@@ -154,10 +154,8 @@ def test_async_direct_probe_offloads_without_blocking_event_loop() -> None:
 
 def test_async_kit_matches_sync_baseline_and_closes_idempotently() -> None:
     async def scenario() -> None:
-        sync_report = MCPTestKit(
-            env={}, cwd=Path("/tmp/mcp-pal-no-project")
-        ).capabilities()
-        kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
+        sync_report = MCPTestKit(env={}, cwd=Path("/tmp/m3-no-project")).capabilities()
+        kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/m3-no-project"))
         async with kit as entered:
             report = await entered.capabilities()
             assert [x.capability.name for x in report.results] == [
@@ -174,7 +172,7 @@ def test_async_kit_matches_sync_baseline_and_closes_idempotently() -> None:
 
 def test_async_capabilities_offload_blocking_probe_work() -> None:
     async def scenario() -> None:
-        kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
+        kit = AsyncMCPTestKit(env={}, cwd=Path("/tmp/m3-no-project"))
         original = kit.probes._service.probe_requested
 
         def slow(requests):

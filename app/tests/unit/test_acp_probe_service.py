@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.services.acp_probes import (
+from m3.services.acp_probes import (
     ACPProbeDimension,
     ACPProbeKind,
     ACPProbeRequest,
@@ -14,9 +14,9 @@ from mcp_pal.services.acp_probes import (
     ACPProbeStatus,
     JsonValue,
 )
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal_app.services.acp_probe_service import ACPProbes
+from m3.storage import SQLiteExecutionStore
+from m3.trace.redaction import RedactionConfig
+from m3_app.services.acp_probe_service import ACPProbes
 
 
 def _service(
@@ -48,7 +48,7 @@ def test_real_shaped_protocol_output_is_projected_into_evidence(
         }
 
     monkeypatch.setattr(
-        "mcp_pal_app.services.acp_probe_service.protocol_probe", raw_protocol
+        "m3_app.services.acp_probe_service.protocol_probe", raw_protocol
     )
     store = SQLiteExecutionStore(tmp_path / "acp.sqlite")
     profile = store.create_harness_profile(
@@ -98,7 +98,7 @@ def test_protocol_wire_frame_fallback_recovers_snake_case_metadata(
         }
 
     monkeypatch.setattr(
-        "mcp_pal_app.services.acp_probe_service.protocol_probe", raw_protocol
+        "m3_app.services.acp_probe_service.protocol_probe", raw_protocol
     )
     store = SQLiteExecutionStore(tmp_path / "wire-fallback.sqlite")
     profile = store.create_harness_profile(
@@ -143,7 +143,7 @@ def test_oversized_protocol_frames_keep_typed_modes_options_and_readiness(
         }
 
     monkeypatch.setattr(
-        "mcp_pal_app.services.acp_probe_service.protocol_probe", raw_protocol
+        "m3_app.services.acp_probe_service.protocol_probe", raw_protocol
     )
     store = SQLiteExecutionStore(tmp_path / "oversized.sqlite")
     profile = store.create_harness_profile(
@@ -164,8 +164,8 @@ def test_oversized_protocol_frames_keep_typed_modes_options_and_readiness(
     reopened = SQLiteExecutionStore(tmp_path / "oversized.sqlite")
     persisted = reopened.get_acp_probe(result.id)
     assert persisted is not None and persisted.agent_modes[0].id == "safe"
-    from mcp_pal_app.services.readiness_service import ReadinessService
-    from mcp_pal_app.settings import Settings
+    from m3_app.services.readiness_service import ReadinessService
+    from m3_app.settings import Settings
 
     readiness = ReadinessService(
         Settings(
@@ -243,9 +243,9 @@ def test_manifest_dispatch_preserves_protocol_deadline_and_passes_full_timeout(
         return {"status": "verified"}
 
     monkeypatch.setattr(
-        "mcp_pal_app.services.acp_probe_service.protocol_probe", fake_protocol
+        "m3_app.services.acp_probe_service.protocol_probe", fake_protocol
     )
-    monkeypatch.setattr("mcp_pal_app.services.acp_probe_service.full_probe", fake_full)
+    monkeypatch.setattr("m3_app.services.acp_probe_service.full_probe", fake_full)
     store = SQLiteExecutionStore(tmp_path / "dispatch.sqlite")
     profile = store.create_harness_profile(
         "agent", {"manifest": {"command": "echo"}, "trusted_unsandboxed": True}
@@ -413,8 +413,8 @@ def test_readiness_projects_identity_match_mismatch_and_missing(tmp_path: Path) 
             }
         )
     )
-    from mcp_pal_app.services.readiness_service import ReadinessService
-    from mcp_pal_app.settings import Settings
+    from m3_app.services.readiness_service import ReadinessService
+    from m3_app.settings import Settings
 
     settings = Settings(
         database_path=str(tmp_path / "unused.sqlite"),
@@ -460,8 +460,8 @@ def test_readiness_keeps_latest_verified_dimensions_independent(tmp_path: Path) 
     store, _probe_service, profile_id, revision_id = _service(
         tmp_path, lambda _request: {"status": "verified"}
     )
-    from mcp_pal_app.services.readiness_service import ReadinessService
-    from mcp_pal_app.settings import Settings
+    from m3_app.services.readiness_service import ReadinessService
+    from m3_app.settings import Settings
 
     settings = Settings(
         database_path=str(tmp_path / "unused.sqlite"),
@@ -585,8 +585,8 @@ def test_readiness_reports_failed_latest_full_verification(tmp_path: Path) -> No
                 }
             )
         )
-    from mcp_pal_app.services.readiness_service import ReadinessService
-    from mcp_pal_app.settings import Settings
+    from m3_app.services.readiness_service import ReadinessService
+    from m3_app.settings import Settings
 
     readiness = ReadinessService(
         Settings(
@@ -662,8 +662,8 @@ def test_readiness_requires_verified_protocol_for_full_verification(
                 }
             )
         )
-    from mcp_pal_app.services.readiness_service import ReadinessService
-    from mcp_pal_app.settings import Settings
+    from m3_app.services.readiness_service import ReadinessService
+    from m3_app.settings import Settings
 
     readiness = ReadinessService(
         Settings(
@@ -841,7 +841,7 @@ def test_runtime_owns_probe_service_and_store_path_redacts(tmp_path: Path) -> No
         )
     )
     assert "probe-secret" not in repr(result.model_dump(mode="json"))
-    from mcp_pal_app.services.app_service import AppRuntimeService
+    from m3_app.services.app_service import AppRuntimeService
 
     runtime = AppRuntimeService(
         store=store,
@@ -863,7 +863,7 @@ def test_acp_service_has_no_legacy_probe_dependency() -> None:
     source = (
         Path(__file__).parents[2]
         / "src"
-        / "mcp_pal_app"
+        / "m3_app"
         / "services"
         / "acp_probe_service.py"
     )

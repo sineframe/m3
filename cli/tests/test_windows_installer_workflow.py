@@ -28,13 +28,13 @@ def test_installer_parser_runs_in_consolidated_quality_job() -> None:
     assert "cli/pyproject.toml" in job
     assert "\\r?$" in job
     assert "scripts/install.ps1.in" in job
-    assert "@MCP_PAL_VERSION@" in job
+    assert "@M3_VERSION@" in job
 
 
 def test_installer_parser_uses_native_powershell_parser_after_rendering() -> None:
     job = _quality_job()
 
-    render_position = job.index("$template.Replace('@MCP_PAL_VERSION@', $version)")
+    render_position = job.index("$template.Replace('@M3_VERSION@', $version)")
     parser_position = job.index(
         "[System.Management.Automation.Language.Parser]::ParseFile"
     )

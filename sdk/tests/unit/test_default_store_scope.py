@@ -3,16 +3,16 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from mcp_pal import MCPTestKit
-from mcp_pal._default_store import (
+from m3 import MCPTestKit
+from m3._default_store import (
     install_default_run_id_factory,
     install_default_store_factory,
     make_default_store,
     restore_default_run_id_factory,
     restore_default_store_factory,
 )
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.storage import SQLiteExecutionStore
+from m3.async_api import AsyncMCPTestKit
+from m3.storage import SQLiteExecutionStore
 
 
 def test_nested_default_store_scopes_restore_and_stale_tokens_are_safe() -> None:
@@ -108,7 +108,7 @@ def test_default_factory_shares_one_run_id_across_kits(tmp_path: Path) -> None:
     store_token = install_default_store_factory(
         lambda: SQLiteExecutionStore((tmp_path / "shared.sqlite").resolve())
     )
-    from mcp_pal.types import RunId
+    from m3.types import RunId
 
     run_token = install_default_run_id_factory(lambda: RunId("pytest-shared"))
     try:

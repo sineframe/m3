@@ -7,9 +7,9 @@ from pathlib import Path
 
 from _local_client import TestClient
 
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal_app.api.app import create_app
-from mcp_pal_app.settings import Settings
+from m3.storage import SQLiteExecutionStore
+from m3_app.api.app import create_app
+from m3_app.settings import Settings
 
 
 def _run_agent_test(
@@ -31,8 +31,8 @@ def _run_agent_test(
     )
     source = f'''\
 import pytest, sys
-from mcp_pal import EvaluationDecision, EvaluationStatus, StdioServer, expect
-pytestmark = pytest.mark.mcp_pal(agents=[{{"harness": "acp", "models": ["fixture-a", "fixture-b"], "manifest": {{"command": sys.executable, "args": [r"{agent}"], "protocol": "acp", "protocol_version": 1}}}}], trials=2)
+from m3 import EvaluationDecision, EvaluationStatus, StdioServer, expect
+pytestmark = pytest.mark.m3(agents=[{{"harness": "acp", "models": ["fixture-a", "fixture-b"], "manifest": {{"command": sys.executable, "args": [r"{agent}"], "protocol": "acp", "protocol_version": 1}}}}], trials=2)
 def test_selected(agent):
     """Checks that the agent selects the shipping quote tool."""
     result = agent.run("Get a local shipping quote.", server=StdioServer(name="example-mcp", command=sys.executable, args=[r"{server}"]))
@@ -52,7 +52,7 @@ def test_selected(agent):
     command = [
         sys.executable,
         "-m",
-        "mcp_pal_cli",
+        "m3_cli",
         "test",
         "--python",
         sys.executable,
@@ -64,7 +64,7 @@ def test_selected(agent):
         "-q",
     ]
     if baseline:
-        command.extend(("--mcp-pal-baseline", baseline))
+        command.extend(("--baseline", baseline))
     command.append(str(test_file))
     return subprocess.run(
         command,

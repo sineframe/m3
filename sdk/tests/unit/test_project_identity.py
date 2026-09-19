@@ -4,9 +4,9 @@ import asyncio
 import sys
 from pathlib import Path
 
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.types import (
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from m3.types import (
     CallTool,
     DirectSpec,
     EventKind,
@@ -90,14 +90,14 @@ def test_kit_run_persists_project_column_and_filter(tmp_path: Path) -> None:
         suite_name="orders",
         servers=(
             ServerBinding(
-                server=StdioServer(name="missing", command="mcp-pal-no-such-server"),
+                server=StdioServer(name="missing", command="m3-no-such-server"),
                 alias="missing",
             ),
         ),
         operation=CallTool(server="missing", name="echo", arguments={}),
         timeout_seconds=0.1,
     )
-    from mcp_pal import MCPTestKit
+    from m3 import MCPTestKit
 
     with MCPTestKit(store=store) as kit:
         result = kit.run(spec)
@@ -127,14 +127,14 @@ def test_kit_run_registers_project_on_fresh_store(tmp_path: Path) -> None:
         project_id=PROJECT,
         servers=(
             ServerBinding(
-                server=StdioServer(name="missing", command="mcp-pal-no-such-server"),
+                server=StdioServer(name="missing", command="m3-no-such-server"),
                 alias="missing",
             ),
         ),
         operation=CallTool(server="missing", name="echo", arguments={}),
         timeout_seconds=0.1,
     )
-    from mcp_pal import MCPTestKit
+    from m3 import MCPTestKit
 
     with MCPTestKit(store=store) as kit:
         result = kit.run(spec)
@@ -149,8 +149,8 @@ def test_kit_run_registers_project_on_fresh_store(tmp_path: Path) -> None:
 def test_sync_and_async_kits_preserve_existing_project_name(tmp_path: Path) -> None:
     store = SQLiteExecutionStore(tmp_path / "existing-project.sqlite")
     store.ensure_project(PROJECT.root, "Orders")
-    from mcp_pal import MCPTestKit
-    from mcp_pal.async_api import AsyncMCPTestKit
+    from m3 import MCPTestKit
+    from m3.async_api import AsyncMCPTestKit
 
     with MCPTestKit(store=store, project_id=PROJECT):
         assert store.get_project(PROJECT.root) == (PROJECT.root, "Orders")
@@ -166,14 +166,14 @@ def test_sync_and_async_kits_preserve_existing_project_name(tmp_path: Path) -> N
 def test_kit_direct_trace_retains_project(tmp_path: Path) -> None:
     store = SQLiteExecutionStore(tmp_path / "direct-project.sqlite")
     store.ensure_project(PROJECT.root, "Orders")
-    from mcp_pal import MCPTestKit
+    from m3 import MCPTestKit
 
     with MCPTestKit(store=store, project_id=PROJECT) as kit:
         client = kit.direct(
             StdioServer(
                 name="echo",
                 command=sys.executable,
-                args=("-m", "mcp_pal.fixtures.echo_server"),
+                args=("-m", "m3.fixtures.echo_server"),
             )
         )
         with client:

@@ -70,7 +70,7 @@ def _report() -> dict[str, Any]:
 def test_parse_ui_links_preserves_the_complete_encoded_run_id() -> None:
     output = "\n".join(
         (
-            "MCP-Pal UI: http://127.0.0.1:8123/history",
+            "M3 UI: http://127.0.0.1:8123/history",
             "Run: http://127.0.0.1:8123/playground/run/run%20id%2Fpart",
         )
     )
@@ -90,17 +90,17 @@ def test_execution_report_url_quotes_run_id_path_syntax() -> None:
     "output, message",
     [
         (
-            "MCP-Pal UI: http://127.0.0.1:8124/history\n"
+            "M3 UI: http://127.0.0.1:8124/history\n"
             "Run: http://127.0.0.1:8124/playground/run/run-1",
             "history link",
         ),
         (
-            "MCP-Pal UI: http://127.0.0.1:8123/history\n"
+            "M3 UI: http://127.0.0.1:8123/history\n"
             "Run: http://127.0.0.1:8124/playground/run/run-1",
             "selected origin",
         ),
         (
-            "MCP-Pal UI: http://127.0.0.1:8123/history\n"
+            "M3 UI: http://127.0.0.1:8123/history\n"
             "Run: http://127.0.0.1:8123/playground/run/run-1?x=1",
             "selected origin",
         ),
@@ -171,6 +171,18 @@ def test_normal_python_loop_model_argument_is_explicit() -> None:
         _LOOP.selected_model(["--model", "opencode/test-model"])
         == "opencode/test-model"
     )
+    assert (
+        _LOOP._options(
+            ["--model", "opencode/test-model", "--execution-timeout", "300"]
+        ).execution_timeout
+        == 300
+    )
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "inf", "nan"])
+def test_normal_python_loop_rejects_invalid_execution_timeout(value: str) -> None:
+    with pytest.raises(SystemExit):
+        _LOOP._options(["--execution-timeout", value])
 
 
 def test_live_loop_diagnostics_use_only_event_identity_fields() -> None:
@@ -254,17 +266,18 @@ def test_live_loop_timeout_cancels_and_reports_safe_final_trace() -> None:
 
 def test_cli_command_runs_only_the_existing_live_target() -> None:
     command = _GATE.cli_test_command(
-        Path("/tmp/mcp-pal"),
+        Path("/tmp/m3"),
         Path("/tmp/project/.venv/bin/python"),
         Path("/tmp/project/runs.sqlite"),
         8123,
         Path("/tmp/project/.env"),
     )
     assert command[-2:] == ["-q", _GATE.TARGET]
-    assert command[:2] == ["/tmp/mcp-pal", "test"]
+    assert command[:2] == ["/tmp/m3", "test"]
     assert "--api-port" not in command
     assert "--ui-port" not in command
     assert "--ui-dir" not in command
+    assert command[command.index("--execution-timeout") + 1] == "300.0"
 
 
 @pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
@@ -273,9 +286,14 @@ def test_live_gate_rejects_invalid_process_timeout(value: float) -> None:
         _GATE.check(process_timeout=value)
 
 
+def test_live_gate_requires_process_deadline_above_execution_deadline() -> None:
+    with pytest.raises(_GATE.GateFailure, match="must exceed"):
+        _GATE.check(process_timeout=300, execution_timeout=300)
+
+
 def test_cli_command_can_select_only_opencode() -> None:
     command = _GATE.cli_test_command(
-        Path("/tmp/mcp-pal"),
+        Path("/tmp/m3"),
         Path("/tmp/python"),
         Path("/tmp/runs.sqlite"),
         8123,
@@ -289,7 +307,7 @@ def test_cli_command_can_select_only_opencode() -> None:
 
 def test_cli_command_uses_selected_models_for_both_providers() -> None:
     command = _GATE.cli_test_command(
-        Path("/tmp/mcp-pal"),
+        Path("/tmp/m3"),
         Path("/tmp/python"),
         Path("/tmp/runs.sqlite"),
         8123,
@@ -301,10 +319,22 @@ def test_cli_command_uses_selected_models_for_both_providers() -> None:
     assert "codex=gpt-current" in command
 
 
+def test_cli_command_passes_selected_execution_timeout() -> None:
+    command = _GATE.cli_test_command(
+        Path("/tmp/m3"),
+        Path("/tmp/python"),
+        Path("/tmp/runs.sqlite"),
+        8123,
+        Path("/tmp/project/.env"),
+        execution_timeout=420,
+    )
+    assert command[command.index("--execution-timeout") + 1] == "420"
+
+
 def test_cli_command_rejects_unknown_live_provider() -> None:
     with pytest.raises(ValueError, match="unsupported live provider"):
         _GATE.cli_test_command(
-            Path("/tmp/mcp-pal"),
+            Path("/tmp/m3"),
             Path("/tmp/python"),
             Path("/tmp/runs.sqlite"),
             8123,
@@ -316,7 +346,7 @@ def test_cli_command_rejects_unknown_live_provider() -> None:
 def test_parse_ui_links_accepts_multiple_distinct_executions() -> None:
     output = "\n".join(
         (
-            "MCP-Pal UI: http://127.0.0.1:8123/history",
+            "M3 UI: http://127.0.0.1:8123/history",
             "Run: http://127.0.0.1:8123/playground/run/opencode-run",
             "Run: http://127.0.0.1:8123/playground/run/codex-run",
         )
@@ -377,8 +407,8 @@ def test_assert_aggregate_requires_each_selected_provider_configuration() -> Non
 def _persistence_fixture(path: Path, *, include_events: bool = True) -> None:
     from datetime import datetime, timezone
 
-    from mcp_pal.storage import SQLiteExecutionStore
-    from mcp_pal.types import (
+    from m3.storage import SQLiteExecutionStore
+    from m3.types import (
         DirectSpec,
         ExecutionId,
         ExecutionOutcome,

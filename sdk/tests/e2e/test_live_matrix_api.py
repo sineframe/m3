@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import StdioServer
+from m3 import MCPTestKit, expect
+from m3.types import StdioServer
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.process_lifecycle]
 
@@ -29,8 +29,8 @@ def _server() -> StdioServer:
 
 
 @pytest.mark.skipif(
-    os.environ.get("MCP_PAL_RUN_LIVE_OPENCODE") != "1",
-    reason="set MCP_PAL_RUN_LIVE_OPENCODE=1 to call OpenCode",
+    os.environ.get("M3_RUN_LIVE_OPENCODE") != "1",
+    reason="set M3_RUN_LIVE_OPENCODE=1 to call OpenCode",
 )
 def test_live_opencode_matrix_case_uses_real_harness() -> None:
     executable = shutil.which("opencode")
@@ -38,7 +38,7 @@ def test_live_opencode_matrix_case_uses_real_harness() -> None:
         pytest.skip("OpenCode is not installed")
     if not os.environ.get("OPENCODE_API_KEY"):
         pytest.skip("OPENCODE_API_KEY is not available")
-    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
+    model = os.environ.get("M3_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
     server = _server()
     selection = {
         "harness": "opencode",
@@ -57,8 +57,8 @@ def test_live_opencode_matrix_case_uses_real_harness() -> None:
 
 
 @pytest.mark.skipif(
-    os.environ.get("MCP_PAL_RUN_LIVE_CLAUDE") != "1",
-    reason="set MCP_PAL_RUN_LIVE_CLAUDE=1 to call Claude Code",
+    os.environ.get("M3_RUN_LIVE_CLAUDE") != "1",
+    reason="set M3_RUN_LIVE_CLAUDE=1 to call Claude Code",
 )
 def test_live_claude_matrix_case_uses_real_harness() -> None:
     executable = shutil.which("claude")
@@ -69,7 +69,7 @@ def test_live_claude_matrix_case_uses_real_harness() -> None:
     server = _server()
     selection = {
         "harness": "claude",
-        "models": [os.environ.get("MCP_PAL_LIVE_CLAUDE_MODEL", "sonnet")],
+        "models": [os.environ.get("M3_LIVE_CLAUDE_MODEL", "sonnet")],
         "executable": executable,
         "credential_env": {"ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY"},
     }

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal_app.settings import Settings
+from m3_app.settings import Settings
 
 
 def test_application_settings_no_longer_loads_cwd_dotenv(
@@ -18,7 +18,7 @@ def test_application_settings_no_longer_loads_cwd_dotenv(
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DATABASE_PATH", raising=False)
 
-    assert Settings().database_path == "./mcp_pal.db"
+    assert Settings().database_path == "./m3.db"
 
 
 def test_application_credentials_are_process_local_not_serialized() -> None:

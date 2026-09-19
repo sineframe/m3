@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.events import EventFactory
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.services.persistent import LeaseLost, SQLiteStoreWorker
-from mcp_pal.storage import SQLiteExecutionStore, StorageConflict
-from mcp_pal.types import EventKind, ExecutionId, ExecutionOutcome, ExecutionState
+from m3.events import EventFactory
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.services.persistent import LeaseLost, SQLiteStoreWorker
+from m3.storage import SQLiteExecutionStore, StorageConflict
+from m3.types import EventKind, ExecutionId, ExecutionOutcome, ExecutionState
 
 
 def _store(tmp_path: Path) -> SQLiteExecutionStore:

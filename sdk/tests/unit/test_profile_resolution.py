@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import (
+from m3 import (
     HarnessProfileRef,
     HTTPServer,
     RevisionSelection,
@@ -11,13 +11,13 @@ from mcp_pal import (
     SSEServer,
     StdioServer,
 )
-from mcp_pal.services.profiles import (
+from m3.services.profiles import (
     ProfileResolutionError,
     resolve_harness_reference,
     resolve_server_reference,
 )
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.trace.redaction import RedactionConfig
+from m3.storage import SQLiteExecutionStore
+from m3.trace.redaction import RedactionConfig
 
 
 def _store(tmp_path: Path) -> SQLiteExecutionStore:

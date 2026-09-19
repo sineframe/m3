@@ -1,4 +1,4 @@
-"""Prepare a synchronized MCP Pal release.
+"""Prepare a synchronized M3 release.
 
 The command is a manual backup for synchronizing source metadata. Normal
 releases derive their version from the pushed tag inside GitHub Actions. This
@@ -8,7 +8,7 @@ create a tag or publish anything.
 
 Typical usage::
 
-    uv run --no-project --with packaging python scripts/prepare_release.py 0.2.0a4
+    uv run --no-project --with packaging python scripts/prepare_release.py 0.2.0a13
 
 Use ``--dry-run`` to inspect the changes without writing files, or ``--check``
 to validate an already-prepared release and its lockfile.
@@ -36,13 +36,13 @@ except (
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_FILES = {
-    "mcp-pal": Path("sdk/pyproject.toml"),
-    "mcp-pal-app": Path("app/pyproject.toml"),
-    "mcp-pal-cli": Path("cli/pyproject.toml"),
+    "m3": Path("sdk/pyproject.toml"),
+    "m3-app": Path("app/pyproject.toml"),
+    "m3-cli": Path("cli/pyproject.toml"),
 }
 CLI_INTERNAL_DEPENDENCIES = {
-    "mcp-pal": re.compile(r'(?m)^(\s*"mcp-pal\[storage\]==)([^"\r\n]+)("\s*,?\s*)$'),
-    "mcp-pal-app": re.compile(r'(?m)^(\s*"mcp-pal-app==)([^"\r\n]+)("\s*,?\s*)$'),
+    "m3": re.compile(r'(?m)^(\s*"m3\[storage\]==)([^"\r\n]+)("\s*,?\s*)$'),
+    "m3-app": re.compile(r'(?m)^(\s*"m3-app==)([^"\r\n]+)("\s*,?\s*)$'),
 }
 VERSION_PATTERN = re.compile(r'(?m)^(\s*version\s*=\s*["\'])([^"\']+)(["\']\s*)$')
 
@@ -110,8 +110,8 @@ def read_state(root: Path = ROOT) -> ReleaseState:
             VERSION_PATTERN, text, "project version", path
         ).group(2)
 
-    cli_path = root / PROJECT_FILES["mcp-pal-cli"]
-    cli_text = contents["mcp-pal-cli"]
+    cli_path = root / PROJECT_FILES["m3-cli"]
+    cli_text = contents["m3-cli"]
     dependencies: dict[str, str] = {}
     for name, pattern in CLI_INTERNAL_DEPENDENCIES.items():
         dependencies[name] = _single_match(
@@ -145,7 +145,7 @@ def _updated_contents(root: Path, target: str) -> dict[Path, str]:
         match = _single_match(VERSION_PATTERN, text, "project version", path)
         updated[path] = text[: match.start(2)] + target + text[match.end(2) :]
 
-    cli_path = root / PROJECT_FILES["mcp-pal-cli"]
+    cli_path = root / PROJECT_FILES["m3-cli"]
     cli_text = updated[cli_path]
     for _name, pattern in CLI_INTERNAL_DEPENDENCIES.items():
         match = _single_match(
@@ -230,7 +230,7 @@ def prepare(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("version", help="new PEP 440 version, for example 0.2.0a4")
+    parser.add_argument("version", help="new PEP 440 version, for example 0.2.0a13")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--dry-run", action="store_true", help="show files that would change"

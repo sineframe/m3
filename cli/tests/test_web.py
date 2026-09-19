@@ -11,8 +11,8 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
 
 from fastapi.testclient import TestClient
 
-from mcp_pal_cli import web
-from mcp_pal_cli.web import create_web_app, ui_directory
+from m3_cli import web
+from m3_cli.web import create_web_app, ui_directory
 
 _FIXTURE_UI = Path(__file__).parent / "fixtures" / "ui"
 
@@ -21,7 +21,7 @@ def test_ui_directory_requires_index_and_assets(tmp_path: Path) -> None:
     try:
         ui_directory(tmp_path)
     except ValueError as error:
-        assert str(error) == "bundled MCP Pal UI assets are unavailable"
+        assert str(error) == "bundled M3 UI assets are unavailable"
     else:
         raise AssertionError("missing UI bundle was accepted")
 

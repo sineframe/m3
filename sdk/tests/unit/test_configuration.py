@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from mcp_pal.configuration import Config, ConfigError, ConfigSource, load_config
+from m3.configuration import Config, ConfigError, ConfigSource, load_config
 
 
 def test_defaults_are_frozen_and_value_only() -> None:
-    config = load_config(env={}, cwd=Path("/tmp/mcp-pal-no-project"))
+    config = load_config(env={}, cwd=Path("/tmp/m3-no-project"))
     assert config.artifact_policy == "failed"
     assert config.protocol_revision == "auto"
     assert config.telemetry_enabled is False
@@ -57,14 +57,14 @@ def test_direct_construction_rejects_incomplete_or_untruthful_provenance() -> No
 
 def test_all_four_precedence_levels_and_origins(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.mcp-pal]\nartifact_policy = "always"\nprotocol_revision = "2025-06-18"\ntelemetry_enabled = true\n',
+        '[tool.m3]\nartifact_policy = "always"\nprotocol_revision = "2025-06-18"\ntelemetry_enabled = true\n',
         encoding="utf-8",
     )
     config = load_config(
         {"artifact_policy": "failed"},
         env={
-            "MCP_PAL_ARTIFACT_POLICY": "never",
-            "MCP_PAL_PROTOCOL_REVISION": "2025-03-26",
+            "M3_ARTIFACT_POLICY": "never",
+            "M3_PROTOCOL_REVISION": "2025-03-26",
         },
         cwd=tmp_path,
         telemetry_enabled=False,
@@ -74,15 +74,13 @@ def test_all_four_precedence_levels_and_origins(tmp_path: Path) -> None:
     assert config.protocol_revision == "2025-03-26"
     assert config.telemetry_enabled is False
     assert config.source_for("artifact_policy").source is ConfigSource.EXPLICIT
-    assert (
-        config.source_for("protocol_revision").origin == "env:MCP_PAL_PROTOCOL_REVISION"
-    )
+    assert config.source_for("protocol_revision").origin == "env:M3_PROTOCOL_REVISION"
     assert config.source_for("telemetry_enabled").origin == "argument:telemetry_enabled"
 
 
 def test_project_config_uses_nearest_pyproject_only(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.mcp-pal]\nartifact_policy = "always"\n', encoding="utf-8"
+        '[tool.m3]\nartifact_policy = "always"\n', encoding="utf-8"
     )
     child = tmp_path / "child"
     child.mkdir()
@@ -98,10 +96,10 @@ def test_supplied_environment_isolated_from_ambient_and_dotenv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / ".env").write_text(
-        "MCP_PAL_ARTIFACT_POLICY=always\nMCP_PAL_TELEMETRY_ENABLED=true\n",
+        "M3_ARTIFACT_POLICY=always\nM3_TELEMETRY_ENABLED=true\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("MCP_PAL_ARTIFACT_POLICY", "always")
+    monkeypatch.setenv("M3_ARTIFACT_POLICY", "always")
     config = load_config(env={}, cwd=tmp_path)
     assert config.artifact_policy == "failed"
     assert config.telemetry_enabled is False
@@ -110,11 +108,11 @@ def test_supplied_environment_isolated_from_ambient_and_dotenv(
 def test_stable_environment_names_and_boolean_validation() -> None:
     config = load_config(
         env={
-            "MCP_PAL_ARTIFACT_POLICY": "always",
-            "MCP_PAL_PROTOCOL_REVISION": "auto",
-            "MCP_PAL_TELEMETRY_ENABLED": "true",
+            "M3_ARTIFACT_POLICY": "always",
+            "M3_PROTOCOL_REVISION": "auto",
+            "M3_TELEMETRY_ENABLED": "true",
         },
-        cwd=Path("/tmp/mcp-pal-no-project"),
+        cwd=Path("/tmp/m3-no-project"),
     )
     assert config.artifact_policy == "always"
     assert config.telemetry_enabled is True
@@ -133,7 +131,7 @@ def test_invalid_values_report_field_and_origin_without_value(
     field: str, value: object
 ) -> None:
     with pytest.raises(ConfigError) as caught:
-        load_config({field: value}, env={}, cwd=Path("/tmp/mcp-pal-no-project"))
+        load_config({field: value}, env={}, cwd=Path("/tmp/m3-no-project"))
     message = str(caught.value)
     assert field in message and "argument" in message and str(value) not in message
 
@@ -142,7 +140,7 @@ def test_unknown_project_settings_are_rejected_without_echoing_values(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.mcp-pal]\nunknown_secret_setting = "TOP-SECRET"\n', encoding="utf-8"
+        '[tool.m3]\nunknown_secret_setting = "TOP-SECRET"\n', encoding="utf-8"
     )
     with pytest.raises(ConfigError) as caught:
         load_config(env={}, cwd=tmp_path)
@@ -153,10 +151,10 @@ def test_unknown_project_settings_are_rejected_without_echoing_values(
 def test_unknown_prefixed_environment_variables_are_ignored() -> None:
     config = load_config(
         env={
-            "MCP_PAL_CLAUDE_MODEL": "claude-sonnet-5",
-            "MCP_PAL_TELEMETRY_ENABLED": "true",
+            "M3_CLAUDE_MODEL": "claude-sonnet-5",
+            "M3_TELEMETRY_ENABLED": "true",
         },
-        cwd=Path("/tmp/mcp-pal-no-project"),
+        cwd=Path("/tmp/m3-no-project"),
     )
     assert config.telemetry_enabled is True
 
@@ -169,7 +167,7 @@ def test_configuration_json_round_trip_and_aliases() -> None:
             "telemetry_enabled": True,
         },
         env={},
-        cwd=Path("/tmp/mcp-pal-no-project"),
+        cwd=Path("/tmp/m3-no-project"),
     )
     restored = Config.model_validate(
         json.loads(json.dumps(config.model_dump(mode="json")))

@@ -6,9 +6,9 @@ Use an ordinary marked pytest test; the CLI supplies harness and model:
 
 ```python
 import pytest
-from mcp_pal import expect
+from m3 import expect
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 def test_shipping(agent, shipping_server):
     result = agent.run("Get a local quote", server=shipping_server)
     expect(result).to_have_tool_call("shipping_quote", server=shipping_server.name,
@@ -30,8 +30,8 @@ For the HTTP route, see the [Streamable HTTP guide](http.md).
 ```python
 from collections.abc import Mapping
 
-from mcp_pal import MCPTestKit
-from mcp_pal.types import HTTPServer
+from m3 import MCPTestKit
+from m3.types import HTTPServer
 
 server = HTTPServer(name="deepwiki", url="https://mcp.deepwiki.com/mcp")
 with MCPTestKit(env={}) as kit, kit.direct(server) as client:
@@ -60,13 +60,13 @@ project being tested:
 ```bash
 VERSION=X.Y.Z
 uv add \
-  "mcp-pal[pytest] @ https://github.com/mcppal/mcp-pal/releases/download/v${VERSION}/mcp_pal-${VERSION}-py3-none-any.whl"
+  "m3[pytest] @ https://github.com/sineframe/m3/releases/download/v${VERSION}/m3-${VERSION}-py3-none-any.whl"
 ```
 
 The SDK requires Python 3.10 or newer.
 
 This installs only the project SDK and pytest support. It does **not** install
-the standalone `mcp-pal` command or the bundled UI.
+the standalone `m3` command or the bundled UI.
 
 ## Install the standalone CLI
 
@@ -81,11 +81,11 @@ the SDK version matches the CLI:
 
 ```bash
 cd my-project
-mcp-pal setup
-mcp-pal doctor
+m3 setup
+m3 doctor
 ```
 
-`mcp-pal setup` installs the matching `mcp-pal[pytest,storage]` SDK into the
+`m3 setup` installs the matching `m3[pytest,storage]` SDK into the
 selected project environment. It does not install the CLI there and does not
 edit dependency manifests or lockfiles. This setup step is separate from both
 the machine-level CLI installation and declaring the SDK as a project
@@ -94,7 +94,7 @@ dependency.
 ## Define the server under test
 
 The remainder of this walkthrough uses the deterministic local fixture.
-MCP Pal receives a server definition rather than starting a hidden fixture.
+M3 receives a server definition rather than starting a hidden fixture.
 For a deployed HTTP endpoint, use `HTTPServer` as shown in the
 [Streamable HTTP guide](http.md). For a local subprocess, construct
 a `StdioServer` with its command,
@@ -122,7 +122,7 @@ its finalized trace. `TraceView` is the stable typed API for tools,
 messages, timing, runtime metadata, and terminal outcome:
 
 ```python
-from mcp_pal.types import ExecutionOutcome
+from m3.types import ExecutionOutcome
 
 with MCPTestKit(env={}) as kit, kit.direct(example_server) as client:
     result = client.call_tool("shipping_quote", {"weight_kg": 2, "zone": "local"})
@@ -149,12 +149,12 @@ Exiting the kit provides the outer cleanup boundary and finalizes trace data.
 
 ## Run the test
 
-The separately installed MCP Pal CLI runs the test with pytest in your project
-environment and records MCP Pal executions. From the project root:
+The separately installed M3 CLI runs the test with pytest in your project
+environment and records M3 executions. From the project root:
 
 ```bash
-mcp-pal doctor
-mcp-pal test -- tests/test_shipping.py
+m3 doctor
+m3 test -- tests/test_shipping.py
 ```
 
 Everything after `--` is passed to pytest unchanged, so selectors such as
@@ -162,7 +162,7 @@ Everything after `--` is passed to pytest unchanged, so selectors such as
 separator to open the bundled local viewer after the test run:
 
 ```bash
-mcp-pal test --ui -- tests/test_shipping.py
+m3 test --ui -- tests/test_shipping.py
 ```
 
 The UI shows the recorded runs and keeps the command open until you press
@@ -180,10 +180,10 @@ Use the existing marker across files to name one suite:
 
 ```python
 import pytest
-pytestmark = pytest.mark.mcp_pal(suite_name="catalog")
+pytestmark = pytest.mark.m3(suite_name="catalog")
 ```
 
-Select it with `mcp-pal test --suite catalog -- tests`; combine it
+Select it with `m3 test --suite catalog -- tests`; combine it
 with `--harness`, `--trials`, paths, `-k`, and `-m`. A standalone kit or
 execution specification can set `suite_name="catalog"` directly. An explicit
 specification name overrides the kit default; the effective name must still
@@ -201,20 +201,20 @@ release wheel:
 ```bash
 VERSION=X.Y.Z
 uv add \
-  "mcp-pal[pytest,storage] @ https://github.com/mcppal/mcp-pal/releases/download/v${VERSION}/mcp_pal-${VERSION}-py3-none-any.whl"
+  "m3[pytest,storage] @ https://github.com/sineframe/m3/releases/download/v${VERSION}/m3-${VERSION}-py3-none-any.whl"
 ```
 
-`mcp-pal test` makes a different product-level choice: it always enables the
+`m3 test` makes a different product-level choice: it always enables the
 SDK pytest plugin and supplies a SQLite results database. The default is
-`.mcp-pal/executions.sqlite` below the project root, and `--results-db` selects
+`.m3/executions.sqlite` below the project root, and `--results-db` selects
 another path:
 
 ```bash
-mcp-pal test --results-db /tmp/mcp-pal-runs.sqlite -- tests/test_shipping.py
+m3 test --results-db /tmp/m3-runs.sqlite -- tests/test_shipping.py
 ```
 
 Scripts can opt into saved storage without the standalone CLI by passing
-`SQLiteExecutionStore(".mcp-pal/executions.sqlite")` to `MCPTestKit(store=...)`.
+`SQLiteExecutionStore(".m3/executions.sqlite")` to `MCPTestKit(store=...)`.
 Run a selected agent as shown below and use `result.snapshot.execution_id` to
 reopen its trace. Close the store after the kit.
 
@@ -222,19 +222,19 @@ Alternatively, a direct pytest invocation can install the same plugin and
 default-store flag used by the CLI:
 
 ```bash
-uv run pytest -p mcp_pal.pytest_plugin \
-  --mcp-pal-results-db .mcp-pal/executions.sqlite tests/test_shipping.py
+uv run pytest -p m3.pytest_plugin \
+  --results-db .m3/executions.sqlite tests/test_shipping.py
 ```
 
 SQLite saves SDK execution specifications and snapshots, recorded events
 and traces, sessions and turns, persisted artifacts/raw-evidence references,
 and evaluations explicitly attached to an execution. Use
 `MCPTestKit(store=SQLiteExecutionStore(path))` or pytest's
-`--mcp-pal-results-db PATH` to select it; no-store SDK use remains in memory.
-With the MCP Pal pytest plugin active, pytest item outcomes are persisted in
-internal run records and MCP Pal matcher checks are persisted as execution
+`--results-db PATH` to select it; no-store SDK use remains in memory.
+With the M3 pytest plugin active, pytest item outcomes are persisted in
+internal run records and M3 matcher checks are persisted as execution
 evaluations. Other Python assertion results and printed diagnostics keep their
-normal pytest meaning and are not inferred as MCP Pal evaluations.
+normal pytest meaning and are not inferred as M3 evaluations.
 Use `store.aggregate_evaluations(...)` for matrix/trial trends; do not infer a
 pass from a merely completed execution.
 
@@ -245,7 +245,7 @@ When several servers expose different tools, keep each tool under its owning
 items, each receiving one immutable case:
 
 ```python
-from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
+from m3.matrix import ServerCase, ToolCase, ToolMatrix
 
 matrix = ToolMatrix(servers=(ServerCase(
     name="catalog",
@@ -269,9 +269,9 @@ CLI. Define the server fixture in your project, then request `agent`:
 
 ```python
 import pytest
-from mcp_pal import expect
+from m3 import expect
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 def test_agent_selects_shipping_quote(agent, shipping_server):
     result = agent.run(
         "Get a local shipping quote for a 2 kg parcel.",
@@ -283,7 +283,7 @@ def test_agent_selects_shipping_quote(agent, shipping_server):
 ```
 
 ```bash
-mcp-pal test --env-file .env \
+m3 test --env-file .env \
   --harness opencode=opencode/big-pickle \
   --harness codex=gpt-5.6-sol \
   --trials 2 -- tests/test_shipping.py
@@ -299,8 +299,8 @@ variable to the variable expected by the harness. Scope it to one kind with
 `--credential-env opencode:VENDOR_API_KEY=MY_VENDOR_KEY` when needed.
 
 To keep defaults in code for direct pytest, use
-`@pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}])`
-and load the plugin with `python -m pytest -p mcp_pal.pytest_plugin`. CLI choices
+`@pytest.mark.m3(agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}])`
+and load the plugin with `python -m pytest -p m3.pytest_plugin`. CLI choices
 replace those defaults. The marker with no arguments is the clean path for
 CLI-selected tests.
 
@@ -330,7 +330,7 @@ agents = [{
 ```python
 import sys
 from pathlib import Path
-from mcp_pal import MCPTestKit, StdioServer
+from m3 import MCPTestKit, StdioServer
 
 examples = Path("sdk/examples").resolve()
 shipping_server = StdioServer(
@@ -381,8 +381,8 @@ diagnostic includes `code`, `stage`, `operation`, `elapsed_seconds`, and
 `timeout_seconds`. `waiting_for_harness_response` means the trace observed the
 harness response wait; it does not prove why the provider is slow. The trace is
 marked partial when cancellation prevents complete capture. The CLI equivalent
-is `mcp-pal test --execution-timeout 30 -- ...`; its per-execution feedback is
-written under `.mcp-pal/reports/<run-id>/executions/` and `traces/`. The live UI
+is `m3 test --execution-timeout 30 -- ...`; its per-execution feedback is
+written under `.m3/reports/<run-id>/executions/` and `traces/`. The live UI
 gate's `--process-timeout` is a separate outer process limit.
 
 ## Bring your own harness with ACP
@@ -394,7 +394,7 @@ literal values. This deterministic local example runs in a plain Python file:
 ```python
 import sys
 from pathlib import Path
-from mcp_pal import MCPTestKit, expect, StdioServer
+from m3 import MCPTestKit, expect, StdioServer
 
 examples = Path("sdk/examples").resolve()
 server = StdioServer(
@@ -406,7 +406,7 @@ acp = [{
     "harness": "acp",
     "models": ["deterministic-fixture"],
     "manifest": {
-        "schema_version": "mcp-pal.harness.v1",
+        "schema_version": "m3.harness.v1",
         "protocol": "acp", "protocol_version": 1,
         "command": sys.executable,
         "args": [str(examples / "servers" / "deterministic_acp_agent.py")],
@@ -422,7 +422,7 @@ with MCPTestKit() as kit:
 
 The local ACP example needs no provider key. For an external ACP agent, set the
 variables its manifest references in the process environment. The same
-selection can go in a `mcp_pal(agents=[...])` marker when pytest is preferred.
+selection can go in a `m3(agents=[...])` marker when pytest is preferred.
 
 ## Run the examples from a checkout
 

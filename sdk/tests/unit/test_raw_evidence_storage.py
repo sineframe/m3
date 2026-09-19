@@ -8,26 +8,26 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.errors import RawEvidenceIntegrityError, RawEvidenceUnavailable
-from mcp_pal.events import EventFactory
-from mcp_pal.observability import (
+from m3.errors import RawEvidenceIntegrityError, RawEvidenceUnavailable
+from m3.events import EventFactory
+from m3.observability import (
     CaptureOptions,
     EvidenceCapture,
     Observation,
     ObservationState,
     RawEvidence,
 )
-from mcp_pal.storage import (
+from m3.storage import (
     InMemoryExecutionStore,
     SQLiteExecutionStore,
     StorageConflict,
 )
-from mcp_pal.storage.evidence import (
+from m3.storage.evidence import (
     evidence_id_for,
     prepare_evidence,
 )
-from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import (
+from m3.trace.redaction import RedactionConfig
+from m3.types import (
     EventId,
     EventKind,
     EvidenceRef,

@@ -1,22 +1,22 @@
 [project]
-name = "mcp-pal-cli"
-version = "0.2.0a3"
-description = "Standalone command line interface for MCP Pal"
+name = "m3-cli"
+version = "0.2.0a13"
+description = "Standalone command line interface for M3"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-  "mcp-pal[storage]==0.2.0a3",
-  "mcp-pal-app==0.2.0a3",
+  "m3[storage]==0.2.0a13",
+  "m3-app==0.2.0a13",
 ]
 
 [project.scripts]
-mcp-pal = "mcp_pal_cli.main:main"
+m3 = "m3_cli.main:main"
 
 [tool.uv.sources]
-mcp-pal = { workspace = true }
-mcp-pal-app = { workspace = true }
+m3 = { workspace = true }
+m3-app = { workspace = true }
 
 [dependency-groups]
 test = [
@@ -36,7 +36,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mcp_pal_cli"]
+packages = ["src/m3_cli"]
 
 [tool.hatch.build.targets.sdist]
 include = [

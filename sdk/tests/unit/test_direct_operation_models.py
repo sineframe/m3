@@ -7,16 +7,16 @@ from types import SimpleNamespace
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-import mcp_pal.async_api as async_api
-import mcp_pal.sync_api as sync_api
-from mcp_pal.direct_client import (
+import m3.async_api as async_api
+import m3.sync_api as sync_api
+from m3.direct_client import (
     AsyncDirectClient,
     Prompt,
     Resource,
     ResourceTemplate,
     Tool,
 )
-from mcp_pal.types import (
+from m3.types import (
     CallTool,
     CallToolResult,
     DirectOperation,
@@ -45,7 +45,7 @@ from mcp_pal.types import (
 
 
 def test_direct_value_exports_use_the_stable_types_module_identities() -> None:
-    from mcp_pal import types
+    from m3 import types
 
     assert types.ToolInfo is async_api.ToolInfo
     assert types.ResourceInfo is async_api.ResourceInfo
@@ -103,7 +103,7 @@ async def test_direct_client_conversions_return_stable_values_with_raw_evidence(
         template = (await client.list_resource_templates()).resource_templates[0]
         prompt = (await client.list_prompts()).prompts[0]
 
-    from mcp_pal import types
+    from m3 import types
 
     assert type(tool) is types.ToolInfo
     assert type(resource) is types.ResourceInfo

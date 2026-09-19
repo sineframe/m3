@@ -11,14 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.events import EventFactory
-from mcp_pal.storage import (
+from m3.events import EventFactory
+from m3.storage import (
     DurableSerializationError,
     SQLiteExecutionStore,
     serialize_durable,
 )
-from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import (
+from m3.trace.redaction import RedactionConfig
+from m3.types import (
     DirectSpec,
     EventKind,
     ExecutionId,
@@ -134,8 +134,8 @@ def test_secret_reference_survives_sqlite_process_round_trip(tmp_path: Path) -> 
             """
 import json, sqlite3, sys
 from pathlib import Path
-from mcp_pal.types import DirectSpec, StdioServer, HTTPServer, SecretReference
-from mcp_pal.storage import SQLiteExecutionStore
+from m3.types import DirectSpec, StdioServer, HTTPServer, SecretReference
+from m3.storage import SQLiteExecutionStore
 db, blobs, profile_id, harness_profile_id, command_id, clone_id = sys.argv[1:]
 store = SQLiteExecutionStore(db, blob_root=blobs)
 profile = store.get_revision(store.resolve_revision(profile_id).id)

@@ -1,10 +1,10 @@
 import asyncio
 import time
 
-from mcp_pal.trace.claude import build_claude_trace, transport_for_server
-from mcp_pal.trace.redaction import redact
-from mcp_pal.transport.http_proxy import McpHttpProxy
-from mcp_pal_app.domain.events import normalize_events
+from m3.trace.claude import build_claude_trace, transport_for_server
+from m3.trace.redaction import redact
+from m3.transport.http_proxy import McpHttpProxy
+from m3_app.domain.events import normalize_events
 
 
 def test_transport_detection_and_partial_stream_events():

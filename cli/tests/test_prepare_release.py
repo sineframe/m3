@@ -34,7 +34,7 @@ def _repo(tmp_path: Path, *, version: str = "1.2.3") -> Path:
     cli.parent.mkdir(parents=True, exist_ok=True)
     cli.write_text(
         f'[project]\nname = "cli"\nversion = "{version}"\ndependencies = [\n'
-        f'  "mcp-pal[storage]=={version}",\n  "mcp-pal-app=={version}",\n]\n',
+        f'  "m3[storage]=={version}",\n  "m3-app=={version}",\n]\n',
         encoding="utf-8",
     )
     (root / "uv.lock").write_text("lock\n", encoding="utf-8")
@@ -62,8 +62,8 @@ def test_prepare_updates_projects_and_runs_lock_checks(tmp_path: Path) -> None:
     assert len(files) == 4
     assert 'version = "2.0.0a1"' in (root / "sdk/pyproject.toml").read_text()
     cli = (root / "cli/pyproject.toml").read_text()
-    assert '"mcp-pal[storage]==2.0.0a1"' in cli
-    assert '"mcp-pal-app==2.0.0a1"' in cli
+    assert '"m3[storage]==2.0.0a1"' in cli
+    assert '"m3-app==2.0.0a1"' in cli
     assert calls == [["uv", "lock"], ["uv", "lock", "--check"]]
 
 
@@ -95,7 +95,7 @@ def test_missing_cli_dependency_pin_is_rejected(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     path = root / "cli/pyproject.toml"
     path.write_text(
-        path.read_text().replace('  "mcp-pal-app==1.2.3",\n', ""),
+        path.read_text().replace('  "m3-app==1.2.3",\n', ""),
         encoding="utf-8",
     )
 
@@ -123,7 +123,7 @@ def test_mismatched_cli_dependency_pin_is_rejected(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     path = root / "cli/pyproject.toml"
     path.write_text(
-        path.read_text().replace("mcp-pal-app==1.2.3", "mcp-pal-app==9.9.9"),
+        path.read_text().replace("m3-app==1.2.3", "m3-app==9.9.9"),
         encoding="utf-8",
     )
 

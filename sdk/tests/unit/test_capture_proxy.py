@@ -10,18 +10,18 @@ import pytest
 from mcp import types
 from mcp.server.lowlevel import Server
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.harness import HarnessAdapterRegistry
-from mcp_pal.harness.contracts import (
+from m3.async_api import AsyncMCPTestKit
+from m3.harness import HarnessAdapterRegistry
+from m3.harness.contracts import (
     DeterministicHarnessAdapter,
     HarnessLaunch,
     HarnessSession,
     HarnessTurnRequest,
 )
-from mcp_pal.server_group import HarnessServerConfig, ServerGroupManager
-from mcp_pal.trace.capture import CaptureWriter
-from mcp_pal.transport.capture_proxy import McpCaptureManager
-from mcp_pal.types import (
+from m3.server_group import HarnessServerConfig, ServerGroupManager
+from m3.trace.capture import CaptureWriter
+from m3.transport.capture_proxy import McpCaptureManager
+from m3.types import (
     AgentSpec,
     ClaudeCode,
     HTTPServer,
@@ -114,7 +114,7 @@ async def test_stdio_configuration_is_rewritten_to_transparent_capture_proxy(
     )
     instrumented = (await manager.instrument((config,)))[0]
     assert instrumented.command == sys.executable
-    assert "mcp_pal.transport.stdio_proxy" in instrumented.args
+    assert "m3.transport.stdio_proxy" in instrumented.args
     assert "--" in instrumented.args
     marker = instrumented.args.index("--")
     assert instrumented.args[marker + 1 :] == ("echo-server", "--fixture")
@@ -147,7 +147,7 @@ async def test_http_instrumentation_keeps_credentials_only_in_proxy(
 async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("MCP_PAL_CAPTURE_SECRET", "capture-secret-value")
+    monkeypatch.setenv("M3_CAPTURE_SECRET", "capture-secret-value")
     manager = McpCaptureManager(tmp_path)
     config = HarnessServerConfig(
         key="echo",
@@ -157,9 +157,7 @@ async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(
         connection_id="connection-secret",
         command="echo-server",
         environment={
-            "TOKEN": SecretReference(
-                source="environment", name="MCP_PAL_CAPTURE_SECRET"
-            )
+            "TOKEN": SecretReference(source="environment", name="M3_CAPTURE_SECRET")
         },
     )
     instrumented = (await manager.instrument((config,)))[0]
@@ -271,7 +269,7 @@ async def test_agent_execution_projects_wire_capture_into_stable_trace() -> None
         message=UserMessage(content=(TextContent(text="draw"),)),
     )
     async with AsyncMCPTestKit(
-        adapter_registry=registry, env={}, cwd="/tmp/mcp-pal-no-project"
+        adapter_registry=registry, env={}, cwd="/tmp/m3-no-project"
     ) as kit:
         result = await kit.run(spec)
     assert result.trace is not None

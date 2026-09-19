@@ -1,4 +1,4 @@
-"""Small executable examples for the public MCP Pal matrix API."""
+"""Small executable examples for the public M3 matrix API."""
 
 from __future__ import annotations
 
@@ -8,16 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.matrix import (
+from m3 import MCPTestKit, expect
+from m3.async_api import AsyncMCPTestKit
+from m3.matrix import (
     ServerCase,
     ToolCase,
     ToolMatrix,
     ToolMatrixCase,
 )
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import (
+from m3.storage import SQLiteExecutionStore
+from m3.types import (
     CallToolResult,
     ExecutionOutcome,
     StdioServer,
@@ -48,7 +48,7 @@ def _agent_entry() -> dict[str, object]:
         "harness": "acp",
         "models": ["deterministic-example"],
         "manifest": {
-            "schema_version": "mcp-pal.harness.v1",
+            "schema_version": "m3.harness.v1",
             "protocol": "acp",
             "protocol_version": 1,
             "command": sys.executable,

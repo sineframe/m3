@@ -19,13 +19,13 @@ from mcp.server.lowlevel.server import (
 )
 from mcp.types import ListToolsResult
 
-from mcp_pal._test_runs import activate_test, reset_test
-from mcp_pal.async_api import AsyncMCPTestKit, InputRequiredResult
-from mcp_pal.errors import KitClosed, ProtocolError, UnsupportedFeature
-from mcp_pal.services.profiles import ProfileResolutionError
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.transport.local import TransportProcessError, TransportStartupError
-from mcp_pal.types import (
+from m3._test_runs import activate_test, reset_test
+from m3.async_api import AsyncMCPTestKit, InputRequiredResult
+from m3.errors import KitClosed, ProtocolError, UnsupportedFeature
+from m3.services.profiles import ProfileResolutionError
+from m3.storage import SQLiteExecutionStore
+from m3.transport.local import TransportProcessError, TransportStartupError
+from m3.types import (
     HTTPServer,
     InProcessServer,
     ProtocolConstraint,
@@ -189,7 +189,7 @@ async def _http_fixture(
 
 @pytest.mark.asyncio
 async def test_kit_direct_owns_in_process_client_and_closes_it() -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(InProcessServer(name="fixture", factory=_server))
     async with client as entered:
         assert entered is client
@@ -216,7 +216,7 @@ async def test_kit_direct_owns_in_process_client_and_closes_it() -> None:
 @pytest.mark.asyncio
 async def test_async_direct_uses_active_pytest_suite(tmp_path) -> None:
     store = SQLiteExecutionStore(tmp_path / "async-suite.sqlite")
-    kit = AsyncMCPTestKit(store=store, env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(store=store, env={}, cwd="/tmp/m3-no-project")
     token = activate_test({"run_id": kit.run_id.root, "suite_name": "catalog"})
     try:
         async with kit.direct(
@@ -264,9 +264,7 @@ async def test_kit_direct_exercises_official_server_callbacks_and_initialization
         callback_events["roots"].append(args)
         return types.ListRootsResult(
             roots=[
-                types.Root.model_validate(
-                    {"uri": "file:///tmp/mcp-pal", "name": "fixture"}
-                )
+                types.Root.model_validate({"uri": "file:///tmp/m3", "name": "fixture"})
             ]
         )
 
@@ -281,7 +279,7 @@ async def test_kit_direct_exercises_official_server_callbacks_and_initialization
     ) -> None:
         callback_events["progress"].append((progress, total, message))
 
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     try:
         async with kit.direct(
             InProcessServer(name="callback-fixture", factory=_callback_server),
@@ -325,7 +323,7 @@ async def test_kit_direct_uses_remote_streamable_http_and_closes_the_server_conn
 ):
     server_socket = await asyncio.start_server(_http_fixture, "127.0.0.1", 0)
     port = server_socket.sockets[0].getsockname()[1]
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     try:
 
         async def sampling(*args: object, **kwargs: object) -> object:
@@ -360,7 +358,7 @@ async def test_kit_direct_uses_remote_streamable_http_and_closes_the_server_conn
 
 @pytest.mark.asyncio
 async def test_kit_close_closes_active_direct_clients() -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(InProcessServer(name="fixture", factory=_server))
     await client.__aenter__()
     await kit.aclose()
@@ -370,7 +368,7 @@ async def test_kit_close_closes_active_direct_clients() -> None:
 
 @pytest.mark.asyncio
 async def test_kit_close_from_another_task_reaps_in_process_owner() -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(InProcessServer(name="fixture", factory=_server))
     await client.__aenter__()
     await asyncio.create_task(kit.aclose())
@@ -383,12 +381,12 @@ async def test_kit_close_from_another_task_reaps_in_process_owner() -> None:
 @pytest.mark.asyncio
 @pytest.mark.process_lifecycle
 async def test_kit_close_from_another_task_reaps_stdio_owner() -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         StdioServer(
             name="echo",
             command=sys.executable,
-            args=("-m", "mcp_pal.fixtures.echo_server"),
+            args=("-m", "m3.fixtures.echo_server"),
         )
     )
     await client.__aenter__()
@@ -409,7 +407,7 @@ async def test_cancelled_public_enter_cancels_owner_startup_without_leaking(
         await release.wait()
         return _server()
 
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(InProcessServer(name="fixture", factory=delayed_factory))
     entering = asyncio.create_task(client.__aenter__())
     await asyncio.wait_for(started.wait(), timeout=1.0)
@@ -434,7 +432,7 @@ async def test_public_direct_forwards_timeout_server_mode_and_session_options() 
     async def elicitation(*args: object, **kwargs: object) -> object:
         return None
 
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         InProcessServer(name="fixture", factory=_server),
         timeout=0.25,
@@ -458,7 +456,7 @@ async def test_public_direct_forwards_timeout_server_mode_and_session_options() 
 async def test_public_direct_surfaces_original_in_process_failure_when_enabled() -> (
     None
 ):
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         InProcessServer(name="failing", factory=_failing_server),
         raise_server_exceptions=True,
@@ -483,7 +481,7 @@ async def test_public_direct_original_failure_survives_scheduler_load(
     noise = asyncio.create_task(scheduler_noise(stop))
     try:
         for _ in range(50):
-            kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+            kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
             client = kit.direct(
                 InProcessServer(name="failing", factory=_failing_server),
                 raise_server_exceptions=True,
@@ -500,7 +498,7 @@ async def test_public_direct_original_failure_survives_scheduler_load(
 
 @pytest.mark.asyncio
 async def test_public_direct_sanitizes_in_process_failure_when_disabled() -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         InProcessServer(name="failing", factory=_failing_server),
         raise_server_exceptions=False,
@@ -526,7 +524,7 @@ async def test_public_direct_in_process_failures_are_original_and_terminal(
     operation: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         InProcessServer(name="failure", factory=factory), raise_server_exceptions=True
     )
@@ -564,7 +562,7 @@ async def test_public_direct_in_process_failures_are_sanitized_when_disabled(
     error_type: type[Exception],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         InProcessServer(name="failure", factory=factory), raise_server_exceptions=False
     )
@@ -586,7 +584,7 @@ async def test_public_direct_in_process_failures_are_sanitized_when_disabled(
 async def test_public_direct_shutdown_failure_is_original_and_terminal(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         InProcessServer(name="shutdown-failure", factory=_shutdown_failure_server),
         raise_server_exceptions=True,
@@ -605,7 +603,7 @@ async def test_public_direct_shutdown_failure_is_original_and_terminal(
 async def test_public_direct_shutdown_failure_is_sanitized_when_disabled(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         InProcessServer(name="shutdown-failure", factory=_shutdown_failure_server),
         raise_server_exceptions=False,
@@ -625,7 +623,7 @@ async def test_public_direct_shutdown_failure_is_sanitized_when_disabled(
 async def test_primary_body_exception_survives_cleanup_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     primary_error = RuntimeError("PRIMARY_SERVER_CANARY")
 
     def failure_server() -> Server:
@@ -659,7 +657,7 @@ async def test_primary_body_exception_survives_cleanup_failure(
 
 @pytest.mark.asyncio
 async def test_standalone_close_failure_is_original_and_terminal() -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(InProcessServer(name="fixture", factory=_server))
     await client.__aenter__()
 
@@ -678,7 +676,7 @@ async def test_standalone_close_failure_is_original_and_terminal() -> None:
 
 @pytest.mark.asyncio
 async def test_direct_rejects_closed_kit_and_unresolved_profile_bindings() -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     binding = ServerBinding(
         profile=ServerProfileRef(
             profile_id=ServerProfileId("server-profile"),
@@ -704,7 +702,7 @@ def test_explicit_unsupported_protocol_fails_before_server_startup() -> None:
         started = True
         return _server()
 
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     with pytest.raises(UnsupportedFeature, match="protocol revision"):
         kit.direct(
             InProcessServer(name="fixture", factory=factory), protocol="2024-11-05"
@@ -713,7 +711,7 @@ def test_explicit_unsupported_protocol_fails_before_server_startup() -> None:
 
 
 def test_protocol_transport_constraint_is_checked_before_startup() -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     with pytest.raises(UnsupportedFeature, match="transport"):
         kit.direct(
             InProcessServer(name="fixture", factory=_server),

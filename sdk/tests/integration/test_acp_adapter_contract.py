@@ -13,14 +13,14 @@ from typing import Any, cast
 import pytest
 from acp.schema import PermissionOption
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.harness.acp import AcpHarnessAdapter, _Client
-from mcp_pal.harness.contracts import (
+from m3.async_api import AsyncMCPTestKit
+from m3.harness.acp import AcpHarnessAdapter, _Client
+from m3.harness.contracts import (
     HarnessLaunch,
     HarnessStartupError,
     HarnessTurnRequest,
 )
-from mcp_pal.interaction_handlers import (
+from m3.interaction_handlers import (
     ElicitationResult,
     FilesystemRequest,
     FilesystemResult,
@@ -31,9 +31,9 @@ from mcp_pal.interaction_handlers import (
     TerminalRequest,
     TerminalResult,
 )
-from mcp_pal.observability import ACPTrace, ObservationReason, ObservationState
-from mcp_pal.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
-from mcp_pal.types import (
+from m3.observability import ACPTrace, ObservationReason, ObservationState
+from m3.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ElicitationPolicy,
@@ -510,7 +510,7 @@ async def test_acp_native_agent_default_policy_is_explicitly_nonportable(
 @pytest.mark.asyncio
 async def test_acp_adapter_missing_binary_is_typed_not_fallback() -> None:
     adapter = AcpHarnessAdapter()
-    launch = _launch("/definitely/missing/mcp-pal-acp")
+    launch = _launch("/definitely/missing/m3-acp")
     readiness = await adapter.preflight(launch)
     assert not readiness.ready
     assert readiness.reason == "acp_executable_missing"

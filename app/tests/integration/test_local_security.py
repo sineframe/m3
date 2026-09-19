@@ -4,9 +4,9 @@ import pytest
 from _local_client import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from mcp_pal_app.api import create_app
-from mcp_pal_app.local_security import LocalSecurityMiddleware
-from mcp_pal_app.settings import Settings
+from m3_app.api import create_app
+from m3_app.local_security import LocalSecurityMiddleware
+from m3_app.settings import Settings
 
 
 def test_local_app_installs_host_and_browser_mutation_boundary(tmp_path: Path) -> None:

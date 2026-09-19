@@ -1,7 +1,7 @@
 import pytest
 
-from mcp_pal.domain import validation
-from mcp_pal.domain.validation import (
+from m3.domain import validation
+from m3.domain.validation import (
     ProfileValidationError,
     referenced_environment_variables,
     selected_server_config,

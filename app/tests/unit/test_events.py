@@ -1,4 +1,4 @@
-from mcp_pal_app.domain.events import (
+from m3_app.domain.events import (
     derive_mcp_assertion,
     derive_mcp_summary,
     normalize_event,

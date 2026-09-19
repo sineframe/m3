@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import MCPTestKit
-from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase, ToolMatrix
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import (
+from m3 import MCPTestKit
+from m3.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase, ToolMatrix
+from m3.storage import SQLiteExecutionStore
+from m3.types import (
     ACPAgent,
     EventKind,
     ExecutionOutcome,
@@ -42,7 +42,7 @@ def _harness() -> ACPAgent:
     return ACPAgent(
         model="matrix-fixture",
         manifest={
-            "schema_version": "mcp-pal.harness.v1",
+            "schema_version": "m3.harness.v1",
             "protocol": "acp",
             "protocol_version": 1,
             "command": sys.executable,
@@ -91,11 +91,11 @@ def test_tool_matrix_case_run_persists_one_normal_execution(tmp_path: Path) -> N
         )
         spec = store.get_execution_spec(result.snapshot.execution_id)
         assert spec is not None
-        assert spec.metadata["mcp_pal.matrix.case_id"] == "catalog/echo"
-        assert spec.metadata["mcp_pal.matrix.kind"] == "tool"
-        assert spec.metadata["mcp_pal.matrix.mode"] == "tool"
-        assert spec.metadata["mcp_pal.matrix.servers"] == "catalog"
-        assert spec.metadata["mcp_pal.matrix.tool"] == "echo"
+        assert spec.metadata["m3.matrix.case_id"] == "catalog/echo"
+        assert spec.metadata["m3.matrix.kind"] == "tool"
+        assert spec.metadata["m3.matrix.mode"] == "tool"
+        assert spec.metadata["m3.matrix.servers"] == "catalog"
+        assert spec.metadata["m3.matrix.tool"] == "echo"
     finally:
         store.close()
 
@@ -139,11 +139,11 @@ def test_harness_matrix_case_run_persists_one_normal_execution(tmp_path: Path) -
         )
         spec = store.get_execution_spec(result.snapshot.execution_id)
         assert spec is not None
-        assert spec.metadata["mcp_pal.matrix.case_id"] == "catalog/acp"
-        assert spec.metadata["mcp_pal.matrix.kind"] == "harness"
-        assert spec.metadata["mcp_pal.matrix.mode"] == "each_server"
-        assert spec.metadata["mcp_pal.matrix.harness"] == "acp"
-        assert spec.metadata["mcp_pal.matrix.trial"] == 1
+        assert spec.metadata["m3.matrix.case_id"] == "catalog/acp"
+        assert spec.metadata["m3.matrix.kind"] == "harness"
+        assert spec.metadata["m3.matrix.mode"] == "each_server"
+        assert spec.metadata["m3.matrix.harness"] == "acp"
+        assert spec.metadata["m3.matrix.trial"] == 1
     finally:
         store.close()
 
@@ -204,7 +204,7 @@ def test_harness_matrix_session_persists_two_ordered_turns(tmp_path: Path) -> No
         )
         spec = store.get_execution_spec(result.snapshot.execution_id)
         assert spec is not None
-        assert spec.metadata["mcp_pal.matrix.mode"] == "all_servers"
-        assert spec.metadata["mcp_pal.matrix.servers"] == "catalog,warehouse"
+        assert spec.metadata["m3.matrix.mode"] == "all_servers"
+        assert spec.metadata["m3.matrix.servers"] == "catalog,warehouse"
     finally:
         store.close()

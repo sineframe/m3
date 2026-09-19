@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 import tomllib
 
-from mcp_pal_cli import init as init_command
-from mcp_pal_cli import main
+from m3_cli import init as init_command
+from m3_cli import main
 
 
 def test_init_creates_project_identity_and_one_collectable_starter(
@@ -32,18 +32,18 @@ def test_init_creates_project_identity_and_one_collectable_starter(
         == 0
     )
     output = capsys.readouterr()
-    assert "Initialized MCP Pal project" in output.out
+    assert "Initialized M3 project" in output.out
     assert "Project name [" not in output.out
     assert "Suite name [" not in output.out
 
-    identity = tomllib.loads((tmp_path / "mcp-pal.toml").read_text(encoding="utf-8"))
+    identity = tomllib.loads((tmp_path / "m3.toml").read_text(encoding="utf-8"))
     assert identity["schema_version"] == 1
     assert identity["project_name"] == "Catalog"
     assert str(uuid.UUID(identity["project_id"])) == identity["project_id"]
 
-    starter = tmp_path / "tests" / "test_mcp_pal_starter.py"
+    starter = tmp_path / "tests" / "test_m3_starter.py"
     source = starter.read_text(encoding="utf-8")
-    assert '@pytest.mark.mcp_pal(suite_name="catalog behavior")' in source
+    assert '@pytest.mark.m3(suite_name="catalog behavior")' in source
     assert "def test_mcp_behavior() -> None:" in source
     result = subprocess.run(
         [
@@ -52,7 +52,7 @@ def test_init_creates_project_identity_and_one_collectable_starter(
             "pytest",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
+            "m3.pytest_plugin",
             str(starter),
         ],
         cwd=tmp_path,
@@ -78,8 +78,8 @@ def test_init_rerun_preserves_files_and_identity(
     ]
     assert main(initial) == 0
     capsys.readouterr()
-    config = tmp_path / "mcp-pal.toml"
-    starter = tmp_path / "tests" / "test_mcp_pal_starter.py"
+    config = tmp_path / "m3.toml"
+    starter = tmp_path / "tests" / "test_m3_starter.py"
     before = (config.read_bytes(), starter.read_bytes())
 
     assert (
@@ -118,14 +118,14 @@ def test_init_prompts_for_missing_fields_in_order(
         f"Project name [{tmp_path.name}]: ",
         "Suite name [mcp-behavior]: ",
     ]
-    source = (tmp_path / "tests" / "test_mcp_pal_starter.py").read_text()
+    source = (tmp_path / "tests" / "test_m3_starter.py").read_text()
     assert 'suite_name="mcp-behavior"' in source
 
 
 def test_init_rejects_partial_state_without_overwriting(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    existing = tmp_path / "tests" / "test_mcp_pal_starter.py"
+    existing = tmp_path / "tests" / "test_m3_starter.py"
     existing.parent.mkdir()
     existing.write_text("existing test\n", encoding="utf-8")
     assert (
@@ -144,9 +144,9 @@ def test_init_rejects_partial_state_without_overwriting(
     )
     assert "partial initialization" in capsys.readouterr().err
     assert existing.read_text(encoding="utf-8") == "existing test\n"
-    assert not (tmp_path / "mcp-pal.toml").exists()
+    assert not (tmp_path / "m3.toml").exists()
 
 
 def test_init_noninteractive_missing_name_is_usage_error(tmp_path: Path) -> None:
     assert main(["init", "--project-root", str(tmp_path), "--suite", "core"]) == 2
-    assert not (tmp_path / "mcp-pal.toml").exists()
+    assert not (tmp_path / "m3.toml").exists()

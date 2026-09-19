@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.types import (
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from m3.types import (
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,

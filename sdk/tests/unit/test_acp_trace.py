@@ -1,4 +1,4 @@
-from mcp_pal.trace.acp import build_acp_trace
+from m3.trace.acp import build_acp_trace
 
 
 def test_acp_trace_wire_authoritative_and_unknown_updates():

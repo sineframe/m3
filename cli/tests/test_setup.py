@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcp_pal_cli import main, setup
+from m3_cli import main, setup
 
 
 def _python(path: Path) -> Path:
@@ -177,8 +177,7 @@ def test_install_prefers_uv_and_uses_pep508_local_reference(
             "install",
             "--python",
             str(target.python),
-            "mcp-pal[pytest,storage] @ "
-            + (tmp_path / "sdk wheel.whl").resolve().as_uri(),
+            "m3[pytest,storage] @ " + (tmp_path / "sdk wheel.whl").resolve().as_uri(),
         ]
     ]
 
@@ -205,7 +204,7 @@ def test_install_falls_back_to_environment_pip(
 def test_cli_version_requires_matching_distributions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    values = {"mcp-pal": "1.2.3", "mcp-pal-cli": "1.2.4"}
+    values = {"m3": "1.2.3", "m3-cli": "1.2.4"}
     monkeypatch.setattr(setup.importlib.metadata, "version", lambda name: values[name])
     with pytest.raises(setup.SetupError, match="versions do not match"):
         setup._cli_version()
@@ -302,7 +301,7 @@ def test_setup_temporary_directory_failure_rolls_back_new_environment(
 def test_checksum_download_uses_override_and_verifies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sdk = tmp_path / "mcp_pal-1.2.3-py3-none-any.whl"
+    sdk = tmp_path / "m3-1.2.3-py3-none-any.whl"
     data = b"wheel"
     digest = hashlib.sha256(data).hexdigest()
 
@@ -322,15 +321,15 @@ def test_checksum_download_uses_override_and_verifies(
             value, self.value = self.value, None
             return value
 
-    monkeypatch.setenv("MCP_PAL_RELEASE_BASE_URL", "https://mirror.invalid/release")
+    monkeypatch.setenv("M3_RELEASE_BASE_URL", "https://mirror.invalid/release")
 
     def open_url(request: object, timeout: int) -> Response:
         del timeout
         name = request.full_url.rsplit("/", 1)[-1]  # type: ignore[attr-defined]
         values = {
-            "mcp_pal-1.2.3-py3-none-any.whl": data,
+            "m3-1.2.3-py3-none-any.whl": data,
             "SHA256SUMS": (
-                f"{'0' * 64}  mcp_pal_cli-1.2.3-py3-none-any.whl\n{digest}  mcp_pal-1.2.3-py3-none-any.whl\n{'1' * 64}  mcp_pal_app-1.2.3-py3-none-any.whl\n"
+                f"{'0' * 64}  m3_cli-1.2.3-py3-none-any.whl\n{digest}  m3-1.2.3-py3-none-any.whl\n{'1' * 64}  m3_app-1.2.3-py3-none-any.whl\n"
             ).encode(),
         }
         return Response(values[name])
@@ -344,20 +343,20 @@ def test_checksum_download_uses_override_and_verifies(
 @pytest.mark.parametrize(
     "manifest",
     [
-        "0" * 64 + "  mcp_pal-1.2.3-py3-none-any.whl\n",
+        "0" * 64 + "  m3-1.2.3-py3-none-any.whl\n",
         "0" * 64
-        + "  mcp_pal_cli-1.2.3-py3-none-any.whl\n"
+        + "  m3_cli-1.2.3-py3-none-any.whl\n"
         + "0" * 64
-        + "  mcp_pal_cli-1.2.3-py3-none-any.whl\n"
+        + "  m3_cli-1.2.3-py3-none-any.whl\n"
         + "1" * 64
-        + "  mcp_pal_app-1.2.3-py3-none-any.whl\n",
+        + "  m3_app-1.2.3-py3-none-any.whl\n",
     ],
 )
 def test_checksum_manifest_rejects_missing_or_duplicate_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest: str
 ) -> None:
     data = b"wheel"
-    monkeypatch.setenv("MCP_PAL_RELEASE_BASE_URL", "https://mirror.invalid/release")
+    monkeypatch.setenv("M3_RELEASE_BASE_URL", "https://mirror.invalid/release")
 
     class Response:
         def __init__(self, value: bytes) -> None:
@@ -387,7 +386,7 @@ def test_checksum_manifest_rejects_missing_or_duplicate_records(
 def test_authenticated_gh_download_checks_auth_once_and_uses_exact_tag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("MCP_PAL_RELEASE_BASE_URL", raising=False)
+    monkeypatch.delenv("M3_RELEASE_BASE_URL", raising=False)
     monkeypatch.setattr(
         setup.shutil, "which", lambda name: "/usr/bin/gh" if name == "gh" else None
     )
@@ -402,7 +401,7 @@ def test_authenticated_gh_download_checks_auth_once_and_uses_exact_tag(
         destination = Path(command[-1])
         if destination.name == "SHA256SUMS":
             destination.write_text(
-                f"{'0' * 64}  mcp_pal_cli-1.2.3-py3-none-any.whl\n{digest}  mcp_pal-1.2.3-py3-none-any.whl\n{'1' * 64}  mcp_pal_app-1.2.3-py3-none-any.whl\n",
+                f"{'0' * 64}  m3_cli-1.2.3-py3-none-any.whl\n{digest}  m3-1.2.3-py3-none-any.whl\n{'1' * 64}  m3_app-1.2.3-py3-none-any.whl\n",
                 encoding="utf-8",
             )
         else:
@@ -443,7 +442,7 @@ def test_ready_requires_exact_version_and_all_project_features(
             (),
             {
                 "returncode": 0,
-                "stdout": '{"checks":{"pytest":true,"mcp_pal":true,"mcp_pal.pytest_plugin":true,"SQLiteExecutionStore":true},"version":"1.2.3"}',
+                "stdout": '{"checks":{"pytest":true,"m3":true,"m3.pytest_plugin":true,"SQLiteExecutionStore":true},"version":"1.2.3"}',
             },
         )(),
     )

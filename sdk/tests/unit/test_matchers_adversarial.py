@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcp_pal.matchers import check, expect
-from mcp_pal.observability import (
+from m3.matchers import check, expect
+from m3.observability import (
     InitializationEntry,
     InitializationValue,
     Observation,
@@ -16,8 +16,8 @@ from mcp_pal.observability import (
     ReportedToolCall,
     ToolCallStatus,
 )
-from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import (
+from m3.trace.redaction import RedactionConfig
+from m3.types import (
     CapabilityStatus,
     ConnectionId,
     Event,

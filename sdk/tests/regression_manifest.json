@@ -18,7 +18,7 @@
       "status": "live",
       "regression": "sdk/tests/e2e/test_live_opencode.py::test_live_opencode_calls_the_mcp_across_two_turns",
       "gate": {
-        "command": "MCP_PAL_RUN_LIVE_OPENCODE=1 uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_live_opencode.py",
+        "command": "M3_RUN_LIVE_OPENCODE=1 uv run --project sdk --all-extras pytest -q sdk/tests/e2e/test_live_opencode.py",
         "expected": "the credentialed live two-turn test runs and passes; without the opt-in it remains collected but skipped"
       }
     },
@@ -213,8 +213,8 @@
       }
     },
     {
-      "id": "mcp-pal-test-wrapper",
-      "finding": "`mcp-pal test` forwards pytest execution and preserves results",
+      "id": "m3-test-wrapper",
+      "finding": "`m3 test` forwards pytest execution and preserves results",
       "status": "passing",
       "regression": [
         "cli/tests/test_supervisor.py::test_cli_forwards_exact_args_after_separator",

@@ -1,22 +1,22 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$Version = '@MCP_PAL_VERSION@'
-$Repository = 'mcppal/mcp-pal'
+$Version = '@M3_VERSION@'
+$Repository = 'sineframe/m3'
 $ReleaseTag = "v$Version"
-$HasBaseUrl = [bool]$env:MCP_PAL_RELEASE_BASE_URL
-$BaseUrl = if ($env:MCP_PAL_RELEASE_BASE_URL) { $env:MCP_PAL_RELEASE_BASE_URL.TrimEnd('/') } else { "https://github.com/$Repository/releases/download/v$Version" }
+$HasBaseUrl = [bool]$env:M3_RELEASE_BASE_URL
+$BaseUrl = if ($env:M3_RELEASE_BASE_URL) { $env:M3_RELEASE_BASE_URL.TrimEnd('/') } else { "https://github.com/$Repository/releases/download/v$Version" }
 
-$CliWheel = "mcp_pal_cli-$Version-py3-none-any.whl"
-$SdkWheel = "mcp_pal-$Version-py3-none-any.whl"
-$AppWheel = "mcp_pal_app-$Version-py3-none-any.whl"
+$CliWheel = "m3_cli-$Version-py3-none-any.whl"
+$SdkWheel = "m3-$Version-py3-none-any.whl"
+$AppWheel = "m3_app-$Version-py3-none-any.whl"
 $WheelNames = @($CliWheel, $SdkWheel, $AppWheel)
-$TempDir = Join-Path ([IO.Path]::GetTempPath()) ('mcp-pal-install-' + [Guid]::NewGuid().ToString('N'))
+$TempDir = Join-Path ([IO.Path]::GetTempPath()) ('m3-install-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
-Write-Output "Installing MCP Pal CLI $Version"
+Write-Output "Installing M3 CLI $Version"
 
 function Fail([string]$Message) {
-    throw "mcp-pal install failed: $Message"
+    throw "m3 install failed: $Message"
 }
 
 function Download([string]$Name, [string]$Destination) {
@@ -64,7 +64,7 @@ try {
         if ($Actual -ne $records[$Name]) { Fail "checksum mismatch for $Name" }
     }
 
-    $UiCheck = 'from importlib import resources; root = resources.files("mcp_pal_cli").joinpath("ui"); assert root.joinpath("index.html").is_file(); assert any(item.is_file() for item in root.joinpath("assets").iterdir())'
+    $UiCheck = 'from importlib import resources; root = resources.files("m3_cli").joinpath("ui"); assert root.joinpath("index.html").is_file(); assert any(item.is_file() for item in root.joinpath("assets").iterdir())'
     Write-Output '[3/4] Installing into isolated tool storage'
     $Uv = Get-Command uv -ErrorAction SilentlyContinue
     if ($Uv) {
@@ -72,23 +72,23 @@ try {
         if ($LASTEXITCODE -ne 0) { Fail 'uv tool install failed' }
         $UvBin = (& $Uv.Source tool dir --bin 2>$null).Trim()
         if (-not $UvBin) { Fail 'could not locate the uv tool bin directory' }
-        $Command = Join-Path $UvBin 'mcp-pal.exe'
-        if (-not (Test-Path -LiteralPath $Command)) { Fail 'uv tool bin directory is missing mcp-pal.exe' }
+        $Command = Join-Path $UvBin 'm3.exe'
+        if (-not (Test-Path -LiteralPath $Command)) { Fail 'uv tool bin directory is missing m3.exe' }
         Write-Output '[4/4] Verifying command and bundled UI'
         & $Command --help | Out-Null
-        if ($LASTEXITCODE -ne 0) { Fail 'installed mcp-pal command failed' }
+        if ($LASTEXITCODE -ne 0) { Fail 'installed m3 command failed' }
         $ToolRoot = (& $Uv.Source tool dir 2>$null).Trim()
-        $ToolPython = Join-Path (Join-Path $ToolRoot 'mcp-pal-cli') 'Scripts/python.exe'
+        $ToolPython = Join-Path (Join-Path $ToolRoot 'm3-cli') 'Scripts/python.exe'
         if (-not (Test-Path -LiteralPath $ToolPython)) { Fail 'uv tool environment Python is missing' }
         & $ToolPython -c $UiCheck
         if ($LASTEXITCODE -ne 0) { Fail 'packaged UI could not be imported from the CLI wheel' }
-        Write-Output 'mcp-pal installed with uv in isolated tool storage.'
+        Write-Output 'm3 installed with uv in isolated tool storage.'
         Write-Output "Command: $Command"
-        Write-Output 'Next: cd <project>; mcp-pal setup'
+        Write-Output 'Next: cd <project>; m3 setup'
     } else {
 
     $PythonCandidates = @()
-    if ($env:MCP_PAL_PYTHON) { $PythonCandidates += $env:MCP_PAL_PYTHON }
+    if ($env:M3_PYTHON) { $PythonCandidates += $env:M3_PYTHON }
     $PythonCandidates += @('py', 'python')
     $Python = $null
     foreach ($Candidate in $PythonCandidates) {
@@ -99,17 +99,17 @@ try {
     }
     if (-not $Python) { Fail 'Python 3.10 or newer is required when uv is unavailable' }
 
-    $InstallRoot = if ($env:MCP_PAL_INSTALL_ROOT) { $env:MCP_PAL_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA 'mcp-pal' }
+    $InstallRoot = if ($env:M3_INSTALL_ROOT) { $env:M3_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA 'm3' }
     if (Test-Path -LiteralPath $InstallRoot) {
-        $Marker = Join-Path $InstallRoot '.mcp-pal-install'
+        $Marker = Join-Path $InstallRoot '.m3-install'
         if (-not (Test-Path -LiteralPath $Marker)) { Fail "refusing to overwrite existing $InstallRoot" }
     }
-    $BinDir = if ($env:MCP_PAL_BIN_DIR) { $env:MCP_PAL_BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'mcp-pal-bin' }
+    $BinDir = if ($env:M3_BIN_DIR) { $env:M3_BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'm3-bin' }
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
-    $CommandPath = Join-Path $BinDir 'mcp-pal.cmd'
+    $CommandPath = Join-Path $BinDir 'm3.cmd'
     if (Test-Path -LiteralPath $CommandPath) {
         $Existing = Get-Content -Raw -LiteralPath $CommandPath
-        if ($Existing -notmatch 'Managed by mcp-pal installer') { Fail "refusing to overwrite existing $CommandPath" }
+        if ($Existing -notmatch 'Managed by m3 installer') { Fail "refusing to overwrite existing $CommandPath" }
     }
 
     $Backup = "$InstallRoot.backup.$([Guid]::NewGuid().ToString('N'))"
@@ -133,10 +133,10 @@ try {
         if ($LASTEXITCODE -ne 0) { Fail 'could not install the release wheels in the dedicated virtual environment' }
         & $VenvPython -c $UiCheck
         if ($LASTEXITCODE -ne 0) { Fail 'packaged UI could not be imported from the CLI wheel' }
-        Set-Content -NoNewline -LiteralPath (Join-Path $InstallRoot '.mcp-pal-install') -Value $Version
+        Set-Content -NoNewline -LiteralPath (Join-Path $InstallRoot '.m3-install') -Value $Version
 
         if ($HadCommand) { Move-Item -LiteralPath $CommandPath -Destination $CommandBackup }
-        $Shim = "@echo off`r`nrem Managed by mcp-pal installer`r`n`"$InstallRoot\Scripts\mcp-pal.exe`" %*`r`n"
+        $Shim = "@echo off`r`nrem Managed by m3 installer`r`n`"$InstallRoot\Scripts\m3.exe`" %*`r`n"
         $ShimTemp = "$CommandPath.tmp.$([Guid]::NewGuid().ToString('N'))"
         if (Test-Path -LiteralPath $ShimTemp) { Fail 'temporary command path already exists' }
         Set-Content -LiteralPath $ShimTemp -Value $Shim -Encoding ASCII
@@ -144,7 +144,7 @@ try {
         $CreatedCommand = $true
         Write-Output '[4/4] Verifying command and bundled UI'
         & $CommandPath --help | Out-Null
-        if ($LASTEXITCODE -ne 0) { Fail 'installed mcp-pal command failed' }
+        if ($LASTEXITCODE -ne 0) { Fail 'installed m3 command failed' }
     } catch {
         if ($CreatedNewRoot -and (Test-Path -LiteralPath $InstallRoot)) { Remove-Item -Recurse -Force -LiteralPath $InstallRoot }
         if ($CreatedCommand -and (Test-Path -LiteralPath $CommandPath)) { Remove-Item -Force -LiteralPath $CommandPath }
@@ -154,10 +154,10 @@ try {
     }
     if ($HadRoot -and (Test-Path -LiteralPath $Backup)) { Remove-Item -Recurse -Force -LiteralPath $Backup }
     if ($HadCommand -and (Test-Path -LiteralPath $CommandBackup)) { Remove-Item -Force -LiteralPath $CommandBackup }
-        Write-Output "mcp-pal installed in $InstallRoot."
+        Write-Output "m3 installed in $InstallRoot."
         Write-Output "Command: $CommandPath"
-        Write-Output 'Next: cd <project>; mcp-pal setup'
-        if ($env:PATH -notlike "*$BinDir*") { Write-Output "Add $BinDir to PATH to run mcp-pal." }
+        Write-Output 'Next: cd <project>; m3 setup'
+        if ($env:PATH -notlike "*$BinDir*") { Write-Output "Add $BinDir to PATH to run m3." }
     }
 } finally {
     if (Test-Path -LiteralPath $TempDir) { Remove-Item -Recurse -Force -LiteralPath $TempDir }

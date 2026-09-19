@@ -14,14 +14,14 @@ import pytest
 from mcp import types
 from mcp.server.lowlevel import Server
 
-from mcp_pal.async_api import (
+from m3.async_api import (
     AsyncDirectClient,
     AsyncMCPTestKit,
     CallToolResult,
     PromptResult,
     ResourceReadResult,
 )
-from mcp_pal.types import (
+from m3.types import (
     HTTPServer,
     InProcessServer,
     SSEServer,

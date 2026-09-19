@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mcp_pal.events import EventFactory
-from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.types import (
+from m3.events import EventFactory
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from m3.types import (
     DirectSpec,
     EventKind,
     ExecutionId,

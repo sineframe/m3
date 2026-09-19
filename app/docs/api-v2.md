@@ -2,7 +2,7 @@
 
 ## What API v2 can do
 
-API v2 reads and manages MCP Pal executions in the SQLite store selected for
+API v2 reads and manages M3 executions in the SQLite store selected for
 the app. It can accept direct or agent execution specs, submit them to the
 configured SDK worker (embedded by default), list and inspect saved executions,
 cancel active executions, delete terminal executions, read bounded evidence,
@@ -14,11 +14,11 @@ result or a normal Python assertion as an execution or evaluation result.
 | Source | How it is persisted | How API v2 reads it |
 |---|---|---|
 | API-created execution | `POST /api/v2/executions` sends a `DirectSpec` or `AgentSpec` through `MCPTestKit`. MCPTestKit saves/submits it using the API-selected SQLite file; the configured worker executes it and records results. The standard app configures an embedded worker. | The API can list, read, report, cancel, and delete it. |
-| SDK, CLI, or pytest execution | Python code can run `kit.agents([...])` with `SQLiteExecutionStore(path)`. A marked pytest test can request `agent`, while `mcp-pal test --harness KIND=MODEL` selects its harnesses and models and supplies the results database (default `.mcp-pal/executions.sqlite`, or `--results-db`). Direct pytest can opt in with the same plugin flag. | Point the API at that exact same SQLite file; it can then list, read, and report those MCP Pal executions. |
+| SDK, CLI, or pytest execution | Python code can run `kit.agents([...])` with `SQLiteExecutionStore(path)`. A marked pytest test can request `agent`, while `m3 test --harness KIND=MODEL` selects its harnesses and models and supplies the results database (default `.m3/executions.sqlite`, or `--results-db`). Direct pytest can opt in with the same plugin flag. | Point the API at that exact same SQLite file; it can then list, read, and report those M3 executions. |
 | In-memory SDK execution | No SQLite store is selected, so data exists only in that SDK process. | Another API process cannot read it. |
 
-These are MCP Pal executions made inside tests. The CLI plugin also records
-pytest item outcomes and MCP Pal matcher checks. Ordinary Python assertions
+These are M3 executions made inside tests. The CLI plugin also records
+pytest item outcomes and M3 matcher checks. Ordinary Python assertions
 are test outcomes; they are not automatically saved as evaluation decisions.
 
 ### API-created execution flow
@@ -30,13 +30,13 @@ are test outcomes; they are not automatically saved as evaluation decisions.
 ### SDK/CLI/pytest shared-database flow
 
 1. Run `kit.agents([...])` with `SQLiteExecutionStore(path)`, or run a marked
-   test with `mcp-pal test --harness KIND=MODEL`, using the CLI's default
+   test with `m3 test --harness KIND=MODEL`, using the CLI's default
    database or `--results-db path`. Set provider credentials in the process
    environment or pass `--env-file .env` explicitly; a custom variable source
    uses `--credential-env TARGET=SOURCE`. The API reads saved references and
    evidence, not provider key values.
 2. Start the API/UI with that exact SQLite path.
-3. List or report the saved MCP Pal executions through API v2.
+3. List or report the saved M3 executions through API v2.
 4. Run `kit.evaluate(...)` or an `EvaluationRunner` against the execution
    using that same store, then read the saved evaluation in the report or
    query it with `POST /api/v2/evaluations/aggregate`.
@@ -51,7 +51,7 @@ standalone API endpoint to run an evaluator. SDK users run `kit.evaluate(...)` o
 evaluation then appears in the execution report, and
 `POST /api/v2/evaluations/aggregate` can summarize it.
 
-MCP Pal does not provide a built-in LLM judge. SDK users may write an
+M3 does not provide a built-in LLM judge. SDK users may write an
 evaluator callback, including one that calls an LLM; credentials and client
 setup remain user-owned. API v2 only reads saved evaluation results and
 provenance, then calculates summaries when asked.
@@ -135,8 +135,8 @@ fields are rejected. `spec.kind` is the discriminator:
 
 | `kind` | Required discriminator-specific fields | Meaning |
 |---|---|---|
-| `direct` | `servers` (at least one), `operation` | MCP Pal performs one direct MCP operation. `operation.kind` is one of `list_tools`, `list_resources`, `list_resource_templates`, `list_prompts`, `call_tool`, `read_resource`, `get_prompt`, or `ping`; its fields follow the matching OpenAPI schema. |
-| `agent` | `servers` (at least one), exactly one of `harness` or `harness_profile` | MCP Pal sends the `message` to the selected agent harness. |
+| `direct` | `servers` (at least one), `operation` | M3 performs one direct MCP operation. `operation.kind` is one of `list_tools`, `list_resources`, `list_resource_templates`, `list_prompts`, `call_tool`, `read_resource`, `get_prompt`, or `ping`; its fields follow the matching OpenAPI schema. |
+| `agent` | `servers` (at least one), exactly one of `harness` or `harness_profile` | M3 sends the `message` to the selected agent harness. |
 
 Both variants also support `run_id`, `case_id`, `protocol`, positive
 `timeout_seconds`, `goal`, `evaluations` declarations (saved in the spec only), artifact/workspace/
@@ -394,7 +394,7 @@ The daily query returns two exact groups:
   "from": "2026-08-01T00:00:00Z",
   "to": "2026-09-01T00:00:00Z",
   "group_by": ["time.day", "evaluator"],
-  "filters": {"evaluator": "mcp_pal.output.has_text.v1"},
+  "filters": {"evaluator": "m3.output.has_text.v1"},
   "limit": 200,
   "offset": 0
 }
@@ -441,7 +441,7 @@ Example response shape:
   "version":"v2",
   "aggregate": {
     "totals": {"trial_count":3,"measured_count":3,"pass_rate":0.6667},
-    "groups": [{"key":{"time.day":"2026-08-20","evaluator":"mcp_pal.output.has_text.v1"},"values":{}}],
+    "groups": [{"key":{"time.day":"2026-08-20","evaluator":"m3.output.has_text.v1"},"values":{}}],
     "total_groups":1,"limit":200,"offset":0
   }
 }
@@ -481,7 +481,7 @@ later re-evaluation from being counted twice or hidden by an older result.
 
 Submit the same direct spec three times with one `run_id` and `case_id`, poll
 each ID, then evaluate each saved report with
-`mcp_pal.output.has_text.v1`. Group by `run_id` and `evaluator` for one pass
+`m3.output.has_text.v1`. Group by `run_id` and `evaluator` for one pass
 rate, or by `trial_id` when the UI needs report links.
 
 ### Chained calls
@@ -493,8 +493,8 @@ that trial.
 
 ### Agent and tool trials
 
-Mark one pytest test with `@pytest.mark.mcp_pal` and request `agent`. Select
-harnesses/models with repeated `mcp-pal test --harness KIND=MODEL` flags, then
+Mark one pytest test with `@pytest.mark.m3` and request `agent`. Select
+harnesses/models with repeated `m3 test --harness KIND=MODEL` flags, then
 use `--trials N` for N independent runs of every combination. Ordinary pytest
 parameters or ToolMatrix cases vary servers and tools. The same logical
 test/tool case retains its `case_id` across harnesses and trials, while each
@@ -507,7 +507,7 @@ execution ID to open a single report. The UI continues reading
 
 ### User-supplied LLM evaluator
 
-MCP Pal does not include an LLM judge. An SDK user can write an evaluator
+M3 does not include an LLM judge. An SDK user can write an evaluator
 callback that calls an LLM and returns the same `EvaluationDecision` as a
 deterministic evaluator. Save provider, model, and rubric provenance with
 that result. Group by `evaluator`, `judge_provider`, or `judge_model`; do not
@@ -519,7 +519,7 @@ saved result and its provenance; it never registers or runs the callback.
 The DeepWiki Streamable HTTP example is opt-in:
 
 ```bash
-MCP_PAL_RUN_DEEPWIKI_LIVE=1 \
+M3_RUN_DEEPWIKI_LIVE=1 \
 uv run --locked --project app --group test --group typecheck \
 pytest -q app/tests/e2e/test_deepwiki_live_evaluation.py
 ```
@@ -577,7 +577,7 @@ group labels. These values come from the persisted project registry, while
 legacy unassigned executions have null project labels.
 
 The supported authoring paths are a marked pytest test selected with
-`mcp-pal test --harness ... --trials N`, or a Python loop over
+`m3 test --harness ... --trials N`, or a Python loop over
 `kit.agents(...)`. Provider keys are supplied through the process environment
 or an explicit `--env-file`; MCP endpoint keys remain server header
 references. These paths write the same execution records consumed by the

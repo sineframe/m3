@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import EvaluationDecision, EvaluationStatus, expect
-from mcp_pal.types import PermissionPolicy, StdioServer
+from m3 import EvaluationDecision, EvaluationStatus, expect
+from m3.types import PermissionPolicy, StdioServer
 
-pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.mcp_pal]
+pytestmark = [pytest.mark.e2e, pytest.mark.live, pytest.mark.m3]
 
 _ROOT = Path(__file__).parents[1]
 

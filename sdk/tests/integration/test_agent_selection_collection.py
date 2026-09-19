@@ -7,12 +7,12 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-from mcp_pal import MCPTestKit, ServerBinding, StdioServer, expect
-from mcp_pal.agent_session import HarnessAdapter
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.harness import HarnessAdapterRegistry
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import (
+from m3 import MCPTestKit, ServerBinding, StdioServer, expect
+from m3.agent_session import HarnessAdapter
+from m3.async_api import AsyncMCPTestKit
+from m3.harness import HarnessAdapterRegistry
+from m3.storage import SQLiteExecutionStore
+from m3.types import (
     RevisionSelection,
     ServerProfileRef,
     TextContent,
@@ -24,11 +24,11 @@ from mcp_pal.types import (
 def test_cli_agents_cross_product_with_tool_matrix_and_trials(tmp_path: Path) -> None:
     source = """
 import pytest
-from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
-from mcp_pal import StdioServer
+from m3.matrix import ServerCase, ToolCase, ToolMatrix
+from m3 import StdioServer
 server = ServerCase(name="shipping", server=StdioServer(name="shipping", command="echo"), tools=(ToolCase(name="quote"),))
 matrix = ToolMatrix(servers=(server,))
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 @matrix.parametrize()
 def test_one(case, agent):
     pass
@@ -45,10 +45,10 @@ def test_one(case, agent):
             "--collect-only",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
-            "--mcp-pal-harness",
+            "m3.pytest_plugin",
+            "--harness",
             "opencode=provider/a,provider/b",
-            "--mcp-pal-trials",
+            "--trials",
             "2",
             str(test_file),
         ],
@@ -73,8 +73,8 @@ def blocked(name, *args, **kwargs):
         raise ModuleNotFoundError('blocked pytest')
     return real(name, *args, **kwargs)
 builtins.__import__ = blocked
-import mcp_pal
-from mcp_pal import MCPTestKit, StdioServer
+import m3
+from m3 import MCPTestKit, StdioServer
 kit = MCPTestKit(env={})
 assert kit.agents
 assert StdioServer(name="s", command="echo").name == "s"
@@ -117,7 +117,7 @@ def test_base_sdk_install_has_no_pytest_and_supports_notebook_selection(
     script = """
 import importlib.util
 assert importlib.util.find_spec("pytest") is None
-from mcp_pal import MCPTestKit, StdioServer
+from m3 import MCPTestKit, StdioServer
 kit = MCPTestKit(env={})
 agent = kit.agents([{"harness": "acp", "models": ["fixture"], "manifest": {"command": "fixture-agent", "protocol": "acp", "protocol_version": 1}}])[0]
 assert agent.model == "fixture"
@@ -139,7 +139,7 @@ def test_collection_requires_marker_only_for_agent_and_runs_ordinary_once(
 ) -> None:
     source = """
 import pytest
-pytestmark = pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["m"]}])
+pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["m"]}])
 def test_plain(): pass
 def test_selected(agent): pass
 """
@@ -155,7 +155,7 @@ def test_selected(agent): pass
             "--collect-only",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
+            "m3.pytest_plugin",
             str(test_file),
         ],
         cwd=tmp_path,
@@ -184,7 +184,7 @@ def agent():
 def test_unmarked(agent):
     assert agent == "project-agent"
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 def test_marked(agent):
     pass
 """,
@@ -200,8 +200,8 @@ def test_marked(agent):
             "--collect-only",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
-            "--mcp-pal-harness",
+            "m3.pytest_plugin",
+            "--harness",
             "opencode=provider/a",
             str(test_file),
         ],
@@ -221,7 +221,7 @@ def test_marked_agent_without_selection_still_fails_at_collection(
 ) -> None:
     test_file = tmp_path / "test_missing.py"
     test_file.write_text(
-        "import pytest\n@pytest.mark.mcp_pal\ndef test_missing(agent): pass\n",
+        "import pytest\n@pytest.mark.m3\ndef test_missing(agent): pass\n",
         encoding="utf-8",
     )
     environment = os.environ.copy()
@@ -234,7 +234,7 @@ def test_marked_agent_without_selection_still_fails_at_collection(
             "--collect-only",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
+            "m3.pytest_plugin",
             str(test_file),
         ],
         cwd=tmp_path,
@@ -250,8 +250,8 @@ def test_marked_agent_without_selection_still_fails_at_collection(
 def test_function_marker_overrides_module_marker(tmp_path: Path) -> None:
     source = """
 import pytest
-pytestmark = pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["module"]}])
-@pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["function"]}])
+pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["module"]}])
+@pytest.mark.m3(agents=[{"harness": "opencode", "models": ["function"]}])
 def test_selected(agent): pass
 """
     test_file = tmp_path / "test_function_marker.py"
@@ -266,7 +266,7 @@ def test_selected(agent): pass
             "--collect-only",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
+            "m3.pytest_plugin",
             str(test_file),
         ],
         cwd=tmp_path,
@@ -285,7 +285,7 @@ def test_cli_models_replace_marker_models_and_retain_acp_manifest(
 ) -> None:
     source = """
 import pytest, sys
-pytestmark = pytest.mark.mcp_pal(agents=[
+pytestmark = pytest.mark.m3(agents=[
  {"harness": "acp", "models": ["marker"],
   "manifest": {"command": sys.executable, "args": ["fixture-agent"], "protocol": "acp", "protocol_version": 1}},
 ])
@@ -303,8 +303,8 @@ def test_selected(agent): pass
             "--collect-only",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
-            "--mcp-pal-harness",
+            "m3.pytest_plugin",
+            "--harness",
             "acp=cli-model",
             str(test_file),
         ],
@@ -321,7 +321,7 @@ def test_selected(agent): pass
 
 def test_collect_only_does_not_start_server(tmp_path: Path) -> None:
     marker = tmp_path / "started"
-    source = f"""\nimport pytest, sys\nfrom mcp_pal import StdioServer\npytestmark = pytest.mark.mcp_pal(agents=[{{"harness": "opencode", "models": ["m"]}}])\nserver = StdioServer(name="side-effect", command=sys.executable, args=["-c", "open({str(marker)!r}, 'w').write('started')"])\ndef test_selected(agent): pass\n"""
+    source = f"""\nimport pytest, sys\nfrom m3 import StdioServer\npytestmark = pytest.mark.m3(agents=[{{"harness": "opencode", "models": ["m"]}}])\nserver = StdioServer(name="side-effect", command=sys.executable, args=["-c", "open({str(marker)!r}, 'w').write('started')"])\ndef test_selected(agent): pass\n"""
     test_file = tmp_path / "test_collect_only.py"
     test_file.write_text(source, encoding="utf-8")
     environment = os.environ.copy()
@@ -334,7 +334,7 @@ def test_collect_only_does_not_start_server(tmp_path: Path) -> None:
             "--collect-only",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
+            "m3.pytest_plugin",
             str(test_file),
         ],
         cwd=tmp_path,
@@ -350,9 +350,9 @@ def test_collect_only_does_not_start_server(tmp_path: Path) -> None:
 def test_xdist_collection_keeps_all_tool_matrix_ids(tmp_path: Path) -> None:
     source = """
 import pytest
-from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
-from mcp_pal import StdioServer
-pytestmark = pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["a", "b"]}], trials=2)
+from m3.matrix import ServerCase, ToolCase, ToolMatrix
+from m3 import StdioServer
+pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["a", "b"]}], trials=2)
 matrix = ToolMatrix(servers=(
  ServerCase(name="one", server=StdioServer(name="one", command="echo"), tools=(ToolCase(name="quote"),)),
  ServerCase(name="two", server=StdioServer(name="two", command="echo"), tools=(ToolCase(name="quote"),)),
@@ -373,7 +373,7 @@ def test_selected(case, agent): pass
             "-n",
             "2",
             "-p",
-            "mcp_pal.pytest_plugin",
+            "m3.pytest_plugin",
             str(test_file),
         ],
         cwd=tmp_path,
@@ -391,7 +391,7 @@ def test_cli_credentials_do_not_mutate_acp_manifest_entries(tmp_path: Path) -> N
     test_file.write_text(
         """
 import pytest, sys
-pytestmark = pytest.mark.mcp_pal(agents=[
+pytestmark = pytest.mark.m3(agents=[
  {"harness": "acp", "models": ["fixture"], "manifest": {"command": sys.executable, "args": ["agent"], "protocol": "acp", "protocol_version": 1}},
  {"harness": "opencode", "models": ["vendor/model"]},
 ])
@@ -410,8 +410,8 @@ def test_selected(agent):
             "--collect-only",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
-            "--mcp-pal-credential-env",
+            "m3.pytest_plugin",
+            "--credential-env",
             "VENDOR_KEY=SOURCE",
             str(test_file),
         ],
@@ -432,8 +432,8 @@ def test_tool_matrix_agent_trials_persist_twelve_distinct_executions(
     acp = examples / "deterministic_acp_agent.py"
     source = f'''
 import pytest, sys
-from mcp_pal import EvaluationDecision, EvaluationStatus, StdioServer, expect
-from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
+from m3 import EvaluationDecision, EvaluationStatus, StdioServer, expect
+from m3.matrix import ServerCase, ToolCase, ToolMatrix
 
 servers = tuple(
     ServerCase(
@@ -444,7 +444,7 @@ servers = tuple(
     for index in range(3)
 )
 matrix = ToolMatrix(servers=servers)
-pytestmark = pytest.mark.mcp_pal(
+pytestmark = pytest.mark.m3(
     agents=[{{"harness": "acp", "models": ["fixture-a", "fixture-b"],
              "manifest": {{"command": sys.executable, "args": [r"{acp}"],
                           "protocol": "acp", "protocol_version": 1}}}}],
@@ -452,13 +452,13 @@ pytestmark = pytest.mark.mcp_pal(
 )
 
 @matrix.parametrize()
-def test_selected(case, agent, mcp_pal_kit):
+def test_selected(case, agent, m3_kit):
     result = agent.run(case.tool.prompt, server=case.server)
     expect(result).to_have_tool_call("shipping_quote", server=case.server.name, status="success")
-    mcp_pal_kit.register_evaluator(
+    m3_kit.register_evaluator(
         "fixture.v1", lambda _context: EvaluationDecision(status=EvaluationStatus.PASSED, score=1.0)
     )
-    mcp_pal_kit.evaluate(result, "fixture.v1")
+    m3_kit.evaluate(result, "fixture.v1")
 '''
     test_file = tmp_path / "test_selected.py"
     test_file.write_text(source, encoding="utf-8")
@@ -472,8 +472,8 @@ def test_selected(case, agent, mcp_pal_kit):
             "pytest",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
-            "--mcp-pal-results-db",
+            "m3.pytest_plugin",
+            "--results-db",
             str(database),
             str(test_file),
         ],
@@ -504,7 +504,7 @@ def test_selected(case, agent, mcp_pal_kit):
         assert len({spec.case_id for spec in specs}) == 3, [
             (
                 spec.case_id,
-                spec.metadata["mcp_pal.matrix.cell_id"],
+                spec.metadata["m3.matrix.cell_id"],
                 spec.metadata["harness_config"],
             )
             for spec in specs
@@ -657,7 +657,7 @@ def test_selected_agent_submit_cancel_uses_real_execution_handle() -> None:
             },
         }
         async with AsyncMCPTestKit(
-            env={}, cwd="/tmp/mcp-pal-no-project", adapter_registry=registry
+            env={}, cwd="/tmp/m3-no-project", adapter_registry=registry
         ) as kit:
             agent = kit.agents([entry])[0]
             handle = agent.submit(
@@ -678,7 +678,7 @@ class _RecordingKit:
         self.specs = []
 
     def agents(self, entries):
-        from mcp_pal._agent_selection import expand
+        from m3._agent_selection import expand
 
         return expand(self, entries)
 

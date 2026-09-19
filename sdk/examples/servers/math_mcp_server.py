@@ -142,9 +142,9 @@ async def _call_tool(
 
 async def main() -> None:
     server: Server[object] = Server(
-        "mcp-pal-math-server",
+        "m3-math-server",
         version="1.0.0",
-        instructions="Deterministic arithmetic tools for MCP Pal evaluations",
+        instructions="Deterministic arithmetic tools for M3 evaluations",
         on_list_tools=_list_tools,
         on_call_tool=_call_tool,
     )

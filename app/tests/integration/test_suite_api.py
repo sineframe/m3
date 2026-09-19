@@ -5,16 +5,16 @@ from pathlib import Path
 
 from _local_client import TestClient
 
-from mcp_pal import (
+from m3 import (
     EvaluationContext,
     EvaluationResult,
     EvaluationStatus,
     ExecutionId,
     ExecutionState,
 )
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal_app.api.app import create_app
-from mcp_pal_app.settings import Settings
+from m3.storage import SQLiteExecutionStore
+from m3_app.api.app import create_app
+from m3_app.settings import Settings
 
 
 def test_suite_execution_endpoint_and_aggregate_filter(tmp_path: Path) -> None:

@@ -54,13 +54,13 @@ For an agent-driven local workflow, see the deterministic ACP harness example
 Harness assertions verify typed finalized `TraceView` tool calls rather than
 trusting model prose.
 
-The existing `mcp_pal` marker accepts `suite_name` and is inherited from module
+The existing `m3` marker accepts `suite_name` and is inherited from module
 or class markers by collected tests. Use the same exact trimmed name in every
 file belonging to a suite; no new marker is required.
 
 ## Test matrices
 
-Agent tests choose a selected agent through the CLI, a `mcp_pal` marker, or
+Agent tests choose a selected agent through the CLI, a `m3` marker, or
 `kit.agents(...)`. Keep deterministic calls in `ToolMatrix`; use ordinary
 pytest parameters or Python loops to cross servers and tools with the selected
 agent. `--trials 2` creates two independent executions for every combination.
@@ -84,9 +84,9 @@ as:
 Each case runs through the normal SDK execution boundary and returns the usual
 `ExecutionResult`.
 
-For agent behavior, write one `@pytest.mark.mcp_pal` test that requests `agent`.
-Pass harnesses and models with repeated `mcp-pal test --harness KIND=MODEL`
-flags, or set defaults with `@pytest.mark.mcp_pal(agents=[...])`. The selected
+For agent behavior, write one `@pytest.mark.m3` test that requests `agent`.
+Pass harnesses and models with repeated `m3 test --harness KIND=MODEL`
+flags, or set defaults with `@pytest.mark.m3(agents=[...])`. The selected
 agent can run against one server, a ToolMatrix `ServerCase`, or several servers
 with `agent.run(..., servers=[...])`. Ordinary pytest parameters vary servers,
 tools, and prompts. The plugin combines those parameters with every selected
@@ -116,7 +116,7 @@ the trace when it does not.
 Every cell has stable matrix metadata such as its case ID, mode, servers,
 harness, tool, and trial. Normal one-turn and multi-turn execution traces can
 be persisted through the existing SQLite execution store; a multi-turn matrix
-session remains one execution containing all turns. The MCP Pal pytest plugin
+session remains one execution containing all turns. The M3 pytest plugin
 persists pytest outcomes in internal run records and matcher checks as
 execution evaluations; ordinary direct SDK use does not. Matrix summary rows
 are not persisted. Use
@@ -140,7 +140,7 @@ log only each event's `sequence`, `kind`, and `lifecycle_phase`. A diagnostic
 event may add `stage`, `operation`, `elapsed_seconds`, and `timeout_seconds`.
 `handle.result(timeout=...)` is wait-only; `agent.submit(..., timeout=...)` and
 `agent.run(..., timeout=...)` set the execution deadline. The CLI equivalent is
-`mcp-pal test --execution-timeout SECONDS`; the live UI gate's
+`m3 test --execution-timeout SECONDS`; the live UI gate's
 `--process-timeout` is a separate outer process limit.
 
 ## Structured output and schema validation
@@ -242,15 +242,15 @@ SDK persistence is selected at the toolkit boundary:
   memory only. This is the default for direct SDK and pytest use.
 - Passing `SQLiteExecutionStore(path)` as `store=` makes those executions
   saved and reopenable by execution ID.
-- `mcp-pal test` always supplies SQLite storage for otherwise unconfigured
+- `m3 test` always supplies SQLite storage for otherwise unconfigured
   kits. It invokes pytest with the SDK plugin and
-  `--mcp-pal-results-db PATH`; the CLI default path is
-  `.mcp-pal/executions.sqlite` in the project.
+  `--results-db PATH`; the CLI default path is
+  `.m3/executions.sqlite` in the project.
 - Direct pytest users may opt into the same behavior explicitly with
-  `-p mcp_pal.pytest_plugin --mcp-pal-results-db PATH`.
+  `-p m3.pytest_plugin --results-db PATH`.
 
 `SQLiteExecutionStore` and the pytest database flag require the optional
-`mcp-pal[storage]` dependency; `mcp-pal[pytest,storage]` installs both direct
+`m3[storage]` dependency; `m3[pytest,storage]` installs both direct
 pytest support and SQLite storage.
 
 The pytest flag installs a default store factory. An explicit `store=` passed
@@ -270,7 +270,7 @@ pass/fail/skip outcomes, ordinary Python assertion results, or aggregate
 matrix/trial summary rows. Use `store.aggregate_evaluations(...)` for rates.
 Evaluations created through `kit.evaluate()` are
 saved when the kit explicitly receives `store=SQLiteExecutionStore(path)`
-or pytest is run with `--mcp-pal-results-db PATH`; otherwise they remain in
+or pytest is run with `--results-db PATH`; otherwise they remain in
 memory.
 
 Execution lifecycle, MCP activity, and evaluation verdicts are different
@@ -287,5 +287,5 @@ the next connection. The isolation and process-cleanup assertions are in
 
 Use the same pattern in a project: control fixtures and avoid shared external
 state when testing protocol behavior. Select explicit SQLite storage when
-opening saved data again is part of the test, or use `mcp-pal test` when CLI-managed run
+opening saved data again is part of the test, or use `m3 test` when CLI-managed run
 history and the local viewer are wanted.

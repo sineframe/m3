@@ -12,7 +12,7 @@ from typing import Any, cast
 
 import pytest
 
-from mcp_pal.observability import (
+from m3.observability import (
     ACPTrace,
     ClaudeCodeTrace,
     CorrelationState,
@@ -49,7 +49,7 @@ from mcp_pal.observability import (
     UsageValue,
     WireToolCall,
 )
-from mcp_pal.types import (
+from m3.types import (
     ErrorCode,
     ErrorInfo,
     EventDirection,

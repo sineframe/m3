@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.sync_api import ToolCallResult
-from mcp_pal.types import (
+from m3 import MCPTestKit, expect
+from m3.sync_api import ToolCallResult
+from m3.types import (
     ACPAgent,
     AgentSpec,
     FullToolPolicy,
@@ -42,7 +42,7 @@ def _server(name: str, marker: Path) -> StdioServer:
         command=sys.executable,
         args=(str(_MCP_SERVER),),
         cwd=str(_REPOSITORY_ROOT),
-        environment={"MCP_PAL_E2E_MCP_MARKER": str(marker)},
+        environment={"M3_E2E_MCP_MARKER": str(marker)},
     )
 
 
@@ -51,7 +51,7 @@ def _harness(kind: str) -> ACPAgent:
         return ACPAgent(
             model="matrix-fixture",
             manifest={
-                "schema_version": "mcp-pal.harness.v1",
+                "schema_version": "m3.harness.v1",
                 "protocol": "acp",
                 "protocol_version": 1,
                 "command": sys.executable,

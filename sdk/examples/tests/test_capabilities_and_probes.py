@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mcp_pal import CapabilityStatus, MCPTestKit, ProbeKind, ProbeRequest
+from m3 import CapabilityStatus, MCPTestKit, ProbeKind, ProbeRequest
 
 
 def test_read_baseline_capabilities_and_explicit_probes() -> None:

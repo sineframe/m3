@@ -8,14 +8,14 @@ import pytest
 from mcp.server.lowlevel import Server
 from mcp.types import ListToolsResult
 
-from mcp_pal.agent_session import AsyncAgentSession
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.execution_runtime import AsyncExecutionController
-from mcp_pal.harness.contracts import HarnessAdapterCapabilities
-from mcp_pal.server_group import ServerGroupManager
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.transport.local import current_workspace_root
-from mcp_pal.types import (
+from m3.agent_session import AsyncAgentSession
+from m3.async_api import AsyncMCPTestKit
+from m3.execution_runtime import AsyncExecutionController
+from m3.harness.contracts import HarnessAdapterCapabilities
+from m3.server_group import ServerGroupManager
+from m3.storage import SQLiteExecutionStore
+from m3.transport.local import current_workspace_root
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ArtifactPolicy,
@@ -91,7 +91,7 @@ async def test_agent_execution_has_one_workspace_event_and_projects_artifacts(
         capabilities = HarnessAdapterCapabilities(name=name)
 
         async def preflight(self, _launch: object) -> object:
-            from mcp_pal.types import Readiness
+            from m3.types import Readiness
 
             return Readiness(ready=True)
 

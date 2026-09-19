@@ -39,7 +39,7 @@ def inspect_artifacts(wheel: Path, sdist: Path) -> None:
             name for name in names if name.endswith(".dist-info/METADATA")
         )
         metadata = email.message_from_bytes(archive.read(metadata_name))
-        assert metadata["Name"] == "mcp-pal"
+        assert metadata["Name"] == "m3"
         assert metadata["Version"] == EXPECTED_VERSION
         assert metadata["Requires-Python"] == ">=3.10"
         assert metadata["License-Expression"] == "Apache-2.0"
@@ -54,53 +54,47 @@ def inspect_artifacts(wheel: Path, sdist: Path) -> None:
             "all",
         }
         assert "app" not in (metadata.get_all("Provides-Extra") or [])
-        assert "mcp_pal/py.typed" in names
+        assert "m3/py.typed" in names
         forbidden_modules = (
-            "mcp_pal/api/",
-            "mcp_pal/ui/",
-            "mcp_pal/persistence/",
-            "mcp_pal/main.py",
-            "mcp_pal/config.py",
-            "mcp_pal/services/run_manager.py",
-            "mcp_pal/harness/claude_cli.py",
-            "mcp_pal/harness/opencode_cli.py",
-            "mcp_pal/domain/events.py",
+            "m3/api/",
+            "m3/ui/",
+            "m3/persistence/",
+            "m3/main.py",
+            "m3/config.py",
+            "m3/services/run_manager.py",
+            "m3/harness/claude_cli.py",
+            "m3/harness/opencode_cli.py",
+            "m3/domain/events.py",
         )
         assert not any(
             name.startswith(prefix) for name in names for prefix in forbidden_modules
         )
-        assert "mcp_pal/schemas/mcp-pal.harness.v1.schema.json" in names
-        assert "mcp_pal/schemas/mcp-pal.event.v0.2.schema.json" in names
+        assert "m3/schemas/m3.harness.v1.schema.json" in names
+        assert "m3/schemas/m3.event.v0.2.schema.json" in names
         assert any(name.endswith(".dist-info/licenses/LICENSE") for name in names)
-        assert not any(name.startswith("mcp_pal/tests/") for name in names)
-        assert not any(name.startswith("mcp_pal/examples/") for name in names)
-        assert not any(name.startswith("mcp_pal/docs/") for name in names)
+        assert not any(name.startswith("m3/tests/") for name in names)
+        assert not any(name.startswith("m3/examples/") for name in names)
+        assert not any(name.startswith("m3/docs/") for name in names)
         entry_points_name = next(
             (name for name in names if name.endswith(".dist-info/entry_points.txt")),
             None,
         )
-        assert entry_points_name is not None
-        entry_points = archive.read(entry_points_name).decode("utf-8")
+        entry_points = (
+            archive.read(entry_points_name).decode("utf-8")
+            if entry_points_name is not None
+            else ""
+        )
         console_scripts = {
             line.split("=", 1)[0].strip()
             for line in entry_points.splitlines()
             if "=" in line and not line.lstrip().startswith("[")
         }
-        assert {"mcp-pal-harness", "mcp-pal-reference-bridge"} <= console_scripts
-        assert "mcp-pal" not in console_scripts
+        assert "m3" not in console_scripts
         assert (
-            sum(
-                name == "mcp_pal/schemas/mcp-pal.harness.v1.schema.json"
-                for name in names
-            )
-            == 1
+            sum(name == "m3/schemas/m3.harness.v1.schema.json" for name in names) == 1
         )
         assert (
-            sum(
-                name == "mcp_pal/schemas/mcp-pal.event.v0.2.schema.json"
-                for name in names
-            )
-            == 1
+            sum(name == "m3/schemas/m3.event.v0.2.schema.json" for name in names) == 1
         )
 
     with tarfile.open(sdist) as archive:
@@ -109,7 +103,7 @@ def inspect_artifacts(wheel: Path, sdist: Path) -> None:
             name.endswith("/tests/unit/test_packaging.py") for name in sdist_names
         )
         assert any(
-            name.endswith("/examples/reference-harness.json") for name in sdist_names
+            name.endswith("/examples/acp-fixture-harness.json") for name in sdist_names
         )
         assert any(name.endswith("/docs/README.md") for name in sdist_names)
         assert any(name.endswith("/LICENSE") for name in sdist_names)
@@ -146,7 +140,7 @@ def extract_sdist(sdist: Path, destination: Path) -> Path:
     extracted = [
         path
         for path in destination.iterdir()
-        if path.is_dir() and path.name.startswith("mcp_pal-")
+        if path.is_dir() and path.name.startswith("m3-")
     ]
     assert len(extracted) == 1
     return extracted[0]
@@ -155,9 +149,7 @@ def extract_sdist(sdist: Path, destination: Path) -> Path:
 def installed_import_smoke(
     python: Path, smoke_dir: Path, expected_version: str
 ) -> None:
-    smoke_dir.joinpath(".env").write_text(
-        "MCP_PAL_IMPORT_SMOKE_SENTINEL=must-not-load\n"
-    )
+    smoke_dir.joinpath(".env").write_text("M3_IMPORT_SMOKE_SENTINEL=must-not-load\n")
     code = textwrap.dedent(
         f"""
         import asyncio
@@ -171,7 +163,7 @@ def installed_import_smoke(
         import subprocess
 
         def denied(*args, **kwargs):
-            raise AssertionError("mcp_pal import attempted a forbidden side effect")
+            raise AssertionError("m3 import attempted a forbidden side effect")
 
         real_open = builtins.open
         real_io_open = io.open
@@ -201,7 +193,7 @@ def installed_import_smoke(
         # Keep the subscription protocol on Popen.  MCP 2.0.0 evaluates
         # ``subprocess.Popen[bytes]`` in a runtime annotation while it is
         # imported on Python 3.10; replacing Popen with a plain function
-        # would make this smoke test fail before mcp_pal is imported.
+        # would make this smoke test fail before m3 is imported.
         class DeniedPopen:
             @classmethod
             def __class_getitem__(cls, item):
@@ -219,12 +211,18 @@ def installed_import_smoke(
         asyncio.run = denied
         sqlite3.connect = denied
 
-        import mcp_pal
+        import m3
         import importlib.util
-        assert mcp_pal.__version__ == metadata.version("mcp-pal") == {expected_version!r}
-        assert os.environ.get("MCP_PAL_IMPORT_SMOKE_SENTINEL") is None
-        for removed in ("mcp_pal.api", "mcp_pal.ui", "mcp_pal.main", "mcp_pal.config", "mcp_pal.persistence", "mcp_pal.services.run_manager", "mcp_pal.harness.claude_cli", "mcp_pal.harness.opencode_cli", "mcp_pal.domain.events"):
-            assert importlib.util.find_spec(removed) is None, removed
+        def module_missing(name):
+            try:
+                return importlib.util.find_spec(name) is None
+            except ModuleNotFoundError:
+                return True
+        assert m3.__version__ == metadata.version("m3") == {expected_version!r}
+        assert os.environ.get("M3_IMPORT_SMOKE_SENTINEL") is None
+        for removed in ("m3.api", "m3.ui", "m3.main", "m3.config", "m3.persistence", "m3.services.run_manager", "m3.harness.claude_cli", "m3.harness.opencode_cli", "m3.domain.events", "m3.bridge", "m3.bridge.reference"):
+            assert module_missing(removed), removed
+        assert importlib.util.find_spec("m3.fixtures.acp_agent") is not None
         """
     )
     run([str(python), "-c", code], cwd=smoke_dir)
@@ -234,10 +232,10 @@ def main() -> None:
     run(["uv", "lock", "--check"])
     versions = [
         value.strip()
-        for value in os.environ.get("MCP_PAL_PYTHONS", "3.10,3.11,3.12,3.13").split(",")
+        for value in os.environ.get("M3_PYTHONS", "3.10,3.11,3.12,3.13").split(",")
         if value.strip()
     ]
-    with tempfile.TemporaryDirectory(prefix="mcp-pal-package-check-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="m3-package-check-") as temporary:
         root = Path(temporary)
         build_dir = root / "build"
         build_dir.mkdir()
@@ -265,21 +263,15 @@ def main() -> None:
             smoke_dir.mkdir()
             installed_import_smoke(python, smoke_dir, EXPECTED_VERSION)
             scripts = python.parent
-            assert not script_executable(scripts, "mcp-pal").exists()
-            run(
-                [str(script_executable(scripts, "mcp-pal-harness")), "--help"],
-                cwd=smoke_dir,
-            )
-            run(
-                [str(script_executable(scripts, "mcp-pal-reference-bridge")), "--help"],
-                cwd=smoke_dir,
-            )
+            assert not script_executable(scripts, "m3").exists()
+            run([str(python), "-m", "m3.harness.cli", "--help"], cwd=smoke_dir)
+            run([str(python), "-m", "m3.fixtures.acp_agent", "--help"], cwd=smoke_dir)
             assert [path.name for path in smoke_dir.iterdir()] == [".env"], (
                 f"import/entry-point artifacts left in {smoke_dir}"
             )
             assert (
                 smoke_dir.joinpath(".env").read_text()
-                == "MCP_PAL_IMPORT_SMOKE_SENTINEL=must-not-load\n"
+                == "M3_IMPORT_SMOKE_SENTINEL=must-not-load\n"
             )
 
     print("packaging gate passed for", ", ".join(versions))

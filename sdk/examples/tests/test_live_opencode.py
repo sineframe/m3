@@ -3,7 +3,7 @@
 Run this separately from the deterministic catalog:
 
     set -a; source .env; set +a
-    MCP_PAL_RUN_LIVE_OPENCODE=1 uv run --project cli mcp-pal test \
+    M3_RUN_LIVE_OPENCODE=1 uv run --project cli m3 test \
       --env-file .env --harness opencode=opencode/big-pickle -- \
       -q sdk/examples/tests/test_live_opencode.py
 
@@ -21,14 +21,14 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import expect
-from mcp_pal.types import StdioServer, TurnOutcome
+from m3 import expect
+from m3.types import StdioServer, TurnOutcome
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live]
 
 _EXAMPLES_ROOT = Path(__file__).parents[1]
 _REPOSITORY_ROOT = _EXAMPLES_ROOT.parents[1]
-_LIVE_ENABLED = os.environ.get("MCP_PAL_RUN_LIVE_OPENCODE") == "1"
+_LIVE_ENABLED = os.environ.get("M3_RUN_LIVE_OPENCODE") == "1"
 
 
 @pytest.fixture
@@ -43,11 +43,9 @@ def example_server() -> StdioServer:
 
 @pytest.mark.skipif(
     not _LIVE_ENABLED,
-    reason="set MCP_PAL_RUN_LIVE_OPENCODE=1 to call OpenCode",
+    reason="set M3_RUN_LIVE_OPENCODE=1 to call OpenCode",
 )
-@pytest.mark.mcp_pal(
-    agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}]
-)
+@pytest.mark.m3(agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}])
 def test_live_opencode_uses_shipping_quote_and_captures_wire_evidence(
     agent, example_server
 ) -> None:

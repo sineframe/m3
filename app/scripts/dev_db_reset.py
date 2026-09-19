@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Safely remove the disposable development SQLite database.
 
-This is intentionally a recipe helper, not an installed ``mcp-pal`` command.
+This is intentionally a recipe helper, not an installed ``m3`` command.
 It accepts only the exact confirmation used by the documented ``just`` recipe
 and only a regular database file below the repository working directory.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 def _configured_path(root: Path) -> Path:
-    raw = os.environ.get("DATABASE_PATH", "./mcp_pal.db").strip()
+    raw = os.environ.get("DATABASE_PATH", "./m3.db").strip()
     if raw.startswith("sqlite:///"):
         raw = raw.removeprefix("sqlite:///")
     if not raw or raw in {".", "..", "/"}:

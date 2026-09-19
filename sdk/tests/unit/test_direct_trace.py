@@ -10,13 +10,13 @@ from mcp import types
 from mcp.shared.message import SessionMessage
 from mcp_types import ErrorData, JSONRPCError, JSONRPCRequest, JSONRPCResponse
 
-from mcp_pal.direct_client import AsyncDirectClient
-from mcp_pal.direct_trace import DirectTraceBridge
-from mcp_pal.errors import TransportError
-from mcp_pal.events import EventFactory, EventSequence
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.storage import InMemoryExecutionStore
-from mcp_pal.types import EventKind, ExecutionId, ExecutionOutcome
+from m3.direct_client import AsyncDirectClient
+from m3.direct_trace import DirectTraceBridge
+from m3.errors import TransportError
+from m3.events import EventFactory, EventSequence
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.storage import InMemoryExecutionStore
+from m3.types import EventKind, ExecutionId, ExecutionOutcome
 
 
 def _correlation(event: Any) -> Any:

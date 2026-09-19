@@ -2,8 +2,8 @@ from pathlib import Path
 
 from _local_client import TestClient
 
-from mcp_pal_app.api.app import create_app, create_viewer_app
-from mcp_pal_app.settings import Settings
+from m3_app.api.app import create_app, create_viewer_app
+from m3_app.settings import Settings
 
 
 def test_viewer_allows_history_reads_and_semantic_evidence_post(tmp_path: Path) -> None:

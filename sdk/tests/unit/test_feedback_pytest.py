@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from mcp_pal.storage import SQLiteExecutionStore
+from m3.storage import SQLiteExecutionStore
 
 
 def _run(
@@ -25,8 +25,8 @@ def _run(
             "pytest",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
-            "--mcp-pal-results-db",
+            "m3.pytest_plugin",
+            "--results-db",
             str(database),
             *extra,
             str(test_file),
@@ -54,7 +54,7 @@ def test_printed_scores_are_diagnostics_not_evaluations(tmp_path: Path) -> None:
         "def test_print_only():\n    print('Score: 0.99')\n",
     )
     assert result.returncode == 0
-    assert "\nMCP Pal run " in result.stdout
+    assert "\nM3 run " in result.stdout
     store, run_id, record = _manifest(database)
     try:
         attempts = store.list_test_results(run_id)
@@ -62,7 +62,7 @@ def test_printed_scores_are_diagnostics_not_evaluations(tmp_path: Path) -> None:
         assert attempts[0]["outcome"] == "passed"
         assert attempts[0]["execution_ids"] == []
         assert store.get_test_run(run_id)["status"] == "finished"
-        report = tmp_path / ".mcp-pal" / "reports" / run_id / "feedback.json"
+        report = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
         assert json.loads(report.read_text(encoding="utf-8"))["run_id"] == run_id
         assert record["capture"]["mode"] == "fd"
     finally:
@@ -114,16 +114,14 @@ def test_manifest_only_baseline_is_accepted(tmp_path: Path) -> None:
     assert first.returncode == 0
     store, run_id, _ = _manifest(database)
     store.close()
-    second, _ = _run(
-        tmp_path, "def test_one():\n    pass\n", "--mcp-pal-baseline", run_id
-    )
+    second, _ = _run(tmp_path, "def test_one():\n    pass\n", "--baseline", run_id)
     assert second.returncode == 0
 
 
 def test_cli_filters_legacy_harness_matrix_cases_at_collection(tmp_path: Path) -> None:
     source = """
-from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
-from mcp_pal.types import OpenCode, StdioServer
+from m3.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
+from m3.types import OpenCode, StdioServer
 import sys
 server = ServerCase(name="s", server=StdioServer(name="s", command=sys.executable), tools=(ToolCase(name="x"),))
 matrix = HarnessMatrix.each_server(servers=(server,), harnesses=(
@@ -134,7 +132,7 @@ matrix = HarnessMatrix.each_server(servers=(server,), harnesses=(
 def test_case(case):
     assert case.harness.harness.model == "provider/two"
 """
-    result, _ = _run(tmp_path, source, "--mcp-pal-harness", "opencode=provider/two")
+    result, _ = _run(tmp_path, source, "--harness", "opencode=provider/two")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "1 passed" in result.stdout
     assert "1 deselected" in result.stdout
@@ -145,14 +143,12 @@ def test_global_credential_mapping_applies_to_marked_agents_without_harness_cli(
 ) -> None:
     source = """
 import os, pytest
-from mcp_pal import StdioServer, UserMessage
+from m3 import StdioServer, UserMessage
 os.environ["MARKED_SOURCE"] = "sentinel"
-pytestmark = pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["vendor/model"]}])
+pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["vendor/model"]}])
 def test_marked(agent):
     spec = agent._spec(UserMessage(content="x"), server=StdioServer(name="s", command="echo"))
     assert spec.harness.credential_references["VENDOR_KEY"].name == "MARKED_SOURCE"
 """
-    result, _ = _run(
-        tmp_path, source, "--mcp-pal-credential-env", "VENDOR_KEY=MARKED_SOURCE"
-    )
+    result, _ = _run(tmp_path, source, "--credential-env", "VENDOR_KEY=MARKED_SOURCE")
     assert result.returncode == 0, result.stdout + result.stderr

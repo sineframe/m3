@@ -20,10 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.matrix import ServerCase, ToolCase
-from mcp_pal.sync_api import ToolCallResult
-from mcp_pal.types import (
+from m3 import MCPTestKit, expect
+from m3.matrix import ServerCase, ToolCase
+from m3.sync_api import ToolCallResult
+from m3.types import (
     ExecutionOutcome,
     HTTPServer,
     TransportKind,
@@ -94,7 +94,7 @@ def _deepwiki_server() -> HTTPServer:
 
 
 def _codex_acp(codex_acp: str, codex: str, codex_home: Path) -> dict[str, object]:
-    model = os.environ.get("MCP_PAL_CODEX_MODEL")
+    model = os.environ.get("M3_CODEX_MODEL")
     runtime_paths = {str(Path(codex_acp).parent), str(Path(codex).parent)}
     if node := shutil.which("node"):
         # The npm-distributed codex-acp executable has an env/node shebang.
@@ -124,12 +124,10 @@ def _codex_acp(codex_acp: str, codex: str, codex_home: Path) -> dict[str, object
 
 
 def _require_codex_acp() -> tuple[str, str, Path]:
-    codex_acp = shutil.which(
-        os.environ.get("MCP_PAL_CODEX_ACP_EXECUTABLE", "codex-acp")
-    )
+    codex_acp = shutil.which(os.environ.get("M3_CODEX_ACP_EXECUTABLE", "codex-acp"))
     if codex_acp is None:
         pytest.skip("codex-acp is not installed")
-    codex = shutil.which(os.environ.get("MCP_PAL_CODEX_EXECUTABLE", "codex"))
+    codex = shutil.which(os.environ.get("M3_CODEX_EXECUTABLE", "codex"))
     if codex is None:
         pytest.skip("Codex is not installed")
     codex_home = Path(
@@ -149,7 +147,7 @@ def _require_opencode() -> tuple[str, str]:
         pytest.skip("OpenCode is not installed")
     if not os.environ.get("OPENCODE_API_KEY"):
         pytest.skip("OPENCODE_API_KEY is not available")
-    return executable, os.environ.get("MCP_PAL_OPENCODE_MODEL", "opencode/big-pickle")
+    return executable, os.environ.get("M3_OPENCODE_MODEL", "opencode/big-pickle")
 
 
 def test_opencode_selects_read_wiki_structure() -> None:

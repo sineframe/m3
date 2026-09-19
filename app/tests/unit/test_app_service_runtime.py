@@ -5,19 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import AgentSpec, EventKind, ExecutionId, ExecutionOutcome
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.harness import HarnessAdapterRegistry
-from mcp_pal.services.acp_probes import ACPProbeKind, ACPProbeRequest
-from mcp_pal.storage import SQLiteExecutionStore, StorageError
-from mcp_pal_app.services.app_service import AppRuntimeService
-from mcp_pal_app.services.execution_service import AppExecutionError
-from mcp_pal_app.services.profile_service import (
+from m3 import AgentSpec, EventKind, ExecutionId, ExecutionOutcome
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.harness import HarnessAdapterRegistry
+from m3.services.acp_probes import ACPProbeKind, ACPProbeRequest
+from m3.storage import SQLiteExecutionStore, StorageError
+from m3_app.services.app_service import AppRuntimeService
+from m3_app.services.execution_service import AppExecutionError
+from m3_app.services.profile_service import (
     HarnessProfileInput,
     MCPProfileInput,
 )
-from mcp_pal_app.services.spec_builder import OneTurnRunDraft
-from mcp_pal_app.settings import Settings
+from m3_app.services.spec_builder import OneTurnRunDraft
+from m3_app.settings import Settings
 
 
 class _FalseyHandle:

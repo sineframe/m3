@@ -1,4 +1,4 @@
-from mcp_pal.trace.normalized import (
+from m3.trace.normalized import (
     SCHEMA_VERSION,
     build_opencode_trace,
     from_claude_trace,

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.storage import (
+from m3.storage import (
     ArtifactNotFound,
     BlobIntegrityError,
     FilesystemBlobStore,
@@ -89,7 +89,7 @@ def test_blob_store_uses_private_modes_and_explicit_temp_cleanup(
     record = store.put(b"private")
     assert store.root.stat().st_mode & 0o777 == 0o700
     assert record.path.stat().st_mode & 0o777 == 0o600
-    temporary = record.path.parent / ".mcp-pal-blob-crashed.tmp"
+    temporary = record.path.parent / ".m3-blob-crashed.tmp"
     temporary.write_bytes(b"partial")
     assert temporary.exists()
     assert store.cleanup_temporary_files() == (temporary,)
@@ -145,7 +145,7 @@ def test_concurrent_process_writes_publish_one_valid_shared_blob(
     root = str(tmp_path / "blobs")
     script = (
         "import sys; "
-        "from mcp_pal.storage import FilesystemBlobStore; "
+        "from m3.storage import FilesystemBlobStore; "
         "print(FilesystemBlobStore(sys.argv[1]).put(b'multiprocess-shared').sha256)"
     )
     processes = [

@@ -6,9 +6,9 @@
 
 ```python
 import pytest
-from mcp_pal import expect
+from m3 import expect
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 def test_shipping_tool(agent, shipping_server):
     result = agent.run(
         "Get a local shipping quote for a 2 kg parcel.",
@@ -21,10 +21,10 @@ def test_shipping_tool(agent, shipping_server):
     )
 ```
 
-The bare `mcp_pal` marker is the visible opt-in. It selects no harness or model by itself; the CLI supplies those values:
+The bare `m3` marker is the visible opt-in. It selects no harness or model by itself; the CLI supplies those values:
 
 ```bash
-mcp-pal test \
+m3 test \
   --harness opencode=opencode/big-pickle \
   --harness codex=gpt-model \
   --trials 2 \
@@ -38,7 +38,7 @@ A test can instead keep default selections in code:
 ```python
 import pytest
 
-pytestmark = pytest.mark.mcp_pal(
+pytestmark = pytest.mark.m3(
     agents=[
         {"harness": "opencode", "models": ["opencode/big-pickle"]},
         {"harness": "codex", "models": ["gpt-model"]},
@@ -53,7 +53,7 @@ def test_shipping_tool(agent, shipping_server):
 The marker can be on a function or module. It does not multiply tests that do not request `agent`. CLI `--harness` replaces the marker’s selection; CLI `--trials` replaces its trial count. Direct pytest requires the plugin:
 
 ```bash
-python -m pytest -p mcp_pal.pytest_plugin tests/test_shipping.py
+python -m pytest -p m3.pytest_plugin tests/test_shipping.py
 ```
 
 If an `agent` test has neither a CLI selection nor a marked selection, collection fails with an error showing both forms.
@@ -61,7 +61,7 @@ If an `agent` test has neither a CLI selection nor a marked selection, collectio
 ### Plain Python and notebooks: the same selection mechanism
 
 ```python
-from mcp_pal import MCPTestKit
+from m3 import MCPTestKit
 
 agents = [
     {"harness": "opencode", "models": ["provider/a", "provider/b"]},
@@ -86,7 +86,7 @@ with MCPTestKit() as kit:
 Keep deterministic `case.run()` unchanged. For agent tool selection, accept `ServerCase` directly as `agent.run(..., server=...)`, retaining its server alias:
 
 ```python
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 @matrix.parametrize()
 def test_agent_chooses_tool(case, agent):
     result = agent.run(case.tool.prompt, server=case.server)
@@ -104,7 +104,7 @@ If the matrix has three tool cases and the CLI supplies two harness/model choice
 A model selection is separate from authentication. Users put provider credentials in the process environment or in a file passed explicitly to the CLI. The normal documentation command will be:
 
 ```bash
-mcp-pal test --env-file .env \
+m3 test --env-file .env \
   --harness opencode=opencode/big-pickle \
   --harness codex=gpt-model \
   -- tests/test_shipping.py
@@ -114,7 +114,7 @@ The ignored `.env` file contains the user’s actual `OPENCODE_API_KEY` and `OPE
 
 Implement these rules:
 
-1. Add `mcp-pal test --env-file PATH`. Read it with `dotenv_values(..., interpolate=False)` and pass a merged environment **only to the pytest child process**. Ambient values win over file values. Do not mutate the CLI process environment, load `.env` implicitly, pass values in argv, or give file-only provider keys to the UI server process. `doctor --env-file` currently reads only `MCP_PAL_*` configuration; the new **test** option must also load provider variables.
+1. Add `m3 test --env-file PATH`. Read it with `dotenv_values(..., interpolate=False)` and pass a merged environment **only to the pytest child process**. Ambient values win over file values. Do not mutate the CLI process environment, load `.env` implicitly, pass values in argv, or give file-only provider keys to the UI server process. `doctor --env-file` currently reads only `M3_*` configuration; the new **test** option must also load provider variables.
 2. Add repeatable optional `--credential-env TARGET=SOURCE` as the normal form; **no harness kind is required**. Both sides are environment-variable **names**. `--credential-env VENDOR_API_KEY=MY_VENDOR_KEY` supplies that target to selected native harnesses. Support `--credential-env KIND:TARGET=SOURCE` only when a mapping should apply to one harness kind. Add the same target-to-source mapping in an agent dictionary as `"credential_env": {"VENDOR_API_KEY": "MY_VENDOR_KEY"}`. Validate names against Python-style environment identifiers. Reject duplicate target definitions at the same precedence level.
 3. Convert every selected `credential_env` entry to the existing `SecretReference(source="environment", name=SOURCE)` in the internal harness value. Resolve its value only at harness launch. Precedence is known default mapping, marked dictionary, global CLI mapping, then kind-scoped CLI mapping. A missing explicitly selected source fails before harness launch with an error naming the variable, not its value.
 4. For bare native CLI selections, create default references for known routes: Claude Code → `ANTHROPIC_API_KEY`; Codex → `OPENAI_API_KEY`; OpenCode or Pi with model prefix `opencode/`, `openai/`, or `anthropic/` → the corresponding `OPENCODE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`. Pi’s existing `openai-codex` route may reference `PI_CODING_AGENT_DIR`. Do not guess credentials for an unrecognized provider prefix; the user supplies `credential_env` or an ACP manifest. ACP retains authentication defined by its manifest.
@@ -125,7 +125,7 @@ Implement these rules:
 
 ### Selection module and input validation
 
-Create `sdk/src/mcp_pal/_agent_selection.py`. It must import no pytest module. Give it four responsibilities: validate dictionaries, expand them, construct the existing harness value, and construct the existing execution specification. Use one internal immutable selection record; do **not** export a new configuration class.
+Create `sdk/src/m3/_agent_selection.py`. It must import no pytest module. Give it four responsibilities: validate dictionaries, expand them, construct the existing harness value, and construct the existing execution specification. Use one internal immutable selection record; do **not** export a new configuration class.
 
 Accepted agent entries:
 
@@ -182,15 +182,15 @@ Use this mapping as the migration checklist. Add a new-interface test for each r
 
 ## 4. CLI and pytest implementation
 
-In `cli/src/mcp_pal_cli/main.py`, add `test` parser options for `--harness`, `--trials`, `--credential-env`, and `--env-file`. Parse `KIND=MODEL[,MODEL...]` at the first `=`; trim and reject empty model segments, unknown kinds, and duplicate choices. Repeated flags append choices in order. Accept both global `TARGET=SOURCE` and optional kind-scoped `KIND:TARGET=SOURCE` credential mappings. Everything after `--` still passes unchanged to pytest.
+In `cli/src/m3_cli/main.py`, add `test` parser options for `--harness`, `--trials`, `--credential-env`, and `--env-file`. Parse `KIND=MODEL[,MODEL...]` at the first `=`; trim and reject empty model segments, unknown kinds, and duplicate choices. Repeated flags append choices in order. Accept both global `TARGET=SOURCE` and optional kind-scoped `KIND:TARGET=SOURCE` credential mappings. Everything after `--` still passes unchanged to pytest.
 
-Thread the parsed values through both `supervisor.run_test` and `run_test_with_runs`, then `_run_pytest_process` and `pytest_command`. `pytest_command` adds repeatable internal `--mcp-pal-harness`, `--mcp-pal-credential-env`, and optional `--mcp-pal-trials` before the user’s pytest arguments. `_run_pytest_process` supplies the merged child environment. Start **one** pytest subprocess for the whole selection; never loop over harnesses in the CLI.
+Thread the parsed values through both `supervisor.run_test` and `run_test_with_runs`, then `_run_pytest_process` and `pytest_command`. `pytest_command` adds repeatable internal `--harness`, `--credential-env`, and optional `--trials` before the user’s pytest arguments. `_run_pytest_process` supplies the merged child environment. Start **one** pytest subprocess for the whole selection; never loop over harnesses in the CLI.
 
-In `sdk/src/mcp_pal/pytest_plugin.py`:
+In `sdk/src/m3/pytest_plugin.py`:
 
 1. Register the marker and internal selection options in `pytest_addoption`/`pytest_configure` **before** the current early return when there is no results database. Direct pytest must work without SQLite.
-2. Add function-scoped `mcp_pal_kit` that constructs and closes `MCPTestKit`. Projects may override it to supply an adapter registry or store. Add function-scoped `agent` using `request.param` and that kit.
-3. Add `pytest_generate_tests`. Act only when `"agent"` is in `metafunc.fixturenames`; require its closest `mcp_pal` marker, including the valid bare `@pytest.mark.mcp_pal` form. Read the marker's optional defaults. If CLI harnesses exist, replace the marked agent list with CLI choices. For each CLI kind, copy advanced settings from the **single** marked entry of that kind if present, replace its models, then apply CLI credential targets. More than one matching marked entry is an explicit ambiguity error. If no CLI harnesses exist, use the marked list. Fail clearly if neither source supplies a selection. CLI trials override marked trials; otherwise default to one. Expand and call `metafunc.parametrize("agent", selections, indirect=True, ids=...)`. A marker without an `agent` fixture does not multiply the test.
+2. Add function-scoped `m3_kit` that constructs and closes `MCPTestKit`. Projects may override it to supply an adapter registry or store. Add function-scoped `agent` using `request.param` and that kit.
+3. Add `pytest_generate_tests`. Act only when `"agent"` is in `metafunc.fixturenames`; require its closest `m3` marker, including the valid bare `@pytest.mark.m3` form. Read the marker's optional defaults. If CLI harnesses exist, replace the marked agent list with CLI choices. For each CLI kind, copy advanced settings from the **single** marked entry of that kind if present, replace its models, then apply CLI credential targets. More than one matching marked entry is an explicit ambiguity error. If no CLI harnesses exist, use the marked list. Fail clearly if neither source supplies a selection. CLI trials override marked trials; otherwise default to one. Expand and call `metafunc.parametrize("agent", selections, indirect=True, ids=...)`. A marker without an `agent` fixture does not multiply the test.
 4. IDs include kind, model, optional configuration name, and trial. They contain no credential values. Pytest’s ordinary parameterization supplies the cross-product with server fixtures and ToolMatrix cases. Construct no server, process, store execution, or network connection in `pytest_generate_tests`.
 5. At fixture runtime, compute the logical case ID from the unparameterized test node ID plus sorted `request.node.callspec.indices` **excluding `agent`**. Hash that payload and truncate its readable prefix to fit the existing 256-character `case_id` limit. Thus one ToolMatrix case shares a case ID across harnesses and trials, while another tool case has a different ID. An explicit `case_id` passed to `agent.run` wins.
 6. For legacy `HarnessMatrix.parametrize()` items only: when a CLI harness filter exists, inspect the parameter value for `HarnessMatrixCase`, retain items matching its actual harness kind and model, and report other items through `pytest_deselected`. Do this before the manifest records collected IDs. Never rewrite a legacy case or apply the new trials to it. With no CLI filter, preserve current behavior.
@@ -209,25 +209,25 @@ Verify that the existing report UI can read every selected execution through `GE
 
 Reduce the **supported wildcard surface** as follows:
 
-- `mcp_pal.__all__` becomes exactly `__version__`, `MCPTestKit`, `StdioServer`, `HTTPServer`, `SSEServer`, `InProcessServer`, `ExecutionResult`, `ExecutionOutcome`, `TurnOutcome`, `expect`, `check`, `MCPError`.
-- `mcp_pal.matrix.__all__` becomes exactly `ToolCase`, `ServerCase`, `ToolMatrix`, `ToolMatrixCase`.
-- Remove `AgentSpec`, `ExecutionSpec`, `HarnessSpec`, `HarnessValue`, `HarnessProfileRef`, `ACPAgent`, `ClaudeCode`, `OpenCode`, `Codex`, `Pi`, and `NativeToolPolicy` from the supported `mcp_pal.types` export manifest. Keep direct-result, server, trace, evaluation, and `SecretReference` types there for focused advanced use.
+- `m3.__all__` becomes exactly `__version__`, `MCPTestKit`, `StdioServer`, `HTTPServer`, `SSEServer`, `InProcessServer`, `ExecutionResult`, `ExecutionOutcome`, `TurnOutcome`, `expect`, `check`, `MCPError`.
+- `m3.matrix.__all__` becomes exactly `ToolCase`, `ServerCase`, `ToolMatrix`, `ToolMatrixCase`.
+- Remove `AgentSpec`, `ExecutionSpec`, `HarnessSpec`, `HarnessValue`, `HarnessProfileRef`, `ACPAgent`, `ClaudeCode`, `OpenCode`, `Codex`, `Pi`, and `NativeToolPolicy` from the supported `m3.types` export manifest. Keep direct-result, server, trace, evaluation, and `SecretReference` types there for focused advanced use.
 
-Keep **explicit old imports** working during this migration. Update `_exports.py`, `types.py`, `matrix.py`, `__init__.py`, and the public-surface tests together. Those tests currently assume every module attribute must be in `__all__`; replace that assertion with an explicit compatibility allowlist rather than deleting old attributes. Preserve the legacy types’ `__module__ = "mcp_pal.types"` assignment even after removing them from `types.__all__`, and test their pickle round trips. Wildcard imports intentionally expose the smaller list.
+Keep **explicit old imports** working during this migration. Update `_exports.py`, `types.py`, `matrix.py`, `__init__.py`, and the public-surface tests together. Those tests currently assume every module attribute must be in `__all__`; replace that assertion with an explicit compatibility allowlist rather than deleting old attributes. Preserve the legacy types’ `__module__ = "m3.types"` assignment even after removing them from `types.__all__`, and test their pickle round trips. Wildcard imports intentionally expose the smaller list.
 
 ## 6. Documentation rewrite: concrete content
 
 Update executable examples at the same time as their linked prose. The user guides and the testing skill must show **only the simple authoring path**. Do not put `AgentSpec`, `HarnessMatrix`, concrete harness classes, native policy classes, fixture-generation mechanics, or internal metadata keys in user-facing examples. The generated OpenAPI schema may retain its existing wire model names.
 
 1. **Root README:** Replace “Test the behavior that matters” with the bare-marked `agent` test from section 1. Immediately beneath it, add “Set credentials” with `OPENCODE_API_KEY` and `OPENAI_API_KEY` in exported environment variables or an explicitly loaded `.env`, then show a two-harness CLI command and explain the exact item count. Replace “Bring your own harness” with an ACP agent dictionary containing a manifest. In the SDK section, show the `kit.agents(...)` Python loop and printed tool names.
-2. **SDK quick start:** Keep the direct MCP discovery/call walkthrough. Add a second walkthrough: define a real server fixture; write one `@pytest.mark.mcp_pal` agent test; run it through `mcp-pal test --harness ...`; optionally use `pytest.mark.mcp_pal(agents=[...])` with direct `pytest -p mcp_pal.pytest_plugin`. State the provider key names and show `--env-file .env`. Explain that the fixture supplies the selected agent and the test supplies the server and assertion. Show `agent.session(server=...)` for two turns.
+2. **SDK quick start:** Keep the direct MCP discovery/call walkthrough. Add a second walkthrough: define a real server fixture; write one `@pytest.mark.m3` agent test; run it through `m3 test --harness ...`; optionally use `pytest.mark.m3(agents=[...])` with direct `pytest -p m3.pytest_plugin`. State the provider key names and show `--env-file .env`. Explain that the fixture supplies the selected agent and the test supplies the server and assertion. Show `agent.session(server=...)` for two turns.
 3. **SDK examples:** Replace the current native harness example and ACP example with complete agent dictionaries. Replace the large server/harness matrix section with three executable examples: ordinary server parametrization + a marked `agent` test; `ToolMatrix` + a marked `agent` test; and `kit.agents(...)` in a normal Python file. Keep `ToolMatrix.case.run()` as the direct-call example. Put `submit` only in an advanced background-execution example showing handle status and result or cancellation. State needed provider key names alongside each runnable example. Update the corresponding files under `sdk/examples/`, including the live OpenCode example used by the UI gate.
 4. **Concepts:** Rewrite “Test matrices” to explain three separate user choices: direct deterministic `ToolMatrix`, a selected `agent` supplied by CLI/marker/list, and ordinary pytest or Python loops for servers/tools. Explain that `--trials 2` creates two independent executions for every combination. Explain omitted `tools` and `tools=[]` accurately without exposing internal policy classes. Link to the credential setup in the quick start.
 5. **Evaluations:** Rewrite the math example to use ordinary math-case parametrization plus a marked `agent`; run it with `--trials 2` and a documented provider-key setup. Pass each math case’s stable ID as `case_id` in Python-loop examples; pytest gets one automatically. Keep one explicit `kit.evaluate(...)` call per completed execution, then show `EvaluationQuery` grouped by `metadata.harness_config` and filtered to the run. State that a plain Python `assert` is a pytest outcome, while an explicit evaluation or recorded matcher is what aggregate queries score.
 6. **HTTP guide:** Keep direct bearer authentication with `SecretReference`. Replace the agent HTTP and matrix examples with `agent.run(..., server=HTTPServer(...))` and a marked ToolMatrix-crossed test. Show the MCP endpoint’s token reference in `HTTPServer.headers`; show provider keys separately in the CLI environment and `--env-file` example. Retain explicit `TrustLevel.PUBLIC` for the public endpoint.
-7. **CLI README:** Add a flag table with `--harness`, `--trials`, `--env-file`, and `--credential-env`; a complete two-harness command; the marker/CLI precedence; the formula for trial counts; a known-provider key table; and an unknown-provider example using normal `--credential-env VENDOR_API_KEY=MY_VENDOR_KEY` plus optional scoped form. State that only variable names go in test code/flags and that `.env` is read only when requested. Clarify that `mcp-pal doctor --env-file` does not itself provide credentials to a later test command.
+7. **CLI README:** Add a flag table with `--harness`, `--trials`, `--env-file`, and `--credential-env`; a complete two-harness command; the marker/CLI precedence; the formula for trial counts; a known-provider key table; and an unknown-provider example using normal `--credential-env VENDOR_API_KEY=MY_VENDOR_KEY` plus optional scoped form. State that only variable names go in test code/flags and that `.env` is read only when requested. Clarify that `m3 doctor --env-file` does not itself provide credentials to a later test command.
 8. **API v2 guide:** Keep the HTTP contract and JSON examples. Replace prose saying SDK authors create an `AgentSpec` with the test/CLI and Python-loop flows, including where provider keys are set for execution. Explain that those flows write the same wire execution records and that the UI reads the three unchanged routes above. Do not describe pytest internals or internal metadata keys.
-9. **Local skill:** In `skills/testing-with-mcp-pal/SKILL.md`, change the boundary table to `agent` for tool choice and `kit.agents(...)` for scripts. Update its workflow to inspect which provider key **names** are required, run a narrow CLI selection with exported variables or `--env-file`, and report live results. Fix its “no hidden fixture” guidance to say no server is generated automatically; the plugin supplies only `agent`. Replace the old harness-spec code in `references/test-patterns.md` with the bare-marked fixture example. Add exact CLI, `.env`, known key names, global/scoped custom-provider mappings, and missing-key guidance to `references/cli-runner.md`. The skill must never ask for or print a secret value in a test, flag, log, or report.
+9. **Local skill:** In `skills/testing-with-m3/SKILL.md`, change the boundary table to `agent` for tool choice and `kit.agents(...)` for scripts. Update its workflow to inspect which provider key **names** are required, run a narrow CLI selection with exported variables or `--env-file`, and report live results. Fix its “no hidden fixture” guidance to say no server is generated automatically; the plugin supplies only `agent`. Replace the old harness-spec code in `references/test-patterns.md` with the bare-marked fixture example. Add exact CLI, `.env`, known key names, global/scoped custom-provider mappings, and missing-key guidance to `references/cli-runner.md`. The skill must never ask for or print a secret value in a test, flag, log, or report.
 
 ## 7. Tests and mandatory final gate
 
@@ -240,13 +240,13 @@ Create focused tests in SDK unit/integration/e2e, CLI tests, and app API integra
 - **Compatibility:** old explicit imports and pickle paths; legacy matrix tests unchanged without CLI flags; kind/model filtering without rewriting under CLI flags; direct `ToolMatrixCase.run()` unchanged.
 - **API/UI contract:** use a real CLI-created SQLite run in app integration tests, read every execution report, aggregate its recorded checks by configuration, fetch feedback and a baseline comparison, and assert the existing JSON envelope/field shapes consumed by the UI.
 
-Run the deterministic SDK, CLI, and app suites, plus the updated executable documentation examples. Test a notebook-style script in an environment with base `mcp-pal` installed **without pytest**.
+Run the deterministic SDK, CLI, and app suites, plus the updated executable documentation examples. Test a notebook-style script in an environment with base `m3` installed **without pytest**.
 
 **The final gate also runs live providers; skipped tests do not satisfy it.** Add one bare-marked live test that uses a real local MCP server and the `agent` fixture. Update `scripts/live_ui_gate.py` to run that test through production CLI/SDK/app wheels with one real OpenCode and one real Codex selection, require both tool calls, then inspect their distinct SQLite records, API v2 reports, feedback, bundled UI, and redaction. Run one real OpenCode `kit.agents(...)` Python script as the non-pytest live path. The gate checks for required executables and credentials up front and fails clearly if absent. Existing Claude Code, Pi, and migrated ACP live tests remain available for their documented routes; run any touched route as part of the final gate.
 
 ## 8. Locked decisions and defaults
 
-- `@pytest.mark.mcp_pal` with no arguments is the standard CLI-driven test opt-in. The `agent` fixture alone does not opt in.
+- `@pytest.mark.m3` with no arguments is the standard CLI-driven test opt-in. The `agent` fixture alone does not opt in.
 - `run` is the ordinary blocking result path. `submit` is the advanced nonblocking handle path retained for status, later waiting, events, and cancellation; both share one specification builder.
 - `tools=None` is the literal default on `run`, `submit`, and `session`. Omission and `None` are equivalent; `tools=[]` denies MCP tools.
 - `--credential-env TARGET=SOURCE` is the normal global form. `KIND:TARGET=SOURCE` is optional scope. Provider credentials come from the environment or explicit `--env-file`; MCP server authentication is separate.

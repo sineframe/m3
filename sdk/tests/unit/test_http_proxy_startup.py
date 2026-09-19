@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-import mcp_pal.transport.http_proxy as http_proxy_module
-from mcp_pal.transport.http_proxy import McpHttpProxy
+import m3.transport.http_proxy as http_proxy_module
+from m3.transport.http_proxy import McpHttpProxy
 
 
 class _NeverStartedServer:

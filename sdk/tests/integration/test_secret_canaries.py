@@ -13,10 +13,10 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from mcp_pal.server_group import HarnessServerConfig
-from mcp_pal.trace.capture import CaptureWriter
-from mcp_pal.transport.capture_proxy import McpCaptureManager
-from mcp_pal.types import SecretReference, TransportKind
+from m3.server_group import HarnessServerConfig
+from m3.trace.capture import CaptureWriter
+from m3.transport.capture_proxy import McpCaptureManager
+from m3.types import SecretReference, TransportKind
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -77,7 +77,7 @@ def _run_proxy_with_handoff(
         (
             sys.executable,
             "-m",
-            "mcp_pal.transport.stdio_proxy",
+            "m3.transport.stdio_proxy",
             "--capture",
             str(capture),
             "--baseline",

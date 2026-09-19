@@ -2,7 +2,7 @@
 
 Run only with an explicit provider credential and opt-in::
 
-    MCP_PAL_RUN_LIVE_MIGRATED_OPENCODE=1 uv run --env-file .env --project cli \
+    M3_RUN_LIVE_MIGRATED_OPENCODE=1 uv run --env-file .env --project cli \
       python scripts/live_migrated_ui_opencode_acp_gate.py
 
 The browser submits one OpenCode ACP turn using two migrated saved profiles.
@@ -26,7 +26,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
-from mcp_pal.storage import SQLiteExecutionStore
+from m3.storage import SQLiteExecutionStore
 
 try:
     from scripts import live_ui_gate as support
@@ -56,8 +56,8 @@ class GateError(RuntimeError):
 
 
 def _require_inputs() -> tuple[str, str]:
-    if os.environ.get("MCP_PAL_RUN_LIVE_MIGRATED_OPENCODE") != "1":
-        raise GateError("set MCP_PAL_RUN_LIVE_MIGRATED_OPENCODE=1 to opt in")
+    if os.environ.get("M3_RUN_LIVE_MIGRATED_OPENCODE") != "1":
+        raise GateError("set M3_RUN_LIVE_MIGRATED_OPENCODE=1 to opt in")
     credential = os.environ.get("OPENCODE_API_KEY")
     if not credential:
         raise GateError("OPENCODE_API_KEY is required for the live gate")
@@ -65,9 +65,9 @@ def _require_inputs() -> tuple[str, str]:
     executable = shutil.which(configured_executable) or configured_executable
     if not executable or not Path(executable).is_file():
         raise GateError("OpenCode executable is unavailable")
-    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
+    model = os.environ.get("M3_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
     if not model or "/" not in model:
-        raise GateError("MCP_PAL_LIVE_OPENCODE_MODEL must be provider/model")
+        raise GateError("M3_LIVE_OPENCODE_MODEL must be provider/model")
     return str(Path(executable).resolve()), model
 
 
@@ -330,7 +330,7 @@ def check() -> str:
     browser_env = support.clean_environment()
     playwright = support._check_browser_prerequisites(UI_ROOT, browser_env)
 
-    root = Path(tempfile.mkdtemp(prefix="mcp-pal-live-migrated-")).resolve()
+    root = Path(tempfile.mkdtemp(prefix="m3-live-migrated-")).resolve()
     process: subprocess.Popen[str] | None = None
     app_child: support.Child | None = None
     failure: BaseException | None = None
@@ -351,17 +351,17 @@ def check() -> str:
         _seed_legacy_database(database, executable=executable, config_path=config_path)
         port = support._free_port()
         origin = f"http://127.0.0.1:{port}"
-        # The SDK rejects unknown MCP_PAL_* configuration keys. Gate-only
+        # The SDK rejects unknown M3_* configuration keys. Gate-only
         # opt-in/browser variables must not enter the app process.
         server_env = {
             key: value
             for key, value in browser_env.items()
-            if not key.startswith("MCP_PAL_")
+            if not key.startswith("M3_")
         }
         server_env["OPENCODE_API_KEY"] = os.environ["OPENCODE_API_KEY"]
         server_env["OPENCODE_GATE_CONFIG"] = str(config_path)
         server_code = (
-            "import sys,uvicorn; from mcp_pal_cli.web import create_web_app; "
+            "import sys,uvicorn; from m3_cli.web import create_web_app; "
             "uvicorn.run(create_web_app(sys.argv[1],ui_dir=sys.argv[2]),"
             "host='127.0.0.1',port=int(sys.argv[3]),log_level='warning')"
         )

@@ -6,9 +6,9 @@ import pytest
 from mcp import types
 from mcp.shared.exceptions import MCPDeprecationWarning
 
-from mcp_pal import MCPTestKit, StdioServer, UnsupportedFeature
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.sync_api import PromptResult, ResourceReadResult, ToolCallResult
+from m3 import MCPTestKit, StdioServer, UnsupportedFeature
+from m3.async_api import AsyncMCPTestKit
+from m3.sync_api import PromptResult, ResourceReadResult, ToolCallResult
 
 
 def _progress_notification() -> types.ProgressNotification:
@@ -25,7 +25,7 @@ def _progress_notification() -> types.ProgressNotification:
 def test_every_sync_direct_client_operation(example_server: StdioServer) -> None:
     with MCPTestKit(env={}) as kit, kit.direct(example_server) as client:
         initialization = client.initialize()
-        assert initialization.server_info["name"] == "mcp-pal-example-server"
+        assert initialization.server_info["name"] == "m3-example-server"
 
         first_tools = client.list_tools()
         assert first_tools.next_cursor == "page-2"
@@ -103,7 +103,7 @@ def test_every_sync_direct_client_operation(example_server: StdioServer) -> None
 async def test_every_async_direct_client_operation(example_server: StdioServer) -> None:
     async with AsyncMCPTestKit(env={}) as kit, kit.direct(example_server) as client:
         initialization = await client.initialize()
-        assert initialization.server_info["name"] == "mcp-pal-example-server"
+        assert initialization.server_info["name"] == "m3-example-server"
 
         first_tools = await client.list_tools()
         assert first_tools.next_cursor == "page-2"

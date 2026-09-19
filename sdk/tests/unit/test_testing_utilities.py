@@ -14,22 +14,22 @@ from typing import Any, cast
 import pytest
 from mcp import types as mcp_types
 
-from mcp_pal import testing as testing_module
-from mcp_pal.async_api import (
+from m3 import testing as testing_module
+from m3.async_api import (
     AsyncMCPTestKit,
     CallToolResult,
     PromptResult,
     ResourceReadResult,
 )
-from mcp_pal.errors import (
+from m3.errors import (
     ModelValidationError,
     OperationCancelled,
     OperationTimeout,
     ProtocolError,
     TransportError,
 )
-from mcp_pal.sync_api import MCPTestKit
-from mcp_pal.testing import (
+from m3.sync_api import MCPTestKit
+from m3.testing import (
     ArtifactIntegrityError,
     FaultInjector,
     Gate,
@@ -43,7 +43,7 @@ from mcp_pal.testing import (
     ReplayServer,
     VirtualClock,
 )
-from mcp_pal.trace.redaction import RedactionConfig
+from m3.trace.redaction import RedactionConfig
 
 
 def _server() -> MockMCPServer:
@@ -73,7 +73,7 @@ def _server() -> MockMCPServer:
 @pytest.mark.asyncio
 async def test_decorated_stateful_server_works_through_official_client() -> None:
     mock = _server()
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(mock.in_process()) as client:
             result = await client.call_tool("echo", {"text": "hello"})
             assert isinstance(result, CallToolResult)
@@ -98,7 +98,7 @@ async def test_expectations_cover_official_tool_resource_and_prompt_calls() -> N
     mock.expect("prompts/list")
     mock.expect("prompts/get", name="greet", arguments={"name": "Ada"})
 
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(mock.in_process()) as client:
             await client.list_tools()
             result = await client.call_tool("echo", {"text": "expected"})
@@ -138,7 +138,7 @@ async def test_repeated_optional_unordered_and_fallback_expectations_are_real() 
     mock.expect("tools/call", tool="repeat", repeat=(2, 2))
     mock.expect("tools/call", tool="fallback", fallback=True).returns("fallback-value")
 
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(mock.in_process()) as client:
             await client.call_tool("second", {})
             await client.call_tool("first", {})
@@ -203,7 +203,7 @@ async def test_gate_fault_and_virtual_clock_are_deterministic() -> None:
 async def test_recording_is_redacted_json_and_replay_is_strict() -> None:
     mock = _server()
     mock.expect_tool_call("echo", {"text": "mock-secret"})
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(mock.in_process()) as client:
             result = await client.call_tool("echo", {"text": "mock-secret"})
             assert isinstance(result, CallToolResult)
@@ -281,7 +281,9 @@ def test_manual_recording_serialization_applies_explicit_redaction_and_safe_prov
 
 
 def test_recording_rejects_bound_json_without_explicit_binding_metadata() -> None:
-    document = '{"schema":"mcp_pal.mock_recording.v1","redaction_bound":true,"interactions":[]}'
+    document = (
+        '{"schema":"m3.mock_recording.v1","redaction_bound":true,"interactions":[]}'
+    )
     with pytest.raises(ValueError, match="redaction bindings"):
         Recording.from_json(document)
 
@@ -292,7 +294,7 @@ async def test_recording_captures_ordered_non_tool_operations_and_replays_them()
 ):
     mock = _server()
     mock.resource_template("memory://{name}", name="memory")
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(mock.in_process()) as client:
             await client.list_all_tools()
             await client.list_all_resources()
@@ -324,7 +326,7 @@ async def test_recording_captures_ordered_non_tool_operations_and_replays_them()
         "version": "1",
     }
     replay = ReplayServer(Recording.from_json(recording.to_json()))
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(replay.in_process()) as client:
             await client.list_all_tools()
             await client.list_all_resources()
@@ -353,7 +355,7 @@ async def test_response_shape_faults_are_observable_through_official_client() ->
     def second(_arguments: dict[str, object]) -> str:
         return "second"
 
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(mock.in_process()) as client:
             tools = await client.list_all_tools()
             result = await client.call_tool("first", {})
@@ -371,7 +373,7 @@ async def test_invalid_advertised_schema_is_rejected_by_official_server() -> Non
     def echo(_arguments: dict[str, object]) -> str:
         return "ok"
 
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(mock.in_process()) as client:
             with pytest.raises(ProtocolError):
                 await client.list_tools()
@@ -388,7 +390,7 @@ async def test_wire_faults_are_typed_and_concurrent_responses_reorder() -> None:
             await asyncio.sleep(0.02)
         return str(arguments.get("value"))
 
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(mock.in_process()) as client:
             first, second = await asyncio.gather(
                 client.call_tool("echo", {"value": 1}),
@@ -414,7 +416,7 @@ async def test_disconnect_malformed_and_partial_faults_close_as_transport_errors
         def echo(_arguments: dict[str, object]) -> str:
             return "ok"
 
-        async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
             async with kit.direct(mock.in_process(), timeout=0.2) as client:
                 with pytest.raises(TransportError):
                     await client.call_tool("echo", {})
@@ -431,7 +433,7 @@ async def test_protocol_and_cancellation_race_faults_are_typed() -> None:
     def protocol_echo(_arguments: dict[str, object]) -> str:
         return "ok"
 
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(protocol_mock.in_process()) as client:
             with pytest.raises(ProtocolError):
                 await client.call_tool("echo", {})
@@ -443,7 +445,7 @@ async def test_protocol_and_cancellation_race_faults_are_typed() -> None:
     def race_echo(_arguments: dict[str, object]) -> str:
         return "ok"
 
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(race_mock.in_process()) as client:
             operation = asyncio.create_task(client.call_tool("echo", {}))
             await asyncio.sleep(0.02)
@@ -463,7 +465,7 @@ async def test_invalid_structured_result_is_model_validation_with_trace_evidence
     def echo(_arguments: dict[str, object]) -> dict[str, object]:
         return {"value": 1}
 
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(mock.in_process(), validate_schemas=True) as client:
             with pytest.raises(ModelValidationError) as failure:
                 await client.call_tool("echo", {})
@@ -483,7 +485,7 @@ async def test_literal_wire_invalid_structured_result_is_sanitized_and_finalized
     None
 ):
     faults = FaultInjector().invalid_result("tools/call")
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(faults.stdio_server(), validate_schemas=True) as client:
             with pytest.raises(ModelValidationError) as failure:
                 await client.call_tool("echo", {"text": "wire-result-secret"})
@@ -496,7 +498,7 @@ async def test_literal_wire_invalid_structured_result_is_sanitized_and_finalized
 @pytest.mark.process_lifecycle
 def test_sync_literal_wire_invalid_structured_result_has_same_contract() -> None:
     faults = FaultInjector().invalid_result("tools/call")
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(faults.stdio_server(), validate_schemas=True)
     try:
         with client:
@@ -515,14 +517,14 @@ async def test_stdio_fixture_emits_literal_faults_and_bounds_raw_payloads() -> N
     for configure in ("partial_frame", "malformed", "process_crash"):
         faults = FaultInjector()
         getattr(faults, configure)("tools/call")
-        async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
             async with kit.direct(faults.stdio_server()) as client:
                 with pytest.raises((OperationTimeout, TransportError)) as failure:
                     await client.call_tool("echo", {"text": "wire-secret"}, timeout=2)
                 assert "wire-secret" not in str(failure.value)
 
     faults = FaultInjector().oversized("tools/call", 256)
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         async with kit.direct(faults.stdio_server()) as client:
             result = await client.call_tool("echo", {"text": "ok"})
             assert isinstance(result, CallToolResult)
@@ -532,7 +534,7 @@ async def test_stdio_fixture_emits_literal_faults_and_bounds_raw_payloads() -> N
 @pytest.mark.process_lifecycle
 def test_stdio_fixture_is_usable_through_sync_client() -> None:
     faults = FaultInjector().partial_frame("tools/call")
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(faults.stdio_server())
     try:
         with client:
@@ -546,7 +548,7 @@ def test_stdio_fixture_is_usable_through_sync_client() -> None:
 async def test_sse_fixture_emits_literal_event_faults() -> None:
     faults = FaultInjector().partial_frame("tools/call")
     try:
-        async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
             async with kit.direct(faults.sse_server(), timeout=2) as client:
                 with pytest.raises((OperationTimeout, TransportError)) as failure:
                     await client.call_tool("echo", {"text": "sse-wire-secret"})
@@ -556,7 +558,7 @@ async def test_sse_fixture_emits_literal_event_faults() -> None:
 
     faults = FaultInjector().oversized("tools/call", 128)
     try:
-        async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
             async with kit.direct(faults.sse_server(), timeout=2) as client:
                 result = await client.call_tool("echo", {})
                 assert isinstance(result, CallToolResult)
@@ -592,7 +594,7 @@ def test_json_projection_fails_closed_for_hostile_and_cyclic_values() -> None:
 
 def test_recording_rejects_hostile_json_shapes_and_unbound_replay() -> None:
     valid_prefix = (
-        '{"schema":"mcp_pal.mock_recording.v1","redaction_bound":true,"interactions":['
+        '{"schema":"m3.mock_recording.v1","redaction_bound":true,"interactions":['
     )
     with pytest.raises(ValueError):
         Recording.from_json(
@@ -604,14 +606,14 @@ def test_recording_rejects_hostile_json_shapes_and_unbound_replay() -> None:
         )
     with pytest.raises(ValueError):
         Recording.from_json(
-            '{"schema":"mcp_pal.mock_recording.v1","redaction_bound":true,"interactions":[],"value":NaN}'
+            '{"schema":"m3.mock_recording.v1","redaction_bound":true,"interactions":[],"value":NaN}'
         )
     with pytest.raises(ValueError):
         ReplayServer(Recording((), redaction_bound=False))
     deep = "{" + '"x":{' * 70 + "0" + "}}" * 70
     with pytest.raises(ValueError):
         Recording.from_json(
-            '{"schema":"mcp_pal.mock_recording.v1","redaction_bound":true,"initialization":'
+            '{"schema":"m3.mock_recording.v1","redaction_bound":true,"initialization":'
             + deep
             + ',"interactions":[]}'
         )
@@ -632,7 +634,7 @@ def test_property_strategy_accepts_json_schema_required_lists() -> None:
     pytest.importorskip("hypothesis")
     from hypothesis import find
 
-    from mcp_pal.testing_property import schema_strategy
+    from m3.testing_property import schema_strategy
 
     strategy = schema_strategy(
         {
@@ -653,7 +655,7 @@ def test_property_strategies_generate_valid_and_invalid_values() -> None:
     from hypothesis import find
     from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
-    from mcp_pal.testing_property import invalid_schema_strategy, schema_strategy
+    from m3.testing_property import invalid_schema_strategy, schema_strategy
 
     schema = {
         "$defs": {"tag": {"type": "string", "pattern": "^[A-Z]{2}$"}},
@@ -682,7 +684,7 @@ def test_property_strategies_cover_composition_nullable_and_bounds() -> None:
     from hypothesis import find
     from jsonschema import Draft202012Validator
 
-    from mcp_pal.testing_property import invalid_schema_strategy, schema_strategy
+    from m3.testing_property import invalid_schema_strategy, schema_strategy
 
     schemas: list[dict[str, Any]] = [
         {"anyOf": [{"type": "string"}, {"type": "integer"}]},
@@ -759,8 +761,8 @@ def test_native_pytest_setup_and_teardown_errors_remain_in_summary(
             "pytest",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
-            "--mcp-pal-results-db",
+            "m3.pytest_plugin",
+            "--results-db",
             str(tmp_path / "results.sqlite"),
             str(test_file),
         ],
@@ -774,7 +776,7 @@ def test_native_pytest_setup_and_teardown_errors_remain_in_summary(
 
 
 def test_progress_counts_setup_and_teardown_without_double_completion() -> None:
-    from mcp_pal.pytest_plugin import _Progress
+    from m3.pytest_plugin import _Progress
 
     reporter = SimpleNamespace(
         isatty=True,
@@ -813,7 +815,7 @@ def test_progress_counts_setup_and_teardown_without_double_completion() -> None:
 
 
 def test_progress_is_disabled_for_non_tty() -> None:
-    from mcp_pal.pytest_plugin import _Progress
+    from m3.pytest_plugin import _Progress
 
     reporter = SimpleNamespace(isatty=False)
     config = SimpleNamespace(
@@ -827,7 +829,7 @@ def test_progress_is_disabled_for_non_tty() -> None:
 
 
 def test_progress_restores_exact_native_reporter_mode() -> None:
-    from mcp_pal.pytest_plugin import _Progress
+    from m3.pytest_plugin import _Progress
 
     reporter = SimpleNamespace(isatty=True, _show_progress_info="count")
     config = SimpleNamespace(

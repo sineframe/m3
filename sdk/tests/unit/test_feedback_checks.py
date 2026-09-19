@@ -11,8 +11,8 @@ import pytest
 from mcp.server.lowlevel import Server
 from mcp.types import ListToolsResult
 
-from mcp_pal import MCPTestKit, _check_recording
-from mcp_pal._check_recording import (
+from m3 import MCPTestKit, _check_recording
+from m3._check_recording import (
     _safe_json,
     _safe_text,
     _subject_binding,
@@ -20,12 +20,12 @@ from mcp_pal._check_recording import (
     bind_execution,
     bind_subject,
 )
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.matchers import check, expect
-from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
-from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.types import ExecutionOutcome, InProcessServer, StdioServer
+from m3.async_api import AsyncMCPTestKit
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.matchers import check, expect
+from m3.matrix import ServerCase, ToolCase, ToolMatrix
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from m3.types import ExecutionOutcome, InProcessServer, StdioServer
 
 
 def _trace(store: InMemoryExecutionStore, execution_id: str):
@@ -46,7 +46,7 @@ def test_matcher_records_pass_and_failure_against_exact_execution() -> None:
 
     records = store.evaluations(trace.execution_id)
     assert [record.status.value for record in records] == ["passed", "failed"]
-    assert records[0].name == "mcp_pal.matcher.to_have_trace.v1"
+    assert records[0].name == "m3.matcher.to_have_trace.v1"
     assert records[1].details["subject"]["execution_id"] == "matcher-execution"
     assert (
         records[0]
@@ -70,8 +70,8 @@ def test_grouped_aliases_record_one_outer_check_each() -> None:
 
     records = store.evaluations(trace.execution_id)
     assert len(records) == 2
-    assert records[0].name == "mcp_pal.matcher.to_not_have_tool_call.v1"
-    assert records[1].name == "mcp_pal.matcher.to_have_text.v1"
+    assert records[0].name == "m3.matcher.to_not_have_tool_call.v1"
+    assert records[1].name == "m3.matcher.to_have_text.v1"
 
 
 def test_unbound_subject_does_not_create_feedback() -> None:
@@ -170,7 +170,7 @@ def test_recording_failure_does_not_change_matcher_failure_and_is_diagnostic(
     store = InMemoryExecutionStore()
     trace = _trace(store, "recording-failure")
     assert bind_execution(trace.execution_id, store)
-    from mcp_pal._test_runs import activate_test, reset_test, test_attempt
+    from m3._test_runs import activate_test, reset_test, test_attempt
 
     state = test_attempt(
         "run-recording-failure", "test-recording-failure", worker_id="master"
@@ -186,7 +186,7 @@ def test_recording_failure_does_not_change_matcher_failure_and_is_diagnostic(
             expect(trace).to_have_text("missing")
     finally:
         reset_test(token)
-    assert state["diagnostics"] == {"mcp_pal": ["matcher_recording_failed"]}
+    assert state["diagnostics"] == {"m3": ["matcher_recording_failed"]}
     assert "sensitive" not in str(state)
 
 
@@ -201,7 +201,7 @@ def test_matcher_feedback_survives_sqlite_reopen(tmp_path) -> None:
     reopened = SQLiteExecutionStore(path)
     records = reopened.evaluations(trace.execution_id)
     assert len(records) == 1
-    assert records[0].name == "mcp_pal.matcher.to_have_trace.v1"
+    assert records[0].name == "m3.matcher.to_have_trace.v1"
     reopened.close()
 
 

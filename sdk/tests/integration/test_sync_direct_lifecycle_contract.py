@@ -14,9 +14,9 @@ import pytest
 from mcp import types
 from mcp.server.lowlevel import Server
 
-from mcp_pal import MCPTestKit
-from mcp_pal.errors import OperationCancelled, OperationTimeout, UnsupportedFeature
-from mcp_pal.types import InProcessServer, ProtocolConstraint, StdioServer
+from m3 import MCPTestKit
+from m3.errors import OperationCancelled, OperationTimeout, UnsupportedFeature
+from m3.types import InProcessServer, ProtocolConstraint, StdioServer
 
 pytestmark = pytest.mark.process_lifecycle
 
@@ -138,7 +138,7 @@ def test_sync_close_from_another_thread_is_safe_and_not_false_closed() -> None:
         finally:
             finished.set()
 
-    thread = threading.Thread(target=owner, name="mcp-pal-sync-owner")
+    thread = threading.Thread(target=owner, name="m3-sync-owner")
     thread.start()
     assert entered.wait(timeout=5)
     kit.close()
@@ -187,8 +187,7 @@ def test_twenty_concurrent_direct_portals_are_reaped() -> None:
             errors.append(error)
 
     threads = [
-        threading.Thread(target=worker, name=f"mcp-pal-sync-{index}")
-        for index in range(20)
+        threading.Thread(target=worker, name=f"m3-sync-{index}") for index in range(20)
     ]
     for thread in threads:
         thread.start()
@@ -259,10 +258,10 @@ def test_close_during_slow_call_cancels_and_cleans_up() -> None:
         finally:
             close_done.set()
 
-    owner_thread = threading.Thread(target=owner, name="mcp-pal-sync-slow-owner")
+    owner_thread = threading.Thread(target=owner, name="m3-sync-slow-owner")
     owner_thread.start()
     assert _SLOW_STARTED.wait(timeout=5)
-    closer_thread = threading.Thread(target=close_kit, name="mcp-pal-sync-closer")
+    closer_thread = threading.Thread(target=close_kit, name="m3-sync-closer")
     closer_thread.start()
     if not close_done.wait(timeout=2):
         # Avoid masking a portal deadlock with a hanging test; the assertions
@@ -293,8 +292,7 @@ def test_concurrent_close_calls_are_idempotent_and_deadlock_free() -> None:
             errors.append(error)
 
     threads = [
-        threading.Thread(target=close, name=f"mcp-pal-close-{index}")
-        for index in range(20)
+        threading.Thread(target=close, name=f"m3-close-{index}") for index in range(20)
     ]
     for thread in threads:
         thread.start()

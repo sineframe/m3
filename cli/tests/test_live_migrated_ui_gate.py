@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from mcp_pal.types import (
+from m3.types import (
     AgentSpec,
     HarnessProfileRef,
     NativeToolPolicy,
@@ -22,8 +22,8 @@ from mcp_pal.types import (
     TextContent,
     UserMessage,
 )
-from mcp_pal_app.api import create_app
-from mcp_pal_app.settings import Settings
+from m3_app.api import create_app
+from m3_app.settings import Settings
 
 _SCRIPTS = Path(__file__).parents[2] / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
@@ -37,7 +37,7 @@ _SPEC.loader.exec_module(gate)
 
 
 def test_live_gate_requires_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MCP_PAL_RUN_LIVE_MIGRATED_OPENCODE", raising=False)
+    monkeypatch.delenv("M3_RUN_LIVE_MIGRATED_OPENCODE", raising=False)
     with pytest.raises(gate.GateError, match="opt in"):
         gate._require_inputs()
 
@@ -99,7 +99,7 @@ def test_migrated_profiles_run_real_local_acp_and_persist_v2_graph(
         "mcpServers": {
             gate.SERVER_NAME: {
                 "command": sys.executable,
-                "args": ["-m", "mcp_pal.fixtures.echo_server"],
+                "args": ["-m", "m3.fixtures.echo_server"],
                 "trust": "sdk_loopback",
             }
         }

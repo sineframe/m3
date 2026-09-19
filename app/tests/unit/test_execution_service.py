@@ -6,15 +6,15 @@ from typing import Any
 
 import pytest
 
-from mcp_pal import (
+from m3 import (
     RawEvidence,
     RawEvidenceIntegrityError,
     RawEvidenceUnavailable,
     TraceUnavailable,
     TraceView,
 )
-from mcp_pal.storage import StorageConflict, StorageError
-from mcp_pal.types import (
+from m3.storage import StorageConflict, StorageError
+from m3.types import (
     DirectSpec,
     EvidenceRef,
     ExecutionId,
@@ -29,7 +29,7 @@ from mcp_pal.types import (
     StdioServer,
     TraceId,
 )
-from mcp_pal_app.services.execution_service import (
+from m3_app.services.execution_service import (
     AppExecutionError,
     AppExecutionService,
 )

@@ -10,16 +10,16 @@ from pathlib import Path
 
 from _local_client import TestClient
 
-from mcp_pal import AgentSpec, ClaudeCode, MCPTestKit, TextContent, UserMessage
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import (
+from m3 import AgentSpec, ClaudeCode, MCPTestKit, TextContent, UserMessage
+from m3.storage import SQLiteExecutionStore
+from m3.types import (
     RevisionSelection,
     ServerBinding,
     ServerProfileRef,
 )
-from mcp_pal_app.api import create_app
-from mcp_pal_app.services.app_service import AppRuntimeService
-from mcp_pal_app.settings import Settings
+from m3_app.api import create_app
+from m3_app.services.app_service import AppRuntimeService
+from m3_app.settings import Settings
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
 _MCP_FIXTURE = (

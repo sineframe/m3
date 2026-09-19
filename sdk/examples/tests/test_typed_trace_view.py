@@ -6,23 +6,23 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
-from mcp_pal import expect
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.harness import (
+from m3 import expect
+from m3.async_api import AsyncMCPTestKit
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.harness import (
     HarnessObservationSink,
     RawEvidenceInput,
     RawFrameObservation,
 )
-from mcp_pal.observability import (
+from m3.observability import (
     ACPTrace,
     Observation,
     ObservationReason,
     ObservationState,
 )
-from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.sync_api import MCPTestKit
-from mcp_pal.types import (
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from m3.sync_api import MCPTestKit
+from m3.types import (
     CallTool,
     DirectSpec,
     ExecutionOutcome,

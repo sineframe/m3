@@ -7,7 +7,7 @@ from pathlib import Path
 from _local_client import TestClient
 from pydantic import TypeAdapter
 
-from mcp_pal import (
+from m3 import (
     ACPAgent,
     AgentSpec,
     ClaudeCode,
@@ -30,10 +30,11 @@ from mcp_pal import (
     TraceView,
     UserMessage,
 )
-from mcp_pal.storage import SQLiteExecutionStore, StorageError
-from mcp_pal.types import CallTool, DirectSpec, ListTools, ServerBinding, StdioServer
-from mcp_pal_app.api.app import create_app
-from mcp_pal_app.settings import Settings
+from m3.storage import SQLiteExecutionStore, StorageError
+from m3.types import CallTool, DirectSpec, ListTools, ServerBinding, StdioServer
+from m3_app.api.app import create_app
+from m3_app.api.wire import internalize_request
+from m3_app.settings import Settings
 
 
 def _payload(run_id=None, suite_name=None, project_id=None, project_name=None):
@@ -43,7 +44,7 @@ def _payload(run_id=None, suite_name=None, project_id=None, project_name=None):
                 server=StdioServer(
                     name="echo",
                     command=sys.executable,
-                    args=("-m", "mcp_pal.fixtures.echo_server"),
+                    args=("-m", "m3.fixtures.echo_server"),
                 )
             ),
         ),
@@ -99,6 +100,21 @@ def _wait_finished(client, execution_id):
     raise AssertionError("execution did not become terminal")
 
 
+def test_v2_execution_preserves_colliding_metadata_keys(tmp_path):
+    database = Path(tmp_path).resolve() / "metadata-collision.sqlite"
+    payload = _payload()
+    metadata = {"m3.run_id": "internal-looking", "run_id": "user-owned"}
+    payload["spec"]["metadata"] = metadata
+    with TestClient(create_app(Settings(database_path=str(database)))) as client:
+        created = client.post("/api/v2/executions", json=payload)
+        assert created.status_code == 202
+        body = created.json()
+        assert body["spec"]["metadata"] == metadata
+        fetched = client.get(f"/api/v2/executions/{body['execution_id']}")
+        assert fetched.status_code == 200
+        assert fetched.json()["spec"]["metadata"] == metadata
+
+
 def test_v2_execution_lifecycle_and_reopen(tmp_path):
     database = Path(tmp_path).resolve() / "v2.sqlite"
     application = create_app(Settings(database_path=str(database)))
@@ -140,9 +156,13 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert report.status_code == 200
         parsed_report = TypeAdapter(ExecutionReport).validate_python(
-            report.json()["report"]
+            internalize_request("/api/v2/executions/report", report.json()["report"])
         )
-        full_trace = TypeAdapter(TraceView).validate_python(report.json()["trace"])
+        full_trace = TypeAdapter(TraceView).validate_python(
+            internalize_request(
+                "/api/v2/executions/report", {"trace": report.json()["trace"]}
+            )["trace"]
+        )
         assert report.json()["report"]["direct_result"]["kind"] == "call_tool"
         assert report.json()["report"]["evidence"]["completeness"] == "partial"
         assert report.json()["trace"]["schema_version"] == "1.1"
@@ -151,7 +171,11 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         )
         assert bounded.json()["report"]["events_truncated"] is True
         assert (
-            TypeAdapter(TraceView).validate_python(bounded.json()["trace"])
+            TypeAdapter(TraceView).validate_python(
+                internalize_request(
+                    "/api/v2/executions/report", {"trace": bounded.json()["trace"]}
+                )["trace"]
+            )
             == full_trace
         )
         next_cursor = bounded.json()["report"]["next_after_sequence"]
@@ -200,7 +224,9 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         evaluated_report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert evaluated_report.status_code == 200
         evaluated_parsed = TypeAdapter(ExecutionReport).validate_python(
-            evaluated_report.json()["report"]
+            internalize_request(
+                "/api/v2/executions/report", evaluated_report.json()["report"]
+            )
         )
         saved_evaluation = evaluated_report.json()["report"]["evaluations"][0]
         assert saved_evaluation["score"] == 0.91
@@ -380,7 +406,7 @@ import pytest
 
 from mcp.server.lowlevel import Server
 from mcp.types import ListToolsResult, Tool
-from mcp_pal import (
+from m3 import (
     EvaluationDecision,
     EvaluationSource,
     EvaluationStatus,
@@ -389,7 +415,7 @@ from mcp_pal import (
     expect,
 )
 
-pytestmark = pytest.mark.mcp_pal(suite_name="catalog")
+pytestmark = pytest.mark.m3(suite_name="catalog")
 
 def _server():
     async def list_tools(_context, _params):
@@ -451,14 +477,14 @@ def test_order_tool_catalog():
             "pytest",
             "-q",
             "-p",
-            "mcp_pal.pytest_plugin",
-            "--mcp-pal-results-db",
+            "m3.pytest_plugin",
+            "--results-db",
             str(database),
             "--rootdir",
             str(tmp_path),
         ]
         if baseline is not None:
-            command.extend(("--mcp-pal-baseline", baseline))
+            command.extend(("--baseline", baseline))
         command.append(str(test_file))
         return subprocess.run(
             command,
@@ -589,7 +615,12 @@ def test_v2_errors_and_deletion_constraints(tmp_path):
         assert cancelled_report.status_code == 200
         assert (
             TypeAdapter(TraceView)
-            .validate_python(cancelled_report.json()["trace"])
+            .validate_python(
+                internalize_request(
+                    "/api/v2/executions/report",
+                    {"trace": cancelled_report.json()["trace"]},
+                )["trace"]
+            )
             .outcome
             == "cancelled"
         )
@@ -652,7 +683,7 @@ def test_v2_accepts_every_serializable_execution_spec_variant(tmp_path):
                 )
                 assert response.status_code == 202
                 response_spec = TypeAdapter(ExecutionSpec).validate_python(
-                    response.json()["spec"]
+                    internalize_request("/api/v2/executions", response.json()["spec"])
                 )
                 assert response_spec == submitted
                 assert (
@@ -961,10 +992,10 @@ def test_v2_store_and_kit_can_be_injected(tmp_path):
 
 
 def test_v2_module_has_no_legacy_orm_or_run_manager_imports():
-    source = Path(__file__).parents[2] / "src/mcp_pal_app/api/v2.py"
+    source = Path(__file__).parents[2] / "src/m3_app/api/v2.py"
     text = source.read_text()
     assert "RunManager" not in text
-    assert "mcp_pal_app.persistence" not in text
+    assert "m3_app.persistence" not in text
     assert "v2_executions" not in text
 
 

@@ -10,7 +10,7 @@ from pathlib import Path
 from _local_client import TestClient
 from pydantic import TypeAdapter
 
-from mcp_pal import (
+from m3 import (
     ACPAgent,
     AgentSpec,
     CallTool,
@@ -25,9 +25,10 @@ from mcp_pal import (
     TraceView,
     UserMessage,
 )
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal_app.api.app import create_app
-from mcp_pal_app.settings import Settings
+from m3.storage import SQLiteExecutionStore
+from m3_app.api.app import create_app
+from m3_app.api.wire import internalize_request
+from m3_app.settings import Settings
 
 
 def _wait_terminal(client: TestClient, execution_id: str) -> dict:
@@ -46,7 +47,7 @@ def _direct_spec() -> DirectSpec:
                 server=StdioServer(
                     name="echo",
                     command=sys.executable,
-                    args=("-m", "mcp_pal.fixtures.echo_server"),
+                    args=("-m", "m3.fixtures.echo_server"),
                 )
             ),
         ),
@@ -64,14 +65,30 @@ def test_v2_direct_real_stdio_and_sqlite_reopen(tmp_path: Path) -> None:
         assert created.status_code == 202
         execution_id = created.json()["execution_id"]
         terminal = _wait_terminal(client, execution_id)
-        assert TypeAdapter(ExecutionSpec).validate_python(terminal["spec"]) == spec
+        assert (
+            TypeAdapter(ExecutionSpec).validate_python(
+                internalize_request("/api/v2/executions", terminal["spec"])
+            )
+            == spec
+        )
         report_response = client.get(
             f"/api/v2/executions/{execution_id}/report", params={"event_limit": 1000}
         )
         assert report_response.status_code == 200
         report_body = report_response.json()
-        report = TypeAdapter(ExecutionReport).validate_python(report_body["report"])
-        trace = TypeAdapter(TraceView).validate_python(report_body["trace"])
+        assert report_body["trace"]["schema_id"] == "trace_view"
+        assert report_body["report"]["events"]
+        assert all(
+            event["schema"] == "event" for event in report_body["report"]["events"]
+        )
+        report = TypeAdapter(ExecutionReport).validate_python(
+            internalize_request("/api/v2/executions/report", report_body["report"])
+        )
+        trace = TypeAdapter(TraceView).validate_python(
+            internalize_request(
+                "/api/v2/executions/report", {"trace": report_body["trace"]}
+            )["trace"]
+        )
         assert (
             report.direct_result is not None
             and report.direct_result.kind == "call_tool"
@@ -97,7 +114,7 @@ def test_v2_direct_missing_executable_exposes_a_terminal_failed_trace(
     spec = DirectSpec(
         servers=(
             ServerBinding(
-                server=StdioServer(name="missing", command="mcp-pal-no-such-executable")
+                server=StdioServer(name="missing", command="m3-no-such-executable")
             ),
         ),
         operation=CallTool(server="missing", name="echo", arguments={}),
@@ -114,12 +131,23 @@ def test_v2_direct_missing_executable_exposes_a_terminal_failed_trace(
         assert response.status_code == 200
         assert (
             TypeAdapter(ExecutionReport)
-            .validate_python(response.json()["report"])
+            .validate_python(
+                internalize_request(
+                    "/api/v2/executions/report", response.json()["report"]
+                )
+            )
             .snapshot.outcome
             == "failed"
         )
         assert (
-            TypeAdapter(TraceView).validate_python(response.json()["trace"]).outcome
+            TypeAdapter(TraceView)
+            .validate_python(
+                internalize_request(
+                    "/api/v2/executions/report",
+                    {"trace": response.json()["trace"]},
+                )["trace"]
+            )
+            .outcome
             == "failed"
         )
 
@@ -129,18 +157,18 @@ def test_v2_acp_real_agent_and_mcp_stdio_with_raw_evidence(tmp_path: Path) -> No
     fixtures = Path(__file__).parents[3] / "sdk" / "tests" / "fixtures"
     acp_marker = tmp_path / "acp.jsonl"
     manifest = {
-        "schema_version": "mcp-pal.harness.v1",
+        "schema_version": "m3.harness.v1",
         "protocol": "acp",
         "protocol_version": 1,
         "command": sys.executable,
         "args": [
-            str(fixtures / "observing_acp_bridge.py"),
+            str(fixtures / "observing_acp_agent.py"),
             "--observation-marker",
             str(acp_marker),
             "--target",
             sys.executable,
             "--target-args-json",
-            '["-m","mcp_pal.fixtures.structured_cli"]',
+            '["-m","m3.fixtures.structured_cli"]',
         ],
         "env": {},
     }
@@ -167,14 +195,25 @@ def test_v2_acp_real_agent_and_mcp_stdio_with_raw_evidence(tmp_path: Path) -> No
         assert created.status_code == 202
         execution_id = created.json()["execution_id"]
         terminal = _wait_terminal(client, execution_id)
-        assert TypeAdapter(ExecutionSpec).validate_python(terminal["spec"]) == spec
+        assert (
+            TypeAdapter(ExecutionSpec).validate_python(
+                internalize_request("/api/v2/executions", terminal["spec"])
+            )
+            == spec
+        )
         response = client.get(
             f"/api/v2/executions/{execution_id}/report", params={"event_limit": 1000}
         )
         assert response.status_code == 200
         body = response.json()
-        report = TypeAdapter(ExecutionReport).validate_python(body["report"])
-        trace = TypeAdapter(TraceView).validate_python(body["trace"])
+        report = TypeAdapter(ExecutionReport).validate_python(
+            internalize_request("/api/v2/executions/report", body["report"])
+        )
+        trace = TypeAdapter(TraceView).validate_python(
+            internalize_request("/api/v2/executions/report", {"trace": body["trace"]})[
+                "trace"
+            ]
+        )
         assert trace.runtime.kind == "acp"
         assert trace.runtime.session_id.value
         assert trace.transports and all(

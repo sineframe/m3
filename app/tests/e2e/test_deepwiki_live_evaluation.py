@@ -9,16 +9,16 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from _local_client import TestClient
 
-from mcp_pal import (
+from m3 import (
     CallTool,
     DirectSpec,
     HTTPServer,
     MCPTestKit,
     ServerBinding,
 )
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal_app.api.app import create_app
-from mcp_pal_app.settings import Settings
+from m3.storage import SQLiteExecutionStore
+from m3_app.api.app import create_app
+from m3_app.settings import Settings
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live]
 
@@ -26,13 +26,13 @@ pytestmark = [pytest.mark.e2e, pytest.mark.live]
 def test_deepwiki_v2_execution_reopen_and_builtin_evaluation(
     tmp_path, monkeypatch
 ) -> None:
-    if os.environ.get("MCP_PAL_RUN_DEEPWIKI_LIVE") != "1":
-        pytest.skip("set MCP_PAL_RUN_DEEPWIKI_LIVE=1 to run the external DeepWiki test")
-    url = os.environ.get("MCP_PAL_DEEPWIKI_URL", "https://mcp.deepwiki.com/mcp")
-    # These are test-runner controls, not MCP Pal settings. Capture them before
-    # constructing the app because settings rejects unknown MCP_PAL_* names.
-    monkeypatch.delenv("MCP_PAL_RUN_DEEPWIKI_LIVE", raising=False)
-    monkeypatch.delenv("MCP_PAL_DEEPWIKI_URL", raising=False)
+    if os.environ.get("M3_RUN_DEEPWIKI_LIVE") != "1":
+        pytest.skip("set M3_RUN_DEEPWIKI_LIVE=1 to run the external DeepWiki test")
+    url = os.environ.get("M3_DEEPWIKI_URL", "https://mcp.deepwiki.com/mcp")
+    # These are test-runner controls, not M3 settings. Capture them before
+    # constructing the app because settings rejects unknown M3_* names.
+    monkeypatch.delenv("M3_RUN_DEEPWIKI_LIVE", raising=False)
+    monkeypatch.delenv("M3_DEEPWIKI_URL", raising=False)
 
     database = tmp_path / "deepwiki-live.sqlite"
     base_spec = DirectSpec(
@@ -96,7 +96,7 @@ def test_deepwiki_v2_execution_reopen_and_builtin_evaluation(
             for execution_id in execution_ids:
                 persisted = reopened.get_report(execution_id)
                 assert persisted is not None
-                evaluation = kit.evaluate(persisted, "mcp_pal.output.has_text.v1")
+                evaluation = kit.evaluate(persisted, "m3.output.has_text.v1")
                 assert evaluation.status.value == "passed"
     finally:
         reopened.close()
@@ -108,7 +108,7 @@ def test_deepwiki_v2_execution_reopen_and_builtin_evaluation(
             assert evaluated_report.status_code == 200
             evaluations = evaluated_report.json()["report"]["evaluations"]
             assert any(
-                evaluation["name"] == "mcp_pal.output.has_text.v1"
+                evaluation["name"] == "output.has_text.v1"
                 and evaluation["status"] == "passed"
                 for evaluation in evaluations
             )
@@ -117,7 +117,7 @@ def test_deepwiki_v2_execution_reopen_and_builtin_evaluation(
             "from": (now - timedelta(days=1)).isoformat(),
             "to": (now + timedelta(days=1)).isoformat(),
             "group_by": ["run_id", "evaluator"],
-            "filters": {"evaluator": "mcp_pal.output.has_text.v1"},
+            "filters": {"evaluator": "m3.output.has_text.v1"},
         }
         aggregate = report_client.post(
             "/api/v2/evaluations/aggregate", json=aggregate_payload

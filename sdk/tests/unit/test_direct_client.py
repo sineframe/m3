@@ -11,7 +11,7 @@ from typing import Any, cast
 import pytest
 from mcp import types
 
-from mcp_pal.direct_client import (
+from m3.direct_client import (
     AsyncDirectClient,
     ClientSessionOptions,
     DirectOperationEvent,
@@ -21,7 +21,7 @@ from mcp_pal.direct_client import (
     ToolCallResult,
     create_client_session,
 )
-from mcp_pal.errors import (
+from m3.errors import (
     ModelValidationError,
     OperationCancelled,
     OperationTimeout,
@@ -29,8 +29,8 @@ from mcp_pal.errors import (
     TransportError,
     UnsupportedFeature,
 )
-from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import CallTool
+from m3.trace.redaction import RedactionConfig
+from m3.types import CallTool
 
 
 def _client(
@@ -842,7 +842,7 @@ async def test_malformed_and_remote_schemas_are_typed_without_echoing_untrusted_
 
 
 def test_wrappers_round_trip_without_serializing_raw_evidence() -> None:
-    from mcp_pal.direct_client import Tool, ToolCallResult
+    from m3.direct_client import Tool, ToolCallResult
 
     tool = Tool(raw={"secret": "not-public"}, name="fixture", input_schema=True)
     dumped = tool.model_dump(mode="json")

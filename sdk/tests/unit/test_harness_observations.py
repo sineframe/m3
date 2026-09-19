@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import expect
-from mcp_pal.agent_session import HarnessAdapter as AgentHarnessAdapter
-from mcp_pal.errors import RawEvidenceIntegrityError
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.harness import (
+from m3 import expect
+from m3.agent_session import HarnessAdapter as AgentHarnessAdapter
+from m3.errors import RawEvidenceIntegrityError
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.harness import (
     HARNESS_OBSERVATION_ADAPTER,
     HarnessObservationSink,
     HarnessSessionEvidence,
@@ -30,15 +30,15 @@ from mcp_pal.harness import (
     TurnEvidence,
     UsageObservedObservation,
 )
-from mcp_pal.harness.contracts import HarnessAdapter as ContractHarnessAdapter
-from mcp_pal.observability import CaptureOptions
-from mcp_pal.storage import (
+from m3.harness.contracts import HarnessAdapter as ContractHarnessAdapter
+from m3.observability import CaptureOptions
+from m3.storage import (
     InMemoryExecutionStore,
     SQLiteExecutionStore,
     StorageConflict,
 )
-from mcp_pal.trace.redaction import RedactionConfig
-from mcp_pal.types import (
+from m3.trace.redaction import RedactionConfig
+from m3.types import (
     EventDirection,
     EventId,
     EventKind,
@@ -52,7 +52,7 @@ NOW = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
 
 
 def test_harness_adapter_identity_remains_compatible() -> None:
-    from mcp_pal.harness import HarnessAdapter
+    from m3.harness import HarnessAdapter
 
     assert HarnessAdapter is AgentHarnessAdapter
     assert ContractHarnessAdapter is AgentHarnessAdapter

@@ -11,23 +11,23 @@ from typing import Any, cast
 
 import pytest
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.harness.acp import AcpHarnessAdapter
-from mcp_pal.harness.claude import ClaudeCodeHarnessAdapter
-from mcp_pal.harness.contracts import (
+from m3.async_api import AsyncMCPTestKit
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.harness.acp import AcpHarnessAdapter
+from m3.harness.claude import ClaudeCodeHarnessAdapter
+from m3.harness.contracts import (
     HarnessLaunch,
     HarnessTurnRequest,
     HarnessTurnResult,
 )
-from mcp_pal.harness.observation_sink import HarnessObservationSink
-from mcp_pal.harness.opencode import OpenCodeHarnessAdapter
-from mcp_pal.observability import DirectTrace, ObservationState, TraceView
-from mcp_pal.server_group import HarnessServerConfig, ServerGroupSnapshot
-from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.sync_api import MCPTestKit
-from mcp_pal.testing import FaultInjector
-from mcp_pal.types import (
+from m3.harness.observation_sink import HarnessObservationSink
+from m3.harness.opencode import OpenCodeHarnessAdapter
+from m3.observability import DirectTrace, ObservationState, TraceView
+from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from m3.sync_api import MCPTestKit
+from m3.testing import FaultInjector
+from m3.types import (
     ACPAgent,
     AgentSpec,
     CallTool,
@@ -68,7 +68,7 @@ def _server() -> ServerBinding:
 
 def _assert_common(view: TraceView, runtime: str) -> None:
     """Assertions intentionally limited to facts every harness can expose."""
-    assert view.schema_id == "mcp_pal.trace_view"
+    assert view.schema_id == "m3.trace_view"
     assert view.outcome is ExecutionOutcome.COMPLETED
     assert view.runtime.kind == runtime
     assert view.trace_id.root
@@ -92,7 +92,7 @@ def _acp_spec(mode: str = "recover") -> AgentSpec:
         harness=ACPAgent(
             model="fixture",
             manifest={
-                "schema_version": "mcp-pal.harness.v1",
+                "schema_version": "m3.harness.v1",
                 "protocol": "acp",
                 "protocol_version": 1,
                 "command": sys.executable,
@@ -207,7 +207,7 @@ async def _native_trace(
         await session.close()
     assert turn.turn_evidence is not None
     if store is None:
-        from mcp_pal.storage import InMemoryExecutionStore
+        from m3.storage import InMemoryExecutionStore
 
         store = InMemoryExecutionStore()
     recorder = ExecutionTraceRecorder(store, execution_id)
@@ -447,7 +447,7 @@ async def test_native_terminal_turns_finalize_and_reopen(
         spec = _opencode_spec()
         adapter: Any = OpenCodeHarnessAdapter(
             executable=str(FIXTURES / "opencode_serve_fixture.py"),
-            environment={"MCP_PAL_OPENCODE_MODE": mode or "normal"},
+            environment={"M3_OPENCODE_MODE": mode or "normal"},
         )
     elif harness == "claude":
         spec = _claude_spec().model_copy(
@@ -595,7 +595,7 @@ async def test_direct_cancelled_trace_persists_and_reopens(tmp_path: Path) -> No
         command=sys.executable,
         args=(str(HANGING_SERVER),),
         cwd=str(ROOT.parent),
-        environment={"MCP_PAL_E2E_PID_FILE": str(marker)},
+        environment={"M3_E2E_PID_FILE": str(marker)},
     )
     spec = DirectSpec(
         servers=(ServerBinding(server=server, alias="hanging"),),

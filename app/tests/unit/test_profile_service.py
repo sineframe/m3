@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal import MCPTestKit
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import (
+from m3 import MCPTestKit
+from m3.storage import SQLiteExecutionStore
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ClaudeCode,
@@ -16,14 +16,14 @@ from mcp_pal.types import (
     StdioServer,
     TextContent,
 )
-from mcp_pal_app.services.profile_service import (
+from m3_app.services.profile_service import (
     HarnessProfileInput,
     MCPProfileInput,
     ProfileService,
     ProfileServiceError,
 )
-from mcp_pal_app.services.spec_builder import ExecutionSpecBuilder, OneTurnRunDraft
-from mcp_pal_app.settings import Settings
+from m3_app.services.spec_builder import ExecutionSpecBuilder, OneTurnRunDraft
+from m3_app.settings import Settings
 
 
 def _service(tmp_path: Path) -> tuple[SQLiteExecutionStore, ProfileService]:

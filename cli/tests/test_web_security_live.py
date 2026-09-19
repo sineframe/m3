@@ -139,7 +139,7 @@ def test_raw_asgi_and_cli_apps_enforce_local_security_over_real_http(
         sys.executable,
         "-m",
         "uvicorn",
-        "mcp_pal_app.main:app",
+        "m3_app.main:app",
         "--host",
         "0.0.0.0",
         "--port",
@@ -168,7 +168,7 @@ def test_raw_asgi_and_cli_apps_enforce_local_security_over_real_http(
     }
     cli_program = (
         "import os, uvicorn; "
-        "from mcp_pal_cli.web import create_web_app; "
+        "from m3_cli.web import create_web_app; "
         "uvicorn.run(create_web_app("
         "os.environ['TEST_WEB_SECURITY_DATABASE'], "
         "ui_dir=os.environ['TEST_WEB_SECURITY_UI']), "

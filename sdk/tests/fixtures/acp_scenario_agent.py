@@ -74,7 +74,7 @@ def run(mode: str) -> int:
     turns = 0
     session_id = "scenario-session"
     try:
-        pid_marker = os.environ.get("MCP_PAL_ACP_PID_FILE")
+        pid_marker = os.environ.get("M3_ACP_PID_FILE")
         if pid_marker:
             Path(pid_marker).write_text(str(os.getpid()), encoding="utf-8")
         for line in sys.stdin:
@@ -88,7 +88,7 @@ def run(mode: str) -> int:
                 servers = params.get("mcpServers") or []
                 if servers and isinstance(servers[0], dict):
                     server_name = str(servers[0].get("name") or server_name)
-                marker = os.environ.get("MCP_PAL_ACP_MARKER")
+                marker = os.environ.get("M3_ACP_MARKER")
                 if marker:
                     with open(marker, "w", encoding="utf-8") as output:
                         json.dump(params, output, separators=(",", ":"))

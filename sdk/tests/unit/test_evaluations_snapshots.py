@@ -9,17 +9,17 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from mcp_pal import MCPTestKit, snapshot
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import ModelValidationError, UnsupportedFeature
-from mcp_pal.evaluations import (
+from m3 import MCPTestKit, snapshot
+from m3.async_api import AsyncMCPTestKit
+from m3.errors import ModelValidationError, UnsupportedFeature
+from m3.evaluations import (
     EvaluationRunner,
     InMemoryEvaluationStore,
     RequiredEvaluationError,
 )
-from mcp_pal.snapshots import SnapshotOptions
-from mcp_pal.trace.redaction import REDACTED, RedactionConfig
-from mcp_pal.types import (
+from m3.snapshots import SnapshotOptions
+from m3.trace.redaction import REDACTED, RedactionConfig
+from m3.types import (
     ArtifactId,
     ArtifactRef,
     EvaluationStatus,
@@ -326,13 +326,13 @@ def test_required_failed_or_error_persists_before_outer_failure() -> None:
 
 
 def test_sync_and_async_kits_expose_separate_persisted_evaluation_results() -> None:
-    with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         kit.register_evaluator("sync", lambda context: True)
         result = kit.evaluate({"answer": "ok"}, "sync")
         assert kit.evaluation_results() == (result,)
 
     async def run() -> None:
-        async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
             kit.register_evaluator(
                 "async", lambda context: EvaluationStatus.INCONCLUSIVE
             )
@@ -353,7 +353,7 @@ def test_sync_and_async_kits_expose_separate_persisted_evaluation_results() -> N
 
 def test_async_evaluator_is_awaited_and_persisted() -> None:
     async def run() -> None:
-        async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
 
             async def evaluate(context: object) -> bool:
                 return True

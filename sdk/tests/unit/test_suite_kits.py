@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 
-from mcp_pal import StdioServer
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.sync_api import MCPTestKit
-from mcp_pal.types import DirectSpec, Ping, RunId, ServerBinding
+from m3 import StdioServer
+from m3.async_api import AsyncMCPTestKit
+from m3.sync_api import MCPTestKit
+from m3.types import DirectSpec, Ping, RunId, ServerBinding
 
 
 def _spec() -> DirectSpec:

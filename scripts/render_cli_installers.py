@@ -1,4 +1,4 @@
-"""Render the versioned standalone MCP Pal installer assets."""
+"""Render the versioned standalone M3 installer assets."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLACEHOLDER = "@MCP_PAL_VERSION@"
+PLACEHOLDER = "@M3_VERSION@"
 VERSION_PATTERN = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+!-]*$")
 
 

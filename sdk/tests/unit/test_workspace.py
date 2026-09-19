@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.harness import DeterministicHarnessAdapter
-from mcp_pal.types import (
+from m3.async_api import AsyncMCPTestKit
+from m3.harness import DeterministicHarnessAdapter
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ArtifactPolicy,
@@ -19,7 +19,7 @@ from mcp_pal.types import (
     WorkspaceKind,
     WorkspacePolicy,
 )
-from mcp_pal.workspace import WorkspaceError, WorkspaceManager
+from m3.workspace import WorkspaceError, WorkspaceManager
 
 
 def _manager(
@@ -223,9 +223,7 @@ def test_git_worktree_creation_and_cleanup(tmp_path: Path) -> None:
     subprocess.run(
         ["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True
     )
-    subprocess.run(
-        ["git", "config", "user.name", "MCP Pal Test"], cwd=source, check=True
-    )
+    subprocess.run(["git", "config", "user.name", "M3 Test"], cwd=source, check=True)
     (source / "file.txt").write_text("x")
     subprocess.run(["git", "add", "file.txt"], cwd=source, check=True)
     subprocess.run(["git", "commit", "-qm", "initial"], cwd=source, check=True)
@@ -334,7 +332,7 @@ def test_excluded_artifact_and_cleanup_failure_are_fail_closed(
     assert "artifact_unavailable:.git" in capture.limitations
 
     monkeypatch.setattr(
-        "mcp_pal.workspace.shutil.rmtree",
+        "m3.workspace.shutil.rmtree",
         lambda _path: (_ for _ in ()).throw(OSError("no")),
     )
     with pytest.raises(WorkspaceError, match="workspace cleanup failed"):

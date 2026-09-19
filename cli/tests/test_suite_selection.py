@@ -11,10 +11,10 @@ def test_cli_suite_selects_only_marked_files(tmp_path: Path) -> None:
     catalog = tmp_path / "catalog.py"
     other = tmp_path / "other.py"
     catalog.write_text(
-        "import pytest\npytestmark=pytest.mark.mcp_pal(suite_name='catalog')\ndef test_a(): pass\ndef test_b(): pass\n"
+        "import pytest\npytestmark=pytest.mark.m3(suite_name='catalog')\ndef test_a(): pass\ndef test_b(): pass\n"
     )
     other.write_text(
-        "import pytest\npytestmark=pytest.mark.mcp_pal(suite_name='other')\ndef test_c(): pass\n"
+        "import pytest\npytestmark=pytest.mark.m3(suite_name='other')\ndef test_c(): pass\n"
     )
     db = tmp_path / "results.sqlite"
     env = dict(
@@ -27,7 +27,7 @@ def test_cli_suite_selects_only_marked_files(tmp_path: Path) -> None:
         [
             sys.executable,
             "-m",
-            "mcp_pal_cli",
+            "m3_cli",
             "test",
             "--suite=catalog",
             "--results-db",
@@ -56,7 +56,7 @@ def test_cli_blank_suite_is_usage_error(tmp_path: Path) -> None:
         + str(Path(__file__).parents[2].parent / "sdk/src"),
     )
     result = subprocess.run(
-        [sys.executable, "-m", "mcp_pal_cli", "test", "--suite=", "--", "-q"],
+        [sys.executable, "-m", "m3_cli", "test", "--suite=", "--", "-q"],
         cwd=tmp_path,
         env=env,
         text=True,
@@ -69,10 +69,10 @@ def test_cli_suite_intersects_path_k_and_marker_selectors(tmp_path: Path) -> Non
     first = tmp_path / "catalog_one.py"
     second = tmp_path / "catalog_two.py"
     first.write_text(
-        "import pytest\npytestmark=pytest.mark.mcp_pal(suite_name='catalog')\n@pytest.mark.fast\ndef test_keep(): pass\ndef test_drop(): pass\n"
+        "import pytest\npytestmark=pytest.mark.m3(suite_name='catalog')\n@pytest.mark.fast\ndef test_keep(): pass\ndef test_drop(): pass\n"
     )
     second.write_text(
-        "import pytest\npytestmark=pytest.mark.mcp_pal(suite_name='catalog')\n@pytest.mark.fast\ndef test_other_file(): pass\n"
+        "import pytest\npytestmark=pytest.mark.m3(suite_name='catalog')\n@pytest.mark.fast\ndef test_other_file(): pass\n"
     )
     env = dict(
         os.environ,
@@ -85,7 +85,7 @@ def test_cli_suite_intersects_path_k_and_marker_selectors(tmp_path: Path) -> Non
         [
             sys.executable,
             "-m",
-            "mcp_pal_cli",
+            "m3_cli",
             "test",
             "--suite",
             "catalog",
@@ -118,15 +118,15 @@ def test_cli_suite_matrix_with_marker_manifests(tmp_path: Path) -> None:
     ):
         path = tmp_path / f"{name}.py"
         agent_source = (
-            "@pytest.mark.mcp_pal(agents=[{'harness':'acp','models':['marker'], 'manifest':{'command':sys.executable,'args':['fixture-agent'],'protocol':'acp','protocol_version':1}}, {'harness':'opencode','models':['marker']}])\ndef test_agent(agent): assert agent.model\n"
+            "@pytest.mark.m3(agents=[{'harness':'acp','models':['marker'], 'manifest':{'command':sys.executable,'args':['fixture-agent'],'protocol':'acp','protocol_version':1}}, {'harness':'opencode','models':['marker']}])\ndef test_agent(agent): assert agent.model\n"
             if suite != "other"
             else ""
         )
-        marker_source = f"pytestmark=pytest.mark.mcp_pal(suite_name='{suite}')\n"
+        marker_source = f"pytestmark=pytest.mark.m3(suite_name='{suite}')\n"
         path.write_text(
             "import os, sys, pytest\n"
             + marker_source
-            + "from mcp_pal.storage import SQLiteExecutionStore\nfrom mcp_pal.types import ExecutionId, ExecutionState\n"
+            + "from m3.storage import SQLiteExecutionStore\nfrom m3.types import ExecutionId, ExecutionState\n"
             f"def test_direct():\n s=SQLiteExecutionStore(os.environ['SUITE_DB']); s.create(ExecutionState(execution_id=ExecutionId('{name}'), suite_name='{suite}')); s.close()\n"
             + agent_source
         )
@@ -144,7 +144,7 @@ def test_cli_suite_matrix_with_marker_manifests(tmp_path: Path) -> None:
         command = [
             sys.executable,
             "-m",
-            "mcp_pal_cli",
+            "m3_cli",
             "test",
             "--results-db",
             str(db),

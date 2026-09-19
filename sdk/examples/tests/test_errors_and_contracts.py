@@ -2,8 +2,8 @@
 
 import pytest
 
-from mcp_pal import MCPTestKit, ModelValidationError, StdioServer
-from mcp_pal.sync_api import ToolCallResult
+from m3 import MCPTestKit, ModelValidationError, StdioServer
+from m3.sync_api import ToolCallResult
 
 
 def test_assert_an_expected_tool_error(example_server: StdioServer) -> None:

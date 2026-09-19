@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.storage import (
+from m3.storage import (
     BlobIntegrityError,
     InMemoryArtifactStore,
     InMemoryExecutionStore,
     StorageConflict,
     TemporaryArtifactStore,
 )
-from mcp_pal.trace.redaction import RedactionConfig, RedactionError
-from mcp_pal.types import (
+from m3.trace.redaction import RedactionConfig, RedactionError
+from m3.types import (
     ArtifactRef,
     Event,
     EventId,
@@ -403,7 +403,7 @@ def test_large_blob_roundtrip_is_content_addressed_and_validated(
     factory: type[InMemoryArtifactStore] | type[TemporaryArtifactStore],
 ) -> None:
     store = factory()
-    content = (b"mcp-pal-large-blob-" * 200_000) + b"!"
+    content = (b"m3-large-blob-" * 200_000) + b"!"
     ref = store.put(
         "execution-1", "large.bin", content, media_type="application/octet-stream"
     )

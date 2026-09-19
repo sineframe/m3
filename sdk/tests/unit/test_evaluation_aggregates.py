@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import ClassVar
 
-from mcp_pal import (
+from m3 import (
     EvaluationDecision,
     EvaluationId,
     EvaluationQuery,
@@ -16,11 +16,11 @@ from mcp_pal import (
     StdioServer,
     TurnId,
 )
-from mcp_pal.aggregations import aggregate_evaluations
-from mcp_pal.evaluations import EvaluationRunner
-from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
-from mcp_pal.storage import InMemoryExecutionStore
-from mcp_pal.storage.sqlite import SQLiteExecutionStore
+from m3.aggregations import aggregate_evaluations
+from m3.evaluations import EvaluationRunner
+from m3.matrix import ServerCase, ToolCase, ToolMatrix
+from m3.storage import InMemoryExecutionStore
+from m3.storage.sqlite import SQLiteExecutionStore
 
 
 def _snapshot(name: str, created_at: datetime) -> ExecutionState:
@@ -465,10 +465,10 @@ def test_matrix_case_and_judge_labels_are_stable() -> None:
             context={
                 "execution_id": "matrix-trial-1",
                 "metadata": {
-                    "mcp_pal.matrix.matrix_id": "matrix-1",
-                    "mcp_pal.matrix.cell_id": "server/tool",
-                    "mcp_pal.matrix.case_id": "server/tool/trial-1",
-                    "mcp_pal.matrix.trial": 1,
+                    "m3.matrix.matrix_id": "matrix-1",
+                    "m3.matrix.cell_id": "server/tool",
+                    "m3.matrix.case_id": "server/tool/trial-1",
+                    "m3.matrix.trial": 1,
                 },
             },
         ),

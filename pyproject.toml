@@ -18,7 +18,7 @@ include = ["*.py", "*.pyi"]
 select = ["F", "I", "B", "RUF", "UP", "E701", "E702"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["mcp_pal", "mcp_pal_app", "mcp_pal_cli"]
+known-first-party = ["m3", "m3_app", "m3_cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["sdk/tests", "app/tests", "cli/tests"]

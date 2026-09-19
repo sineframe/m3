@@ -13,10 +13,10 @@ from typing import Any
 import httpx2
 import pytest
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import OperationCancelled
-from mcp_pal.transport.direct import TransportConnectionError
-from mcp_pal.types import (
+from m3.async_api import AsyncMCPTestKit
+from m3.errors import OperationCancelled
+from m3.transport.direct import TransportConnectionError
+from m3.types import (
     HTTPServer,
     SecretReference,
     SSEServer,
@@ -234,7 +234,7 @@ async def test_streamable_http_live_matrix_with_bearer_and_tools() -> None:
             await writer.wait_closed()
 
     server, port = await _start_server(handler)
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     try:
         binding = HTTPServer(
             name="live-http",
@@ -275,7 +275,7 @@ async def test_streamable_http_live_matrix_with_bearer_and_tools() -> None:
 async def test_sse_live_matrix_uses_bearer_secret_and_closes_cleanly() -> None:
     fixture = _LiveSSEFixture(token="fixture-token")
     server, port = await _start_server(fixture)
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     try:
         binding = SSEServer(
             name="live-sse",
@@ -323,7 +323,7 @@ async def test_sse_live_matrix_uses_bearer_secret_and_closes_cleanly() -> None:
 async def test_remote_auth_rejection_retains_sanitized_partial_evidence() -> None:
     fixture = _LiveSSEFixture(token="expected-token")
     server, port = await _start_server(fixture)
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     try:
         binding = SSEServer(
             name="rejected-sse",
@@ -375,7 +375,7 @@ async def test_remote_initialization_cancellation_closes_transport() -> None:
             handler_done.set()
 
     server, port = await _start_server(hanging_handler)
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         HTTPServer(
             name="hanging-http",
@@ -411,13 +411,13 @@ async def test_stdio_initialization_cancellation_reaps_owned_process(
 
     marker = tmp_path / "stdio.pid"
     fixture = Path(__file__).parents[1] / "fixtures" / "hanging_stdio_server.py"
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         StdioServer(
             name="hanging-stdio",
             command=os.sys.executable,
             args=("-u", str(fixture)),
-            environment={"MCP_PAL_E2E_PID_FILE": str(marker)},
+            environment={"M3_E2E_PID_FILE": str(marker)},
         ),
         timeout=30,
     )

@@ -9,9 +9,9 @@ import pytest
 from mcp import ClientSession, types
 from mcp.server.lowlevel import Server
 
-from mcp_pal.direct_client import AsyncDirectClient
-from mcp_pal.errors import OperationCancelled, ProtocolError
-from mcp_pal.transport.local import (
+from m3.direct_client import AsyncDirectClient
+from m3.errors import OperationCancelled, ProtocolError
+from m3.transport.local import (
     InProcessMCPTransport,
     TransportProcessError,
 )
@@ -107,7 +107,7 @@ async def _get_prompt(
 
 def _server() -> Server:
     return Server(
-        "mcp-pal-e2e",
+        "m3-e2e",
         version="1.0",
         instructions="Use the fixture tools.",
         on_list_tools=_list_tools,
@@ -129,7 +129,7 @@ async def test_async_direct_client_real_e2e_tools_resources_and_prompts() -> Non
     async with InProcessMCPTransport(_server) as connection:
         async with _client(connection) as client:
             assert client.initialization is not None
-            assert client.initialization.server_info["name"] == "mcp-pal-e2e"
+            assert client.initialization.server_info["name"] == "m3-e2e"
             assert client.initialization.instructions == "Use the fixture tools."
 
             tools = await client.list_all_tools()

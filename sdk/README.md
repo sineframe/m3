@@ -1,6 +1,6 @@
-# MCP Pal Python SDK
+# M3 Python SDK
 
-`mcp-pal` is the public Python SDK for testing MCP servers and verifying how
+`m3` is the public Python SDK for testing MCP servers and verifying how
 agent harnesses use their tools. It provides direct MCP clients, pytest
 integration, agent sessions, matrices, typed traces, assertions, and optional
 persistent storage.
@@ -13,11 +13,11 @@ project being tested:
 ```bash
 VERSION=X.Y.Z
 uv add \
-  "mcp-pal[pytest] @ https://github.com/mcppal/mcp-pal/releases/download/v${VERSION}/mcp_pal-${VERSION}-py3-none-any.whl"
+  "m3[pytest] @ https://github.com/sineframe/m3/releases/download/v${VERSION}/m3-${VERSION}-py3-none-any.whl"
 ```
 
 The SDK requires Python 3.10 or newer. The standalone CLI is optional; install
-it separately only when you want the `mcp-pal` command or bundled UI, as
+it separately only when you want the `m3` command or bundled UI, as
 described in the [quick start](docs/quick-start.md#install-the-standalone-cli).
 
 ## Choose an import
@@ -25,22 +25,22 @@ described in the [quick start](docs/quick-start.md#install-the-standalone-cli).
 Start with the package root for the usual synchronous test workflow:
 
 ```python
-from mcp_pal import MCPTestKit, expect
-from mcp_pal.types import StdioServer
+from m3 import MCPTestKit, expect
+from m3.types import StdioServer
 ```
 
 When a test needs a focused part of the SDK, use its corresponding module:
 
 | Need | Import from |
 | --- | --- |
-| Run synchronous tests and assertions | `mcp_pal` |
-| Define servers, harnesses, and result values | `mcp_pal.types` |
-| Use the asynchronous test kit | `mcp_pal.async_api` |
-| Inspect typed traces | `mcp_pal.observability` |
-| Build repeated server or harness cases | `mcp_pal.matrix` |
-| Define and run evaluations | `mcp_pal.evaluations` |
-| Use mock and replay servers | `mcp_pal.testing` |
-| Persist executions in SQLite | `mcp_pal.storage` |
+| Run synchronous tests and assertions | `m3` |
+| Define servers, harnesses, and result values | `m3.types` |
+| Use the asynchronous test kit | `m3.async_api` |
+| Inspect typed traces | `m3.observability` |
+| Build repeated server or harness cases | `m3.matrix` |
+| Define and run evaluations | `m3.evaluations` |
+| Use mock and replay servers | `m3.testing` |
+| Persist executions in SQLite | `m3.storage` |
 
 ## Learn the SDK
 

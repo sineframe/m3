@@ -29,7 +29,7 @@ def run(command: list[str], *, env: dict[str, str], cwd: Path) -> None:
 def wheel_paths(release_dir: Path, version: str) -> tuple[Path, Path, Path]:
     paths = tuple(
         release_dir / f"{prefix}-{version}-py3-none-any.whl"
-        for prefix in ("mcp_pal_cli", "mcp_pal", "mcp_pal_app")
+        for prefix in ("m3_cli", "m3", "m3_app")
     )
     if any(not path.is_file() for path in paths):
         raise SmokeError("release directory is missing one of the three exact wheels")
@@ -44,8 +44,8 @@ def assert_ui_in_wheel(cli_wheel: Path) -> None:
             names = set(archive.namelist())
     except (OSError, zipfile.BadZipFile) as exc:
         raise SmokeError("CLI wheel is not a readable wheel archive") from exc
-    if "mcp_pal_cli/ui/index.html" not in names or not any(
-        name.startswith("mcp_pal_cli/ui/assets/") and not name.endswith("/")
+    if "m3_cli/ui/index.html" not in names or not any(
+        name.startswith("m3_cli/ui/assets/") and not name.endswith("/")
         for name in names
     ):
         raise SmokeError("CLI wheel does not contain the packaged UI")
@@ -65,7 +65,7 @@ def smoke(release_dir: str | Path, version: str) -> None:
     uv = shutil.which("uv")
     if uv is None:
         raise SmokeError("uv is required for the isolated release smoke test")
-    with tempfile.TemporaryDirectory(prefix="mcp-pal-cli-uv-smoke-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="m3-cli-uv-smoke-") as temporary:
         root = Path(temporary)
         tool_dir = root / "tool"
         tool_bin = root / "bin"
@@ -94,20 +94,18 @@ def smoke(release_dir: str | Path, version: str) -> None:
             env=env,
             cwd=root,
         )
-        executable = tool_bin / ("mcp-pal.exe" if os.name == "nt" else "mcp-pal")
+        executable = tool_bin / ("m3.exe" if os.name == "nt" else "m3")
         if not executable.is_file():
             raise SmokeError(
-                "uv did not create the mcp-pal tool command in isolated storage"
+                "uv did not create the m3 tool command in isolated storage"
             )
         run([str(executable), "--help"], env=env, cwd=root)
-        tool_python = installed_ui_check(
-            tool_dir / "mcp-pal-cli", windows=os.name == "nt"
-        )
+        tool_python = installed_ui_check(tool_dir / "m3-cli", windows=os.name == "nt")
         run(
             [
                 str(tool_python),
                 "-c",
-                'from importlib import resources; root = resources.files("mcp_pal_cli").joinpath("ui"); assert root.joinpath("index.html").is_file(); assert any(item.is_file() for item in root.joinpath("assets").iterdir())',
+                'from importlib import resources; root = resources.files("m3_cli").joinpath("ui"); assert root.joinpath("index.html").is_file(); assert any(item.is_file() for item in root.joinpath("assets").iterdir())',
             ],
             env=env,
             cwd=root,

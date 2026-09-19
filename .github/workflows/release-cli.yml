@@ -23,7 +23,7 @@ jobs:
     env:
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - name: Check out MCP Pal
+      - name: Check out M3
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -109,7 +109,7 @@ jobs:
       - name: Build and inspect the three release wheels
         run: |
           set -euo pipefail
-          release_dir="$RUNNER_TEMP/mcp-pal-release"
+          release_dir="$RUNNER_TEMP/m3-release"
           rm -rf "$release_dir"
           mkdir -p "$release_dir"
           python scripts/build_cli_release.py \
@@ -122,11 +122,11 @@ jobs:
           mapfile -t wheels < <(find "$release_dir" -maxdepth 1 -type f -name '*.whl' -printf '%f\n' | sort)
           test "${#wheels[@]}" -eq 3
           printf '%s\n' "${wheels[@]}" | grep -Fx \
-            "mcp_pal-${{ steps.version.outputs.version }}-py3-none-any.whl"
+            "m3-${{ steps.version.outputs.version }}-py3-none-any.whl"
           printf '%s\n' "${wheels[@]}" | grep -Fx \
-            "mcp_pal_app-${{ steps.version.outputs.version }}-py3-none-any.whl"
+            "m3_app-${{ steps.version.outputs.version }}-py3-none-any.whl"
           printf '%s\n' "${wheels[@]}" | grep -Fx \
-            "mcp_pal_cli-${{ steps.version.outputs.version }}-py3-none-any.whl"
+            "m3_cli-${{ steps.version.outputs.version }}-py3-none-any.whl"
           (cd "$release_dir" && sha256sum "${wheels[@]}" > SHA256SUMS)
           test "$(wc -l < "$release_dir/SHA256SUMS")" -eq 3
           python scripts/smoke_cli_uv_install.py \
@@ -136,7 +136,7 @@ jobs:
       - name: Run the isolated two-environment standalone gate
         run: |
           set -euo pipefail
-          release_dir="$RUNNER_TEMP/mcp-pal-release"
+          release_dir="$RUNNER_TEMP/m3-release"
           python scripts/check_cli_standalone.py \
             --release-dir "$release_dir" \
             --version '${{ steps.version.outputs.version }}'
@@ -148,7 +148,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          release_dir="$RUNNER_TEMP/mcp-pal-release"
+          release_dir="$RUNNER_TEMP/m3-release"
           prerelease=()
           case "$VERSION" in
             *a*|*b*|*rc*|*dev*) prerelease=(--prerelease) ;;
@@ -157,9 +157,9 @@ jobs:
             --verify-tag \
             --generate-notes \
             "${prerelease[@]}" \
-            "$release_dir/mcp_pal-${VERSION}-py3-none-any.whl" \
-            "$release_dir/mcp_pal_app-${VERSION}-py3-none-any.whl" \
-            "$release_dir/mcp_pal_cli-${VERSION}-py3-none-any.whl" \
+            "$release_dir/m3-${VERSION}-py3-none-any.whl" \
+            "$release_dir/m3_app-${VERSION}-py3-none-any.whl" \
+            "$release_dir/m3_cli-${VERSION}-py3-none-any.whl" \
             "$release_dir/SHA256SUMS" \
             "$release_dir/install.sh" \
             "$release_dir/install.ps1"

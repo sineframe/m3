@@ -1,4 +1,4 @@
-# MCP Pal architecture
+# M3 architecture
 
 This document is for contributors and maintainers. End users should start with
 the [root README](../README.md), the [CLI guide](../cli/README.md), or the
@@ -6,14 +6,14 @@ the [root README](../README.md), the [CLI guide](../cli/README.md), or the
 
 ## Product boundary
 
-MCP Pal has two user-facing entry points that run in separate environments:
+M3 has two user-facing entry points that run in separate environments:
 
 ```text
 project under test
-└── mcp-pal SDK + pytest plugin ── MCP server or agent harness
+└── m3 SDK + pytest plugin ── MCP server or agent harness
 
 machine environment
-└── mcp-pal CLI (optional) ────── selects the project Python, SQLite history,
+└── m3 CLI (optional) ────── selects the project Python, SQLite history,
                                   internal app, and local viewer
 ```
 
@@ -30,9 +30,9 @@ responsibilities:
 
 | Directory | Distribution | Responsibility |
 | --- | --- | --- |
-| [`sdk/`](../sdk/) | `mcp-pal` | Public Python API, direct MCP clients, agent sessions, harness adapters, traces, assertions, pytest integration, and storage interfaces. |
-| [`cli/`](../cli/) | `mcp-pal-cli` | The `mcp-pal` command, project-environment discovery, pytest supervision, release packaging, and the bundled browser UI. |
-| [`app/`](../app/) | `mcp-pal-app` | Internal FastAPI services and API adapters used by the standalone CLI. |
+| [`sdk/`](../sdk/) | `m3` | Public Python API, direct MCP clients, agent sessions, harness adapters, traces, assertions, pytest integration, and storage interfaces. |
+| [`cli/`](../cli/) | `m3-cli` | The `m3` command, project-environment discovery, pytest supervision, release packaging, and the bundled browser UI. |
+| [`app/`](../app/) | `m3-app` | Internal FastAPI services and API adapters used by the standalone CLI. |
 
 The CLI depends on the SDK and app at matching versions. A project that uses
 only the library does not need the CLI or the app.
@@ -53,14 +53,14 @@ observability consistent regardless of how a test is launched.
 SDK storage is in memory unless the caller selects a store explicitly. The
 SQLite store persists execution specifications and snapshots, events and
 traces, sessions and turns, artifact/evidence references, and evaluations. The
-pytest plugin can select that store with `--mcp-pal-results-db`; the CLI uses
+pytest plugin can select that store with `--results-db`; the CLI uses
 the equivalent project-local database by default.
 
 The plugin also records pytest run metadata and writes a deterministic feedback
-bundle under `.mcp-pal/reports/<run-id>/feedback.json`. A baseline comparison
+bundle under `.m3/reports/<run-id>/feedback.json`. A baseline comparison
 reads an existing run and does not mutate it. Ordinary pytest output and Python
 assertions remain normal diagnostics and test results; they are not inferred
-as MCP Pal evaluations.
+as M3 evaluations.
 
 ## API and browser viewer
 

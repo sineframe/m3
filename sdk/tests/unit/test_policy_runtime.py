@@ -4,11 +4,11 @@ from collections.abc import Mapping
 
 import pytest
 
-from mcp_pal.agent_session import AdapterTurn, AsyncAgentSession
-from mcp_pal.errors import UnsupportedFeature
-from mcp_pal.policy import ToolDescriptor, ToolPolicyEvidence
-from mcp_pal.server_group import ServerGroupManager
-from mcp_pal.types import (
+from m3.agent_session import AdapterTurn, AsyncAgentSession
+from m3.errors import UnsupportedFeature
+from m3.policy import ToolDescriptor, ToolPolicyEvidence
+from m3.server_group import ServerGroupManager
+from m3.types import (
     ACPAgent,
     ActivityHealth,
     AgentSpec,
@@ -33,7 +33,7 @@ class ReportingAdapter:
         self.opened = False
 
     async def preflight(self, _launch: object) -> object:
-        from mcp_pal.types import Readiness
+        from m3.types import Readiness
 
         return Readiness(ready=True)
 

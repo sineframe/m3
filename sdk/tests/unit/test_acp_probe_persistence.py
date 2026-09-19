@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.services.acp_probes import (
+from m3.services.acp_probes import (
     ACPProbeDimension,
     ACPProbeKind,
     ACPProbeRequest,
@@ -16,12 +16,12 @@ from mcp_pal.services.acp_probes import (
     redact_probe,
     run_acp_probe,
 )
-from mcp_pal.storage import (
+from m3.storage import (
     InMemoryExecutionStore,
     SQLiteExecutionStore,
     StorageConflict,
 )
-from mcp_pal.trace.redaction import RedactionConfig
+from m3.trace.redaction import RedactionConfig
 
 
 def _result(

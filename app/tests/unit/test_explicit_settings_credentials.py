@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import cast
 
-from mcp_pal import (
+from m3 import (
     ACPAgent,
     AgentSpec,
     ClaudeCode,
@@ -18,29 +18,29 @@ from mcp_pal import (
     TextContent,
     UserMessage,
 )
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.harness.acp import (
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.harness.acp import (
     AcpHarnessAdapter,
     _isolated_acp_env,
     _resolve_environment_secret,
 )
-from mcp_pal.harness.claude import ClaudeCodeHarnessAdapter
-from mcp_pal.harness.contracts import HarnessLaunch
-from mcp_pal.harness.native import (
+from m3.harness.claude import ClaudeCodeHarnessAdapter
+from m3.harness.contracts import HarnessLaunch
+from m3.harness.native import (
     _isolated_environment,
     _resolve_runtime_value,
     write_config,
 )
-from mcp_pal.harness.opencode import (
+from m3.harness.opencode import (
     OpenCodeHarnessAdapter,
     _resolve_opencode_environment_value,
     opencode_configuration,
 )
-from mcp_pal.server_group import HarnessServerConfig, ServerGroupSnapshot
-from mcp_pal.storage import SQLiteExecutionStore
-from mcp_pal.types import NativeToolPolicy, TransportKind
-from mcp_pal_app.services.app_service import build_harness_adapter_registry
-from mcp_pal_app.settings import Settings
+from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
+from m3.storage import SQLiteExecutionStore
+from m3.types import NativeToolPolicy, TransportKind
+from m3_app.services.app_service import build_harness_adapter_registry
+from m3_app.settings import Settings
 
 
 def test_settings_credentials_are_explicit_and_not_serialized(

@@ -2,9 +2,9 @@
 
 import pytest
 
-from mcp_pal import StdioServer
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.sync_api import ToolCallResult
+from m3 import StdioServer
+from m3.async_api import AsyncMCPTestKit
+from m3.sync_api import ToolCallResult
 
 
 @pytest.mark.asyncio

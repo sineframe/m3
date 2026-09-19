@@ -41,7 +41,7 @@ import sys
 
 import pytest
 
-from mcp_pal.matrix import (
+from m3.matrix import (
     HarnessCase,
     HarnessMatrix,
     HarnessMatrixCase,
@@ -50,7 +50,7 @@ from mcp_pal.matrix import (
     ToolMatrix,
     ToolMatrixCase,
 )
-from mcp_pal.types import ACPAgent, StdioServer
+from m3.types import ACPAgent, StdioServer
 
 sentinel_server = StdioServer(
     name="catalog",
@@ -182,9 +182,9 @@ def block_pytest(name, *args, **kwargs):
     return original_import(name, *args, **kwargs)
 
 builtins.__import__ = block_pytest
-import mcp_pal
-from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
-from mcp_pal.types import StdioServer
+import m3
+from m3.matrix import ServerCase, ToolCase, ToolMatrix
+from m3.types import StdioServer
 
 matrix = ToolMatrix(servers=(ServerCase(
     name="catalog",

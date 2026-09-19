@@ -1,10 +1,10 @@
-# MCP Pal PyPI migration report
+# M3 PyPI migration report
 
 Status: proposed follow-up work  
 Prepared: 2026-09-05  
 Scope: publish the SDK and standalone CLI on PyPI, make the CLI own its FastAPI
 viewer runtime, and preserve the CLI's two-environment architecture. The
-internal `mcp-pal-app` distribution is deliberately excluded from PyPI.
+internal `m3-app` distribution is deliberately excluded from PyPI.
 
 ## Executive conclusion
 
@@ -15,19 +15,19 @@ The user-facing flow can become:
 
 ```sh
 # Install the command in uv's isolated tool environment.
-uv tool install "mcp-pal-cli==<version>"
+uv tool install "m3-cli==<version>"
 
 # In the project being tested, install the matching SDK/plugin.
-uv add --dev "mcp-pal[pytest,storage]==<version>"
+uv add --dev "m3[pytest,storage]==<version>"
 
-mcp-pal test --ui -- tests/
+m3 test --ui -- tests/
 ```
 
 There would be no `gh auth login`, `gh release download`, installer bootstrap,
-manual wheel filename, `.mcp-pal-download` directory, or manually supplied
-`--with` wheels. Package resolution would install `mcp-pal` automatically from
+manual wheel filename, `.m3-download` directory, or manually supplied
+`--with` wheels. Package resolution would install `m3` automatically from
 the CLI package's dependency metadata; the FastAPI viewer runtime would be part
-of `mcp-pal-cli` itself. `uv tool install` would still isolate the CLI from both
+of `m3-cli` itself. `uv tool install` would still isolate the CLI from both
 global Python modules and the tested project, which is the behavior uv
 documents for tools.
 
@@ -39,7 +39,7 @@ and their dependencies.
 The go/no-go issue is visibility: PyPI does not support private packages. A
 production PyPI publication makes both distributions and the compiled UI
 inside the CLI distribution publicly downloadable. Keeping the GitHub source
-repositories private does not change that. If MCP Pal must remain private, use
+repositories private does not change that. If M3 must remain private, use
 a private package index instead of pypi.org. See [PyPI's private-package
 answer](https://pypi.org/help/#how-can-i-publish-my-private-packages-to-pypi).
 
@@ -47,14 +47,14 @@ answer](https://pypi.org/help/#how-can-i-publish-my-private-packages-to-pypi).
 
 | Concern | Private GitHub Releases now | PyPI afterwards |
 | --- | --- | --- |
-| CLI installation | Authenticate `gh`, download installer, installer downloads three wheels | `uv tool install mcp-pal-cli==<version>` |
-| SDK installation | Construct a wheel filename, download it, install its local path | `uv add --dev "mcp-pal[pytest,storage]==<version>"` |
+| CLI installation | Authenticate `gh`, download installer, installer downloads three wheels | `uv tool install m3-cli==<version>` |
+| SDK installation | Construct a wheel filename, download it, install its local path | `uv add --dev "m3[pytest,storage]==<version>"` |
 | Dependency wiring | Installer explicitly supplies SDK and app wheels | CLI owns the viewer runtime; PyPI resolves the SDK dependency |
 | Checksums | Custom `SHA256SUMS` download and verification | Index metadata supplies hashes; installers verify downloaded distributions |
 | OS bootstrap scripts | Maintain and test shell and PowerShell implementations | Not required for the normal uv flow |
 | Consumer authentication | Every developer needs private GitHub repository access | None for public PyPI packages |
-| Upgrades | Download another exact installer/release | `uv tool upgrade mcp-pal-cli` or reinstall an exact version |
-| Ephemeral use | Custom local release assets | `uvx --from mcp-pal-cli mcp-pal ...` |
+| Upgrades | Download another exact installer/release | `uv tool upgrade m3-cli` or reinstall an exact version |
+| Ephemeral use | Custom local release assets | `uvx --from m3-cli m3 ...` |
 | Publisher credentials | GitHub token or release permissions | GitHub OIDC Trusted Publishing; no long-lived PyPI API token |
 
 PyPI does **not** simplify these parts:
@@ -75,16 +75,16 @@ Official references:
 
 ## Current repository findings
 
-MCP Pal currently builds three distributions, all at `0.2.0a2`:
+M3 currently builds three distributions, all at `0.2.0a13`:
 
 | Directory | Current distribution | Purpose | PyPI target |
 | --- | --- | --- | --- |
-| `sdk/` | `mcp-pal` | SDK, pytest plugin, storage implementation | Public `mcp-pal` project |
-| `app/` | `mcp-pal-app` | Existing FastAPI/API runtime used by the viewer | Not published; viewer runtime moves behind the CLI boundary |
-| `cli/` | `mcp-pal-cli` | `mcp-pal` command and bundled UI | Public `mcp-pal-cli` project with the viewer runtime included |
+| `sdk/` | `m3` | SDK, pytest plugin, storage implementation | Public `m3` project |
+| `app/` | `m3-app` | Existing FastAPI/API runtime used by the viewer | Not published; viewer runtime moves behind the CLI boundary |
+| `cli/` | `m3-cli` | `m3` command and bundled UI | Public `m3-cli` project with the viewer runtime included |
 
-As checked through PyPI's JSON endpoints on 2026-09-05, `mcp-pal` and
-`mcp-pal-cli` both return HTTP 404. They appear unregistered, but this is not a
+As checked through PyPI's JSON endpoints on 2026-09-05, `m3` and
+`m3-cli` both return HTTP 404. They appear unregistered, but this is not a
 reservation or guarantee:
 PyPI can reject names that are prohibited or too similar to another project,
 and a pending Trusted Publisher does not reserve a name until the first upload.
@@ -102,10 +102,10 @@ Publication readiness differs by package:
   classifiers, and project URLs.
 - `cli/pyproject.toml` has a README and license but lacks authors, keywords,
   classifiers, and project URLs.
-- `cli/pyproject.toml` currently depends on `mcp-pal-app==0.2.0a2`, and
-  `cli/src/mcp_pal_cli/web.py` imports `create_app` and `Settings` from that
+- `cli/pyproject.toml` currently depends on `m3-app==0.2.0a13`, and
+  `cli/src/m3_cli/web.py` imports `create_app` and `Settings` from that
   package. That is why the current GitHub installer needs an app wheel. It is an
-  implementation dependency, not evidence that `mcp-pal-app` should become a
+  implementation dependency, not evidence that `m3-app` should become a
   public product.
 - The CLI currently uses the full application factory, not a small standalone
   viewer adapter. Removing the public app distribution therefore requires a
@@ -117,31 +117,31 @@ Publication readiness differs by package:
 Publish exactly two public projects:
 
 ```text
-mcp-pal-cli                 # primary user-facing product
-└── mcp-pal[storage]==X     # public SDK dependency
+m3-cli                 # primary user-facing product
+└── m3[storage]==X     # public SDK dependency
 
-mcp-pal                     # SDK/plugin installed in tested projects
+m3                     # SDK/plugin installed in tested projects
 
-mcp-pal-app                 # internal repository application; not on PyPI
+m3-app                 # internal repository application; not on PyPI
 ```
 
-`mcp-pal-cli` is the point of the migration and must be treated as the primary
+`m3-cli` is the point of the migration and must be treated as the primary
 release deliverable. Its wheel must contain the command, FastAPI viewer runtime,
-and compiled UI. `mcp-pal` remains separate because pytest imports the SDK and
+and compiled UI. `m3` remains separate because pytest imports the SDK and
 plugin from the tested project's environment.
 
-Do not copy `mcp_pal_app` into the CLI only during a release build. That would
+Do not copy `m3_app` into the CLI only during a release build. That would
 make ordinary source builds differ from release builds and would leave two
 owners for the same import package. Extract the viewer-specific runtime into a
-neutral internal import namespace such as `mcp_pal_viewer` that is physically
-owned and shipped by the CLI distribution. Both `mcp_pal_cli` and the internal
+neutral internal import namespace such as `m3_viewer` that is physically
+owned and shipped by the CLI distribution. Both `m3_cli` and the internal
 repository app can consume that one implementation. The broader development
 application, legacy UI, profile editing, and run-creation machinery must not be
 pulled into the CLI unless the bundled viewer actually needs them.
 
 Consequences:
 
-1. Create PyPI projects only for `mcp-pal` and `mcp-pal-cli`.
+1. Create PyPI projects only for `m3` and `m3-cli`.
 2. Both must trust the same GitHub workflow identity.
 3. Both versions must be advanced and released together during the alpha
    series.
@@ -177,11 +177,11 @@ organization if ownership should outlive one person's account.
 
 ### 3. Configure one pending Trusted Publisher per public package
 
-For `mcp-pal` and `mcp-pal-cli`, configure a pending GitHub Actions publisher
+For `m3` and `m3-cli`, configure a pending GitHub Actions publisher
 with:
 
-- owner: `mcppal`;
-- repository: `mcp-pal`;
+- owner: `sineframe`;
+- repository: `m3`;
 - workflow filename: the final publishing workflow filename, recommended
   `.github/workflows/release-pypi.yml`;
 - environment: `pypi`.
@@ -217,8 +217,8 @@ Files:
 - `sdk/pyproject.toml`
 - `app/pyproject.toml`
 - `cli/pyproject.toml`
-- `cli/src/mcp_pal_cli/web.py`
-- the viewer API/factory modules currently under `app/src/mcp_pal_app/`
+- `cli/src/m3_cli/web.py`
+- the viewer API/factory modules currently under `app/src/m3_app/`
 - affected app and CLI tests
 
 Changes:
@@ -227,20 +227,20 @@ Changes:
    needed for history and direct-run viewing.
 2. Move or extract that viewer-specific FastAPI factory, v2 routes/projections,
    minimal settings, and lifecycle ownership into a neutral internal package
-   such as `cli/src/mcp_pal_viewer/`. Include that package in the
-   `mcp-pal-cli` distribution and preserve the existing `/api/v2` wire contract
+   such as `cli/src/m3_viewer/`. Include that package in the
+   `m3-cli` distribution and preserve the existing `/api/v2` wire contract
    exactly.
 3. Do not duplicate the runtime at build time. There must be one authoritative
    source implementation used by source tests and release builds.
 4. Keep broader application-only behavior under `app/`. Make the internal app
-   consume `mcp_pal_viewer` where it needs the same v2 surface, so there is one
-   implementation and no dependency from viewer code back into `mcp_pal_app`.
+   consume `m3_viewer` where it needs the same v2 surface, so there is one
+   implementation and no dependency from viewer code back into `m3_app`.
    The app may depend on the CLI workspace project for development; it is still
    excluded from the publish artifact set.
-5. Remove `mcp-pal-app` from `cli`'s published dependencies. Add the runtime
+5. Remove `m3-app` from `cli`'s published dependencies. Add the runtime
    dependencies actually used by the CLI, including FastAPI/uvicorn and any
    required settings or SQLAlchemy packages, with tested bounds.
-6. Keep an exact same-version `mcp-pal[storage]` dependency during alpha.
+6. Keep an exact same-version `m3[storage]` dependency during alpha.
 7. Add complete `authors`, `keywords`, `classifiers`, and `[project.urls]` to
    the CLI metadata.
 8. Ensure both public distributions contain the Apache license and declare it
@@ -254,8 +254,8 @@ Changes:
 Acceptance invariants:
 
 - installing only the CLI wheel plus its SDK dependency provides
-  `mcp-pal test --ui`;
-- `importlib.util.find_spec("mcp_pal_app")` is false in the clean CLI tool
+  `m3 test --ui`;
+- `importlib.util.find_spec("m3_app")` is false in the clean CLI tool
   environment;
 - `/api/v2`, SQLite reads, UI routing, loopback-only hosting, same-origin
   protection, and secret redaction behave exactly as before;
@@ -394,16 +394,16 @@ Behavior to remove:
 - rendered OS-specific bootstrap assets;
 - custom authenticated wheel downloads;
 - `SHA256SUMS` as an installation requirement;
-- `MCP_PAL_RELEASE_BASE_URL` and private-release download branches;
+- `M3_RELEASE_BASE_URL` and private-release download branches;
 - fallback logic that manually creates a dedicated CLI virtual environment.
 
 Do not remove the uv isolation test. Replace its local-wheel command with a
 pre-publish local-artifact gate and add a post-publish exact-index gate.
 
 If supporting users without uv is a product requirement, recommend `pipx
-install mcp-pal-cli==<version>` as the isolated alternative. Do not restore a
+install m3-cli==<version>` as the isolated alternative. Do not restore a
 global `pip install` recommendation or maintain a second custom environment
-manager inside MCP Pal.
+manager inside M3.
 
 ### Packet 5: rewrite installation documentation
 
@@ -417,27 +417,27 @@ Replace the private GitHub release instructions with:
 
 ```sh
 # Install the CLI without modifying this project's environment.
-uv tool install "mcp-pal-cli==<version>"
+uv tool install "m3-cli==<version>"
 
 # Add the SDK, pytest plugin, and SQLite storage to the tested project.
-uv add --dev "mcp-pal[pytest,storage]==<version>"
+uv add --dev "m3[pytest,storage]==<version>"
 
 # Verify environment discovery, then run tests and open the viewer.
-mcp-pal doctor
-mcp-pal test --ui -- tests/
+m3 doctor
+m3 test --ui -- tests/
 ```
 
 Also document:
 
-- `uv tool upgrade mcp-pal-cli`;
-- `uv tool uninstall mcp-pal-cli`;
-- `uvx --from mcp-pal-cli mcp-pal ...` for ephemeral use;
+- `uv tool upgrade m3-cli`;
+- `uv tool uninstall m3-cli`;
+- `uvx --from m3-cli m3 ...` for ephemeral use;
 - the reason the CLI and SDK intentionally occupy different environments;
-- how non-uv projects install `mcp-pal[pytest,storage]` into their own venv;
+- how non-uv projects install `m3[pytest,storage]` into their own venv;
 - that exact CLI and SDK versions must match during the alpha series;
 - that pre-releases may require an explicit version until a stable release is
   available;
-- the package names versus command name (`mcp-pal-cli` provides `mcp-pal`).
+- the package names versus command name (`m3-cli` provides `m3`).
 
 Delete all normal-user references to:
 
@@ -445,8 +445,8 @@ Delete all normal-user references to:
 - `gh release download`;
 - installer shell files;
 - wheel filenames;
-- `.mcp-pal-download`;
-- `MCP_PAL_RELEASE_BASE_URL`;
+- `.m3-download`;
+- `M3_RELEASE_BASE_URL`;
 - manually supplying SDK/app wheels to `uv tool install`.
 
 ## Test and release gates
@@ -474,14 +474,14 @@ Run from a fresh temporary directory and give uv temporary cache/tool paths so
 the gate cannot pass from a developer's existing installation:
 
 1. Poll PyPI until both exact versions appear, with a bounded timeout.
-2. Run `uv tool install "mcp-pal-cli==<version>"` using PyPI only.
+2. Run `uv tool install "m3-cli==<version>"` using PyPI only.
 3. Assert the installed CLI and SDK versions both equal the tag version, and
-   assert that no separately installed `mcp-pal-app` distribution or
-   `mcp_pal_app` import package is present.
+   assert that no separately installed `m3-app` distribution or
+   `m3_app` import package is present.
 4. Assert neither public installation has local-directory or direct-URL
    provenance.
 5. Create a separate dummy project and install
-   `mcp-pal[pytest,storage]==<version>` from PyPI only.
+   `m3[pytest,storage]==<version>` from PyPI only.
 6. Run the existing standalone dummy test, SQLite/API checks, and bundled UI
    browser checks.
 7. Run a small Windows install/command smoke test as well as Linux. The wheels
@@ -495,7 +495,7 @@ TestPyPI is optional rather than the primary correctness gate. Its dependency
 population differs from PyPI, and testing packages with ordinary dependencies
 often requires a second production index. The PyPA guide documents that setup,
 but the exact local-artifact gate avoids ambiguity over which copy of the two
-public MCP Pal packages was installed. See [Using
+public M3 packages was installed. See [Using
 TestPyPI](https://packaging.python.org/en/latest/guides/using-testpypi/).
 
 ## Versioning and failure recovery
@@ -511,8 +511,8 @@ TestPyPI](https://packaging.python.org/en/latest/guides/using-testpypi/).
 5. If published behavior is bad, yank the affected release and publish a new
    version. Do not treat deletion and replacement as a rollback strategy.
 6. For the first migration release, choose a version that has never been
-   published. `0.2.0a2` is currently unused on PyPI and GitHub, but use the next
-   version if `0.2.0a2` is released through the current GitHub-only path first.
+   published. `0.2.0a13` is currently unused on PyPI and GitHub, but use the next
+   version if `0.2.0a13` is released through the current GitHub-only path first.
 7. Keep exact alpha pins. Revisit compatible ranges only after the packages
    have an explicit compatibility and deprecation policy.
 
@@ -524,7 +524,7 @@ TestPyPI](https://packaging.python.org/en/latest/guides/using-testpypi/).
 | Package names claimed before first publication | High | Configure pending publishers shortly before a fully gated first release and publish promptly |
 | Workflow compromise grants publish authority | High | Dedicated workflow/environment, immutable action pins, job-level `id-token: write`, protected release flow |
 | Partial two-package publication | High | Build once, publish SDK immediately before CLI, retain exact artifacts, documented identical retry |
-| Internal app boundary leaks into public packaging again | High | Gate CLI metadata against `mcp-pal-app` and gate the clean environment against `mcp_pal_app` |
+| Internal app boundary leaks into public packaging again | High | Gate CLI metadata against `m3-app` and gate the clean environment against `m3_app` |
 | CLI resolves an incompatible SDK | High | Same public version and exact CLI-to-SDK pin during alpha |
 | sdist omits bundled UI or differs from wheel | High | Inspect both, rebuild wheel from sdist, run UI gate against published shape |
 | Developer environment makes smoke test pass falsely | Medium | Temporary uv cache/tool directories and dummy project; PyPI-only source assertions |
@@ -536,7 +536,7 @@ TestPyPI](https://packaging.python.org/en/latest/guides/using-testpypi/).
 
 1. Decide whether public distribution is acceptable.
 2. Move the viewer runtime behind the CLI package boundary and remove the
-   `mcp-pal-app` distribution dependency.
+   `m3-app` distribution dependency.
 3. Prepare SDK/CLI metadata and extend the release builder to produce and
    validate four public distributions.
 4. Add the split build/publish/verify workflow and contract tests.
@@ -554,16 +554,16 @@ TestPyPI](https://packaging.python.org/en/latest/guides/using-testpypi/).
 
 The migration is complete only when all of these are true:
 
-- only the `mcp-pal` and `mcp-pal-cli` names are created for this release, and
+- only the `m3` and `m3-cli` names are created for this release, and
   both are owned by the intended PyPI account/organization;
 - both public projects trust only the intended GitHub workflow/environment;
 - a version tag builds one immutable, fully tested artifact set;
 - the SDK and CLI wheel plus sdist are published with matching versions;
-- the CLI distribution has no dependency on `mcp-pal-app`, contains the viewer
-  runtime and compiled UI itself, and works without `mcp_pal_app` installed;
-- `uv tool install mcp-pal-cli==<version>` succeeds from PyPI in clean Linux and
+- the CLI distribution has no dependency on `m3-app`, contains the viewer
+  runtime and compiled UI itself, and works without `m3_app` installed;
+- `uv tool install m3-cli==<version>` succeeds from PyPI in clean Linux and
   Windows environments;
-- a separate dummy project installs `mcp-pal[pytest,storage]==<version>` from
+- a separate dummy project installs `m3[pytest,storage]==<version>` from
   PyPI and passes the SQLite/API/UI standalone gate;
 - normal user documentation contains no GitHub authentication or wheel-download
   ceremony;

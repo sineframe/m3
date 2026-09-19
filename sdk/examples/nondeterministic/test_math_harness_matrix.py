@@ -3,7 +3,7 @@
 Run explicitly because this test invokes an external model and is
 nondeterministic:
 
-    MCP_PAL_RUN_LIVE_MATH_MATRIX=1 \
+    M3_RUN_LIVE_MATH_MATRIX=1 \
       uv run --project sdk --all-extras pytest -s -q \
       sdk/examples/nondeterministic/test_math_harness_matrix.py
 """
@@ -21,7 +21,7 @@ from typing import Any, cast
 
 import pytest
 
-from mcp_pal import (
+from m3 import (
     # ClaudeCode,
     EvaluationContext,
     EvaluationDecision,
@@ -34,15 +34,15 @@ from mcp_pal import (
     StdioServer,
     ToolCase,
 )
-from mcp_pal.aggregations import EvaluationQuery
-from mcp_pal.storage import SQLiteExecutionStore
+from m3.aggregations import EvaluationQuery
+from m3.storage import SQLiteExecutionStore
 
 pytestmark = [pytest.mark.e2e, pytest.mark.live]
 
 _EXAMPLES_ROOT = Path(__file__).parents[1]
 _REPOSITORY_ROOT = _EXAMPLES_ROOT.parents[1]
 _SERVER = _EXAMPLES_ROOT / "servers" / "math_mcp_server.py"
-_LIVE_ENABLED = os.environ.get("MCP_PAL_RUN_LIVE_MATH_MATRIX") == "1"
+_LIVE_ENABLED = os.environ.get("M3_RUN_LIVE_MATH_MATRIX") == "1"
 _EVALUATOR = "example.math-answer-and-tool.v1"
 _TRIALS_PER_CASE = 2
 
@@ -70,7 +70,7 @@ _TEST_CASES: tuple[MathTestCase, ...] = (
 
 
 def _agent_selections(opencode: str) -> list[dict[str, object]]:
-    model = os.environ.get("MCP_PAL_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
+    model = os.environ.get("M3_LIVE_OPENCODE_MODEL", "opencode/big-pickle")
     return [{"harness": "opencode", "models": [model], "executable": opencode}]
 
 
@@ -125,7 +125,7 @@ def _observed_tools(execution: ExecutionResult) -> tuple[str, ...]:
 
 @pytest.mark.skipif(
     not _LIVE_ENABLED,
-    reason="set MCP_PAL_RUN_LIVE_MATH_MATRIX=1 to call OpenCode",
+    reason="set M3_RUN_LIVE_MATH_MATRIX=1 to call OpenCode",
 )
 def test_ten_math_cases_across_harnesses_with_repeated_trials(
     tmp_path: Path,
@@ -140,7 +140,7 @@ def test_ten_math_cases_across_harnesses_with_repeated_trials(
         args=(str(_SERVER),),
         cwd=str(_EXAMPLES_ROOT),
     )
-    # Use SQLiteExecutionStore(".mcp-pal/math-evaluations.sqlite") instead when
+    # Use SQLiteExecutionStore(".m3/math-evaluations.sqlite") instead when
     # the evaluation history should remain available after pytest exits.
     store = SQLiteExecutionStore(tmp_path / "math-evaluations.sqlite")
     try:

@@ -46,7 +46,7 @@ def probe_agent(path: Path, behavior: str = "ok") -> str:
             request = json.loads(line); method = request.get("method"); ident = request.get("id"); params = request.get("params") or {{}}
             if method == "initialize":
                 caps = {{"mcpCapabilities": {{"http": True, "sse": True}}}}
-                identity = {{}} if behavior == "no_identity" else {{"agentInfo":{{"name":"probe-fixture", "version":"1"}}}}
+                identity = {{}} if behavior == "no_identity" else {{"agentInfo":{{"name":"probe-echo", "version":"1"}}}}
                 send({{"jsonrpc":"2.0", "id":ident, "result":{{"protocolVersion":1, "agentCapabilities":caps, **identity}}}})
             elif method == "session/new":
                 server = params["mcpServers"][0].copy(); server["type"] = server.get("type", "stdio")
@@ -57,7 +57,7 @@ def probe_agent(path: Path, behavior: str = "ok") -> str:
             elif method == "session/set_config_option":
                 send({{"jsonrpc":"2.0", "id":ident, "result":{{"configOptions":[]}}}})
             elif method == "session/prompt":
-                nonce = re.search(r"(mcp-pal-probe-[0-9a-f]+)", params["prompt"][0]["text"]).group(1)
+                nonce = re.search(r"(m3-probe-[0-9a-f]+)", params["prompt"][0]["text"]).group(1)
                 rpc("initialize", {{"protocolVersion":"2024-11-05", "capabilities":{{}}, "clientInfo":{{"name":"fixture", "version":"1"}}}})
                 rpc("tools/list", {{}})
                 call = rpc("tools/call", {{"name":"echo", "arguments":{{"text":nonce}}}})

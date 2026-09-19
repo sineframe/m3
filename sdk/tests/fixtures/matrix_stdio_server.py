@@ -11,7 +11,7 @@ from typing import Any
 def _record_observation(request: dict[str, Any]) -> None:
     """Optionally expose process/request evidence for black-box E2E tests."""
 
-    marker = os.environ.get("MCP_PAL_E2E_MCP_MARKER")
+    marker = os.environ.get("M3_E2E_MCP_MARKER")
     if not marker:
         return
     observation = {

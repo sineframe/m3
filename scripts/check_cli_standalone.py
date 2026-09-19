@@ -10,6 +10,7 @@ while the latter owns pytest and the SDK test code.
 from __future__ import annotations
 
 import argparse
+import email
 import json
 import os
 import re
@@ -39,6 +40,7 @@ _MAX_DIAGNOSTICS = 6_000
 _PROCESS_TIMEOUT = 180
 _UI_TIMEOUT = 120
 _SECRET_NAME_PARTS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+_CHECKOUT_ROOT = Path(__file__).resolve().parents[1]
 _REMOVED_ENV_NAMES = frozenset(
     {"VIRTUAL_ENV", "CONDA_PREFIX", "PYTHONPATH", "UV_PROJECT_ENVIRONMENT"}
 )
@@ -144,7 +146,7 @@ def wheel_paths(
         raise StandaloneGateError("release directory is unavailable")
     expected = tuple(
         release / f"{prefix}-{version}-py3-none-any.whl"
-        for prefix in ("mcp_pal_cli", "mcp_pal", "mcp_pal_app")
+        for prefix in ("m3_cli", "m3", "m3_app")
     )
     if (
         any(not path.is_file() for path in expected)
@@ -164,8 +166,8 @@ def assert_bundled_ui(wheel: Path) -> None:
             names = set(archive.namelist())
     except (OSError, zipfile.BadZipFile) as exc:
         raise StandaloneGateError("CLI wheel is not a readable wheel archive") from exc
-    if "mcp_pal_cli/ui/index.html" not in names or not any(
-        name.startswith("mcp_pal_cli/ui/assets/") and not name.endswith("/")
+    if "m3_cli/ui/index.html" not in names or not any(
+        name.startswith("m3_cli/ui/assets/") and not name.endswith("/")
         for name in names
     ):
         raise StandaloneGateError(
@@ -173,32 +175,128 @@ def assert_bundled_ui(wheel: Path) -> None:
         )
 
 
+def _wheel_requirements(
+    wheels: tuple[Path, ...], *, extras: frozenset[str]
+) -> tuple[str, ...]:
+    """Read third-party requirements from local wheels without installing them.
+
+    Local M3 distributions are installed in a separate ``--no-index`` pass.
+    This second list deliberately contains only third-party requirements, so
+    uv may resolve those from its configured package index without ever
+    falling back to a checkout package or an unbuilt local distribution.
+    """
+
+    requirements: set[str] = set()
+    local_names = {"m3", "m3-app", "m3-cli"}
+    for wheel in wheels:
+        try:
+            with zipfile.ZipFile(wheel) as archive:
+                metadata_name = next(
+                    name
+                    for name in archive.namelist()
+                    if name.endswith(".dist-info/METADATA")
+                )
+                metadata = email.message_from_bytes(archive.read(metadata_name))
+        except (OSError, StopIteration, zipfile.BadZipFile) as exc:
+            raise StandaloneGateError(
+                f"could not read requirements from {wheel.name}"
+            ) from exc
+        for raw in metadata.get_all("Requires-Dist") or ():
+            requirement, _, marker = raw.partition(";")
+            marker = marker.strip()
+            if marker and "extra" in marker:
+                if not any(
+                    re.search(
+                        rf"extra\s*==\s*['\"]{re.escape(extra)}['\"]",
+                        marker,
+                    )
+                    for extra in extras
+                ):
+                    continue
+                # The requested extras are selected explicitly by this gate;
+                # retaining ``extra == ...`` would make uv skip the package
+                # when it resolves this standalone third-party list.
+                marker = ""
+            requirement = requirement.strip()
+            package = re.match(r"[A-Za-z0-9][A-Za-z0-9_.-]*", requirement)
+            if (
+                package is None
+                or package.group(0).lower().replace("_", "-") in local_names
+            ):
+                continue
+            requirements.add(requirement + (f"; {marker}" if marker else ""))
+    return tuple(sorted(requirements))
+
+
+def _install_wheels(
+    uv: str,
+    python: Path,
+    wheels: tuple[Path, ...],
+    release_dir: Path,
+    env: Mapping[str, str],
+    *,
+    extras: frozenset[str],
+) -> None:
+    """Install local wheels with no index, then resolve only third parties."""
+
+    _run(
+        [
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--no-index",
+            "--find-links",
+            str(release_dir),
+            "--no-deps",
+            *(str(wheel) for wheel in wheels),
+        ],
+        cwd=python.parent,
+        env=dict(env),
+    )
+    requirements = _wheel_requirements(wheels, extras=extras)
+    if requirements:
+        _run(
+            [uv, "pip", "install", "--python", str(python), *requirements],
+            cwd=python.parent,
+            env=dict(env),
+        )
+
+
 def _tool_probe(
-    tool_python: Path, expected_version: str, env: Mapping[str, str]
+    tool_python: Path,
+    expected_version: str,
+    env: Mapping[str, str],
+    source_root: Path,
 ) -> None:
     code = r"""
 import importlib.metadata as metadata
 import importlib.util
 import json
+import sys
 from importlib import resources
+from m3 import MCPTestKit
 
 required = {
     name: importlib.util.find_spec(name) is not None
-    for name in ("mcp_pal_cli", "mcp_pal", "mcp_pal_app")
+    for name in ("m3_cli", "m3", "m3_app")
 }
 forbidden = {
     name: importlib.util.find_spec(name) is None
     for name in ("pytest", "streamlit", "requests")
 }
-ui = resources.files("mcp_pal_cli").joinpath("ui")
+ui = resources.files("m3_cli").joinpath("ui")
 payload = {
     "required": required,
     "forbidden": forbidden,
-    "version": metadata.version("mcp-pal"),
+    "version": metadata.version("m3"),
     "ui": ui.joinpath("index.html").is_file() and any(item.is_file() for item in ui.joinpath("assets").iterdir()),
+    "source_absent": all("__SOURCE_ROOT__" not in item for item in sys.path),
+    "kit_imported": MCPTestKit.__name__ == "MCPTestKit",
 }
 print(json.dumps(payload, sort_keys=True))
-"""
+""".replace("__SOURCE_ROOT__", str(source_root))
     result = _run([str(tool_python), "-c", code], cwd=tool_python.parent, env=dict(env))
     try:
         payload = json.loads(result.stdout.strip().splitlines()[-1])
@@ -207,12 +305,12 @@ print(json.dumps(payload, sort_keys=True))
             "CLI tool environment returned an invalid package check"
         ) from exc
     if payload.get("required") != {
-        "mcp_pal_cli": True,
-        "mcp_pal": True,
-        "mcp_pal_app": True,
+        "m3_cli": True,
+        "m3": True,
+        "m3_app": True,
     }:
         raise StandaloneGateError(
-            "CLI tool environment is missing a required MCP Pal package"
+            "CLI tool environment is missing a required M3 package"
         )
     if payload.get("forbidden") != {
         "pytest": True,
@@ -222,9 +320,14 @@ print(json.dumps(payload, sort_keys=True))
         raise StandaloneGateError(
             "CLI tool environment contains a project-only package"
         )
-    if payload.get("version") != expected_version or payload.get("ui") is not True:
+    if (
+        payload.get("version") != expected_version
+        or payload.get("ui") is not True
+        or payload.get("source_absent") is not True
+        or payload.get("kit_imported") is not True
+    ):
         raise StandaloneGateError(
-            "CLI tool environment has the wrong version or no bundled UI"
+            "CLI tool environment has the wrong version, source import, or bundled UI"
         )
 
 
@@ -233,24 +336,36 @@ def _project_probe(
     cwd: Path,
     expected_version: str,
     env: Mapping[str, str],
+    source_root: Path,
 ) -> None:
     code = r"""
 import importlib.metadata as metadata
 import importlib.util
 import json
+import sys
+from m3 import MCPTestKit
 
 required = {}
-for name in ("pytest", "mcp_pal", "mcp_pal.pytest_plugin"):
+for name in ("pytest", "m3", "m3.pytest_plugin"):
     required[name] = importlib.util.find_spec(name) is not None
 try:
-    from mcp_pal.storage import SQLiteExecutionStore
+    from m3.storage import SQLiteExecutionStore
 except Exception:
     required["SQLiteExecutionStore"] = False
 else:
     required["SQLiteExecutionStore"] = True
-forbidden = {name: importlib.util.find_spec(name) is None for name in ("mcp_pal_cli", "mcp_pal_app")}
-print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("mcp-pal")}, sort_keys=True))
-"""
+forbidden = {name: importlib.util.find_spec(name) is None for name in ("m3_cli", "m3_app")}
+probe_path = "__PROBE_PATH__"
+store = SQLiteExecutionStore(probe_path)
+store.close()
+reopened = SQLiteExecutionStore(probe_path)
+reopened.close()
+import os
+os.unlink(probe_path)
+print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("m3"), "source_absent": all("__SOURCE_ROOT__" not in item for item in sys.path), "kit_imported": MCPTestKit.__name__ == "MCPTestKit"}, sort_keys=True))
+""".replace("__SOURCE_ROOT__", str(source_root)).replace(
+        "__PROBE_PATH__", str(cwd / "m3-probe.sqlite")
+    )
     result = _run([str(project_python), "-c", code], cwd=cwd, env=dict(env))
     try:
         payload = json.loads(result.stdout.strip().splitlines()[-1])
@@ -263,29 +378,37 @@ print(json.dumps({"required": required, "forbidden": forbidden, "version": metad
         required.get(name)
         for name in (
             "pytest",
-            "mcp_pal",
-            "mcp_pal.pytest_plugin",
+            "m3",
+            "m3.pytest_plugin",
             "SQLiteExecutionStore",
         )
     ):
         raise StandaloneGateError(
             "project environment is missing pytest, SDK, plugin, or SQLite storage"
         )
-    if payload.get("forbidden") != {"mcp_pal_cli": True, "mcp_pal_app": True}:
+    if payload.get("forbidden") != {"m3_cli": True, "m3_app": True}:
         raise StandaloneGateError(
             "project environment contains the standalone CLI or app"
         )
-    if payload.get("version") != expected_version:
-        raise StandaloneGateError("project SDK version does not match the CLI release")
+    if (
+        payload.get("version") != expected_version
+        or payload.get("source_absent") is not True
+        or payload.get("kit_imported") is not True
+    ):
+        raise StandaloneGateError("project SDK version or source import check failed")
 
 
 def _write_dummy_test(repo: Path) -> None:
     tests = repo / "tests"
-    tests.mkdir(parents=True)
-    (tests / "test_public_sdk.py").write_text(
-        """from mcp_pal import MCPTestKit
-from mcp_pal.testing import FaultInjector
-from mcp_pal.types import DirectSpec, Ping, ServerBinding
+    tests.mkdir(parents=True, exist_ok=True)
+    (tests / "test_m3_starter.py").write_text(
+        """import pytest
+
+from m3 import MCPTestKit
+from m3.testing import FaultInjector
+from m3.types import DirectSpec, Ping, ServerBinding
+
+pytestmark = pytest.mark.m3(suite_name="standalone")
 
 
 def test_stored_public_sdk_run() -> None:
@@ -314,7 +437,7 @@ def _stored_run_ids(
     code = r"""
 import json
 import sys
-from mcp_pal.storage import SQLiteExecutionStore
+from m3.storage import SQLiteExecutionStore
 
 store = SQLiteExecutionStore(sys.argv[1])
 try:
@@ -332,6 +455,40 @@ finally:
         raise StandaloneGateError("project store query returned invalid JSON") from exc
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise StandaloneGateError("project store query returned invalid run IDs")
+    return value
+
+
+def _stored_test_run_ids(
+    project_python: Path,
+    repo: Path,
+    database: Path,
+    env: Mapping[str, str],
+) -> list[str]:
+    """Read pytest manifest IDs for the CLI's baseline option."""
+
+    code = r"""
+import json
+import sys
+from m3.storage import SQLiteExecutionStore
+
+store = SQLiteExecutionStore(sys.argv[1])
+try:
+    values = store.list_test_runs()
+    print(json.dumps([str(item["run_id"]) for item in values if "run_id" in item]))
+finally:
+    store.close()
+"""
+    result = _run(
+        [str(project_python), "-c", code, str(database)], cwd=repo, env=dict(env)
+    )
+    try:
+        value = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise StandaloneGateError(
+            "project manifest query returned invalid JSON"
+        ) from exc
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise StandaloneGateError("project manifest query returned invalid run IDs")
     return value
 
 
@@ -374,7 +531,7 @@ def _free_port() -> int:
 def _parse_ui_links(output: str, origin: str, expected_id: str) -> str:
     """Validate CLI link output and return the direct run URL."""
 
-    history_matches = re.findall(r"(?m)^MCP-Pal UI: (https?://[^\s]+)$", output)
+    history_matches = re.findall(r"(?m)^M3 UI: (https?://[^\s]+)$", output)
     expected_history = f"{origin}/history"
     if len(history_matches) != 1 or history_matches[0] != expected_history:
         raise StandaloneGateError(
@@ -481,7 +638,8 @@ def _run_ui_gate(
     database: Path,
     port: int,
     env: dict[str, str],
-    existing_id: str,
+    existing_ids: tuple[str, ...],
+    ui_dir: Path | None = None,
 ) -> None:
     command = [
         str(executable),
@@ -519,7 +677,7 @@ def _run_ui_gate(
     deadline = time.monotonic() + _UI_TIMEOUT
     while time.monotonic() < deadline:
         text = output.text()
-        if "MCP-Pal UI:" in text and re.search(
+        if "M3 UI:" in text and re.search(
             r"(?m)^Run: http://127\.0\.0\.1:[0-9]+/playground/run/", text
         ):
             break
@@ -533,14 +691,22 @@ def _run_ui_gate(
         )
 
     text = output.text()
-    if "MCP-Pal UI:" not in text:
+    if "M3 UI:" not in text:
         _terminate(process)
         raise StandaloneGateError(
             f"CLI UI process exited before printing links\n{_safe_diagnostics(text, env)}"
         )
-    current_runs = _stored_run_ids(project_python, repo, database, env)
-    new_runs = [run_id for run_id in current_runs if run_id != existing_id]
-    if len(current_runs) != 2 or len(new_runs) != 1:
+    # The UI command prints links as soon as the server is ready; its pytest
+    # child can still be committing the execution when those links appear.
+    current_runs: list[str] = []
+    storage_deadline = time.monotonic() + 30
+    while time.monotonic() < storage_deadline:
+        current_runs = _stored_run_ids(project_python, repo, database, env)
+        if len(current_runs) >= 3:
+            break
+        time.sleep(0.2)
+    new_runs = [run_id for run_id in current_runs if run_id not in existing_ids]
+    if len(current_runs) != 3 or len(new_runs) != 1:
         _terminate(process)
         raise StandaloneGateError(
             "UI test did not create exactly one additional stored run"
@@ -577,6 +743,13 @@ def _run_ui_gate(
         _terminate(process)
         raise StandaloneGateError("CLI UI process attempted to use a Node/Vite runtime")
 
+    if ui_dir is not None:
+        try:
+            _run_playwright_contract(ui_dir, origin, expected_id, env)
+        except StandaloneGateError:
+            _terminate(process)
+            raise
+
     _terminate(process)
     if process.returncode != 0:
         raise StandaloneGateError(
@@ -594,126 +767,291 @@ def _run_ui_gate(
     raise StandaloneGateError("CLI UI port remained open after Ctrl-C cleanup")
 
 
-def check(release_dir: str | os.PathLike[str], version: str) -> None:
+def _run_playwright_contract(
+    ui_dir: Path, origin: str, execution_id: str, env: Mapping[str, str]
+) -> None:
+    """Verify a real v2 report and its bundled UI rendering in Chromium."""
+
+    node = shutil.which("node")
+    if node is None or not (ui_dir / "node_modules" / "playwright").exists():
+        raise StandaloneGateError("Node.js and UI Playwright must be installed")
+    code = r"""
+const { chromium } = require('playwright');
+const [origin, executionId] = process.argv.slice(1);
+(async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    const report = await page.request.get(`${origin}/api/v2/executions/${encodeURIComponent(executionId)}/report`);
+    if (!report.ok()) throw new Error(`v2 report returned ${report.status()}`);
+    const body = await report.json();
+    if (body.trace?.schema_id !== 'trace_view') throw new Error('v2 trace schema is not neutral');
+    if (!body.report?.events?.every((event) => event.schema === 'event')) {
+      throw new Error('v2 event schemas are not neutral');
+    }
+    await page.goto(`${origin}/history`);
+    const row = page.locator('tr').filter({ hasText: executionId });
+    await row.waitFor({ state: 'visible', timeout: 15000 });
+    await row.getByRole('button', { name: `Open ${executionId}` }).click();
+    await page.waitForURL(new RegExp(`/playground/run/${executionId}$`));
+    await page.getByText('Completed', { exact: true }).first().waitFor({ state: 'visible' });
+    console.log('Playwright v2 report and bundled UI contract passed');
+  } finally {
+    await browser.close();
+  }
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+    _run(
+        [node, "-e", code, origin, execution_id],
+        cwd=ui_dir,
+        env=dict(env),
+        timeout=_UI_TIMEOUT,
+    )
+
+
+def _run_direct_pytest(
+    project_python: Path,
+    repo: Path,
+    database: Path,
+    env: Mapping[str, str],
+) -> None:
+    command = [
+        str(project_python),
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "m3.pytest_plugin",
+        "--results-db",
+        str(database),
+        "--project-root",
+        str(repo),
+        "--harness",
+        "opencode=fixture/model",
+        "--credential-env",
+        "VENDOR_API_KEY=M3_GATE_SOURCE",
+        "--trials",
+        "1",
+        "--suite",
+        "standalone",
+        "--execution-timeout",
+        "30",
+        "tests/test_m3_starter.py",
+    ]
+    _run(command, cwd=repo, env=dict(env))
+
+
+def _run_m3_test(
+    executable: Path,
+    project_python: Path,
+    repo: Path,
+    database: Path,
+    baseline: str,
+    env: Mapping[str, str],
+) -> None:
+    command = [
+        str(executable),
+        "test",
+        "--python",
+        str(project_python),
+        "--project-root",
+        str(repo),
+        "--results-db",
+        str(database),
+        "--baseline",
+        baseline,
+        "--harness",
+        "opencode=fixture/model",
+        "--credential-env",
+        "VENDOR_API_KEY=M3_GATE_SOURCE",
+        "--trials",
+        "1",
+        "--suite",
+        "standalone",
+        "--execution-timeout",
+        "30",
+        "--",
+        "-q",
+    ]
+    _run(command, cwd=repo, env=dict(env))
+
+
+def check(
+    release_dir: str | os.PathLike[str],
+    version: str,
+    ui_dir: str | os.PathLike[str] | None = None,
+) -> None:
     cli_wheel, sdk_wheel, app_wheel = wheel_paths(release_dir, version)
     assert_bundled_ui(cli_wheel)
     uv = shutil.which("uv")
     if uv is None:
         raise StandaloneGateError("uv is required for the standalone gate")
 
-    with tempfile.TemporaryDirectory(prefix="mcp-pal-cli-standalone-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="m3-cli-standalone-") as temporary:
         # macOS commonly exposes the temporary directory through /var ->
         # /private/var. SQLite intentionally rejects symlinked database paths,
         # so use the physical temporary path throughout the gate.
         root = Path(temporary).resolve()
-        repo = root / "dummy-repo"
-        repo.mkdir()
-        tool_dir = root / "uv-tools"
-        tool_bin = root / "uv-bin"
-        cache_dir = root / "uv-cache"
-        tool_bin.mkdir()
         env = _clean_environment()
-        env.update(
-            {
-                "UV_TOOL_DIR": str(tool_dir),
-                "UV_TOOL_BIN_DIR": str(tool_bin),
-                "UV_CACHE_DIR": str(cache_dir),
-                "PATH": str(tool_bin) + os.pathsep + env.get("PATH", ""),
-            }
-        )
-        # The dummy repository is the only working directory used for test
-        # commands.  No command below can see or modify the source checkout.
-        _write_dummy_test(repo)
-        _run(
-            [
-                uv,
-                "tool",
-                "install",
-                "--force",
-                str(cli_wheel),
-                "--with",
-                str(sdk_wheel),
-                "--with",
-                str(app_wheel),
-            ],
-            cwd=repo,
-            env=env,
-        )
-        executable = tool_bin / ("mcp-pal.exe" if os.name == "nt" else "mcp-pal")
-        if not executable.is_file():
-            raise StandaloneGateError(
-                "uv did not create the standalone mcp-pal command"
-            )
-        tool_python = _command_path(tool_dir / "mcp-pal-cli", "python")
-        if not tool_python.is_file():
-            raise StandaloneGateError("uv tool environment Python is missing")
-        _tool_probe(tool_python, version, env)
+        env["M3_GATE_SOURCE"] = "standalone-gate-source"
+        env["PATH"] = env.get("PATH", "")
+        release = Path(release_dir).resolve()
 
-        # Exercise the public project setup command against the exact release
-        # assets.  The file URL is a local release mirror for this isolated
-        # gate; production setup uses authenticated ``gh release download``.
-        setup_env = dict(env)
-        setup_env["MCP_PAL_RELEASE_BASE_URL"] = Path(release_dir).resolve().as_uri()
-        _run(
-            [str(executable), "setup", "--project-root", str(repo)],
-            cwd=repo,
-            env=setup_env,
+        # Keep this gate explicit about the supported floor and release Python.
+        # The workflow runs the same wheel set through both environments.
+        python_versions = tuple(
+            value.strip()
+            for value in os.environ.get("M3_GATE_PYTHONS", "3.10,3.13").split(",")
+            if value.strip()
         )
-        project_python = _python_path(repo / ".venv")
-        _project_probe(project_python, repo, version, env)
-        database = repo / ".mcp-pal" / "executions.sqlite"
-        _run(
-            [
-                str(executable),
-                "doctor",
-                "--python",
-                str(project_python),
-                "--project-root",
-                str(repo),
-                "--require",
-                "storage:sqlite",
-            ],
-            cwd=repo,
-            env=env,
-        )
-        _run(
-            [
-                str(executable),
-                "test",
-                "--python",
-                str(project_python),
-                "--results-db",
-                str(database),
-                "--",
-                "-q",
-            ],
-            cwd=repo,
-            env=env,
-        )
-        first_runs = _stored_run_ids(project_python, repo, database, env)
-        if len(first_runs) != 1:
-            raise StandaloneGateError(
-                f"expected exactly one stored run after plain test, found {len(first_runs)}"
+        if not python_versions:
+            raise StandaloneGateError("M3_GATE_PYTHONS must not be empty")
+        browser_ui_dir = Path(ui_dir).resolve() if ui_dir is not None else None
+
+        for python_version in python_versions:
+            version_root = root / python_version.replace(".", "-")
+            version_root.mkdir()
+            version_repo = version_root / "repo"
+            version_repo.mkdir()
+            _run(["git", "init", "-q"], cwd=version_repo, env=dict(env))
+            tool_env = version_root / "tool-env"
+            project_env = version_repo / ".venv"
+            _run(
+                [uv, "venv", "--python", python_version, str(tool_env)],
+                cwd=version_repo,
+                env=dict(env),
             )
-        port = _free_port()
-        _run_ui_gate(
-            executable, project_python, repo, database, port, env, first_runs[0]
-        )
-        final_runs = _stored_run_ids(project_python, repo, database, env)
-        if len(final_runs) != 2 or first_runs[0] not in final_runs:
-            raise StandaloneGateError(
-                "UI test did not preserve exactly two stored runs"
+            tool_python = _python_path(tool_env)
+            _install_wheels(
+                uv,
+                tool_python,
+                (cli_wheel, sdk_wheel, app_wheel),
+                release,
+                env,
+                extras=frozenset({"storage"}),
             )
-        print("isolated CLI standalone gate passed", flush=True)
+            executable = _command_path(tool_env, "m3")
+            if not executable.is_file():
+                raise StandaloneGateError(
+                    f"m3 executable is missing from the {python_version} tool environment"
+                )
+            _tool_probe(tool_python, version, env, _CHECKOUT_ROOT)
+            _run([str(executable), "--help"], cwd=version_repo, env=dict(env))
+            _run(
+                [str(tool_python), "-m", "m3_cli", "--help"],
+                cwd=version_repo,
+                env=dict(env),
+            )
+
+            # Start from a genuinely fresh project, exercise init, then
+            # replace only its skipped starter body with a deterministic test.
+            _run(
+                [
+                    str(executable),
+                    "init",
+                    "--project-root",
+                    str(version_repo),
+                    "--project-name",
+                    "standalone-gate",
+                    "--suite",
+                    "standalone",
+                ],
+                cwd=version_repo,
+                env=dict(env),
+            )
+            _write_dummy_test(version_repo)
+            _run(
+                [uv, "venv", "--python", python_version, str(project_env)],
+                cwd=version_repo,
+                env=dict(env),
+            )
+            setup_env = dict(env)
+            setup_env["M3_RELEASE_BASE_URL"] = release.as_uri()
+            _run(
+                [str(executable), "setup", "--project-root", str(version_repo)],
+                cwd=version_repo,
+                env=setup_env,
+            )
+            project_python = _python_path(project_env)
+            _project_probe(project_python, version_repo, version, env, _CHECKOUT_ROOT)
+            database = version_repo / ".m3" / "executions.sqlite"
+            _run(
+                [
+                    str(executable),
+                    "doctor",
+                    "--python",
+                    str(project_python),
+                    "--project-root",
+                    str(version_repo),
+                    "--require",
+                    "storage:sqlite",
+                ],
+                cwd=version_repo,
+                env=dict(env),
+            )
+
+            # Direct pytest and the CLI each execute the same local MCP test.
+            # Across these two invocations all eight public plugin options are
+            # exercised, including baseline comparison on the second run.
+            _run_direct_pytest(project_python, version_repo, database, env)
+            first_runs = _stored_run_ids(project_python, version_repo, database, env)
+            first_test_runs = _stored_test_run_ids(
+                project_python, version_repo, database, env
+            )
+            if len(first_runs) != 1 or len(first_test_runs) != 1:
+                raise StandaloneGateError(
+                    f"expected one stored run and manifest after direct pytest ({python_version}), found {len(first_runs)} and {len(first_test_runs)}"
+                )
+            _run_m3_test(
+                executable,
+                project_python,
+                version_repo,
+                database,
+                first_test_runs[0],
+                env,
+            )
+            second_runs = _stored_run_ids(project_python, version_repo, database, env)
+            second_test_runs = _stored_test_run_ids(
+                project_python, version_repo, database, env
+            )
+            if len(second_runs) != 2 or first_runs[0] not in second_runs:
+                raise StandaloneGateError(
+                    f"CLI test did not persist/reload the baseline run ({python_version})"
+                )
+            if len(second_test_runs) != 2 or first_test_runs[0] not in second_test_runs:
+                raise StandaloneGateError(
+                    f"CLI test did not persist/reload the baseline manifest ({python_version})"
+                )
+            port = _free_port()
+            _run_ui_gate(
+                executable,
+                project_python,
+                version_repo,
+                database,
+                port,
+                env,
+                tuple(second_runs),
+                browser_ui_dir if python_version == python_versions[-1] else None,
+            )
+            final_runs = _stored_run_ids(project_python, version_repo, database, env)
+            if len(final_runs) != 3 or not set(second_runs).issubset(final_runs):
+                raise StandaloneGateError(
+                    f"UI test did not preserve all installed-wheel runs ({python_version})"
+                )
+            print(
+                f"isolated CLI standalone gate passed on Python {python_version}",
+                flush=True,
+            )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-dir", required=True, type=Path)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--ui-dir", type=Path)
     args = parser.parse_args(argv)
     try:
-        check(args.release_dir, args.version)
+        check(args.release_dir, args.version, args.ui_dir)
     except StandaloneGateError as exc:
         print(f"CLI standalone gate failed: {exc}", file=sys.stderr)
         return 2

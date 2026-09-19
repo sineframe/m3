@@ -9,9 +9,9 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-import mcp_pal
-from mcp_pal.errors import UnsupportedFeature
-from mcp_pal.matrix import (
+import m3
+from m3.errors import UnsupportedFeature
+from m3.matrix import (
     HarnessCase,
     HarnessMatrix,
     HarnessMatrixCase,
@@ -20,7 +20,7 @@ from mcp_pal.matrix import (
     ToolMatrix,
     ToolMatrixCase,
 )
-from mcp_pal.types import (
+from m3.types import (
     ACPAgent,
     AgentSpec,
     CallTool,
@@ -422,11 +422,11 @@ def test_matrix_accepts_generators_without_reordering_or_side_effects() -> None:
 
 
 def test_matrix_module_and_root_exports_are_stable() -> None:
-    module = importlib.import_module("mcp_pal.matrix")
+    module = importlib.import_module("m3.matrix")
     expected = ("ToolCase", "ServerCase", "ToolMatrix", "ToolMatrixCase")
     assert tuple(module.__all__) == expected
-    assert all(hasattr(mcp_pal, name) for name in expected)
-    assert all(getattr(mcp_pal, name) is getattr(module, name) for name in expected)
+    assert all(hasattr(m3, name) for name in expected)
+    assert all(getattr(m3, name) is getattr(module, name) for name in expected)
     assert all(
         hasattr(module, name)
         for name in ("HarnessCase", "HarnessMatrix", "HarnessMatrixCase")
@@ -482,7 +482,7 @@ def test_matrix_parametrize_reports_only_missing_pytest_and_cases_stay_available
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", block_pytest)
-    with pytest.raises(ImportError, match=r"mcp-pal\[pytest\]"):
+    with pytest.raises(ImportError, match=r"m3\[pytest\]"):
         matrix.parametrize()
     assert [case.id for case in matrix.cases()] == ["catalog/default"]
 
@@ -521,7 +521,7 @@ def test_tool_case_run_builds_direct_spec_and_preserves_caller_kit() -> None:
     assert kit.spec.operation.arguments["q"] == "x"
     assert kit.spec.timeout_seconds == 3
     assert kit.spec.validate_schemas is True
-    assert kit.spec.metadata["mcp_pal.matrix.case_id"] == "catalog/search"
+    assert kit.spec.metadata["m3.matrix.case_id"] == "catalog/search"
     assert kit.spec.metadata["suite"] == "unit"
     assert kit.closed is False
 
@@ -590,15 +590,13 @@ def test_harness_case_metadata_reserves_matrix_namespace_and_requires_message() 
     with pytest.raises(ValueError, match="requires an explicit message"):
         case.run(kit=_RecordingKit())
     with pytest.raises(ValueError, match="reserved"):
-        case.run(
-            "message", kit=_RecordingKit(), metadata={"mcp_pal.matrix.mode": "bad"}
-        )
+        case.run("message", kit=_RecordingKit(), metadata={"m3.matrix.mode": "bad"})
     kit = _RecordingKit()
     case.run("message", kit=kit, metadata={"suite": "unit"})
-    assert kit.spec.metadata["mcp_pal.matrix.mode"] == "each_server"
-    assert kit.spec.metadata["mcp_pal.matrix.servers"] == "catalog"
-    assert kit.spec.metadata["mcp_pal.matrix.harness"] == "acp"
-    assert kit.spec.metadata["mcp_pal.matrix.trial"] == 1
+    assert kit.spec.metadata["m3.matrix.mode"] == "each_server"
+    assert kit.spec.metadata["m3.matrix.servers"] == "catalog"
+    assert kit.spec.metadata["m3.matrix.harness"] == "acp"
+    assert kit.spec.metadata["m3.matrix.trial"] == 1
     assert kit.spec.metadata["suite"] == "unit"
 
 
@@ -750,7 +748,7 @@ def test_typed_user_message_takes_precedence_over_tool_prompt() -> None:
 def test_owned_sync_run_closes_kit_on_success_and_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sync_api = importlib.import_module("mcp_pal.sync_api")
+    sync_api = importlib.import_module("m3.sync_api")
     created: list[_RecordingKit] = []
 
     def make_kit() -> _RecordingKit:
@@ -778,7 +776,7 @@ def test_owned_sync_run_closes_kit_on_success_and_failure(
 async def test_owned_async_run_closes_kit_on_success_and_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async_api = importlib.import_module("mcp_pal.async_api")
+    async_api = importlib.import_module("m3.async_api")
     created: list[_AsyncRecordingKit] = []
 
     def make_kit() -> _AsyncRecordingKit:
@@ -805,7 +803,7 @@ async def test_owned_async_run_closes_kit_on_success_and_failure(
 def test_owned_sync_session_closes_kit_when_enter_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sync_api = importlib.import_module("mcp_pal.sync_api")
+    sync_api = importlib.import_module("m3.sync_api")
     created: list[_FailingEnterSessionKit] = []
 
     def make_kit() -> _FailingEnterSessionKit:
@@ -826,7 +824,7 @@ def test_owned_sync_session_closes_kit_when_enter_fails(
 def test_owned_sync_session_closes_kit_on_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sync_api = importlib.import_module("mcp_pal.sync_api")
+    sync_api = importlib.import_module("m3.sync_api")
     created: list[_SessionKit] = []
 
     def make_kit() -> _SessionKit:
@@ -847,7 +845,7 @@ def test_owned_sync_session_closes_kit_on_success(
 async def test_owned_async_session_closes_kit_when_enter_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async_api = importlib.import_module("mcp_pal.async_api")
+    async_api = importlib.import_module("m3.async_api")
     created: list[_FailingAsyncEnterSessionKit] = []
 
     def make_kit() -> _FailingAsyncEnterSessionKit:
@@ -869,7 +867,7 @@ async def test_owned_async_session_closes_kit_when_enter_fails(
 async def test_owned_async_session_closes_kit_on_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async_api = importlib.import_module("mcp_pal.async_api")
+    async_api = importlib.import_module("m3.async_api")
     created: list[_AsyncSessionKit] = []
 
     def make_kit() -> _AsyncSessionKit:

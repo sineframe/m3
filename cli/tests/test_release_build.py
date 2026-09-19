@@ -69,18 +69,18 @@ def test_build_release_rejects_tag_version_mismatch(tmp_path: Path) -> None:
 
 def test_project_versions_are_common() -> None:
     versions = release.project_versions()
-    assert set(versions) == {"mcp_pal", "mcp_pal_app", "mcp_pal_cli"}
+    assert set(versions) == {"m3", "m3_app", "m3_cli"}
     assert len(set(versions.values())) == 1
 
 
 def test_classify_wheels_does_not_use_prefix_matching(tmp_path: Path) -> None:
-    app = tmp_path / "mcp_pal_app-1.0-py3-none-any.whl"
-    sdk = tmp_path / "mcp_pal-1.0-py3-none-any.whl"
+    app = tmp_path / "m3_app-1.0-py3-none-any.whl"
+    sdk = tmp_path / "m3-1.0-py3-none-any.whl"
     result = release.classify_wheels(
         [app, sdk],
-        {"mcp_pal": "1.0", "mcp_pal_app": "1.0"},
+        {"m3": "1.0", "m3_app": "1.0"},
     )
-    assert result == {"mcp_pal": sdk, "mcp_pal_app": app}
+    assert result == {"m3": sdk, "m3_app": app}
 
 
 def _wheel(
@@ -111,10 +111,10 @@ def _wheel(
                 f"{info}/entry_points.txt", "[console_scripts]\n" + entry_point + "\n"
             )
         if ui:
-            archive.writestr("mcp_pal_cli/ui/index.html", "html")
-            archive.writestr("mcp_pal_cli/ui/assets/app.js", "js")
+            archive.writestr("m3_cli/ui/index.html", "html")
+            archive.writestr("m3_cli/ui/assets/app.js", "js")
         if app_ui:
-            archive.writestr("mcp_pal_app/ui/__init__.py", "")
+            archive.writestr("m3_app/ui/__init__.py", "")
     return wheel
 
 
@@ -122,18 +122,18 @@ def _synthetic_release(
     root: Path,
     *,
     cli_requires: tuple[str, ...] | None = None,
-    cli_entry_point: str | None = "mcp-pal = mcp_pal_cli.main:main",
+    cli_entry_point: str | None = "m3 = m3_cli.main:main",
     cli_ui: bool = True,
     app_requires: tuple[str, ...] = (),
     app_provides_extras: tuple[str, ...] = (),
     app_ui: bool = False,
 ) -> tuple[dict[str, str], Path]:
     version = "1.0"
-    _wheel(root, "mcp_pal", "mcp-pal", version)
+    _wheel(root, "m3", "m3", version)
     _wheel(
         root,
-        "mcp_pal_app",
-        "mcp-pal-app",
+        "m3_app",
+        "m3-app",
         version,
         requires=app_requires,
         provides_extras=app_provides_extras,
@@ -141,18 +141,17 @@ def _synthetic_release(
     )
     _wheel(
         root,
-        "mcp_pal_cli",
-        "mcp-pal-cli",
+        "m3_cli",
+        "m3-cli",
         version,
-        requires=cli_requires
-        or (f"mcp-pal[storage]=={version}", f"mcp-pal-app=={version}"),
+        requires=cli_requires or (f"m3[storage]=={version}", f"m3-app=={version}"),
         entry_point=cli_entry_point,
         ui=cli_ui,
     )
     return {
-        "mcp_pal": version,
-        "mcp_pal_app": version,
-        "mcp_pal_cli": version,
+        "m3": version,
+        "m3_app": version,
+        "m3_cli": version,
     }, _valid_ui(root)
 
 
@@ -160,30 +159,30 @@ def test_verify_release_checks_metadata_entry_point_dependencies_and_ui(
     tmp_path: Path,
 ) -> None:
     version = "1.0"
-    _wheel(tmp_path, "mcp_pal", "mcp-pal", version)
+    _wheel(tmp_path, "m3", "m3", version)
     _wheel(
         tmp_path,
-        "mcp_pal_app",
-        "mcp-pal-app",
+        "m3_app",
+        "m3-app",
         version,
         requires=(),
     )
     _wheel(
         tmp_path,
-        "mcp_pal_cli",
-        "mcp-pal-cli",
+        "m3_cli",
+        "m3-cli",
         version,
-        requires=(f"mcp-pal[storage]=={version}", f"mcp-pal-app=={version}"),
-        entry_point="mcp-pal = mcp_pal_cli.main:main",
+        requires=(f"m3[storage]=={version}", f"m3-app=={version}"),
+        entry_point="m3 = m3_cli.main:main",
         ui=True,
     )
     ui = _valid_ui(tmp_path)
     result = release.verify_release(
         tmp_path,
-        {"mcp_pal": version, "mcp_pal_app": version, "mcp_pal_cli": version},
+        {"m3": version, "m3_app": version, "m3_cli": version},
         ui_source_dist=ui,
     )
-    assert set(result) == {"mcp_pal", "mcp_pal_app", "mcp_pal_cli"}
+    assert set(result) == {"m3", "m3_app", "m3_cli"}
 
 
 def test_verify_release_rejects_cli_without_packaged_ui(tmp_path: Path) -> None:
@@ -195,9 +194,9 @@ def test_verify_release_rejects_cli_without_packaged_ui(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("requires", "entry_point", "message"),
     [
-        (("mcp-pal[storage]==1.0",), "mcp-pal = mcp_pal_cli.main:main", "dependencies"),
+        (("m3[storage]==1.0",), "m3 = m3_cli.main:main", "dependencies"),
         (
-            ("mcp-pal[storage]==1.0", "mcp-pal-app==1.0"),
+            ("m3[storage]==1.0", "m3-app==1.0"),
             None,
             "entry point",
         ),
@@ -261,8 +260,8 @@ def test_verify_release_rejects_forbidden_cli_dependencies(
     expected, ui = _synthetic_release(
         tmp_path,
         cli_requires=(
-            "mcp-pal[storage]==1.0",
-            "mcp-pal-app==1.0",
+            "m3[storage]==1.0",
+            "m3-app==1.0",
             dependency,
         ),
     )

@@ -16,23 +16,23 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.agent_session import AsyncAgentSession
-from mcp_pal.harness.codex import (
+from m3.agent_session import AsyncAgentSession
+from m3.harness.codex import (
     CodexHarnessAdapter,
     codex_configuration,
     render_codex_config,
 )
-from mcp_pal.harness.contracts import (
+from m3.harness.contracts import (
     HarnessLaunch,
     HarnessStartupError,
     HarnessTurnRequest,
 )
-from mcp_pal.harness.pi import PiHarnessAdapter
-from mcp_pal.harness.pi_extension.bridge import MCPBridge, qualified_tool_name
-from mcp_pal.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
-from mcp_pal.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
-from mcp_pal.transport.capture_proxy import McpCaptureManager
-from mcp_pal.types import (
+from m3.harness.pi import PiHarnessAdapter
+from m3.harness.pi_extension.bridge import MCPBridge, qualified_tool_name
+from m3.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
+from m3.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
+from m3.transport.capture_proxy import McpCaptureManager
+from m3.types import (
     AgentSpec,
     Codex,
     Pi,
@@ -91,7 +91,7 @@ def test_pi_accepts_bridge_only_dynamic_tool_map(
 ) -> None:
     server, tool = "remote", "shipping_quote"
     path = tmp_path / "mapping.json"
-    monkeypatch.setenv("MCP_PAL_PI_TOOL_MAP", str(path))
+    monkeypatch.setenv("M3_PI_TOOL_MAP", str(path))
     MCPBridge({server: {tool: {"description": "quotes"}}}).list_tools()
     adapter = PiHarnessAdapter()
     adapter._tool_map_path = str(path)
@@ -104,7 +104,7 @@ async def test_instrumented_http_credentials_do_not_reach_harness_configs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     canary = "Bearer harness-secret"
-    monkeypatch.setenv("MCP_PAL_HTTP_SECRET", canary)
+    monkeypatch.setenv("M3_HTTP_SECRET", canary)
     manager = McpCaptureManager(tmp_path, trusted_private_keys={"remote"})
     config = HarnessServerConfig(
         key="remote",
@@ -115,7 +115,7 @@ async def test_instrumented_http_credentials_do_not_reach_harness_configs(
         endpoint="http://127.0.0.1:1/mcp",
         headers={
             "Authorization": SecretReference(
-                source="environment", name="MCP_PAL_HTTP_SECRET"
+                source="environment", name="M3_HTTP_SECRET"
             )
         },
     )
@@ -170,7 +170,7 @@ async def test_pi_native_rpc_handshake_multiturn_and_usage() -> None:
     launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
     adapter = PiHarnessAdapter(
         executable=str(PI_FIXTURE),
-        environment={"MCP_PAL_PI_FIXTURE_STARTUP_EVENT": "1"},
+        environment={"M3_PI_FIXTURE_STARTUP_EVENT": "1"},
     )
     session = await adapter.open(launch)
     result = await session.send(HarnessTurnRequest.from_message("hello"))
@@ -189,7 +189,7 @@ async def test_pi_error_stop_reason_is_a_failed_turn() -> None:
     launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
     adapter = PiHarnessAdapter(
         executable=str(PI_FIXTURE),
-        environment={"MCP_PAL_PI_FIXTURE_ERROR": "1"},
+        environment={"M3_PI_FIXTURE_ERROR": "1"},
     )
     session = await adapter.open(launch)
     result = await session.send(HarnessTurnRequest.from_message("hello"))
@@ -270,7 +270,7 @@ async def test_native_cancel_sends_pi_abort_before_cleanup() -> None:
 async def test_pi_cancel_marks_inflight_turn_cancelled_and_keeps_process() -> None:
     launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
     adapter = PiHarnessAdapter(
-        executable=str(PI_FIXTURE), environment={"MCP_PAL_PI_FIXTURE_BLOCK": "1"}
+        executable=str(PI_FIXTURE), environment={"M3_PI_FIXTURE_BLOCK": "1"}
     )
     session = await adapter.open(launch)
     sending = asyncio.create_task(
@@ -399,7 +399,7 @@ async def test_pi_streaming_tool_events_do_not_duplicate_execution_observations(
 def test_provider_protocol_errors_are_not_successes() -> None:
     from datetime import datetime, timezone
 
-    from mcp_pal.harness._rpc_native import JsonRpcProcess
+    from m3.harness._rpc_native import JsonRpcProcess
 
     adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
     with pytest.raises(HarnessStartupError):
@@ -556,7 +556,7 @@ def test_pi_extension_has_no_request_local_timeout() -> None:
     source = (
         Path(__file__).parents[2]
         / "src"
-        / "mcp_pal"
+        / "m3"
         / "harness"
         / "pi_extension"
         / "extension.ts"
@@ -571,7 +571,7 @@ def test_bundled_pi_extension_loads_without_starting_a_model_turn() -> None:
     bridge = (
         Path(__file__).parents[2]
         / "src"
-        / "mcp_pal"
+        / "m3"
         / "harness"
         / "pi_extension"
         / "bridge.py"
@@ -580,11 +580,11 @@ def test_bundled_pi_extension_loads_without_starting_a_model_turn() -> None:
     environment = dict(os.environ)
     sdk_root = ROOT.parent
     server = sdk_root / "examples" / "servers" / "example_mcp_server.py"
-    environment["MCP_PAL_PI_BRIDGE_COMMAND"] = "uv"
-    environment["MCP_PAL_PI_BRIDGE_ARGV"] = json.dumps(
+    environment["M3_PI_BRIDGE_COMMAND"] = "uv"
+    environment["M3_PI_BRIDGE_ARGV"] = json.dumps(
         ["run", "--project", str(sdk_root), "python", str(bridge)]
     )
-    environment["MCP_PAL_MCP_CONFIG"] = json.dumps(
+    environment["M3_MCP_CONFIG"] = json.dumps(
         {
             "example": {
                 "transport": "stdio",
@@ -628,8 +628,8 @@ def test_bundled_pi_extension_loads_without_starting_a_model_turn() -> None:
 
 
 def test_public_types_and_registry_are_native_peers() -> None:
-    from mcp_pal.harness import default_adapters
-    from mcp_pal.types import HarnessSpec
+    from m3.harness import default_adapters
+    from m3.types import HarnessSpec
 
     assert HarnessSpec.__metadata__
     registry = default_adapters()
@@ -1028,7 +1028,7 @@ async def test_codex_streamed_and_completed_message_returns_one_text() -> None:
 
 @pytest.mark.asyncio
 async def test_closed_json_rpc_process_does_not_consume_stale_frames() -> None:
-    from mcp_pal.harness._rpc_native import JsonRpcProcess
+    from m3.harness._rpc_native import JsonRpcProcess
 
     process = JsonRpcProcess("fixture")
     await process._frames.put({"method": "turn/completed"})

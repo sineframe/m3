@@ -9,4 +9,4 @@ remediation and are not future architecture.
       and active documentation.
 - [ ] Preserve the CLI-owned compiled SPA and its browser/E2E tests.
 
-The supported browser experience is the compiled SPA served by `mcp_pal_cli.web`.
+The supported browser experience is the compiled SPA served by `m3_cli.web`.

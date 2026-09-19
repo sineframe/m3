@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.services.probes import (
+from m3.services.probes import (
     ProbeKind,
     ProbeRequest,
     Probes,
 )
-from mcp_pal.types import CapabilityStatus
+from m3.types import CapabilityStatus
 
 
 def _fake_executable(tmp_path: Path, body: str, name: str = "fake-agent") -> Path:
@@ -249,7 +249,7 @@ def test_transport_and_optional_storage_have_explicit_statuses() -> None:
     service = Probes()
     unsupported = service.probe_transport("custom", transport="custom")
     available = service.probe_storage("memory")
-    missing = service.probe_storage("sql", module="module_that_does_not_exist_mcp_pal")
+    missing = service.probe_storage("sql", module="module_that_does_not_exist")
 
     assert unsupported.status is CapabilityStatus.UNSUPPORTED
     assert available.status is CapabilityStatus.READY

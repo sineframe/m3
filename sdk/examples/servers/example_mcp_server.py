@@ -314,9 +314,9 @@ async def _roots_changed(
 
 async def main() -> None:
     server: Server[object] = Server(
-        "mcp-pal-example-server",
+        "m3-example-server",
         version="1.0.0",
-        instructions="Deterministic server for MCP Pal SDK examples",
+        instructions="Deterministic server for M3 SDK examples",
         on_list_tools=_list_tools,
         on_call_tool=_call_tool,
         on_list_resources=_list_resources,

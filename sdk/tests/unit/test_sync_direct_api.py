@@ -12,12 +12,12 @@ from mcp.server.lowlevel import Server
 from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import ListToolsResult
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.errors import OperationCancelled, UnsupportedFeature
-from mcp_pal.harness import HarnessAdapterRegistry, HarnessStartupError
-from mcp_pal.storage import InMemoryExecutionStore, SQLiteExecutionStore
-from mcp_pal.sync_api import DirectClient, MCPTestKit, _adapt_callback
-from mcp_pal.types import (
+from m3.async_api import AsyncMCPTestKit
+from m3.errors import OperationCancelled, UnsupportedFeature
+from m3.harness import HarnessAdapterRegistry, HarnessStartupError
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from m3.sync_api import DirectClient, MCPTestKit, _adapt_callback
+from m3.types import (
     AgentSpec,
     ClaudeCode,
     InProcessServer,
@@ -83,7 +83,7 @@ def test_profile_backed_sync_and_async_direct_reject_nonfinite_timeouts(
 
 
 def test_sync_direct_uses_typed_results_and_final_trace() -> None:
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(InProcessServer(name="fixture", factory=_server))
     with client as entered:
         assert entered is client
@@ -102,7 +102,7 @@ def test_sync_direct_uses_typed_results_and_final_trace() -> None:
 def test_sync_direct_does_not_expose_async_client_and_matches_supported_surface() -> (
     None
 ):
-    from mcp_pal.async_api import AsyncDirectClient
+    from m3.async_api import AsyncDirectClient
 
     expected = {
         name
@@ -116,7 +116,7 @@ def test_sync_direct_does_not_expose_async_client_and_matches_supported_surface(
     }
     assert expected <= actual
 
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(InProcessServer(name="fixture", factory=_server))
     assert not isinstance(client, AsyncDirectClient)
     assert not hasattr(client, "_session")
@@ -126,7 +126,7 @@ def test_sync_direct_does_not_expose_async_client_and_matches_supported_surface(
 def test_nested_and_repeated_sync_kit_lifecycles_leave_no_portal_threads() -> None:
     baseline = {thread.ident for thread in threading.enumerate()}
     for _ in range(3):
-        with MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+        with MCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
             with kit as nested:
                 assert nested is kit
                 with kit.direct(
@@ -142,7 +142,7 @@ def test_nested_and_repeated_sync_kit_lifecycles_leave_no_portal_threads() -> No
 
 
 def test_sync_callback_mutation_matches_async_unsupported_contract() -> None:
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(InProcessServer(name="fixture", factory=_server))
     with client:
         with pytest.raises(UnsupportedFeature, match="callbacks must be supplied"):
@@ -176,7 +176,7 @@ def test_sync_callbacks_adapt_sync_and_async_callbacks() -> None:
 
 
 def test_concurrent_direct_creation_shares_one_portal_and_close_reaps_all() -> None:
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     barrier = threading.Barrier(8)
     clients: list[DirectClient] = []
     failures: list[BaseException] = []
@@ -205,13 +205,13 @@ def test_concurrent_direct_creation_shares_one_portal_and_close_reaps_all() -> N
 
 
 def test_failed_new_portal_creation_is_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    from mcp_pal.sync_api import _PortalRuntime
+    from m3.sync_api import _PortalRuntime
 
     def fail(*args: object, **kwargs: object) -> int:
         raise RuntimeError("portal startup fixture failure")
 
     monkeypatch.setattr(_PortalRuntime, "create_direct", fail)
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     with pytest.raises(RuntimeError, match="portal startup fixture failure"):
         kit.direct(InProcessServer(name="fixture", factory=_server))
     assert kit._portal is None
@@ -231,7 +231,7 @@ def test_close_during_inflight_sync_operation_maps_teardown_to_cancelled() -> No
 
         return Server("sync-hanging", on_call_tool=call_tool)
 
-    kit = MCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project")
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(InProcessServer(name="fixture", factory=hanging_server))
     client.__enter__()
     outcome: list[BaseException] = []

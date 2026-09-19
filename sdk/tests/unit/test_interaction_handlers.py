@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from mcp_pal.async_api import AsyncMCPTestKit
-from mcp_pal.harness import DeterministicHarnessAdapter, HarnessTurnRequest
-from mcp_pal.interaction_handlers import (
+from m3.async_api import AsyncMCPTestKit
+from m3.harness import DeterministicHarnessAdapter, HarnessTurnRequest
+from m3.interaction_handlers import (
     AllowedCommands,
     ElicitationRequest,
     FilesystemRequest,
@@ -21,7 +21,7 @@ from mcp_pal.interaction_handlers import (
     TerminalRequest,
     WorkspaceFiles,
 )
-from mcp_pal.types import (
+from m3.types import (
     ACPAgent,
     AgentSpec,
     ElicitationPolicy,
@@ -48,7 +48,7 @@ def _spec() -> AgentSpec:
 
 @pytest.mark.asyncio
 async def test_default_deny_is_typed_and_receipted() -> None:
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(_spec(), adapter=DeterministicHarnessAdapter())
         permission = await session.interactions.permission(
             PermissionRequest("write", "secret")
@@ -87,7 +87,7 @@ async def test_explicit_handlers_enforce_policy_and_record_safe_receipts() -> No
     handlers = InteractionHandlers(
         permission=permission, elicitation=elicitation, sampling=sampling
     )
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(
             _spec(),
             adapter=DeterministicHarnessAdapter(),
@@ -179,7 +179,7 @@ async def test_handler_receipts_are_race_safe_and_launch_is_wired() -> None:
         return True
 
     handlers = InteractionHandlers(permission=permission)
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(
             _spec(), adapter=adapter, interaction_handlers=handlers
         )
@@ -208,7 +208,7 @@ async def test_deterministic_adapter_handler_receives_policy_controller() -> Non
         return "ok"
 
     adapter = DeterministicHarnessAdapter(handler=turn)
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(_spec(), adapter=adapter)
         async with session:
             result = await session.send("run")
@@ -227,7 +227,7 @@ async def test_handler_cancellation_is_not_converted_to_a_deny() -> None:
         return True
 
     controller = InteractionHandlers(permission=permission)
-    async with AsyncMCPTestKit(env={}, cwd="/tmp/mcp-pal-no-project") as kit:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(
             _spec(),
             adapter=DeterministicHarnessAdapter(),
@@ -286,7 +286,7 @@ async def test_terminal_resolves_allowlisted_executables_and_does_not_inherit_en
             (
                 sys.executable,
                 "-c",
-                "import os; print(os.environ.get('MCP_PAL_CANARY', 'missing'))",
+                "import os; print(os.environ.get('M3_CANARY', 'missing'))",
             ),
         )
     )

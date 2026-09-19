@@ -11,7 +11,7 @@ from importlib import resources
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from mcp_pal.events import (
+from m3.events import (
     EVENT_SCHEMA_ID,
     EVENT_SCHEMA_VERSION,
     Event,
@@ -29,9 +29,9 @@ from mcp_pal.events import (
     RequestLink,
     RequestSequence,
 )
-from mcp_pal.execution_trace import ExecutionTraceRecorder
-from mcp_pal.storage import InMemoryExecutionStore
-from mcp_pal.types import ExecutionId, ExecutionOutcome, TraceId, TraceResult
+from m3.execution_trace import ExecutionTraceRecorder
+from m3.storage import InMemoryExecutionStore
+from m3.types import ExecutionId, ExecutionOutcome, TraceId, TraceResult
 
 
 def _provenance() -> EventSource:
@@ -39,7 +39,7 @@ def _provenance() -> EventSource:
 
 
 def test_event_public_types_have_runtime_schemas() -> None:
-    types_module = importlib.import_module("mcp_pal.types")
+    types_module = importlib.import_module("m3.types")
     names = (
         "Event",
         "EventDirection",
@@ -61,18 +61,16 @@ def test_event_public_types_have_runtime_schemas() -> None:
 
 
 def test_packaged_event_schema_matches_authoritative_model() -> None:
-    resource = resources.files("mcp_pal").joinpath(
-        "schemas/mcp-pal.event.v0.2.schema.json"
-    )
+    resource = resources.files("m3").joinpath("schemas/m3.event.v0.2.schema.json")
     with resource.open("r", encoding="utf-8") as handle:
         packaged = json.load(handle)
     expected = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://mcp-pal.local/schemas/mcp-pal.event.v0.2.schema.json",
+        "$id": "https://m3.local/schemas/m3.event.v0.2.schema.json",
         **Event.model_json_schema(by_alias=True),
     }
     assert packaged == expected
-    assert packaged["$id"].endswith("mcp-pal.event.v0.2.schema.json")
+    assert packaged["$id"].endswith("m3.event.v0.2.schema.json")
     assert packaged["properties"]["schema"]["const"] == EVENT_SCHEMA_ID
     assert packaged["properties"]["schema_version"]["const"] == EVENT_SCHEMA_VERSION
     assert packaged["additionalProperties"] is False

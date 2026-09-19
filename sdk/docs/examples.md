@@ -1,11 +1,11 @@
 # Examples
 
-Agent tests use `@pytest.mark.mcp_pal`; select models with CLI `--harness` and
+Agent tests use `@pytest.mark.m3`; select models with CLI `--harness` and
 repeat independent executions with `--trials N`. Use `kit.agents(...)` in
 scripts and notebooks, and `ToolMatrix` for deterministic direct calls.
 
-These are ordinary pytest tests using public MCP Pal APIs. In your project,
-run tests with `mcp-pal test -- tests` and add `--ui` before `--` to inspect
+These are ordinary pytest tests using public M3 APIs. In your project,
+run tests with `m3 test -- tests` and add `--ui` before `--` to inspect
 recorded executions in the bundled local viewer. Direct pytest remains
 supported. The local examples use deterministic tools, resources, and prompts.
 The Streamable HTTP example uses an external DeepWiki endpoint and is
@@ -61,9 +61,9 @@ harnesses and models when you run it. The executable local fixture is shown in
 
 ```python
 import pytest
-from mcp_pal import expect
+from m3 import expect
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 def test_agent_uses_shipping_quote(agent, example_server):
     result = agent.run(
         "Use shipping_quote for a 2 kg parcel in the local zone.",
@@ -75,7 +75,7 @@ def test_agent_uses_shipping_quote(agent, example_server):
 ```
 
 ```bash
-mcp-pal test --env-file .env \
+m3 test --env-file .env \
   --harness opencode=opencode/big-pickle \
   --harness codex=gpt-5.6-sol --trials 2 -- tests/test_shipping.py
 ```
@@ -89,7 +89,7 @@ model name. A custom provider can map a source variable with
 `opencode:VENDOR_API_KEY=MY_VENDOR_KEY`. MCP server credentials are separate.
 
 To keep defaults in code, put
-`@pytest.mark.mcp_pal(agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}])`
+`@pytest.mark.m3(agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}])`
 on the test. CLI selections replace those defaults.
 
 ## 4. Bring your own harness with ACP
@@ -100,7 +100,7 @@ process and any environment-variable references:
 ```python
 import sys
 from pathlib import Path
-from mcp_pal import MCPTestKit, StdioServer, expect
+from m3 import MCPTestKit, StdioServer, expect
 
 examples = Path("sdk/examples").resolve()
 example_server = StdioServer(
@@ -113,7 +113,7 @@ choices = [{
     "harness": "acp",
     "models": ["deterministic-example"],
     "manifest": {
-        "schema_version": "mcp-pal.harness.v1",
+        "schema_version": "m3.harness.v1",
         "protocol": "acp", "protocol_version": 1,
         "command": sys.executable,
         "args": [str(examples / "servers" / "deterministic_acp_agent.py")],
@@ -339,20 +339,20 @@ The standalone CLI enables the same storage automatically for every
 unconfigured kit used during its pytest process:
 
 ```bash
-mcp-pal test --results-db .mcp-pal/executions.sqlite -- tests
+m3 test --results-db .m3/executions.sqlite -- tests
 ```
 
 For direct pytest, opt into that default-store behavior explicitly when it is
 more convenient than passing `store=` in test code:
 
 ```bash
-pytest -p mcp_pal.pytest_plugin \
-  --mcp-pal-results-db .mcp-pal/executions.sqlite tests
+pytest -p m3.pytest_plugin \
+  --results-db .m3/executions.sqlite tests
 ```
 
 This saved history contains executions, traces, sessions/turns, stored
 artifacts/evidence, and explicitly attached `kit.evaluate()` records. When the
-MCP Pal pytest plugin is active, it also contains pytest item outcomes and MCP
+M3 pytest plugin is active, it also contains pytest item outcomes and MCP
 Pal matcher evaluations. It does not turn arbitrary Python assertions into
 evaluations or persist matrix/trial aggregate trends.
 
@@ -363,9 +363,9 @@ Use normal pytest parameterization for server and prompt variations. The
 
 ```python
 import pytest
-from mcp_pal import expect
+from m3 import expect
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 @pytest.mark.parametrize("prompt,tool", [
     ("Get a local shipping quote for 2 kg", "shipping_quote"),
     ("Normalize Ada Lovelace", "normalize_customer"),
@@ -390,8 +390,8 @@ agent test. The tool's prompt must be populated for the second form:
 import sys
 from pathlib import Path
 import pytest
-from mcp_pal import StdioServer, expect
-from mcp_pal.matrix import ServerCase, ToolCase, ToolMatrix
+from m3 import StdioServer, expect
+from m3.matrix import ServerCase, ToolCase, ToolMatrix
 
 _examples = Path("sdk/examples").resolve()
 example_server = StdioServer(
@@ -421,7 +421,7 @@ def test_known_tool(case):
     else:
         assert result.structured_content == {"customer_id": "ada-lovelace"}
 
-@pytest.mark.mcp_pal
+@pytest.mark.m3
 @matrix.parametrize()
 def test_agent_chooses_tool(case, agent):
     result = agent.run(case.tool.prompt, server=case.server)
@@ -445,7 +445,7 @@ server; choose a harness that supports multiple servers for this example.
 ### Run without pytest
 
 ```python
-from mcp_pal import MCPTestKit
+from m3 import MCPTestKit
 
 agents = [
     {"harness": "opencode", "models": ["opencode/big-pickle", "openai/gpt-5.6-sol"]},
@@ -503,7 +503,7 @@ The same dictionary works in a normal Python program:
 ```python
 import sys
 from pathlib import Path
-from mcp_pal import MCPTestKit, StdioServer, expect
+from m3 import MCPTestKit, StdioServer, expect
 
 root = Path("sdk/examples").resolve()
 server = StdioServer(

@@ -1,4 +1,4 @@
-"""Deterministic tests for the stable ``mcp-pal doctor`` command."""
+"""Deterministic tests for the stable ``m3 doctor`` command."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-import mcp_pal_cli.doctor as doctor_module
-from mcp_pal_cli import main
+import m3_cli.doctor as doctor_module
+from m3_cli import main
 
 
 def test_doctor_without_requirements_checks_config_and_memory(capsys) -> None:
@@ -53,8 +53,8 @@ def test_doctor_selected_env_file_and_ambient_precedence(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     selected = tmp_path / "selected.env"
-    selected.write_text("MCP_PAL_ARTIFACT_POLICY=always\n", encoding="utf-8")
-    monkeypatch.setenv("MCP_PAL_ARTIFACT_POLICY", "never")
+    selected.write_text("M3_ARTIFACT_POLICY=always\n", encoding="utf-8")
+    monkeypatch.setenv("M3_ARTIFACT_POLICY", "never")
 
     assert (
         main(["doctor", "--require", "config", "--env-file", str(selected), "--json"])
@@ -84,17 +84,17 @@ def test_doctor_rejects_unknown_option_without_echoing_input(capsys) -> None:
     ("variable", "value", "field", "origin", "reason"),
     (
         (
-            "MCP_PAL_TELEMETRY_ENABLED",
+            "M3_TELEMETRY_ENABLED",
             "secret-not-bool",
             "telemetry_enabled",
-            "env:MCP_PAL_TELEMETRY_ENABLED",
+            "env:M3_TELEMETRY_ENABLED",
             "must be true or false",
         ),
         (
-            "MCP_PAL_ARTIFACT_POLICY",
+            "M3_ARTIFACT_POLICY",
             "secret-policy",
             "artifact_policy",
-            "env:MCP_PAL_ARTIFACT_POLICY",
+            "env:M3_ARTIFACT_POLICY",
             "must be one of failed, always, or never",
         ),
     ),
@@ -124,7 +124,7 @@ def test_doctor_configuration_errors_are_actionable_and_value_free(
 def test_doctor_ignores_unknown_prefixed_environment_variables(
     monkeypatch, capsys
 ) -> None:
-    monkeypatch.setenv("MCP_PAL_CLAUDE_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("M3_CLAUDE_MODEL", "claude-sonnet-5")
     assert main(["doctor", "--require", "config", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ready"] is True
@@ -133,12 +133,12 @@ def test_doctor_ignores_unknown_prefixed_environment_variables(
 def test_doctor_configuration_error_human_output_has_structured_diagnostic(
     monkeypatch, capsys
 ) -> None:
-    monkeypatch.setenv("MCP_PAL_TELEMETRY_ENABLED", "not-a-secret-bool")
+    monkeypatch.setenv("M3_TELEMETRY_ENABLED", "not-a-secret-bool")
     assert main(["doctor", "--require", "config"]) == 2
     captured = capsys.readouterr()
     assert "code=invalid_configuration" in captured.err
     assert "field=telemetry_enabled" in captured.err
-    assert "origin=env:MCP_PAL_TELEMETRY_ENABLED" in captured.err
+    assert "origin=env:M3_TELEMETRY_ENABLED" in captured.err
     assert "reason=must be true or false" in captured.err
     assert "not-a-secret-bool" not in captured.err
 
@@ -163,10 +163,7 @@ def test_doctor_env_file_without_config_fails_before_reading_file(
         == 2
     )
     captured = capsys.readouterr()
-    assert (
-        captured.err.strip()
-        == "mcp-pal doctor: --env-file requires a config requirement"
-    )
+    assert captured.err.strip() == "m3 doctor: --env-file requires a config requirement"
 
 
 def test_doctor_transport_and_storage_namespaces(capsys) -> None:
@@ -194,7 +191,7 @@ def test_doctor_checks_discovered_project_python(capsys) -> None:
     assert main(["doctor", "--python", "./.venv/bin/python", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["project_python"]["status"] == "ready"
-    assert report["project_python"]["version"] == metadata.version("mcp-pal")
+    assert report["project_python"]["version"] == metadata.version("m3")
     assert report["project_python"]["source"] == "--python"
     assert report["project_python"]["executable"].endswith("/.venv/bin/python")
 
@@ -229,7 +226,7 @@ def test_doctor_reports_unconfigured_project_without_operational_error(
     report = json.loads(capsys.readouterr().out)
     assert report["cli"]["status"] == "ready"
     assert report["project_python"]["status"] == "not ready"
-    assert "mcp-pal setup" in report["project_python"]["reason"]
+    assert "m3 setup" in report["project_python"]["reason"]
 
 
 def test_doctor_human_not_ready_has_direct_remediation(
@@ -238,4 +235,4 @@ def test_doctor_human_not_ready_has_direct_remediation(
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     monkeypatch.delenv("CONDA_PREFIX", raising=False)
     assert main(["doctor", "--project-root", str(tmp_path)]) == 1
-    assert "Next: mcp-pal setup" in capsys.readouterr().out
+    assert "Next: m3 setup" in capsys.readouterr().out
