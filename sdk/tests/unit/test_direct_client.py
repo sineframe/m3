@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Mapping
 from collections.abc import Mapping as ABCMapping
 from typing import Any, cast
@@ -29,6 +30,7 @@ from mcp_pal.errors import (
     UnsupportedFeature,
 )
 from mcp_pal.trace.redaction import RedactionConfig
+from mcp_pal.types import CallTool
 
 
 def _client(
@@ -648,6 +650,42 @@ async def test_official_input_required_results_are_not_coerced_to_empty_wrappers
     assert isinstance(read, InputRequiredResult) and read.request_state == "state-1"
     assert isinstance(prompt, InputRequiredResult) and prompt.request_state == "state-2"
     assert isinstance(call, InputRequiredResult) and call.request_state == "state-3"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_thaws_nested_arguments_before_session_serialization() -> None:
+    captured: dict[str, object] = {}
+
+    class RecordingSession(FakeSession):
+        async def call_tool(
+            self,
+            name: str,
+            arguments: dict[str, object] | None = None,
+            **kwargs: object,
+        ) -> types.CallToolResult:
+            captured.update(arguments or {})
+            json.dumps(arguments)
+            return types.CallToolResult(content=[])
+
+    operation = CallTool(
+        server="drawing",
+        name="create_element",
+        arguments={
+            "type": "line",
+            "points": [{"x": 0, "y": 0}, {"x": 10, "y": 0}],
+        },
+    )
+
+    async with _client(RecordingSession()) as client:
+        await client.call_tool(operation.name, operation.arguments)
+
+    assert captured == {
+        "type": "line",
+        "points": [{"x": 0, "y": 0}, {"x": 10, "y": 0}],
+    }
+    points = captured["points"]
+    assert type(points) is list
+    assert type(points[0]) is dict
 
 
 @pytest.mark.asyncio

@@ -968,7 +968,7 @@ class AsyncDirectClient:
         allow_claimed: bool = False,
     ) -> ToolCallResult | InputRequiredResult:
         self._require_open()
-        values = dict(arguments or {})
+        values = cast(dict[str, Any], _plain_json(arguments or {}))
         effective_timeout = self._timeout if timeout is None else timeout
         if self._validate_schemas:
             tools = await self.list_all_tools()
