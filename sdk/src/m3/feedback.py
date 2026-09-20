@@ -312,6 +312,17 @@ def _input_value(
     if record is not None:
         if record.details:
             details = dict(record.details)
+            if record.provenance is not None and record.provenance.kind == "llm_judge":
+                for key in (
+                    "attempts",
+                    "elapsed_ms",
+                    "usage",
+                    "returned_model",
+                    "prompt_version",
+                    "response_mode",
+                    "error_code",
+                ):
+                    details.pop(key, None)
             # Matcher details contain observed subject evidence (execution and
             # trace IDs).  It is useful in the execution export, but must not
             # make identical expectations look changed across runs.
@@ -875,9 +886,31 @@ def _evaluation_changes(
         changed_fields = []
         if left_inputs != right_inputs:
             changed_fields.append("expected_or_provenance")
+        left_judges = {
+            tuple(
+                (key, getattr(record.provenance, key, None))
+                for key in ("model", "rubric_id", "rubric_version", "config_digest")
+            )
+            for record in left
+            if record.provenance is not None and record.provenance.kind == "llm_judge"
+        }
+        right_judges = {
+            tuple(
+                (key, getattr(record.provenance, key, None))
+                for key in ("model", "rubric_id", "rubric_version", "config_digest")
+            )
+            for record in right
+            if record.provenance is not None and record.provenance.kind == "llm_judge"
+        }
+        if left_judges != right_judges:
+            changed_fields.append("judge_configuration")
         if left_unknown or right_unknown:
             changed_fields.append("predicate_implementation_unknown")
-        if left_values != right_values or not comparable:
+        if (
+            left_values != right_values
+            or not comparable
+            or "judge_configuration" in changed_fields
+        ):
             changes.append(
                 {
                     "suite_id": key[0],
@@ -1299,6 +1332,13 @@ def build_feedback(
             None,
         )
         comparison_limitations: list[str] = []
+        if any(
+            "judge_configuration" in item.get("changed_fields", ())
+            for item in evaluation_changes
+        ):
+            comparison_limitations.append(
+                "judge model, rubric, prompt version, or configuration digest changed; pass-rate comparison is not like-for-like"
+            )
         if unmatched_evaluations is not None:
             count = len(unmatched_evaluations.get("results", ()))
             comparison_limitations.append(

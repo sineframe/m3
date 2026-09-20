@@ -31,6 +31,9 @@ def _cli_case(
         "PAL_GLOBAL",
         "PAL_SCOPED",
         "M3_CLAUDE_MODEL",
+        "M3_JUDGE_API_KEY",
+        "MY_JUDGE_KEY",
+        "OPENAI_API_KEY",
     ):
         environment.pop(key, None)
     if ambient:
@@ -130,6 +133,86 @@ def test_child(m3_kit):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert os.environ.get("M3_CLAUDE_MODEL") is None
+    _assert_no_secret(result, database, tmp_path)
+
+
+def test_env_file_keeps_judge_key_separate_from_agent_key(tmp_path: Path) -> None:
+    source = """
+import os
+from m3.judges import LLMJudge
+from m3.types import EvaluationContext, EvaluationStatus
+
+def test_judge(monkeypatch):
+    keys = []
+    def request(_judge, _payload, key):
+        keys.append(key)
+        return {"score": 1, "rationale": "ok", "abstain": False}, {}, "judge"
+    monkeypatch.setattr("m3.judges._openai_sync", request)
+    result = LLMJudge(model="judge")(
+        EvaluationContext(subject={"input": "task", "expected": "answer", "actual": "answer"})
+    )
+    assert result.status is EvaluationStatus.PASSED
+    assert keys == [os.environ["M3_JUDGE_API_KEY"]]
+    assert keys != [os.environ["OPENAI_API_KEY"]]
+"""
+    result, database = _cli_case(
+        tmp_path,
+        source,
+        f"OPENAI_API_KEY=agent-only\nM3_JUDGE_API_KEY={SECRET}\n",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    _assert_no_secret(result, database, tmp_path)
+
+
+def test_judge_credential_mapping_overrides_target_without_mapping_harness(
+    tmp_path: Path,
+) -> None:
+    source = """
+import os
+import pytest
+from m3 import StdioServer, UserMessage
+from m3.judges import LLMJudge
+from m3.types import EvaluationContext, EvaluationStatus
+
+pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["mystery/model"]}])
+
+def test_judge(agent, monkeypatch):
+    spec = agent._spec(UserMessage(content="probe"), server=StdioServer(name="s", command="echo"))
+    assert spec.harness.credential_references == {}
+    keys = []
+    def request(_judge, _payload, key):
+        keys.append(key)
+        return {"score": 1, "rationale": "ok", "abstain": False}, {}, "judge"
+    monkeypatch.setattr("m3.judges._openai_sync", request)
+    result = LLMJudge(model="judge")(
+        EvaluationContext(subject={"input": "task", "expected": "answer", "actual": "answer"})
+    )
+    assert result.status is EvaluationStatus.PASSED
+    assert keys == [os.environ["MY_JUDGE_KEY"]]
+    assert os.environ["M3_JUDGE_API_KEY"] == os.environ["MY_JUDGE_KEY"]
+"""
+    result, database = _cli_case(
+        tmp_path,
+        source,
+        f"M3_JUDGE_API_KEY=old-target\nMY_JUDGE_KEY={SECRET}\n",
+        "--credential-env",
+        "judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    _assert_no_secret(result, database, tmp_path)
+
+
+def test_missing_judge_credential_source_stops_before_tests(tmp_path: Path) -> None:
+    result, database = _cli_case(
+        tmp_path,
+        "def test_never():\n    raise AssertionError('test should not run')\n",
+        f"M3_JUDGE_API_KEY={SECRET}\n",
+        "--credential-env",
+        "judge:M3_JUDGE_API_KEY=MISSING_SOURCE",
+    )
+    assert result.returncode != 0
+    assert "judge credential source is unavailable" in result.stderr
+    assert "test should not run" not in result.stdout + result.stderr
     _assert_no_secret(result, database, tmp_path)
 
 

@@ -1,5 +1,15 @@
 # M3 CLI
 
+Use `m3 test --env-file .env` to pass selected variables to pytest.
+`--credential-env` maps agent harness credentials, or judge credentials with
+the `judge:` scope. The judge reads `M3_JUDGE_API_KEY` by default; use
+`LLMJudge(api_key_env=...)` to select another target variable.
+`--judge-max-requests N` caps attempts including retries. Custom endpoints
+require explicit `api_key_env` and
+`response_mode`; loopback `auth="none"` reads no key and sends no
+`Authorization` header. Judges use Chat Completions, so the endpoint and model
+must support the selected response mode.
+
 `m3` is a standalone test runner for projects that use the M3 SDK.
 The command is distributed with the production web UI, so users do not need a
 checkout of this repository, Node.js, Vite, or `uv` in the project
@@ -57,12 +67,14 @@ again after a complete initialization reports the existing project and leaves
 both files alone. The first skipped run confirms collection; it does not check
 server behavior.
 
-`m3 setup` installs only `m3[pytest,storage]` into the project
+`m3 setup` installs `m3[pytest,storage,judge]` into the project
 environment. It selects `--python`, then an active `VIRTUAL_ENV` or
 `CONDA_PREFIX`, then `.venv`, creating `.venv` when needed. It never installs
 the CLI or bundled app there, never edits dependency manifests or lockfiles,
-and verifies the exact SDK version and release checksum. If you recreate or
-sync the environment, run setup again until PyPI publishing is available.
+and verifies the exact SDK version and release checksum. Judge support is
+included. If you recreate or sync the environment, run setup again until PyPI
+publishing is available. Rerunning setup also adds judge support to an older
+project environment.
 
 <details>
 <summary>Advanced recovery: install the SDK wheel manually</summary>
@@ -78,8 +90,9 @@ gh release download "v${VERSION}" -R sineframe/m3 -p "$SDK_WHEEL" \
   -O ".m3-download/$SDK_WHEEL"
 uv venv .venv
 . .venv/bin/activate
-uv pip install "m3[pytest,storage] @ ./.m3-download/$SDK_WHEEL"
-rm -rf .m3-download
+uv pip install "m3[pytest,storage,judge] @ ./.m3-download/$SDK_WHEEL"
+rm ".m3-download/$SDK_WHEEL"
+rmdir .m3-download 2>/dev/null || true
 ```
 
 On Windows:
@@ -92,7 +105,7 @@ gh release download "v$Version" -R sineframe/m3 -p $SdkWheel -O ".m3-download/$S
 if ($LASTEXITCODE -ne 0) { throw 'gh release download failed' }
 uv venv .venv
 . .venv\Scripts\Activate.ps1
-uv pip install "m3[pytest,storage] @ ./.m3-download/$SdkWheel"
+uv pip install "m3[pytest,storage,judge] @ ./.m3-download/$SdkWheel"
 Remove-Item -Recurse -Force .m3-download
 ```
 </details>
@@ -142,7 +155,7 @@ Agent selection flags:
 | `--trials N` | independent executions per combination |
 | `--execution-timeout SECONDS` | full deadline for each selected execution; each case has its own deadline |
 | `--env-file PATH` | explicitly load provider variables for the pytest child |
-| `--credential-env [KIND:]TARGET=SOURCE` | map provider variable names, optionally scoped to a harness kind |
+| `--credential-env [KIND:]TARGET=SOURCE` | map an agent credential; use `judge:TARGET=SOURCE` for the judge |
 | `--suite NAME` or `--suite=NAME` | select tests whose inherited `m3` marker has this suite name |
 
 Suite selection happens during pytest collection, before agent expansion. Put
@@ -179,11 +192,21 @@ Known provider variable names are:
 | Codex, OpenCode, or Pi with `openai/` models | `OPENAI_API_KEY` |
 | Claude Code, OpenCode, or Pi with `anthropic/` models | `ANTHROPIC_API_KEY` |
 | Pi with `openai-codex/` models | `PI_CODING_AGENT_DIR` |
+| `m3.judges.LLMJudge` | `M3_JUDGE_API_KEY` by default, or explicit `api_key_env` |
+
+For example, put `OPENAI_API_KEY` for an agent using OpenAI and
+`M3_JUDGE_API_KEY` for the judge in the same `.env` file, then run
+`m3 test --env-file .env`. The judge does not fall back to the agent key.
+If the judge key is already named `MY_JUDGE_KEY`, use
+`--credential-env judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY`. The explicit mapping
+overrides `M3_JUDGE_API_KEY` for that test run. A missing source stops the run
+before tests execute.
 
 Custom providers use names only, for example
 `--credential-env VENDOR_API_KEY=MY_VENDOR_KEY`; use
 `--credential-env opencode:VENDOR_API_KEY=MY_VENDOR_KEY` to scope a mapping.
-Only names appear in flags and test code. `.env` is read only when
+Unscoped mappings apply to harnesses, not judges. Only names appear in flags
+and test code. `.env` is read only when
 `--env-file` is supplied, and ambient variables take precedence. `doctor
 --env-file` checks configuration and does not provide credentials to a later
 test command.
@@ -198,14 +221,11 @@ order:
 5. `python3`, then `python` on `PATH`.
 
 The selected environment must contain `pytest`, the SDK pytest plugin, SQLite
-storage, and `m3` at exactly the same version as the CLI's SDK. Follow the
-authenticated SDK-wheel download shown in [Install](#install), then install
-the project dependency in its own environment (pre-PyPI):
+storage, judge support, and `m3` at exactly the same version as the CLI's SDK.
+Run setup in the project to install these together:
 
 ```sh
-uv venv .venv
-. .venv/bin/activate
-uv pip install "m3[pytest,storage] @ ./.m3-download/$SDK_WHEEL"
+m3 setup
 ```
 
 The default results database is `.m3/executions.sqlite` below the project
@@ -321,10 +341,10 @@ authentication and network controls.
 ## Troubleshooting
 
 - `project Python ... does not match`: install the same `m3` version as
-  the CLI, including the `[pytest,storage]` extras, in the project environment.
-- `pytest` or SQLite is missing: activate the selected project environment and
-  download the matching SDK wheel with `gh release download` as shown above,
-  then install `m3[pytest,storage] @ ./.m3-download/$SDK_WHEEL`.
+  the CLI, including the `[pytest,storage,judge]` extras, by running `m3 setup`
+  in the project.
+- `pytest`, SQLite, or judge support is missing: run `m3 setup` in the project
+  to install the matching SDK and extras.
 - `port is already in use`: select another port with `--port 8123`.
 - No UI bundle is available: reinstall the CLI release; development checkouts
   do not contain generated UI files.

@@ -87,9 +87,25 @@ pass-rate summaries. Execution outcome, MCP activity health,
 and evaluation/test verdict are separate; `completed` alone does not mean
 passed.
 
-M3 has no built-in LLM judge. An SDK user may put an LLM call inside a
-sync or async evaluator callback and return an `EvaluationDecision` (with
-redacted source details); it is not a separate post-evaluator layer. Chained
+M3 provides an LLM judge through `m3 setup` or the SDK's `judge` extra.
+Register it directly for the standard subject shape, or use `judge_response`:
+
+```python
+from m3.judges import LLMJudge
+
+judge = LLMJudge(model="judge-model")
+kit.register_evaluator("answer.correctness.v1", judge)
+result = kit.evaluate(
+    {"input": prompt, "expected": reference, "actual": answer},
+    "answer.correctness.v1",
+)
+assert result.status.value in {"passed", "failed", "error"}
+```
+
+Use `required=True` to persist then raise for failed or error results. The
+result exposes `status`, `score`, `rationale`, and safe `details`/provenance.
+For advanced subjects, a configured `LLMJudge` can be called inside a
+sync or async evaluator callback and return an `EvaluationDecision`. Chained
 direct calls share one client execution, agent evaluations can use `turn_id`,
 and matrix trials carry matrix/cell/trial metadata. API v2 only reads the
 saved result and provenance; it does not run the callback.

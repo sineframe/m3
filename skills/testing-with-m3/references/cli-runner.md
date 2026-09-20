@@ -5,12 +5,21 @@ Use `m3 test --env-file .env --harness opencode=opencode/big-pickle
 variable names are `OPENCODE_API_KEY`, `OPENAI_API_KEY`, and
 `ANTHROPIC_API_KEY`; custom providers use `--credential-env TARGET=SOURCE` or
 the scoped `KIND:TARGET=SOURCE` form. Only names belong in flags and code.
+For a judge key under a different name, use
+`--credential-env judge:M3_JUDGE_API_KEY=SOURCE`.
 
-The project SDK and standalone CLI have different installation scopes:
+The project SDK and standalone CLI have different installation scopes.
+
+`m3 setup` installs the project SDK with judge support. Rerun setup to upgrade
+an environment created by an older CLI.
+
+The CLI itself does not provide the project's Python imports. Keep
+`OPENCODE_API_KEY` for the agent and `M3_JUDGE_API_KEY` for the judge; pass both
+with `m3 test --env-file .env`.
 
 | Component | Install scope | Provides |
 |---|---|---|
-| `m3[pytest]` | Project environment | Python SDK and pytest support |
+| `m3[pytest,storage,judge]` | Project environment via `m3 setup` | Python SDK, pytest, SQLite, and judge support |
 | M3 CLI | Machine-level isolated environment | `m3` command and bundled UI |
 
 Adding the SDK with `uv add` or `pip install` does not install the CLI. The CLI
@@ -81,7 +90,7 @@ running `m3 init` without flags receives the questions one by one.
 Repeating it on a complete project reports the existing identity and changes
 nothing.
 
-`m3 setup` installs the exact matching `m3[pytest,storage]` SDK into
+`m3 setup` installs the exact matching `m3[pytest,storage,judge]` SDK into
 the selected project environment. It does not install the CLI there and does
 not edit the project's dependency manifest or lockfile. The CLI and project
 SDK versions must match; do not work around a mismatch by bypassing `doctor`.

@@ -1,8 +1,84 @@
 # Explicit evaluations
 
+## Response judges
+
+`m3 setup` includes judge support. If installing the SDK directly, include
+the `judge` extra (for example, `m3[pytest,judge]`). Put the judge key in `.env`
+as `M3_JUDGE_API_KEY`. For an OpenCode agent, the same file can also hold
+`OPENCODE_API_KEY`:
+
+```dotenv
+OPENCODE_API_KEY=agent-secret
+M3_JUDGE_API_KEY=judge-secret
+```
+
+Load the file when running tests:
+
+```sh
+m3 test --env-file .env -- tests/test_answer.py
+```
+
+Use the judge in a test:
+
+```python
+from m3.judges import LLMJudge
+
+judge = LLMJudge(model="your-judge-model")
+result = m3_kit.judge_response(
+    name="answer.correctness.v1", input=prompt,
+    actual=turn.response.text if turn.response else "", expected="The answer is 5.",
+    judge=judge, execution_id=session.result.snapshot.execution_id,
+    turn_id=turn.turn_id, required=True,
+)
+```
+
+`.env` is loaded only when passed with `--env-file`. Missing credentials,
+malformed subjects, and provider failures are persisted as safe `ERROR`
+evaluations. The async kit provides `await judge_response(...)` as well.
+
+For advanced subjects, register the same callback with a stable evaluator name:
+
+```python
+judge = LLMJudge(model="your-judge-model")
+m3_kit.register_evaluator("answer.correctness.v1", judge)
+m3_kit.evaluate({"input": prompt, "expected": reference, "actual": answer},
+                "answer.correctness.v1")
+```
+
+The judge sends selected test text to its configured endpoint, so avoid
+including private data unless that transfer is intended.
+
+Judges use the OpenAI Chat Completions API. The default endpoint uses
+`M3_JUDGE_API_KEY` and defaults to `json_schema`. A custom endpoint must declare
+both its credential environment variable and response mode:
+
+```python
+custom = LLMJudge(
+    model="vendor-chat-model",
+    base_url="https://judge.example.test/v1",
+    api_key_env="M3_JUDGE_API_KEY",
+    response_mode="json_text",  # or "json_schema"
+)
+```
+
+For a local HTTP fixture, anonymous loopback access is allowed with no key or
+`Authorization` header and reads no API key:
+
+```python
+local = LLMJudge(
+    model="fixture-chat-model",
+    base_url="http://127.0.0.1:8123/v1",
+    auth="none",
+    response_mode="json_text",
+)
+```
+
+The selected model and endpoint must support the chosen Chat Completions
+response mode.
+
 Evaluations are explicit callbacks over a redacted execution subject. They run
 when the test calls `kit.evaluate`; they are not inferred from an execution
-specification. Provider setup is described in the [quick start](quick-start.md#agent-behavior-tests).
+specification. Provider setup is described in the [quick start](quick-start.md#response-judge).
 
 ```python
 import pytest

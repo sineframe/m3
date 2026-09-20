@@ -1,5 +1,43 @@
 # Quick start
 
+## Response judge
+
+`m3 setup` installs judge support in the project environment. Rerun setup to
+add it to an environment created by an older CLI.
+
+Put the judge key in `.env` as `M3_JUDGE_API_KEY`. For an OpenCode agent, the
+same file can also hold `OPENCODE_API_KEY`:
+
+```dotenv
+OPENCODE_API_KEY=agent-secret
+M3_JUDGE_API_KEY=judge-secret
+```
+
+Load the file when running tests:
+
+```sh
+m3 test --env-file .env -- tests/test_answer.py
+```
+
+```python
+import pytest
+from m3.judges import LLMJudge
+
+@pytest.mark.m3
+def test_answer(m3_kit):
+    judge = LLMJudge(model="judge-model")
+    result = m3_kit.judge_response(
+        name="answer.correctness.v1", input="What is 2 + 3?",
+        actual="The answer is 5.", expected="The answer is 5.", judge=judge,
+    )
+    assert result.status.value == "passed"
+```
+
+`required=True` persists a failed or error result before raising. Durable
+records retain score, rationale, safe details, provenance, and a subject
+digest; raw submitted text and provider payloads are omitted. Use
+`--judge-max-requests N` to cap requests for a run, including retries.
+
 ## Agent behavior tests
 
 Use an ordinary marked pytest test; the CLI supplies harness and model:
@@ -85,7 +123,7 @@ m3 setup
 m3 doctor
 ```
 
-`m3 setup` installs the matching `m3[pytest,storage]` SDK into the
+`m3 setup` installs the matching `m3[pytest,storage,judge]` SDK into the
 selected project environment. It does not install the CLI there and does not
 edit dependency manifests or lockfiles. This setup step is separate from both
 the machine-level CLI installation and declaring the SDK as a project
@@ -201,7 +239,7 @@ release wheel:
 ```bash
 VERSION=X.Y.Z
 uv add \
-  "m3[pytest,storage] @ https://github.com/sineframe/m3/releases/download/v${VERSION}/m3-${VERSION}-py3-none-any.whl"
+  "m3[pytest,storage,judge] @ https://github.com/sineframe/m3/releases/download/v${VERSION}/m3-${VERSION}-py3-none-any.whl"
 ```
 
 `m3 test` makes a different product-level choice: it always enables the
@@ -293,10 +331,7 @@ This command creates four agent test items. Put `OPENCODE_API_KEY` in `.env` for
 OpenCode and `OPENAI_API_KEY` for Codex when using provider keys. Existing
 native login can also authenticate a harness where supported. Claude Code uses
 `ANTHROPIC_API_KEY`; OpenCode and Pi use the key for their model provider.
-Only variable **names** belong in test code or CLI flags. For a custom provider,
-`--credential-env VENDOR_API_KEY=MY_VENDOR_KEY` maps a source environment
-variable to the variable expected by the harness. Scope it to one kind with
-`--credential-env opencode:VENDOR_API_KEY=MY_VENDOR_KEY` when needed.
+Put provider keys in `.env` under the names expected by the selected harness.
 
 To keep defaults in code for direct pytest, use
 `@pytest.mark.m3(agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}])`

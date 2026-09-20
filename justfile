@@ -22,7 +22,7 @@ api:
     uv run --project app uvicorn m3_app.main:app --host 127.0.0.1 --reload
 
 test:
-    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests
+    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --extra judge --group typecheck pytest -q sdk/tests
     PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test --group typecheck pytest -q app/tests
     PYTHONDONTWRITEBYTECODE=1 uv run --project cli pytest -q cli/tests
 
@@ -36,11 +36,11 @@ live-ui-gate:
     uv run --env-file .env --project cli python scripts/live_ui_gate.py
 
 test-unit:
-    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --group typecheck pytest -q sdk/tests/unit
+    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --extra judge --group typecheck pytest -q sdk/tests/unit
     PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test --group typecheck pytest -q app/tests/unit
 
 test-integration:
-    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest pytest -q sdk/tests/integration
+    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --extra judge pytest -q sdk/tests/integration
     PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test pytest -q app/tests/integration
 
 # Fresh v0.2 development schema reset. The exact confirmation is required;
@@ -53,14 +53,14 @@ package-check:
     uv run --project sdk --all-extras python scripts/check_packaging.py
 
 typecheck-sdk-usage:
-    PYTHONDONTWRITEBYTECODE=1 uv run --locked --project sdk --extra pytest --group typecheck pytest -q sdk/tests/unit/test_typecheck_examples.py
+    PYTHONDONTWRITEBYTECODE=1 uv run --locked --project sdk --extra pytest --extra judge --group typecheck pytest -q sdk/tests/unit/test_typecheck_examples.py
 
 typecheck-sdk-public:
-    uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/m3/types.py sdk/src/m3/errors.py sdk/src/m3/policy.py sdk/src/m3/interaction_handlers.py sdk/src/m3/configuration.py
+    uv run --isolated --python 3.10 --locked --project sdk --extra judge --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/m3/types.py sdk/src/m3/errors.py sdk/src/m3/policy.py sdk/src/m3/interaction_handlers.py sdk/src/m3/configuration.py
 
 # This checks the complete SDK without a baseline and is required by CI.
 typecheck-sdk:
-    uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/m3
+    uv run --isolated --python 3.10 --locked --project sdk --extra judge --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/m3
 
 typecheck-app:
     uv run --isolated --python 3.10 --locked --project app --group typecheck mypy --config-file app/pyproject.toml --strict app/src/m3_app

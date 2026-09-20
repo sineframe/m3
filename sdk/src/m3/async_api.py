@@ -37,6 +37,9 @@ from ._check_recording import (
     record_checks_enabled as _record_checks_enabled,
 )
 from ._default_store import (
+    make_default_judge_limit as _make_default_judge_limit,
+)
+from ._default_store import (
     make_default_run_id as _make_default_run_id,
 )
 from ._default_store import (
@@ -156,6 +159,7 @@ from .interaction_handlers import (
     TerminalResult,
     WorkspaceFiles,
 )
+from .judges import LLMJudge as _LLMJudge
 from .observability import *  # noqa: F403 - re-exported by the public API
 from .observability import RawEvidence, TraceView
 from .observability import __all__ as _OBSERVABILITY_EXPORTS
@@ -906,6 +910,7 @@ class AsyncMCPTestKit:
         suite_name: str | None = None,
         project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
+        max_judge_requests: int | None = None,
     ) -> None:
         from ._test_runs import active_test
 
@@ -988,7 +993,19 @@ class AsyncMCPTestKit:
                 # Construction outside an event loop is valid; submit() will
                 # bind the worker to the loop that executes the work.
                 pass
-        self._evaluations = _EvaluationRunner(durable_store=store)
+        plugin_judge_limit = _make_default_judge_limit()
+        effective_judge_limit = (
+            min(max_judge_requests, plugin_judge_limit)
+            if max_judge_requests is not None and plugin_judge_limit is not None
+            else max_judge_requests
+            if max_judge_requests is not None
+            else plugin_judge_limit
+        )
+        self._evaluations = _EvaluationRunner(
+            durable_store=store,
+            max_judge_requests=effective_judge_limit,
+            run_id=self._run_id.root,
+        )
         self._probes = AsyncProbes(
             timeout_seconds=probe_timeout_seconds,
             output_limit=probe_output_limit,
@@ -1200,6 +1217,41 @@ class AsyncMCPTestKit:
             trace=trace,
             artifacts=artifacts,
             metadata=metadata,
+            execution_id=execution_id,
+            turn_id=turn_id,
+            case_id=case_id,
+        )
+
+    async def judge_response(
+        self,
+        *,
+        name: str,
+        input: str,
+        actual: str,
+        expected: str,
+        judge: _LLMJudge,
+        required: bool = False,
+        execution_id: _Any = None,
+        turn_id: _Any = None,
+        case_id: str | None = None,
+    ) -> _EvaluationResult:
+        self._ensure_open()
+        if name in self._evaluations.registry.names():
+            existing = self._evaluations.registry.get(name)
+            owner = getattr(existing, "__self__", None)
+            if (
+                not isinstance(owner, _LLMJudge)
+                or owner.config_digest != judge.config_digest
+            ):
+                raise ValueError(
+                    f"conflicting judge configuration for evaluator {name}"
+                )
+        else:
+            self._evaluations.register(name, judge.evaluate_async)
+        return await self.evaluate(
+            {"input": input, "expected": expected, "actual": actual},
+            name,
+            required=required,
             execution_id=execution_id,
             turn_id=turn_id,
             case_id=case_id,

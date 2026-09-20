@@ -20,6 +20,7 @@ from m3.types import (
     ErrorInfo,
     EvaluationId,
     EvaluationRecord,
+    EvaluationSource,
     EvaluationStatus,
     EventDirection,
     EventKind,
@@ -465,6 +466,141 @@ def test_repeated_trials_expose_score_and_pass_rate_delta():
     assert change["delta"]["pass_rate"] == 0.5
     assert change["delta"]["score_count"] == 0
     assert change["delta"]["average_score"] == 0.6
+
+
+def test_same_judge_config_is_comparable():
+    baseline = _report("old-judge", "baseline", "same")
+    current = _report("new-judge", "current", "same")
+    source = EvaluationSource(
+        kind="llm_judge", provider="openai", model="judge-v1", config_digest="a" * 64
+    )
+    old_record = EvaluationRecord(
+        evaluation_id=EvaluationId("old-judge-eval"),
+        execution_id=baseline.snapshot.execution_id,
+        case_id="case",
+        name="quality",
+        status=EvaluationStatus.PASSED,
+        score=0.8,
+        provenance=source,
+    )
+    new_record = old_record.model_copy(
+        update={
+            "evaluation_id": EvaluationId("new-judge-eval"),
+            "execution_id": current.snapshot.execution_id,
+        }
+    )
+    feedback = build_feedback(
+        _Store(
+            (
+                baseline.model_copy(update={"evaluations": (old_record,)}),
+                current.model_copy(update={"evaluations": (new_record,)}),
+            )
+        ),
+        "current",
+        baseline_run_id="baseline",
+    )
+    assert not any(
+        item.get("evaluator") == "quality"
+        for item in feedback.comparison.evaluation_changes
+    )
+    assert feedback.comparison.limitations == ()
+
+
+def test_judge_provider_error_does_not_change_input_fingerprint():
+    baseline = _report("old-judge-error", "baseline", "same")
+    current = _report("new-judge-error", "current", "same")
+    source = EvaluationSource(
+        kind="llm_judge", provider="openai", model="judge-v1", config_digest="a" * 64
+    )
+    old_record = EvaluationRecord(
+        evaluation_id=EvaluationId("old-judge-error-eval"),
+        execution_id=baseline.snapshot.execution_id,
+        case_id="case",
+        name="quality",
+        status=EvaluationStatus.PASSED,
+        score=0.8,
+        details={"attempts": 1, "prompt_version": "m3-llm-judge.v1"},
+        provenance=source,
+    )
+    new_record = old_record.model_copy(
+        update={
+            "evaluation_id": EvaluationId("new-judge-error-eval"),
+            "execution_id": current.snapshot.execution_id,
+            "status": EvaluationStatus.ERROR,
+            "score": None,
+            "details": {
+                "error_code": "rate_limit",
+                "attempts": 2,
+                "prompt_version": "m3-llm-judge.v1",
+            },
+        }
+    )
+    feedback = build_feedback(
+        _Store(
+            (
+                baseline.model_copy(update={"evaluations": (old_record,)}),
+                current.model_copy(update={"evaluations": (new_record,)}),
+            )
+        ),
+        "current",
+        baseline_run_id="baseline",
+    )
+    change = next(
+        item
+        for item in feedback.comparison.evaluation_changes
+        if item.get("evaluator") == "quality"
+    )
+    assert change["comparable"] is True
+    assert "expected_or_provenance" not in change["changed_fields"]
+    assert change["after"]["results"] == (("error", None),)
+    assert change["delta"]["measured_count"] == -1
+    assert change["delta"]["score_count"] == -1
+
+
+def test_changed_judge_config_warns_even_when_score_matches():
+    baseline = _report("old-judge-config", "baseline", "same")
+    current = _report("new-judge-config", "current", "same")
+    old_source = EvaluationSource(
+        kind="llm_judge", model="judge-v1", config_digest="a" * 64
+    )
+    new_source = EvaluationSource(
+        kind="llm_judge", model="judge-v2", config_digest="b" * 64
+    )
+    old_record = EvaluationRecord(
+        evaluation_id=EvaluationId("old-config-eval"),
+        execution_id=baseline.snapshot.execution_id,
+        case_id="case",
+        name="quality",
+        status=EvaluationStatus.PASSED,
+        score=0.8,
+        provenance=old_source,
+    )
+    new_record = EvaluationRecord(
+        evaluation_id=EvaluationId("new-config-eval"),
+        execution_id=current.snapshot.execution_id,
+        case_id="case",
+        name="quality",
+        status=EvaluationStatus.PASSED,
+        score=0.8,
+        provenance=new_source,
+    )
+    feedback = build_feedback(
+        _Store(
+            (
+                baseline.model_copy(update={"evaluations": (old_record,)}),
+                current.model_copy(update={"evaluations": (new_record,)}),
+            )
+        ),
+        "current",
+        baseline_run_id="baseline",
+    )
+    change = next(
+        item
+        for item in feedback.comparison.evaluation_changes
+        if item.get("evaluator") == "quality"
+    )
+    assert "judge_configuration" in change["changed_fields"]
+    assert any("judge model" in item for item in feedback.comparison.limitations)
 
 
 def test_unscored_results_keep_null_score_signals_and_null_delta():

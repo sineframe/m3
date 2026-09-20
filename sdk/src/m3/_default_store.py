@@ -22,6 +22,7 @@ _counter = 0
 _factory: StoreFactory | None = None
 _token: StoreFactoryToken | None = None
 _run_id_factory: Callable[[], Any] | None = None
+_judge_limit_factory: Callable[[], int | None] | None = None
 
 
 def install_default_store_factory(factory: StoreFactory) -> StoreFactoryToken:
@@ -70,12 +71,39 @@ def make_default_run_id() -> Any | None:
     return factory() if factory is not None else None
 
 
+def install_default_judge_limit_factory(
+    factory: Callable[[], int | None],
+) -> Callable[[], int | None] | None:
+    global _judge_limit_factory
+    with _lock:
+        previous = _judge_limit_factory
+        _judge_limit_factory = factory
+        return previous
+
+
+def restore_default_judge_limit_factory(
+    previous: Callable[[], int | None] | None,
+) -> None:
+    global _judge_limit_factory
+    with _lock:
+        _judge_limit_factory = previous
+
+
+def make_default_judge_limit() -> int | None:
+    with _lock:
+        factory = _judge_limit_factory
+    return factory() if factory is not None else None
+
+
 __all__ = [
     "StoreFactoryToken",
+    "install_default_judge_limit_factory",
     "install_default_run_id_factory",
     "install_default_store_factory",
+    "make_default_judge_limit",
     "make_default_run_id",
     "make_default_store",
+    "restore_default_judge_limit_factory",
     "restore_default_run_id_factory",
     "restore_default_store_factory",
 ]

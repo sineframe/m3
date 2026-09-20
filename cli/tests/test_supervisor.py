@@ -625,6 +625,7 @@ def test_validation_requires_exact_sdk_version(
                         "pytest": True,
                         "m3": True,
                         "m3.pytest_plugin": True,
+                        "openai": True,
                         "SQLiteExecutionStore": True,
                     },
                     "version": "0.2.0a12",
@@ -634,6 +635,34 @@ def test_validation_requires_exact_sdk_version(
     )()
     monkeypatch.setattr(supervisor.subprocess, "run", lambda *_args, **_kwargs: result)
     with pytest.raises(supervisor.ProjectPythonError, match="does not match"):
+        supervisor.validate_project_python(
+            Path(sys.executable), cli_sdk_version="0.2.0a13", project_root=tmp_path
+        )
+
+
+def test_validation_requires_judge_dependency(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = type(
+        "Result",
+        (),
+        {
+            "returncode": 0,
+            "stdout": json.dumps(
+                {
+                    "checks": {
+                        "pytest": True,
+                        "m3": True,
+                        "m3.pytest_plugin": True,
+                        "SQLiteExecutionStore": True,
+                    },
+                    "version": "0.2.0a13",
+                }
+            ),
+        },
+    )()
+    monkeypatch.setattr(supervisor.subprocess, "run", lambda *_args, **_kwargs: result)
+    with pytest.raises(supervisor.ProjectPythonError, match="openai; run m3 setup"):
         supervisor.validate_project_python(
             Path(sys.executable), cli_sdk_version="0.2.0a13", project_root=tmp_path
         )
@@ -668,6 +697,17 @@ def test_command_forwards_execution_timeout(tmp_path: Path) -> None:
     assert "--execution-timeout" in command
     index = command.index("--execution-timeout")
     assert command[index + 1] == "12.5"
+
+
+def test_command_forwards_judge_request_cap(tmp_path: Path) -> None:
+    command = supervisor.pytest_command(
+        Path("/project/.venv/bin/python"),
+        (tmp_path / "results.sqlite").resolve(),
+        ["-q", "tests"],
+        judge_max_requests=7,
+    )
+    index = command.index("--judge-max-requests")
+    assert command[index + 1] == "7"
 
 
 def test_command_pins_project_root_when_supervisor_runs_pytest(tmp_path: Path) -> None:

@@ -177,7 +177,8 @@ def test_install_prefers_uv_and_uses_pep508_local_reference(
             "install",
             "--python",
             str(target.python),
-            "m3[pytest,storage] @ " + (tmp_path / "sdk wheel.whl").resolve().as_uri(),
+            "m3[pytest,storage,judge] @ "
+            + (tmp_path / "sdk wheel.whl").resolve().as_uri(),
         ]
     ]
 
@@ -199,6 +200,9 @@ def test_install_falls_back_to_environment_pip(
     )
     assert setup._install_sdk(target, tmp_path / "sdk.whl") == "venv/pip"
     assert calls[0][:4] == [str(target.python), "-m", "pip", "install"]
+    assert calls[0][-1] == (
+        "m3[pytest,storage,judge] @ " + (tmp_path / "sdk.whl").resolve().as_uri()
+    )
 
 
 def test_cli_version_requires_matching_distributions(
@@ -442,9 +446,22 @@ def test_ready_requires_exact_version_and_all_project_features(
             (),
             {
                 "returncode": 0,
-                "stdout": '{"checks":{"pytest":true,"m3":true,"m3.pytest_plugin":true,"SQLiteExecutionStore":true},"version":"1.2.3"}',
+                "stdout": '{"checks":{"pytest":true,"m3":true,"m3.pytest_plugin":true,"openai":true,"SQLiteExecutionStore":true},"version":"1.2.3"}',
             },
         )(),
     )
     assert setup._ready(Path("/tmp/python"), "1.2.3", tmp_path)
     assert not setup._ready(Path("/tmp/python"), "9.9.9", tmp_path)
+    monkeypatch.setattr(
+        setup.subprocess,
+        "run",
+        lambda *args, **kwargs: type(
+            "Result",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"checks":{"pytest":true,"m3":true,"m3.pytest_plugin":true,"SQLiteExecutionStore":true},"version":"1.2.3"}',
+            },
+        )(),
+    )
+    assert not setup._ready(Path("/tmp/python"), "1.2.3", tmp_path)

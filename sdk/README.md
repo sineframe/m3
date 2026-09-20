@@ -1,5 +1,11 @@
 # M3 Python SDK
 
+`m3 setup` includes response judges in the project environment. See
+[`docs/evaluations.md`](docs/evaluations.md) for
+helper and registered evaluator usage, credential separation, persistence, and
+request caps. Installing the standalone CLI does not install project Python
+dependencies.
+
 `m3` is the public Python SDK for testing MCP servers and verifying how
 agent harnesses use their tools. It provides direct MCP clients, pytest
 integration, agent sessions, matrices, typed traces, assertions, and optional
@@ -7,14 +13,18 @@ persistent storage.
 
 ## Install the SDK
 
-Choose a release version and add the SDK wheel with pytest support to the
+Choose a release version and add the SDK wheel with pytest and judge support to the
 project being tested:
 
 ```bash
 VERSION=X.Y.Z
 uv add \
-  "m3[pytest] @ https://github.com/sineframe/m3/releases/download/v${VERSION}/m3-${VERSION}-py3-none-any.whl"
+  "m3[pytest,judge] @ https://github.com/sineframe/m3/releases/download/v${VERSION}/m3-${VERSION}-py3-none-any.whl"
 ```
+
+If you use the standalone CLI, `m3 setup` installs pytest, storage, and judge
+support together. Run it again to upgrade a project environment created by an
+older CLI.
 
 The SDK requires Python 3.10 or newer. The standalone CLI is optional; install
 it separately only when you want the `m3` command or bundled UI, as

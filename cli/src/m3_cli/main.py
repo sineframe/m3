@@ -97,6 +97,7 @@ def _parser() -> argparse.ArgumentParser:
         metavar="SECONDS",
         help="deadline for each selected agent execution",
     )
+    test.add_argument("--judge-max-requests", type=int, default=None, metavar="N")
     test.add_argument(
         "--credential-env",
         action="append",
@@ -149,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
                 credential_env=args.credential_env,
                 env_file=args.env_file,
                 execution_timeout=args.execution_timeout,
+                judge_max_requests=args.judge_max_requests,
             )
         if args.command == "setup":
             try:

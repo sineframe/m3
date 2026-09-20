@@ -78,8 +78,8 @@ def _validate_selection_options(
             scope = scope.strip().lower().replace("-", "_")
             if scope == "claude":
                 scope = "claude_code"
-            if scope not in _HARNESS_KINDS:
-                return f"unknown credential harness kind {scope!r}"
+            if scope not in _HARNESS_KINDS | {"judge"}:
+                return f"unknown credential scope {scope!r}"
         target, source = target.strip(), source.strip()
         if not _ENV_NAME.fullmatch(target) or not _ENV_NAME.fullmatch(source):
             return "credential environment names must be Python identifiers"
@@ -245,7 +245,7 @@ import importlib.metadata
 import json
 
 checks = {}
-for name in ("pytest", "m3", "m3.pytest_plugin"):
+for name in ("pytest", "m3", "m3.pytest_plugin", "openai"):
     try:
         importlib.import_module(name)
     except Exception:
@@ -315,6 +315,7 @@ def validate_project_python(
             "pytest",
             "m3",
             "m3.pytest_plugin",
+            "openai",
             "SQLiteExecutionStore",
         )
         if not checks.get(name)
@@ -322,7 +323,7 @@ def validate_project_python(
     if missing:
         names = ", ".join(missing)
         raise ProjectPythonError(
-            f"the project Python is missing required M3 packages: {names}; install m3[pytest,storage] in the project"
+            f"the project Python is missing required M3 packages: {names}; run m3 setup in the project"
         )
     project_version = payload.get("version")
     expected = _cli_sdk_version() if cli_sdk_version is None else cli_sdk_version
@@ -688,6 +689,7 @@ def pytest_command(
     suite: str | None = None,
     credential_env: Sequence[str] = (),
     execution_timeout: float | None = None,
+    judge_max_requests: int | None = None,
 ) -> list[str]:
     command = [
         str(python),
@@ -714,6 +716,8 @@ def pytest_command(
         command.extend(("--suite", suite))
     if execution_timeout is not None:
         command.extend(("--execution-timeout", str(execution_timeout)))
+    if judge_max_requests is not None:
+        command.extend(("--judge-max-requests", str(judge_max_requests)))
     command.extend(pytest_args)
     return command
 
@@ -766,6 +770,7 @@ def _run_pytest_process(
     suite: str | None = None,
     credential_env: Sequence[str] = (),
     execution_timeout: float | None = None,
+    judge_max_requests: int | None = None,
     environment: Mapping[str, str] | None = None,
 ) -> int:
     """Run pytest with safe process-group cleanup and return its status."""
@@ -794,6 +799,7 @@ def _run_pytest_process(
                     suite=suite,
                     credential_env=credential_env,
                     execution_timeout=execution_timeout,
+                    judge_max_requests=judge_max_requests,
                 ),
                 env=dict(environment) if environment is not None else None,
                 **kwargs,
@@ -907,6 +913,7 @@ def run_test_with_runs(
     credential_env: Sequence[str] = (),
     env_file: str | os.PathLike[str] | None = None,
     execution_timeout: float | None = None,
+    judge_max_requests: int | None = None,
 ) -> TestRunResult:
     """Run pytest and retain newly stored runs for optional UI serving."""
 
@@ -976,6 +983,7 @@ def run_test_with_runs(
         trials=trials,
         credential_env=credential_env,
         execution_timeout=execution_timeout,
+        judge_max_requests=judge_max_requests,
         suite=suite,
         environment=child_environment,
     )
@@ -1012,6 +1020,7 @@ def run_test(
     credential_env: Sequence[str] = (),
     env_file: str | os.PathLike[str] | None = None,
     execution_timeout: float | None = None,
+    judge_max_requests: int | None = None,
 ) -> int:
     """Run pytest and return its exact exit status."""
 
@@ -1042,6 +1051,7 @@ def run_test(
             credential_env=credential_env,
             env_file=env_file,
             execution_timeout=execution_timeout,
+            judge_max_requests=judge_max_requests,
         ).exit_code
     root = (project_root or Path.cwd()).resolve()
     prepared = _prepare_test(python, database, root)
@@ -1072,6 +1082,7 @@ def run_test(
         trials=trials,
         credential_env=credential_env,
         execution_timeout=execution_timeout,
+        judge_max_requests=judge_max_requests,
         suite=suite,
         environment=child_environment,
     )

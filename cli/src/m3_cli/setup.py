@@ -30,7 +30,7 @@ import importlib.metadata
 import json
 
 checks = {}
-for name in ("pytest", "m3", "m3.pytest_plugin"):
+for name in ("pytest", "m3", "m3.pytest_plugin", "openai"):
     try:
         importlib.import_module(name)
     except Exception:
@@ -390,6 +390,7 @@ def _ready(python: Path, version: str, project_root: Path) -> bool:
                     "pytest",
                     "m3",
                     "m3.pytest_plugin",
+                    "openai",
                     "SQLiteExecutionStore",
                 )
             )
@@ -406,7 +407,7 @@ def _ready(python: Path, version: str, project_root: Path) -> bool:
 
 
 def _install_sdk(target: EnvironmentTarget, sdk: Path) -> str:
-    requirement = f"m3[pytest,storage] @ {sdk.resolve().as_uri()}"
+    requirement = f"m3[pytest,storage,judge] @ {sdk.resolve().as_uri()}"
     uv = shutil.which("uv")
     command = (
         [uv, "pip", "install", "--python", str(target.python), requirement]

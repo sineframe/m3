@@ -245,7 +245,7 @@ def test_private_install_docs_use_exact_authenticated_assets() -> None:
     assert "sh install.sh\nrm install.sh" in contents
     assert "--pattern install.ps1 --output install.ps1" in contents
     assert ".\\install.ps1\nRemove-Item install.ps1" in contents
-    assert "m3[pytest,storage] @ ./.m3-download/$SDK_WHEEL" in contents
+    assert "m3[pytest,storage,judge] @ ./.m3-download/$SDK_WHEEL" in contents
     assert "only downloads files" in contents
     assert "does not create or modify a" in contents
 

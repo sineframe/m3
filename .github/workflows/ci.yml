@@ -57,7 +57,7 @@ jobs:
       - name: Install locked test workspace
         run: >-
           uv sync --locked --all-packages
-          --extra pytest --extra storage --extra property
+          --extra pytest --extra judge --extra storage --extra property
           --group test --group typecheck
 
       - name: Run SDK tests without live providers
@@ -65,7 +65,7 @@ jobs:
           set -o pipefail
           log="$RUNNER_TEMP/sdk-tests.log"
           set +e
-          timeout 8m uv run --locked --no-sync --project sdk \
+          timeout 8m uv run --locked --no-sync --project sdk --extra judge \
             pytest -q -n 2 --dist worksteal --durations=25 --durations-min=1 \
             -m "not live and not process_lifecycle" sdk/tests 2>&1 | tee "$log"
           status=${PIPESTATUS[0]}
@@ -83,7 +83,7 @@ jobs:
           set -o pipefail
           log="$RUNNER_TEMP/sdk-process-lifecycle-tests.log"
           set +e
-          timeout 8m uv run --locked --no-sync --project sdk \
+          timeout 8m uv run --locked --no-sync --project sdk --extra judge \
             pytest -q --durations=25 --durations-min=1 \
             -m "not live and process_lifecycle" sdk/tests 2>&1 | tee "$log"
           status=${PIPESTATUS[0]}
@@ -101,7 +101,7 @@ jobs:
           set -o pipefail
           log="$RUNNER_TEMP/sdk-examples.log"
           set +e
-          timeout 3m uv run --locked --no-sync --project sdk \
+          timeout 3m uv run --locked --no-sync --project sdk --extra judge \
             pytest -q -n 2 --dist worksteal --durations=25 --durations-min=1 \
             -m "not live" sdk/examples/tests 2>&1 | tee "$log"
           status=${PIPESTATUS[0]}
@@ -181,10 +181,10 @@ jobs:
         run: uv run --locked --group lint ruff format --check .
 
       - name: Type-check SDK public ratchet
-        run: uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/m3/types.py sdk/src/m3/errors.py sdk/src/m3/policy.py sdk/src/m3/interaction_handlers.py sdk/src/m3/configuration.py
+        run: uv run --isolated --python 3.10 --locked --project sdk --extra judge --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/m3/types.py sdk/src/m3/errors.py sdk/src/m3/policy.py sdk/src/m3/interaction_handlers.py sdk/src/m3/configuration.py
 
       - name: Type-check SDK
-        run: uv run --isolated --python 3.10 --locked --project sdk --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/m3
+        run: uv run --isolated --python 3.10 --locked --project sdk --extra judge --group typecheck mypy --config-file sdk/pyproject.toml --strict sdk/src/m3
 
       - name: Type-check application
         run: uv run --isolated --python 3.10 --locked --project app --group typecheck mypy --config-file app/pyproject.toml --strict app/src/m3_app
@@ -200,6 +200,12 @@ jobs:
 
       - name: Import application
         run: uv run --locked --no-sync --project app python -c "from m3_app.main import app; print(app.title)"
+
+      - name: Import SDK judge without optional dependencies
+        run: >-
+          uv run --isolated --no-project
+          --with "m3 @ file://${GITHUB_WORKSPACE}/sdk"
+          python -c "import importlib.util; from m3.judges import LLMJudge; assert importlib.util.find_spec('openai') is None; print(LLMJudge.__name__)"
 
       - name: Compile CLI
         run: uv run --locked --no-sync --project cli python -m compileall -q cli/src

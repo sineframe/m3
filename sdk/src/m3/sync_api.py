@@ -49,6 +49,9 @@ from ._check_recording import (
     record_checks_enabled as _record_checks_enabled,
 )
 from ._default_store import (
+    make_default_judge_limit as _make_default_judge_limit,
+)
+from ._default_store import (
     make_default_run_id as _make_default_run_id,
 )
 from ._default_store import (
@@ -134,6 +137,7 @@ from .interaction_handlers import (
     TerminalResult,
     WorkspaceFiles,
 )
+from .judges import LLMJudge as _LLMJudge
 from .observability import *  # noqa: F403 - re-exported by the public API
 from .observability import RawEvidence, TraceView
 from .observability import __all__ as _OBSERVABILITY_EXPORTS
@@ -321,6 +325,7 @@ class _PortalRuntime:
         suite_name: str | None = None,
         project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
+        max_judge_requests: int | None = None,
     ) -> None:
         from .async_api import AsyncMCPTestKit
 
@@ -335,6 +340,7 @@ class _PortalRuntime:
             suite_name=suite_name,
             project_id=project_id,
             record_checks=record_checks,
+            max_judge_requests=max_judge_requests,
         )
         self.clients: dict[int, _AsyncDirectClient] = {}
         self.sessions: dict[int, _AsyncAgentSession] = {}
@@ -580,6 +586,7 @@ class _SyncPortal:
         suite_name: str | None = None,
         project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
+        max_judge_requests: int | None = None,
     ) -> None:
         self._lock = _RLock()
         self._context = _start_blocking_portal()
@@ -597,6 +604,7 @@ class _SyncPortal:
                 suite_name,
                 project_id,
                 record_checks,
+                max_judge_requests,
             )
         except BaseException:
             self._context.__exit__(None, None, None)
@@ -1191,6 +1199,7 @@ class MCPTestKit:
         suite_name: str | None = None,
         project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
+        max_judge_requests: int | None = None,
     ) -> None:
         from ._test_runs import active_test
 
@@ -1234,7 +1243,15 @@ class MCPTestKit:
         self._portal: _SyncPortal | None = None
         self._active_direct: set[DirectClient] = set()
         self._active_sessions: set[AgentSession] = set()
-        self._evaluations = _EvaluationRunner()
+        plugin_judge_limit = _make_default_judge_limit()
+        effective_judge_limit = (
+            min(max_judge_requests, plugin_judge_limit)
+            if max_judge_requests is not None and plugin_judge_limit is not None
+            else max_judge_requests
+            if max_judge_requests is not None
+            else plugin_judge_limit
+        )
+        self._max_judge_requests = effective_judge_limit
         self._probe_timeout_seconds = probe_timeout_seconds
         self._probe_output_limit = probe_output_limit
         self.config = (
@@ -1266,7 +1283,11 @@ class MCPTestKit:
         # Evaluation persistence follows the selected execution store.  Keep
         # the runner runtime-only registry, while detached evaluations remain
         # kit-local inside the runner.
-        self._evaluations = _EvaluationRunner(durable_store=store)
+        self._evaluations = _EvaluationRunner(
+            durable_store=store,
+            max_judge_requests=effective_judge_limit,
+            run_id=self._run_id.root,
+        )
         self._embedded_worker = embedded_worker
         self._adapter_registry = adapter_registry
         self._probes = Probes(
@@ -1494,6 +1515,41 @@ class MCPTestKit:
             case_id=case_id,
         )
 
+    def judge_response(
+        self,
+        *,
+        name: str,
+        input: str,
+        actual: str,
+        expected: str,
+        judge: _LLMJudge,
+        required: bool = False,
+        execution_id: _Any = None,
+        turn_id: _Any = None,
+        case_id: str | None = None,
+    ) -> _EvaluationResult:
+        """Judge one response and persist the result through this kit's runner."""
+        self._ensure_open()
+        if name in self._evaluations.registry.names():
+            existing = self._evaluations.registry.get(name)
+            if (
+                not isinstance(existing, _LLMJudge)
+                or existing.config_digest != judge.config_digest
+            ):
+                raise ValueError(
+                    f"conflicting judge configuration for evaluator {name}"
+                )
+        else:
+            self._evaluations.register(name, judge)
+        return self.evaluate(
+            {"input": input, "expected": expected, "actual": actual},
+            name,
+            required=required,
+            execution_id=execution_id,
+            turn_id=turn_id,
+            case_id=case_id,
+        )
+
     def evaluation_results(self) -> tuple[_EvaluationResult, ...]:
         self._ensure_open()
         return self._evaluations.results()
@@ -1554,6 +1610,7 @@ class MCPTestKit:
                     or (str(marker_suite).strip() if marker_suite else None),
                     self._project_id,
                     self._record_checks,
+                    self._max_judge_requests,
                 )
                 self._portal = portal
             try:
@@ -1677,6 +1734,7 @@ class MCPTestKit:
                     or (str(marker_suite).strip() if marker_suite else None),
                     self._project_id,
                     self._record_checks,
+                    self._max_judge_requests,
                 )
                 self._portal = portal
             try:
@@ -1758,6 +1816,7 @@ class MCPTestKit:
                     self._suite_name,
                     self._project_id,
                     self._record_checks,
+                    self._max_judge_requests,
                 )
                 self._portal = portal
             try:

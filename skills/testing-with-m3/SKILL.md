@@ -155,6 +155,26 @@ finalization but does not start or stop a deployed service.
 
 ## Evaluations and saved history
 
+### LLM judges
+
+`m3 setup` includes judge support in the project environment. Rerun setup to
+upgrade an environment created by an older CLI.
+
+Keep `OPENCODE_API_KEY` for the agent and `M3_JUDGE_API_KEY` for the judge, and
+pass both explicitly with `m3 test --env-file .env`. If the judge key has a
+different name, use `--credential-env judge:M3_JUDGE_API_KEY=SOURCE`; unscoped
+mappings apply only to harnesses. The default judge key is
+`M3_JUDGE_API_KEY`; custom endpoints require explicit `api_key_env` and
+`response_mode`, except loopback
+`auth="none"`, which reads no key and sends no `Authorization` header. The
+endpoint and model must support the selected Chat Completions response mode.
+Use
+`judge_response` for the standard `{input, expected, actual}` subject, or
+register it under a stable name for that subject. For a custom subject, wrap the
+judge in a callback that builds the standard subject. `required=True` persists
+before failing on FAILED/ERROR, and `--judge-max-requests` caps attempts
+including retries.
+
 ### Named suites
 
 Use the existing `m3` marker with `suite_name` at module or class scope;

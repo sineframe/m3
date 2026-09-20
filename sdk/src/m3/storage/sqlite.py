@@ -462,6 +462,9 @@ CREATE TABLE IF NOT EXISTS v2_sequence_reservations (
   execution_id TEXT NOT NULL REFERENCES v2_executions(id) ON DELETE CASCADE,
   sequence INTEGER NOT NULL CHECK(sequence >= 0), PRIMARY KEY(execution_id, sequence)
 );
+CREATE TABLE IF NOT EXISTS v2_judge_request_budgets (
+  run_id TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -2825,6 +2828,37 @@ class SQLiteExecutionStore(_SqliteBase):
             raise StorageConflict(
                 "evaluation already exists or execution does not exist"
             ) from exc
+        finally:
+            connection.close()
+
+    def reserve_judge_request(self, run_id: str, limit: int) -> bool:
+        """Atomically reserve one judge request for a run across workers."""
+        if limit < 0:
+            raise ValueError("judge request limit must be nonnegative")
+        connection = self._connect()
+        try:
+            self._begin(connection, immediate=True)
+            connection.execute(
+                "INSERT OR IGNORE INTO v2_judge_request_budgets(run_id,used) VALUES(?,0)",
+                (str(run_id),),
+            )
+            row = connection.execute(
+                "SELECT used FROM v2_judge_request_budgets WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()
+            used = int(row[0]) if row is not None else 0
+            if used >= limit:
+                self._rollback(connection)
+                return False
+            connection.execute(
+                "UPDATE v2_judge_request_budgets SET used=used+1 WHERE run_id=?",
+                (str(run_id),),
+            )
+            self._commit(connection)
+            return True
+        except Exception:
+            self._rollback(connection)
+            raise
         finally:
             connection.close()
 

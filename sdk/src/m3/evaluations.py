@@ -370,6 +370,25 @@ def _subject_context(
     return _EvaluationContext.model_validate(projected)
 
 
+class _LocalJudgeBudget:
+    def __init__(self, limit: int | None, reserve_callback: _Any = None) -> None:
+        self.limit = limit
+        self.reserve_callback = reserve_callback
+        self.used = 0
+        self.lock = _RLock()
+
+    def reserve(self) -> bool:
+        if self.limit is None:
+            return True
+        if self.reserve_callback is not None:
+            return bool(self.reserve_callback())
+        with self.lock:
+            if self.used >= self.limit:
+                return False
+            self.used += 1
+            return True
+
+
 class EvaluationRunner:
     """Run and persist deterministic evaluations in a separate store."""
 
@@ -380,12 +399,25 @@ class EvaluationRunner:
         store: EvaluationStore | None = None,
         durable_store: _Any | None = None,
         redaction_config: _RedactionConfig | None = None,
+        max_judge_requests: int | None = None,
+        run_id: str | None = None,
     ) -> None:
         self.registry = registry or EvaluatorRegistry()
         register_builtin_evaluators(self.registry)
         self.store = store or InMemoryEvaluationStore()
         self.durable_store = durable_store
         self.redaction_config = redaction_config or _RedactionConfig.from_environment()
+        if max_judge_requests is not None and max_judge_requests < 0:
+            raise ValueError("max_judge_requests must be nonnegative")
+        reserve = None
+        reserve_request = getattr(durable_store, "reserve_judge_request", None)
+        if (
+            max_judge_requests is not None
+            and run_id is not None
+            and callable(reserve_request)
+        ):
+            reserve = lambda: reserve_request(run_id, max_judge_requests)
+        self._judge_budget = _LocalJudgeBudget(max_judge_requests, reserve)
 
     def register(
         self, name: str, evaluator: EvaluatorCallable | AsyncEvaluator
@@ -446,8 +478,15 @@ class EvaluationRunner:
         rationale = None
         metrics: dict[str, float] = {}
         provenance = None
+        details: dict[str, _Any] = {}
         try:
-            raw = callback(context)
+            from .judges import reset_request_budget, set_request_budget
+
+            token = set_request_budget(self._judge_budget)
+            try:
+                raw = callback(context)
+            finally:
+                reset_request_budget(token)
         except Exception:
             status = _EvaluationStatus.ERROR
             message = "evaluator failed"
@@ -468,6 +507,7 @@ class EvaluationRunner:
                             dict(raw.metrics),
                             raw.provenance,
                         )
+                        details = dict(raw.details)
                 except Exception:
                     status = _EvaluationStatus.ERROR
                     message = "evaluator failed"
@@ -482,6 +522,7 @@ class EvaluationRunner:
             rationale=rationale,
             metrics=metrics,
             provenance=provenance,
+            details=details,
         )
         self._persist(result)
         _raise_for_required(result)
@@ -541,10 +582,17 @@ class EvaluationRunner:
         rationale: str | None = None
         metrics: dict[str, float] = {}
         provenance: _Any = None
+        details: dict[str, _Any] = {}
         try:
-            raw = callback(context)
-            if _inspect.isawaitable(raw):
-                raw = await raw
+            from .judges import reset_request_budget, set_request_budget
+
+            token = set_request_budget(self._judge_budget)
+            try:
+                raw = callback(context)
+                if _inspect.isawaitable(raw):
+                    raw = await raw
+            finally:
+                reset_request_budget(token)
             status = _status(raw)
             score = raw.score if isinstance(raw, _EvaluationDecision) else None
             rationale = raw.rationale if isinstance(raw, _EvaluationDecision) else None
@@ -552,6 +600,7 @@ class EvaluationRunner:
             provenance = (
                 raw.provenance if isinstance(raw, _EvaluationDecision) else None
             )
+            details = dict(raw.details) if isinstance(raw, _EvaluationDecision) else {}
         except Exception:
             status = _EvaluationStatus.ERROR
             message = "evaluator failed"
@@ -568,6 +617,7 @@ class EvaluationRunner:
             rationale=rationale,
             metrics=metrics,
             provenance=provenance,
+            details=details,
         )
         self._persist(result)
         _raise_for_required(result)

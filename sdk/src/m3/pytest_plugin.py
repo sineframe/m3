@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import inspect as _inspect
 import math as _math
+import os as _os
+import re as _re
 import time as _time
 from collections.abc import Iterator as _Iterator
 from contextvars import ContextVar as _ContextVar
@@ -20,10 +22,16 @@ from ._check_recording import (
     set_default_record_checks as _set_default_record_checks,
 )
 from ._default_store import (
+    install_default_judge_limit_factory as _install_default_judge_limit_factory,
+)
+from ._default_store import (
     install_default_run_id_factory as _install_default_run_id_factory,
 )
 from ._default_store import (
     install_default_store_factory as _install_default_store_factory,
+)
+from ._default_store import (
+    restore_default_judge_limit_factory as _restore_default_judge_limit_factory,
 )
 from ._default_store import (
     restore_default_run_id_factory as _restore_default_run_id_factory,
@@ -52,6 +60,43 @@ from ._test_runs import (
 
 _NATIVE_PROGRESS_UNSET = object()
 _PLUGIN_CONFIG: _ContextVar[_Any] = _ContextVar("m3_pytest_plugin_config", default=None)
+_ENV_NAME = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_CREDENTIAL_SCOPES = {"claude_code", "opencode", "codex", "pi", "acp", "judge"}
+
+
+def _parse_credential_mappings(
+    config: _Any,
+) -> tuple[dict[str, str], dict[str, dict[str, str]], dict[str, str]]:
+    harness: dict[str, str] = {}
+    scoped: dict[str, dict[str, str]] = {}
+    judge: dict[str, str] = {}
+    seen: set[tuple[str | None, str]] = set()
+    for raw in config.getoption("--credential-env") or []:
+        if "=" not in raw:
+            raise _pytest.UsageError("--credential-env requires TARGET=SOURCE")
+        target, source = raw.split("=", 1)
+        scope: str | None = None
+        if ":" in target:
+            scope, target = target.split(":", 1)
+            scope = scope.strip().lower().replace("-", "_")
+            scope = {"claude": "claude_code"}.get(scope, scope)
+            if scope not in _CREDENTIAL_SCOPES:
+                raise _pytest.UsageError("unknown credential scope")
+        target, source = target.strip(), source.strip()
+        if not _ENV_NAME.fullmatch(target) or not _ENV_NAME.fullmatch(source):
+            raise _pytest.UsageError(
+                "credential environment names must be Python identifiers"
+            )
+        if (scope, target) in seen:
+            raise _pytest.UsageError(f"duplicate credential target {target!r}")
+        seen.add((scope, target))
+        if scope == "judge":
+            judge[target] = source
+        elif scope is None:
+            harness[target] = source
+        else:
+            scoped.setdefault(scope, {})[target] = source
+    return harness, scoped, judge
 
 
 def pytest_addoption(parser: _Any) -> None:
@@ -89,10 +134,28 @@ def pytest_addoption(parser: _Any) -> None:
     group.addoption("--trials", action="store", default=None, type=int)
     group.addoption("--suite", action="store", default=None, metavar="NAME")
     group.addoption("--execution-timeout", action="store", default=None, type=float)
+    group.addoption("--judge-max-requests", action="store", default=None, type=int)
 
 
 def pytest_configure(config: _Any) -> None:
+    mappings, scoped, judge = _parse_credential_mappings(config)
+    environment = dict(_os.environ)
+    judge_values: dict[str, str] = {}
+    for target, source in judge.items():
+        value = environment.get(source)
+        if not value:
+            raise _pytest.UsageError("judge credential source is unavailable")
+        judge_values[target] = value
+    config._m3_cli_credentials = (mappings, scoped)
+    config._m3_judge_env_previous = {
+        target: environment.get(target) for target in judge_values
+    }
+    _os.environ.update(judge_values)
     config._m3_config_token = _PLUGIN_CONFIG.set(config)
+    judge_limit = config.getoption("--judge-max-requests")
+    if judge_limit is not None and judge_limit < 0:
+        raise _pytest.UsageError("--judge-max-requests must be nonnegative")
+    config._m3_judge_max_requests = judge_limit
     config.addinivalue_line(
         "markers",
         "m3(agents=None, trials=None, suite_name=None): select agent executions",
@@ -187,6 +250,9 @@ def pytest_configure(config: _Any) -> None:
             ),
         )
     config._m3_run_id_previous = _install_default_run_id_factory(lambda: run_id)
+    config._m3_judge_limit_previous = _install_default_judge_limit_factory(
+        lambda: config._m3_judge_max_requests
+    )
     config._m3_store_token = _install_default_store_factory(
         lambda: SQLiteExecutionStore(path)
     )
@@ -211,6 +277,7 @@ def m3_kit(request: _Any) -> _Any:
     kit = MCPTestKit(
         suite_name=str(suite_name) if suite_name else None,
         project_id=getattr(request.config, "_m3_project_id", None),
+        max_judge_requests=getattr(request.config, "_m3_judge_max_requests", None),
     )
     try:
         yield kit
@@ -267,27 +334,7 @@ def _parse_cli_harnesses(config: _Any) -> list[dict[str, _Any]]:
         if not kind or any(not item for item in models):
             raise _pytest.UsageError("--harness contains an empty kind or model")
         result.append({"harness": kind, "models": models})
-    mappings: dict[str, str] = {}
-    scoped: dict[str, dict[str, str]] = {}
-    for raw in config.getoption("--credential-env") or []:
-        if "=" not in raw:
-            raise _pytest.UsageError("--credential-env requires TARGET=SOURCE")
-        target, source = raw.split("=", 1)
-        scope = None
-        if ":" in target:
-            scope, target = target.split(":", 1)
-            scope = scope.strip().lower().replace("-", "_")
-            scope = {"claude": "claude_code"}.get(scope, scope)
-        target = target.strip()
-        if (scope, target) in {(None, key) for key in mappings} or (
-            scope is not None and target in scoped.get(scope, {})
-        ):
-            raise _pytest.UsageError(f"duplicate credential target {target!r}")
-        if scope is None:
-            mappings[target] = source.strip()
-        else:
-            scoped.setdefault(scope, {})[target] = source.strip()
-    config._m3_cli_credentials = (mappings, scoped)
+    mappings, scoped = config._m3_cli_credentials
     for entry in result:
         kind = str(entry["harness"]).lower().replace("-", "_")
         kind = {"claude": "claude_code"}.get(kind, kind)
@@ -412,6 +459,11 @@ def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
 
 
 def pytest_unconfigure(config: _Any) -> None:
+    for target, previous in getattr(config, "_m3_judge_env_previous", {}).items():
+        if previous is None:
+            _os.environ.pop(target, None)
+        else:
+            _os.environ[target] = previous
     hooks = getattr(config, "_m3_manifest_hooks", None)
     if hooks is not None:
         config.pluginmanager.unregister(hooks)
@@ -424,6 +476,8 @@ def pytest_unconfigure(config: _Any) -> None:
         _restore_default_store_factory(token)
     if hasattr(config, "_m3_run_id_previous"):
         _restore_default_run_id_factory(config._m3_run_id_previous)
+    if hasattr(config, "_m3_judge_limit_previous"):
+        _restore_default_judge_limit_factory(config._m3_judge_limit_previous)
     check_token = getattr(config, "_m3_checks_token", None)
     if check_token is not None:
         _restore_default_record_checks(check_token)

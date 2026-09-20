@@ -56,6 +56,7 @@ class EvaluationDecision(FrozenModel):
     rationale: str | None = None
     metrics: _Mapping[str, float] = _Field(default_factory=dict)
     provenance: EvaluationSource | None = None
+    details: _Mapping[str, _Any] = _Field(default_factory=dict)
 
     @_field_validator("score", mode="before")
     @classmethod
