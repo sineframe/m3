@@ -81,14 +81,18 @@ m3 setup
 m3 doctor
 ```
 
-`init` creates a committed `m3.toml` identity and one skipped starter test
-at `tests/test_m3_starter.py`; it does not install the SDK or create the
-results database. Replace the method's TODO with a test grounded in the real
+`init` creates a committed `m3.toml` identity, one skipped starter test at
+`tests/test_m3_starter.py`, and a credential-name template in `.env.example`.
+Copy the template to `.env` if it is absent; otherwise add only the needed
+keys to the existing `.env`. Add `.env` to `.gitignore` if needed, and pass
+`--env-file .env` to `m3 test`. The template contains blank `OPENCODE_API_KEY`,
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `M3_JUDGE_API_KEY` entries. It does
+not install the SDK or create the results database. Replace the method's TODO
+with a test grounded in the real
 server contract and remove its skip before treating the run as a behavior
 check. Both name flags suppress interactive questions for an agent. A person
 running `m3 init` without flags receives the questions one by one.
-Repeating it on a complete project reports the existing identity and changes
-nothing.
+Repeating it preserves existing files and creates `.env.example` if missing.
 
 `m3 setup` installs the exact matching `m3[pytest,storage,judge]` SDK into
 the selected project environment. It does not install the CLI there and does

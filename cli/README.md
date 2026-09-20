@@ -63,9 +63,13 @@ m3 test --suite mcp-behavior -- tests/test_m3_starter.py
 `init` defaults the project name to the repository name and the suite name to
 `mcp-behavior`. It creates `m3.toml` (the stable project identity) and a
 single skipped starter test at `tests/test_m3_starter.py`. Running `init`
-again after a complete initialization reports the existing project and leaves
-both files alone. The first skipped run confirms collection; it does not check
-server behavior.
+also creates `.env.example` with blank `OPENCODE_API_KEY`, `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, and `M3_JUDGE_API_KEY` entries. Copy it to `.env` if you
+do not already have one; otherwise add only the keys your tests need. Add
+`.env` to `.gitignore` if needed and pass `--env-file .env` to `m3 test`. Running
+`init` again preserves existing files and adds `.env.example` if it is
+missing. The first skipped run confirms collection; it does not check server
+behavior.
 
 `m3 setup` installs `m3[pytest,storage,judge]` into the project
 environment. It selects `--python`, then an active `VIRTUAL_ENV` or
@@ -127,9 +131,10 @@ shows the runs produced by that test command.
 ### `init`
 
 Run `m3 init` from the repository you want to test. It asks for the
-project name, then the suite name, showing a default for each. It creates only
-the identity file and skipped pytest starter. If both files are already
-present, it reports the existing project and changes nothing. If one file is
+project name, then the suite name, showing a default for each. It creates the
+identity file, skipped pytest starter, and `.env.example` template. If the
+identity and starter already exist, it reports the existing project and adds
+the template only when missing. If one of those two required files is
 missing or the identity is invalid, it reports the partial state for repair.
 
 ### `doctor`

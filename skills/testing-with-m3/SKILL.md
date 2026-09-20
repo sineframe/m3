@@ -28,14 +28,19 @@ NAME`; supplying both names makes the command usable by an agent without
 interactive prompts. Use the repository name and `mcp-behavior` unless the user
 has supplied better names. Then run `m3 setup` and `m3 doctor`.
 
-The command creates `m3.toml` with a stable project ID and one skipped
-test at `tests/test_m3_starter.py`. Continue with the workflow below:
+The command creates `m3.toml` with a stable project ID, one skipped test at
+`tests/test_m3_starter.py`, and `.env.example` with blank agent and judge key
+names. For provider tests, copy `.env.example` to `.env` if it is absent;
+otherwise add only the needed keys to the existing `.env`. Keep `.env` out of
+version control by adding it to `.gitignore` if needed. Run
+`m3 test --env-file .env -- <pytest arguments>`.
+Never put real keys in `.env.example`. Continue with the workflow below:
 inspect the real server, replace the starter method with a direct or agent
 test, remove its skip, and run `m3 test --suite NAME --
 tests/test_m3_starter.py`. A fresh run with one skip confirms collection;
-it does not verify behavior. Repeating `init` on a complete project reports
-the existing files and changes nothing. Keep `project_id` when renaming the
-project.
+it does not verify behavior. Repeating `init` preserves existing files and
+adds `.env.example` if an older project lacks it. Keep `project_id` when
+renaming the project.
 
 ## Choose the Boundary
 
@@ -74,13 +79,12 @@ finalization but does not start or stop a deployed service.
    than guessing or relying on a plan.
 2. Reuse its fixture and pytest conventions.
 3. Write the smallest test that proves the requested claim.
-4. For an agent test, identify its model provider's required credential
-   variable **name**. Common routes use `OPENCODE_API_KEY`, `OPENAI_API_KEY`,
-   or `ANTHROPIC_API_KEY`. Export the variable or use `m3 test --env-file
-   .env`; the file is never loaded implicitly. A custom source uses
-   `--credential-env TARGET=SOURCE`, optionally
-   `KIND:TARGET=SOURCE` for one harness. Keep MCP server authentication in
-   `HTTPServer.headers` or a direct-client bearer reference. Never request,
+4. For an agent or judge test, use the matching key name from `.env.example`:
+   `OPENCODE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` for the selected
+   agent provider, and `M3_JUDGE_API_KEY` for `LLMJudge`. Run
+   `m3 test --env-file .env`; the file is never loaded implicitly. Keep MCP
+   server authentication in `HTTPServer.headers` or a direct-client bearer
+   reference. Never request,
    print, log, or put a secret value into a test, command argument, or report.
 5. Choose the runner. Prefer `m3 test -- <pytest arguments>` when the
    separately installed CLI is available and `m3 doctor` reports that the

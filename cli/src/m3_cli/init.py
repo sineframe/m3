@@ -17,6 +17,17 @@ else:  # pragma: no cover - exercised by Python 3.10
     import tomli as _tomllib
 
 DEFAULT_SUITE = "mcp-behavior"
+_ENV_EXAMPLE = """# Copy to .env if it does not exist; otherwise add the keys you need.
+# Keep real keys out of .env.example and ensure .env is gitignored.
+
+# Agent model providers
+OPENCODE_API_KEY=
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+
+# LLMJudge(model=...) reads this key by default.
+M3_JUDGE_API_KEY=
+"""
 
 
 def _project_root(value: Path | None) -> Path:
@@ -91,6 +102,18 @@ def _style(value: str, code: str) -> str:
     return value
 
 
+def _create_env_example(path: Path) -> bool:
+    if path.exists() or path.is_symlink():
+        return False
+    with path.open("x", encoding="utf-8", newline="\n") as stream:
+        try:
+            stream.write(_ENV_EXAMPLE)
+        except OSError:
+            path.unlink(missing_ok=True)
+            raise
+    return True
+
+
 def run(args: object) -> int:
     root = _project_root(getattr(args, "project_root", None))
     if not root.is_dir():
@@ -98,6 +121,7 @@ def run(args: object) -> int:
         return 2
     config = root / "m3.toml"
     starter = root / "tests" / "test_m3_starter.py"
+    env_example = root / ".env.example"
     config_present = config.exists() or config.is_symlink()
     starter_present = starter.exists() or starter.is_symlink()
     data = (
@@ -111,10 +135,19 @@ def run(args: object) -> int:
         and starter.is_file()
         and not starter.is_symlink()
     ):
+        try:
+            created_example = _create_env_example(env_example)
+        except OSError:
+            print("m3 init: could not create .env.example", file=sys.stderr)
+            return 2
         print(f"m3 is already initialized at {root}")
         print(f"Project: {data['project_name']}")
         print(f"Files: {config}, {starter}")
-        print("Nothing changed; supplied names were not applied.")
+        if created_example:
+            print(f"Created {env_example}")
+            print("Existing project files unchanged; supplied names were not applied.")
+        else:
+            print("Nothing changed; supplied names were not applied.")
         print("Edit project_name in m3.toml to rename the project; keep project_id.")
         return 0
     if config_present or starter_present:
@@ -173,6 +206,8 @@ def run(args: object) -> int:
         with starter.open("x", encoding="utf-8", newline="\n") as stream:
             created.append(starter)
             stream.write(_starter(suite_name))
+        if _create_env_example(env_example):
+            created.append(env_example)
     except OSError:
         for path in reversed(created):
             try:
@@ -189,7 +224,13 @@ def run(args: object) -> int:
     print(_style(f"Initialized M3 project {project_name!r} at {root}", "32"))
     print(f"Created {config}")
     print(f"Created {starter}")
+    if env_example in created:
+        print(f"Created {env_example}")
     print("Next: m3 setup")
+    print(
+        "For agent or judge tests, add the keys you use to .env (copy .env.example if needed)."
+    )
+    print("Pass --env-file .env to m3 test to load those keys.")
     print("Then implement and unskip the test, and run:")
     print(f"  m3 test --suite {suite_name} -- tests/test_m3_starter.py")
     return 0

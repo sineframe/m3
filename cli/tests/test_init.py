@@ -41,6 +41,17 @@ def test_init_creates_project_identity_and_one_collectable_starter(
     assert identity["project_name"] == "Catalog"
     assert str(uuid.UUID(identity["project_id"])) == identity["project_id"]
 
+    template = (tmp_path / ".env.example").read_text(encoding="utf-8")
+    for name in (
+        "OPENCODE_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "M3_JUDGE_API_KEY",
+    ):
+        assert f"{name}=\n" in template
+    assert "--env-file .env" in output.out
+    assert not (tmp_path / ".env").exists()
+
     starter = tmp_path / "tests" / "test_m3_starter.py"
     source = starter.read_text(encoding="utf-8")
     assert '@pytest.mark.m3(suite_name="catalog behavior")' in source
@@ -80,7 +91,9 @@ def test_init_rerun_preserves_files_and_identity(
     capsys.readouterr()
     config = tmp_path / "m3.toml"
     starter = tmp_path / "tests" / "test_m3_starter.py"
-    before = (config.read_bytes(), starter.read_bytes())
+    env_example = tmp_path / ".env.example"
+    env_example.write_text("MY_EXISTING_KEY=\n", encoding="utf-8")
+    before = (config.read_bytes(), starter.read_bytes(), env_example.read_bytes())
 
     assert (
         main(
@@ -99,7 +112,65 @@ def test_init_rerun_preserves_files_and_identity(
     output = capsys.readouterr().out
     assert "already initialized" in output
     assert "supplied names were not applied" in output
+    assert (
+        config.read_bytes(),
+        starter.read_bytes(),
+        env_example.read_bytes(),
+    ) == before
+
+
+def test_init_rerun_adds_template_to_older_project(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    command = [
+        "init",
+        "--project-root",
+        str(tmp_path),
+        "--project-name",
+        "Catalog",
+        "--suite",
+        "core",
+    ]
+    assert main(command) == 0
+    capsys.readouterr()
+    config = tmp_path / "m3.toml"
+    starter = tmp_path / "tests" / "test_m3_starter.py"
+    before = (config.read_bytes(), starter.read_bytes())
+    (tmp_path / ".env.example").unlink()
+
+    assert main(command) == 0
+    output = capsys.readouterr().out
+    assert "already initialized" in output
+    assert "Created" in output and ".env.example" in output
+    assert "M3_JUDGE_API_KEY=\n" in (tmp_path / ".env.example").read_text()
     assert (config.read_bytes(), starter.read_bytes()) == before
+
+
+def test_init_preserves_existing_env_example(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env_example = tmp_path / ".env.example"
+    env_example.write_text("PROJECT_KEY=keep-me\n", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text("PROJECT_KEY=private-value\n", encoding="utf-8")
+    assert (
+        main(
+            [
+                "init",
+                "--project-root",
+                str(tmp_path),
+                "--project-name",
+                "Catalog",
+                "--suite",
+                "core",
+            ]
+        )
+        == 0
+    )
+    assert env_example.read_text(encoding="utf-8") == "PROJECT_KEY=keep-me\n"
+    assert env_file.read_text(encoding="utf-8") == "PROJECT_KEY=private-value\n"
+    assert "Created" in capsys.readouterr().out
+    assert (tmp_path / "m3.toml").is_file()
 
 
 def test_init_prompts_for_missing_fields_in_order(
@@ -145,6 +216,7 @@ def test_init_rejects_partial_state_without_overwriting(
     assert "partial initialization" in capsys.readouterr().err
     assert existing.read_text(encoding="utf-8") == "existing test\n"
     assert not (tmp_path / "m3.toml").exists()
+    assert not (tmp_path / ".env.example").exists()
 
 
 def test_init_noninteractive_missing_name_is_usage_error(tmp_path: Path) -> None:

@@ -5,8 +5,11 @@
 `m3 setup` installs judge support in the project environment. Rerun setup to
 add it to an environment created by an older CLI.
 
-Put the judge key in `.env` as `M3_JUDGE_API_KEY`. For an OpenCode agent, the
-same file can also hold `OPENCODE_API_KEY`:
+`m3 init` creates `.env.example` with blank agent and judge key names. Copy it
+to `.env` if that file is absent, or add the needed names to your existing
+`.env`. Keep `.env` out of version control. Put the judge key in `.env` as
+`M3_JUDGE_API_KEY`. For an OpenCode agent, the same file can also hold
+`OPENCODE_API_KEY`:
 
 ```dotenv
 OPENCODE_API_KEY=agent-secret

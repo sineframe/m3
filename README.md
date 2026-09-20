@@ -120,8 +120,9 @@ Start with the [CLI installation guide](cli/README.md#install), then follow the
 [project setup and testing guide](cli/README.md#set-up-a-project).
 
 From the project root, run `m3 init` to answer the project and suite name
-questions and create a skipped starter test. Then run `m3 setup`, fill in
-the test, and use `m3 test` to record its result.
+questions and create a skipped starter test and `.env.example` key template.
+Then run `m3 setup`, fill in the test, and use `m3 test --env-file .env` when
+the test needs provider keys.
 
 CLI-managed runs use `.m3/executions.sqlite` by default and write an
 agent-readable report to `.m3/reports/<run-id>/feedback.json`. The CLI
