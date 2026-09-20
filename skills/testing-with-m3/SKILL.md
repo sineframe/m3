@@ -133,7 +133,9 @@ the keys for the selected provider or judge from an authorized source, and
 run `m3 test --env-file .env ...`; the CLI never auto-loads `.env`. A supported
 native harness login can also authenticate without a key. Keep `.env`
 ignored, use names rather than values in flags, and never print or place
-secrets in tests or reports.
+secrets in tests or reports. CLI-run tests receive credentials through the
+selected child environment; configuring the app's `Settings` separately is
+unnecessary for this workflow.
 
 When a run fails, check collection and environment first, then server startup
 or connection, harness/provider setup, operation assertions, evaluator status,
