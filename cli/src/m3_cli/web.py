@@ -8,7 +8,7 @@ import re
 import sys
 from importlib import resources
 from pathlib import Path
-from typing import NoReturn, cast
+from typing import NoReturn
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -60,16 +60,13 @@ def create_web_app(
 ) -> FastAPI:
     """Create the full application and mount the production SPA last."""
 
-    from m3_app.api import create_app  # type: ignore[import-untyped]
-    from m3_app.settings import Settings  # type: ignore[import-untyped]
+    from m3_app.api import create_app
+    from m3_app.settings import Settings
 
     root = ui_directory(ui_dir)
-    application = cast(
-        FastAPI,
-        create_app(
-            Settings(database_path=str(Path(database).absolute())),
-            v2_embedded_worker=True,
-        ),
+    application = create_app(
+        Settings(database_path=str(Path(database).absolute())),
+        v2_embedded_worker=True,
     )
     application.mount(
         "/assets", StaticFiles(directory=str(root / "assets")), name="assets"

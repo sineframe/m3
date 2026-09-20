@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -63,6 +63,46 @@ class TestResultSummary:
     description: str
     outcome: str
     duration_seconds: float | None
+
+
+def project_test_results(
+    records: Iterable[Mapping[str, object]], execution_id: str
+) -> tuple[TestResultSummary, ...]:
+    """Project persisted pytest attempts exactly as the v2 app does."""
+    summaries: list[TestResultSummary] = []
+    for record in records:
+        attempt_id = record.get("attempt_id")
+        node_id = record.get("node_id")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            continue
+        if not isinstance(node_id, str) or not node_id:
+            continue
+        execution_ids = record.get("execution_ids", ())
+        if not isinstance(execution_ids, (list, tuple, set)):
+            continue
+        if execution_id not in {str(value) for value in execution_ids}:
+            continue
+        raw_duration = record.get("duration_seconds")
+        duration = (
+            float(raw_duration)
+            if isinstance(raw_duration, (int, float))
+            and not isinstance(raw_duration, bool)
+            and math.isfinite(raw_duration)
+            else None
+        )
+        raw_description = record.get("description")
+        raw_outcome = record.get("outcome")
+        summaries.append(
+            TestResultSummary(
+                attempt_id=attempt_id,
+                node_id=node_id,
+                description=raw_description if isinstance(raw_description, str) else "",
+                outcome=raw_outcome if isinstance(raw_outcome, str) else "",
+                duration_seconds=duration,
+            )
+        )
+    summaries.sort(key=lambda item: (item.node_id, item.attempt_id))
+    return tuple(summaries)
 
 
 class AppExecutionStore(Protocol):
@@ -320,42 +360,7 @@ class AppExecutionService:
             raise AppExecutionError(
                 "execution_data_unavailable", "execution data is unavailable"
             ) from exc
-        summaries: list[TestResultSummary] = []
-        for record in records:
-            attempt_id = record.get("attempt_id")
-            node_id = record.get("node_id")
-            if not isinstance(attempt_id, str) or not attempt_id:
-                continue
-            if not isinstance(node_id, str) or not node_id:
-                continue
-            execution_ids = record.get("execution_ids", ())
-            if not isinstance(execution_ids, (list, tuple, set)):
-                continue
-            if identifier.root not in {str(value) for value in execution_ids}:
-                continue
-            raw_duration = record.get("duration_seconds")
-            duration = (
-                float(raw_duration)
-                if isinstance(raw_duration, (int, float))
-                and not isinstance(raw_duration, bool)
-                and math.isfinite(raw_duration)
-                else None
-            )
-            raw_description = record.get("description")
-            raw_outcome = record.get("outcome")
-            summaries.append(
-                TestResultSummary(
-                    attempt_id=attempt_id,
-                    node_id=node_id,
-                    description=raw_description
-                    if isinstance(raw_description, str)
-                    else "",
-                    outcome=raw_outcome if isinstance(raw_outcome, str) else "",
-                    duration_seconds=duration,
-                )
-            )
-        summaries.sort(key=lambda item: (item.node_id, item.attempt_id))
-        return tuple(summaries)
+        return project_test_results(records, identifier.root)
 
     def cancel(
         self, execution_id: ExecutionId | str, reason: str | None = None

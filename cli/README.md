@@ -306,6 +306,16 @@ Each run also writes an agent-readable JSON bundle to
 read-only comparison. The JSON is deterministic for the saved run, and normal
 pytest results remain visible alongside the M3 run ID and feedback path.
 
+### Control-plane upload status
+
+`m3 test` only writes local results. It never uploads a report, even when
+`M3_CONTROL_PLANE_URL` or `M3_CONTROL_PLANE_TOKEN` is present. There is no
+`m3 upload` command yet. The CLI package contains a report uploader module
+for a future explicit command; it is not registered with command dispatch.
+That module prepares the same public v2 responses as the local app, sends the
+feedback summary and complete current-run execution reports, then publishes
+the run. The transport contract is documented in the control-plane repository.
+
 ### `--ui`
 
 Add `--ui` to keep a local viewer open after pytest finishes:

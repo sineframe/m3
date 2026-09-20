@@ -37,6 +37,7 @@ from m3 import (
     RawEvidence,
     TraceView,
 )
+from m3_app.api.report_payloads import build_execution_envelope, build_report_envelope
 from m3_app.api.wire import (
     internalize_request,
     neutralize_openapi,
@@ -1115,10 +1116,13 @@ def install_v2(
         service: AppExecutionService = Depends(get_service),
     ) -> V2ExecutionEnvelope:
         report = service.create(body.spec)
-        return V2ExecutionEnvelope.from_report(
-            report,
-            service.specification(report.snapshot.execution_id),
-            project_name(service, report),
+        return V2ExecutionEnvelope.model_validate(
+            build_execution_envelope(
+                report.snapshot,
+                service.specification(report.snapshot.execution_id),
+                project_name(service, report),
+                public=False,
+            )
         )
 
     @router.get("", response_model=V2ExecutionPageEnvelope)
@@ -1186,10 +1190,13 @@ def install_v2(
         service: AppExecutionService = Depends(get_service),
     ) -> V2ExecutionEnvelope:
         report = service.get(execution_id)
-        return V2ExecutionEnvelope.from_report(
-            report,
-            service.specification(report.snapshot.execution_id),
-            project_name(service, report),
+        return V2ExecutionEnvelope.model_validate(
+            build_execution_envelope(
+                report.snapshot,
+                service.specification(report.snapshot.execution_id),
+                project_name(service, report),
+                public=False,
+            )
         )
 
     @router.post("/{execution_id}/cancel", response_model=V2ExecutionEnvelope)
@@ -1199,10 +1206,13 @@ def install_v2(
         service: AppExecutionService = Depends(get_service),
     ) -> V2ExecutionEnvelope:
         report = service.cancel(execution_id, reason)
-        return V2ExecutionEnvelope.from_report(
-            report,
-            service.specification(report.snapshot.execution_id),
-            project_name(service, report),
+        return V2ExecutionEnvelope.model_validate(
+            build_execution_envelope(
+                report.snapshot,
+                service.specification(report.snapshot.execution_id),
+                project_name(service, report),
+                public=False,
+            )
         )
 
     @router.delete("/{execution_id}", response_model=V2DeletedEnvelope)
@@ -1229,17 +1239,24 @@ def install_v2(
         trace = service.trace_view(execution_id)
         spec = service.specification(execution_id)
         test_results = tuple(
-            V2TestResultSummary(
-                attempt_id=item.attempt_id,
-                node_id=item.node_id,
-                description=item.description,
-                outcome=item.outcome,
-                duration_seconds=item.duration_seconds,
-            )
+            {
+                "attempt_id": item.attempt_id,
+                "node_id": item.node_id,
+                "description": item.description,
+                "outcome": item.outcome,
+                "duration_seconds": item.duration_seconds,
+            }
             for item in service.test_results(report)
         )
-        return V2ExecutionReportEnvelope.from_values(
-            report.snapshot.execution_id, spec, report, trace, test_results
+        return V2ExecutionReportEnvelope.model_validate(
+            build_report_envelope(
+                report.snapshot.execution_id,
+                spec,
+                report,
+                trace,
+                test_results,
+                public=False,
+            )
         )
 
     application.include_router(router)

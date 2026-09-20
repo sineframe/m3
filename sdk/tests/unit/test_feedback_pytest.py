@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from m3.storage import SQLiteExecutionStore
 
 
@@ -65,6 +67,22 @@ def test_printed_scores_are_diagnostics_not_evaluations(tmp_path: Path) -> None:
         report = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
         assert json.loads(report.read_text(encoding="utf-8"))["run_id"] == run_id
         assert record["capture"]["mode"] == "fd"
+    finally:
+        store.close()
+
+
+def test_control_plane_environment_does_not_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", "https://unreachable.invalid")
+    monkeypatch.setenv("M3_CONTROL_PLANE_TOKEN", "m3pat_not-used")
+    result, database = _run(tmp_path, "def test_local_only():\n    assert True\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "control-plane" not in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        assert (tmp_path / ".m3" / "reports" / run_id / "feedback.json").is_file()
+        assert not (tmp_path / ".m3" / "reports" / run_id / "control-plane").exists()
     finally:
         store.close()
 
