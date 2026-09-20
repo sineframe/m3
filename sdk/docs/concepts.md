@@ -265,9 +265,12 @@ The SQLite execution store currently persists:
 - redacted artifacts, blob metadata, and raw-evidence references;
 - worker leases, commands, and cancellation state used by persistent runs.
 
-It does not currently persist pytest collection/session details, pytest item
-pass/fail/skip outcomes, ordinary Python assertion results, or aggregate
-matrix/trial summary rows. Use `store.aggregate_evaluations(...)` for rates.
+With the M3 pytest plugin active, the run store also persists pytest
+collection/session details and pytest item pass/fail/skip outcomes in internal
+run records. M3 matcher checks are saved as execution evaluations. Ordinary
+Python assertions do not become individual evaluations, and aggregate
+matrix/trial summary rows are not persisted. Use
+`store.aggregate_evaluations(...)` for rates.
 Evaluations created through `kit.evaluate()` are
 saved when the kit explicitly receives `store=SQLiteExecutionStore(path)`
 or pytest is run with `--results-db PATH`; otherwise they remain in

@@ -32,6 +32,7 @@ def test_answer(m3_kit):
     result = m3_kit.judge_response(
         name="answer.correctness.v1", input="What is 2 + 3?",
         actual="The answer is 5.", expected="The answer is 5.", judge=judge,
+        required=True,
     )
     assert result.status.value == "passed"
 ```
@@ -48,13 +49,22 @@ Use an ordinary marked pytest test; the CLI supplies harness and model:
 ```python
 import pytest
 from m3 import expect
+from m3.types import PermissionPolicy
 
 @pytest.mark.m3
 def test_shipping(agent, shipping_server):
-    result = agent.run("Get a local quote", server=shipping_server)
+    result = agent.run(
+        "Use this shipping MCP server to quote a 2 kg parcel in its local zone.",
+        server=shipping_server,
+        permission_policy=PermissionPolicy(mode="allow"),
+    )
     expect(result).to_have_tool_call("shipping_quote", server=shipping_server.name,
                                      status="success")
 ```
+
+The native Codex harness asks for approval before an MCP tool call. Use
+`PermissionPolicy(mode="allow")` only for a trusted test server and scoped
+workspace; the default policy denies tool approvals.
 
 Provider credentials are `OPENCODE_API_KEY`, `OPENAI_API_KEY`, or
 `ANTHROPIC_API_KEY` in the process environment. Use `--env-file .env` to load

@@ -1,5 +1,23 @@
 # M3 CLI runner
 
+The public CLI has four subcommands in the tested release. Use `m3 --help`
+and `m3 COMMAND --help` for exact options; `m3 --version` and separate
+`m3 report`/`m3 compare` commands are unavailable.
+
+| Command | Use |
+|---|---|
+| `m3 init` | Create `m3.toml`, a skipped pytest starter, and `.env.example` |
+| `m3 setup` | Install the matching SDK into the selected project Python |
+| `m3 doctor` | Check project setup, optionally with `--json` or `--require` |
+| `m3 test` | Run pytest, save feedback, and optionally compare with `--baseline` or open `--ui` |
+
+Run `init` before expecting a complete project result from `doctor`. If a
+shell already has `VIRTUAL_ENV` or `CONDA_PREFIX` set, `setup` selects that
+environment before a project `.venv`. Check `m3 doctor --json` after setup;
+use `--python PATH` for an intentional override. For a reproducible project,
+declare the SDK release in its dependency manifest too: `m3 setup` does not
+edit the manifest or lockfile.
+
 Use `m3 test --env-file .env --harness opencode=opencode/big-pickle
 --harness codex=gpt-5.6-sol --trials 2 -- tests/test_shipping.py`. Known provider
 variable names are `OPENCODE_API_KEY`, `OPENAI_API_KEY`, and

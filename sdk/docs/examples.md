@@ -3,6 +3,10 @@
 Agent tests use `@pytest.mark.m3`; select models with CLI `--harness` and
 repeat independent executions with `--trials N`. Use `kit.agents(...)` in
 scripts and notebooks, and `ToolMatrix` for deterministic direct calls.
+For a trusted native Codex test server, pass
+`permission_policy=PermissionPolicy(mode="allow")` to `agent.run(...)` or
+`agent.session(...)` so Codex's MCP tool approval can be answered. The default
+permission policy denies it.
 
 These are ordinary pytest tests using public M3 APIs. In your project,
 run tests with `m3 test -- tests` and add `--ui` before `--` to inspect
