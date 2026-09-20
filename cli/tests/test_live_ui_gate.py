@@ -68,14 +68,8 @@ def _report() -> dict[str, Any]:
 
 
 def test_parse_ui_links_preserves_the_complete_encoded_run_id() -> None:
-    output = "\n".join(
-        (
-            "M3 UI: http://127.0.0.1:8123/history",
-            "Run: http://127.0.0.1:8123/playground/run/run%20id%2Fpart",
-        )
-    )
-    history, direct, run_id = _GATE.parse_ui_links(output, "http://127.0.0.1:8123")
-    assert history.endswith("/history")
+    output = "Run: http://127.0.0.1:8123/reports/runs/run%20id%2Fpart"
+    direct, run_id = _GATE.parse_ui_links(output, "http://127.0.0.1:8123")
     assert direct[0].endswith("run%20id%2Fpart")
     assert run_id[0] == "run id/part"
 
@@ -90,18 +84,15 @@ def test_execution_report_url_quotes_run_id_path_syntax() -> None:
     "output, message",
     [
         (
-            "M3 UI: http://127.0.0.1:8124/history\n"
-            "Run: http://127.0.0.1:8124/playground/run/run-1",
-            "history link",
-        ),
-        (
-            "M3 UI: http://127.0.0.1:8123/history\n"
-            "Run: http://127.0.0.1:8124/playground/run/run-1",
+            "Run: http://127.0.0.1:8124/reports/runs/run-1",
             "selected origin",
         ),
         (
-            "M3 UI: http://127.0.0.1:8123/history\n"
-            "Run: http://127.0.0.1:8123/playground/run/run-1?x=1",
+            "Run: http://127.0.0.1:8123/playground/run/run-1",
+            "reports run route",
+        ),
+        (
+            "Run: http://127.0.0.1:8123/reports/runs/run-1?x=1",
             "selected origin",
         ),
     ],
@@ -343,15 +334,14 @@ def test_cli_command_rejects_unknown_live_provider() -> None:
         )
 
 
-def test_parse_ui_links_accepts_multiple_distinct_executions() -> None:
+def test_parse_ui_links_accepts_multiple_distinct_report_runs() -> None:
     output = "\n".join(
         (
-            "M3 UI: http://127.0.0.1:8123/history",
-            "Run: http://127.0.0.1:8123/playground/run/opencode-run",
-            "Run: http://127.0.0.1:8123/playground/run/codex-run",
+            "Run: http://127.0.0.1:8123/reports/runs/opencode-run",
+            "Run: http://127.0.0.1:8123/reports/runs/codex-run",
         )
     )
-    _history, _direct, run_ids = _GATE.parse_ui_links(output, "http://127.0.0.1:8123")
+    _direct, run_ids = _GATE.parse_ui_links(output, "http://127.0.0.1:8123")
     assert run_ids == ("opencode-run", "codex-run")
 
 

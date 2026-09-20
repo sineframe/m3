@@ -745,14 +745,9 @@ def interrupt(child: Child | None) -> None:
         terminate(child)
 
 
-def parse_ui_links(
-    output: str, origin: str
-) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
-    """Return history URL, direct URL, and decoded run ID from CLI output."""
+def parse_ui_links(output: str, origin: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return direct report URLs and decoded run IDs from CLI output."""
 
-    history = re.findall(r"(?m)^M3 UI: (https?://[^\s]+)$", output)
-    if len(history) != 1 or history[0] != f"{origin}/history":
-        raise GateFailure("CLI UI history link does not match the selected origin")
     direct = re.findall(r"(?m)^Run: (https?://[^\s]+)$", output)
     if not direct:
         raise GateFailure("CLI UI process did not print a direct run link")
@@ -773,15 +768,15 @@ def parse_ui_links(
         raise GateFailure("CLI direct link does not match the selected origin")
     for link in direct:
         parsed = urlsplit(link)
-        prefix = "/playground/run/"
+        prefix = "/reports/runs/"
         if not parsed.path.startswith(prefix):
-            raise GateFailure("CLI direct link does not use the playground run route")
+            raise GateFailure("CLI direct link does not use the reports run route")
         encoded_id = parsed.path[len(prefix) :]
         run_id = unquote(encoded_id)
         if not encoded_id or not run_id:
             raise GateFailure("CLI direct link has an empty run ID")
         run_ids.append(run_id)
-    return history[0], tuple(direct), tuple(run_ids)
+    return tuple(direct), tuple(run_ids)
 
 
 def _http(url: str) -> tuple[int, str, bytes]:
@@ -828,7 +823,7 @@ def _assert_execution_in_history(payload: Any, run_id: str) -> None:
     snapshot = item.get("snapshot", item)
     execution_id = snapshot.get("execution_id") if isinstance(snapshot, dict) else None
     if execution_id != run_id:
-        raise GateFailure("history execution ID does not match the CLI direct link")
+        raise GateFailure("listed execution ID does not match the requested execution")
 
 
 def assert_sqlite_persistence(
@@ -931,6 +926,20 @@ def _pytest_run_id(database: Path, execution_id: str) -> str:
     if row is None or not row[0]:
         raise GateFailure("live execution is missing its pytest run mapping")
     return str(row[0])
+
+
+def _execution_ids_for_run(database: Path, run_id: str) -> tuple[str, ...]:
+    try:
+        with sqlite3.connect(
+            f"{database.resolve().as_uri()}?mode=ro", uri=True
+        ) as connection:
+            rows = connection.execute(
+                "SELECT id FROM v2_executions WHERE run_id=? ORDER BY created_at,id",
+                (run_id,),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise GateFailure("live execution database could not be inspected") from exc
+    return tuple(str(row[0]) for row in rows)
 
 
 def _unwrap(value: Any) -> Any:
@@ -1088,16 +1097,16 @@ def _check_browser_prerequisites(ui_dir: Path, env: Mapping[str, str]) -> Path:
 
 def _wait_for_links(
     child: Child, origin: str
-) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     deadline = time.monotonic() + READY_TIMEOUT
     while time.monotonic() < deadline:
         output = child.text()
-        if "M3 UI:" in output and re.search(r"(?m)^Run: https?://", output):
+        if re.search(r"(?m)^Run: https?://", output):
             return parse_ui_links(output, origin)
         if not child.alive():
             break
         time.sleep(0.2)
-    raise GateFailure("CLI did not print its history and direct run links")
+    raise GateFailure("CLI did not print a direct report run link")
 
 
 def check(
@@ -1307,20 +1316,38 @@ def check(
         )
         child = Child(command, repo, live_env)
         origin = f"http://127.0.0.1:{port}"
-        history_url, direct_urls, run_ids = _wait_for_links(child, origin)
-        if len(run_ids) != len(providers) or len(set(run_ids)) != len(run_ids):
+        direct_urls, run_ids = _wait_for_links(child, origin)
+        if len(run_ids) != 1:
+            raise GateFailure("live gate did not produce one pytest report run")
+        feedback_run_id = run_ids[0]
+        execution_ids = _execution_ids_for_run(database, feedback_run_id)
+        if len(execution_ids) != len(providers) or len(set(execution_ids)) != len(
+            execution_ids
+        ):
             raise GateFailure(
                 "live gate did not produce one distinct execution for each provider"
             )
         history_payload = _json_get(f"{origin}/api/v2/executions")
         expected_models = {"opencode": model, "codex": codex_model}
         reports: dict[str, Any] = {}
-        for index, run_id in enumerate(run_ids):
-            _assert_execution_in_history(history_payload, run_id)
-            expected_model = expected_models[providers[index]]
-            report_payload = _json_get(execution_report_url(origin, run_id))
-            assert_report(report_payload, expected_model, run_id, providers[index])
-            reports[run_id] = report_payload
+        seen_providers: set[str] = set()
+        for execution_id in execution_ids:
+            _assert_execution_in_history(history_payload, execution_id)
+            report_payload = _json_get(execution_report_url(origin, execution_id))
+            trace = (
+                report_payload.get("trace", {})
+                if isinstance(report_payload, dict)
+                else {}
+            )
+            runtime = trace.get("runtime", {}) if isinstance(trace, dict) else {}
+            provider = runtime.get("kind") if isinstance(runtime, dict) else None
+            if provider not in providers or provider in seen_providers:
+                raise GateFailure("live execution provider is missing or duplicated")
+            assert_report(
+                report_payload, expected_models[provider], execution_id, provider
+            )
+            seen_providers.add(provider)
+            reports[execution_id] = report_payload
         aggregate = _post_json(
             f"{origin}/api/v2/evaluations/aggregate",
             {
@@ -1329,7 +1356,8 @@ def check(
             },
         )
         assert_aggregate(aggregate, providers, expected_models)
-        feedback_run_id = _pytest_run_id(database, run_ids[0])
+        if _pytest_run_id(database, execution_ids[0]) != feedback_run_id:
+            raise GateFailure("CLI report link does not match the persisted pytest run")
         feedback = _json_get(
             f"{origin}/api/v2/feedback/{quote(feedback_run_id, safe='')}"
         )
@@ -1346,14 +1374,14 @@ def check(
             for item in feedback_body["executions"]
             if isinstance(item, dict) and item.get("execution_id")
         }
-        if not set(run_ids).issubset(feedback_execution_ids):
+        if not set(execution_ids).issubset(feedback_execution_ids):
             raise GateFailure("feedback API response is missing a selected execution")
         secrets = provider_secret_values(providers, original_env, dotenv_file_values)
         for run_id, payload in reports.items():
             _assert_secret_absent(payload, secrets, f"API report {run_id}")
         _assert_secret_absent(aggregate, secrets, "API aggregate")
         _assert_secret_absent(feedback, secrets, "API feedback")
-        for route in (history_url, *direct_urls):
+        for route in direct_urls:
             status, content_type, body = _http(route)
             if (
                 status != 200
@@ -1362,7 +1390,7 @@ def check(
             ):
                 raise GateFailure("CLI UI route did not return the bundled SPA")
         ui_probe = _write_ui_probe(temp_path)
-        for run_id in run_ids:
+        for run_id in execution_ids:
             run_playwright(
                 playwright,
                 selected_ui,
@@ -1378,7 +1406,7 @@ def check(
             raise GateFailure(
                 f"CLI did not preserve pytest success (exit {child.process.returncode})"
             )
-        for run_id in run_ids:
+        for run_id in execution_ids:
             assert_sqlite_persistence(database, run_id)
             raw_database = database.read_bytes().decode("utf-8", errors="ignore")
             _assert_secret_absent(raw_database, secrets, "SQLite execution store")

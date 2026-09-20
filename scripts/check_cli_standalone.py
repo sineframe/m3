@@ -531,12 +531,6 @@ def _free_port() -> int:
 def _parse_ui_links(output: str, origin: str, expected_id: str) -> str:
     """Validate CLI link output and return the direct run URL."""
 
-    history_matches = re.findall(r"(?m)^M3 UI: (https?://[^\s]+)$", output)
-    expected_history = f"{origin}/history"
-    if len(history_matches) != 1 or history_matches[0] != expected_history:
-        raise StandaloneGateError(
-            "CLI UI history link does not match the selected loopback origin"
-        )
     direct_matches = re.findall(r"(?m)^Run: (https?://[^\s]+)$", output)
     if not direct_matches:
         raise StandaloneGateError("CLI UI process did not print a direct run link")
@@ -557,11 +551,9 @@ def _parse_ui_links(output: str, origin: str, expected_id: str) -> str:
         raise StandaloneGateError(
             "CLI direct link does not match the selected loopback origin"
         )
-    prefix = "/playground/run/"
+    prefix = "/reports/runs/"
     if not parsed.path.startswith(prefix):
-        raise StandaloneGateError(
-            "CLI direct link does not use the playground run route"
-        )
+        raise StandaloneGateError("CLI direct link does not use the reports run route")
     encoded_suffix = parsed.path[len(prefix) :]
     if not encoded_suffix or unquote(encoded_suffix) != expected_id:
         raise StandaloneGateError(
@@ -642,6 +634,9 @@ def _run_ui_gate(
     verdict_run_id: str,
     ui_dir: Path | None = None,
 ) -> None:
+    existing_manifest_ids = set(
+        _stored_test_run_ids(project_python, repo, database, env)
+    )
     command = [
         str(executable),
         "test",
@@ -678,24 +673,20 @@ def _run_ui_gate(
     deadline = time.monotonic() + _UI_TIMEOUT
     while time.monotonic() < deadline:
         text = output.text()
-        if "M3 UI:" in text and re.search(
-            r"(?m)^Run: http://127\.0\.0\.1:[0-9]+/playground/run/", text
-        ):
+        if re.search(r"(?m)^Run: http://127\.0\.0\.1:[0-9]+/reports/runs/", text):
             break
         if process.poll() is not None:
             break
         time.sleep(0.1)
     else:
         _terminate(process)
-        raise StandaloneGateError(
-            "CLI UI process did not print its history and run links"
-        )
+        raise StandaloneGateError("CLI UI process did not print a report run link")
 
     text = output.text()
-    if "M3 UI:" not in text:
+    if "Run: " not in text:
         _terminate(process)
         raise StandaloneGateError(
-            f"CLI UI process exited before printing links\n{_safe_diagnostics(text, env)}"
+            f"CLI UI process exited before printing a report link\n{_safe_diagnostics(text, env)}"
         )
     # The UI command prints links as soon as the server is ready; its pytest
     # child can still be committing the execution when those links appear.
@@ -713,9 +704,18 @@ def _run_ui_gate(
             "UI test did not create exactly one additional stored run"
         )
     expected_id = new_runs[0]
+    new_manifest_ids = (
+        set(_stored_test_run_ids(project_python, repo, database, env))
+        - existing_manifest_ids
+    )
+    if len(new_manifest_ids) != 1:
+        _terminate(process)
+        raise StandaloneGateError(
+            "UI test did not create exactly one test run manifest"
+        )
     origin = f"http://127.0.0.1:{port}"
     try:
-        direct_url = _parse_ui_links(text, origin, expected_id)
+        direct_url = _parse_ui_links(text, origin, new_manifest_ids.pop())
     except StandaloneGateError:
         _terminate(process)
         raise

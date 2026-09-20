@@ -127,9 +127,8 @@ def test_ui_server_prints_links_and_returns_original_failure(
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 1, runs, ()) == 1
     output = capsys.readouterr().out
     assert output.splitlines() == [
-        "M3 UI: http://127.0.0.1:8123/history",
-        "Run: http://127.0.0.1:8123/playground/run/run%20id%2F1",
-        "Run: http://127.0.0.1:8123/playground/run/run-two",
+        "Run: http://127.0.0.1:8123/reports/runs/run%20id%2F1",
+        "Run: http://127.0.0.1:8123/reports/runs/run-two",
     ]
 
 
@@ -151,10 +150,7 @@ def test_ui_server_zero_runs_prints_message(
         lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 0, (), ()) == 0
-    assert capsys.readouterr().out.splitlines() == [
-        "M3 UI: http://127.0.0.1:8123/history",
-        "No new stored runs.",
-    ]
+    assert capsys.readouterr().out.splitlines() == ["No new stored runs."]
 
 
 @pytest.mark.parametrize("exit_code", [2, 130, 143])
@@ -270,30 +266,20 @@ def test_find_new_runs_excludes_existing_and_sorts_stably() -> None:
     )
 
 
-def test_list_stored_runs_reads_all_pages_and_uses_visible_store_results(
+def test_list_stored_runs_uses_manifests_even_without_executions(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    class Page:
-        def __init__(self, items: tuple[object, ...], total: int) -> None:
-            self.items = items
-            self.total = total
-
-    class Snapshot:
-        def __init__(self, run_id: str, second: int) -> None:
-            self.execution_id = run_id
-            self.created_at = datetime.fromtimestamp(second, tz=timezone.utc)
-
     class Store:
         def __init__(self, _database: Path) -> None:
-            self.calls: list[tuple[int, int]] = []
+            self.calls = 0
 
-        def list_executions(self, *, limit: int, offset: int) -> Page:
-            self.calls.append((limit, offset))
-            if offset == 0:
-                return Page(
-                    tuple(Snapshot(f"run-{index}", index) for index in range(100)), 102
-                )
-            return Page((Snapshot("run-100", 100), Snapshot("run-101", 101)), 102)
+        def list_test_runs(self) -> tuple[dict[str, str], ...]:
+            self.calls += 1
+            return (
+                {"run_id": "pytest-run", "created_at": "2026-09-20T12:00:00Z"},
+                {"run_id": "bad", "created_at": "not a timestamp"},
+                {"run_id": "naive", "created_at": "2026-09-20T12:00:00"},
+            )
 
         def close(self) -> None:
             pass
@@ -304,8 +290,12 @@ def test_list_stored_runs_reads_all_pages_and_uses_visible_store_results(
     )
     result = supervisor.list_stored_runs(tmp_path / "runs.sqlite")
     assert result.warning is None
-    assert len(result.runs) == 102
-    assert store.calls == [(100, 0), (100, 100)]
+    assert result.runs == (
+        supervisor.StoredRun(
+            "pytest-run", datetime(2026, 9, 20, 12, tzinfo=timezone.utc)
+        ),
+    )
+    assert store.calls == 1
 
 
 def test_list_stored_runs_returns_safe_warning_for_unreadable_database(
@@ -323,12 +313,9 @@ def test_list_stored_runs_returns_safe_warning_for_unreadable_database(
     assert str(secret_path) not in result.warning
 
 
-def test_run_urls_encode_every_path_separator_character() -> None:
-    urls = supervisor.build_run_urls("run id/with?unsafe#chars", 8123)
-    assert urls.history == "http://127.0.0.1:8123/history"
-    assert (
-        urls.direct
-        == "http://127.0.0.1:8123/playground/run/run%20id%2Fwith%3Funsafe%23chars"
+def test_run_url_encodes_every_path_separator_character() -> None:
+    assert supervisor.build_run_url("run id/with?unsafe#chars", 8123) == (
+        "http://127.0.0.1:8123/reports/runs/run%20id%2Fwith%3Funsafe%23chars"
     )
 
 
@@ -866,7 +853,7 @@ def test_plain_test_does_not_scan_results_database(
     assert supervisor.run_test(project_root=tmp_path) == 0
 
 
-def test_real_store_listing_excludes_deleted_runs(tmp_path: Path) -> None:
+def test_real_store_listing_uses_test_run_ids(tmp_path: Path) -> None:
     from m3.storage import SQLiteExecutionStore
     from m3.types import (
         ExecutionId,
@@ -885,12 +872,15 @@ def test_real_store_listing_excludes_deleted_runs(tmp_path: Path) -> None:
             finished_at=datetime.now(timezone.utc),
         )
     )
-    assert [run.run_id for run in supervisor.list_stored_runs(database).runs] == [
-        "visible"
-    ]
-    store.delete_execution(ExecutionId("visible"))
-    store.close()
     assert supervisor.list_stored_runs(database).runs == ()
+    store.save_test_run(
+        "pytest-run",
+        {"run_id": "pytest-run", "created_at": "2026-09-20T12:00:00Z"},
+    )
+    store.close()
+    assert [run.run_id for run in supervisor.list_stored_runs(database).runs] == [
+        "pytest-run"
+    ]
 
 
 @pytest.mark.parametrize("code", [0, 1, 5, 17])

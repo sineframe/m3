@@ -331,19 +331,18 @@ m3 test --ui
 
 This starts one FastAPI server and one loopback port. The production UI is
 bundled inside the CLI wheel; Node.js, npm, and Vite are not run at runtime.
-The command prints links like these:
+The command prints report links like this:
 
 ```text
-M3 UI: http://127.0.0.1:8000/history
-Run: http://127.0.0.1:8000/playground/run/<runId>
+Run: http://127.0.0.1:8000/reports/runs/<runId>
 ```
 
-The `<runId>` in the direct link is the same execution ID stored by the SDK
-and returned by `/api/v2/executions`. The history and direct-run pages come
-from that same origin. The CLI stays open so the browser can load results;
-press Ctrl+C to stop it. A normal pytest failure still opens the UI and keeps
-that pytest exit code. Collection/configuration errors, interruption, server
-startup errors, and invalid configuration return an operational failure.
+The `<runId>` in the direct link is the pytest run ID stored in the test-run
+manifest and returned by `/api/v2/feedback/<runId>`. The CLI stays open so the
+browser can load results; press Ctrl+C to stop it. A normal pytest failure
+still opens the UI and keeps that pytest exit code. Collection/configuration
+errors, interruption, server startup errors, and invalid configuration return
+an operational failure.
 
 When stdout is an interactive terminal, the SDK plugin shows a compact test
 progress bar. It is disabled for non-TTY output and for verbose pytest modes,

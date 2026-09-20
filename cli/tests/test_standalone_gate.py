@@ -96,18 +96,13 @@ def test_redact_diagnostics_hides_secret_like_values() -> None:
 
 
 def test_parse_ui_links_uses_the_complete_encoded_run_suffix() -> None:
-    output = "\n".join(
-        (
-            "M3 UI: http://127.0.0.1:8123/history",
-            "Run: http://127.0.0.1:8123/playground/run/run%20id%2Fpart",
-        )
-    )
+    output = "Run: http://127.0.0.1:8123/reports/runs/run%20id%2Fpart"
     assert _GATE._parse_ui_links(
         output, "http://127.0.0.1:8123", "run id/part"
     ).endswith("run%20id%2Fpart")
-    with pytest.raises(_GATE.StandaloneGateError, match="history link"):
+    with pytest.raises(_GATE.StandaloneGateError, match="selected loopback origin"):
         _GATE._parse_ui_links(
-            output.replace("8123/history", "8124/history"),
+            output.replace("8123/reports", "8124/reports"),
             "http://127.0.0.1:8123",
             "run id/part",
         )

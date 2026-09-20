@@ -115,12 +115,6 @@ class TestRunResult:
     warnings: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
-class RunURLs:
-    history: str
-    direct: str
-
-
 def _absolute_path(value: str | os.PathLike[str]) -> Path:
     """Make a path absolute without resolving a venv's Python symlink."""
 
@@ -367,9 +361,6 @@ def _test_environment(env_file: str | os.PathLike[str] | None) -> dict[str, str]
     return child
 
 
-_STORE_PAGE_SIZE = 100
-
-
 def _execution_store_type() -> Any:
     """Load the optional SQLite store only when run discovery is requested."""
 
@@ -379,31 +370,28 @@ def _execution_store_type() -> Any:
 
 
 def list_stored_runs(database: Path) -> StoredRuns:
-    """List all visible executions through the store's public paging API."""
+    """List pytest run manifests, whose IDs identify feedback reports."""
 
     store: Any | None = None
     try:
         store = _execution_store_type()(database)
         runs: list[StoredRun] = []
-        offset = 0
-        while True:
-            page = store.list_executions(limit=_STORE_PAGE_SIZE, offset=offset)
-            items = tuple(page.items)
-            runs.extend(
-                StoredRun(
-                    run_id=str(
-                        getattr(snapshot.execution_id, "root", snapshot.execution_id)
-                    ),
-                    created_at=snapshot.created_at,
-                )
-                for snapshot in items
-            )
-            offset += len(items)
-            if not items or offset >= int(page.total):
-                break
-        # UI direct-run URLs refer to execution IDs. Test-run manifest IDs are
-        # intentionally kept out of this projection because they are not
-        # executable history records.
+        for manifest in store.list_test_runs():
+            run_id = manifest.get("run_id")
+            created_at = manifest.get("created_at")
+            if (
+                not isinstance(run_id, str)
+                or not run_id
+                or not isinstance(created_at, str)
+            ):
+                continue
+            try:
+                timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if timestamp.utcoffset() is None:
+                continue
+            runs.append(StoredRun(run_id=run_id, created_at=timestamp))
         return StoredRuns(tuple(runs))
     except Exception:
         # The test process must remain useful even when an old, locked, or
@@ -533,15 +521,12 @@ def find_new_runs(before: StoredRuns, after: StoredRuns) -> tuple[StoredRun, ...
     return tuple(sorted(unique.values(), key=lambda run: (run.created_at, run.run_id)))
 
 
-def build_run_urls(run_id: str, port: int) -> RunURLs:
-    """Build the history and encoded direct-run URLs for the local UI."""
+def build_run_url(run_id: str, port: int) -> str:
+    """Build an encoded feedback report URL for the local UI."""
 
     origin = f"http://127.0.0.1:{port}"
     encoded_run_id = quote(str(run_id), safe="")
-    return RunURLs(
-        history=f"{origin}/history",
-        direct=f"{origin}/playground/run/{encoded_run_id}",
-    )
+    return f"{origin}/reports/runs/{encoded_run_id}"
 
 
 def _validate_port(port: int) -> str | None:
@@ -854,13 +839,11 @@ def _print_ui_output(
 ) -> None:
     for warning in dict.fromkeys(warnings):
         print(f"Warning: {warning}", file=sys.stderr)
-    history_url = build_run_urls("run", port).history
-    print(f"M3 UI: {history_url}", flush=True)
     if not new_runs:
         print("No new stored runs.", flush=True)
         return
     for run in new_runs:
-        print(f"Run: {build_run_urls(run.run_id, port).direct}", flush=True)
+        print(f"Run: {build_run_url(run.run_id, port)}", flush=True)
 
 
 def _run_ui_server(
@@ -1091,12 +1074,11 @@ def run_test(
 __all__ = [
     "OPERATIONAL_ERROR",
     "ProjectPythonError",
-    "RunURLs",
     "StoredRun",
     "StoredRuns",
     "TestRunResult",
     "baseline_exists",
-    "build_run_urls",
+    "build_run_url",
     "find_new_runs",
     "list_stored_runs",
     "pytest_command",

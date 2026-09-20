@@ -49,6 +49,7 @@ def test_full_app_uses_same_database_and_serves_spa_without_api_fallback(
         assert executions.json() is not None
         assert client.get("/history").status_code == 200
         assert client.get("/playground/run/run%20id").status_code == 200
+        assert client.get("/reports/runs/run%20id").status_code == 200
         assert client.get("/assets/app.js").status_code == 200
         unknown_api = client.get("/api/does-not-exist")
         assert unknown_api.status_code == 404
