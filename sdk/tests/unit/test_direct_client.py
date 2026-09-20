@@ -267,6 +267,28 @@ async def test_tool_error_is_a_result_and_raw_response_is_preserved() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_error_skips_output_schema_validation() -> None:
+    class ErrorOutputSession(FakeSession):
+        async def list_tools(self, *, params: object = None) -> types.ListToolsResult:
+            return types.ListToolsResult(
+                tools=[
+                    types.Tool(
+                        name="bad",
+                        input_schema={"type": "object"},
+                        output_schema={"type": "object", "required": ["value"]},
+                    )
+                ]
+            )
+
+    async with _client(ErrorOutputSession(), validate_schemas=True) as client:
+        result = await client.call_tool("bad", {})
+
+    assert isinstance(result, ToolCallResult)
+    assert result.is_error is True
+    assert result.content[0]["text"] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_structural_input_and_output_validation() -> None:
     session = FakeSession()
     async with _client(session, validate_schemas=True) as client:

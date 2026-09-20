@@ -126,7 +126,9 @@ finalization but does not start or stop a deployed service.
 - If policy exposes only the expected tool, the test proves tool use, not tool
   choice. Preserve realistic safe alternatives when selection is the claim.
 - Tool failures are results with `is_error=True`; transport and local schema
-  failures are exceptions. Schema checking requires `validate_schemas=True`.
+  failures are exceptions. Schema checking requires `validate_schemas=True`;
+  a tool error is still a result and is not checked against the success
+  `outputSchema`. Assert `result.is_error` when the error is expected.
 - Use environment variables or explicit `--env-file` for provider credentials;
   use `SecretReference` for MCP endpoint credentials. Never embed or log values.
   Keep nondeterministic external/provider tests separate from deterministic
@@ -142,6 +144,14 @@ finalization but does not start or stop a deployed service.
   `print()` or log line remains diagnostic text and is never a score. Never
   infer a pass from lifecycle `completed`; use an explicit evaluator or saved
   pytest/check result.
+- In `feedback.json`, `tests[].outcome` is pytest's case outcome and
+  `tests[].verdict` identifies passed, failed assertion, protocol error,
+  setup/teardown error, or another pytest error. `tests[].tool_result` and
+  `executions[].tool_result` independently record observed tool errors.
+  `executions[].outcome=completed` records only
+  lifecycle completion. `summary.failures` counts failed/error pytest cases
+  and collection errors; matcher failures on those cases are attached as
+  evidence, not counted as another failed case.
 
 ## Evaluations and saved history
 

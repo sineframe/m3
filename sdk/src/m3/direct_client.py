@@ -1020,7 +1020,7 @@ class AsyncDirectClient:
                 structured_content=_attribute(raw, "structured_content"),
                 is_error=bool(_attribute(raw, "is_error", False)),
             )
-            if self._validate_schemas:
+            if self._validate_schemas and not result.is_error:
                 tools = await self.list_all_tools()
                 tool = next((item for item in tools if item.name == name), None)
                 if tool is not None and tool.output_schema is not None:

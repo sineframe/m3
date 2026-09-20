@@ -84,6 +84,42 @@ def test_setup_failure_is_recorded_as_error(tmp_path: Path) -> None:
         store.close()
 
 
+def test_pytest_feedback_counts_cases_and_preserves_expected_tool_error(
+    tmp_path: Path,
+) -> None:
+    source = (
+        Path(__file__).parents[3]
+        / "scripts"
+        / "fixtures"
+        / "verdicts"
+        / "test_verdicts.py"
+    ).read_text(encoding="utf-8")
+    result, database = _run(tmp_path, source)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "2 failed, 2 passed, 1 error" in result.stdout
+    assert (
+        "M3 verdicts: 2 passed, 1 failed assertion, 1 protocol error, 1 setup error"
+        in result.stdout
+    )
+
+    store, run_id, _ = _manifest(database)
+    try:
+        feedback_path = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
+        feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
+        assert feedback["summary"]["tests"] == 5
+        assert feedback["summary"]["failures"] == 3
+        tests = {item["node_id"].split("::")[-1]: item for item in feedback["tests"]}
+        assert tests["test_expected_tool_error"]["verdict"] == "passed"
+        assert tests["test_expected_tool_error"]["tool_result"] == "tool_error"
+        assert tests["test_failed_matcher"]["verdict"] == "failed_assertion"
+        assert tests["test_protocol_error"]["verdict"] == "protocol_error"
+        assert tests["test_setup_error"]["verdict"] == "setup_error"
+        assert len(feedback["failures"]) == 3
+        assert any(item.get("evaluations") for item in feedback["failures"])
+    finally:
+        store.close()
+
+
 def test_collection_error_still_writes_manifest(tmp_path: Path) -> None:
     result, database = _run(tmp_path, "def test_broken(:\n    pass\n")
     assert result.returncode != 0
@@ -92,6 +128,99 @@ def test_collection_error_still_writes_manifest(tmp_path: Path) -> None:
         assert record["status"] in {"finished", "interrupted", "incomplete"}
         assert record["collected_node_ids"] == []
         assert store.list_test_results(run_id) == ()
+    finally:
+        store.close()
+
+
+def test_skipped_collection_does_not_count_as_failure(tmp_path: Path) -> None:
+    result, database = _run(
+        tmp_path,
+        "import pytest\npytest.skip('optional dependency absent', allow_module_level=True)\n",
+    )
+    assert result.returncode == 5
+    assert "1 skipped" in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        feedback = json.loads(
+            (tmp_path / ".m3" / "reports" / run_id / "feedback.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert feedback["summary"]["failures"] == 0
+        assert feedback["summary"]["collection_errors"] == 0
+    finally:
+        store.close()
+
+
+def test_test_body_exception_is_not_labeled_as_assertion(tmp_path: Path) -> None:
+    result, database = _run(
+        tmp_path, "def test_crash():\n    raise RuntimeError('crashed')\n"
+    )
+    assert result.returncode == 1
+    store, run_id, _ = _manifest(database)
+    try:
+        feedback = json.loads(
+            (tmp_path / ".m3" / "reports" / run_id / "feedback.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert feedback["tests"][0]["verdict"] == "pytest_error"
+        assert "M3 verdicts: 1 pytest error" in result.stdout
+    finally:
+        store.close()
+
+
+def test_plain_assertion_is_labeled_as_failed_assertion(tmp_path: Path) -> None:
+    result, database = _run(tmp_path, "def test_plain():\n    assert 1 == 2\n")
+    assert result.returncode == 1
+    assert "AssertionError" in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        feedback = json.loads(
+            (tmp_path / ".m3" / "reports" / run_id / "feedback.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert (
+            feedback["tests"][0]["phases"]["call"]["exception_type"] == "AssertionError"
+        )
+        assert feedback["tests"][0]["verdict"] == "failed_assertion"
+        assert "M3 verdicts: 1 failed assertion" in result.stdout
+    finally:
+        store.close()
+
+
+def test_expected_protocol_error_does_not_mask_later_assertion(tmp_path: Path) -> None:
+    source = """
+from m3 import MCPTestKit
+from m3.testing import FaultInjector
+from m3.types import CallTool, DirectSpec, ServerBinding
+
+def test_assertion_after_expected_protocol_error():
+    fault = FaultInjector().protocol_error("tools/call", code=-32042)
+    spec = DirectSpec(
+        servers=(ServerBinding(server=fault.stdio_server(), alias="fault"),),
+        operation=CallTool(server="fault", name="echo", arguments={}),
+    )
+    with MCPTestKit() as kit:
+        result = kit.run(spec)
+    if result.error is None or result.error.code.value != "protocol_error":
+        raise RuntimeError("expected protocol error was not observed")
+    assert False, "separate assertion failure"
+"""
+    result, database = _run(tmp_path, source)
+    assert result.returncode == 1
+    assert "separate assertion failure" in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        feedback = json.loads(
+            (tmp_path / ".m3" / "reports" / run_id / "feedback.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert feedback["executions"][0]["result_kind"] == "protocol_error"
+        assert feedback["tests"][0]["verdict"] == "failed_assertion"
+        assert "M3 verdicts: 1 failed assertion" in result.stdout
     finally:
         store.close()
 

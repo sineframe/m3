@@ -28,7 +28,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -639,6 +639,7 @@ def _run_ui_gate(
     port: int,
     env: dict[str, str],
     existing_ids: tuple[str, ...],
+    verdict_run_id: str,
     ui_dir: Path | None = None,
 ) -> None:
     command = [
@@ -702,11 +703,11 @@ def _run_ui_gate(
     storage_deadline = time.monotonic() + 30
     while time.monotonic() < storage_deadline:
         current_runs = _stored_run_ids(project_python, repo, database, env)
-        if len(current_runs) >= 3:
+        if len(current_runs) >= len(existing_ids) + 1:
             break
         time.sleep(0.2)
     new_runs = [run_id for run_id in current_runs if run_id not in existing_ids]
-    if len(current_runs) != 3 or len(new_runs) != 1:
+    if len(current_runs) != len(existing_ids) + 1 or len(new_runs) != 1:
         _terminate(process)
         raise StandaloneGateError(
             "UI test did not create exactly one additional stored run"
@@ -723,6 +724,30 @@ def _run_ui_gate(
         _terminate(process)
         raise StandaloneGateError("executions API did not return JSON")
     _assert_json_execution(body, expected_id)
+    status, content_type, body = _http(
+        f"{origin}/api/v2/feedback/{quote(verdict_run_id, safe='')}"
+    )
+    if status != 200 or "json" not in content_type.lower():
+        _terminate(process)
+        raise StandaloneGateError("Reports feedback API did not return JSON")
+    try:
+        served = json.loads(body)["feedback"]
+        verdicts = {
+            str(item["node_id"]).split("::")[-1]: item["verdict"]
+            for item in served["tests"]
+        }
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        _terminate(process)
+        raise StandaloneGateError("Reports feedback API is malformed") from exc
+    if served.get("summary", {}).get("failures") != 3 or verdicts != {
+        "test_expected_tool_error": "passed",
+        "test_failed_matcher": "failed_assertion",
+        "test_protocol_error": "protocol_error",
+        "test_setup_error": "setup_error",
+        "test_plain_pass": "passed",
+    }:
+        _terminate(process)
+        raise StandaloneGateError("Reports verdicts differ from installed feedback")
     status, content_type, body = _http(origin + "/history")
     if (
         status != 200
@@ -746,6 +771,7 @@ def _run_ui_gate(
     if ui_dir is not None:
         try:
             _run_playwright_contract(ui_dir, origin, expected_id, env)
+            _run_playwright_verdict_contract(ui_dir, origin, verdict_run_id, env)
         except StandaloneGateError:
             _terminate(process)
             raise
@@ -803,6 +829,55 @@ const [origin, executionId] = process.argv.slice(1);
 """
     _run(
         [node, "-e", code, origin, execution_id],
+        cwd=ui_dir,
+        env=dict(env),
+        timeout=_UI_TIMEOUT,
+    )
+
+
+def _run_playwright_verdict_contract(
+    ui_dir: Path, origin: str, run_id: str, env: Mapping[str, str]
+) -> None:
+    """Read the installed UI's real Reports page for the mixed verdict run."""
+
+    node = shutil.which("node")
+    if node is None or not (ui_dir / "node_modules" / "playwright").exists():
+        raise StandaloneGateError("Node.js and UI Playwright must be installed")
+    code = r"""
+const { chromium } = require('playwright');
+const [origin, runId] = process.argv.slice(1);
+(async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(`${origin}/reports/runs/${encodeURIComponent(runId)}`);
+    await page.getByRole('heading', { name: runId }).waitFor({ state: 'visible', timeout: 15000 });
+    const expected = [
+      ['test_expected_tool_error', 'Passed'],
+      ['test_failed_matcher', 'Failed Assertion'],
+      ['test_protocol_error', 'Protocol Error'],
+      ['test_setup_error', 'Setup Error'],
+      ['test_plain_pass', 'Passed'],
+    ];
+    for (const [name, verdict] of expected) {
+      const row = page.getByRole('button', { name: new RegExp(`Test: .*${name}\\. Result: ${verdict}\\.`) });
+      await row.waitFor({ state: 'visible', timeout: 15000 });
+      if (name === 'test_expected_tool_error' && !(await row.getByText('Tool error result').isVisible())) {
+        throw new Error('expected tool error is missing from Reports');
+      }
+    }
+    const summary = page.getByRole('region', { name: 'Test run summary' });
+    if (!(await summary.getByText('Failures').locator('..').getByText('3', { exact: true }).isVisible())) {
+      throw new Error('Reports failure count differs from pytest');
+    }
+    console.log('Playwright installed Reports verdict contract passed');
+  } finally {
+    await browser.close();
+  }
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+    _run(
+        [node, "-e", code, origin, run_id],
         cwd=ui_dir,
         env=dict(env),
         timeout=_UI_TIMEOUT,
@@ -874,6 +949,91 @@ def _run_m3_test(
         "-q",
     ]
     _run(command, cwd=repo, env=dict(env))
+
+
+def _run_verdict_fixture(
+    executable: Path,
+    project_python: Path,
+    repo: Path,
+    database: Path,
+    env: Mapping[str, str],
+) -> str:
+    """Check mixed pytest outcomes using only the installed release wheels."""
+
+    before = set(_stored_test_run_ids(project_python, repo, database, env))
+    fixture = repo / "tests" / "test_verdicts.py"
+    shutil.copyfile(
+        _CHECKOUT_ROOT / "scripts" / "fixtures" / "verdicts" / "test_verdicts.py",
+        fixture,
+    )
+    command = [
+        str(executable),
+        "test",
+        "--python",
+        str(project_python),
+        "--project-root",
+        str(repo),
+        "--results-db",
+        str(database),
+        "--",
+        "-q",
+        "tests/test_verdicts.py",
+    ]
+    print("+", _display(command), flush=True)
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(repo),
+            env=dict(env),
+            capture_output=True,
+            text=True,
+            timeout=_PROCESS_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise StandaloneGateError("installed verdict fixture could not run") from exc
+    finally:
+        fixture.unlink(missing_ok=True)
+    terminal = result.stdout + "\n" + result.stderr
+    if (
+        result.returncode != 1
+        or "2 failed, 2 passed, 1 error" not in terminal
+        or "M3 verdicts: 2 passed, 1 failed assertion, 1 protocol error, 1 setup error"
+        not in terminal
+    ):
+        raise StandaloneGateError(
+            "installed CLI verdicts differ from pytest\n"
+            + _safe_diagnostics(terminal, env)
+        )
+    new_runs = set(_stored_test_run_ids(project_python, repo, database, env)) - before
+    if len(new_runs) != 1:
+        raise StandaloneGateError("verdict fixture did not create one test run")
+    run_id = new_runs.pop()
+    path = repo / ".m3" / "reports" / run_id / "feedback.json"
+    try:
+        feedback = json.loads(path.read_text(encoding="utf-8"))
+        tests = {
+            str(item["node_id"]).split("::")[-1]: item for item in feedback["tests"]
+        }
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise StandaloneGateError("installed verdict feedback is malformed") from exc
+    expected = {
+        "test_expected_tool_error": "passed",
+        "test_failed_matcher": "failed_assertion",
+        "test_protocol_error": "protocol_error",
+        "test_setup_error": "setup_error",
+        "test_plain_pass": "passed",
+    }
+    if (
+        feedback.get("summary", {}).get("tests") != 5
+        or feedback.get("summary", {}).get("failures") != 3
+        or len(feedback.get("failures", ())) != 3
+        or {name: item.get("verdict") for name, item in tests.items()} != expected
+        or tests["test_expected_tool_error"].get("tool_result") != "tool_error"
+        or not any(item.get("evaluations") for item in feedback["failures"])
+    ):
+        raise StandaloneGateError("installed verdict feedback differs from pytest")
+    return run_id
 
 
 def check(
@@ -1022,6 +1182,12 @@ def check(
                 raise StandaloneGateError(
                     f"CLI test did not persist/reload the baseline manifest ({python_version})"
                 )
+            verdict_run_id = _run_verdict_fixture(
+                executable, project_python, version_repo, database, env
+            )
+            before_ui_runs = _stored_run_ids(
+                project_python, version_repo, database, env
+            )
             port = _free_port()
             _run_ui_gate(
                 executable,
@@ -1030,11 +1196,14 @@ def check(
                 database,
                 port,
                 env,
-                tuple(second_runs),
+                tuple(before_ui_runs),
+                verdict_run_id,
                 browser_ui_dir if python_version == python_versions[-1] else None,
             )
             final_runs = _stored_run_ids(project_python, version_repo, database, env)
-            if len(final_runs) != 3 or not set(second_runs).issubset(final_runs):
+            if len(final_runs) != len(before_ui_runs) + 1 or not set(
+                before_ui_runs
+            ).issubset(final_runs):
                 raise StandaloneGateError(
                     f"UI test did not preserve all installed-wheel runs ({python_version})"
                 )

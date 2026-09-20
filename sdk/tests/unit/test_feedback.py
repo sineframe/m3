@@ -15,6 +15,9 @@ from m3.events import EventFactory, EventSequence
 from m3.feedback import build_feedback, export_feedback
 from m3.storage import SQLiteExecutionStore
 from m3.types import (
+    CallToolResult,
+    ErrorCode,
+    ErrorInfo,
     EvaluationId,
     EvaluationRecord,
     EvaluationStatus,
@@ -686,7 +689,193 @@ def test_manifest_failures_and_reruns_are_preserved():
     )
     assert len(feedback.tests) == 2
     assert any(item.get("kind") == "collection" for item in feedback.failures)
-    assert any(item.get("kind") == "not_run" for item in feedback.failures)
+    assert any("not produce an attempt" in item for item in feedback.limitations)
+
+
+def test_failed_matcher_is_evidence_for_one_failed_pytest_case():
+    report = _report("execution", "run", "description")
+    matcher = EvaluationRecord(
+        evaluation_id=EvaluationId("matcher-1"),
+        execution_id=report.snapshot.execution_id,
+        name="m3.matcher.to_have_text.v1",
+        status=EvaluationStatus.FAILED,
+    )
+    report = report.model_copy(update={"evaluations": (matcher,)})
+    store = _Store(
+        (report,),
+        tests={
+            "run": (
+                {
+                    "attempt_id": "attempt-1",
+                    "node_id": "test.py::test_failure",
+                    "outcome": "failed",
+                    "execution_ids": ["execution"],
+                },
+            )
+        },
+    )
+
+    feedback = build_feedback(store, "run")
+
+    assert feedback.summary["failures"] == 1
+    assert len(feedback.failures) == 1
+    assert feedback.failures[0]["verdict"] == "failed_assertion"
+    assert len(feedback.failures[0]["evaluations"]) == 1
+
+
+def test_skipped_and_not_run_cases_do_not_inflate_pytest_failures():
+    feedback = build_feedback(
+        _Store(
+            (),
+            tests={"run": ({"node_id": "test.py::test_skip", "outcome": "skipped"},)},
+            manifests={"run": {"not_run_node_ids": ["test.py::test_not_run"]}},
+        ),
+        "run",
+    )
+
+    assert feedback.summary["failures"] == 0
+    assert feedback.summary["skipped_tests"] == 1
+    assert feedback.failures == ()
+    assert any("not produce an attempt" in item for item in feedback.limitations)
+
+
+def test_feedback_keeps_test_verdict_tool_result_and_execution_outcome_separate():
+    tool = _report("tool", "run", "tool result").model_copy(
+        update={"direct_result": CallToolResult(is_error=True)}
+    )
+    protocol = _report("protocol", "run", "protocol failure").model_copy(
+        update={"error": ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="failed")}
+    )
+    tests = {
+        "run": (
+            {
+                "node_id": "test.py::test_expected_error",
+                "outcome": "passed",
+                "execution_ids": ["tool"],
+            },
+            {
+                "node_id": "test.py::test_protocol",
+                "outcome": "failed",
+                "execution_ids": ["protocol"],
+            },
+            {
+                "node_id": "test.py::test_setup",
+                "outcome": "error",
+                "execution_ids": [],
+                "phases": {"setup": {"outcome": "failed"}},
+            },
+        )
+    }
+
+    feedback = build_feedback(_Store((tool, protocol), tests=tests), "run")
+
+    assert [test["verdict"] for test in feedback.tests] == [
+        "passed",
+        "protocol_error",
+        "setup_error",
+    ]
+    assert feedback.tests[0]["tool_result"] == "tool_error"
+    executions = {item["execution_id"]: item for item in feedback.executions}
+    assert executions["tool"]["outcome"] == "completed"
+    assert executions["tool"]["result_kind"] == "tool_error"
+    assert feedback.summary["failures"] == 2
+
+
+def test_feedback_detects_top_level_tool_error_without_result_body():
+    report = _report("tool", "run", "tool error")
+    factory = EventFactory(
+        report.snapshot.execution_id,
+        allocator=EventSequence(start=len(report.events)),
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    event = factory.create(
+        EventKind.TOOL_RESULT_RECEIVED,
+        payload={"isError": True, "tool_status": "tool_error"},
+    )
+    report = report.model_copy(
+        update={
+            "events": (*report.events, event),
+            "event_count": report.event_count + 1,
+        }
+    )
+    store = _Store(
+        (report,),
+        tests={
+            "run": (
+                {
+                    "node_id": "test.py::test_expected_tool_error",
+                    "outcome": "passed",
+                    "execution_ids": ["tool"],
+                },
+            )
+        },
+    )
+
+    feedback = build_feedback(store, "run")
+
+    assert feedback.executions[0]["outcome"] == "completed"
+    assert feedback.executions[0]["result_kind"] == "tool_error"
+    assert feedback.tests[0]["verdict"] == "passed"
+    assert feedback.tests[0]["tool_result"] == "tool_error"
+
+
+def test_feedback_keeps_tool_error_when_cleanup_also_fails():
+    report = _report("tool", "run", "tool error").model_copy(
+        update={
+            "direct_result": CallToolResult(is_error=True),
+            "error": ErrorInfo(code=ErrorCode.CLEANUP_FAILED, message="cleanup failed"),
+        }
+    )
+    feedback = build_feedback(
+        _Store(
+            (report,),
+            tests={
+                "run": (
+                    {
+                        "node_id": "test.py::test_cleanup_error",
+                        "outcome": "error",
+                        "execution_ids": ["tool"],
+                        "phases": {"teardown": {"outcome": "failed"}},
+                    },
+                )
+            },
+        ),
+        "run",
+    )
+
+    assert feedback.executions[0]["result_kind"] == "cleanup_failed"
+    assert feedback.executions[0]["tool_result"] == "tool_error"
+    assert feedback.tests[0]["verdict"] == "teardown_error"
+    assert feedback.tests[0]["tool_result"] == "tool_error"
+
+
+def test_unrelated_exception_after_protocol_result_keeps_pytest_verdict():
+    report = _report("protocol", "run", "protocol result").model_copy(
+        update={"error": ErrorInfo(code=ErrorCode.PROTOCOL_ERROR, message="failed")}
+    )
+    feedback = build_feedback(
+        _Store(
+            (report,),
+            tests={
+                "run": (
+                    {
+                        "node_id": "test.py::test_unrelated_error",
+                        "outcome": "failed",
+                        "execution_ids": ["protocol"],
+                        "phases": {
+                            "call": {
+                                "outcome": "failed",
+                                "exception_type": "RuntimeError",
+                            }
+                        },
+                    },
+                )
+            },
+        ),
+        "run",
+    )
+
+    assert feedback.tests[0]["verdict"] == "pytest_error"
 
 
 def test_test_comparison_ignores_attempt_ids_and_durations():

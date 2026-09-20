@@ -968,31 +968,118 @@ def _contexts(
     return values
 
 
+def _has_tool_error(entry: _Entry) -> bool:
+    """Read tool results independently of a later terminal execution error."""
+    report = entry.report
+    if report.direct_result is not None and getattr(
+        report.direct_result, "is_error", False
+    ):
+        return True
+    for event in report.events:
+        if event.kind.value != "tool.result_received":
+            continue
+        if (
+            event.payload.get("isError") is True
+            or event.payload.get("is_error") is True
+        ):
+            return True
+        result = event.payload.get("result")
+        if isinstance(result, Mapping) and (
+            result.get("isError") is True or result.get("is_error") is True
+        ):
+            return True
+    return False
+
+
+def _result_kind(entry: _Entry) -> str | None:
+    """Keep execution completion distinct from tool and protocol outcomes."""
+
+    report = entry.report
+    if report.error is not None:
+        return report.error.code.value
+    if _has_tool_error(entry):
+        return "tool_error"
+    if any(event.kind.value == "mcp.error" for event in report.events):
+        return "protocol_error"
+    return (
+        report.snapshot.outcome.value if report.snapshot.outcome is not None else None
+    )
+
+
+def _test_verdict(
+    test: Mapping[str, Any], execution_kinds: Mapping[str, str | None]
+) -> str:
+    outcome = str(test.get("outcome", "unknown"))
+    if outcome == "error":
+        phases = test.get("phases")
+        if isinstance(phases, Mapping):
+            setup = phases.get("setup")
+            if isinstance(setup, Mapping) and setup.get("outcome") == "failed":
+                return "setup_error"
+            teardown = phases.get("teardown")
+            if isinstance(teardown, Mapping) and teardown.get("outcome") == "failed":
+                return "teardown_error"
+        return "pytest_error"
+    if outcome == "failed":
+        phases = test.get("phases")
+        call = phases.get("call") if isinstance(phases, Mapping) else None
+        exception_type = (
+            call.get("exception_type") if isinstance(call, Mapping) else None
+        )
+        exception_name = (
+            exception_type.rsplit(".", 1)[-1]
+            if isinstance(exception_type, str)
+            else None
+        )
+        if exception_name == "AssertionError":
+            return "failed_assertion"
+        linked = {
+            execution_kinds.get(str(execution_id))
+            for execution_id in test.get("execution_ids", ()) or ()
+        }
+        linked_protocol = "protocol_error" in linked or "transport_error" in linked
+        if exception_name in {"ProtocolError", "TransportError"} and linked_protocol:
+            return "protocol_error"
+        if exception_type is not None:
+            return "pytest_error"
+        if linked_protocol:
+            return "protocol_error"
+        return "failed_assertion"
+    return outcome
+
+
 def _failure_values(
     entries: tuple[_Entry, ...],
     tests: Sequence[Mapping[str, Any]],
     contexts: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
-    values: list[Mapping[str, Any]] = [
+    values: list[dict[str, Any]] = [
         dict(value)
         for value in tests
-        if str(value.get("outcome")) in {"failed", "error", "skipped"}
+        if str(value.get("outcome")) in {"failed", "error"}
     ]
+    failed_by_execution: dict[str, list[int]] = defaultdict(list)
+    for index, value in enumerate(values):
+        for execution_id in value.get("execution_ids", ()) or ():
+            failed_by_execution[str(execution_id)].append(index)
     for entry in entries:
         for record in entry.report.evaluations:
             if record.status.value in {"failed", "error", "inconclusive"}:
-                values.append(
-                    {
-                        "kind": "evaluation",
-                        "execution_id": _id(record.execution_id),
-                        "evaluator": record.name,
-                        "case_id": _case(entry, record, contexts),
-                        "status": record.status.value,
-                        "score": record.score,
-                        "rationale": record.rationale,
-                        "details": dict(record.details),
-                    }
-                )
+                evaluation = {
+                    "kind": "evaluation",
+                    "execution_id": _id(record.execution_id),
+                    "evaluator": record.name,
+                    "case_id": _case(entry, record, contexts),
+                    "status": record.status.value,
+                    "score": record.score,
+                    "rationale": record.rationale,
+                    "details": dict(record.details),
+                }
+                matches = failed_by_execution.get(_id(record.execution_id), [])
+                if len(matches) == 1:
+                    values[matches[0]].setdefault("evaluations", []).append(evaluation)
+                else:
+                    values.append(evaluation)
     return tuple(values)
 
 
@@ -1003,7 +1090,7 @@ def _manifest_failures(
         return ()
     values: list[Mapping[str, Any]] = []
     for report in manifest.get("collection_reports", ()) or ():
-        if isinstance(report, Mapping):
+        if isinstance(report, Mapping) and report.get("outcome") == "failed":
             values.append({"kind": "collection", **dict(report)})
     for error in manifest.get("worker_errors", ()) or ():
         if isinstance(error, Mapping):
@@ -1015,8 +1102,6 @@ def _manifest_failures(
                 "message": "one or more test manifest writes failed",
             }
         )
-    for node_id in manifest.get("not_run_node_ids", ()) or ():
-        values.append({"kind": "not_run", "node_id": str(node_id)})
     return tuple(values)
 
 
@@ -1064,7 +1149,10 @@ def build_feedback(
     if not current and not results:
         limitations.append("no executions or test results were recorded for this run")
     if manifest is not None:
-        if manifest.get("collection_reports"):
+        if any(
+            isinstance(report, Mapping) and report.get("outcome") == "failed"
+            for report in manifest.get("collection_reports", ()) or ()
+        ):
             limitations.append("pytest collection reported one or more errors")
         if manifest.get("worker_errors"):
             limitations.append("one or more test workers ended with errors")
@@ -1075,9 +1163,27 @@ def build_feedback(
     execution_by_id = {
         _id(entry.report.snapshot.execution_id): _suite(entry) for entry in current
     }
+    execution_kinds = {
+        _id(entry.report.snapshot.execution_id): _result_kind(entry)
+        for entry in current
+    }
+    tool_error_ids = {
+        _id(entry.report.snapshot.execution_id)
+        for entry in current
+        if _has_tool_error(entry)
+    }
     tests = tuple(
         {
             **dict(value),
+            "verdict": _test_verdict(value, execution_kinds),
+            "tool_result": (
+                "tool_error"
+                if any(
+                    str(execution_id) in tool_error_ids
+                    for execution_id in value.get("execution_ids", ()) or ()
+                )
+                else None
+            ),
             **(
                 execution_by_id.get(str(value.get("execution_ids", ())[0]), {})
                 if value.get("execution_ids")
@@ -1098,6 +1204,12 @@ def build_feedback(
             "outcome": entry.report.snapshot.outcome.value
             if entry.report.snapshot.outcome is not None
             else None,
+            "result_kind": execution_kinds[_id(entry.report.snapshot.execution_id)],
+            "tool_result": (
+                "tool_error"
+                if _id(entry.report.snapshot.execution_id) in tool_error_ids
+                else None
+            ),
             "lifecycle": entry.report.snapshot.lifecycle.value,
             "event_count": entry.report.event_count,
             "events_truncated": entry.report.events_truncated,
@@ -1238,10 +1350,27 @@ def build_feedback(
             },
             limitations=tuple(comparison_limitations),
         )
+    test_counts = {
+        outcome: sum(test.get("outcome") == outcome for test in tests)
+        for outcome in ("passed", "failed", "error", "skipped")
+    }
+    collection_errors = (
+        sum(
+            isinstance(report, Mapping) and report.get("outcome") == "failed"
+            for report in manifest.get("collection_reports", ()) or ()
+        )
+        if manifest
+        else 0
+    )
     summary: dict[str, Any] = {
         "executions": len(current),
         "tests": len(tests),
-        "failures": len(failures),
+        "passed_tests": test_counts["passed"],
+        "failed_tests": test_counts["failed"],
+        "error_tests": test_counts["error"],
+        "skipped_tests": test_counts["skipped"],
+        "collection_errors": collection_errors,
+        "failures": test_counts["failed"] + test_counts["error"] + collection_errors,
         "terminal_executions": sum(
             1 for entry in current if entry.report.snapshot.outcome is not None
         ),

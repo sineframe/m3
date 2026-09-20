@@ -583,7 +583,7 @@ def _pytest_collectreport(report: _Any) -> None:
     if (
         store is None
         or run_id is None
-        or getattr(report, "outcome", "passed") == "passed"
+        or getattr(report, "outcome", "passed") != "failed"
     ):
         return
     record = dict(store.get_test_run(run_id.root) or {})
@@ -689,6 +689,22 @@ def _pytest_runtest_logreport(report: _Any) -> None:
         "duration_seconds": float(getattr(report, "duration", 0.0) or 0.0),
         "wasxfail": bool(getattr(report, "wasxfail", False)),
     }
+    exception_types = state.get("_m3_exception_types")
+    exception_type = (
+        exception_types.pop(str(report.when), None)
+        if isinstance(exception_types, dict)
+        else None
+    )
+    if report.outcome == "failed":
+        if isinstance(exception_type, str):
+            phases[str(report.when)]["exception_type"] = exception_type
+        else:
+            crash = getattr(getattr(report, "longrepr", None), "reprcrash", None)
+            message = getattr(crash, "message", None)
+            if isinstance(message, str):
+                phases[str(report.when)]["exception_type"] = message.split(":", 1)[0]
+    if not state.get("_m3_exception_types"):
+        state.pop("_m3_exception_types", None)
     state["duration_seconds"] = sum(
         float(value.get("duration_seconds", 0.0) or 0.0)
         for value in phases.values()
@@ -705,6 +721,21 @@ def _pytest_runtest_logreport(report: _Any) -> None:
         }:
             diagnostics[f"{report.when}:longrepr"] = _diagnostic(report.longrepr)
     _save_attempt(report.config, state) if hasattr(report, "config") else None
+
+
+def _pytest_runtest_makereport(item: _Any, call: _Any) -> None:
+    state = _active_test()
+    if state is None or str(state.get("node_id")) != str(getattr(item, "nodeid", "")):
+        return
+    exception = getattr(getattr(call, "excinfo", None), "type", None)
+    if not isinstance(exception, type):
+        return
+    name = exception.__qualname__
+    if exception.__module__ != "builtins":
+        name = f"{exception.__module__}.{name}"
+    exception_types = state.setdefault("_m3_exception_types", {})
+    if isinstance(exception_types, dict):
+        exception_types[str(call.when)] = name
 
 
 def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
@@ -832,6 +863,35 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         reporter.write_line("")
         reporter.write_line(f"M3 run {run_id.root}")
         reporter.write_line(f"M3 feedback: {output}")
+        verdicts = [
+            str(test.get("verdict", test.get("outcome", "unknown")))
+            for test in feedback.tests
+        ]
+        categories = (
+            ("passed", "passed"),
+            ("failed_assertion", "failed assertion"),
+            ("protocol_error", "protocol error"),
+            ("setup_error", "setup error"),
+            ("teardown_error", "teardown error"),
+            ("pytest_error", "pytest error"),
+            ("skipped", "skipped"),
+        )
+        counts = ", ".join(
+            f"{verdicts.count(kind)} {label}"
+            for kind, label in categories
+            if verdicts.count(kind)
+        )
+        reporter.write_line("M3 verdicts: " + (counts or "no test cases recorded"))
+        tool_errors = sum(
+            test.get("tool_result") == "tool_error" for test in feedback.tests
+        )
+        completed = sum(
+            execution.get("outcome") == "completed" for execution in feedback.executions
+        )
+        reporter.write_line(
+            f"M3 observations: {tool_errors} tool error result(s); "
+            f"{completed} completed execution(s)"
+        )
         for execution_id, stage, elapsed in timeout_summaries:
             elapsed_text = (
                 f"{elapsed:.3f}s" if isinstance(elapsed, float) else "unknown"
@@ -877,6 +937,10 @@ class _ManifestHooks:
     @_pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_runtest_protocol(self, item: _Any, nextitem: _Any) -> object:
         yield from _pytest_runtest_protocol(item, nextitem)
+
+    @_pytest.hookimpl
+    def pytest_runtest_makereport(self, item: _Any, call: _Any) -> None:
+        _pytest_runtest_makereport(item, call)
 
     @_pytest.hookimpl
     def pytest_runtest_logreport(self, report: _Any) -> None:

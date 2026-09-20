@@ -540,6 +540,11 @@ def test_order_tool_catalog():
         "executions": 1,
         "tests": 1,
         "failures": 0,
+        "passed_tests": 1,
+        "failed_tests": 0,
+        "error_tests": 0,
+        "skipped_tests": 0,
+        "collection_errors": 0,
         "terminal_executions": 1,
         "run_status": "finished",
     }
