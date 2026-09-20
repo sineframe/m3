@@ -147,6 +147,8 @@ class AppExecutionStore(Protocol):
     def delete_execution(self, execution_id: ExecutionId | str) -> None: ...
     def aggregate_evaluations(self, query: EvaluationQuery) -> EvaluationReport: ...
 
+    def list_test_runs(self) -> tuple[Mapping[str, object], ...]: ...
+
 
 class AppExecutionKit(Protocol):
     """Minimal public synchronous SDK toolkit surface required by the app."""
@@ -428,9 +430,23 @@ class AppExecutionService:
                 "invalid_evaluation_aggregate_query",
                 "evaluation aggregate query is invalid",
             ) from exc
+
         except StorageError as exc:
             raise AppExecutionError(
                 "evaluation_data_unavailable", "evaluation data is unavailable"
+            ) from exc
+
+    def list_runs(self) -> tuple[Mapping[str, object], ...]:
+        """Return persisted pytest run manifests for safe API projection."""
+        self._ensure_open()
+        getter = getattr(self.store, "list_test_runs", None)
+        if not callable(getter):
+            return ()
+        try:
+            return tuple(getter())
+        except StorageError as exc:
+            raise AppExecutionError(
+                "run_data_unavailable", "run data is unavailable"
             ) from exc
 
     def feedback(self, run_id: str, *, baseline_run_id: str | None = None) -> Feedback:

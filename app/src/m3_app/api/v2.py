@@ -10,6 +10,7 @@ import json
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Body, Depends, Query, Request, status
@@ -167,6 +168,23 @@ class V2EvaluationAggregateEnvelope(BaseModel):
 class V2FeedbackEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     feedback: Feedback
+
+
+class V2RunSummary(BaseModel):
+    """Safe, compact summary of a persisted pytest run manifest."""
+
+    run_id: str
+    created_at: str | None = None
+    finished_at: str | None = None
+    status: str | None = None
+    project_id: str | None = None
+    project_name: str | None = None
+    test_count: int = 0
+
+
+class V2RunListEnvelope(BaseModel):
+    version: Literal["v2"] = "v2"
+    runs: tuple[V2RunSummary, ...]
 
 
 class V2DeletedEnvelope(BaseModel):
@@ -488,6 +506,7 @@ def _service_fault(error: AppExecutionError) -> V2Fault:
         "execution_not_terminal": 409,
         "raw_evidence_not_found": 404,
         "execution_data_unavailable": 500,
+        "run_data_unavailable": 500,
         "trace_unavailable": 500,
         "raw_evidence_integrity_error": 500,
         "invalid_report_cursor": 422,
@@ -1098,6 +1117,59 @@ def install_v2(
     def get_service(request: Request) -> AppExecutionService:
         return cast(AppExecutionService, request.app.state.v2_service)
 
+    runs_router = APIRouter(prefix="/api/v2/runs", tags=["runs-v2"])
+
+    @runs_router.get("", response_model=V2RunListEnvelope)
+    def list_runs(
+        service: AppExecutionService = Depends(get_service),
+    ) -> V2RunListEnvelope:
+        def optional_string(value: object) -> str | None:
+            return value if isinstance(value, str) else None
+
+        summaries: list[V2RunSummary] = []
+        for manifest in service.list_runs():
+            run_id = manifest.get("run_id")
+            if not isinstance(run_id, str) or not run_id:
+                continue
+            collected = manifest.get("collected_node_ids")
+            test_count = (
+                len(collected)
+                if isinstance(collected, (list, tuple))
+                else manifest.get("collection_count", 0)
+            )
+            safe_test_count = (
+                test_count
+                if isinstance(test_count, int) and not isinstance(test_count, bool)
+                else 0
+            )
+            summaries.append(
+                V2RunSummary(
+                    run_id=run_id,
+                    created_at=optional_string(manifest.get("created_at")),
+                    finished_at=optional_string(manifest.get("finished_at")),
+                    status=optional_string(manifest.get("status")),
+                    project_id=optional_string(manifest.get("project_id")),
+                    project_name=optional_string(manifest.get("project_name")),
+                    test_count=max(0, safe_test_count),
+                )
+            )
+
+        def sort_key(item: V2RunSummary) -> tuple[datetime, str]:
+            try:
+                timestamp = (item.created_at or "").replace("Z", "+00:00")
+                value = datetime.fromisoformat(timestamp)
+                if value.tzinfo is None:
+                    value = value.replace(tzinfo=timezone.utc)
+                value = value.astimezone(timezone.utc)
+            except (OverflowError, ValueError):
+                value = datetime.min.replace(tzinfo=timezone.utc)
+            return value, item.run_id
+
+        summaries.sort(key=sort_key, reverse=True)
+        return V2RunListEnvelope(runs=tuple(summaries))
+
+    application.include_router(runs_router)
+
     def project_name(
         service: AppExecutionService, report: ExecutionReport
     ) -> str | None:
@@ -1372,6 +1444,7 @@ def install_v2(
             "/api/v2/executions/{execution_id}": "Read an execution snapshot or delete it after it reaches a terminal state.",
             "/api/v2/executions/{execution_id}/cancel": "Request cancellation of an active execution.",
             "/api/v2/executions/{execution_id}/report": "Read a terminal execution report, trace, test summaries, and bounded event or artifact pages.",
+            "/api/v2/runs": "List safe, newest-first pytest run summaries, including runs with no executions or evaluations.",
             "/api/v2/suites/{suite_id}/executions": "Page through saved executions belonging to an integer suite ID.",
             "/api/v2/evaluations/aggregate": "Calculate a read-only aggregate from evaluation results already saved by the SDK or CLI.",
             "/api/v2/feedback/{run_id}": "Read saved feedback for a run and optionally compare it with a saved baseline run.",
@@ -1569,6 +1642,7 @@ def install_v2(
             ("delete", "/api/v2/executions/{execution_id}"),
             ("post", "/api/v2/executions/{execution_id}/cancel"),
             ("get", "/api/v2/executions/{execution_id}/report"),
+            ("get", "/api/v2/runs"),
             ("get", "/api/v2/suites/{suite_id}/executions"),
             ("get", "/api/v2/feedback/{run_id}"),
             ("post", "/api/v2/evidence/read"),
@@ -1590,6 +1664,7 @@ def install_v2(
             ("post", "/api/v2/executions"),
             ("get", "/api/v2/executions/{execution_id}"),
             ("get", "/api/v2/executions/{execution_id}/report"),
+            ("get", "/api/v2/runs"),
             ("post", "/api/v2/evaluations/aggregate"),
             ("get", "/api/v2/feedback/{run_id}"),
             ("post", "/api/v2/evidence/read"),

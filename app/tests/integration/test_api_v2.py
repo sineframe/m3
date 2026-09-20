@@ -399,6 +399,66 @@ def test_v2_feedback_reads_manifest_and_optional_baseline(tmp_path):
     store.close()
 
 
+def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_path):
+    database = Path(tmp_path).resolve() / "runs.sqlite"
+    store = SQLiteExecutionStore(database)
+    store.save_test_run(
+        "old-run",
+        {
+            "run_id": "old-run",
+            "created_at": "2026-09-18T10:00:00+00:00",
+            "status": "finished",
+            "project_root": "/private/project",
+            "selection": ["tests/test_secret.py"],
+            "capture": {"verbose": 3},
+            "collected_node_ids": ["tests/test_old.py::test_one"],
+        },
+    )
+    store.save_test_run(
+        "empty-run",
+        {
+            "run_id": "empty-run",
+            "created_at": "2026-09-19T10:00:00Z",
+            "finished_at": None,
+            "status": "finished",
+            "project_name": "demo",
+            "collection_count": 0,
+            "collected_node_ids": [],
+        },
+    )
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        response = client.get("/api/v2/runs")
+    assert response.status_code == 200
+    assert response.json() == {
+        "version": "v2",
+        "runs": [
+            {
+                "run_id": "empty-run",
+                "created_at": "2026-09-19T10:00:00Z",
+                "finished_at": None,
+                "status": "finished",
+                "project_id": None,
+                "project_name": "demo",
+                "test_count": 0,
+            },
+            {
+                "run_id": "old-run",
+                "created_at": "2026-09-18T10:00:00+00:00",
+                "finished_at": None,
+                "status": "finished",
+                "project_id": None,
+                "project_name": None,
+                "test_count": 1,
+            },
+        ],
+    }
+    assert "project_root" not in response.text
+    assert "selection" not in response.text
+    assert "capture" not in response.text
+    store.close()
+
+
 def test_v2_feedback_reads_real_two_run_interface_and_score_changes(tmp_path):
     """Exercise pytest plugin -> SQLite -> HTTP feedback without fake rows."""
 
