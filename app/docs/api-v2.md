@@ -23,6 +23,13 @@ cancel active executions, delete terminal executions, read bounded evidence,
 and summarize evaluations that are already saved. It does not treat a pytest
 result or a normal Python assertion as an execution or evaluation result.
 
+`GET /api/v2/runs` returns an unpaginated, newest first list of safe pytest
+run summaries. Each item contains `run_id`, `created_at`, `finished_at`,
+`status`, optional project identifiers and name, and `test_count`. Manifest
+paths, selection arguments, capture settings, and other raw manifest fields
+are not exposed. Runs are listed even when they have no executions or saved
+evaluations.
+
 ### Where readable executions come from
 
 | Source | How it is persisted | How API v2 reads it |
