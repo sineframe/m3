@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 if "--help" in sys.argv:
@@ -12,6 +13,7 @@ if "--help" in sys.argv:
 
 thread = "fixture-thread"
 turn = 0
+approval = os.environ.get("M3_CODEX_FIXTURE_APPROVAL") == "1"
 for line in sys.stdin:
     try:
         frame = json.loads(line)
@@ -45,6 +47,27 @@ for line in sys.stdin:
             ),
             flush=True,
         )
+        if approval:
+            print(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 500,
+                        "method": "mcpServer/elicitation/request",
+                        "params": {
+                            "threadId": thread,
+                            "turnId": f"fixture-turn-{turn}",
+                            "serverName": "fixture",
+                            "_meta": {"codex_approval_kind": "mcp_tool_call"},
+                            "message": "Allow the fixture MCP server to run tool?",
+                            "mode": "form",
+                            "requestedSchema": {"type": "object", "properties": {}},
+                        },
+                    }
+                ),
+                flush=True,
+            )
+            continue
         print(
             json.dumps(
                 {
@@ -99,6 +122,43 @@ for line in sys.stdin:
                             "id": f"fixture-turn-{turn}",
                             "status": "completed",
                             "model": "fixture",
+                        },
+                    },
+                }
+            ),
+            flush=True,
+        )
+    elif approval and ident == 500 and method is None:
+        accepted = frame.get("result", {}).get("action") == "accept"
+        if accepted:
+            print(
+                json.dumps(
+                    {
+                        "method": "item/completed",
+                        "params": {
+                            "item": {
+                                "type": "mcpToolCall",
+                                "id": "fixture-call",
+                                "server": "fixture",
+                                "tool": "shipping_quote",
+                                "arguments": {"weight_kg": 2, "zone": "local"},
+                                "status": "completed",
+                                "result": {"amount": 9, "currency": "USD"},
+                            }
+                        },
+                    }
+                ),
+                flush=True,
+            )
+        print(
+            json.dumps(
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": thread,
+                        "turn": {
+                            "id": f"fixture-turn-{turn}",
+                            "status": "completed",
                         },
                     },
                 }

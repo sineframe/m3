@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..interaction_handlers import PermissionRequest
 from ..types import (
     Capability,
     CapabilityStatus,
@@ -692,9 +693,56 @@ class CodexHarnessAdapter(NativeRPCAdapter):
     async def next_frame(
         self, process: JsonRpcProcess, timeout: float | None
     ) -> Mapping[str, Any] | None:
-        if self._deferred_frames:
-            return self._deferred_frames.pop(0)
-        return await process.next(timeout)
+        frame = (
+            self._deferred_frames.pop(0)
+            if self._deferred_frames
+            else await process.next(timeout)
+        )
+        # Codex pauses the turn until its client answers this tool approval.
+        if frame is not None and frame.get("method") == "mcpServer/elicitation/request":
+            await self._answer_mcp_elicitation(process, frame)
+        return frame
+
+    async def _answer_mcp_elicitation(
+        self, process: JsonRpcProcess, frame: Mapping[str, Any]
+    ) -> None:
+        request_id = frame.get("id")
+        if isinstance(request_id, bool) or not isinstance(request_id, (str, int)):
+            raise HarnessStartupError("Codex MCP elicitation identity is invalid")
+        params = frame.get("params")
+        params = params if isinstance(params, Mapping) else {}
+        metadata = params.get("_meta")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        server_name = params.get("serverName")
+        turn_id = params.get("turnId")
+        launch = self._launch
+        allowed = False
+        if (
+            launch is not None
+            and launch.interactions is not None
+            and metadata.get("codex_approval_kind") == "mcp_tool_call"
+            and isinstance(server_name, str)
+            and any(
+                config.key == server_name and config.available
+                for config in launch.configurations
+            )
+            and params.get("threadId") == self._thread_id
+            and (turn_id is None or turn_id == self._turn_id)
+        ):
+            permission = await launch.interactions.permission(
+                PermissionRequest("mcp_tool", server_name)
+            )
+            allowed = permission.allowed
+        await process.write(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "action": "accept" if allowed else "decline",
+                    **({"content": {}} if allowed else {}),
+                },
+            }
+        )
 
     async def _cancel(self, process: JsonRpcProcess) -> None:
         self._cancel_requested = True
