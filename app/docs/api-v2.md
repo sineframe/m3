@@ -1,5 +1,19 @@
 # API v2 capability guide
 
+## Browser and machine readable API reference
+
+The standard local app publishes generated OpenAPI 3.1 at
+`http://127.0.0.1:8000/openapi.json`, with Swagger UI at `/docs` and ReDoc at
+`/redoc`. The schema is generated from the route declarations and SDK models,
+including direct and agent execution discriminators, typed reports, trace
+entries, and the v2 error envelope. The app is unauthenticated and must stay
+bound to loopback; Host, loopback-client, and same-origin mutation checks are
+enforced by middleware.
+
+The history viewer publishes a read-only OpenAPI surface: GET and HEAD reads,
+plus `POST /api/v2/evidence/read` and `POST /api/v2/evaluations/aggregate`.
+Other mutation requests receive `405` with `{"detail":"viewer API is read-only"}`.
+
 ## What API v2 can do
 
 API v2 reads and manages M3 executions in the SQLite store selected for
@@ -127,6 +141,11 @@ JSON `session_config` query parameter to retrieve the same history.
 | `GET /api/v2/capabilities` | Read local capability and readiness details. |
 | `GET /api/v2/readiness` | Read the local readiness snapshot. |
 | `GET /api/v2/health` | Check application storage health. |
+
+Harness profile creation and revision requests must send
+`trusted_unsandboxed: true` as an explicit acknowledgement that the configured
+local command may run without the application sandbox. Imports are always
+stored untrusted and do not carry this acknowledgement forward.
 
 ## API-created execution details
 

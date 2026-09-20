@@ -221,6 +221,14 @@ class V2HarnessRevisionCreate(BaseModel):
     trusted_unsandboxed: bool = False
 
 
+class V2HarnessExportOut(BaseModel):
+    """Portable harness profile export accepted by the import endpoint."""
+
+    name: str
+    description: str = ""
+    manifest: dict[str, JsonValue]
+
+
 class V2ProbeCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     probe_type: ACPProbeKind = ACPProbeKind.PROTOCOL
@@ -263,6 +271,68 @@ class V2ProbeEnvelope(BaseModel):
 class V2ProbeHistoryEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     probes: tuple[ACPProbeResult, ...]
+
+
+class V2StorageHealth(BaseModel):
+    """Safe durable storage projection returned by readiness endpoints."""
+
+    available: bool
+    status: Literal["connected", "degraded"]
+    reason: str | None = None
+
+
+class V2HarnessCapability(BaseModel):
+    """Common public fields for built-in and ACP harness readiness entries."""
+
+    selection_id: str
+    kind: str
+    harness: str
+    name: str
+    ready: bool
+    models: tuple[str, ...] = ()
+    tool_modes: tuple[str, ...] = ()
+    limits: dict[str, JsonValue] | None = None
+    executable: bool | None = None
+    required_flags_ok: bool | None = None
+    missing_flags: tuple[str, ...] = ()
+    missing_environment: tuple[str, ...] = ()
+    credential_available: bool | None = None
+    providers: tuple[str, ...] = ()
+    profile_id: str | None = None
+    revision_id: str | None = None
+    local_ready: bool | None = None
+    trusted_unsandboxed: bool | None = None
+    archived: bool | None = None
+    verification_status: str | None = None
+    warnings: tuple[str, ...] = ()
+    agent_modes: tuple[dict[str, JsonValue], ...] = ()
+    session_config_options: tuple[dict[str, JsonValue], ...] = ()
+    protocol_verified: bool | None = None
+    full_verified: bool | None = None
+    current_agent_mode_id: str | None = None
+    agent_identity: dict[str, JsonValue] | None = None
+    protocol_verification: dict[str, JsonValue] | None = None
+    full_verifications: tuple[dict[str, JsonValue], ...] = ()
+
+
+class V2CapabilitiesOut(BaseModel):
+    version: Literal["v2"] = "v2"
+    ready: bool
+    run_ready: bool
+    storage: V2StorageHealth
+    harnesses: tuple[V2HarnessCapability, ...]
+
+
+class V2ReadinessOut(V2CapabilitiesOut):
+    pass
+
+
+class V2HealthOut(BaseModel):
+    version: Literal["v2"] = "v2"
+    status: Literal["connected", "degraded"]
+    ready: bool
+    checks: dict[str, bool]
+    reason: str | None = None
 
 
 def _profile_out(view: ProfileView) -> V2ProfileOut:
@@ -791,14 +861,14 @@ def install_v2(
             raise _profile_error(exc) from exc
 
     @profile_router.get(
-        "/harness-profiles/{profile_id}/export", response_model=dict[str, JsonValue]
+        "/harness-profiles/{profile_id}/export", response_model=V2HarnessExportOut
     )
     def export_harness_profile(
         profile_id: str, runtime: AppRuntimeService = Depends(get_runtime)
-    ) -> dict[str, JsonValue]:
+    ) -> V2HarnessExportOut:
         try:
-            return cast(
-                dict[str, JsonValue], json.loads(runtime.export_harness(profile_id))
+            return V2HarnessExportOut.model_validate(
+                json.loads(runtime.export_harness(profile_id))
             )
         except (ProfileServiceError, json.JSONDecodeError) as exc:
             if isinstance(exc, ProfileServiceError):
@@ -1237,6 +1307,14 @@ def install_v2(
 
         for model in (TraceView, ExecutionReport, RawEvidence, EvidenceRef):
             add_model(model)
+        for extra_model in (
+            V2StorageHealth,
+            V2HarnessCapability,
+            V2CapabilitiesOut,
+            V2ReadinessOut,
+            V2HealthOut,
+        ):
+            add_model(extra_model)
         # Use the stable public name for the evidence request reference;
         # FastAPI otherwise suffixes this input-only occurrence with
         # ``-Input`` even though it is the same SDK value model.
@@ -1245,6 +1323,424 @@ def install_v2(
             reference = evidence_request.get("properties", {}).get("reference")
             if isinstance(reference, dict) and "$ref" in reference:
                 reference["$ref"] = "#/components/schemas/EvidenceRef"
+
+        # FastAPI can only infer the success model.  The v2 middleware and
+        # handlers deliberately return a stable error envelope, so make that
+        # contract explicit for generated clients and Swagger UI.
+        error_ref = {"$ref": "#/components/schemas/V2ErrorEnvelope"}
+        error_schema = V2ErrorEnvelope.model_json_schema()
+        error_defs = error_schema.pop("$defs", {})
+        for name, definition in error_defs.items():
+            components.setdefault(name, _component_refs(definition))
+        components.setdefault("V2ErrorEnvelope", _component_refs(error_schema))
+        descriptions = {
+            "/api/v2/profiles": "List or create MCP server profiles. List is read-only; creation stores an immutable revision.",
+            "/api/v2/profiles/{profile_id}": "Read a profile or update only its display metadata. Profile revisions remain immutable.",
+            "/api/v2/profiles/{profile_id}/revisions": "Create an immutable MCP JSON revision for an existing profile.",
+            "/api/v2/profiles/{profile_id}/archive": "Archive a profile so it cannot be selected for new work.",
+            "/api/v2/profiles/{profile_id}/restore": "Restore an archived MCP profile.",
+            "/api/v2/harness-profiles": "List or create agent harness profiles and their immutable manifest revisions.",
+            "/api/v2/harness-profiles/{profile_id}": "Read or update harness profile metadata.",
+            "/api/v2/harness-profiles/{profile_id}/revisions": "Create an immutable harness manifest revision.",
+            "/api/v2/harness-profiles/{profile_id}/archive": "Archive a harness profile.",
+            "/api/v2/harness-profiles/{profile_id}/restore": "Restore an archived harness profile.",
+            "/api/v2/harness-profiles/{profile_id}/export": "Export the stored harness profile payload for SDK or CLI import.",
+            "/api/v2/harness-profiles/import": "Import a previously exported harness profile and create it as a new profile.",
+            "/api/v2/capabilities": "Report storage and configured harness readiness. Credentials are represented only as availability flags.",
+            "/api/v2/readiness": "Report whether storage and at least one configured harness are ready to run work.",
+            "/api/v2/health": "Return the durable storage health status used by local liveness checks.",
+            "/api/v2/harness-profiles/{profile_id}/probes": "Read exact-dimension probe history or submit a probe request. Submission is asynchronous and returns 202.",
+            "/api/v2/harness-profiles/{profile_id}/probes/{probe_id}/cancel": "Cancel a queued or active harness probe.",
+            "/api/v2/executions": "Submit an asynchronous direct or agent execution, or page through saved executions.",
+            "/api/v2/executions/{execution_id}": "Read an execution snapshot or delete it after it reaches a terminal state.",
+            "/api/v2/executions/{execution_id}/cancel": "Request cancellation of an active execution.",
+            "/api/v2/executions/{execution_id}/report": "Read a terminal execution report, trace, test summaries, and bounded event or artifact pages.",
+            "/api/v2/suites/{suite_id}/executions": "Page through saved executions belonging to an integer suite ID.",
+            "/api/v2/evaluations/aggregate": "Calculate a read-only aggregate from evaluation results already saved by the SDK or CLI.",
+            "/api/v2/feedback/{run_id}": "Read saved feedback for a run and optionally compare it with a saved baseline run.",
+            "/api/v2/evidence/read": "Read bounded evidence by reference; content may be redacted or truncated and integrity is checked.",
+        }
+        method_descriptions = {
+            (
+                "get",
+                "/api/v2/profiles",
+            ): "List MCP profiles; include_archived defaults to false.",
+            (
+                "post",
+                "/api/v2/profiles",
+            ): "Create an MCP profile and its first immutable revision. Duplicate names return profile_conflict.",
+            (
+                "get",
+                "/api/v2/harness-profiles",
+            ): "List harness profiles; include_archived defaults to false.",
+            (
+                "post",
+                "/api/v2/harness-profiles",
+            ): "Create a harness profile. trusted_unsandboxed must be true to acknowledge local execution.",
+            (
+                "post",
+                "/api/v2/harness-profiles/import",
+            ): "Import either an exported {name, description, manifest} wrapper or a bare manifest. Imports are stored untrusted.",
+            (
+                "get",
+                "/api/v2/harness-profiles/{profile_id}/probes",
+            ): "Read exact-dimension probe history using revision_id, kind, transport, mode_id, and URL-encoded session_config.",
+            (
+                "post",
+                "/api/v2/harness-profiles/{profile_id}/probes",
+            ): "Queue a probe and return 202. Query kind, transport, and mode_id override matching body values; revision_id selects the current or explicit revision.",
+            (
+                "post",
+                "/api/v2/executions",
+            ): "Submit a JSON direct or agent ExecutionSpec and return 202; poll the returned execution_id before reading its report.",
+            (
+                "get",
+                "/api/v2/executions",
+            ): "Page saved executions with limit 1-100, offset >=0, and lifecycle, outcome, or project_id filters.",
+            (
+                "get",
+                "/api/v2/executions/{execution_id}",
+            ): "Read the current asynchronous execution snapshot.",
+            (
+                "delete",
+                "/api/v2/executions/{execution_id}",
+            ): "Delete an execution only after it is terminal; active executions return execution_active.",
+        }
+        examples = {
+            "/api/v2/evaluations/aggregate": {
+                "summary": "Group saved evaluations by run and case",
+                "value": {
+                    "group_by": ["run_id", "case_id"],
+                    "filters": {"evaluator": ["quality.v1"]},
+                    "limit": 100,
+                    "offset": 0,
+                },
+            },
+            "/api/v2/evidence/read": {
+                "summary": "Read a bounded evidence reference",
+                "value": {
+                    "reference": {
+                        "evidence_id": "evidence-example-1",
+                        "sha256": "a" * 64,
+                    },
+                    "max_bytes": 65536,
+                },
+            },
+            "/api/v2/executions": {
+                "summary": "Submit a direct execution",
+                "value": {
+                    "spec": {
+                        "kind": "direct",
+                        "servers": [
+                            {
+                                "server": {
+                                    "kind": "streamable_http",
+                                    "name": "example",
+                                    "url": "https://example.invalid/mcp",
+                                }
+                            }
+                        ],
+                        "operation": {
+                            "kind": "call_tool",
+                            "server": "example",
+                            "name": "echo",
+                            "arguments": {"message": "hello"},
+                        },
+                    }
+                },
+            },
+            "/api/v2/profiles": {
+                "summary": "Create an MCP profile",
+                "value": {
+                    "name": "example-server",
+                    "description": "Safe example",
+                    "mcp_json": {
+                        "mcpServers": {
+                            "example": {
+                                "type": "http",
+                                "url": "https://example.invalid/mcp",
+                            }
+                        }
+                    },
+                },
+            },
+            "/api/v2/profiles/{profile_id}/revisions": {
+                "summary": "Create an MCP profile revision",
+                "value": {
+                    "mcp_json": {
+                        "mcpServers": {
+                            "example": {
+                                "type": "http",
+                                "url": "https://example.invalid/mcp",
+                            }
+                        }
+                    }
+                },
+            },
+            "/api/v2/harness-profiles": {
+                "summary": "Create a harness profile",
+                "value": {
+                    "name": "example-acp",
+                    "description": "Safe example; trusted_unsandboxed acknowledges local execution",
+                    "manifest": {
+                        "schema_version": "m3.harness.v1",
+                        "protocol": "acp",
+                        "protocol_version": 1,
+                        "command": "example-agent",
+                        "args": [],
+                        "env": {"EXAMPLE_TOKEN": "${EXAMPLE_TOKEN}"},
+                    },
+                    "trusted_unsandboxed": True,
+                },
+            },
+            "/api/v2/harness-profiles/{profile_id}/revisions": {
+                "summary": "Create a harness revision",
+                "value": {
+                    "manifest": {
+                        "schema_version": "m3.harness.v1",
+                        "protocol": "acp",
+                        "protocol_version": 1,
+                        "command": "example-agent",
+                        "args": [],
+                        "env": {"EXAMPLE_TOKEN": "${EXAMPLE_TOKEN}"},
+                    },
+                    "trusted_unsandboxed": True,
+                },
+            },
+            "/api/v2/harness-profiles/{profile_id}/probes": {
+                "summary": "Submit a protocol probe",
+                "value": {
+                    "probe_type": "protocol",
+                    "transport": "stdio",
+                    "session_config": {},
+                    "timeout_seconds": 30,
+                },
+            },
+            "/api/v2/harness-profiles/import": {
+                "summary": "Import an exported harness profile",
+                "value": {
+                    "name": "imported-acp",
+                    "description": "Safe example",
+                    "manifest": {
+                        "schema_version": "m3.harness.v1",
+                        "protocol": "acp",
+                        "protocol_version": 1,
+                        "command": "example-agent",
+                        "args": [],
+                        "env": {},
+                    },
+                },
+            },
+        }
+        not_found_operations = {
+            ("get", "/api/v2/profiles/{profile_id}"),
+            ("patch", "/api/v2/profiles/{profile_id}"),
+            ("post", "/api/v2/profiles/{profile_id}/revisions"),
+            ("post", "/api/v2/profiles/{profile_id}/archive"),
+            ("post", "/api/v2/profiles/{profile_id}/restore"),
+            ("get", "/api/v2/harness-profiles/{profile_id}"),
+            ("patch", "/api/v2/harness-profiles/{profile_id}"),
+            ("post", "/api/v2/harness-profiles/{profile_id}/revisions"),
+            ("post", "/api/v2/harness-profiles/{profile_id}/archive"),
+            ("post", "/api/v2/harness-profiles/{profile_id}/restore"),
+            ("get", "/api/v2/harness-profiles/{profile_id}/export"),
+            ("get", "/api/v2/harness-profiles/{profile_id}/probes"),
+            ("post", "/api/v2/harness-profiles/{profile_id}/probes"),
+            ("post", "/api/v2/harness-profiles/{profile_id}/probes/{probe_id}/cancel"),
+            ("post", "/api/v2/executions"),
+            ("get", "/api/v2/executions/{execution_id}"),
+            ("delete", "/api/v2/executions/{execution_id}"),
+            ("post", "/api/v2/executions/{execution_id}/cancel"),
+            ("get", "/api/v2/executions/{execution_id}/report"),
+            ("get", "/api/v2/suites/{suite_id}/executions"),
+            ("get", "/api/v2/feedback/{run_id}"),
+            ("post", "/api/v2/evidence/read"),
+        }
+        conflict_operations = {
+            ("post", "/api/v2/profiles"),
+            ("patch", "/api/v2/profiles/{profile_id}"),
+            ("post", "/api/v2/profiles/{profile_id}/revisions"),
+            ("post", "/api/v2/harness-profiles"),
+            ("patch", "/api/v2/harness-profiles/{profile_id}"),
+            ("post", "/api/v2/harness-profiles/{profile_id}/revisions"),
+            ("post", "/api/v2/harness-profiles/import"),
+            ("post", "/api/v2/executions"),
+            ("delete", "/api/v2/executions/{execution_id}"),
+            ("post", "/api/v2/executions/{execution_id}/cancel"),
+            ("get", "/api/v2/executions/{execution_id}/report"),
+        }
+        internal_error_operations = {
+            ("post", "/api/v2/executions"),
+            ("get", "/api/v2/executions/{execution_id}"),
+            ("get", "/api/v2/executions/{execution_id}/report"),
+            ("post", "/api/v2/evaluations/aggregate"),
+            ("get", "/api/v2/feedback/{run_id}"),
+            ("post", "/api/v2/evidence/read"),
+            ("get", "/api/v2/harness-profiles/{profile_id}/export"),
+        }
+        validation_operations = {
+            ("get", "/api/v2/profiles"),
+            ("post", "/api/v2/profiles"),
+            ("patch", "/api/v2/profiles/{profile_id}"),
+            ("post", "/api/v2/profiles/{profile_id}/revisions"),
+            ("post", "/api/v2/harness-profiles"),
+            ("patch", "/api/v2/harness-profiles/{profile_id}"),
+            ("post", "/api/v2/harness-profiles/{profile_id}/revisions"),
+            ("post", "/api/v2/harness-profiles/import"),
+            ("get", "/api/v2/harness-profiles/{profile_id}/probes"),
+            ("post", "/api/v2/harness-profiles/{profile_id}/probes"),
+            ("post", "/api/v2/executions"),
+            ("get", "/api/v2/executions"),
+            ("get", "/api/v2/executions/{execution_id}"),
+            ("delete", "/api/v2/executions/{execution_id}"),
+            ("post", "/api/v2/executions/{execution_id}/cancel"),
+            ("get", "/api/v2/executions/{execution_id}/report"),
+            ("get", "/api/v2/suites/{suite_id}/executions"),
+            ("post", "/api/v2/evaluations/aggregate"),
+            ("post", "/api/v2/evidence/read"),
+        }
+        for path, path_item in list(schema.get("paths", {}).items()):
+            if not isinstance(path_item, dict):
+                continue
+            if getattr(application.state, "viewer_read_only", False):
+                allowed = {"get", "head", "options"}
+                if path in {"/api/v2/evidence/read", "/api/v2/evaluations/aggregate"}:
+                    allowed.add("post")
+                for method in list(path_item):
+                    if method.lower() not in allowed:
+                        del path_item[method]
+                if not any(
+                    str(key).lower() in {"get", "post", "head", "options"}
+                    for key in path_item
+                ):
+                    del schema["paths"][path]
+                    continue
+            for method, operation in path_item.items():
+                if method.lower() not in {
+                    "get",
+                    "post",
+                    "patch",
+                    "delete",
+                    "put",
+                } or not isinstance(operation, dict):
+                    continue
+                operation.setdefault("summary", f"{method.upper()} {path}")
+                operation["description"] = (
+                    method_descriptions.get((method.lower(), path))
+                    or descriptions.get(path)
+                    or operation.get("description")
+                    or ""
+                ).strip()
+                responses = operation.setdefault("responses", {})
+                if path == "/api/v2/capabilities" and method.lower() == "get":
+                    responses.setdefault("200", {}).setdefault(
+                        "content", {}
+                    ).setdefault("application/json", {})["schema"] = {
+                        "$ref": "#/components/schemas/V2CapabilitiesOut"
+                    }
+                elif path == "/api/v2/readiness" and method.lower() == "get":
+                    responses.setdefault("200", {}).setdefault(
+                        "content", {}
+                    ).setdefault("application/json", {})["schema"] = {
+                        "$ref": "#/components/schemas/V2ReadinessOut"
+                    }
+                elif path == "/api/v2/health" and method.lower() == "get":
+                    responses.setdefault("200", {}).setdefault(
+                        "content", {}
+                    ).setdefault("application/json", {})["schema"] = {
+                        "$ref": "#/components/schemas/V2HealthOut"
+                    }
+                # Route validation is normalized by the v2 exception handler.
+                if (method.lower(), path) in validation_operations:
+                    responses["422"] = {
+                        "description": "Invalid request or domain input.",
+                        "content": {"application/json": {"schema": error_ref}},
+                    }
+                else:
+                    responses.pop("422", None)
+                if (method.lower(), path) in not_found_operations:
+                    responses.setdefault(
+                        "404",
+                        {
+                            "description": "Resource not found (for example profile_not_found, execution_not_found, suite_not_found, probe_not_found, or feedback_not_found).",
+                            "content": {"application/json": {"schema": error_ref}},
+                        },
+                    )
+                if (method.lower(), path) in conflict_operations:
+                    responses.setdefault(
+                        "409",
+                        {
+                            "description": "State conflict (for example profile_conflict, execution_active, execution_terminal, execution_not_terminal, or cancellation_conflict).",
+                            "content": {"application/json": {"schema": error_ref}},
+                        },
+                    )
+                if (method.lower(), path) in internal_error_operations:
+                    responses.setdefault(
+                        "500",
+                        {
+                            "description": "Mapped durable-data failure such as execution_data_unavailable, trace_unavailable, evaluation_data_unavailable, feedback_data_unavailable, or raw_evidence_integrity_error.",
+                            "content": {"application/json": {"schema": error_ref}},
+                        },
+                    )
+                if path in examples and "requestBody" in operation:
+                    request_examples = (
+                        operation["requestBody"]
+                        .setdefault("content", {})
+                        .setdefault("application/json", {})
+                        .setdefault("examples", {})
+                    )
+                    request_examples["safe"] = examples[path]
+                    if path == "/api/v2/executions" and method.lower() == "post":
+                        request_examples["agent"] = {
+                            "summary": "Submit an ACP agent execution",
+                            "value": {
+                                "spec": {
+                                    "kind": "agent",
+                                    "servers": [
+                                        {
+                                            "server": {
+                                                "kind": "streamable_http",
+                                                "name": "example",
+                                                "url": "https://example.invalid/mcp",
+                                            }
+                                        }
+                                    ],
+                                    "harness": {
+                                        "kind": "acp",
+                                        "model": "example-model",
+                                        "manifest": {
+                                            "schema_version": "m3.harness.v1",
+                                            "protocol": "acp",
+                                            "protocol_version": 1,
+                                            "command": "example-agent",
+                                            "args": [],
+                                            "env": {},
+                                        },
+                                    },
+                                    "message": {
+                                        "content": [
+                                            {
+                                                "kind": "text",
+                                                "text": "Run the safe example task.",
+                                            }
+                                        ]
+                                    },
+                                }
+                            },
+                        }
+                if (
+                    path == "/api/v2/executions/{execution_id}/report"
+                    and method.lower() == "get"
+                ):
+                    for parameter in operation.get("parameters", []):
+                        if parameter.get("name") == "after_sequence":
+                            parameter["example"] = 120
+                        elif parameter.get("name") in {"event_limit", "artifact_limit"}:
+                            parameter["example"] = 100
+                if path == "/api/v2/feedback/{run_id}" and method.lower() == "get":
+                    for parameter in operation.get("parameters", []):
+                        if parameter.get("name") == "baseline_run_id":
+                            parameter["example"] = "run-baseline"
         return neutralize_openapi(schema)
 
     application.openapi = openapi_with_sdk_models

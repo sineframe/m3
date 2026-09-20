@@ -296,7 +296,13 @@ def neutralize_openapi(schema: Mapping[str, Any]) -> dict[str, Any]:
     info = output.get("info")
     if isinstance(info, dict):
         info["title"] = "Test Results API"
-        info["description"] = "API for test execution results"
+        # Keep the access boundary visible in the generated public document.
+        # This function neutralizes product-owned values; it must not discard
+        # the application-level description supplied by FastAPI.
+        info.setdefault(
+            "description",
+            "Local, unauthenticated API for test execution results. Bind this service to loopback.",
+        )
 
     def property_name(path: tuple[str, ...]) -> str | None:
         for index in range(len(path) - 2, -1, -1):

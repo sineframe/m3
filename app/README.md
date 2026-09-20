@@ -26,9 +26,13 @@ just api
 The maintained [API v2 capability guide](docs/api-v2.md) lists every route,
 request and response shape, persistence behavior, and example flow.
 
-Its OpenAPI documentation is available at `http://127.0.0.1:8000/docs` by
-default. The supported browser experience is the compiled SPA bundled with the
-standalone CLI.
+Its generated OpenAPI 3.1 documentation is available at
+`http://127.0.0.1:8000/docs` (Swagger UI), `/redoc` (ReDoc), and
+`/openapi.json` (machine-readable schema). The supported browser experience is
+the compiled SPA bundled with the standalone CLI. The CLI uses the full
+`create_app()` API. The separate `create_viewer_app()` history viewer publishes
+read operations plus the read-only evidence and evaluation POSTs; other
+mutation requests are rejected with 405.
 
 The app exposes the read-only route
 `GET /api/v2/feedback/{run_id}?baseline_run_id=...`. It reads the SDK's saved

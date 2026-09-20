@@ -58,7 +58,42 @@ def _create_app(
     app = FastAPI(
         title="Test Results API",
         version=_package_version(),
-        description="API for test execution results",
+        description=(
+            "Local, unauthenticated API for test execution results. "
+            "Bind this service to loopback (127.0.0.1); the application "
+            "enforces loopback clients, an approved Host header, and same-origin "
+            "browser mutations. Use /docs for Swagger UI, /redoc for ReDoc, "
+            "and /openapi.json for the generated OpenAPI 3.1 contract."
+        ),
+        # Relative URL keeps the schema correct for uvicorn's configurable
+        # port and for the bundled CLI launcher.
+        servers=[{"url": "/", "description": "Local app origin"}],
+        openapi_tags=[
+            {
+                "name": "control-plane-v2",
+                "description": "Profiles, probes, capabilities, and local readiness.",
+            },
+            {
+                "name": "executions-v2",
+                "description": "Submit, inspect, cancel, report, and delete asynchronous executions.",
+            },
+            {
+                "name": "suites-v2",
+                "description": "Saved executions belonging to a suite.",
+            },
+            {
+                "name": "evaluations-v2",
+                "description": "Read-only aggregation of saved evaluation results.",
+            },
+            {
+                "name": "feedback-v2",
+                "description": "Read-only feedback projections for saved runs.",
+            },
+            {
+                "name": "evidence-v2",
+                "description": "Read bounded, redacted evidence from saved runs.",
+            },
+        ],
         lifespan=lifespan,
     )
     app.state.runtime = runtime
