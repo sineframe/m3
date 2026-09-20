@@ -25,6 +25,24 @@ jq '.tests[] | {node_id, outcome, verdict, tool_result, execution_ids}' "$report
 jq '.failures[] | {kind, node_id, verdict, evaluator, status, execution_id}' "$report"
 ```
 
+For the first deterministic direct test, check the specific pytest node ID.
+A green pytest result alone does not show that M3 ran a server operation:
+
+```sh
+node=tests/test_shipping.py::test_shipping_quote_contract
+jq -e --arg node "$node" '
+  (.summary.executions > 0) and
+  any(.tests[];
+    .node_id == $node and .outcome == "passed" and
+    ((.execution_ids // []) | length > 0))
+' "$report"
+```
+
+If this returns false, make the test invoke the direct client or an agent,
+then rerun it. For a direct tool contract, inspect the linked trace to confirm
+the expected tool call and result. A linked execution alone does not prove the
+tool was called or that the assertion was useful.
+
 `summary.failures` counts failed or errored pytest cases and collection errors.
 `tests[].outcome` is pytest's case outcome; `tests[].verdict` distinguishes
 assertion, protocol, setup, teardown, and other errors. A tool result can have

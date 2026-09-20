@@ -4,6 +4,11 @@ Start with the claim and an expected result from the target project's contract.
 Inspect the real server and its existing test fixtures before replacing the
 placeholder names and values below. A green connection or a nonempty response
 is only a smoke test; assert the behavior the user needs to protect.
+Give each pytest test function a concise docstring stating the behavior it
+checks. M3 saves that docstring as the test description shown in the UI.
+At least one deterministic test must use `MCPTestKit` to call the server and
+produce a linked execution. A plain `assert` in a pytest function is not M3
+coverage even if `m3 test` reports a pass.
 
 For a new test, use this progression when the server exposes the surface:
 catalog and schema, representative valid results, boundary and expected error
@@ -36,10 +41,11 @@ the exact trimmed name. For a standalone SDK run, pass `suite_name` to
 `MCPTestKit` or the execution specification instead.
 
 The private SDK release is not installed by bare `uv add "m3[pytest]"`.
-If the standalone CLI is in scope, follow [cli-runner.md](cli-runner.md) and
-`m3 setup` for a version-matched project SDK. For SDK-only use, install the
-exact release wheel through the target project's approved dependency workflow
-and include the required extras. Prefer its existing server fixture.
+Follow [cli-runner.md](cli-runner.md) and `m3 setup` for a version-matched
+project SDK. If the user specifically needs
+SDK-only use, install the exact release wheel through the target project's
+approved dependency workflow and include the required extras. Prefer its
+existing server fixture.
 
 ## Choose persistence explicitly
 
@@ -202,6 +208,7 @@ def shipping_server():
     )
 
 def test_shipping_quote_contract(shipping_server):
+    """A local 2 kg quote returns the documented USD amount."""
     with MCPTestKit() as kit, kit.direct(
         shipping_server, validate_schemas=True
     ) as client:
@@ -217,6 +224,7 @@ def test_shipping_quote_contract(shipping_server):
 
 @pytest.mark.m3
 def test_agent_selects_shipping_quote(agent, shipping_server):
+    """The agent uses the shipping service for a local parcel quote."""
     result = agent.run(
         "Get a local shipping quote for a 2 kg parcel.",
         server=shipping_server,
@@ -285,6 +293,7 @@ confirmed from the installed release.
 
 ```python
 def test_unknown_order_is_expected_error(shipping_server):
+    """Looking up an unknown order returns a domain error."""
     with MCPTestKit() as kit, kit.direct(shipping_server) as client:
         result = client.call_tool("get_order", {"order_id": "missing-fixture"})
     assert result.is_error is True
@@ -338,6 +347,7 @@ matrix = ToolMatrix(servers=(ServerCase(
 
 @matrix.parametrize()
 def test_quote_matrix(case):
+    """Each zone returns its documented shipping amount."""
     result = case.run().direct_result
     assert result is not None and result.is_error is False
     expected = {"local": 9.0, "regional": 12.0}
@@ -361,6 +371,7 @@ For a trusted native Codex server, allow its tool approvals explicitly:
 ```python
 @pytest.mark.m3
 def test_quote_choice(agent, shipping_server):
+    """The agent chooses the shipping quote tool for a local parcel."""
     result = agent.run(
         "Use the shipping MCP service here to quote a 2 kg parcel in the "
         "local zone. What amount and currency does its calculator return?",

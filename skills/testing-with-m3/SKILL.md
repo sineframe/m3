@@ -26,18 +26,31 @@ Read only the reference needed for the task:
    existing fixtures and pytest conventions. Find independent expected results
    before writing assertions. Do not copy the current output into an expected
    value merely to make a test pass.
-2. Check the Python environment, installed M3 version, and whether `m3` is
-   available. Prefer an existing project test runner. The CLI and SDK install
-   separately; the CLI's `m3 setup` installs a matching SDK into the selected
-   project environment without changing its lockfile.
-3. For a CLI-managed new project with no M3 tests, run
-   `m3 init --project-name NAME --suite mcp-behavior`, `m3 setup`, then
-   `m3 doctor`. Replace the skipped starter with a real assertion and remove
-   its skip. Supply both init names so an agent is not prompted. For one
-   SDK-only test, install the SDK through the project's approved dependency
-   workflow and run pytest; `m3 init` and the standalone CLI are optional.
-4. Write and run the narrowest deterministic test first. Add agent/provider
-   tests only when the claim involves tool selection or an agent's output.
+2. Use the standalone `m3` CLI as the default runner. Check its availability,
+   the project Python, and the installed M3 version. If the CLI is missing,
+   install the intended release using [CLI runner](references/cli-runner.md).
+   The CLI and SDK install separately.
+3. In the target project, run
+   `m3 init --project-name NAME --suite mcp-behavior`, then `m3 setup` and
+   `m3 doctor`. Run `init` even when the project is already fully initialized:
+   it preserves existing files and creates a missing `.env.example`. If it
+   reports partial initialization, repair the named files and retry. Supply
+   both names to avoid interactive prompts. `setup`
+   installs the matching SDK into the selected project Python without editing
+   the dependency manifest or lockfile. Replace the skipped starter with a
+   real test and remove its skip.
+4. Write a deterministic direct test that actually calls a server tool, then
+   run it with `m3 test -- tests/PATH.py`. A normal pytest assertion without an
+   M3 client or agent operation produces no execution. Give every test a short
+   behavior-focused function docstring; M3 saves it as the test description
+   shown in the UI. Use the [stdio example](references/test-patterns.md#stdio-local-command)
+   or the project's equivalent server fixture. Add agent/provider tests when
+   the claim involves tool selection or an agent's output.
+5. Inspect the printed feedback path and require a passing pytest case **and**
+   at least one linked execution for the direct test. If no execution was
+   recorded, fix the test and rerun it before claiming M3 coverage. Follow
+   [feedback and iteration](references/feedback-iteration.md#one-run-find-the-verdict-and-evidence)
+   for the exact JSON checks.
 
 ## Choose the test and the evidence
 
@@ -77,9 +90,9 @@ operations.
 
 ## Run and score
 
-`m3 test` runs pytest in the project Python, saves executions and pytest
-outcomes in SQLite, and prints a run ID plus the feedback path. Put CLI options
-before `--` and pytest selectors after it:
+`m3 test` is the primary runner. It runs pytest in the project Python, saves
+executions and pytest outcomes in SQLite, and prints a run ID plus the feedback
+path. Put CLI options before `--` and pytest selectors after it:
 
 ```sh
 m3 test --suite mcp-behavior -- tests/test_m3_starter.py
@@ -87,9 +100,10 @@ m3 test --harness codex=gpt-5.6-sol --trials 2 -- tests/test_agent.py
 ```
 
 A marked test requesting `agent` needs `--harness KIND=MODEL` or marker
-`agents=[...]`. A marker alone does not select an agent. Direct pytest can run
-SDK tests without the standalone CLI, but history is in memory unless the kit
-uses `SQLiteExecutionStore` or the M3 pytest plugin receives `--results-db`.
+`agents=[...]`. A marker alone does not select an agent. When the user
+specifically needs SDK-only pytest, use the project's approved SDK
+installation workflow. Direct pytest history is in memory unless the kit uses
+`SQLiteExecutionStore` or the M3 pytest plugin receives `--results-db`.
 Keep direct-only and agent tests in separate files when running without a
 harness: `-k` filters after collection and does not avoid an agent fixture
 selection error in the same collected file.
@@ -112,10 +126,14 @@ Small trial counts show observations, not reliable improvement estimates.
 | `LLMJudge` | `M3_JUDGE_API_KEY` by default; separate from the agent key |
 | Authenticated MCP endpoint | `SecretReference` in `HTTPServer.headers` for agent access, or a direct-client bearer reference |
 
-Local direct tests and the deterministic ACP fixture need no model key. The
-CLI reads `.env` only with `--env-file .env`; blank entries in `.env.example`
-are names, not credentials. Keep `.env` ignored, use names rather than values
-in flags, and never print or place secrets in tests or reports.
+Local direct tests and the deterministic ACP fixture need no model key.
+`m3 init` creates `.env.example` with blank credential names, not working
+credentials. For agent or judge tests, copy it to `.env` if needed, fill only
+the keys for the selected provider or judge from an authorized source, and
+run `m3 test --env-file .env ...`; the CLI never auto-loads `.env`. A supported
+native harness login can also authenticate without a key. Keep `.env`
+ignored, use names rather than values in flags, and never print or place
+secrets in tests or reports.
 
 When a run fails, check collection and environment first, then server startup
 or connection, harness/provider setup, operation assertions, evaluator status,
