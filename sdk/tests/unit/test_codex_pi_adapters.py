@@ -29,12 +29,14 @@ from m3.harness.contracts import (
 )
 from m3.harness.pi import PiHarnessAdapter
 from m3.harness.pi_extension.bridge import MCPBridge, qualified_tool_name
+from m3.interaction_handlers import Interactions
 from m3.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
 from m3.transport.capture_proxy import McpCaptureManager
 from m3.types import (
     AgentSpec,
     Codex,
+    PermissionPolicy,
     Pi,
     RestrictiveToolPolicy,
     SecretReference,
@@ -163,6 +165,47 @@ async def test_codex_native_app_server_handshake_multiturn_and_usage() -> None:
     )
     assert session.snapshot().turns == 2
     await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("permission_mode,expected_calls", [("allow", 1), ("deny", 0)])
+async def test_codex_mcp_tool_approval_uses_session_permission_policy(
+    permission_mode: str, expected_calls: int
+) -> None:
+    configuration = HarnessServerConfig(
+        key="fixture",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="fixture-connection",
+        command="fixture",
+    )
+    base = _launch(
+        Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+        configurations=(configuration,),
+    )
+    launch = HarnessLaunch(
+        base.spec,
+        base.servers,
+        base.configurations,
+        base.tool_policy,
+        Interactions(permission_policy=PermissionPolicy(mode=permission_mode)),
+    )
+    adapter = CodexHarnessAdapter(
+        executable=str(CODEX_FIXTURE),
+        environment={"M3_CODEX_FIXTURE_APPROVAL": "1"},
+    )
+    session = await adapter.open(launch)
+    try:
+        result = await session.send(HarnessTurnRequest.from_message("quote"))
+        assert result.status == "completed"
+        assert len(result.tool_calls) == expected_calls
+        assert launch.interactions is not None
+        receipts = launch.interactions.receipts()
+        assert len(receipts) == 1
+        assert receipts[0].decision == permission_mode
+    finally:
+        await session.close()
 
 
 @pytest.mark.asyncio
