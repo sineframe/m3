@@ -147,12 +147,14 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         )
         typed_page = TypeAdapter(ExecutionPage).validate_python(page.json()["page"])
         assert typed_page.total == 1 and len(typed_page.items) == 1
+        assert typed_page.items[0].tool_call_count == 1
         fetched = client.get(f"/api/v2/executions/{execution_id}")
         assert fetched.status_code == 200
         assert TypeAdapter(ExecutionSpec).validate_python(
             fetched.json()["spec"]
         ) == TypeAdapter(ExecutionSpec).validate_python(body["spec"])
         assert fetched.json()["snapshot"]["run_id"] == "api-run"
+        assert fetched.json()["snapshot"]["tool_call_count"] == 1
         report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert report.status_code == 200
         parsed_report = TypeAdapter(ExecutionReport).validate_python(

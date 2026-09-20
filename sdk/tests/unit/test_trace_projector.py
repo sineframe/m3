@@ -1,5 +1,7 @@
 """Finalized direct-MCP projection and public trace retrieval contracts."""
 
+import json
+import sqlite3
 from datetime import datetime, timezone
 
 import pytest
@@ -35,19 +37,26 @@ from m3.observability import (
 )
 from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from m3.sync_api import MCPTestKit
+from m3.trace.counts import tool_call_count, tool_call_count_after
 from m3.trace.projector import _entry_for_event
 from m3.types import (
     ConnectionId,
     EvaluationStatus,
+    Event,
     EventDirection,
+    EventId,
     EventKind,
+    EventOrigin,
+    EventSource,
     EvidenceRef,
+    ExecutionId,
     ExecutionOutcome,
     ExecutionResult,
     ExecutionState,
     ExecutionStatus,
     RequestLink,
     TraceResult,
+    TurnId,
 )
 
 
@@ -222,6 +231,401 @@ def test_direct_projector_pairs_protocol_and_tools_and_preserves_indexes() -> No
     assert view.runtime.initialization.value.server_name.value == "fixture"
     assert view.summary.tool_call_count == 1
     assert view.summary.successful_tool_call_count == 1
+
+
+def test_execution_snapshot_exposes_tool_call_count_for_history() -> None:
+    trace = _trace()
+    store = InMemoryExecutionStore()
+    execution = trace.execution_id
+    store.create(ExecutionState(execution_id=execution))
+    store.append_events(trace.events)
+
+    snapshot = store.get_snapshot(execution)
+    assert snapshot is not None
+    assert snapshot.tool_call_count == trace.view().summary.tool_call_count == 1
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_non_tool_event_appends_do_not_reproject_tool_call_count(
+    store_kind: str, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Appending ordinary events carries the existing history count forward."""
+    calls = 0
+    from m3.trace.projector import TraceProjector
+
+    original = TraceProjector._timeline
+
+    def counted(events):
+        nonlocal calls
+        calls += 1
+        return original(events)
+
+    monkeypatch.setattr(TraceProjector, "_timeline", staticmethod(counted))
+    store = (
+        InMemoryExecutionStore()
+        if store_kind == "memory"
+        else SQLiteExecutionStore(tmp_path / "count.sqlite")
+    )
+    try:
+        store.create(ExecutionState(execution_id="count-execution"))
+
+        def diagnostic(sequence: int) -> Event:
+            return Event(
+                event_id=EventId(f"count-event-{sequence}"),
+                execution_id=ExecutionId("count-execution"),
+                sequence=sequence,
+                kind=EventKind.DIAGNOSTIC,
+                monotonic_offset_ms=float(sequence),
+                payload={"sequence": sequence},
+            )
+
+        trace = _trace(terminal=False)
+        execution = ExecutionId("count-execution")
+        events = tuple(
+            event.model_copy(update={"execution_id": execution})
+            for event in trace.events
+        )
+        store.append_events(events)
+        assert store.get_snapshot("count-execution").tool_call_count == 1
+        projected_calls = calls
+        next_sequence = len(events)
+        store.append_events((diagnostic(next_sequence),))
+        store.append_events((diagnostic(next_sequence + 1),))
+        assert store.get_snapshot("count-execution").tool_call_count == 1
+        assert calls == projected_calls
+    finally:
+        if hasattr(store, "close"):
+            store.close()
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_incremental_reported_wire_tool_request_count_matches_trace_view(
+    store_kind: str, tmp_path
+) -> None:
+    trace = _trace()
+    execution = ExecutionId("incremental-count-execution")
+    created = trace.events[0].model_copy(
+        update={
+            "execution_id": execution,
+            "sequence": 0,
+            "monotonic_offset_ms": 0.0,
+        }
+    )
+    diagnostic = Event(
+        event_id=EventId("incremental-diagnostic"),
+        execution_id=execution,
+        sequence=1,
+        kind=EventKind.DIAGNOSTIC,
+        monotonic_offset_ms=0.0,
+        payload={},
+    )
+    wire = trace.events[7].model_copy(
+        update={
+            "execution_id": execution,
+            "sequence": 2,
+            "monotonic_offset_ms": 2.0,
+        }
+    )
+    reported = wire.model_copy(
+        update={
+            "event_id": EventId("incremental-reported"),
+            "sequence": 3,
+            "monotonic_offset_ms": 3.0,
+            "correlation": None,
+            "provenance": EventSource(
+                origin=EventOrigin.HARNESS_REPORTED, source="test.harness"
+            ),
+        }
+    )
+    terminal = trace.events[-1].model_copy(
+        update={
+            "execution_id": execution,
+            "sequence": 4,
+            "monotonic_offset_ms": 4.0,
+        }
+    )
+    response = trace.events[8].model_copy(
+        update={
+            "execution_id": execution,
+            "sequence": 4,
+            "monotonic_offset_ms": 4.0,
+        }
+    )
+    trailing = diagnostic.model_copy(
+        update={
+            "event_id": EventId("incremental-trailing-diagnostic"),
+            "sequence": 5,
+            "monotonic_offset_ms": 5.0,
+        }
+    )
+    terminal = terminal.model_copy(update={"sequence": 6, "monotonic_offset_ms": 6.0})
+    events = (created, diagnostic, wire, reported, response, trailing, terminal)
+    store = (
+        InMemoryExecutionStore()
+        if store_kind == "memory"
+        else SQLiteExecutionStore(tmp_path / "incremental-count.sqlite")
+    )
+    try:
+        store.create(ExecutionState(execution_id=execution))
+        store.append_events((created, diagnostic))
+        store.append_events((wire,))
+        store.append_events((reported, response, trailing, terminal))
+        projected = TraceResult(
+            trace_id=trace.trace_id,
+            execution_id=execution,
+            completeness="complete",
+            highest_sequence=terminal.sequence,
+            events=events,
+        ).view()
+        assert projected.summary.tool_call_count == 1
+        assert store.get_snapshot(execution).tool_call_count == 1
+        assert store.get_snapshot(execution).tool_call_count == (
+            projected.summary.tool_call_count
+        )
+    finally:
+        if hasattr(store, "close"):
+            store.close()
+
+
+def test_many_incremental_wire_tool_requests_project_only_new_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from m3.trace.projector import TraceProjector
+
+    projected_lengths: list[int] = []
+    original = TraceProjector._timeline
+
+    def counted(events):
+        projected_lengths.append(len(events))
+        return original(events)
+
+    monkeypatch.setattr(TraceProjector, "_timeline", staticmethod(counted))
+    trace = _trace(terminal=False)
+    execution = ExecutionId("many-incremental-count-execution")
+    store = InMemoryExecutionStore()
+    store.create(ExecutionState(execution_id=execution))
+    created = trace.events[0].model_copy(
+        update={
+            "execution_id": execution,
+            "sequence": 0,
+            "monotonic_offset_ms": 0.0,
+        }
+    )
+    store.append_events((created,))
+    template = trace.events[7]
+    for sequence in range(1, 201):
+        store.append_events(
+            (
+                template.model_copy(
+                    update={
+                        "execution_id": execution,
+                        "event_id": EventId(f"many-call-{sequence}"),
+                        "sequence": sequence,
+                        "monotonic_offset_ms": float(sequence),
+                    }
+                ),
+            )
+        )
+    assert store.get_snapshot(execution).tool_call_count == 200
+    assert max(projected_lengths) == 1
+
+
+def test_mixed_request_count_ignores_long_non_tool_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from m3.trace.counts import tool_call_count, tool_call_count_after
+    from m3.trace.projector import TraceProjector
+
+    trace = _trace(terminal=False)
+    wire = trace.events[7].model_copy(
+        update={"sequence": 100, "monotonic_offset_ms": 100.0}
+    )
+    reported = wire.model_copy(
+        update={
+            "event_id": EventId("filtered-reported"),
+            "sequence": 101,
+            "monotonic_offset_ms": 101.0,
+            "correlation": None,
+            "provenance": EventSource(
+                origin=EventOrigin.HARNESS_REPORTED, source="test.harness"
+            ),
+        }
+    )
+    diagnostics = tuple(
+        Event(
+            event_id=EventId(f"long-diagnostic-{sequence}"),
+            execution_id=wire.execution_id,
+            sequence=sequence,
+            kind=EventKind.DIAGNOSTIC,
+            monotonic_offset_ms=float(sequence),
+            payload={},
+        )
+        for sequence in range(100)
+    )
+    events = (*diagnostics, wire, reported)
+    expected = tool_call_count(events)
+    projected_lengths: list[int] = []
+    original = TraceProjector._timeline
+
+    def counted(values):
+        projected_lengths.append(len(values))
+        return original(values)
+
+    monkeypatch.setattr(TraceProjector, "_timeline", staticmethod(counted))
+    assert expected == 1
+    assert tool_call_count_after(0, events, (reported,)) == expected
+    assert projected_lengths == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "explicit_match",
+        "explicit_mismatch",
+        "unique_fallback",
+        "ambiguous_fallback",
+        "malformed",
+        "repeated_reported_id",
+    ],
+)
+def test_mixed_request_matcher_matches_canonical_projection(case: str) -> None:
+    trace = _trace(terminal=False)
+    wire = trace.events[7]
+
+    def reported(event: Event, identifier: str, **updates: object) -> Event:
+        payload = dict(event.payload)
+        payload.pop("call_id", None)
+        payload.update(updates.pop("payload", {}))
+        if "call_id" in updates:
+            payload["call_id"] = updates.pop("call_id")
+        return event.model_copy(
+            update={
+                "event_id": EventId(identifier),
+                "payload": payload,
+                "correlation": None,
+                "provenance": EventSource(
+                    origin=EventOrigin.HARNESS_REPORTED, source="test.harness"
+                ),
+                **updates,
+            }
+        )
+
+    if case == "explicit_match":
+        events = (wire, reported(wire, "reported-match", call_id="call-3"))
+    elif case == "explicit_mismatch":
+        events = (wire, reported(wire, "reported-mismatch", call_id="other"))
+    elif case == "unique_fallback":
+        common = {"server_binding": "server", "turn_id": TurnId("turn-1")}
+        wire = wire.model_copy(update=common)
+        events = (
+            wire.model_copy(update={"payload": {"params": {"name": "echo"}}}),
+            reported(
+                wire,
+                "reported-fallback",
+                **common,
+                payload={"params": {"name": "echo"}},
+            ),
+        )
+    elif case == "ambiguous_fallback":
+        common = {"server_binding": "server", "turn_id": TurnId("turn-1")}
+        first = wire.model_copy(
+            update={
+                **common,
+                "event_id": EventId("wire-first"),
+                "payload": {"params": {"name": "echo"}},
+            }
+        )
+        second = first.model_copy(update={"event_id": EventId("wire-second")})
+        events = (
+            first,
+            second,
+            reported(
+                first,
+                "reported-ambiguous",
+                **common,
+                payload={"params": {"name": "echo"}},
+            ),
+        )
+    elif case == "malformed":
+        events = (
+            wire,
+            reported(
+                wire,
+                "reported-malformed",
+                payload={"params": "invalid"},
+            ),
+        )
+    else:
+        first = reported(wire, "reported-one", call_id="same")
+        second = reported(wire, "reported-two", call_id="same")
+        events = (first, second)
+
+    expected = tool_call_count(events)
+    previous = tool_call_count(events[:-1])
+    assert tool_call_count_after(previous, events, (events[-1],)) == expected
+
+
+def test_execution_snapshot_deduplicates_reported_and_wire_tool_calls() -> None:
+    trace = _trace()
+    wire_call = trace.events[7]
+    reported_call = wire_call.model_copy(
+        update={
+            "event_id": EventId("reported-call"),
+            "sequence": 8,
+            "correlation": None,
+            "provenance": EventSource(
+                origin=EventOrigin.HARNESS_REPORTED, source="test.harness"
+            ),
+        }
+    )
+    shifted = tuple(
+        event.model_copy(update={"sequence": event.sequence + 1})
+        for event in trace.events[8:]
+    )
+    events = (*trace.events[:8], reported_call, *shifted)
+    store = InMemoryExecutionStore()
+    store.create(ExecutionState(execution_id=trace.execution_id))
+    store.append_events(events)
+
+    snapshot = store.get_snapshot(trace.execution_id)
+    assert snapshot is not None
+    projected = trace.model_copy(
+        update={"events": events, "highest_sequence": events[-1].sequence}
+    ).view()
+    assert snapshot.tool_call_count == projected.summary.tool_call_count == 1
+
+
+def test_sqlite_legacy_snapshot_hydrates_tool_call_count(tmp_path) -> None:
+    from m3.storage import SQLiteExecutionStore
+
+    trace = _trace()
+    database = tmp_path / "legacy.sqlite"
+    store = SQLiteExecutionStore(database)
+    try:
+        store.create(ExecutionState(execution_id=trace.execution_id))
+        store.append_events(trace.events)
+    finally:
+        store.close()
+    connection = sqlite3.connect(database)
+    raw = connection.execute(
+        "SELECT snapshot_json FROM v2_executions WHERE id=?",
+        (trace.execution_id.root,),
+    ).fetchone()[0]
+    value = json.loads(raw)
+    value.pop("tool_call_count", None)
+    connection.execute(
+        "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
+        (json.dumps(value), trace.execution_id.root),
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = SQLiteExecutionStore(database)
+    try:
+        assert reopened.get_snapshot(trace.execution_id).tool_call_count == 1
+        assert reopened.list_executions().items[0].tool_call_count == 1
+    finally:
+        reopened.close()
 
 
 def test_json_null_is_observed_and_round_trips_while_invalid_json_is_unavailable() -> (

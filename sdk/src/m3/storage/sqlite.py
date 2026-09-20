@@ -46,6 +46,7 @@ from ..observability import (
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
 from ..suites import Suite, generated_suite_id, normalize_suite_name
+from ..trace.counts import tool_call_count, tool_call_count_after
 from ..trace.redaction import (
     RedactionConfig,
     redact_artifact_bytes,
@@ -1743,12 +1744,21 @@ class SQLiteExecutionStore(_SqliteBase):
         return tuple(values)
 
     def get_snapshot(self, execution_id: ExecutionId | str) -> ExecutionState | None:
+        key = _execution_key(execution_id)
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
-                (_execution_key(execution_id),),
+                (key,),
             ).fetchone()
-        return ExecutionState.model_validate(_loads(row[0])) if row else None
+        if row is None:
+            return None
+        raw = _loads(row[0])
+        snapshot = ExecutionState.model_validate(raw)
+        if "tool_call_count" not in raw:
+            snapshot = snapshot.model_copy(
+                update={"tool_call_count": tool_call_count(self._events(key))}
+            )
+        return snapshot
 
     def get_execution_spec(
         self, execution_id: ExecutionId | str
@@ -1809,7 +1819,19 @@ class SQLiteExecutionStore(_SqliteBase):
                 f"SELECT snapshot_json FROM v2_executions WHERE {where} ORDER BY json_extract(snapshot_json, '$.created_at') DESC, id DESC LIMIT ? OFFSET ?",
                 (*tuple(parameters), limit, offset),
             ).fetchall()
-        snapshots = [ExecutionState.model_validate(_loads(row[0])) for row in rows]
+        snapshots = []
+        for row in rows:
+            raw = _loads(row[0])
+            snapshot = ExecutionState.model_validate(raw)
+            if "tool_call_count" not in raw:
+                snapshot = snapshot.model_copy(
+                    update={
+                        "tool_call_count": tool_call_count(
+                            self._events(snapshot.execution_id.root)
+                        )
+                    }
+                )
+            snapshots.append(snapshot)
         return page.model_copy(
             update={
                 "items": tuple(snapshots),
@@ -2013,7 +2035,11 @@ class SQLiteExecutionStore(_SqliteBase):
         ) if count_row else 0
 
     def _derive_snapshot(
-        self, execution_id: str, events: Sequence[Event] | None = None
+        self,
+        execution_id: str,
+        events: Sequence[Event] | None = None,
+        *,
+        appended: Sequence[Event] | None = None,
     ) -> ExecutionState:
         existing = self.get_snapshot(execution_id)
         if existing is None:
@@ -2072,6 +2098,11 @@ class SQLiteExecutionStore(_SqliteBase):
             lifecycle=lifecycle,
             outcome=outcome,
             sequence=values[-1].sequence if values else existing.sequence,
+            tool_call_count=(
+                tool_call_count(values)
+                if appended is None
+                else tool_call_count_after(existing.tool_call_count, values, appended)
+            ),
             created_at=created_at,
             finished_at=finished_at,
             provenance=existing.provenance,
@@ -2423,7 +2454,9 @@ class SQLiteExecutionStore(_SqliteBase):
                             ),
                         )
             derived = self._derive_snapshot(
-                execution_id, self._events(execution_id) + safe_events
+                execution_id,
+                self._events(execution_id) + safe_events,
+                appended=safe_events,
             )
             connection.execute(
                 "UPDATE v2_executions SET snapshot_json=? WHERE id=?",

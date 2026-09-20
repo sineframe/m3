@@ -15,6 +15,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from .storage import ExecutionStore, StorageConflict
+from .trace.counts import tool_call_count
 from .trace.redaction import RedactionConfig, redact_for_persistence, redact_model_json
 from .types import (
     ConnectionId,
@@ -671,11 +672,17 @@ class ExecutionTraceRecorder:
 
     def _project_snapshot(self) -> ExecutionState:
         events = self._committed_events()
+        saved = self._store.get_snapshot(self._execution_id)
         lifecycle = ExecutionStatus.CREATED
         outcome: ExecutionOutcome | None = None
         created_at = events[0].timestamp if events else datetime.now(timezone.utc)
         finished_at: datetime | None = None
         highest = events[-1].sequence if events else 0
+        # Stores maintain this derived field at commit time. Reuse it here so
+        # snapshot reads do not repeatedly project the full event history.
+        tool_call_total = (
+            saved.tool_call_count if saved is not None else tool_call_count(events)
+        )
         for event in events:
             if event.kind is EventKind.EXECUTION_CREATED:
                 created_at = event.timestamp
@@ -687,7 +694,6 @@ class ExecutionTraceRecorder:
                     outcome = _enum_or_none(ExecutionOutcome, value)
                 lifecycle = ExecutionStatus.FINISHED
                 finished_at = event.timestamp
-        saved = self._store.get_snapshot(self._execution_id)
         return ExecutionState(
             execution_id=self._execution_id,
             project_id=saved.project_id if saved is not None else None,
@@ -696,6 +702,7 @@ class ExecutionTraceRecorder:
             lifecycle=lifecycle,
             outcome=outcome,
             sequence=highest,
+            tool_call_count=tool_call_total,
             created_at=created_at,
             finished_at=finished_at,
         )

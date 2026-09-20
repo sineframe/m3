@@ -36,6 +36,7 @@ from ..observability import (
 )
 from ..services.acp_probes import ACPProbeDimension, ACPProbeResult
 from ..suites import Suite, generated_suite_id, normalize_suite_name
+from ..trace.counts import tool_call_count, tool_call_count_after
 from ..trace.redaction import (
     RedactionConfig,
     redact_artifact_bytes,
@@ -1214,7 +1215,9 @@ class InMemoryExecutionStore:
             candidate_events = current + tuple(
                 item.model_copy() for item in safe_events
             )
-            candidate_snapshot = self._derive_snapshot(execution_id, candidate_events)
+            candidate_snapshot = self._derive_snapshot(
+                execution_id, candidate_events, appended=safe_events
+            )
             # Tuple replacement is the commit point. Readers cannot observe
             # the candidate batch because it is never placed in _events earlier.
             # Event is recursively immutable, so a shallow model
@@ -1236,7 +1239,11 @@ class InMemoryExecutionStore:
                     continue
 
     def _derive_snapshot(
-        self, execution_id: str, events: tuple[Event, ...]
+        self,
+        execution_id: str,
+        events: tuple[Event, ...],
+        *,
+        appended: Sequence[Event] | None = None,
     ) -> ExecutionState:
         previous = self._snapshots[execution_id]
         lifecycle = ExecutionStatus.CREATED
@@ -1276,6 +1283,11 @@ class InMemoryExecutionStore:
             lifecycle=lifecycle,
             outcome=outcome,
             sequence=highest,
+            tool_call_count=(
+                tool_call_count(events)
+                if appended is None
+                else tool_call_count_after(previous.tool_call_count, events, appended)
+            ),
             created_at=created_at
             if created_at.tzinfo is not None
             else datetime.now(timezone.utc),

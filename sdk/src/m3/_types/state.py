@@ -37,6 +37,7 @@ class ExecutionState(FrozenModel):
     lifecycle: ExecutionStatus = ExecutionStatus.CREATED
     outcome: ExecutionOutcome | None = None
     sequence: int = _Field(default=0, ge=0)
+    tool_call_count: int = _Field(default=0, ge=0)
     created_at: _datetime = _Field(default_factory=_utc_now)
     finished_at: _datetime | None = None
     provenance: SessionSource | None = None
