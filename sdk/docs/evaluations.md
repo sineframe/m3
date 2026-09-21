@@ -48,6 +48,31 @@ m3_kit.evaluate({"input": prompt, "expected": reference, "actual": answer},
 The judge sends selected test text to its configured endpoint, so avoid
 including private data unless that transfer is intended.
 
+The request supplies the judge with `input`, `expected`, and `actual` as JSON
+strings, plus the configured rubric when one is present. The judge must return
+one JSON object with this shape:
+
+```json
+{
+  "score": 0.95,
+  "rationale": "The response matches the expected answer.",
+  "abstain": false
+}
+```
+
+`score` must be between `0` and `1`. Set `score` to `null` and `abstain` to
+`true` only when the supplied evidence cannot be assessed. `rationale` must be
+a concise string and is limited to 2,000 characters. The default
+`json_schema` mode enforces this object at the provider. `json_text` asks the
+model for the same object, parses the returned text as JSON, and validates the
+required fields, types, and score range locally.
+
+M3 compares a non-abstaining score with the judge's `threshold`, which defaults
+to `0.8`, and records a `PASSED` or `FAILED` evaluation with the score and
+rationale. An abstention, malformed object, refusal, or provider failure is
+recorded as an `ERROR` evaluation. The saved result also includes safe request
+details and judge provenance such as the model and rubric identifiers.
+
 Judges use the OpenAI Chat Completions API. The default endpoint uses
 `M3_JUDGE_API_KEY` and defaults to `json_schema`. A custom endpoint must declare
 both its credential environment variable and response mode:
