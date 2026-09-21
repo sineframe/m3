@@ -12,7 +12,7 @@ export OPENROUTER_API_KEY=""
 export OPENCODE_API_KEY=""
 
 uv sync --locked --all-packages \
-  --extra pytest --extra storage --extra property \
+  --extra pytest --extra judge --extra storage --extra property \
   --group test --group typecheck
 
 uv run --locked --no-sync --project sdk \
