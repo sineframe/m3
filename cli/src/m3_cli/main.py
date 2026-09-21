@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from . import doctor, init, runtime, setup
+from .branding import M3_ASCII_ART
 from .errors import CLIError
 
 
@@ -18,7 +19,11 @@ class _RedactingArgumentParser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = _RedactingArgumentParser(prog="m3")
+    parser = _RedactingArgumentParser(
+        prog="m3",
+        description=M3_ASCII_ART,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     subparsers = parser.add_subparsers(
         dest="command", required=True, parser_class=_RedactingArgumentParser
     )

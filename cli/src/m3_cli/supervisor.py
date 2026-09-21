@@ -27,6 +27,8 @@ from urllib.error import URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from .branding import M3_ASCII_ART
+
 if typing.TYPE_CHECKING:
     import tomli as _tomllib
 elif sys.version_info >= (3, 11):
@@ -1068,6 +1070,7 @@ def _run_ui_server(
             for line in _server_diagnostics(child):
                 print(f"m3: UI server: {line}", file=sys.stderr)
             return OPERATIONAL_ERROR
+        print(M3_ASCII_ART, flush=True)
         _print_ui_output(port, new_runs, warnings)
         with _termination_signal_handlers():
             while True:

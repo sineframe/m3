@@ -13,6 +13,7 @@ from typing import ClassVar
 import pytest
 
 from m3_cli import main, supervisor
+from m3_cli.branding import M3_ASCII_ART
 
 
 @pytest.mark.parametrize("value", ["codex=", "unknown=model", "opencode=a,,b"])
@@ -127,6 +128,7 @@ def test_ui_server_prints_links_and_returns_original_failure(
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 1, runs, ()) == 1
     output = capsys.readouterr().out
     assert output.splitlines() == [
+        *M3_ASCII_ART.splitlines(),
         "Run: http://127.0.0.1:8123/reports/runs/run%20id%2F1",
         "Run: http://127.0.0.1:8123/reports/runs/run-two",
     ]
@@ -150,7 +152,10 @@ def test_ui_server_zero_runs_prints_message(
         lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 0, (), ()) == 0
-    assert capsys.readouterr().out.splitlines() == ["No new stored runs."]
+    assert capsys.readouterr().out.splitlines() == [
+        *M3_ASCII_ART.splitlines(),
+        "No new stored runs.",
+    ]
 
 
 @pytest.mark.parametrize("exit_code", [2, 130, 143])
@@ -374,7 +379,7 @@ def test_cli_module_help() -> None:
         check=False,
     )
     assert result.returncode == 0
-    assert "m3" in result.stdout
+    assert M3_ASCII_ART in result.stdout
 
 
 def test_cli_test_help_documents_scoped_credential_mapping() -> None:
