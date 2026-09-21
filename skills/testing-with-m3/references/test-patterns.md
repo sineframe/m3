@@ -101,6 +101,16 @@ result = kit.evaluate(
 assert result.status.value == "passed"
 ```
 
+The judge receives JSON strings for `input`, `expected`, and `actual`, plus an
+optional configured rubric. It returns one JSON object with exactly `score`,
+`rationale`, and `abstain`. `score` is a number from 0 to 1, `rationale` is a
+concise string, and `abstain` is a boolean. For evidence that cannot be
+assessed, use `score: null` and `abstain: true`. The default `json_schema`
+response mode enforces this object at the provider; `json_text` parses and
+validates its required fields, types, and score range locally. Scores at or
+above the configured threshold become PASSED and lower scores become FAILED.
+Abstentions and invalid output become ERROR evaluations.
+
 Use `required=True` to persist then raise for failed or error results. The
 result exposes `status`, `score`, `rationale`, and safe `details`/provenance.
 For advanced subjects, a configured `LLMJudge` can be called inside a
