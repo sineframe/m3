@@ -326,6 +326,8 @@ class _PortalRuntime:
         project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
         max_judge_requests: int | None = None,
+        harness_cache_dir: str | _Path | None = None,
+        runtime_project_root: str | _Path | None = None,
     ) -> None:
         from .async_api import AsyncMCPTestKit
 
@@ -341,6 +343,8 @@ class _PortalRuntime:
             project_id=project_id,
             record_checks=record_checks,
             max_judge_requests=max_judge_requests,
+            harness_cache_dir=harness_cache_dir,
+            cwd=runtime_project_root,
         )
         self.clients: dict[int, _AsyncDirectClient] = {}
         self.sessions: dict[int, _AsyncAgentSession] = {}
@@ -432,12 +436,14 @@ class _PortalRuntime:
         adapter: _AgentAdapter | None = None,
         runtime_servers: _Iterable[_Any] = (),
         interaction_handlers: InteractionHandlers | None = None,
+        harness_cache_dir: str | _Path | None = None,
     ) -> int:
         session = self.kit.agent_session(
             spec,
             adapter=adapter,
             runtime_servers=runtime_servers,
             interaction_handlers=interaction_handlers,
+            harness_cache_dir=harness_cache_dir,
         )
         handle = self._next_session
         self._next_session += 1
@@ -587,6 +593,8 @@ class _SyncPortal:
         project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
         max_judge_requests: int | None = None,
+        harness_cache_dir: str | _Path | None = None,
+        runtime_project_root: str | _Path | None = None,
     ) -> None:
         self._lock = _RLock()
         self._context = _start_blocking_portal()
@@ -605,6 +613,8 @@ class _SyncPortal:
                 project_id,
                 record_checks,
                 max_judge_requests,
+                harness_cache_dir,
+                runtime_project_root,
             )
         except BaseException:
             self._context.__exit__(None, None, None)
@@ -994,6 +1004,7 @@ class AgentSession:
         runtime_servers: _Iterable[_Any] = (),
         interaction_handlers: InteractionHandlers | None = None,
         _handle: int | None = None,
+        harness_cache_dir: str | _Path | None = None,
     ) -> None:
         self._portal = portal
         self._handle = (
@@ -1007,6 +1018,7 @@ class AgentSession:
                     adapter,
                     tuple(runtime_servers),
                     interaction_handlers,
+                    harness_cache_dir,
                 ),
             )
         )
@@ -1200,6 +1212,7 @@ class MCPTestKit:
         project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
         max_judge_requests: int | None = None,
+        harness_cache_dir: str | _Path | None = None,
     ) -> None:
         from ._test_runs import active_test
 
@@ -1226,6 +1239,12 @@ class MCPTestKit:
             else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
         )
         self._suite_name = suite_name
+        self._runtime_project_root = _Path(cwd or _Path.cwd()).expanduser().resolve()
+        self._harness_cache_dir = (
+            None
+            if harness_cache_dir is None
+            else str(_Path(harness_cache_dir).expanduser().resolve())
+        )
         self._project_id = (
             None
             if project_id is None
@@ -1611,6 +1630,8 @@ class MCPTestKit:
                     self._project_id,
                     self._record_checks,
                     self._max_judge_requests,
+                    self._harness_cache_dir,
+                    self._runtime_project_root,
                 )
                 self._portal = portal
             try:
@@ -1735,6 +1756,8 @@ class MCPTestKit:
                     self._project_id,
                     self._record_checks,
                     self._max_judge_requests,
+                    self._harness_cache_dir,
+                    self._runtime_project_root,
                 )
                 self._portal = portal
             try:
@@ -1795,6 +1818,7 @@ class MCPTestKit:
         adapter: _AgentAdapter | None = None,
         runtime_servers: _Iterable[_Any] = (),
         interaction_handlers: InteractionHandlers | None = None,
+        harness_cache_dir: str | _Path | None = None,
     ) -> AgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentSpec):
@@ -1817,11 +1841,18 @@ class MCPTestKit:
                     self._project_id,
                     self._record_checks,
                     self._max_judge_requests,
+                    self._harness_cache_dir,
+                    self._runtime_project_root,
                 )
                 self._portal = portal
             try:
                 session = AgentSession(
-                    portal, spec, adapter, runtime_servers, interaction_handlers
+                    portal,
+                    spec,
+                    adapter,
+                    runtime_servers,
+                    interaction_handlers,
+                    harness_cache_dir=harness_cache_dir,
                 )
             except BaseException:
                 if self._portal is portal and not self._active_direct:

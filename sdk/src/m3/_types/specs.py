@@ -8,6 +8,7 @@ from typing import Literal as _Literal
 
 from pydantic import Field as _Field
 from pydantic import field_validator as _field_validator
+from pydantic import model_serializer as _model_serializer
 from pydantic import model_validator as _model_validator
 
 from .base import (
@@ -153,6 +154,41 @@ class HarnessValue(FrozenModel):
     name: str = _Field(min_length=1, max_length=128)
     model: str = _Field(min_length=1, max_length=512)
     executable: str | None = None
+    runtime: _Literal["system", "managed"] = "system"
+    version: str | None = _Field(default=None, min_length=1, max_length=64)
+
+    @_field_validator("runtime", mode="before")
+    @classmethod
+    def _none_runtime_is_system(cls, value: _Any) -> _Any:
+        return "system" if value is None else value
+
+    @_model_validator(mode="after")
+    def _validate_runtime(self) -> HarnessValue:
+        import re
+
+        if self.version is not None and self.runtime != "managed":
+            raise ValueError("harness version requires managed runtime")
+        if self.version == "latest":
+            return self
+        if (
+            self.version is not None
+            and re.fullmatch(
+                r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9a-z]+(?:\.[0-9a-z]+)*)?",
+                self.version,
+            )
+            is None
+        ):
+            raise ValueError("harness version is invalid")
+        return self
+
+    @_model_serializer(mode="wrap")
+    def _serialize_runtime_fields(self, handler: _Any) -> dict[str, _Any]:
+        value = dict(handler(self))
+        if value.get("runtime") in {None, "system"}:
+            value.pop("runtime", None)
+        if value.get("version") is None:
+            value.pop("version", None)
+        return value
 
     def with_model(self, model: str) -> HarnessValue:
         """Return an immutable copy with a different model identifier."""
@@ -259,6 +295,12 @@ class ACPAgent(HarnessValue):
     manifest: _Mapping[str, _Any] = _Field(default_factory=dict)
     agent_mode_id: str | None = _Field(default=None, min_length=1, max_length=256)
     session_config: _Mapping[str, _Any] = _Field(default_factory=dict)
+
+    @_model_validator(mode="after")
+    def _managed_runtime_unsupported(self) -> ACPAgent:
+        if self.runtime == "managed":
+            raise ValueError("managed runtime is supported only for native harnesses")
+        return self
 
     @_field_validator("session_config")
     @classmethod

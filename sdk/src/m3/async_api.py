@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect as _inspect
 import math as _math
+import shutil as _shutil
+import tempfile as _tempfile
 from collections.abc import Awaitable as _Awaitable
 from collections.abc import Callable as _Callable
 from collections.abc import Iterable as _Iterable
@@ -911,6 +913,7 @@ class AsyncMCPTestKit:
         project_id: _ProjectId | str | None = None,
         record_checks: bool = False,
         max_judge_requests: int | None = None,
+        harness_cache_dir: str | _Path | None = None,
     ) -> None:
         from ._test_runs import active_test
 
@@ -936,6 +939,15 @@ class AsyncMCPTestKit:
             else _RunId(scoped_run_id or f"run-{_uuid4().hex}")
         )
         self._suite_name = suite_name
+        self._runtime_project_root = _Path(cwd or _Path.cwd()).expanduser().resolve()
+        self._harness_cache_dir = (
+            None
+            if harness_cache_dir is None
+            else str(_Path(harness_cache_dir).expanduser().resolve())
+        )
+        self._runtime_invocation_dir = _Path(
+            _tempfile.mkdtemp(prefix="m3-runtime-invocation-")
+        )
         self._project_id = (
             None
             if project_id is None
@@ -1155,6 +1167,7 @@ class AsyncMCPTestKit:
                         close()
                 except BaseException as exc:
                     failures.append(exc)
+            _shutil.rmtree(self._runtime_invocation_dir, ignore_errors=True)
             if failures:
                 raise failures[0]
 
@@ -1453,6 +1466,7 @@ class AsyncMCPTestKit:
         _trace_owner: bool = True,
         _execution_id: _Any = None,
         _artifact_store: _ArtifactStore | None = None,
+        harness_cache_dir: str | _Path | None = None,
     ) -> AsyncAgentSession:
         self._ensure_open()
         if not isinstance(spec, _AgentSpec):
@@ -1561,6 +1575,13 @@ class AsyncMCPTestKit:
             trace_recorder=recorder,
             trace_owner=_trace_owner,
             artifact_store=recorder_artifacts,
+            harness_cache_dir=(
+                self._harness_cache_dir
+                if harness_cache_dir is None
+                else str(_Path(harness_cache_dir).expanduser().resolve())
+            ),
+            runtime_invocation_dir=self._runtime_invocation_dir,
+            runtime_project_root=self._runtime_project_root,
         )
         if self._record_checks:
             _bind_execution(

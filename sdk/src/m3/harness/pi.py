@@ -239,6 +239,8 @@ class PiHarnessAdapter(NativeRPCAdapter):
             os.close(fd)
         self._tool_map_path = str(path)
         environment = dict(self._launch_environment or self.environment)
+        environment["PI_SKIP_VERSION_CHECK"] = "1"
+        environment["PI_TELEMETRY"] = "0"
         environment["M3_PI_TOOL_MAP"] = str(path)
         self._launch_environment = environment
         return environment

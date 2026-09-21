@@ -259,6 +259,31 @@ def test_codex_config_is_bounded_and_rejects_sse() -> None:
         codex_configuration(_launch(Codex(model="fixture"), configurations=(sse,)))
 
 
+def test_codex_update_setting_is_written_at_toml_root(tmp_path: Path) -> None:
+    server = HarnessServerConfig(
+        "server",
+        TransportKind.STDIO,
+        True,
+        True,
+        "server-1",
+        command="echo",
+    )
+    for name, configurations in (("empty", ()), ("server", (server,))):
+        root = tmp_path / name
+        root.mkdir()
+        adapter = CodexHarnessAdapter()
+        adapter.environment_for_launch(
+            _launch(Codex(model="fixture"), configurations=configurations), root
+        )
+        parsed = tomllib.loads((root / "codex-home" / "config.toml").read_text())
+        assert parsed["check_for_update_on_startup"] is False
+        assert "check_for_update_on_startup" not in parsed["mcp_servers"]
+        assert all(
+            "check_for_update_on_startup" not in value
+            for value in parsed["mcp_servers"].values()
+        )
+
+
 def test_codex_secret_references_are_not_rendered_as_secret_values() -> None:
     config = HarnessServerConfig(
         "secret",

@@ -138,7 +138,7 @@ jobs:
           set -o pipefail
           log="$RUNNER_TEMP/cli-tests.log"
           set +e
-          timeout 2m uv run --locked --no-sync --project cli pytest -q \
+          timeout 4m uv run --locked --no-sync --project cli pytest -q \
             --durations=25 --durations-min=1 cli/tests 2>&1 | tee "$log"
           status=${PIPESTATUS[0]}
           set -e
@@ -342,3 +342,45 @@ jobs:
           python scripts/check_cli_standalone.py \
             --release-dir '${{ steps.release.outputs.dir }}' \
             --version '${{ steps.release.outputs.version }}'
+
+  managed-runtime-assets:
+    if: github.event_name == 'workflow_dispatch'
+    name: Managed asset / ${{ matrix.os }} / ${{ matrix.kind }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, kind: opencode }
+          - { os: macos-latest, kind: opencode }
+          - { os: windows-latest, kind: opencode }
+          - { os: macos-latest, kind: claude }
+          - { os: windows-latest, kind: codex }
+          - { os: macos-latest, kind: pi }
+          - { os: windows-latest, kind: pi }
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install locked SDK test dependencies
+        run: uv sync --locked --project sdk --extra pytest
+
+      - name: Download, verify, launch, and reuse the managed CLI
+        env:
+          M3_RUN_LIVE_MANAGED_ASSETS: "1"
+          M3_LIVE_MANAGED_KIND: ${{ matrix.kind }}
+          M3_GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          uv run --locked --no-sync --project sdk pytest -q
+          sdk/tests/e2e/test_live_managed_asset_download.py

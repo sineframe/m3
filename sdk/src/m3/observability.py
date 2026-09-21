@@ -31,6 +31,9 @@ from .types import (
     ActivityHealth as _ActivityHealth,
 )
 from .types import (
+    AgentIdentity as _AgentIdentity,
+)
+from .types import (
     ArtifactRef as _ArtifactRef,
 )
 from .types import (
@@ -751,6 +754,7 @@ class TraceView(_FrozenModel):
     outcome: _ExecutionOutcome = _ExecutionOutcome.COMPLETED
     completeness: _Literal["complete", "partial"] = "complete"
     limitations: tuple[str, ...] = ()
+    agent: _AgentIdentity | None = None
     runtime: RuntimeTraceInfo = _Field(default_factory=DirectTrace)
     summary: TraceSummary = _Field(default_factory=TraceSummary)
     timeline: tuple[TraceEntry, ...] = ()

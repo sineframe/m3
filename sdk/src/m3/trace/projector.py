@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeVar, cast
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
+from .._types.agent_identity import project_agent_identity
 from ..errors import TraceNotFinalized, TraceUnavailable
 from ..observability import (
     ACPTrace,
@@ -1505,6 +1506,7 @@ class TraceProjector:
             completeness=trace.completeness,
             limitations=trace.limitations,
             runtime=runtime,
+            agent=project_agent_identity(events),
             summary=summary,
             timeline=timeline,
         )

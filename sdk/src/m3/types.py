@@ -11,6 +11,7 @@ from datetime import datetime as _datetime  # noqa: F401
 from typing import Any as _Any  # noqa: F401
 from typing import Literal as _Literal  # noqa: F401
 
+from ._types.agent_identity import AgentIdentity, HarnessIdentity, ModelIdentity
 from ._types.base import (
     EVENT_SCHEMA_ID,
     EVENT_SCHEMA_VERSION,
@@ -160,6 +161,7 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "EVENT_SCHEMA_VERSION",
     "ACPAgent",
     "ActivityHealth",
+    "AgentIdentity",
     "AgentSpec",
     "ArtifactId",
     "ArtifactPolicy",
@@ -211,6 +213,7 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "FrozenModel",
     "FullToolPolicy",
     "HarnessId",
+    "HarnessIdentity",
     "HarnessProfileId",
     "HarnessProfileRef",
     "HarnessSpec",
@@ -222,6 +225,7 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "JsonRpcId",
     "LifecyclePhase",
     "Metadata",
+    "ModelIdentity",
     "NativeToolPolicy",
     "OpaqueContent",
     "OpenCode",

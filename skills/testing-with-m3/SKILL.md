@@ -99,6 +99,15 @@ m3 test --suite mcp-behavior -- tests/test_m3_starter.py
 m3 test --harness codex=gpt-5.6-sol --trials 2 -- tests/test_agent.py
 ```
 
+For reproducible native harness versions, add `--runtime=managed` and use
+`--harness KIND@VERSION=MODEL`; repeat `--harness` for each version. An
+unversioned managed selection resolves `latest` once per run. Without
+managed mode, M3 uses the locally installed harness. In Python, set
+`runtime="managed"` and `version="..."` on the harness spec. Both test kit
+constructors accept `harness_cache_dir=...`; CLI runs may use
+`--harness-cache-dir PATH` or `M3_HARNESS_CACHE_DIR`. Agent startup waits
+for download or cache verification. Reports show the resolved version.
+
 A marked test requesting `agent` needs `--harness KIND=MODEL` or marker
 `agents=[...]`. A marker alone does not select an agent. When the user
 specifically needs SDK-only pytest, use the project's approved SDK

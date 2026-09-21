@@ -623,7 +623,15 @@ ROOT_COMMON: tuple[str, ...] = (
     "TransportError",
 )
 
-_ROOT_ALL = _ROOT_BASE + tuple(_OBSERVABILITY_EXPORTS)
+_ROOT_ALL = (
+    _ROOT_BASE
+    + tuple(_OBSERVABILITY_EXPORTS)
+    + (
+        "AgentIdentity",
+        "HarnessIdentity",
+        "ModelIdentity",
+    )
+)
 ROOT_OTHER: tuple[str, ...] = tuple(
     name for name in _ROOT_ALL if name not in ROOT_COMMON
 )

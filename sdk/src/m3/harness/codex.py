@@ -168,7 +168,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         home = root / "codex-home"
         home.mkdir(mode=0o700, exist_ok=True)
         config = home / "config.toml"
-        config.write_text(render_codex_config(launch), encoding="utf-8")
+        config.write_text(
+            "check_for_update_on_startup = false\n\n" + render_codex_config(launch),
+            encoding="utf-8",
+        )
         config.chmod(0o600)
         # Preserve an existing native ChatGPT login when no API-key mapping is
         # configured. The isolated home is temporary and cleaned with the

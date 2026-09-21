@@ -308,6 +308,8 @@ def _response(output: Mapping[str, Any], text: str) -> TurnResponse:
 class ClaudeCodeHarnessAdapter:
     """One continuous Claude Code stream-JSON conversation."""
 
+    managed_runtime_supported = True
+
     def __init__(
         self,
         *,
@@ -434,6 +436,7 @@ class ClaudeCodeHarnessAdapter:
         owner = ProcessOwner(root)
         try:
             environment = _isolated_environment(root, self.environment)
+            environment["DISABLE_UPDATES"] = "1"
             harness = launch.spec.harness
             if harness is None:
                 raise HarnessStartupError("Claude Code harness is unavailable")

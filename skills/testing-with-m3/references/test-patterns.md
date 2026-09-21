@@ -24,6 +24,22 @@ Start with [a local stdio contract](#stdio-local-command) or
 agent. Use [evaluations](#evaluations-that-gate-pytest) for quality rules and
 [saved feedback](feedback-iteration.md) for repeat runs.
 
+Run the same test against two managed OpenCode releases with the selected
+provider key available through the environment or an explicit `.env` file:
+
+```bash
+m3 test --env-file .env --runtime=managed \
+  --harness opencode@1.18.30=opencode/big-pickle \
+  --harness opencode@1.18.31=opencode/big-pickle \
+  -- tests/test_shipping.py
+```
+
+For a Python script, put `"runtime": "managed"` and `"version": "1.18.30"`
+in each native agent dictionary passed to `kit.agents([...])`. The same model
+may appear in several entries when their versions differ. A managed entry
+without `version` requests `latest` for that invocation. M3 waits for a
+verified cache entry before launching the selected agent.
+
 ## Same suite across files
 
 Use the existing `m3` marker; do not add another marker:

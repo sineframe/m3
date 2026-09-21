@@ -87,6 +87,24 @@ clients. SDK test authors can use the smaller marked-test or `kit.agents([...])`
 interfaces. Reports, raw evidence, and evaluation summaries keep their
 existing v2 payload shapes.
 
+Managed native harness executions add an optional `agent` object to the
+execution snapshot, report, and trace. Its `harness` object records `kind`,
+`runtime`, `requested_selector`, `resolved_version`, `target`, `digest`,
+`verification_method`, and `immutable_release`. Its `model` object records
+`requested_id`, optional `provider`, and optional `observed_id`. The requested
+model and observed model are separate because a vendor may report a different
+effective model. A failed setup can have a requested selector without a
+resolved version. Existing records and direct executions can have `agent: null`.
+
+For example, `m3 test --runtime=managed --harness
+opencode@1.18.30=opencode/big-pickle -- tests/test_shipping.py` stores the
+selector in its submitted spec, then records the resolved version and digest
+as execution evidence. `GET /api/v2/executions/{execution_id}` exposes that
+identity in `snapshot.agent`; the report route exposes it in `report.agent`
+and `trace.agent`. Exported trace JSON uses the same trace shape. Feedback
+configuration labels distinguish different resolved versions, including two
+runs that each requested `latest` but resolved differently.
+
 Execution, report, evidence, evaluation, feedback, and probe responses carry
 `version: "v2"`. Control-plane profile list/object responses (including
 imports) and harness export responses retain their bare shapes for the pinned

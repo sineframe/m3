@@ -7,6 +7,8 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+import pytest
+
 from m3 import MCPTestKit, ServerBinding, StdioServer, expect
 from m3.agent_session import HarnessAdapter
 from m3.async_api import AsyncMCPTestKit
@@ -62,6 +64,79 @@ def test_one(case, agent):
     assert result.stdout.count("test_one[") == 4
     assert "opencode-provider/a-opencode-trial-1" in result.stdout
     assert "opencode-provider/b-opencode-trial-2" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ("--runtime=managed", "--harness=pi=openai/model"),
+        ("--runtime=managed", "--harness=pi@1.2.3=openai/model"),
+    ),
+)
+def test_cli_collects_managed_pi_selection(
+    tmp_path: Path, arguments: tuple[str, ...]
+) -> None:
+    test_file = tmp_path / "test_managed_pi.py"
+    test_file.write_text(
+        "import pytest\n@pytest.mark.m3\ndef test_managed_pi(agent): pass\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-p",
+            "m3.pytest_plugin",
+            *arguments,
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.count("test_managed_pi[") == 1
+
+
+def test_cli_executes_same_model_at_multiple_managed_versions(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_versions.py"
+    test_file.write_text(
+        "import pytest\n"
+        "@pytest.mark.m3\n"
+        "def test_versions(agent):\n"
+        "    assert agent.entry['version'] in {'1.18.30', '1.18.31'}\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "m3.pytest_plugin",
+            "--runtime=managed",
+            "--harness=opencode@1.18.30=model",
+            "--harness=opencode@1.18.31=model",
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
 
 
 def test_base_sdk_import_does_not_require_pytest(tmp_path: Path) -> None:

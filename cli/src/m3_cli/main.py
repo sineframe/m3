@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-from . import doctor, init, setup
+from . import doctor, init, runtime, setup
 from .errors import CLIError
 
 
@@ -85,9 +85,14 @@ def _parser() -> argparse.ArgumentParser:
     test.add_argument(
         "--baseline", metavar="RUN_ID", help="compare feedback with a previous run"
     )
+    test.add_argument("--runtime", choices=("system", "managed"), default="system")
     test.add_argument(
-        "--harness", action="append", default=[], metavar="KIND=MODEL[,MODEL...]"
+        "--harness",
+        action="append",
+        default=[],
+        metavar="KIND[@VERSION]=MODEL[,MODEL...]",
     )
+    test.add_argument("--harness-cache-dir", type=Path, default=None, metavar="PATH")
     test.add_argument("--trials", type=int, default=None, metavar="N")
     test.add_argument("--suite", type=str, default=None, metavar="NAME")
     test.add_argument(
@@ -109,6 +114,27 @@ def _parser() -> argparse.ArgumentParser:
         "--ui", action="store_true", help="serve the bundled UI after pytest"
     )
     test.add_argument("--port", type=int, default=8000, metavar="PORT", help="UI port")
+
+    runtime_parser = subparsers.add_parser(
+        "runtime", help="manage managed runtime caches"
+    )
+    runtime_sub = runtime_parser.add_subparsers(
+        dest="runtime_command", required=True, parser_class=_RedactingArgumentParser
+    )
+    cache_parser = runtime_sub.add_parser("cache", help="manage managed harness cache")
+    cache_sub = cache_parser.add_subparsers(
+        dest="cache_command", required=True, parser_class=_RedactingArgumentParser
+    )
+    for action in ("list", "prune"):
+        command = cache_sub.add_parser(action, help=f"{action} managed harness cache")
+        command.add_argument(
+            "--cache-dir",
+            "--harness-cache-dir",
+            type=Path,
+            default=None,
+            metavar="PATH",
+        )
+        command.add_argument("--project-root", type=Path, default=None, metavar="PATH")
     return parser
 
 
@@ -120,7 +146,8 @@ def main(argv: list[str] | None = None) -> int:
     effective_argv = list(sys.argv[1:] if argv is None else argv)
     command_name = (
         effective_argv[0]
-        if effective_argv and effective_argv[0] in {"doctor", "setup", "test", "init"}
+        if effective_argv
+        and effective_argv[0] in {"doctor", "setup", "test", "init", "runtime"}
         else "doctor"
     )
     pytest_args: list[str] = []
@@ -151,6 +178,14 @@ def main(argv: list[str] | None = None) -> int:
                 env_file=args.env_file,
                 execution_timeout=args.execution_timeout,
                 judge_max_requests=args.judge_max_requests,
+                runtime=args.runtime,
+                harness_cache_dir=args.harness_cache_dir,
+            )
+        if args.command == "runtime":
+            return runtime.cache_command(
+                args.cache_command,
+                args.cache_dir,
+                project_root=args.project_root,
             )
         if args.command == "setup":
             try:

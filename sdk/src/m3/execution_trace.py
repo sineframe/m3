@@ -14,6 +14,7 @@ from time import perf_counter_ns
 from typing import Any, Literal, cast
 from uuid import uuid4
 
+from ._types.agent_identity import project_agent_identity
 from .storage import ExecutionStore, StorageConflict
 from .trace.counts import tool_call_count
 from .trace.redaction import RedactionConfig, redact_for_persistence, redact_model_json
@@ -705,6 +706,9 @@ class ExecutionTraceRecorder:
             tool_call_count=tool_call_total,
             created_at=created_at,
             finished_at=finished_at,
+            agent=project_agent_identity(
+                events, saved.agent if saved is not None else None
+            ),
         )
 
     def _project_turns(self) -> dict[TurnId, TurnState]:

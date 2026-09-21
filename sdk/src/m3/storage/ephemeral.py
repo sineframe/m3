@@ -26,6 +26,7 @@ from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from pydantic import TypeAdapter, ValidationError
 
+from .._types.agent_identity import project_agent_identity
 from ..aggregations import EvaluationQuery, EvaluationReport, aggregate_evaluations
 from ..errors import RawEvidenceUnavailable, TraceNotFinalized, TraceUnavailable
 from ..observability import (
@@ -775,6 +776,7 @@ class InMemoryExecutionStore:
         direct_result, error, evidence = _report_fields(all_events)
         return ExecutionReport(
             snapshot=snapshot,
+            agent=snapshot.agent,
             events=selected,
             direct_result=direct_result,
             error=error,
@@ -1292,6 +1294,7 @@ class InMemoryExecutionStore:
             if created_at.tzinfo is not None
             else datetime.now(timezone.utc),
             finished_at=finished_at,
+            agent=project_agent_identity(events, previous.agent),
         )
 
     def _redact_event(self, event: Event) -> Event:

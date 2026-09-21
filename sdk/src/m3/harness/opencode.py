@@ -273,9 +273,10 @@ def _write_opencode_config(root: Path, launch: HarnessLaunch, dialect: str) -> P
     config = root / "opencode.json"
     descriptor: int | None = None
     try:
-        payload = json.dumps(
-            opencode_configuration(launch, dialect=dialect), separators=(",", ":")
-        )
+        rendered = opencode_configuration(launch, dialect=dialect)
+        if getattr(launch.spec.harness, "runtime", None) == "managed":
+            rendered["autoupdate"] = False
+        payload = json.dumps(rendered, separators=(",", ":"))
         descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             descriptor = None
@@ -313,6 +314,8 @@ class _HistorySnapshot(NamedTuple):
 
 class OpenCodeHarnessAdapter:
     """One isolated OpenCode server and attached conversation session."""
+
+    managed_runtime_supported = True
 
     def __init__(
         self,
@@ -520,6 +523,7 @@ class OpenCodeHarnessAdapter:
         try:
             harness = launch.spec.harness
             environment = _isolated_environment(root, self.environment)
+            environment["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
             runtime_secrets: set[str] = set()
             if isinstance(harness, OpenCode):
                 for variable, reference in harness.credential_references.items():

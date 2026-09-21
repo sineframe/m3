@@ -29,6 +29,7 @@ from typing import Any, Literal, cast
 
 from pydantic import TypeAdapter, ValidationError
 
+from .._types.agent_identity import project_agent_identity
 from ..aggregations import EvaluationQuery, EvaluationReport, aggregate_evaluations
 from ..domain.validation import validate_mcp_config
 from ..errors import (
@@ -1885,6 +1886,7 @@ class SQLiteExecutionStore(_SqliteBase):
         )
         return ExecutionReport(
             snapshot=snapshot,
+            agent=snapshot.agent,
             events=events,
             artifacts=artifacts,
             direct_result=direct_result,
@@ -2109,6 +2111,7 @@ class SQLiteExecutionStore(_SqliteBase):
             created_at=created_at,
             finished_at=finished_at,
             provenance=existing.provenance,
+            agent=project_agent_identity(values, existing.agent),
         )
 
     def _safe_event(self, event: Event) -> Event:

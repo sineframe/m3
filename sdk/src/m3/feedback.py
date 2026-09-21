@@ -242,6 +242,7 @@ def _config(
     contexts: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[str | None, str | None]:
     metadata = _metadata(entry, record)
+    agent = entry.report.snapshot.agent or entry.report.agent
     label = (
         metadata.get("harness_config")
         or metadata.get("m3.matrix.harness")
@@ -252,6 +253,12 @@ def _config(
         label = getattr(harness, "model", None)
         if label is None and harness is not None:
             label = type(harness).__name__
+    if agent is not None and agent.harness.runtime == "managed":
+        harness = agent.harness
+        runtime_label = harness.resolved_version or harness.requested_selector
+        if runtime_label:
+            base_label = str(label or agent.model.requested_id)
+            label = f"{base_label} · {harness.kind}@{runtime_label}"
     if entry.spec is None and label is None:
         context = (
             contexts.get(
@@ -289,6 +296,15 @@ def _config(
         "harness_profile",
     }
     spec_value = {key: dumped[key] for key in stable_fields if key in dumped}
+    if agent is not None and agent.harness.runtime == "managed":
+        harness = agent.harness
+        spec_value["managed_runtime"] = {
+            "kind": harness.kind,
+            "requested_selector": harness.requested_selector,
+            "resolved_version": harness.resolved_version,
+            "target": harness.target,
+            "digest": harness.digest,
+        }
     spec_metadata = dict(dumped.get("metadata") or {})
     for key in (
         *_OBSERVATIONAL_METADATA,

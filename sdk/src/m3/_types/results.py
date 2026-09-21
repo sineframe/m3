@@ -9,6 +9,7 @@ from typing import Literal as _Literal
 from pydantic import Field as _Field
 from pydantic import model_validator as _model_validator
 
+from .agent_identity import AgentIdentity
 from .base import (
     ActivityHealth,
     CapabilityStatus,
@@ -230,6 +231,7 @@ class ExecutionReport(FrozenModel):
     """Portable evidence that is actually persisted by an execution store."""
 
     snapshot: ExecutionState
+    agent: AgentIdentity | None = None
     events: tuple[Event, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
     direct_result: DirectResult | None = None

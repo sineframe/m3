@@ -156,7 +156,9 @@ Agent selection flags:
 
 | Flag | Meaning |
 | --- | --- |
-| `--harness KIND=MODEL[,MODEL...]` | repeatable harness/model selection |
+| `--harness KIND[@VERSION]=MODEL[,MODEL...]` | repeatable harness, optional version, and model selection |
+| `--runtime=system\|managed` | use the installed harness (default) or the managed cache |
+| `--harness-cache-dir PATH` | override the per-user harness cache for this run |
 | `--trials N` | independent executions per combination |
 | `--execution-timeout SECONDS` | full deadline for each selected execution; each case has its own deadline |
 | `--env-file PATH` | explicitly load provider variables for the pytest child |
@@ -188,6 +190,45 @@ CLI supplies its harnesses and models. A marker may instead set defaults with
 defaults; CLI `--trials` replaces the marker's trial count. Ordinary tests
 without an `agent` fixture still run once. For an agent test, the item count is
 ordinary pytest cases × selected harness/model choices × trials.
+
+### Managed harness runtimes
+
+The default `--runtime=system` launches the harness already installed on the
+machine. A version selector requires `--runtime=managed`. With managed mode,
+an unversioned harness requests `latest`; M3 resolves it once for the run and
+shares that pinned version across pytest workers. Explicit versions are
+reused until their verified cache entry is removed.
+
+```sh
+m3 test --runtime=managed \
+  --harness opencode@1.18.30=opencode/big-pickle \
+  --harness opencode@1.18.31=opencode/big-pickle \
+  -- tests/test_shipping.py
+```
+
+Harness setup starts when the selected test runs. The test waits for the
+requested release to be resolved, downloaded, checked, and installed, or for
+an existing cache entry to be checked. The CLI prints resolution, download,
+verification, and ready states; cache hits are shown as loaded from cache.
+Setup failures fail the affected test. Each execution records the selected
+model, requested harness selector, resolved harness version, target, and
+download digest. Matrix reports distinguish different resolved versions.
+
+The default cache root is `~/Library/Caches/m3/harnesses` on macOS,
+`${XDG_CACHE_HOME:-~/.cache}/m3/harnesses` on Linux, and
+`%LOCALAPPDATA%/m3/harnesses` on Windows (falling back to
+`~/AppData/Local/m3/harnesses`). Entries are grouped by harness,
+version, target, and digest. Set `M3_HARNESS_CACHE_DIR`, pass
+`--harness-cache-dir PATH`, or use the SDK's `harness_cache_dir` argument to
+override the root. The SDK constructor takes precedence for SDK calls; the
+CLI flag takes precedence over the environment variable for CLI runs. Keep
+the cache outside the tested repository and system executable directories.
+M3 runs the cached executable by absolute path without a global install or
+PATH change.
+
+Inspect or remove cached releases with `m3 runtime cache list` and
+`m3 runtime cache prune`. Pruning waits for active leases for up to 10 seconds
+and returns an operational error if a release remains in use.
 
 Known provider variable names are:
 

@@ -386,6 +386,25 @@ def test_pi_openai_codex_route_uses_existing_login_directory(
     )
 
 
+def test_pi_selection_preserves_managed_runtime_and_version(kit: MCPTestKit) -> None:
+    agent = kit.agents(
+        [
+            {
+                "harness": "pi",
+                "models": ["openai/model"],
+                "runtime": "managed",
+                "version": "1.2.3",
+            }
+        ]
+    )[0]
+
+    spec = agent._spec(UserMessage(content="x"), server=_server())
+
+    assert spec.harness.kind == "pi"
+    assert spec.harness.runtime == "managed"
+    assert spec.harness.version == "1.2.3"
+
+
 def test_public_method_defaults_and_async_expansion(kit: MCPTestKit) -> None:
     agent = kit.agents([{"harness": "codex", "models": ["gpt"]}])[0]
     assert inspect.signature(agent.run).parameters["tools"].default is None

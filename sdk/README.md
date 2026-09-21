@@ -67,6 +67,42 @@ When a test needs a focused part of the SDK, use its corresponding module:
 
 The examples use only public SDK APIs and run as ordinary pytest tests.
 
+## Managed native harnesses
+
+Native Claude Code, OpenCode, Codex, and Pi agents can use a harness release
+managed by M3. Set `runtime="managed"` and an exact `version` on the harness
+specification, or omit the version to resolve `latest` once per test invocation.
+For example:
+
+```python
+from m3.types import OpenCode
+
+harness = OpenCode(
+    model="opencode/big-pickle", runtime="managed", version="1.18.30"
+)
+```
+
+Both `MCPTestKit` and `AsyncMCPTestKit` accept `harness_cache_dir=...` to
+override the per-user cache. M3 resolves and verifies the selected release
+before adapter startup, retains it while the agent runs, and includes the
+requested model and resolved runtime identity in snapshots, reports, and
+trace views. The system runtime remains the default.
+
+M3 chooses the CLI asset for the machine running the Python process. The
+default cache is `~/Library/Caches/m3/harnesses` on macOS,
+`${XDG_CACHE_HOME:-~/.cache}/m3/harnesses` on Linux, and
+`%LOCALAPPDATA%/m3/harnesses` on Windows (falling back to
+`~/AppData/Local/m3/harnesses`). Set `M3_HARNESS_CACHE_DIR` or the kit
+constructor argument to override it. Installations are grouped under separate
+harness, version, target, and digest directories. `m3 runtime cache list`
+shows cached releases; `m3 runtime cache prune` removes them when no run is
+using them. M3 verifies the release digest and cache receipt before launch,
+rejects unsupported targets and unsafe archives, and reports setup failures
+on the selected test. Managed mode uses an isolated executable and writable
+runtime state; it is not an operating system sandbox.
+For GitHub API rate limits, set `M3_GITHUB_TOKEN`; M3 sends it only to
+`api.github.com` metadata requests and removes it on redirects.
+
 ## Develop the SDK
 
 From the repository root, install the workspace with `just setup`, then run the

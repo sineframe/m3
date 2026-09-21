@@ -205,6 +205,8 @@ class NativeRPCSession(NativeSessionBase):
 class NativeRPCAdapter:
     """Provider-neutral lifecycle shell; subclasses provide wire dialects."""
 
+    managed_runtime_supported = True
+
     harness_kind = "native"
     executable_name = "native"
 

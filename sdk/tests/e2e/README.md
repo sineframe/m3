@@ -34,6 +34,34 @@ M3_RUN_LIVE_OPENCODE=1 \
 
 Set `M3_LIVE_OPENCODE_MODEL=opencode/big-pickle` to characterize another model.
 
+The managed runtime smoke test downloads OpenCode 1.18.30 and 1.18.31 into a
+temporary cache, makes one provider-backed MCP call with each, then repeats
+1.18.30 to verify cache reuse and persisted version identity. It requires an
+explicit opt-in and `OPENCODE_API_KEY`:
+
+```bash
+M3_RUN_LIVE_MANAGED_RUNTIME=1 \
+  uv run --project sdk --all-extras \
+  pytest -q sdk/tests/e2e/test_live_managed_runtime.py
+```
+
+The credential-free asset smoke checks download a pinned CLI, run `--version`,
+and verify a warm cache hit without contacting the release host again. They do
+not call a model provider. Select one recipe with `M3_LIVE_MANAGED_KIND`
+(`claude`, `opencode`, `codex`, or `pi`):
+
+```bash
+M3_RUN_LIVE_MANAGED_ASSETS=1 M3_LIVE_MANAGED_KIND=opencode \
+  uv run --project sdk --extra pytest \
+  pytest -q sdk/tests/e2e/test_live_managed_asset_download.py
+```
+
+The [CI workflow](../../../.github/workflows/ci.yml) runs this check on Linux,
+macOS, and Windows when dispatched manually. It runs one Codex binary check
+on Windows and makes no provider calls.
+The workflow supplies `M3_GITHUB_TOKEN` for release metadata so shared CI
+runner IP addresses do not exhaust GitHub's anonymous API allowance.
+
 Codex and Pi have separate opt-in live tests. Each command requires the
 corresponding native executable, a matching model variable, and an explicit
 credential route; credentials are passed through each selection's public

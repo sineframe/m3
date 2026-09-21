@@ -11,12 +11,15 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
+import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 from uuid import uuid4
 
+from ._types.agent_identity import project_agent_identity
 from .errors import (
     CleanupError,
     KitClosed,
@@ -207,9 +210,22 @@ class AsyncAgentSession:
         trace_recorder: ExecutionTraceRecorder | None = None,
         trace_owner: bool = True,
         artifact_store: ArtifactStore | None = None,
+        harness_cache_dir: str | None = None,
+        runtime_manager: Any = None,
+        runtime_invocation_dir: str | Path | None = None,
+        runtime_project_root: str | Path | None = None,
     ) -> None:
         self.spec = spec
         self.adapter = adapter
+        self._harness_cache_dir = harness_cache_dir
+        self._runtime_manager = runtime_manager
+        self._runtime_invocation_dir = runtime_invocation_dir
+        self._runtime_project_root = (
+            Path(runtime_project_root).expanduser().resolve()
+            if runtime_project_root is not None
+            else Path.cwd().resolve()
+        )
+        self._runtime_lease: Any = None
         # The manager owns the server descriptors and any SDK-created
         # loopback resources for this conversation.  ``Any`` keeps this core
         # state machine independent from the richer harness contract module.
@@ -532,6 +548,10 @@ class AsyncAgentSession:
     async def _start_adapter(self) -> None:
         if self._adapter_started:
             return
+        # Managed runtime resolution is deliberately the first startup step:
+        # it must complete (or be cancelled) before server startup, probes, or
+        # provider open can produce side effects.
+        await self._prepare_managed_runtime()
         if self._server_manager is not None:
             # Import lazily: the contract module aliases this core adapter
             # protocol, so importing it at module load would create a cycle.
@@ -689,6 +709,151 @@ class AsyncAgentSession:
                 raise asyncio.CancelledError()
         self._adapter_started = True
 
+    async def _prepare_managed_runtime(self) -> None:
+        harness = getattr(self.spec, "harness", None)
+        if harness is None:
+            return
+        runtime = getattr(harness, "runtime", None) or "system"
+        kind = getattr(harness, "kind", getattr(harness, "name", "unknown"))
+        provider = getattr(harness, "provider", None)
+        if (
+            provider is None
+            and isinstance(getattr(harness, "model", None), str)
+            and "/" in harness.model
+        ):
+            provider = harness.model.split("/", 1)[0]
+        self._emit_event(
+            EventKind.HARNESS_SELECTION,
+            {
+                "harness": {
+                    "kind": kind,
+                    "runtime": runtime,
+                    "requested_selector": getattr(harness, "version", None)
+                    or ("latest" if runtime == "managed" else None),
+                },
+                "model": {"requested_id": harness.model, "provider": provider},
+            },
+            phase=LifecyclePhase.STARTUP,
+        )
+        if runtime != "managed":
+            return
+        if not getattr(self.adapter, "managed_runtime_supported", False) or not hasattr(
+            self.adapter, "executable"
+        ):
+            raise UnsupportedFeature(
+                "managed runtime requires a native harness adapter"
+            )
+        manager = self._runtime_manager
+        if manager is None:
+            try:
+                from .runtime import RuntimeManager
+            except (ImportError, ModuleNotFoundError):
+                raise UnsupportedFeature(
+                    "managed harness runtime is unavailable"
+                ) from None
+            manager = RuntimeManager(
+                cache_root=self._harness_cache_dir,
+                project_root=str(self._runtime_project_root),
+                invocation_dir=os.environ.get("M3_RUNTIME_INVOCATION_DIR")
+                or self._runtime_invocation_dir,
+                progress_file=os.environ.get("M3_RUNTIME_PROGRESS_FILE"),
+            )
+            self._runtime_manager = manager
+        acquire = getattr(manager, "acquire", None)
+        if not callable(acquire):
+            raise UnsupportedFeature("managed harness runtime is unavailable")
+        selector: Any = getattr(harness, "version", None) or "latest"
+        result = acquire("claude" if kind == "claude_code" else kind, selector)
+        if inspect.isawaitable(result):
+            # Runtime acquisition may delegate cache work to a thread.  Keep
+            # that task alive when startup is cancelled, then release a lease
+            # created after cancellation without delaying the caller.
+            acquisition = asyncio.ensure_future(result)
+
+            def _release_late(done: asyncio.Future[Any]) -> None:
+                if done.cancelled():
+                    return
+                try:
+                    lease = done.result()
+                except BaseException:
+                    return
+                release = getattr(lease, "release", None) or getattr(
+                    lease, "close", None
+                )
+                if callable(release):
+                    value = release()
+                    if inspect.isawaitable(value):
+                        release_task = asyncio.ensure_future(value)
+                        release_task.add_done_callback(lambda _: None)
+
+            try:
+                result = await asyncio.shield(acquisition)
+            except asyncio.CancelledError:
+                acquisition.add_done_callback(_release_late)
+                raise
+        if result is None:
+            raise UnsupportedFeature("managed harness runtime could not be resolved")
+        self._runtime_lease = result
+        executable = getattr(result, "executable", None)
+        environment = getattr(result, "environment", None)
+        if isinstance(result, Mapping):
+            executable = result.get("executable", executable)
+            environment = result.get("environment", environment)
+        if not isinstance(executable, (str, os.PathLike)) or not str(executable):
+            raise UnsupportedFeature("managed harness runtime could not be resolved")
+        executable = str(executable)
+        if not os.path.isabs(executable):
+            raise UnsupportedFeature("managed harness executable must be absolute")
+        # Adapters intentionally expose these two launch knobs.  Native
+        # implementations use them for every preflight and process spawn.
+        if hasattr(self.adapter, "executable"):
+            self.adapter.executable = executable
+        if isinstance(environment, Mapping) and hasattr(self.adapter, "environment"):
+            self.adapter.environment = dict(environment)
+        self._managed_runtime_result = result
+        provenance = getattr(result, "provenance", {})
+        resolved_version = (
+            provenance.get("version") if isinstance(provenance, Mapping) else None
+        )
+        target = (
+            provenance.get("target", kind) if isinstance(provenance, Mapping) else kind
+        )
+        digest = provenance.get("sha256") if isinstance(provenance, Mapping) else None
+        verification = (
+            provenance.get("verification_method")
+            if isinstance(provenance, Mapping)
+            else None
+        )
+        immutable = (
+            provenance.get("immutable_release")
+            if isinstance(provenance, Mapping)
+            else None
+        )
+        if isinstance(result, Mapping):
+            resolved_version = result.get(
+                "resolved_version", result.get("version", resolved_version)
+            )
+            target = result.get("target", target)
+            digest = result.get("digest", digest)
+            verification = result.get("verification_method", verification)
+            immutable = result.get("immutable_release", immutable)
+        if isinstance(resolved_version, str) and isinstance(digest, str):
+            self._emit_event(
+                EventKind.HARNESS_RUNTIME_RESOLVED,
+                {
+                    "resolved_version": resolved_version,
+                    "target": str(target),
+                    "digest": digest,
+                    "verification_method": verification
+                    if isinstance(verification, str) and verification
+                    else None,
+                    "immutable_release": immutable
+                    if isinstance(immutable, bool)
+                    else None,
+                },
+                phase=LifecyclePhase.STARTUP,
+            )
+
     def _requires_policy_preflight(self) -> bool:
         """Require explicit capability evidence for policies that can allow tools."""
 
@@ -723,6 +888,19 @@ class AsyncAgentSession:
             try:
                 await self._server_manager.close()
                 self._server_manager_closed = True
+            except Exception as exc:
+                if failure is None:
+                    failure = exc
+        if self._runtime_lease is not None:
+            try:
+                release = getattr(self._runtime_lease, "release", None) or getattr(
+                    self._runtime_lease, "close", None
+                )
+                if callable(release):
+                    value = release()
+                    if inspect.isawaitable(value):
+                        await value
+                self._runtime_lease = None
             except Exception as exc:
                 if failure is None:
                     failure = exc
@@ -1917,6 +2095,13 @@ class AsyncAgentSession:
                 {"lifecycle": ExecutionStatus.FINISHED.value, "outcome": outcome.value},
                 phase=LifecyclePhase.CLEANUP,
             )
+            agent_identity = project_agent_identity(
+                self._trace_recorder.events(), self._snapshot.agent
+            )
+            if agent_identity != self._snapshot.agent:
+                self._snapshot = self._snapshot.model_copy(
+                    update={"agent": agent_identity}
+                )
             store = getattr(self._trace_recorder, "_store", None)
             close_session = getattr(store, "close_session", None)
             if callable(close_session):
@@ -2185,6 +2370,10 @@ class AsyncAgentSession:
             server_manager=child_manager,
             server_manager_factory=self._server_manager_factory,
             provenance=provenance,
+            harness_cache_dir=self._harness_cache_dir,
+            runtime_manager=self._runtime_manager,
+            runtime_invocation_dir=self._runtime_invocation_dir,
+            runtime_project_root=self._runtime_project_root,
         )
 
     async def aclose(self) -> None:

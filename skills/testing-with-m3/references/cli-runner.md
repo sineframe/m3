@@ -28,6 +28,14 @@ For a judge key under a different name, use
 
 The project SDK and standalone CLI have different installation scopes.
 
+To compare harness releases, use `m3 test --runtime=managed
+--harness opencode@1.18.30=opencode/big-pickle
+--harness opencode@1.18.31=opencode/big-pickle -- tests/test_shipping.py`.
+The CLI reports cache hits or download progress before each selected test
+starts. An unversioned managed selection resolves `latest` once per run.
+The default system runtime uses the existing machine installation. Use
+`--harness-cache-dir PATH` or `M3_HARNESS_CACHE_DIR` for a different cache root.
+
 `m3 setup` installs the project SDK with judge support. Rerun setup to upgrade
 an environment created by an older CLI.
 

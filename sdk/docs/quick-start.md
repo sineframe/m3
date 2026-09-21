@@ -72,6 +72,25 @@ Provider credentials are `OPENCODE_API_KEY`, `OPENAI_API_KEY`, or
 `ANTHROPIC_API_KEY` in the process environment. Use `--env-file .env` to load
 them explicitly. MCP endpoint credentials remain in `HTTPServer.headers`.
 
+To run that same test against two OpenCode CLI releases, use the managed
+runtime. M3 detects this machine's OS and CPU, fetches the matching CLI asset
+into its per-user cache, verifies it, and waits for installation before
+starting either agent. Each test result records the requested model and the
+resolved harness version:
+
+```sh
+m3 test --env-file .env --runtime=managed \
+  --harness opencode@1.18.30=opencode/big-pickle \
+  --harness opencode@1.18.31=opencode/big-pickle \
+  -- tests/test_shipping.py
+```
+
+The default `--runtime=system` uses the installed harness. In managed mode,
+omitting `@VERSION` requests `latest` once per invocation, including pytest
+workers. Set `M3_HARNESS_CACHE_DIR` or pass `--harness-cache-dir PATH` to
+change the cache root. See the [CLI guide](../../cli/README.md#managed-harness-runtimes)
+for platform defaults, progress output, cache commands, and setup errors.
+
 For a deployed MCP URL, use `HTTPServer` and assert direct discovery
 and a tool call. The complete external example is
 [`examples/nondeterministic/test_streamable_http.py`](../examples/nondeterministic/test_streamable_http.py);

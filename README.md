@@ -49,6 +49,20 @@ m3 test --env-file .env --harness opencode=opencode/big-pickle \
 This collects four agent items and performs four executions. The fixture
 supplies the selected agent; the test supplies the MCP server and assertion.
 
+To test specific harness releases, select a managed runtime and put each
+version after the harness name:
+
+```bash
+m3 test --runtime=managed \
+  --harness opencode@1.18.30=opencode/big-pickle \
+  --harness opencode@1.18.31=opencode/big-pickle \
+  -- tests/test_shipping.py
+```
+
+M3 downloads each release into a per-user cache, runs each selection with its
+own executable, and records the resolved harness and model in results and
+traces. See the [CLI guide](cli/README.md#managed-harness-runtimes).
+
 ## Bring your own harness
 
 Built-in harnesses are convenient, but you can bring any agent implementing

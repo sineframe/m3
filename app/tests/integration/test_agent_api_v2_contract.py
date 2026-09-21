@@ -73,7 +73,7 @@ def test_selected(agent):
         capture_output=True,
         text=True,
         check=False,
-        timeout=30,
+        timeout=90,
     )
 
 

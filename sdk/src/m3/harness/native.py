@@ -37,7 +37,13 @@ def _executable(value: str | None, default: str) -> str:
     candidate = value or default
     if not candidate or "\x00" in candidate:
         raise ValueError("harness executable is invalid")
-    return candidate
+    # Child processes and probes must use the same absolute binary.  Keeping
+    # PATH lookup here also makes system runtimes deterministic in evidence.
+    resolved = shutil.which(candidate)
+    if resolved:
+        return str(Path(resolved).resolve())
+    path = Path(candidate)
+    return str(path.resolve()) if path.is_absolute() else candidate
 
 
 def _isolated_environment(

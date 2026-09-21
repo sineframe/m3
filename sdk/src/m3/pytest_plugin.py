@@ -8,6 +8,7 @@ import os as _os
 import re as _re
 import time as _time
 from collections.abc import Iterator as _Iterator
+from collections.abc import Mapping as _Mapping
 from contextvars import ContextVar as _ContextVar
 from pathlib import Path as _Path
 from typing import Any as _Any
@@ -127,6 +128,17 @@ def pytest_addoption(parser: _Any) -> None:
         action="append",
         default=[],
         metavar="KIND=MODEL[,MODEL...]",
+    )
+    group.addoption("--runtime", action="store", default=None, metavar="RUNTIME")
+    group.addoption(
+        "--harness-runtime", dest="runtime", action="store", metavar="RUNTIME"
+    )
+    group.addoption(
+        "--harness-version",
+        dest="harness_version",
+        action="store",
+        default=None,
+        metavar="VERSION",
     )
     group.addoption(
         "--credential-env", action="append", default=[], metavar="TARGET=SOURCE"
@@ -285,6 +297,14 @@ def m3_kit(request: _Any) -> _Any:
         kit.close()
 
 
+def _agent_parameter_id(selected: _Any) -> str:
+    identity = f"{selected.harness}-{selected.model or 'profile'}-{selected.name}"
+    runtime = selected.entry.get("runtime", "system")
+    if runtime == "managed":
+        identity += f"-managed-{selected.entry.get('version') or 'latest'}"
+    return f"{identity}-trial-{selected.trial}"
+
+
 @_pytest.fixture
 def agent(request: _Any, m3_kit: _Any) -> _Any:
     selected = request.param
@@ -292,7 +312,7 @@ def agent(request: _Any, m3_kit: _Any) -> _Any:
     callspec = getattr(request.node, "callspec", None)
     import hashlib
 
-    agent_id = f"{selected.harness}-{selected.model or 'profile'}-{selected.name}-trial-{selected.trial}"
+    agent_id = _agent_parameter_id(selected)
     parameter_ids = list(getattr(callspec, "_idlist", ()))
     # Pytest's callspec.indices counts the Cartesian product, so a ToolMatrix
     # case gets a different index for each agent.  The per-parameter IDs retain
@@ -330,11 +350,22 @@ def _parse_cli_harnesses(config: _Any) -> list[dict[str, _Any]]:
             raise _pytest.UsageError("--harness requires KIND=MODEL[,MODEL...]")
         kind, values = raw.split("=", 1)
         kind = kind.strip()
+        requested_version: str | None = None
+        if "@" in kind:
+            kind, requested_version = (part.strip() for part in kind.split("@", 1))
+            if not requested_version:
+                raise _pytest.UsageError("--harness contains an empty version")
         models = [item.strip() for item in values.split(",")]
         if not kind or any(not item for item in models):
             raise _pytest.UsageError("--harness contains an empty kind or model")
-        result.append({"harness": kind, "models": models})
+        entry: dict[str, _Any] = {"harness": kind, "models": models}
+        if requested_version:
+            entry["version"] = requested_version
+            entry["runtime"] = "managed"
+        result.append(entry)
     mappings, scoped = config._m3_cli_credentials
+    runtime = config.getoption("--runtime")
+    version = config.getoption("--harness-version")
     for entry in result:
         kind = str(entry["harness"]).lower().replace("-", "_")
         kind = {"claude": "claude_code"}.get(kind, kind)
@@ -342,6 +373,11 @@ def _parse_cli_harnesses(config: _Any) -> list[dict[str, _Any]]:
         values.update(scoped.get(kind, {}))
         if values and kind != "acp":
             entry["credential_env"] = values
+        if kind != "acp":
+            if runtime and "runtime" not in entry:
+                entry["runtime"] = runtime
+            if version and "version" not in entry:
+                entry["version"] = version
     return result
 
 
@@ -416,6 +452,28 @@ def pytest_generate_tests(metafunc: _Any) -> None:
                     value["credential_env"] = merged_credentials
                 merged.append(value)
             selections = merged
+    selected_runtime = config.getoption("--runtime")
+    selected_version = config.getoption("--harness-version")
+    if selected_runtime or selected_version:
+        updated_selections = []
+        for item in selections:
+            if not isinstance(item, _Mapping):
+                updated_selections.append(item)
+                continue
+            value = dict(item)
+            kind = str(value.get("harness", "")).lower().replace("-", "_")
+            if kind != "acp":
+                if selected_runtime and "runtime" not in value:
+                    value["runtime"] = selected_runtime
+                effective_runtime = value.get("runtime", selected_runtime or "system")
+                if (
+                    selected_version
+                    and effective_runtime == "managed"
+                    and "version" not in value
+                ):
+                    value["version"] = selected_version
+            updated_selections.append(value)
+        selections = updated_selections
     trials = config.getoption("--trials")
     if trials is None:
         trials = marker_kwargs.get("trials", 1)
@@ -433,10 +491,7 @@ def pytest_generate_tests(metafunc: _Any) -> None:
 
     # Expansion is pure and safe during collection.
     expanded = expand(None, selections, trials)
-    ids = tuple(
-        f"{item.harness}-{item.model or 'profile'}-{item.name}-trial-{item.trial}"
-        for item in expanded
-    )
+    ids = tuple(_agent_parameter_id(item) for item in expanded)
     metafunc.parametrize("agent", expanded, indirect=True, ids=ids)
 
 

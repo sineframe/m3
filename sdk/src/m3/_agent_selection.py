@@ -130,6 +130,8 @@ def _harness(entry: _Mapping[str, _Any], kind: str, model: str) -> _Any:
     kwargs: dict[str, _Any] = {"name": _name(name, "name"), "model": model}
     for field in (
         "executable",
+        "runtime",
+        "version",
         "provider",
         "dialect",
         "manifest",
@@ -146,14 +148,22 @@ def _harness(entry: _Mapping[str, _Any], kind: str, model: str) -> _Any:
     if kind == "claude_code":
         return _ClaudeCode(
             credential_references=refs,
-            **{k: v for k, v in kwargs.items() if k in {"name", "model", "executable"}},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in {"name", "model", "executable", "runtime", "version"}
+            },
         )
     if kind == "opencode":
         return _OpenCode(credential_references=refs, **kwargs)
     if kind == "codex":
         return _Codex(
             credential_references=refs,
-            **{k: v for k, v in kwargs.items() if k in {"name", "model", "executable"}},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in {"name", "model", "executable", "runtime", "version"}
+            },
         )
     if kind == "pi":
         return _Pi(
@@ -161,7 +171,8 @@ def _harness(entry: _Mapping[str, _Any], kind: str, model: str) -> _Any:
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k in {"name", "model", "executable", "provider"}
+                if k
+                in {"name", "model", "executable", "provider", "runtime", "version"}
             },
         )
     if kind == "acp":
@@ -441,7 +452,7 @@ def expand(
     if isinstance(trials, bool) or not isinstance(trials, int) or trials <= 0:
         raise ValueError("trials must be a positive integer")
     output: list[_Selection] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, str, str]] = set()
     seen_profiles: set[tuple[str, str]] = set()
     for raw in entries:
         if not isinstance(raw, _Mapping):
@@ -491,6 +502,8 @@ def expand(
                 "models",
                 "name",
                 "executable",
+                "runtime",
+                "version",
                 "credential_env",
                 "credential_references",
                 "_case_id",
@@ -503,6 +516,8 @@ def expand(
                 "models",
                 "name",
                 "executable",
+                "runtime",
+                "version",
                 "credential_env",
                 "credential_references",
                 "_case_id",
@@ -515,6 +530,8 @@ def expand(
                 "models",
                 "name",
                 "executable",
+                "runtime",
+                "version",
                 "provider",
                 "dialect",
                 "credential_env",
@@ -529,6 +546,8 @@ def expand(
                 "models",
                 "name",
                 "executable",
+                "runtime",
+                "version",
                 "provider",
                 "credential_env",
                 "credential_references",
@@ -544,6 +563,8 @@ def expand(
                 "manifest",
                 "agent_mode_id",
                 "session_config",
+                "runtime",
+                "version",
                 "_case_id",
                 "_matrix_id",
                 "_cell_id",
@@ -558,6 +579,8 @@ def expand(
             )
         if kind == "acp" and not isinstance(raw.get("manifest"), _Mapping):
             raise ValueError("ACP selection requires a runnable manifest")
+        if kind == "acp" and raw.get("runtime") == "managed":
+            raise ValueError("managed runtime is supported only for native harnesses")
         if kind == "acp":
             try:
                 _validate_manifest(dict(raw["manifest"]))
@@ -574,7 +597,13 @@ def expand(
         for model in models:
             model = _name(model, "model")
             config_name = _name(raw.get("name", kind), "name")
-            key = (kind, config_name, model)
+            key = (
+                kind,
+                config_name,
+                model,
+                str(raw.get("runtime", "system")),
+                str(raw.get("version", "")),
+            )
             if key in seen:
                 raise ValueError(f"duplicate agent selection {key!r}")
             seen.add(key)

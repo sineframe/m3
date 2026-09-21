@@ -12,6 +12,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import typing
@@ -36,6 +37,69 @@ else:  # pragma: no cover
 OPERATIONAL_ERROR = 2
 _HARNESS_KINDS = {"claude", "claude_code", "opencode", "codex", "pi", "acp"}
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_RUNTIME_VERSION = re.compile(
+    r"^(?:latest|(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9a-z]+(?:\.[0-9a-z]+)*)?)$"
+)
+_PROGRESS_LINE_LIMIT = 2048
+_PROGRESS_TOTAL_LIMIT = 16 * 1024 * 1024
+
+
+def _format_progress_event(event: Mapping[str, Any]) -> str | None:
+    """Render runtime-core acquisition records as compact human progress."""
+
+    def safe_text(value: Any, maximum: int) -> str | None:
+        if not isinstance(value, str) or len(value) > maximum:
+            return None
+        return (
+            value if all(32 <= ord(character) <= 126 for character in value) else None
+        )
+
+    event_name = event.get("event")
+    if not isinstance(event_name, str):
+        value = event.get("message", event.get("status"))
+        return safe_text(value, 256)
+    if event_name not in {
+        "acquire_start",
+        "download_progress",
+        "acquire_complete",
+        "cache_hit",
+    }:
+        return None
+    kind = safe_text(event.get("kind"), 64)
+    version = safe_text(event.get("resolved_version"), 64)
+    prefix = ""
+    if kind is not None:
+        prefix = {"opencode": "OpenCode", "claude_code": "Claude Code"}.get(
+            kind, kind.title()
+        )
+        if version is not None:
+            prefix += f" {version}"
+        prefix += ": "
+    phase_value = event.get("phase")
+    phase = phase_value if isinstance(phase_value, str) else ""
+    action = {
+        "resolve": "resolving release",
+        "download": "downloading",
+        "extract": "installing",
+        "verify": "verifying",
+        "ready": "loaded from cache"
+        if event_name == "cache_hit"
+        else "ready; running test",
+    }.get(phase, event_name)
+    detail = ""
+    current, total = event.get("bytes"), event.get("total_bytes")
+    if (
+        isinstance(current, (int, float))
+        and not isinstance(current, bool)
+        and isinstance(total, (int, float))
+        and not isinstance(total, bool)
+        and math.isfinite(current)
+        and math.isfinite(total)
+        and 0 <= current <= total <= 1024**4
+        and total > 0
+    ):
+        detail = f" {current / 1024 / 1024:.0f}/{total / 1024 / 1024:.0f} MB"
+    return f"{prefix}{action}{detail}"
 
 
 def _validate_selection_options(
@@ -43,7 +107,10 @@ def _validate_selection_options(
     trials: int | None,
     credential_env: Sequence[str],
     execution_timeout: float | None = None,
+    runtime: str = "system",
 ) -> str | None:
+    if runtime not in {"system", "managed"}:
+        return "--runtime must be system or managed"
     if execution_timeout is not None and (
         not math.isfinite(execution_timeout) or execution_timeout <= 0
     ):
@@ -54,16 +121,33 @@ def _validate_selection_options(
     for raw in harnesses:
         if "=" not in raw:
             return "--harness requires KIND=MODEL[,MODEL...]"
-        kind, models = raw.split("=", 1)
-        kind = kind.strip().lower().replace("-", "_")
+        raw_kind, models = raw.split("=", 1)
+        raw_kind = raw_kind.strip()
+        version: str | None = None
+        if "@" in raw_kind:
+            base, version = raw_kind.split("@", 1)
+            if runtime != "managed":
+                return "versioned harness selectors require --runtime managed"
+            if (
+                not base.strip()
+                or len(version) > 64
+                or not _RUNTIME_VERSION.fullmatch(version)
+            ):
+                return "--harness has an invalid version"
+            kind = base.strip().lower().replace("-", "_")
+        else:
+            kind = raw_kind.lower().replace("-", "_")
         if kind == "claude":
             kind = "claude_code"
+        selector = f"{kind}@{version}" if version is not None else kind
         if kind not in _HARNESS_KINDS:
             return f"unknown harness kind {kind!r}"
+        if runtime == "managed" and kind == "acp":
+            return "ACP does not support --runtime managed"
         if not models.strip() or any(not model.strip() for model in models.split(",")):
             return "--harness contains an empty model"
         for model in models.split(","):
-            choice = (kind, model.strip())
+            choice = (selector, model.strip())
             if choice in selected:
                 return f"duplicate harness/model selection {kind}={model.strip()}"
             selected.add(choice)
@@ -675,6 +759,7 @@ def pytest_command(
     credential_env: Sequence[str] = (),
     execution_timeout: float | None = None,
     judge_max_requests: int | None = None,
+    runtime: str = "system",
 ) -> list[str]:
     command = [
         str(python),
@@ -693,6 +778,8 @@ def pytest_command(
         command.extend(("--rootdir", str(project_root)))
     for value in harnesses:
         command.extend(("--harness", value))
+    if runtime == "managed":
+        command.extend(("--runtime", "managed"))
     for value in credential_env:
         command.extend(("--credential-env", value))
     if trials is not None:
@@ -757,10 +844,14 @@ def _run_pytest_process(
     execution_timeout: float | None = None,
     judge_max_requests: int | None = None,
     environment: Mapping[str, str] | None = None,
+    runtime: str = "system",
+    harness_cache_dir: str | os.PathLike[str] | None = None,
 ) -> int:
     """Run pytest with safe process-group cleanup and return its status."""
 
     process: subprocess.Popen[Any] | None = None
+    runtime_dir: Path | None = None
+    progress: _ProgressStream | None = None
     try:
         with _termination_signal_handlers():
             kwargs: dict[str, Any] = {}
@@ -772,6 +863,30 @@ def _run_pytest_process(
                     kwargs["creationflags"] = flags
             if project_root is not None:
                 kwargs["cwd"] = str(project_root)
+            child_environment = (
+                dict(environment) if environment is not None else dict(os.environ)
+            )
+            if runtime == "managed":
+                runtime_dir = Path(tempfile.mkdtemp(prefix="m3-runtime-"))
+                os.chmod(runtime_dir, 0o700)
+                progress_path = runtime_dir / "progress.jsonl"
+                progress_path.touch(mode=0o600)
+                os.chmod(progress_path, 0o600)
+                pin_dir = runtime_dir / "invocation-pin"
+                pin_dir.mkdir(mode=0o700)
+                # The aliases keep the boundary compatible across runtime-core versions.
+                for key in (
+                    "M3_RUNTIME_PROGRESS_FILE",
+                    "M3_MANAGED_RUNTIME_PROGRESS_FILE",
+                ):
+                    child_environment[key] = str(progress_path)
+                for key in ("M3_INVOCATION_PIN_DIR", "M3_RUNTIME_INVOCATION_DIR"):
+                    child_environment[key] = str(pin_dir)
+                if harness_cache_dir is not None:
+                    child_environment["M3_HARNESS_CACHE_DIR"] = str(
+                        Path(harness_cache_dir).expanduser().absolute()
+                    )
+                progress = _ProgressStream(progress_path)
             process = subprocess.Popen(
                 pytest_command(
                     python,
@@ -785,12 +900,22 @@ def _run_pytest_process(
                     credential_env=credential_env,
                     execution_timeout=execution_timeout,
                     judge_max_requests=judge_max_requests,
+                    runtime=runtime,
                 ),
-                env=dict(environment) if environment is not None else None,
+                env=child_environment,
                 **kwargs,
             )
             try:
-                raw_code = int(process.wait())
+                while True:
+                    if progress is not None:
+                        progress.poll()
+                    try:
+                        raw_code = int(process.wait(timeout=0.2))
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+                if progress is not None:
+                    progress.poll()
             except KeyboardInterrupt:
                 _terminate_process(process)
                 return 130
@@ -804,6 +929,87 @@ def _run_pytest_process(
             _terminate_process(process)
         print("m3 test: pytest could not be started", file=sys.stderr)
         return OPERATIONAL_ERROR
+    finally:
+        if progress is not None:
+            progress.close()
+        if runtime_dir is not None:
+            shutil.rmtree(runtime_dir, ignore_errors=True)
+
+
+class _ProgressStream:
+    """Bounded, replacement-safe JSONL progress reader."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.offset = 0
+        self._inode: tuple[int, int] | None = None
+        self.total = 0
+        self._pending = b""
+        self._discard_long_line = False
+        self._last: tuple[str, str] | None = None
+        self._last_print = 0.0
+
+    def poll(self) -> None:
+        if self.total >= _PROGRESS_TOTAL_LIMIT:
+            return
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(self.path, flags)
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                inode = (info.st_dev, info.st_ino)
+                if self._inode != inode or info.st_size < self.offset:
+                    self.offset = 0
+                    self._pending = b""
+                    self._discard_long_line = False
+                self._inode = inode
+                if info.st_size <= self.offset:
+                    return
+                stream.seek(self.offset)
+                data = stream.read(
+                    min(
+                        info.st_size - self.offset,
+                        _PROGRESS_TOTAL_LIMIT - self.total,
+                        1024 * 1024,
+                    )
+                )
+            self.offset += len(data)
+        except OSError:
+            return
+        self.total += len(data)
+        chunks = (self._pending + data).split(b"\n")
+        discard_first = self._discard_long_line
+        self._discard_long_line = False
+        self._pending = chunks.pop()
+        if len(self._pending) > _PROGRESS_LINE_LIMIT:
+            self._pending = b""
+            self._discard_long_line = True
+        for index, raw in enumerate(chunks):
+            if discard_first and index == 0:
+                continue
+            if len(raw) > _PROGRESS_LINE_LIMIT:
+                continue
+            try:
+                event = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(event, dict):
+                continue
+            message = _format_progress_event(event)
+            if message is None:
+                continue
+            resolved = event.get("resolved_version")
+            if resolved is not None and not isinstance(resolved, str):
+                continue
+            key = (message, resolved or "")
+            now = time.monotonic()
+            if key == self._last and now - self._last_print < 0.2:
+                continue
+            self._last, self._last_print = key, now
+            print(f"m3: {message}", flush=True)
+
+    def close(self) -> None:
+        self.poll()
 
 
 def _prepare_test(
@@ -897,11 +1103,13 @@ def run_test_with_runs(
     env_file: str | os.PathLike[str] | None = None,
     execution_timeout: float | None = None,
     judge_max_requests: int | None = None,
+    runtime: str = "system",
+    harness_cache_dir: str | os.PathLike[str] | None = None,
 ) -> TestRunResult:
     """Run pytest and retain newly stored runs for optional UI serving."""
 
     option_error = _validate_selection_options(
-        harnesses, trials, credential_env, execution_timeout
+        harnesses, trials, credential_env, execution_timeout, runtime
     )
     if suite is not None and not suite.strip():
         print("m3 test: --suite must not be blank", file=sys.stderr)
@@ -969,6 +1177,8 @@ def run_test_with_runs(
         judge_max_requests=judge_max_requests,
         suite=suite,
         environment=child_environment,
+        runtime=runtime,
+        harness_cache_dir=harness_cache_dir,
     )
     after = list_stored_runs(database_path)
     warnings = tuple(
@@ -1004,6 +1214,8 @@ def run_test(
     env_file: str | os.PathLike[str] | None = None,
     execution_timeout: float | None = None,
     judge_max_requests: int | None = None,
+    runtime: str = "system",
+    harness_cache_dir: str | os.PathLike[str] | None = None,
 ) -> int:
     """Run pytest and return its exact exit status."""
 
@@ -1012,7 +1224,7 @@ def run_test(
         return 2
 
     option_error = _validate_selection_options(
-        harnesses, trials, credential_env, execution_timeout
+        harnesses, trials, credential_env, execution_timeout, runtime
     )
     if option_error is not None:
         print(f"m3 test: {option_error}", file=sys.stderr)
@@ -1035,6 +1247,8 @@ def run_test(
             env_file=env_file,
             execution_timeout=execution_timeout,
             judge_max_requests=judge_max_requests,
+            runtime=runtime,
+            harness_cache_dir=harness_cache_dir,
         ).exit_code
     root = (project_root or Path.cwd()).resolve()
     prepared = _prepare_test(python, database, root)
@@ -1068,6 +1282,8 @@ def run_test(
         judge_max_requests=judge_max_requests,
         suite=suite,
         environment=child_environment,
+        runtime=runtime,
+        harness_cache_dir=harness_cache_dir,
     )
 
 

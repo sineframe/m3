@@ -25,6 +25,8 @@
         "execution.created",
         "execution.state_changed",
         "execution.finished",
+        "harness.selection",
+        "harness.runtime_resolved",
         "session.created",
         "session.state_changed",
         "turn.created",
@@ -87,53 +89,6 @@
       "title": "EventOrigin",
       "type": "string"
     },
-    "PayloadRef": {
-      "additionalProperties": false,
-      "properties": {
-        "blob_id": {
-          "maxLength": 256,
-          "minLength": 1,
-          "title": "Blob Id",
-          "type": "string"
-        },
-        "compression": {
-          "anyOf": [
-            {
-              "maxLength": 64,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Compression"
-        },
-        "media_type": {
-          "default": "application/json",
-          "maxLength": 256,
-          "title": "Media Type",
-          "type": "string"
-        },
-        "sha256": {
-          "pattern": "^[0-9a-f]{64}$",
-          "title": "Sha256",
-          "type": "string"
-        },
-        "size_bytes": {
-          "minimum": 0,
-          "title": "Size Bytes",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "blob_id",
-        "sha256",
-        "size_bytes"
-      ],
-      "title": "PayloadRef",
-      "type": "object"
-    },
     "EventSource": {
       "additionalProperties": false,
       "properties": {
@@ -179,25 +134,6 @@
       ],
       "title": "EventSource",
       "type": "object"
-    },
-    "ExecutionId": {
-      "title": "ExecutionId",
-      "type": "string"
-    },
-    "LifecyclePhase": {
-      "enum": [
-        "preflight",
-        "startup",
-        "initialization",
-        "idle",
-        "turn",
-        "mcp_call",
-        "cleanup",
-        "terminal",
-        "unknown"
-      ],
-      "title": "LifecyclePhase",
-      "type": "string"
     },
     "EvidenceRef": {
       "additionalProperties": false,
@@ -266,6 +202,72 @@
         "evidence_id"
       ],
       "title": "EvidenceRef",
+      "type": "object"
+    },
+    "ExecutionId": {
+      "title": "ExecutionId",
+      "type": "string"
+    },
+    "LifecyclePhase": {
+      "enum": [
+        "preflight",
+        "startup",
+        "initialization",
+        "idle",
+        "turn",
+        "mcp_call",
+        "cleanup",
+        "terminal",
+        "unknown"
+      ],
+      "title": "LifecyclePhase",
+      "type": "string"
+    },
+    "PayloadRef": {
+      "additionalProperties": false,
+      "properties": {
+        "blob_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Blob Id",
+          "type": "string"
+        },
+        "compression": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compression"
+        },
+        "media_type": {
+          "default": "application/json",
+          "maxLength": 256,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "blob_id",
+        "sha256",
+        "size_bytes"
+      ],
+      "title": "PayloadRef",
       "type": "object"
     },
     "ReasoningState": {

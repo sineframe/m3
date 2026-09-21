@@ -40,6 +40,8 @@ class EventKind(str, _Enum):
     EXECUTION_CREATED = "execution.created"
     EXECUTION_STATE_CHANGED = "execution.state_changed"
     EXECUTION_FINISHED = "execution.finished"
+    HARNESS_SELECTION = "harness.selection"
+    HARNESS_RUNTIME_RESOLVED = "harness.runtime_resolved"
     SESSION_CREATED = "session.created"
     SESSION_STATE_CHANGED = "session.state_changed"
     TURN_CREATED = "turn.created"

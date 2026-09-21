@@ -11,6 +11,7 @@ from ..errors import (
 from ..errors import (
     ModelValidationError as _ModelValidationError,
 )
+from .agent_identity import AgentIdentity
 from .base import (
     ExecutionId,
     ExecutionOutcome,
@@ -41,6 +42,7 @@ class ExecutionState(FrozenModel):
     created_at: _datetime = _Field(default_factory=_utc_now)
     finished_at: _datetime | None = None
     provenance: SessionSource | None = None
+    agent: AgentIdentity | None = None
 
     @_model_validator(mode="after")
     def _terminal_consistency(self) -> ExecutionState:

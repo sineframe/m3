@@ -1665,6 +1665,8 @@ def test_every_event_kind_has_an_explicit_projection_contract() -> None:
         EventKind.PROVIDER_EVENT: "provider",
         EventKind.TOOL_CALL_REQUESTED: "tool_call",
         EventKind.TOOL_RESULT_RECEIVED: "diagnostic",
+        EventKind.HARNESS_SELECTION: "diagnostic",
+        EventKind.HARNESS_RUNTIME_RESOLVED: "diagnostic",
     }
     assert set(expected) == set(EventKind)
     trace = _trace()
