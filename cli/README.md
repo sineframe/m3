@@ -68,8 +68,8 @@ also creates `.env.example` with blank `OPENCODE_API_KEY`, `OPENAI_API_KEY`,
 do not already have one; otherwise add only the keys your tests need. Add
 `.env` to `.gitignore` if needed and pass `--env-file .env` to `m3 test`. Running
 `init` again preserves existing files and adds `.env.example` if it is
-missing. The first skipped run confirms collection; it does not check server
-behavior.
+missing. The first skipped run confirms collection but exits 1 under `m3 test`
+because no test executed. Replace the starter before using the run as a CI gate.
 
 `m3 setup` installs `m3[pytest,storage,judge]` into the project
 environment. It selects `--python`, then an active `VIRTUAL_ENV` or

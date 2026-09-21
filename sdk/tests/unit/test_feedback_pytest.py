@@ -696,6 +696,34 @@ def test_skipped_collection_does_not_count_as_failure(tmp_path: Path) -> None:
         store.close()
 
 
+def test_skipped_only_suite_fails_the_managed_run(tmp_path: Path) -> None:
+    result, database = _run(
+        tmp_path,
+        "import pytest\n@pytest.mark.m3(suite_name='contract')\n@pytest.mark.skip(reason='starter')\ndef test_starter():\n    pass\n",
+        "--suite",
+        "contract",
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "M3: no tests executed" in result.stdout
+    store, run_id, record = _manifest(database)
+    try:
+        assert record["exit_status"] == 1
+        assert [test["outcome"] for test in store.list_test_results(run_id)] == [
+            "skipped"
+        ]
+    finally:
+        store.close()
+
+
+def test_collect_only_does_not_require_executed_tests(tmp_path: Path) -> None:
+    result, _ = _run(
+        tmp_path,
+        "import pytest\n@pytest.mark.skip(reason='starter')\ndef test_starter():\n    pass\n",
+        "--collect-only",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_test_body_exception_is_not_labeled_as_assertion(tmp_path: Path) -> None:
     result, database = _run(
         tmp_path, "def test_crash():\n    raise RuntimeError('crashed')\n"

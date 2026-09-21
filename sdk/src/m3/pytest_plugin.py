@@ -1163,12 +1163,22 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         1 if manifest_error and int(exitstatus) == 0 else int(exitstatus)
     )
     store = getattr(config, "_m3_manifest_store", None)
+    no_executed_tests = False
     if store is not None:
         record = dict(store.get_test_run(run_id.root) or {})
         collected = {str(item) for item in record.get("collected_node_ids", ())}
-        recorded = {
-            str(item.get("node_id")) for item in store.list_test_results(run_id.root)
-        }
+        attempts = store.list_test_results(run_id.root)
+        recorded = {str(item.get("node_id")) for item in attempts}
+        no_executed_tests = (
+            effective_exitstatus == 0
+            and not config.getoption("collectonly")
+            and not any(
+                item.get("outcome") in {"passed", "failed", "error"}
+                for item in attempts
+            )
+        )
+        if no_executed_tests:
+            effective_exitstatus = 1
         worker_errors = list(record.get("worker_errors", ()))
         incomplete_workers = bool(worker_errors)
         if incomplete_workers and effective_exitstatus == 0:
@@ -1379,6 +1389,10 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
             f"M3 observations: {tool_errors} tool error result(s); "
             f"{completed} completed execution(s)"
         )
+        if no_executed_tests:
+            reporter.write_line(
+                "M3: no tests executed; skipped-only runs fail", red=True
+            )
         for execution_id, stage, elapsed in timeout_summaries:
             elapsed_text = (
                 f"{elapsed:.3f}s" if isinstance(elapsed, float) else "unknown"
