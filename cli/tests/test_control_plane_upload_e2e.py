@@ -43,6 +43,17 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
             store=store, env={}, cwd=str(repository), run_id="run-upload"
         ) as kit:
             result = kit.run(spec)
+        execution_id = result.snapshot.execution_id.root
+        store.save_test_result(
+            "run-upload",
+            "attempt-upload",
+            {
+                "attempt_id": "attempt-upload",
+                "node_id": "tests/test_upload.py::test_result",
+                "outcome": "passed",
+                "execution_ids": [execution_id],
+            },
+        )
         feedback = build_feedback(store, "run-upload")
         directory = root / "reports" / "run-upload"
         export_feedback(feedback, store, directory)
@@ -61,7 +72,6 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
             token="m3pat_test",
         )
 
-        execution_id = result.snapshot.execution_id.root
         assert [url.rsplit("/", 1)[-1] for url, _ in sent] == [
             "report",
             "report",
@@ -82,6 +92,17 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
         )
         assert execution["report"]["trace"]["execution_id"] == execution_id
         assert execution["report"]["trace"]["schema_id"] == "trace_view"
+        assert execution["report"]["test_results"] == [
+            {
+                "attempt_id": "attempt-upload",
+                "node_id": "tests/test_upload.py::test_result",
+                "description": "",
+                "outcome": "passed",
+                "verdict": "passed",
+                "effective_verdict": "passed",
+                "duration_seconds": None,
+            }
+        ]
         assert execution["report"]["trace"]["schema_version"] == "1.1"
         assert execution["report"]["report"]["events_truncated"] is False
         assert json.loads(sent[2][1]) == {"transport_version": 1}

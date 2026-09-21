@@ -38,10 +38,14 @@ def test_answer(m3_kit):
     assert result.status.value == "passed"
 ```
 
-`required=True` persists a failed or error result before raising. Durable
-records retain score, rationale, safe details, provenance, and a subject
-digest; raw submitted text and provider payloads are omitted. Use
-`--judge-max-requests N` to cap requests for a run, including retries.
+`required=True` persists every result before returning. A `failed`, `error`,
+`inconclusive`, or `not_run` result then raises `RequiredEvaluationError`;
+`passed` returns normally. Catching that exception does not turn the run into
+a success: session finalization still applies the required-evaluation policy
+while preserving pytest's own recorded outcome. Durable records retain score,
+rationale, safe details, provenance, and a subject digest; raw submitted text
+and provider payloads are omitted. Use `--judge-max-requests N` to cap requests
+for a run, including retries.
 
 ## Agent behavior tests
 

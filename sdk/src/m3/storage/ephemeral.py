@@ -939,6 +939,16 @@ class InMemoryExecutionStore:
             snapshots = {key: value for key, value in self._snapshots.items()}
             specifications = {key: value for key, value in self._specifications.items()}
             projects = dict(self._projects)
+            attempt_states: dict[str, str] = {}
+            for result_values in self._test_results.values():
+                for result in result_values.values():
+                    outcome = str(result.get("outcome", "")).lower()
+                    for execution_id in result.get("execution_ids", ()):
+                        key = str(getattr(execution_id, "root", execution_id))
+                        if outcome == "running":
+                            attempt_states[key] = "running"
+                        elif key not in attempt_states:
+                            attempt_states[key] = outcome
         enriched_records = []
         for record in records:
             snapshot = snapshots.get(record.execution_id.root)
@@ -956,7 +966,12 @@ class InMemoryExecutionStore:
             )
         records = enriched_records
         traces = {}
-        for execution_id in {record.execution_id.root for record in records}:
+        trace_execution_ids = {record.execution_id.root for record in records}
+        trace_execution_ids.update(str(getattr(key, "root", key)) for key in snapshots)
+        trace_execution_ids.update(
+            str(getattr(key, "root", key)) for key in specifications
+        )
+        for execution_id in trace_execution_ids:
             try:
                 trace = self.get_trace_view(execution_id)
             except (TraceUnavailable, TraceNotFinalized, StorageError, ValueError):
@@ -969,6 +984,8 @@ class InMemoryExecutionStore:
             snapshots=snapshots,
             specifications=specifications,
             traces=traces,
+            attempt_states=attempt_states,
+            project_names=projects,
         )
 
     def get_trace(self, execution_id: ExecutionId | str) -> TraceResult | None:

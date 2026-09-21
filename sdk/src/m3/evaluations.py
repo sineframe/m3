@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib as _hashlib
 import inspect as _inspect
+import json as _json
 from collections.abc import (
     Callable as _Callable,
 )
@@ -26,6 +28,9 @@ from .trace.redaction import (
 )
 from .trace.redaction import (
     redact_for_api as _redact_for_api,
+)
+from .trace.redaction import (
+    redact_for_persistence as _redact_for_persistence,
 )
 from .types import (
     ArtifactRef as _ArtifactRef,
@@ -60,7 +65,7 @@ EvaluationDecision = _EvaluationDecision
 
 
 class RequiredEvaluationError(AssertionError):
-    """A required failed/error evaluation after its result was persisted."""
+    """A required non-passing evaluation after its result was persisted."""
 
     def __init__(self, result: _EvaluationResult) -> None:
         self.result = result.model_copy()
@@ -253,10 +258,11 @@ def _status(value: EvaluationVerdict) -> _EvaluationStatus:
 
 
 def _raise_for_required(result: _EvaluationResult) -> None:
-    if result.required and result.status in {
-        _EvaluationStatus.FAILED,
-        _EvaluationStatus.ERROR,
-    }:
+    # A required evaluation is evidence that a declared check was actually
+    # satisfied.  ``inconclusive`` and ``not_run`` are therefore blocking just
+    # like a failed evaluator or evaluator error.  Persisting happens before
+    # this function is called so callers can inspect the complete evidence.
+    if result.required and result.status is not _EvaluationStatus.PASSED:
         raise RequiredEvaluationError(result)
 
 
@@ -418,6 +424,10 @@ class EvaluationRunner:
         ):
             reserve = lambda: reserve_request(run_id, max_judge_requests)
         self._judge_budget = _LocalJudgeBudget(max_judge_requests, reserve)
+        # Requiredness belongs to the (execution, evaluator) lineage, not to
+        # one arbitrary rerun row.  Keep this small runtime index so an
+        # advisory rerun in the same kit cannot downgrade a prior requirement.
+        self._required_identities: set[tuple[str, str, str | None, str, str]] = set()
 
     def register(
         self, name: str, evaluator: EvaluatorCallable | AsyncEvaluator
@@ -468,6 +478,7 @@ class EvaluationRunner:
             turn_id=turn_id,
             case_id=case_id,
         )
+        required = self._effective_required(context, name, required)
         identifier = (
             evaluation_id
             if isinstance(evaluation_id, _EvaluationId)
@@ -572,6 +583,7 @@ class EvaluationRunner:
             turn_id=turn_id,
             case_id=case_id,
         )
+        required = self._effective_required(context, name, required)
         identifier = (
             evaluation_id
             if isinstance(evaluation_id, _EvaluationId)
@@ -631,6 +643,10 @@ class EvaluationRunner:
             result.context.execution_id if result.context is not None else None
         )
         self.store.save(result)
+        if execution_id is None and result.required:
+            from ._test_runs import record_detached_evaluation
+
+            record_detached_evaluation(result)
         save_evaluation = getattr(self.durable_store, "save_evaluation", None)
         if callable(save_evaluation) and execution_id is not None:
             save_evaluation(
@@ -638,6 +654,74 @@ class EvaluationRunner:
                 result,
                 turn_id=result.context.turn_id if result.context else None,
             )
+
+    def _effective_required(
+        self, context: _EvaluationContext, name: str, required: bool
+    ) -> bool:
+        """Retain requiredness for one exact execution/evaluator lineage.
+
+        Registration-level expectations are resolved by the session finalizer
+        from the execution spec.  This runtime rule covers the dynamic
+        ``evaluate(required=True)`` path and durable advisory reruns.
+        """
+
+        execution_id = context.execution_id
+        if execution_id is None:
+            return required
+        identity = self._lineage_identity(context, name)
+        durable_required = False
+        evaluations = getattr(self.durable_store, "evaluations", None)
+        if callable(evaluations):
+            try:
+                durable_required = any(
+                    record.name == name
+                    and bool(record.required)
+                    and self._record_lineage(record) == identity[2:]
+                    for record in evaluations(execution_id)
+                )
+            except Exception:
+                # Persistence failures are reported by the durable save path;
+                # evaluator execution itself must not silently become a new
+                # failure mode merely because an optional lookup is unavailable.
+                durable_required = False
+        effective = bool(
+            required or durable_required or identity in self._required_identities
+        )
+        if effective:
+            self._required_identities.add(identity)
+        return effective
+
+    def _subject_digest(self, context: _EvaluationContext) -> str:
+        value = context.subject
+        if hasattr(value, "model_dump"):
+            value = value.model_dump(mode="json")
+        value = _redact_for_persistence(
+            value, config=self.redaction_config, path="$.evaluation.subject"
+        )
+        encoded = _json.dumps(
+            value, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+        return _hashlib.sha256(encoded).hexdigest()
+
+    def _lineage_identity(
+        self, context: _EvaluationContext, name: str
+    ) -> tuple[str, str, str | None, str, str]:
+        execution_id = context.execution_id
+        if execution_id is None:
+            raise ValueError("evaluation lineage requires an execution_id")
+        turn_id = context.turn_id.root if context.turn_id is not None else None
+        return (
+            execution_id.root,
+            name,
+            turn_id,
+            context.subject_kind,
+            self._subject_digest(context),
+        )
+
+    @staticmethod
+    def _record_lineage(record: _Any) -> tuple[str | None, str, str]:
+        turn_id = record.turn_id.root if record.turn_id is not None else None
+        return (turn_id, str(record.subject_kind), str(record.subject_digest))
 
 
 __all__ = [  # noqa: RUF022 - public API order is compatibility-checked

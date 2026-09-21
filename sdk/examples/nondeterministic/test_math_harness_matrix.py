@@ -214,7 +214,7 @@ def test_ten_math_cases_across_harnesses_with_repeated_trials(
             len(_TEST_CASES) * len(_agent_selections(opencode)) * _TRIALS_PER_CASE
         )
         assert report.totals.evaluation_count == expected_trials
-        assert report.totals.measured_count == expected_trials
+        assert report.totals.expected_count == expected_trials
         assert report.totals.pass_rate is not None
 
         print(
@@ -226,7 +226,7 @@ def test_ten_math_cases_across_harnesses_with_repeated_trials(
                 f"{group.key['metadata.harness_config']}: "
                 f"{group.values.pass_rate:.1%} "
                 f"({group.values.status_counts['passed']}/"
-                f"{group.values.measured_count})"
+                f"{group.values.expected_count})"
             )
 
     finally:

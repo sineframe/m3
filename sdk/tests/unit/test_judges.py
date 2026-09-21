@@ -915,7 +915,7 @@ def test_sqlite_judge_reopen_keeps_safe_fields_and_digest(tmp_path):
     assert "actual" not in exported
 
 
-def test_error_is_counted_but_excluded_from_pass_rate():
+def test_error_is_counted_in_expected_pass_rate_denominator():
     from m3.feedback import _evaluation_stats
     from m3.types import EvaluationId, EvaluationRecord, ExecutionId
 
@@ -926,18 +926,22 @@ def test_error_is_counted_but_excluded_from_pass_rate():
             name="j",
             status=EvaluationStatus.PASSED,
             score=1,
+            subject_digest="a" * 64,
         ),
         EvaluationRecord(
             evaluation_id=EvaluationId("x"),
             execution_id=ExecutionId("e"),
             name="j",
             status=EvaluationStatus.ERROR,
+            subject_digest="b" * 64,
         ),
     )
     stats = _evaluation_stats(records)
     assert stats["status_counts"]["error"] == 1
-    assert stats["pass_rate"] == 1.0
-    assert stats["measured_count"] == 1
+    assert stats["evaluation_count"] == 2
+    assert stats["expected_count"] == 2
+    assert stats["pass_rate"] == 0.5
+    assert "measured_count" not in stats
 
 
 def test_required_error_is_persisted_before_raise():

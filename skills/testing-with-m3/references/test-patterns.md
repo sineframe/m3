@@ -127,8 +127,10 @@ validates its required fields, types, and score range locally. Scores at or
 above the configured threshold become PASSED and lower scores become FAILED.
 Abstentions and invalid output become ERROR evaluations.
 
-Use `required=True` to persist then raise for failed or error results. The
-result exposes `status`, `score`, `rationale`, and safe `details`/provenance.
+Use `required=True` to persist then raise for failed, error, inconclusive, or
+not-run results. Session finalization still blocks the run if test code catches
+that exception. The result exposes `status`, `score`, `rationale`, and safe
+`details`/provenance.
 For advanced subjects, a configured `LLMJudge` can be called inside a
 sync or async evaluator callback and return an `EvaluationDecision`. Chained
 direct calls share one client execution, agent evaluations can use `turn_id`,

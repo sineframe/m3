@@ -25,10 +25,17 @@ result or a normal Python assertion as an execution or evaluation result.
 
 `GET /api/v2/runs` returns an unpaginated, newest first list of safe pytest
 run summaries. Each item contains `run_id`, `created_at`, `finished_at`,
-`status`, optional project identifiers and name, and `test_count`. Manifest
-paths, selection arguments, capture settings, and other raw manifest fields
-are not exposed. Runs are listed even when they have no executions or saved
+`status`, optional project identifiers and name, `test_count`, independent
+`test_outcome_counts`, and derived `effective_verdict_counts`. Manifest paths,
+selection arguments, capture settings, and other raw manifest fields are not
+exposed. Runs are listed even when they have no executions or saved
 evaluations.
+
+`test_outcome_counts` is an independent count of raw persisted pytest
+outcomes. `effective_verdict_counts` is the count after applying required
+evaluation completeness and execution policy. Both maps contain only
+non-empty string labels with non-negative integer counts; malformed manifest
+entries are omitted from the response.
 
 ### Where readable executions come from
 
@@ -424,14 +431,22 @@ execution lifecycle completion.
 Example grouped response:
 
 ```json
-{"version":"v2","aggregate":{"groups":[{"key":{"suite_name":"catalog"},"values":{"evaluation_count":2,"measured_count":2,"pass_rate":0.5}},{"key":{"suite_name":"other"},"values":{"evaluation_count":1,"measured_count":1,"pass_rate":1.0}}],"total_groups":2}}
+{"version":"v2","aggregate":{"groups":[{"key":{"suite_name":"catalog"},"values":{"evaluation_count":2,"expected_count":2,"missing_required_count":0,"pending_required_count":0,"pass_rate":0.5}},{"key":{"suite_name":"other"},"values":{"evaluation_count":1,"expected_count":1,"missing_required_count":0,"pending_required_count":0,"pass_rate":1.0}}],"total_groups":2}}
 ```
 
 The daily query returns two exact groups:
 
 ```json
-{"version":"v2","aggregate":{"groups":[{"key":{"time.day":"2026-08-01"},"values":{"evaluation_count":1,"measured_count":1,"pass_rate":1.0}},{"key":{"time.day":"2026-08-02"},"values":{"evaluation_count":1,"measured_count":1,"pass_rate":0.0}}],"total_groups":2}}
+{"version":"v2","aggregate":{"groups":[{"key":{"time.day":"2026-08-01"},"values":{"evaluation_count":1,"expected_count":1,"pass_rate":1.0}},{"key":{"time.day":"2026-08-02"},"values":{"evaluation_count":1,"expected_count":1,"pass_rate":0.0}}],"total_groups":2}}
 ```
+
+Time buckets can be combined with execution labels. For example,
+`["time.day", "harness"]` returns one group per UTC calendar day and
+harness value; each group key contains both labels and its values contain the
+same `evaluation_count`, `expected_count`, missing/pending counters,
+`status_counts`, and health fields described below. A missing harness label is
+not silently assigned a runtime name, so those records remain distinguishable
+as an unlabelled group.
 
 ```json
 {
@@ -459,10 +474,11 @@ different evaluators. Unknown labels, duplicate group labels, invalid time
 buckets, empty filter lists, mixed evaluator filters, naive timestamps, and
 `from >= to` are rejected with `422 invalid_evaluation_aggregate_query`.
 
-Use one evaluator filter or include `evaluator` in `group_by`. This keeps a
-deterministic evaluator separate from a user-supplied LLM evaluator. When
-several evaluator groups are returned, combined totals have `pass_rate: null`
-and `average_score: null`; each group has its own values.
+Use one evaluator filter or include `evaluator` in `group_by`. This makes each
+evaluator's trend independently visible. Totals are recomputed from the full
+filtered population before group pagination; they are not obtained by summing
+group values. This matters for distinct trial/execution counts, averages, and
+percentiles.
 
 `judge_provider`, `judge_model`, and `rubric_id` are optional labels copied
 from the provenance saved with a user-supplied evaluator result. They do not
@@ -473,10 +489,20 @@ a stable case from `matrix.id` plus `matrix.cell`. If neither is available,
 aggregation may expose a stable `spec:<sha256>` ID or, for spec-less traces, a
 stable `trace:<sha256>` ID.
 
-Pass rate is `passed / (passed + failed)`. Inconclusive, error, and not-run
-results remain in `status_counts` but do not enter that denominator.
-Individual malformed legacy rows are skipped safely. Store/read failures
-return `evaluation_data_unavailable`.
+Pass rate is `passed evaluations / expected evaluations`. Expected evaluations
+are the latest saved evaluation identities plus required expectations that are
+still missing when their execution and linked pytest attempt are terminal.
+Saved `failed`, `error`, `inconclusive`, and `not_run` rows all enter the
+denominator. An unresolved requirement belonging to a running attempt is
+reported in `pending_required_count` and excluded from the denominator until
+the attempt becomes terminal.
+
+Grouping or filtering by `evaluation_status` is intentionally a view of
+persisted rows only: missing and pending expectations are excluded rather than
+placed in a synthetic null/status group. In that view, `expected_count` equals
+`evaluation_count`, and both requirement counters are zero. Individual
+malformed legacy rows are skipped safely. Store/read failures return
+`evaluation_data_unavailable`.
 
 Example response shape:
 
@@ -484,7 +510,7 @@ Example response shape:
 {
   "version":"v2",
   "aggregate": {
-    "totals": {"trial_count":3,"measured_count":3,"pass_rate":0.6667},
+    "totals": {"trial_count":3,"evaluation_count":3,"expected_count":3,"missing_required_count":0,"pending_required_count":0,"pass_rate":0.6667},
     "groups": [{"key":{"time.day":"2026-08-20","evaluator":"m3.output.has_text.v1"},"values":{}}],
     "total_groups":1,"limit":200,"offset":0
   }
@@ -499,9 +525,12 @@ The `200` aggregate response is `{version, aggregate}`. `aggregate` contains
 |---|---|
 | `trial_count` | Distinct executions/trials represented. |
 | `evaluation_count` | Latest selected evaluation records after deduplication. |
-| `measured_count`, `status_counts` | Passed plus failed denominator count, and counts for every status (`passed`, `failed`, `inconclusive`, `error`, `not_run`). |
-| `pass_rate` | `passed / (passed + failed)`, or `null` when there are no measured results. Combined totals are `null` when multiple evaluators are present. |
-| `average_score`, `score_count` | Average of present scores and the number of scored results. Combined average is `null` when multiple evaluators are present. |
+| `expected_count` | Pass-rate denominator: latest saved evaluation identities plus terminal missing required expectations. |
+| `missing_required_count` | Terminal required `(execution_id, evaluator)` expectations with no saved result. |
+| `pending_required_count` | Live unresolved required expectations, excluded from `expected_count` and `pass_rate`. |
+| `status_counts` | Persisted rows by status (`passed`, `failed`, `inconclusive`, `error`, `not_run`). Missing and pending expectations have no invented status. |
+| `pass_rate` | `passed / expected_count`, or `null` when `expected_count` is zero. |
+| `average_score`, `score_count` | Average of present scores and the number of scored results. |
 | `health` | Execution/tool health described below. |
 
 `groups` contains `{key, values}`. `key` maps each requested group label to
@@ -601,10 +630,42 @@ Wire responses retain the typed `ExecutionState` model for lifecycle snapshots.
 
 Execution reports include a `test_results` array for pytest attempts linked to
 the execution. Each entry contains `attempt_id`, `node_id`, the cleaned test
-`description`, pytest `outcome`, and `duration_seconds`. Older records without
-a description return an empty string, and executions without linked attempts
-return an empty array. The execution snapshot's `outcome` remains the runtime
-execution outcome.
+`description`, raw pytest `outcome`, normalized pytest `verdict`, derived
+`effective_verdict`, and `duration_seconds`. The effective verdict applies the
+run's required-evaluation policy without relabeling the pytest result. Older
+records without a description return an empty string, and executions without
+linked attempts return an empty array. The execution snapshot's `outcome`
+remains the runtime execution outcome.
+
+`GET /api/v2/feedback/{run_id}` exposes the same separation for every test.
+Its `evaluations` entries include both `evaluation_id` and `execution_id`.
+Required evaluations run without an execution identity are owned by the pytest
+attempt, use `execution_id: null`, and still affect `effective_verdict`; they do
+not enter execution-scoped evaluation aggregates.
+Each feedback test entry also includes case-level `tool_calls` counts with
+`total`, `successful`, and `failed` fields. These counts are derived once from
+distinct linked execution traces; pytest-only tests report zeroes and calls
+are never attributed to individual evaluators.
+Aggregate evaluator health is exposed by `/api/v2/evaluations/aggregate`.
+Feedback keeps case-level tool-call counts separate from evaluator statistics.
+`evaluation_completeness` counts distinct required
+`(execution_id, evaluator)` pairs and lists missing or pending pairs with both
+identity fields. A saved failed evaluation is complete evidence but produces a
+failed effective verdict; `error`, `inconclusive`, `not_run`, and terminal
+missing required evidence produce an incomplete verdict. Manifest-only tests
+that never ran are persisted as stable `not_run` attempts and have
+`evaluation_completeness.status: "not_applicable"` with an incomplete
+effective verdict.
+
+Pytest and evaluation signals remain independent. A plain pytest assertion can
+therefore have `verdict: "failed_assertion"`, two passed evaluations, and
+`effective_verdict: "failed"`. An ordinary skip remains skipped only when its
+required evidence is complete; required failures or incomplete evidence take
+precedence. A valid expected xfail waives all required evidence linked to that
+attempt for effective-verdict purposes because pytest does not persist causal
+evaluation identity, while setup/teardown, collection, and persistence errors
+remain incomplete. Strict xpass is failed; non-strict xpass passes when its
+required evidence is complete.
 
 Pytest descriptions come from the test function docstring:
 

@@ -49,9 +49,10 @@ assertion, protocol, setup, teardown, and other errors. A tool result can have
 `is_error=True` even when the execution lifecycle is completed.
 `executions[].outcome=completed` does not mean that a pytest assertion or
 evaluator passed. `evaluation_stats` groups explicit saved evaluations by
-name; a print or log line is not a score. A test can pass while its saved
-evaluation is failed if it deliberately catches a `required=True` assertion;
-review both test outcomes and evaluation counts.
+name; a print or log line is not a score. `tests[].effective_verdict` applies
+the required-evaluation policy without relabeling `tests[].outcome`; catching a
+`required=True` exception does not make the final run successful. Review both
+pytest outcomes and evaluation evidence.
 
 The bundle maps execution IDs to supporting files. Read one referenced trace
 rather than the whole bundle:
@@ -159,8 +160,10 @@ Check in order:
    unlike-for-like. Inspect failing case execution IDs and their selected
    traces; do not infer tool use from final prose.
 5. Report pass/fail/error/inconclusive counts and the number of trials for each
-   evaluator/configuration. `pass_rate` is passed divided by passed plus failed;
-   error, inconclusive, and not-run are excluded from that denominator.
+   evaluator/configuration. `pass_rate` is passed evaluations divided by
+   expected evaluations. Expected includes every latest saved identity plus
+   terminal missing required expectations; live pending requirements are
+   reported separately and excluded until terminal.
    Two trials are a smoke check, not a reliable population estimate.
 
 Keep all attempts, including failures. If the comparison is incomplete or

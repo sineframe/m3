@@ -11,13 +11,27 @@ import math
 import os
 import re
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
-from .aggregations import EvaluationQuery
+from ._test_runs import (
+    evaluation_lineage as _evaluation_lineage,
+)
+from ._test_runs import (
+    latest_evaluations as _latest_evaluations,
+)
+from ._test_runs import (
+    required_evaluation_lineages as _required_evaluation_lineages,
+)
+from ._test_runs import (
+    required_status_blocks as _required_status_blocks,
+)
+from ._test_runs import (
+    xfail_waives_required_evaluations as _xfail_waives_required_evaluations,
+)
 from .storage import ExecutionStore
 from .types import (
     EvaluationRecord,
@@ -66,6 +80,7 @@ class Feedback(FrozenModel):
 class _Entry:
     report: ExecutionReport
     spec: ExecutionSpec | None
+    trace: Any = None
 
 
 @dataclass(frozen=True)
@@ -183,10 +198,20 @@ def _entries(store: ExecutionStore, run_id: str) -> tuple[_Entry, ...]:
             report = store.get_report(snapshot.execution_id)
             if report is not None:
                 get_spec = getattr(store, "get_execution_spec", None)
+                get_trace = getattr(store, "get_trace_view", None)
+                try:
+                    trace = (
+                        get_trace(snapshot.execution_id)
+                        if callable(get_trace)
+                        else None
+                    )
+                except Exception:
+                    trace = None
                 result.append(
                     _Entry(
                         report,
                         get_spec(snapshot.execution_id) if callable(get_spec) else None,
+                        trace,
                     )
                 )
         offset += len(page.items)
@@ -373,17 +398,30 @@ def _unknown_callable(value: Any) -> bool:
     return False
 
 
-def _evaluation_stats(records: Sequence[EvaluationRecord]) -> Mapping[str, Any]:
+def _evaluation_stats(
+    records: Sequence[EvaluationRecord],
+    *,
+    expected_count: int | None = None,
+    missing_required_count: int = 0,
+    pending_required_count: int = 0,
+) -> Mapping[str, Any]:
     """Return score signals without inventing values for unscored records."""
+    measured_records = tuple(_latest_evaluations(records).values())
     statuses: dict[str, int] = defaultdict(int)
-    scores = [record.score for record in records if record.score is not None]
-    for record in records:
+    scores = [record.score for record in measured_records if record.score is not None]
+    for record in measured_records:
         statuses[record.status.value] += 1
-    measured = sum(statuses.get(status, 0) for status in ("passed", "failed"))
+    resolved_expected = (
+        len(measured_records) if expected_count is None else expected_count
+    )
     return {
-        "evaluation_count": len(records),
-        "measured_count": measured,
-        "pass_rate": (statuses.get("passed", 0) / measured if measured else None),
+        "evaluation_count": len(measured_records),
+        "expected_count": resolved_expected,
+        "missing_required_count": missing_required_count,
+        "pending_required_count": pending_required_count,
+        "pass_rate": (
+            statuses.get("passed", 0) / resolved_expected if resolved_expected else None
+        ),
         "score_count": len(scores),
         "average_score": round(sum(scores) / len(scores), 12) if scores else None,
         "status_counts": dict(sorted(statuses.items())),
@@ -396,17 +434,33 @@ def _stats_delta(
     *,
     comparable: bool,
 ) -> Mapping[str, Any]:
-    fields = ("measured_count", "pass_rate", "score_count", "average_score")
-    return {
-        field: (
-            round(after[field] - before[field], 12)
-            if comparable
+    fields = (
+        "evaluation_count",
+        "expected_count",
+        "missing_required_count",
+        "pending_required_count",
+        "pass_rate",
+        "score_count",
+        "average_score",
+    )
+    result: dict[str, Any] = {}
+    for field in fields:
+        if field in {
+            "evaluation_count",
+            "expected_count",
+            "missing_required_count",
+            "pending_required_count",
+        }:
+            result[field] = after.get(field, 0) - before.get(field, 0)
+        elif (
+            comparable
             and before.get(field) is not None
             and after.get(field) is not None
-            else None
-        )
-        for field in fields
-    }
+        ):
+            result[field] = round(after[field] - before[field], 12)
+        else:
+            result[field] = None
+    return result
 
 
 def _safe_filename(identifier: Any, suffix: str) -> str:
@@ -768,26 +822,79 @@ def _evaluation_entries(
 ) -> tuple[tuple[tuple[int | None, str, str, str], EvaluationRecord], ...]:
     values: list[tuple[tuple[int | None, str, str, str], EvaluationRecord]] = []
     for entry in entries:
-        for record in entry.report.evaluations:
-            case = _case(entry, record, contexts)
-            _, config = _config(entry, record, contexts)
-            if case is None or config is None:
+        for record in _latest_evaluations(entry.report.evaluations).values():
+            key = _record_comparison_key(entry, record, contexts)
+            if key is None:
                 continue
-            values.append(
-                (
-                    (
-                        _suite_value(getattr(record, "suite_id", None))
-                        or _suite_value(
-                            getattr(entry.report.snapshot, "suite_id", None)
-                        ),
-                        str(case),
-                        record.name,
-                        config,
-                    ),
-                    record,
-                )
-            )
+            values.append((key, record))
     return tuple(values)
+
+
+def _record_comparison_key(
+    entry: _Entry,
+    record: EvaluationRecord,
+    contexts: Mapping[str, Mapping[str, Any]] | None,
+) -> tuple[int | None, str, str, str] | None:
+    """Return the comparison identity using record-level case metadata."""
+    case = _case(entry, record, contexts)
+    _, config = _config(entry, record, contexts)
+    if case is None or config is None:
+        return None
+    suite_id = _suite_value(getattr(record, "suite_id", None))
+    if suite_id is None:
+        suite_id = _suite_value(getattr(entry.report.snapshot, "suite_id", None))
+    return suite_id, str(case), record.name, config
+
+
+def _required_comparison_keys(
+    entries: Sequence[_Entry],
+    contexts: Mapping[str, Mapping[str, Any]] | None = None,
+) -> tuple[tuple[int | None, str, str, str], ...]:
+    values: list[tuple[int | None, str, str, str]] = []
+    for entry in entries:
+        case = _case(entry, None, contexts)
+        _, config = _config(entry, None, contexts)
+        if case is None or config is None:
+            continue
+        suite_id = _suite_value(getattr(entry.report.snapshot, "suite_id", None))
+        for name in sorted(_spec_required_names(entry)):
+            if _latest_for_evaluator(entry, name):
+                continue
+            values.append((suite_id, str(case), name, config))
+    return tuple(values)
+
+
+def _key_requirement_stats(
+    entries: Sequence[_Entry],
+    key: tuple[int | None, str, str, str],
+    contexts: Mapping[str, Mapping[str, Any]] | None,
+) -> tuple[int, int, int]:
+    persisted_lineages: set[tuple[str, str | None, str, str | None, str | None]] = set()
+    missing = pending = 0
+    for entry in entries:
+        latest = _latest_for_evaluator(entry, key[2])
+        for record in latest:
+            if _record_comparison_key(entry, record, contexts) == key:
+                persisted_lineages.add(_evaluation_lineage(record))
+        if latest or key[2] not in _required_names(entry):
+            continue
+        case = _case(entry, None, contexts)
+        _, config = _config(entry, None, contexts)
+        suite_id = _suite_value(getattr(entry.report.snapshot, "suite_id", None))
+        if (
+            key[2] in _spec_required_names(entry)
+            and (suite_id, case, key[2], config) == key
+        ):
+            context = (
+                contexts.get(_id(entry.report.snapshot.execution_id), {})
+                if contexts is not None
+                else {}
+            )
+            if _execution_is_running(entry) or context.get("running", False):
+                pending += 1
+            else:
+                missing += 1
+    return len(persisted_lineages) + missing, missing, pending
 
 
 def _evaluation_changes(
@@ -807,8 +914,12 @@ def _evaluation_changes(
         before[key].append(record)
     for key, record in _evaluation_entries(new, new_contexts):
         after[key].append(record)
+    for key in _required_comparison_keys(old, old_contexts):
+        before.setdefault(key, [])
+    for key in _required_comparison_keys(new, new_contexts):
+        after.setdefault(key, [])
     for entry in (*old, *new):
-        for record in entry.report.evaluations:
+        for record in _latest_evaluations(entry.report.evaluations).values():
             contexts = old_contexts if entry in old else new_contexts
             case = _case(entry, record, contexts)
             _, config = _config(entry, record, contexts)
@@ -831,7 +942,8 @@ def _evaluation_changes(
     old_by_execution = {_id(entry.report.snapshot.execution_id): entry for entry in old}
     new_by_execution = {_id(entry.report.snapshot.execution_id): entry for entry in new}
     for key in sorted(set(before) | set(after), key=_identity_sort_key):
-        left, right = before.get(key, []), after.get(key, [])
+        left = _latest_records_for(before.get(key, []))
+        right = _latest_records_for(after.get(key, []))
         left_values = sorted(
             [(record.status.value, record.score) for record in left],
             key=lambda value: (
@@ -879,8 +991,24 @@ def _evaluation_changes(
         comparable = (
             left_inputs == right_inputs and not left_unknown and not right_unknown
         )
-        left_stats = _evaluation_stats(left)
-        right_stats = _evaluation_stats(right)
+        left_expected, left_missing, left_pending = _key_requirement_stats(
+            old, key, old_contexts
+        )
+        right_expected, right_missing, right_pending = _key_requirement_stats(
+            new, key, new_contexts
+        )
+        left_stats = _evaluation_stats(
+            left,
+            expected_count=left_expected,
+            missing_required_count=left_missing,
+            pending_required_count=left_pending,
+        )
+        right_stats = _evaluation_stats(
+            right,
+            expected_count=right_expected,
+            missing_required_count=right_missing,
+            pending_required_count=right_pending,
+        )
         left_labels = sorted(
             {
                 label
@@ -926,6 +1054,11 @@ def _evaluation_changes(
             left_values != right_values
             or not comparable
             or "judge_configuration" in changed_fields
+            or left_stats["expected_count"] != right_stats["expected_count"]
+            or left_stats["missing_required_count"]
+            != right_stats["missing_required_count"]
+            or left_stats["pending_required_count"]
+            != right_stats["pending_required_count"]
         ):
             changes.append(
                 {
@@ -1013,6 +1146,7 @@ def _contexts(
             values[str(execution_id)] = {
                 "node_id": node_id,
                 "attempt_id": result.get("attempt_id"),
+                "running": str(result.get("outcome")) == "running",
             }
     return values
 
@@ -1038,6 +1172,20 @@ def _has_tool_error(entry: _Entry) -> bool:
         ):
             return True
     return False
+
+
+def _tool_calls(entries: Sequence[_Entry]) -> Mapping[str, int]:
+    """Summarize distinct linked execution traces without evaluator attribution."""
+
+    total = successful = failed = 0
+    for entry in entries:
+        summary = getattr(entry.trace, "summary", None)
+        if summary is None:
+            continue
+        total += int(getattr(summary, "tool_call_count", 0) or 0)
+        successful += int(getattr(summary, "successful_tool_call_count", 0) or 0)
+        failed += int(getattr(summary, "failed_tool_call_count", 0) or 0)
+    return {"total": total, "successful": successful, "failed": failed}
 
 
 def _result_kind(entry: _Entry) -> str | None:
@@ -1097,6 +1245,455 @@ def _test_verdict(
     return outcome
 
 
+def _spec_required_names(entry: _Entry) -> set[str]:
+    """Return required evaluator names declared by this execution's spec."""
+    spec = entry.spec
+    registrations = getattr(spec, "evaluations", ()) if spec is not None else ()
+    return {
+        str(registration.name)
+        for registration in registrations or ()
+        if bool(getattr(registration, "required", False))
+    }
+
+
+def _execution_is_running(entry: _Entry) -> bool:
+    """Treat every non-finished execution lifecycle as still live."""
+
+    lifecycle = getattr(entry.report.snapshot, "lifecycle", None)
+    return getattr(lifecycle, "value", lifecycle) != "finished"
+
+
+def _required_lineages(
+    entry: _Entry,
+) -> set[tuple[str, str | None, str, str | None, str | None]]:
+    """Dynamic requirements apply only to the exact persisted lineage."""
+    return _required_evaluation_lineages(entry.report.evaluations)
+
+
+def _required_names(entry: _Entry) -> set[str]:
+    return _spec_required_names(entry) | {
+        lineage[2] for lineage in _required_lineages(entry)
+    }
+
+
+def _record_is_required(entry: _Entry, record: EvaluationRecord) -> bool:
+    return record.name in _spec_required_names(entry) or _evaluation_lineage(
+        record
+    ) in _required_lineages(entry)
+
+
+def _latest_for_evaluator(entry: _Entry, evaluator: str) -> list[EvaluationRecord]:
+    return [
+        record
+        for lineage, record in _latest_evaluations(entry.report.evaluations).items()
+        if lineage[2] == evaluator
+    ]
+
+
+def _latest_records_for(
+    records: Sequence[EvaluationRecord],
+) -> tuple[EvaluationRecord, ...]:
+    latest = _latest_evaluations(records)
+    return tuple(
+        sorted(
+            latest.values(),
+            key=lambda record: (
+                record.created_at,
+                _id(record.evaluation_id),
+            ),
+        )
+    )
+
+
+def _evaluation_projection(
+    entry: _Entry,
+    record: EvaluationRecord,
+    contexts: Mapping[str, Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    return {
+        "kind": "evaluation",
+        "evaluation_id": _id(record.evaluation_id),
+        "execution_id": _id(record.execution_id),
+        "evaluator": record.name,
+        "case_id": _case(entry, record, contexts),
+        "status": record.status.value,
+        "required": _record_is_required(entry, record),
+        "score": record.score,
+        "rationale": record.rationale,
+        "message": record.message,
+        "details": dict(record.details),
+    }
+
+
+def _detached_evaluation_projection(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Project persisted required evidence without an execution identity."""
+    status = str(value.get("status") or "error")
+    evaluator = str(value.get("name") or value.get("evaluator") or "<unknown>")
+    details = value.get("details")
+    metrics = value.get("metrics")
+    return {
+        "kind": "evaluation",
+        "evaluation_id": value.get("evaluation_id"),
+        "execution_id": None,
+        "evaluator": evaluator,
+        "status": status,
+        "required": bool(value.get("required", False)),
+        "score": value.get("score"),
+        "rationale": value.get("rationale"),
+        "message": value.get("message"),
+        "metrics": dict(metrics) if isinstance(metrics, Mapping) else {},
+        "details": dict(details) if isinstance(details, Mapping) else {},
+    }
+
+
+def _pair_completeness(
+    entry: _Entry, evaluator: str, *, running: bool
+) -> tuple[str, Mapping[str, Any] | None]:
+    """Classify one distinct (execution_id, evaluator) evidence identity."""
+    spec_required = evaluator in _spec_required_names(entry)
+    latest_records = _latest_for_evaluator(entry, evaluator)
+    if not spec_required:
+        latest_records = [
+            record
+            for record in latest_records
+            if _evaluation_lineage(record) in _required_lineages(entry)
+        ]
+    execution_id = _id(entry.report.snapshot.execution_id)
+    base = {"execution_id": execution_id, "evaluator": evaluator}
+    if not latest_records:
+        if running:
+            return "incomplete", {"kind": "pending_evaluation", **base}
+        return "incomplete", {"kind": "missing_evaluation", **base}
+    failed = next(
+        (record for record in latest_records if record.status.value == "failed"),
+        None,
+    )
+    if failed is not None:
+        return "complete", {
+            "kind": "failed_evaluation",
+            "evaluation_id": _id(failed.evaluation_id),
+            **base,
+            "status": failed.status.value,
+        }
+    incomplete = next(
+        (
+            record
+            for record in latest_records
+            if _required_status_blocks(record.status)
+            and record.status.value != "failed"
+        ),
+        None,
+    )
+    if incomplete is not None:
+        return "incomplete", {
+            "kind": "incomplete_evaluation",
+            "evaluation_id": _id(incomplete.evaluation_id),
+            **base,
+            "status": incomplete.status.value,
+        }
+    return "complete", None
+
+
+def _evaluation_evidence(
+    entries: Sequence[_Entry],
+    execution_ids: Sequence[Any],
+    contexts: Mapping[str, Mapping[str, Any]] | None,
+    *,
+    manifest_only: bool = False,
+    attempt_running: bool = False,
+    detached_evaluations: Sequence[Mapping[str, Any]] = (),
+) -> tuple[list[Mapping[str, Any]], Mapping[str, Any], str, list[Mapping[str, Any]]]:
+    """Project evaluations and required-pair completeness for one test."""
+    selected = {str(getattr(value, "root", value)) for value in execution_ids}
+    linked = [
+        entry
+        for entry in entries
+        if _id(entry.report.snapshot.execution_id) in selected
+    ]
+    evaluations: list[Mapping[str, Any]] = []
+    completeness: list[Mapping[str, Any]] = []
+    reasons: list[Mapping[str, Any]] = []
+    required_states: list[str] = []
+    missing_required: list[Mapping[str, Any]] = []
+    pending_required: list[Mapping[str, Any]] = []
+    incomplete_required: list[Mapping[str, Any]] = []
+    complete_pair_count = 0
+    for entry in linked:
+        for record in _latest_evaluations(entry.report.evaluations).values():
+            evaluations.append(_evaluation_projection(entry, record, contexts))
+        running = attempt_running or _execution_is_running(entry)
+        for evaluator in sorted(_required_names(entry)):
+            status, reason = _pair_completeness(entry, evaluator, running=running)
+            pair = {
+                "execution_id": _id(entry.report.snapshot.execution_id),
+                "evaluator": evaluator,
+            }
+            completeness.append(pair)
+            if status == "complete":
+                complete_pair_count += 1
+            required_states.append(
+                "failed"
+                if reason is not None and reason.get("kind") == "failed_evaluation"
+                else "incomplete"
+                if status != "complete"
+                else "complete"
+            )
+            if reason is not None:
+                reasons.append(reason)
+                if reason.get("kind") == "missing_evaluation":
+                    missing_required.append(pair)
+                elif reason.get("kind") == "pending_evaluation":
+                    pending_required.append(pair)
+                elif reason.get("kind") == "incomplete_evaluation":
+                    incomplete_required.append(reason)
+    for detached in detached_evaluations:
+        if not bool(detached.get("required", False)):
+            continue
+        evaluation = _detached_evaluation_projection(detached)
+        evaluations.append(evaluation)
+        status = str(evaluation["status"])
+        identity = {
+            "evaluation_id": evaluation["evaluation_id"],
+            "execution_id": None,
+            "evaluator": evaluation["evaluator"],
+            "status": status,
+        }
+        if status == "failed":
+            required_states.append("failed")
+            reasons.append({"kind": "failed_evaluation", **identity})
+        elif _required_status_blocks(status) or status != "passed":
+            required_states.append("incomplete")
+            reason = {"kind": "incomplete_evaluation", **identity}
+            reasons.append(reason)
+            incomplete_required.append(reason)
+        else:
+            required_states.append("complete")
+    if manifest_only:
+        return (
+            evaluations,
+            {
+                "status": "not_applicable",
+                "required_pair_count": 0,
+                "complete_pair_count": 0,
+                "incomplete_pair_count": 0,
+                "missing_required_count": 0,
+                "pending_required_count": 0,
+                "missing_required": [],
+                "pending_required": [],
+                "incomplete_required": [],
+            },
+            "incomplete",
+            [{"kind": "pytest", "reason": "test_not_run"}],
+        )
+    if any(state == "failed" for state in required_states):
+        required_state = "failed"
+    elif any(state == "incomplete" for state in required_states):
+        required_state = "incomplete"
+    elif required_states:
+        required_state = "passed"
+    else:
+        required_state = "none"
+    if not completeness:
+        completeness_status = "not_applicable"
+    elif len(completeness) == complete_pair_count:
+        completeness_status = "complete"
+    else:
+        completeness_status = "incomplete"
+    return (
+        evaluations,
+        {
+            "status": completeness_status,
+            "required_pair_count": len(completeness),
+            "complete_pair_count": complete_pair_count,
+            "incomplete_pair_count": len(completeness) - complete_pair_count,
+            "missing_required_count": len(missing_required),
+            "pending_required_count": len(pending_required),
+            "missing_required": missing_required,
+            "pending_required": pending_required,
+            "incomplete_required": incomplete_required,
+        },
+        required_state,
+        reasons,
+    )
+
+
+def _xfail_state(test: Mapping[str, Any]) -> tuple[bool, bool]:
+    phases = test.get("phases")
+    if not isinstance(phases, Mapping):
+        return False, False
+    call = phases.get("call")
+    if not isinstance(call, Mapping) or not call.get("wasxfail"):
+        return False, False
+    # A failed call with wasxfail is strict XPASS; a skipped call is the
+    # ordinary expected-failure path.  The latter is the only waiver case.
+    return call.get("outcome") == "skipped", call.get("outcome") == "passed"
+
+
+def _effective_verdict(
+    test: Mapping[str, Any],
+    required_state: str,
+    *,
+    valid_xfail: bool,
+    running: bool,
+) -> str:
+    outcome = str(test.get("outcome", "unknown"))
+    if running or outcome == "running":
+        return "pending"
+    if outcome == "not_run":
+        return "incomplete"
+    xfail, xpass = _xfail_state(test)
+    if xfail and valid_xfail:
+        return "skipped"
+    if xpass:
+        if required_state == "failed":
+            return "failed"
+        return "incomplete" if required_state == "incomplete" else "passed"
+    if outcome in {"error", "unknown"}:
+        return "incomplete"
+    if outcome == "failed":
+        # A valid strict XPASS remains an ordinary pytest failure.
+        return "failed"
+    if required_state == "failed":
+        return "failed"
+    if required_state == "incomplete":
+        return "incomplete"
+    if outcome == "skipped":
+        return "skipped"
+    return "passed"
+
+
+def _attempt_effective_verdict(
+    value: Mapping[str, Any],
+    entries: Sequence[_Entry],
+    manifest: Mapping[str, Any] | None,
+) -> str:
+    return str(
+        project_test_attempt(
+            value,
+            entries,
+            manifest=manifest,
+            contexts=_contexts((value,), manifest),
+        )["effective_verdict"]
+    )
+
+
+def project_test_attempt(
+    value: Mapping[str, Any],
+    entries: Sequence[_Entry],
+    *,
+    manifest: Mapping[str, Any] | None = None,
+    contexts: Mapping[str, Mapping[str, Any]] | None = None,
+    execution_kinds: Mapping[str, str | None] | None = None,
+) -> Mapping[str, Any]:
+    """Project one raw pytest attempt with independent and effective verdicts.
+
+    This small entry point is also suitable for services that already have a
+    linked set of execution entries and need the same contract as feedback.
+    """
+    raw = dict(value)
+    execution_ids = raw.get("execution_ids", ()) or ()
+    linked_entries = [
+        entry
+        for entry in entries
+        if _id(entry.report.snapshot.execution_id)
+        in {str(getattr(item, "root", item)) for item in execution_ids}
+    ]
+    attempt_running = str(raw.get("outcome")) == "running"
+    manifest_only = str(raw.get("outcome")) == "not_run" and not execution_ids
+    projected_evaluations, completeness, required_state, reasons = _evaluation_evidence(
+        entries,
+        execution_ids,
+        contexts if contexts is not None else _contexts((raw,), manifest),
+        manifest_only=manifest_only,
+        attempt_running=attempt_running,
+        detached_evaluations=(
+            raw.get("detached_evaluations", ())
+            if isinstance(raw.get("detached_evaluations", ()), (list, tuple))
+            else ()
+        ),
+    )
+    collection_error = bool(
+        manifest
+        and (
+            manifest.get("persistence_error")
+            or any(
+                isinstance(report, Mapping) and report.get("outcome") == "failed"
+                for report in manifest.get("collection_reports", ()) or ()
+            )
+        )
+    )
+    xfail, _ = _xfail_state(raw)
+    projected: dict[str, Any] = {
+        **raw,
+        "verdict": _test_verdict(raw, execution_kinds or {}),
+        "effective_verdict": _effective_verdict(
+            raw,
+            required_state,
+            valid_xfail=(
+                xfail
+                and _xfail_waives_required_evaluations(raw)
+                and not collection_error
+            ),
+            running=(
+                attempt_running or completeness.get("pending_required_count", 0) > 0
+            ),
+        ),
+        "evaluations": projected_evaluations,
+        "evaluation_completeness": completeness,
+        "evaluation_reasons": reasons,
+        "tool_calls": _tool_calls(linked_entries),
+    }
+    if (
+        execution_ids
+        and projected.get("suite_id") is None
+        and projected.get("suite_name") is None
+    ):
+        first_execution_id = str(getattr(execution_ids[0], "root", execution_ids[0]))
+        first_entry = next(
+            (
+                entry
+                for entry in linked_entries
+                if _id(entry.report.snapshot.execution_id) == first_execution_id
+            ),
+            None,
+        )
+        if first_entry is not None:
+            projected.update(_suite(first_entry))
+    projected["tool_result"] = (
+        "tool_error"
+        if any(_has_tool_error(entry) for entry in linked_entries)
+        else None
+    )
+    return projected
+
+
+def project_test_attempts(
+    store: ExecutionStore,
+    run_id: RunId | str,
+) -> tuple[Mapping[str, Any], ...]:
+    """Return projected pytest attempts for a run without building full feedback."""
+    normalized_run_id = _run_key(run_id)
+    if normalized_run_id is None:
+        raise ValueError("run_id is required")
+    entries = _entries(store, normalized_run_id)
+    results, manifest = _test_values(store, normalized_run_id)
+    contexts = _contexts(results, manifest)
+    execution_kinds = {
+        _id(entry.report.snapshot.execution_id): _result_kind(entry)
+        for entry in entries
+    }
+    return tuple(
+        project_test_attempt(
+            result,
+            entries,
+            manifest=manifest,
+            contexts=contexts,
+            execution_kinds=execution_kinds,
+        )
+        for result in results
+    )
+
+
 def _failure_values(
     entries: tuple[_Entry, ...],
     tests: Sequence[Mapping[str, Any]],
@@ -1112,23 +1709,35 @@ def _failure_values(
         for execution_id in value.get("execution_ids", ()) or ():
             failed_by_execution[str(execution_id)].append(index)
     for entry in entries:
-        for record in entry.report.evaluations:
-            if record.status.value in {"failed", "error", "inconclusive"}:
-                evaluation = {
-                    "kind": "evaluation",
-                    "execution_id": _id(record.execution_id),
-                    "evaluator": record.name,
-                    "case_id": _case(entry, record, contexts),
-                    "status": record.status.value,
-                    "score": record.score,
-                    "rationale": record.rationale,
-                    "details": dict(record.details),
-                }
+        for record in _latest_evaluations(entry.report.evaluations).values():
+            if _required_status_blocks(record.status):
+                evaluation = _evaluation_projection(entry, record, contexts)
                 matches = failed_by_execution.get(_id(record.execution_id), [])
                 if len(matches) == 1:
-                    values[matches[0]].setdefault("evaluations", []).append(evaluation)
+                    projected = values[matches[0]].setdefault("evaluations", [])
+                    if not any(
+                        item.get("evaluation_id") == evaluation.get("evaluation_id")
+                        for item in projected
+                        if isinstance(item, Mapping)
+                    ):
+                        projected.append(evaluation)
                 else:
                     values.append(evaluation)
+    for test_value in tests:
+        for detached_evaluation in test_value.get("evaluations", ()) or ():
+            if not isinstance(detached_evaluation, Mapping):
+                continue
+            if detached_evaluation.get("execution_id") is not None:
+                continue
+            if not _required_status_blocks(detached_evaluation.get("status")):
+                continue
+            if not any(
+                existing.get("evaluation_id")
+                == detached_evaluation.get("evaluation_id")
+                for existing in values
+                if isinstance(existing, Mapping)
+            ):
+                values.append(dict(detached_evaluation))
     return tuple(values)
 
 
@@ -1155,20 +1764,45 @@ def _manifest_failures(
 
 
 def _stats(
-    store: ExecutionStore, entries: tuple[_Entry, ...], run_id: str
+    entries: tuple[_Entry, ...],
+    *,
+    running_execution_ids: Collection[str] = (),
 ) -> Mapping[str, Any]:
     names = sorted(
         {record.name for entry in entries for record in entry.report.evaluations}
+        | {name for entry in entries for name in _spec_required_names(entry)}
     )
     values: dict[str, Any] = {}
     for name in names:
-        try:
-            report = store.aggregate_evaluations(
-                EvaluationQuery(filters={"evaluator": (name,), "run_id": (run_id,)})
-            )
-            values[name] = report.totals.model_dump(mode="json")
-        except Exception:
-            values[name] = {"unavailable": True}
+        records = [
+            record
+            for entry in entries
+            for record in entry.report.evaluations
+            if record.name == name
+        ]
+        expected = len(_latest_evaluations(records))
+        missing = 0
+        pending = 0
+        for entry in entries:
+            if name not in _required_names(entry):
+                continue
+            latest = _latest_for_evaluator(entry, name)
+            if name in _spec_required_names(entry) and not latest:
+                execution_id = _id(entry.report.snapshot.execution_id)
+                if (
+                    _execution_is_running(entry)
+                    or execution_id in running_execution_ids
+                ):
+                    pending += 1
+                else:
+                    expected += 1
+                    missing += 1
+        values[name] = _evaluation_stats(
+            records,
+            expected_count=expected,
+            missing_required_count=missing,
+            pending_required_count=pending,
+        )
     return values
 
 
@@ -1189,8 +1823,8 @@ def build_feedback(
         else None
     )
     if project_id is None and current:
-        value = current[0].report.snapshot.project_id
-        project_id = value.root if value is not None else None
+        project_value = current[0].report.snapshot.project_id
+        project_id = project_value.root if project_value is not None else None
     get_project = getattr(store, "get_project", None)
     project = get_project(project_id) if project_id and callable(get_project) else None
     current_contexts = _contexts(results, manifest)
@@ -1209,9 +1843,6 @@ def build_feedback(
             limitations.append("some test manifest data could not be persisted")
         if manifest.get("not_run_node_ids"):
             limitations.append("some collected tests did not produce an attempt")
-    execution_by_id = {
-        _id(entry.report.snapshot.execution_id): _suite(entry) for entry in current
-    }
     execution_kinds = {
         _id(entry.report.snapshot.execution_id): _result_kind(entry)
         for entry in current
@@ -1222,25 +1853,13 @@ def build_feedback(
         if _has_tool_error(entry)
     }
     tests = tuple(
-        {
-            **dict(value),
-            "verdict": _test_verdict(value, execution_kinds),
-            "tool_result": (
-                "tool_error"
-                if any(
-                    str(execution_id) in tool_error_ids
-                    for execution_id in value.get("execution_ids", ()) or ()
-                )
-                else None
-            ),
-            **(
-                execution_by_id.get(str(value.get("execution_ids", ())[0]), {})
-                if value.get("execution_ids")
-                and value.get("suite_id") is None
-                and value.get("suite_name") is None
-                else {}
-            ),
-        }
+        project_test_attempt(
+            value,
+            current,
+            manifest=manifest,
+            contexts=current_contexts,
+            execution_kinds=execution_kinds,
+        )
         for value in results
     )
     failures = _failure_values(current, tests, current_contexts) + _manifest_failures(
@@ -1276,6 +1895,20 @@ def build_feedback(
         baseline = _entries(store, baseline_id)
         baseline_results, baseline_manifest = _test_values(store, baseline_id)
         baseline_contexts = _contexts(baseline_results, baseline_manifest)
+        baseline_execution_kinds = {
+            _id(entry.report.snapshot.execution_id): _result_kind(entry)
+            for entry in baseline
+        }
+        baseline_tests = tuple(
+            project_test_attempt(
+                value,
+                baseline,
+                manifest=baseline_manifest,
+                contexts=baseline_contexts,
+                execution_kinds=baseline_execution_kinds,
+            )
+            for value in baseline_results
+        )
 
         def outcomes(
             values: Sequence[Mapping[str, Any]],
@@ -1298,7 +1931,12 @@ def build_feedback(
                     if suite_id is None and value.get("execution_ids"):
                         suite_id = suite_lookup.get(str(value["execution_ids"][0]))
                     grouped[(suite_id, node_id)].append(
-                        {"outcome": value.get("outcome")}
+                        {
+                            "outcome": value.get("outcome"),
+                            "effective_verdict": _attempt_effective_verdict(
+                                value, entries_value, manifest_value
+                            ),
+                        }
                     )
             for grouped_key in grouped:
                 grouped[grouped_key].sort(key=lambda value: str(value.get("outcome")))
@@ -1382,7 +2020,7 @@ def build_feedback(
                 "current tool catalogs were captured but scenario identity was unavailable"
             )
         baseline_failures = _failure_values(
-            baseline, baseline_results, baseline_contexts
+            baseline, baseline_tests, baseline_contexts
         ) + _manifest_failures(baseline_manifest)
         comparison = Comparison(
             baseline_run_id=baseline_id,
@@ -1408,8 +2046,27 @@ def build_feedback(
         )
     test_counts = {
         outcome: sum(test.get("outcome") == outcome for test in tests)
-        for outcome in ("passed", "failed", "error", "skipped")
+        for outcome in ("passed", "failed", "error", "skipped", "not_run")
     }
+    effective_counts = {
+        verdict: sum(test.get("effective_verdict") == verdict for test in tests)
+        for verdict in ("pending", "passed", "failed", "incomplete", "skipped")
+    }
+    not_run_tests = tuple(
+        dict.fromkeys(
+            [
+                str(test.get("node_id"))
+                for test in tests
+                if str(test.get("outcome")) == "not_run"
+            ]
+            + [
+                _normalise_node_id(str(node_id), manifest)
+                for node_id in (
+                    manifest.get("not_run_node_ids", ()) if manifest else ()
+                )
+            ]
+        )
+    )
     collection_errors = (
         sum(
             isinstance(report, Mapping) and report.get("outcome") == "failed"
@@ -1425,6 +2082,9 @@ def build_feedback(
         "failed_tests": test_counts["failed"],
         "error_tests": test_counts["error"],
         "skipped_tests": test_counts["skipped"],
+        "test_outcome_counts": dict(test_counts),
+        "effective_verdict_counts": effective_counts,
+        "not_run_tests": not_run_tests,
         "collection_errors": collection_errors,
         "failures": test_counts["failed"] + test_counts["error"] + collection_errors,
         "terminal_executions": sum(
@@ -1433,6 +2093,12 @@ def build_feedback(
     }
     if manifest is not None:
         summary["run_status"] = manifest.get("status")
+    running_execution_ids = {
+        str(execution_id)
+        for result in results
+        if str(result.get("outcome")) == "running"
+        for execution_id in (result.get("execution_ids", ()) or ())
+    }
     return Feedback(
         run_id=current_id,
         project_id=project_id,
@@ -1441,7 +2107,10 @@ def build_feedback(
         tests=tests,
         executions=executions,
         failures=failures,
-        evaluation_stats=_stats(store, current, current_id),
+        evaluation_stats=_stats(
+            current,
+            running_execution_ids=running_execution_ids,
+        ),
         summary=summary,
         limitations=tuple(limitations),
         comparison=comparison,
@@ -1676,4 +2345,11 @@ def export_feedback(
     return target
 
 
-__all__ = ["Comparison", "Feedback", "build_feedback", "export_feedback"]
+__all__ = [
+    "Comparison",
+    "Feedback",
+    "build_feedback",
+    "export_feedback",
+    "project_test_attempt",
+    "project_test_attempts",
+]

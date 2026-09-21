@@ -98,12 +98,12 @@ def test_suite_execution_endpoint_and_aggregate_filter(tmp_path: Path) -> None:
         assert set(groups) == {"catalog", "other"}
         assert (
             groups["catalog"]["evaluation_count"],
-            groups["catalog"]["measured_count"],
+            groups["catalog"]["expected_count"],
             groups["catalog"]["pass_rate"],
         ) == (2, 2, 0.5)
         assert (
             groups["other"]["evaluation_count"],
-            groups["other"]["measured_count"],
+            groups["other"]["expected_count"],
             groups["other"]["pass_rate"],
         ) == (1, 1, 1.0)
         daily_response = client.post(

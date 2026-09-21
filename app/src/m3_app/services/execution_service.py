@@ -34,6 +34,7 @@ from m3 import (
     TraceView,
     build_feedback,
 )
+from m3.feedback import project_test_attempts
 from m3.services.profiles import ProfileResolutionError
 from m3.storage import ExecutionStore, StorageConflict, StorageError
 from m3.suites import Suite
@@ -62,6 +63,8 @@ class TestResultSummary:
     node_id: str
     description: str
     outcome: str
+    verdict: str
+    effective_verdict: str
     duration_seconds: float | None
 
 
@@ -98,6 +101,16 @@ def project_test_results(
                 node_id=node_id,
                 description=raw_description if isinstance(raw_description, str) else "",
                 outcome=raw_outcome if isinstance(raw_outcome, str) else "",
+                verdict=(
+                    str(record["verdict"])
+                    if isinstance(record.get("verdict"), str)
+                    else "unknown"
+                ),
+                effective_verdict=(
+                    str(record["effective_verdict"])
+                    if isinstance(record.get("effective_verdict"), str)
+                    else "unknown"
+                ),
                 duration_seconds=duration,
             )
         )
@@ -357,7 +370,9 @@ class AppExecutionService:
         if run_id is None:
             return ()
         try:
-            records = self.store.list_test_results(run_id.root)
+            records = project_test_attempts(
+                cast(ExecutionStore, self.store), run_id.root
+            )
         except (StorageError, TypeError, ValueError, AttributeError) as exc:
             raise AppExecutionError(
                 "execution_data_unavailable", "execution data is unavailable"

@@ -232,6 +232,7 @@ def test_public_managed_multiple_versions_collect_without_download(
     )
     assert result.returncode == 0, result.stderr
     assert "2" in result.stdout
+    assert "required evaluations blocked" not in result.stdout
 
 
 def test_public_managed_pytest_xdist_shares_local_latest_pin(

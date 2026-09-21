@@ -319,10 +319,12 @@ def test_required_failed_or_error_persists_before_outer_failure() -> None:
     assert store.get("evaluation-required-error") is not None
 
     runner.register("not-run", lambda _context: EvaluationStatus.NOT_RUN)
-    not_run = runner.evaluate(
-        {}, "not-run", required=True, evaluation_id="evaluation-required-not-run"
-    )
-    assert not_run.status is EvaluationStatus.NOT_RUN
+    with pytest.raises(RequiredEvaluationError) as not_run:
+        runner.evaluate(
+            {}, "not-run", required=True, evaluation_id="evaluation-required-not-run"
+        )
+    assert not_run.value.result.status is EvaluationStatus.NOT_RUN
+    assert store.get("evaluation-required-not-run") is not None
 
 
 def test_sync_and_async_kits_expose_separate_persisted_evaluation_results() -> None:
@@ -336,9 +338,10 @@ def test_sync_and_async_kits_expose_separate_persisted_evaluation_results() -> N
             kit.register_evaluator(
                 "async", lambda context: EvaluationStatus.INCONCLUSIVE
             )
-            result = await kit.evaluate({"answer": "ok"}, "async", required=True)
-            assert result.status is EvaluationStatus.INCONCLUSIVE
-            assert kit.evaluation_results() == (result,)
+            with pytest.raises(RequiredEvaluationError) as inconclusive:
+                await kit.evaluate({"answer": "ok"}, "async", required=True)
+            assert inconclusive.value.result.status is EvaluationStatus.INCONCLUSIVE
+            assert kit.evaluation_results() == (inconclusive.value.result,)
 
             kit.register_evaluator("required-failure", lambda context: False)
             with pytest.raises(RequiredEvaluationError):
@@ -349,6 +352,27 @@ def test_sync_and_async_kits_expose_separate_persisted_evaluation_results() -> N
             )
 
     asyncio.run(run())
+
+
+def test_dynamic_requiredness_is_scoped_to_subject_lineage() -> None:
+    runner = EvaluationRunner(store=InMemoryEvaluationStore())
+    runner.register("lineage", lambda context: context.subject["ok"])
+    with pytest.raises(RequiredEvaluationError):
+        runner.evaluate(
+            {"ok": False},
+            "lineage",
+            required=True,
+            execution_id="execution-lineage",
+        )
+
+    # A later advisory evaluation for a different subject is independent.
+    passed = runner.evaluate({"ok": True}, "lineage", execution_id="execution-lineage")
+    assert passed.required is False
+
+    # Repeating the exact subject lineage cannot downgrade requiredness.
+    with pytest.raises(RequiredEvaluationError) as repeated:
+        runner.evaluate({"ok": False}, "lineage", execution_id="execution-lineage")
+    assert repeated.value.result.required is True
 
 
 def test_async_evaluator_is_awaited_and_persisted() -> None:

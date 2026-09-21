@@ -2955,7 +2955,6 @@ class SQLiteExecutionStore(_SqliteBase):
             where.append("x.created_at < ?")
             params.append(_iso(query.to.astimezone(timezone.utc)))
         for label, column in (
-            ("evaluator", "e.evaluator_name"),
             ("run_id", "COALESCE(e.run_id, x.run_id)"),
             ("suite_name", "s.suite_name"),
             ("project_id", "x.project_id"),
@@ -2968,16 +2967,47 @@ class SQLiteExecutionStore(_SqliteBase):
                 params.extend(str(value) for value in values)
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT e.execution_id,e.result_json,x.snapshot_json,x.specification_json,x.project_id,p.project_name "
-                "FROM v2_evaluations e JOIN v2_executions x ON x.id=e.execution_id LEFT JOIN v2_suites s ON s.id=x.suite_id LEFT JOIN v2_projects p ON p.id=x.project_id WHERE "
+                "SELECT x.id,e.result_json,x.snapshot_json,x.specification_json,x.project_id,p.project_name,x.run_id "
+                "FROM v2_executions x LEFT JOIN v2_evaluations e ON x.id=e.execution_id LEFT JOIN v2_suites s ON s.id=x.suite_id LEFT JOIN v2_projects p ON p.id=x.project_id WHERE "
                 + " AND ".join(where)
                 + " ORDER BY x.created_at,e.created_at,e.id",
                 params,
             ).fetchall()
+            selected_run_ids: set[str] = set()
+            for row in rows:
+                snapshot = _loads(row[2], {})
+                if isinstance(snapshot, Mapping) and snapshot.get("run_id") is not None:
+                    selected_run_ids.add(str(snapshot["run_id"]))
+                elif row[6] is not None:
+                    selected_run_ids.add(str(row[6]))
+            test_result_rows: list[Any] = []
+            if selected_run_ids:
+                placeholders = ",".join("?" for _ in selected_run_ids)
+                test_result_rows = connection.execute(
+                    "SELECT record_json FROM v2_test_results "
+                    f"WHERE run_id IN ({placeholders})",
+                    tuple(sorted(selected_run_ids)),
+                ).fetchall()
+        attempt_states: dict[str, str] = {}
+        for test_result_row in test_result_rows:
+            value = _loads(test_result_row[0], {})
+            if not isinstance(value, Mapping):
+                continue
+            outcome = str(value.get("outcome", "")).lower()
+            execution_ids = value.get("execution_ids", ())
+            if not isinstance(execution_ids, (list, tuple, set)):
+                continue
+            for execution_id in execution_ids:
+                key = str(getattr(execution_id, "root", execution_id))
+                if outcome == "running":
+                    attempt_states[key] = "running"
+                elif key not in attempt_states:
+                    attempt_states[key] = outcome
         records: list[EvaluationRecord] = []
         snapshots: dict[str, ExecutionState] = {}
         specifications: dict[str, ExecutionSpec] = {}
         traces: dict[str, TraceView] = {}
+        project_names: dict[str, str] = {}
         loaded_executions: set[str] = set()
         attempted_traces: set[str] = set()
         for row in rows:
@@ -2985,6 +3015,8 @@ class SQLiteExecutionStore(_SqliteBase):
             try:
                 if execution_id not in loaded_executions:
                     loaded_executions.add(execution_id)
+                    if row[4] is not None and row[5] is not None:
+                        project_names[str(row[4])] = str(row[5])
                     snapshots[execution_id] = ExecutionState.model_validate(
                         _loads(row[2])
                     )
@@ -2996,7 +3028,24 @@ class SQLiteExecutionStore(_SqliteBase):
                         specifications[execution_id] = TypeAdapter(
                             ExecutionSpec
                         ).validate_python(_loads(row[3]))
-                value = _loads(row[1], {})
+                if execution_id not in attempted_traces:
+                    attempted_traces.add(execution_id)
+                    try:
+                        trace = self.get_trace_view(execution_id)
+                    except (
+                        TraceUnavailable,
+                        TraceNotFinalized,
+                        StorageError,
+                        ValueError,
+                    ):
+                        trace = None
+                    if trace is not None:
+                        traces[execution_id] = trace
+                value = _loads(row[1], None)
+                if not isinstance(value, Mapping):
+                    value = None
+                if value is None:
+                    continue
                 raw_context = (
                     value.get("context") if isinstance(value, Mapping) else None
                 )
@@ -3024,20 +3073,14 @@ class SQLiteExecutionStore(_SqliteBase):
                 records.append(EvaluationRecord.model_validate(projected))
             except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
                 continue
-            if execution_id not in attempted_traces:
-                attempted_traces.add(execution_id)
-                try:
-                    trace = self.get_trace_view(execution_id)
-                except (TraceUnavailable, TraceNotFinalized, StorageError, ValueError):
-                    trace = None
-                if trace is not None:
-                    traces[execution_id] = trace
         return aggregate_evaluations(
             query,
             records,
             snapshots=snapshots,
             specifications=specifications,
             traces=traces,
+            attempt_states=attempt_states,
+            project_names=project_names,
         )
 
     persisted_evaluations = evaluations

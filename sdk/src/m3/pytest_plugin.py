@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib as _hashlib
 import inspect as _inspect
 import math as _math
 import os as _os
@@ -47,7 +48,16 @@ from ._test_runs import (
     active_test as _active_test,
 )
 from ._test_runs import (
+    evaluation_lineage as _evaluation_lineage,
+)
+from ._test_runs import (
+    latest_evaluations as _latest_evaluations,
+)
+from ._test_runs import (
     now_iso as _now_iso,
+)
+from ._test_runs import (
+    required_status_blocks as _required_status_blocks,
 )
 from ._test_runs import (
     reset_test as _reset_test,
@@ -58,11 +68,21 @@ from ._test_runs import (
 from ._test_runs import (
     test_attempt as _test_attempt,
 )
+from ._test_runs import (
+    xfail_waives_required_evaluations as _xfail_waives_required_evaluations,
+)
 
 _NATIVE_PROGRESS_UNSET = object()
 _PLUGIN_CONFIG: _ContextVar[_Any] = _ContextVar("m3_pytest_plugin_config", default=None)
 _ENV_NAME = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _CREDENTIAL_SCOPES = {"claude_code", "opencode", "codex", "pi", "acp", "judge"}
+
+
+def _items(value: object) -> tuple[object, ...]:
+    """Return JSON-style collection values without assuming object iterability."""
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return tuple(value)
+    return ()
 
 
 def _parse_credential_mappings(
@@ -646,7 +666,17 @@ def _pytest_collection_finish(session: _Any) -> None:
         if isinstance(workeroutput, dict):
             workeroutput["m3_collected_node_ids"] = node_ids
         return
-    _record_collected(config, node_ids)
+    # At collection-finish this is the controller's final, post-filter item
+    # list.  Earlier collection hooks may have observed deselected items; do
+    # not retain those as manifest-only not-run requirements.
+    store = getattr(config, "_m3_manifest_store", None)
+    run_id = getattr(config, "_m3_run_id", None)
+    if store is None or run_id is None:
+        return
+    record = dict(store.get_test_run(run_id.root) or {})
+    record["collected_node_ids"] = sorted(set(node_ids))
+    record["collection_count"] = len(node_ids)
+    store.save_test_run(run_id.root, record)
 
 
 def _pytest_xdist_node_collection_finished(node: _Any, ids: list[str]) -> None:
@@ -847,6 +877,275 @@ def _pytest_runtest_makereport(item: _Any, call: _Any) -> None:
         exception_types[str(call.when)] = name
 
 
+def _manifest_not_run_attempt(
+    run_id: str, node_id: str, manifest: _Any
+) -> dict[str, object]:
+    """Build the stable, auditable attempt for a collected-but-never-run test."""
+
+    digest = _hashlib.sha256(str(node_id).encode("utf-8")).hexdigest()[:32]
+    finished_at = manifest.get("finished_at") if isinstance(manifest, dict) else None
+    project_id = manifest.get("project_id") if isinstance(manifest, dict) else None
+    project_name = manifest.get("project_name") if isinstance(manifest, dict) else None
+    return {
+        "schema_version": 1,
+        "attempt_id": f"{run_id}:manifest-not-run:{digest}",
+        "run_id": str(run_id),
+        "node_id": str(node_id),
+        "description": "",
+        "worker_id": "controller",
+        "suite_id": None,
+        "suite_name": None,
+        "project_id": project_id,
+        "project_name": project_name,
+        "phases": {},
+        "outcome": "not_run",
+        "verdict": "not_run",
+        "duration": None,
+        "duration_seconds": None,
+        "execution_ids": [],
+        "diagnostics": {"session": "not_run"},
+        "diagnostic": "session:not_run",
+        "started_at": None,
+        "finished_at": finished_at,
+        "record_source": "manifest_not_run",
+    }
+
+
+def _persist_manifest_not_run(
+    config: _Any, store: _Any, run_id: str, manifest: dict[str, object]
+) -> bool:
+    """Persist manifest-only attempts, retaining the manifest audit list."""
+
+    collected = {str(item) for item in _items(manifest.get("collected_node_ids", ()))}
+    listed = {str(item) for item in _items(manifest.get("not_run_node_ids", ()))}
+    try:
+        recorded = {
+            str(item.get("node_id")) for item in store.list_test_results(run_id)
+        }
+    except Exception:
+        config._m3_manifest_write_error = True
+        return False
+    missing = sorted((listed or (collected - recorded)) - recorded)
+    failed = False
+    for node_id in missing:
+        attempt = _manifest_not_run_attempt(run_id, node_id, manifest)
+        try:
+            store.save_test_result(run_id, str(attempt["attempt_id"]), attempt)
+        except Exception:
+            failed = True
+    if failed:
+        config._m3_manifest_write_error = True
+    return not failed
+
+
+def _required_evaluation_issues(
+    store: _Any,
+    run_id: str,
+    attempts: tuple[dict[str, object], ...],
+    *,
+    persistence_error: bool = False,
+    collection_error: bool = False,
+) -> tuple[str, ...]:
+    """Resolve required evaluation verdicts without depending on feedback."""
+
+    issues: list[str] = []
+    for attempt in attempts:
+        if str(attempt.get("outcome")) in {"not_run", "error"}:
+            issues.append(
+                f"incomplete pytest attempt {attempt.get('node_id', '<unknown>')}"
+            )
+        detached = attempt.get("detached_evaluations")
+        if (
+            isinstance(detached, _Mapping)
+            or not isinstance(detached, (list, tuple))
+            or _xfail_waives_required_evaluations(attempt)
+        ):
+            detached = ()
+        for evaluation in detached:
+            if not isinstance(evaluation, _Mapping) or not bool(
+                evaluation.get("required", False)
+            ):
+                continue
+            status = evaluation.get("status")
+            if _required_status_blocks(status):
+                issues.append(
+                    "required evaluation did not pass "
+                    f"{attempt.get('node_id', '<unknown>')}:{evaluation.get('name', '<unknown>')}"
+                )
+        phases = attempt.get("phases")
+        diagnostics = attempt.get("diagnostics")
+        has_phase_error = isinstance(diagnostics, _Mapping) and any(
+            str(key).split(":", 1)[0] in {"setup", "teardown"}
+            and str(key).endswith(":longrepr")
+            for key in diagnostics
+        )
+        has_xfail_phase = isinstance(phases, _Mapping) and any(
+            isinstance(value, _Mapping) and value.get("wasxfail")
+            for value in phases.values()
+        )
+        if has_phase_error and has_xfail_phase:
+            issues.append(
+                f"incomplete pytest attempt {attempt.get('node_id', '<unknown>')}"
+            )
+    if persistence_error:
+        issues.append("test manifest persistence is incomplete")
+    if collection_error:
+        issues.append("pytest collection reported an error")
+    linked_attempts: dict[str, list[bool]] = {}
+    for attempt in attempts:
+        linked = [str(item) for item in _items(attempt.get("execution_ids", ()))]
+        for execution_id in linked:
+            linked_attempts.setdefault(execution_id, []).append(
+                _xfail_waives_required_evaluations(attempt)
+            )
+    waivers = {
+        execution_id: all(values)
+        for execution_id, values in linked_attempts.items()
+        if values
+    }
+    running_attempt_execution_ids = {
+        str(item)
+        for attempt in attempts
+        if str(attempt.get("outcome")) == "running"
+        for item in _items(attempt.get("execution_ids", ()))
+    }
+    offset = 0
+    executions: list[_Any] = []
+    while True:
+        page = store.list_executions(limit=100, offset=offset, run_id=run_id)
+        executions.extend(page.items)
+        offset += len(page.items)
+        if not page.items or offset >= page.total:
+            break
+    for entry in executions:
+        raw_execution_id = getattr(entry, "execution_id", "")
+        execution_id = str(getattr(raw_execution_id, "root", raw_execution_id))
+        if not execution_id:
+            continue
+        spec = store.get_execution_spec(execution_id)
+        spec_required_names = {
+            str(item.name)
+            for item in (getattr(spec, "evaluations", ()) if spec else ())
+            if bool(getattr(item, "required", False))
+        }
+        declared = set(spec_required_names)
+        records = tuple(store.evaluations(execution_id))
+        dynamic_names = {str(record.name) for record in records if record.required}
+        declared.update(dynamic_names)
+        if not declared:
+            continue
+        by_name: dict[str, list[_Any]] = {}
+        for record in records:
+            by_name.setdefault(str(record.name), []).append(record)
+        lifecycle = getattr(getattr(entry, "lifecycle", None), "value", None)
+        terminal = lifecycle == "finished"
+        for name in sorted(declared):
+            relevant = by_name.get(name, ())
+            if not relevant:
+                if (
+                    terminal
+                    and execution_id not in running_attempt_execution_ids
+                    and not waivers.get(execution_id)
+                ):
+                    issues.append(f"missing required evaluation {execution_id}:{name}")
+                continue
+            if waivers.get(execution_id):
+                continue
+            by_lineage: dict[
+                tuple[str, str | None, str, str | None, str | None], list[_Any]
+            ] = {}
+            for record in relevant:
+                key = _evaluation_lineage(record)
+                by_lineage.setdefault(key, []).append(record)
+            for lineage_records in by_lineage.values():
+                if name not in spec_required_names and not any(
+                    record.required for record in lineage_records
+                ):
+                    continue
+                latest = next(iter(_latest_evaluations(lineage_records).values()))
+                status = str(getattr(latest.status, "value", latest.status))
+                if _required_status_blocks(status):
+                    issues.append(
+                        f"required evaluation did not pass {execution_id}:{name}"
+                    )
+    return tuple(dict.fromkeys(issues))
+
+
+def _manifest_status(manifest: _Mapping[str, object], exit_status: int) -> str:
+    if manifest.get("worker_errors"):
+        return "incomplete"
+    return "interrupted" if exit_status in {2, 3, 4} else "finished"
+
+
+def _save_manifest(
+    config: _Any,
+    store: _Any,
+    run_id: str,
+    updates: _Mapping[str, object],
+    *,
+    terminal_status: int | None = None,
+    session: _Any | None = None,
+    fail_closed: bool = False,
+) -> bool:
+    """Merge and persist terminal manifest fields with consistent failure handling."""
+
+    try:
+        manifest = dict(store.get_test_run(run_id) or {})
+        manifest.update(updates)
+        if terminal_status is not None:
+            manifest["exit_status"] = terminal_status
+            manifest["status"] = _manifest_status(manifest, terminal_status)
+        store.save_test_run(run_id, manifest)
+    except Exception:
+        config._m3_manifest_write_error = True
+        if (
+            fail_closed
+            and session is not None
+            and int(getattr(session, "exitstatus", 0)) == 0
+        ):
+            session.exitstatus = 1
+        return False
+    return True
+
+
+def _save_feedback_counters(
+    config: _Any,
+    store: _Any,
+    run_id: str,
+    feedback: _Any,
+    session: _Any,
+    exitstatus: int,
+) -> bool:
+    """Persist counters before exporting the manifest-backed feedback bundle."""
+
+    try:
+        outcome_counts: dict[str, int] = {}
+        for attempt in store.list_test_results(run_id):
+            outcome = str(attempt.get("outcome", "unknown"))
+            outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
+        verdict_counts: dict[str, int] = {}
+        for test in feedback.tests:
+            verdict = str(test.get("effective_verdict", test.get("verdict", "unknown")))
+            verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+        return not _save_manifest(
+            config,
+            store,
+            run_id,
+            {
+                "test_outcome_counts": outcome_counts,
+                "effective_verdict_counts": verdict_counts,
+            },
+            terminal_status=int(getattr(session, "exitstatus", exitstatus)),
+            session=session,
+            fail_closed=True,
+        )
+    except Exception:
+        config._m3_manifest_write_error = True
+        if int(exitstatus) == 0:
+            session.exitstatus = 1
+        return True
+
+
 def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
     """Export deterministic feedback after pytest has finished collecting results."""
     config = session.config
@@ -854,9 +1153,14 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
     run_id = getattr(config, "_m3_run_id", None)
     if path is None or run_id is None or getattr(config, "_m3_is_worker", False):
         return
+    # Collection-only runs enumerate parametrized cases but intentionally do
+    # not execute them.  They are not terminal test sessions: finalizing their
+    # manifest would turn every collected node into a false not_run failure.
+    if bool(getattr(getattr(config, "option", None), "collectonly", False)):
+        return
     manifest_error = bool(getattr(config, "_m3_manifest_write_error", False))
     effective_exitstatus = (
-        2 if manifest_error and int(exitstatus) == 0 else int(exitstatus)
+        1 if manifest_error and int(exitstatus) == 0 else int(exitstatus)
     )
     store = getattr(config, "_m3_manifest_store", None)
     if store is not None:
@@ -868,30 +1172,39 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         worker_errors = list(record.get("worker_errors", ()))
         incomplete_workers = bool(worker_errors)
         if incomplete_workers and effective_exitstatus == 0:
-            effective_exitstatus = 2
+            effective_exitstatus = 1
+        not_run_node_ids = sorted(collected - recorded)
+        finished_at = _now_iso()
+        record["not_run_node_ids"] = not_run_node_ids
+        record["finished_at"] = finished_at
+        # Persist real manifest-only attempts before feedback is built.  The
+        # manifest list remains an audit trail even after successful upsert.
+        if not_run_node_ids:
+            if not _persist_manifest_not_run(config, store, run_id.root, record):
+                if effective_exitstatus == 0:
+                    effective_exitstatus = 1
         record.update(
             {
-                "status": "incomplete"
-                if incomplete_workers
-                else (
-                    "finished"
-                    if effective_exitstatus not in {2, 3, 4}
-                    else "interrupted"
-                ),
-                "exit_status": effective_exitstatus,
-                "finished_at": _now_iso(),
+                "finished_at": finished_at,
                 "persistence_error": bool(
                     getattr(config, "_m3_manifest_write_error", False)
                 ),
-                "not_run_node_ids": sorted(collected - recorded),
+                "not_run_node_ids": not_run_node_ids,
             }
         )
-        try:
-            store.save_test_run(run_id.root, record)
-        except Exception:
-            config._m3_manifest_write_error = True
-            if effective_exitstatus == 0:
-                effective_exitstatus = 2
+        if (
+            not _save_manifest(
+                config,
+                store,
+                run_id.root,
+                record,
+                terminal_status=effective_exitstatus,
+                session=session,
+                fail_closed=True,
+            )
+            and effective_exitstatus == 0
+        ):
+            effective_exitstatus = 1
     manifest_error = manifest_error or bool(
         getattr(config, "_m3_manifest_write_error", False)
     )
@@ -901,7 +1214,38 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         # The feedback bundle may still be useful, but it must not look like a
         # complete successful run when one or more attempts were not persisted.
         if int(exitstatus) == 0:
-            session.exitstatus = 2
+            session.exitstatus = 1
+    if store is not None:
+        latest_manifest = dict(store.get_test_run(run_id.root) or {})
+        attempts = tuple(dict(value) for value in store.list_test_results(run_id.root))
+        collection_error = any(
+            isinstance(report, dict) and report.get("outcome") == "failed"
+            for report in latest_manifest.get("collection_reports", ()) or ()
+        )
+        required_issues = _required_evaluation_issues(
+            store,
+            run_id.root,
+            attempts,
+            persistence_error=manifest_error,
+            collection_error=collection_error,
+        )
+        config._m3_required_evaluation_issues = required_issues
+        if required_issues and int(exitstatus) == 0:
+            session.exitstatus = 1
+            effective_exitstatus = 1
+        elif required_issues and session.exitstatus == 0:
+            session.exitstatus = 1
+        final_status = int(getattr(session, "exitstatus", effective_exitstatus))
+        _save_manifest(
+            config,
+            store,
+            run_id.root,
+            {},
+            terminal_status=final_status,
+            session=session,
+            fail_closed=True,
+        )
+        effective_exitstatus = int(getattr(session, "exitstatus", final_status))
     timeout_summaries: list[tuple[str, str, float | None]] = []
     try:
         from .feedback import build_feedback, export_feedback
@@ -946,6 +1290,31 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
                 run_id,
                 baseline_run_id=getattr(config, "_m3_baseline", None),
             )
+            counter_save_failed = _save_feedback_counters(
+                config,
+                store,
+                run_id.root,
+                feedback,
+                session,
+                exitstatus,
+            )
+            if counter_save_failed:
+                _save_manifest(
+                    config,
+                    store,
+                    run_id.root,
+                    {},
+                    terminal_status=int(getattr(session, "exitstatus", exitstatus)),
+                    session=session,
+                    fail_closed=True,
+                )
+            # Rebuild after the final manifest write so the exported feedback
+            # and its diagnostic manifest describe the same terminal state.
+            feedback = build_feedback(
+                export_store,
+                run_id,
+                baseline_run_id=getattr(config, "_m3_baseline", None),
+            )
             output = export_feedback(
                 feedback,
                 export_store,
@@ -961,7 +1330,16 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
     except Exception:
         config._m3_feedback_error = "feedback export failed"
         if int(exitstatus) == 0:
-            session.exitstatus = 2
+            session.exitstatus = 1
+        if store is not None:
+            final_status = int(getattr(session, "exitstatus", exitstatus))
+            _save_manifest(
+                config,
+                store,
+                run_id.root,
+                {},
+                terminal_status=final_status,
+            )
         reporter = config.pluginmanager.getplugin("terminalreporter")
         if reporter is not None:
             reporter.write_line("M3 feedback export failed", red=True)
@@ -1012,6 +1390,12 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
             )
         if manifest_error:
             reporter.write_line("M3 test manifest persistence was incomplete", red=True)
+        if getattr(config, "_m3_required_evaluation_issues", ()):
+            reporter.write_line(
+                "M3 required evaluations blocked finalization: "
+                + "; ".join(config._m3_required_evaluation_issues),
+                red=True,
+            )
 
 
 class _ManifestHooks:

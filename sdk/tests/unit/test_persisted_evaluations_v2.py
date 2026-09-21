@@ -7,8 +7,11 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
+import pytest
+
 from m3 import EvaluationQuery, MCPTestKit
-from m3.evaluations import EvaluationRunner
+from m3.evaluations import EvaluationRunner, RequiredEvaluationError
+from m3.pytest_plugin import _required_evaluation_issues
 from m3.storage.sqlite import SQLiteExecutionStore
 from m3.types import (
     EvaluationContext,
@@ -61,6 +64,57 @@ def test_structured_decision_is_compact_and_typed_after_sqlite_reopen(tmp_path) 
     store.close()
     reopened = SQLiteExecutionStore(database)
     assert reopened.evaluations("execution-v2")[0].evaluation_id == result.evaluation_id
+    reopened.close()
+
+
+def test_reopened_runner_preserves_dynamic_required_lineage(tmp_path) -> None:
+    database = tmp_path / "required-lineage.sqlite"
+    store = SQLiteExecutionStore(database)
+    store.create(_snapshot("execution-required-lineage"), run_id="run-lineage")
+
+    first = EvaluationRunner(durable_store=store)
+    first.register("quality.v1", lambda _context: False)
+    with pytest.raises(RequiredEvaluationError):
+        first.evaluate(
+            {"answer": "safe"},
+            "quality.v1",
+            required=True,
+            execution_id="execution-required-lineage",
+        )
+    required_record = store.evaluations("execution-required-lineage")[0]
+    assert required_record.required is True
+    assert required_record.subject_digest is not None
+    store.close()
+
+    reopened = SQLiteExecutionStore(database)
+    second = EvaluationRunner(durable_store=reopened)
+    second.register("quality.v1", lambda _context: True)
+    rerun = second.evaluate(
+        {"answer": "safe"},
+        "quality.v1",
+        execution_id="execution-required-lineage",
+    )
+    assert rerun.required is True
+    attempt = (
+        {
+            "node_id": "test.py::lineage",
+            "outcome": "passed",
+            "execution_ids": ["execution-required-lineage"],
+        },
+    )
+    assert _required_evaluation_issues(reopened, "run-lineage", attempt) == ()
+
+    third = EvaluationRunner(durable_store=reopened)
+    third.register("quality.v1", lambda _context: False)
+    with pytest.raises(RequiredEvaluationError):
+        third.evaluate(
+            {"answer": "safe"},
+            "quality.v1",
+            execution_id="execution-required-lineage",
+        )
+    assert _required_evaluation_issues(reopened, "run-lineage", attempt) == (
+        "required evaluation did not pass execution-required-lineage:quality.v1",
+    )
     reopened.close()
 
 

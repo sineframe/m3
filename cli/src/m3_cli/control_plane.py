@@ -16,7 +16,7 @@ from typing import Any
 from urllib import error, request
 from urllib.parse import quote, urlparse
 
-from m3.feedback import Feedback
+from m3.feedback import Feedback, project_test_attempts
 from m3.storage import SQLiteExecutionStore
 from m3_app.api.report_payloads import (
     build_execution_envelope,
@@ -133,7 +133,7 @@ def _execution_payload(store: SQLiteExecutionStore, snapshot: Any) -> dict[str, 
         test_results = tuple(
             asdict(item)
             for item in project_test_results(
-                store.list_test_results(snapshot.run_id.root), execution_id
+                project_test_attempts(store, snapshot.run_id.root), execution_id
             )
         )
     public = build_report_envelope(execution_id, spec, report, trace, test_results)

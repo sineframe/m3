@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -285,6 +286,12 @@ def test_v2_execution_report_links_saved_pytest_results(tmp_path):
                 "node_id": "tests/test_catalog.py::test_a",
                 "description": "Checks the catalog entry.",
                 "outcome": "failed",
+                "phases": {
+                    "call": {
+                        "outcome": "failed",
+                        "exception_type": "builtins.AssertionError",
+                    }
+                },
                 "duration_seconds": 0.42,
                 "execution_ids": ids,
             },
@@ -321,6 +328,8 @@ def test_v2_execution_report_links_saved_pytest_results(tmp_path):
                 "node_id": "tests/test_catalog.py::test_a",
                 "description": "Checks the catalog entry.",
                 "outcome": "failed",
+                "verdict": "failed_assertion",
+                "effective_verdict": "failed",
                 "duration_seconds": 0.42,
             },
             {
@@ -328,6 +337,8 @@ def test_v2_execution_report_links_saved_pytest_results(tmp_path):
                 "node_id": "tests/test_catalog.py::test_b",
                 "description": "",
                 "outcome": "passed",
+                "verdict": "passed",
+                "effective_verdict": "passed",
                 "duration_seconds": None,
             },
         ]
@@ -412,6 +423,18 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
             "selection": ["tests/test_secret.py"],
             "capture": {"verbose": 3},
             "collected_node_ids": ["tests/test_old.py::test_one"],
+            "test_outcome_counts": {
+                "passed": 1,
+                "negative": -1,
+                "boolean": True,
+                "": 9,
+            },
+            "effective_verdict_counts": {
+                "passed": 1,
+                "negative": -1,
+                "boolean": False,
+                "": 9,
+            },
         },
     )
     store.save_test_run(
@@ -441,6 +464,8 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
                 "project_id": None,
                 "project_name": "demo",
                 "test_count": 0,
+                "test_outcome_counts": {},
+                "effective_verdict_counts": {},
             },
             {
                 "run_id": "old-run",
@@ -450,6 +475,8 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
                 "project_id": None,
                 "project_name": None,
                 "test_count": 1,
+                "test_outcome_counts": {"passed": 1},
+                "effective_verdict_counts": {"passed": 1},
             },
         ],
     }
@@ -457,6 +484,112 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
     assert "selection" not in response.text
     assert "capture" not in response.text
     store.close()
+
+
+def test_v2_manifest_not_run_feedback_and_run_list_counts(tmp_path):
+    source = """
+def test_first():
+    assert False
+
+def test_second():
+    assert True
+"""
+    test_file = tmp_path / "test_manifest.py"
+    test_file.write_text(source, encoding="utf-8")
+    database = tmp_path / "manifest.sqlite"
+    sdk_source = str(Path(__file__).parents[3] / "sdk" / "src")
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = (
+        sdk_source + os.pathsep + environment.get("PYTHONPATH", "")
+    )
+
+    def run(*extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "m3.pytest_plugin",
+                "--results-db",
+                str(database),
+                "--rootdir",
+                str(tmp_path),
+                *extra,
+                str(test_file),
+            ],
+            cwd=tmp_path,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+
+    baseline_result = run()
+    assert baseline_result.returncode == 1, (
+        baseline_result.stdout + baseline_result.stderr
+    )
+    store = SQLiteExecutionStore(database)
+    try:
+        baseline_run_id = str(store.list_test_runs()[0]["run_id"])
+    finally:
+        store.close()
+
+    current_result = run("--maxfail=1", "--baseline", baseline_run_id)
+    assert current_result.returncode == 1, current_result.stdout + current_result.stderr
+
+    store = SQLiteExecutionStore(database)
+    try:
+        run_ids = {str(item["run_id"]) for item in store.list_test_runs()}
+        current_run_id = (run_ids - {baseline_run_id}).pop()
+        manifest = dict(store.get_test_run(current_run_id))
+        rows = store.list_test_results(current_run_id)
+        not_run_rows = [
+            row for row in rows if row.get("record_source") == "manifest_not_run"
+        ]
+        assert len(not_run_rows) == 1
+        assert not_run_rows[0]["outcome"] == "not_run"
+        assert manifest["test_outcome_counts"]["not_run"] == 1
+        assert manifest["effective_verdict_counts"]["incomplete"] == 1
+
+        report_path = tmp_path / ".m3" / "reports" / current_run_id / "feedback.json"
+        feedback = json.loads(report_path.read_text(encoding="utf-8"))
+        not_run_tests = [
+            test for test in feedback["tests"] if test["outcome"] == "not_run"
+        ]
+        assert len(not_run_tests) == 1
+        assert not_run_tests[0]["record_source"] == "manifest_not_run"
+        assert not_run_tests[0]["effective_verdict"] == "incomplete"
+        assert feedback["summary"]["not_run_tests"] == [not_run_tests[0]["node_id"]]
+        assert feedback["summary"]["test_outcome_counts"]["not_run"] == 1
+        assert feedback["summary"]["effective_verdict_counts"]["incomplete"] == 1
+
+        comparison = feedback["comparison"]
+        second_change = next(
+            item
+            for item in comparison["test_changes"]
+            if str(item["node_id"]).endswith("test_manifest.py::test_second")
+        )
+        assert second_change["baseline"] == [
+            {"outcome": "passed", "effective_verdict": "passed"}
+        ]
+        assert second_change["current"] == [
+            {"outcome": "not_run", "effective_verdict": "incomplete"}
+        ]
+    finally:
+        store.close()
+
+    application = create_app(Settings(database_path=str(database)))
+    with TestClient(application) as client:
+        response = client.get("/api/v2/runs")
+    assert response.status_code == 200
+    current_summary = next(
+        item for item in response.json()["runs"] if item["run_id"] == current_run_id
+    )
+    assert current_summary["test_outcome_counts"]["not_run"] == 1
+    assert current_summary["effective_verdict_counts"]["incomplete"] == 1
 
 
 def test_v2_feedback_reads_real_two_run_interface_and_score_changes(tmp_path):
@@ -606,6 +739,21 @@ def test_order_tool_catalog():
         "failed_tests": 0,
         "error_tests": 0,
         "skipped_tests": 0,
+        "test_outcome_counts": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0,
+            "not_run": 0,
+        },
+        "effective_verdict_counts": {
+            "pending": 0,
+            "passed": 1,
+            "failed": 0,
+            "incomplete": 0,
+            "skipped": 0,
+        },
+        "not_run_tests": [],
         "collection_errors": 0,
         "terminal_executions": 1,
         "run_status": "finished",
@@ -653,6 +801,301 @@ def test_order_tool_catalog():
     assert evaluation_change["after"]["stats"]["average_score"] == 0.9
     assert evaluation_change["delta"]["average_score"] == 0.6
     assert evaluation_change["delta"]["pass_rate"] == 1.0
+
+
+def test_v2_feedback_distinguishes_pytest_and_evaluation_evidence(tmp_path):
+    """Persist and serve the three independent evidence combinations."""
+    source = """
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+from m3 import (
+    ACPAgent,
+    AgentSpec,
+    EvaluationDecision,
+    EvaluationStatus,
+    FullToolPolicy,
+    MCPTestKit,
+    ServerBinding,
+    StdioServer,
+    TextContent,
+    UserMessage,
+)
+
+pytestmark = pytest.mark.m3(suite_name="blind-evidence")
+_PROMPT = "Inspect the order summary and return a concise response."
+
+
+def _trace_view(context):
+    if context.trace is None:
+        return None
+    return context.trace.view()
+
+
+def _contains_order_summary(block):
+    text = getattr(block, "text", None)
+    return (
+        isinstance(text, str)
+        and bool(text.strip())
+        and "order summary" in text.lower()
+    )
+
+
+def _expected_content(context):
+    view = _trace_view(context)
+    found = bool(
+        view
+        and any(
+            _contains_order_summary(block)
+            for message in view.messages
+            if message.role.value == "assistant"
+            for block in message.content
+        )
+    )
+    return EvaluationDecision(
+        status=EvaluationStatus.PASSED if found else EvaluationStatus.FAILED,
+        rationale="checked assistant response content for the order summary",
+        details={"evidence_basis": "trace.messages.assistant_text"},
+    )
+
+
+def _successful_tool_call(context):
+    view = _trace_view(context)
+    found = bool(
+        view
+        and any(
+            call.tool.value == "echo"
+            and call.tool_status.value == "success"
+            and call.result.value is not None
+            and not call.result.value.is_error
+            and any(
+                _contains_order_summary(block)
+                for block in call.result.value.content
+            )
+            for call in view.tool_calls
+        )
+    )
+    return EvaluationDecision(
+        status=EvaluationStatus.PASSED if found else EvaluationStatus.FAILED,
+        rationale="checked the successful echo result for the order summary",
+        details={"evidence_basis": "trace.tool_calls.echo.successful_result"},
+    )
+
+
+def _run_evaluations(names):
+    fixtures = Path(os.environ["M3_FIXTURES"])
+    repository_root = Path(os.environ["M3_REPOSITORY_ROOT"])
+    spec = AgentSpec(
+        harness=ACPAgent(
+            model="fixture",
+            manifest={
+                "schema_version": "m3.harness.v1",
+                "protocol": "acp",
+                "protocol_version": 1,
+                "command": sys.executable,
+                "args": [str(fixtures / "acp_scenario_agent.py"), "normal"],
+                "env": {},
+            },
+        ),
+        servers=(
+            ServerBinding(
+                server=StdioServer(
+                    name="e2e-mcp",
+                    command=sys.executable,
+                    args=(str(fixtures / "matrix_stdio_server.py"),),
+                    cwd=str(repository_root),
+                ),
+                alias="e2e-mcp",
+            ),
+        ),
+        tool_policy=FullToolPolicy(acknowledge_risk=True),
+        message=UserMessage(content=(TextContent(text=_PROMPT),)),
+    )
+    with MCPTestKit(suite_name="blind-evidence", cwd=str(repository_root)) as kit:
+        evaluators = {
+            "response.expected_content.v1": _expected_content,
+            "tool_call.succeeded.v1": _successful_tool_call,
+        }
+        for name in names:
+            kit.register_evaluator(name, evaluators[name])
+        result = kit.run(spec)
+        trace = result.trace
+        if trace is None:
+            raise RuntimeError("agent execution did not produce trace evidence")
+        for name in names:
+            kit.evaluate(
+                trace,
+                name,
+                required=True,
+                trace=trace,
+                execution_id=result.snapshot.execution_id,
+            )
+
+
+def test_pytest_only():
+    assert 2 + 2 == 4
+
+
+def test_evaluation_only():
+    _run_evaluations(("response.expected_content.v1",))
+
+
+def test_combined():
+    _run_evaluations(
+        ("response.expected_content.v1", "tool_call.succeeded.v1")
+    )
+    assert False
+"""
+    test_file = tmp_path / "test_blind_evidence.py"
+    test_file.write_text(source, encoding="utf-8")
+    database = tmp_path / "blind-evidence.sqlite"
+    (tmp_path / "m3.toml").write_text(
+        'schema_version = 1\nproject_id = "11111111-1111-4111-8111-111111111111"\nproject_name = "Blind Evidence"\n',
+        encoding="utf-8",
+    )
+    sdk_source = str(Path(__file__).parents[3] / "sdk" / "src")
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = (
+        sdk_source + os.pathsep + environment.get("PYTHONPATH", "")
+    )
+    environment["M3_FIXTURES"] = str(
+        Path(__file__).parents[3] / "sdk" / "tests" / "fixtures"
+    )
+    environment["M3_REPOSITORY_ROOT"] = str(Path(__file__).parents[3])
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "m3.pytest_plugin",
+            "--results-db",
+            str(database),
+            "--rootdir",
+            str(tmp_path),
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "1 failed, 2 passed" in result.stdout
+
+    store = SQLiteExecutionStore(database)
+    try:
+        run_id = str(store.list_test_runs()[0]["run_id"])
+        attempts = {
+            str(row["node_id"]).rsplit("::", 1)[-1]: row
+            for row in store.list_test_results(run_id)
+        }
+        assert set(attempts) == {
+            "test_pytest_only",
+            "test_evaluation_only",
+            "test_combined",
+        }
+        assert attempts["test_pytest_only"]["execution_ids"] == []
+        assert len(attempts["test_evaluation_only"]["execution_ids"]) == 1
+        assert len(attempts["test_combined"]["execution_ids"]) == 1
+        for name in ("test_evaluation_only", "test_combined"):
+            execution_id = attempts[name]["execution_ids"][0]
+            trace = store.get_trace_view(execution_id)
+            assert trace.tool_calls
+            assert {call.tool.value for call in trace.tool_calls} == {"echo"}
+            assert all(call.tool_status.value == "success" for call in trace.tool_calls)
+            assert all(call.result.value is not None for call in trace.tool_calls)
+            evaluation_rows = store.evaluations(execution_id)
+            expected_names = (
+                ("response.expected_content.v1",)
+                if name == "test_evaluation_only"
+                else ("response.expected_content.v1", "tool_call.succeeded.v1")
+            )
+            assert [row.name for row in evaluation_rows] == list(expected_names)
+            assert all(row.status is EvaluationStatus.PASSED for row in evaluation_rows)
+            assert all(row.required for row in evaluation_rows)
+
+        application = create_app(Settings(database_path=str(database)), v2_store=store)
+        with TestClient(application) as client:
+            response = client.get(f"/api/v2/feedback/{run_id}")
+            aggregate_response = client.post(
+                "/api/v2/evaluations/aggregate",
+                json={
+                    "group_by": ["evaluator"],
+                    "filters": {"run_id": [run_id]},
+                },
+            )
+        assert response.status_code == 200
+        assert aggregate_response.status_code == 200
+        feedback = response.json()["feedback"]
+        aggregate = aggregate_response.json()["aggregate"]
+    finally:
+        store.close()
+
+    tests = {
+        str(test["node_id"]).rsplit("::", 1)[-1]: test for test in feedback["tests"]
+    }
+    assert tests["test_pytest_only"]["outcome"] == "passed"
+    assert tests["test_pytest_only"]["execution_ids"] == []
+    assert tests["test_pytest_only"]["evaluations"] == []
+    assert tests["test_pytest_only"]["tool_calls"] == {
+        "total": 0,
+        "successful": 0,
+        "failed": 0,
+    }
+    assert tests["test_evaluation_only"]["outcome"] == "passed"
+    assert tests["test_evaluation_only"]["effective_verdict"] == "passed"
+    assert len(tests["test_evaluation_only"]["execution_ids"]) == 1
+    evaluation_only = tests["test_evaluation_only"]["evaluations"]
+    assert [item["evaluator"] for item in evaluation_only] == [
+        "response.expected_content.v1"
+    ]
+    assert [item["status"] for item in evaluation_only] == ["passed"]
+    assert all(item["evaluation_id"] for item in evaluation_only)
+    assert tests["test_evaluation_only"]["tool_calls"]["total"] > 0
+    assert (
+        tests["test_evaluation_only"]["tool_calls"]["successful"]
+        == tests["test_evaluation_only"]["tool_calls"]["total"]
+    )
+    assert tests["test_evaluation_only"]["tool_calls"]["failed"] == 0
+    assert evaluation_only[0]["details"] == {
+        "evidence_basis": "trace.messages.assistant_text"
+    }
+    assert tests["test_combined"]["outcome"] == "failed"
+    assert tests["test_combined"]["effective_verdict"] == "failed"
+    assert len(tests["test_combined"]["execution_ids"]) == 1
+    combined = tests["test_combined"]["evaluations"]
+    assert {item["evaluator"] for item in combined} == {
+        "response.expected_content.v1",
+        "tool_call.succeeded.v1",
+    }
+    assert {item["status"] for item in combined} == {"passed"}
+    assert len({item["evaluation_id"] for item in combined}) == 2
+    assert tests["test_combined"]["tool_calls"]["total"] > 0
+    assert tests["test_combined"]["tool_calls"]["failed"] == 0
+    assert {item["details"]["evidence_basis"] for item in combined} == {
+        "trace.messages.assistant_text",
+        "trace.tool_calls.echo.successful_result",
+    }
+    aggregate_groups = {
+        group["key"]["evaluator"]: group["values"] for group in aggregate["groups"]
+    }
+    assert set(aggregate_groups) == {
+        "response.expected_content.v1",
+        "tool_call.succeeded.v1",
+    }
+    assert all(
+        values["health"]["tool_calls"]["total"] > 0
+        for values in aggregate_groups.values()
+    )
+    assert feedback["summary"]["tests"] == 3
+    assert feedback["summary"]["executions"] == 2
 
 
 def test_v2_errors_and_deletion_constraints(tmp_path):
@@ -823,6 +1266,17 @@ def test_v2_evaluation_aggregate_validation_and_openapi(tmp_path):
         operation = schema["paths"]["/api/v2/evaluations/aggregate"]["post"]
         assert operation["responses"]["200"]["content"]["application/json"]
         assert "EvaluationReport" in schema["components"]["schemas"]
+        stats = schema["components"]["schemas"]["EvaluationStats"]
+        properties = stats["properties"]
+        assert "expected_count" in properties
+        assert "missing_required_count" in properties
+        assert "pending_required_count" in properties
+        assert "measured_count" not in properties
+        report_fields = schema["components"]["schemas"]["V2TestResultSummary"][
+            "properties"
+        ]
+        assert "verdict" in report_fields
+        assert "effective_verdict" in report_fields
 
 
 def test_v2_capability_doc_lists_every_route(tmp_path):

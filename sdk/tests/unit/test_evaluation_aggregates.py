@@ -3,16 +3,23 @@ from types import SimpleNamespace
 from typing import ClassVar
 
 from m3 import (
+    CallTool,
+    DirectSpec,
     EvaluationDecision,
     EvaluationId,
     EvaluationQuery,
     EvaluationRecord,
+    EvaluationRegistration,
     EvaluationResult,
     EvaluationSource,
     EvaluationStatus,
     ExecutionId,
+    ExecutionOutcome,
     ExecutionState,
+    ExecutionStatus,
+    ProjectId,
     RunId,
+    ServerBinding,
     StdioServer,
     TurnId,
 )
@@ -154,7 +161,7 @@ def _save(
     )
 
 
-def test_status_denominator_and_no_measured_results() -> None:
+def test_status_denominator_and_no_expected_results() -> None:
     store = InMemoryExecutionStore()
     created = datetime(2026, 3, 1, tzinfo=timezone.utc)
     statuses = (
@@ -172,15 +179,535 @@ def test_status_denominator_and_no_measured_results() -> None:
         group_by=("evaluator",), filters={"evaluator": "quality.v1"}
     )
     values = store.aggregate_evaluations(query).totals
-    assert values.measured_count == 2
-    assert values.pass_rate == 0.5
+    assert values.expected_count == 5
+    assert "measured_count" not in values.model_dump()
+    assert values.pass_rate == 0.2
     assert values.status_counts["inconclusive"] == 1
 
     empty = InMemoryExecutionStore()
     assert empty.aggregate_evaluations(query).totals.pass_rate is None
 
 
-def test_multi_evaluator_totals_are_not_a_single_rate_and_empty_labels_are_valid() -> (
+def test_pagination_keeps_full_population_totals_and_non_additive_metrics() -> None:
+    store = InMemoryExecutionStore()
+    created = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    for execution in ("execution-1", "execution-2"):
+        store.create(_snapshot(execution, created))
+    _save(
+        store,
+        "execution-1",
+        "quality-1",
+        "quality.v1",
+        EvaluationStatus.PASSED,
+        score=0.0,
+    )
+    _save(
+        store,
+        "execution-2",
+        "quality-2",
+        "quality.v1",
+        EvaluationStatus.PASSED,
+        score=0.5,
+    )
+    _save(
+        store,
+        "execution-1",
+        "quality-3",
+        "quality.v2",
+        EvaluationStatus.PASSED,
+        score=1.0,
+    )
+    traces = {
+        "execution-1": SimpleNamespace(
+            summary=SimpleNamespace(
+                timing=SimpleNamespace(duration_ms=100.0),
+                successful_tool_call_count=1,
+                failed_tool_call_count=0,
+                protocol_error_count=0,
+            ),
+            tool_calls=(
+                SimpleNamespace(server_latency_ms=SimpleNamespace(value=10.0)),
+            ),
+        ),
+        "execution-2": SimpleNamespace(
+            summary=SimpleNamespace(
+                timing=SimpleNamespace(duration_ms=300.0),
+                successful_tool_call_count=1,
+                failed_tool_call_count=0,
+                protocol_error_count=0,
+            ),
+            tool_calls=(
+                SimpleNamespace(server_latency_ms=SimpleNamespace(value=30.0)),
+            ),
+        ),
+    }
+
+    query = EvaluationQuery(group_by=("evaluator",), limit=1, offset=1)
+    report = aggregate_evaluations(
+        query,
+        tuple(
+            record
+            for execution in ("execution-1", "execution-2")
+            for record in store.evaluations(execution)
+        ),
+        snapshots={
+            execution: store.get_snapshot(execution)
+            for execution in ("execution-1", "execution-2")
+        },
+        traces=traces,
+    )
+
+    assert report.total_groups == 2
+    assert len(report.groups) == 1
+    assert report.groups[0].key == {"evaluator": "quality.v2"}
+    assert report.totals.trial_count == 2
+    assert report.totals.evaluation_count == 3
+    assert report.totals.average_score == 0.5
+    assert report.totals.health.execution_duration_ms.p50 == 200.0
+    assert report.totals.health.execution_duration_ms.p95 == 290.0
+    assert report.totals.health.server_latency_ms.p50 == 20.0
+    assert report.totals.health.server_latency_ms.p95 == 29.0
+    assert report.groups[0].values.average_score == 1.0
+    assert report.groups[0].values.health.execution_duration_ms.p50 == 100.0
+    assert report.groups[0].values.health.execution_duration_ms.p95 == 100.0
+    assert report.groups[0].values.health.server_latency_ms.p50 == 10.0
+    assert report.groups[0].values.health.server_latency_ms.p95 == 10.0
+
+
+def test_required_expectations_are_pending_live_and_missing_after_terminal() -> None:
+    created = datetime(2026, 3, 2, tzinfo=timezone.utc)
+    spec = SimpleNamespace(
+        evaluations=(SimpleNamespace(name="quality.v1", required=True),),
+        metadata={},
+        case_id="case-required",
+        suite_name=None,
+        kind="direct",
+        servers=(),
+        operation=None,
+        harness=None,
+        model_dump=lambda **_kwargs: {"kind": "direct", "case_id": "case-required"},
+    )
+    query = EvaluationQuery(
+        group_by=("time.day", "harness", "evaluator"),
+        filters={"evaluator": "quality.v1"},
+    )
+    running = SimpleNamespace(
+        created_at=created, lifecycle=SimpleNamespace(value="running")
+    )
+    report = aggregate_evaluations(
+        query,
+        (),
+        snapshots={"required-execution": running},
+        specifications={"required-execution": spec},
+    )
+    values = report.groups[0].values
+    assert values.trial_count == 1
+    assert values.expected_count == 0
+    assert values.pending_required_count == 1
+    assert values.missing_required_count == 0
+    assert values.pass_rate is None
+    assert report.groups[0].key["time.day"] == "2026-03-02"
+
+    finished = SimpleNamespace(
+        created_at=created, lifecycle=SimpleNamespace(value="finished")
+    )
+    report = aggregate_evaluations(
+        query,
+        (),
+        snapshots={"required-execution": finished},
+        specifications={"required-execution": spec},
+    )
+    values = report.groups[0].values
+    assert values.trial_count == 1
+    assert values.expected_count == 1
+    assert values.pending_required_count == 0
+    assert values.missing_required_count == 1
+    assert values.pass_rate == 0
+
+    still_running = aggregate_evaluations(
+        query,
+        (),
+        snapshots={"required-execution": finished},
+        specifications={"required-execution": spec},
+        attempt_states={"required-execution": "running"},
+    )
+    assert still_running.totals.expected_count == 0
+    assert still_running.totals.pending_required_count == 1
+
+    terminal_attempt_running_execution = aggregate_evaluations(
+        query,
+        (),
+        snapshots={"required-execution": running},
+        specifications={"required-execution": spec},
+        attempt_states={"required-execution": "passed"},
+    )
+    assert terminal_attempt_running_execution.totals.expected_count == 0
+    assert terminal_attempt_running_execution.totals.pending_required_count == 1
+
+
+def test_required_expectations_time_bounds_match_memory_and_sqlite(tmp_path) -> None:
+    spec = DirectSpec(
+        servers=(
+            ServerBinding(
+                server=StdioServer(name="echo", command="echo"),
+            ),
+        ),
+        operation=CallTool(name="ping", server="echo"),
+        evaluations=(EvaluationRegistration(name="quality.v1", required=True),),
+    )
+    before = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    inside = datetime(2026, 3, 2, tzinfo=timezone.utc)
+    after = datetime(2026, 3, 3, tzinfo=timezone.utc)
+    query = EvaluationQuery(
+        from_=inside,
+        to=after,
+        group_by=("evaluator",),
+        filters={"evaluator": "quality.v1"},
+    )
+
+    def state(name: str, created_at: datetime, lifecycle: ExecutionStatus):
+        finished = lifecycle is ExecutionStatus.FINISHED
+        outcome = ExecutionOutcome.COMPLETED if finished else None
+        return _snapshot(name, created_at).model_copy(
+            update={
+                "lifecycle": lifecycle,
+                "outcome": outcome,
+                "finished_at": created_at if finished else None,
+            }
+        )
+
+    executions = (
+        state("outside-missing", before, ExecutionStatus.FINISHED),
+        state("inside-missing", inside, ExecutionStatus.FINISHED),
+        state("outside-pending", before, ExecutionStatus.RUNNING_TURN),
+        state("inside-pending", inside, ExecutionStatus.RUNNING_TURN),
+    )
+    stores = (
+        InMemoryExecutionStore(),
+        SQLiteExecutionStore(tmp_path / "aggregate-time-bounds.sqlite"),
+    )
+    reports = []
+    for store in stores:
+        try:
+            for execution in executions:
+                store.create(execution, specification=spec.model_dump(mode="json"))
+            reports.append(store.aggregate_evaluations(query))
+        finally:
+            store.close()
+
+    for report in reports:
+        assert report.totals.trial_count == 2
+        assert report.totals.expected_count == 1
+        assert report.totals.missing_required_count == 1
+        assert report.totals.pending_required_count == 1
+        assert report.totals.pass_rate == 0
+    assert reports[0].totals.model_dump(mode="json") == reports[1].totals.model_dump(
+        mode="json"
+    )
+
+
+def test_store_attempt_state_keeps_finished_execution_requirement_pending(
+    tmp_path,
+) -> None:
+    created = datetime(2026, 3, 2, tzinfo=timezone.utc)
+    spec = DirectSpec(
+        servers=(
+            ServerBinding(
+                server=StdioServer(name="echo", command="echo"),
+            ),
+        ),
+        operation=CallTool(name="ping", server="echo"),
+        evaluations=(EvaluationRegistration(name="quality.v1", required=True),),
+    )
+    query = EvaluationQuery(
+        group_by=("evaluator",), filters={"evaluator": "quality.v1"}
+    )
+    finished = _snapshot("attempt-linked-execution", created).model_copy(
+        update={
+            "lifecycle": ExecutionStatus.FINISHED,
+            "outcome": ExecutionOutcome.COMPLETED,
+            "finished_at": created,
+        }
+    )
+    stores = (
+        InMemoryExecutionStore(),
+        SQLiteExecutionStore(tmp_path / "attempt-state.sqlite"),
+    )
+    for store in stores:
+        store.create(
+            finished,
+            specification=spec.model_dump(mode="json"),
+        )
+        store.save_test_result(
+            "run-1",
+            "attempt-1",
+            {"outcome": "running", "execution_ids": ["attempt-linked-execution"]},
+        )
+        store.save_test_result(
+            "run-1",
+            "attempt-2",
+            {"outcome": "passed", "execution_ids": ["attempt-linked-execution"]},
+        )
+        values = store.aggregate_evaluations(query).totals
+        assert values.pending_required_count == 1
+        store.close()
+
+
+def test_evaluation_status_grouping_excludes_synthetic_requirements() -> None:
+    created = datetime(2026, 3, 3, tzinfo=timezone.utc)
+    snapshot = SimpleNamespace(
+        created_at=created, lifecycle=SimpleNamespace(value="finished")
+    )
+    spec = SimpleNamespace(
+        evaluations=(SimpleNamespace(name="quality.v1", required=True),),
+        metadata={},
+        case_id="case-required",
+        suite_name=None,
+        kind="direct",
+        servers=(),
+        operation=None,
+        harness=None,
+        model_dump=lambda **_kwargs: {"kind": "direct"},
+    )
+    report = aggregate_evaluations(
+        EvaluationQuery(
+            group_by=("evaluation_status", "evaluator"),
+            filters={"evaluator": "quality.v1"},
+        ),
+        (),
+        snapshots={"required-execution": snapshot},
+        specifications={"required-execution": spec},
+    )
+    assert report.total_groups == 0
+    assert report.totals.expected_count == 0
+    assert report.totals.missing_required_count == 0
+
+
+def test_mapping_spec_fields_are_used_for_evaluation_labels() -> None:
+    created = datetime(2026, 3, 3, tzinfo=timezone.utc)
+    spec = {
+        "kind": "agent",
+        "case_id": "mapping-case",
+        "suite_name": "mapping-suite",
+        "metadata": {"owner": "mapping-owner"},
+        "servers": (
+            {
+                "alias": "catalog",
+                "server": {"name": "catalog", "kind": "stdio"},
+            },
+        ),
+        "operation": {"name": "lookup"},
+        "harness": {
+            "name": "mapping-harness",
+            "kind": "agent",
+            "model": "mapping-model",
+        },
+    }
+    record = EvaluationRecord(
+        evaluation_id="mapping-evaluation",
+        execution_id="mapping-execution",
+        name="quality.v1",
+        status=EvaluationStatus.PASSED,
+        created_at=created,
+    )
+    report = aggregate_evaluations(
+        EvaluationQuery(
+            group_by=(
+                "case_id",
+                "suite_name",
+                "execution_kind",
+                "server",
+                "tool",
+                "transport",
+                "harness",
+                "model",
+                "metadata.owner",
+                "evaluator",
+            ),
+            filters={"evaluator": "quality.v1"},
+        ),
+        (record,),
+        snapshots={
+            "mapping-execution": SimpleNamespace(
+                created_at=created, lifecycle=SimpleNamespace(value="finished")
+            )
+        },
+        specifications={"mapping-execution": spec},
+    )
+
+    assert report.total_groups == 1
+    assert report.groups[0].key == {
+        "case_id": "mapping-case",
+        "suite_name": "mapping-suite",
+        "execution_kind": "agent",
+        "server": "catalog",
+        "tool": "lookup",
+        "transport": "stdio",
+        "harness": "mapping-harness",
+        "model": "mapping-model",
+        "metadata.owner": "mapping-owner",
+        "evaluator": "quality.v1",
+    }
+
+
+def test_mapping_spec_required_expectation_preserves_labels_and_metadata() -> None:
+    created = datetime(2026, 3, 3, tzinfo=timezone.utc)
+    report = aggregate_evaluations(
+        EvaluationQuery(
+            group_by=("case_id", "suite_name", "metadata.owner", "evaluator"),
+            filters={"evaluator": "quality.v1"},
+        ),
+        (),
+        snapshots={
+            "mapping-execution": SimpleNamespace(
+                created_at=created, lifecycle=SimpleNamespace(value="finished")
+            )
+        },
+        specifications={
+            "mapping-execution": {
+                "case_id": "mapping-case",
+                "suite_name": "mapping-suite",
+                "metadata": {"owner": "mapping-owner"},
+                "evaluations": ({"name": "quality.v1", "required": True},),
+            }
+        },
+    )
+
+    assert report.total_groups == 1
+    assert report.groups[0].key == {
+        "case_id": "mapping-case",
+        "suite_name": "mapping-suite",
+        "metadata.owner": "mapping-owner",
+        "evaluator": "quality.v1",
+    }
+    assert report.groups[0].values.missing_required_count == 1
+
+
+def test_sqlite_pending_group_uses_project_and_trace_labels_and_health(
+    tmp_path,
+) -> None:
+    created = datetime(2026, 3, 3, tzinfo=timezone.utc)
+    project_id = ProjectId("11111111-1111-4111-8111-111111111111")
+    spec = DirectSpec(
+        project_id=project_id,
+        servers=(
+            ServerBinding(
+                server=StdioServer(name="echo", command="echo"),
+            ),
+        ),
+        operation=CallTool(name="ping", server="echo"),
+        evaluations=(EvaluationRegistration(name="quality.v1", required=True),),
+    )
+    store = SQLiteExecutionStore(tmp_path / "pending-trace.sqlite")
+    store.ensure_project(project_id.root, "Acme")
+    store.create(
+        _snapshot("pending-trace", created).model_copy(
+            update={"project_id": project_id}
+        ),
+        specification=spec.model_dump(mode="json"),
+    )
+    store.get_trace_view = lambda _execution_id: SimpleNamespace(  # type: ignore[method-assign]
+        runtime=SimpleNamespace(kind="agent"),
+        summary=SimpleNamespace(
+            timing=SimpleNamespace(duration_ms=12),
+            successful_tool_call_count=1,
+            failed_tool_call_count=0,
+            protocol_error_count=0,
+        ),
+        tool_calls=(SimpleNamespace(server_latency_ms=SimpleNamespace(value=3)),),
+    )
+    report = store.aggregate_evaluations(
+        EvaluationQuery(
+            group_by=("project_name", "harness", "evaluator"),
+            filters={"evaluator": "quality.v1"},
+        )
+    )
+    assert report.total_groups == 1
+    group = report.groups[0]
+    assert group.key["project_name"] == "Acme"
+    assert group.key["harness"] == "agent"
+    assert group.values.pending_required_count == 1
+    assert group.values.health.execution_count == 1
+    assert group.values.health.tool_calls.total == 1
+    store.close()
+
+
+def test_in_memory_pending_group_uses_trace_labels_and_health() -> None:
+    created = datetime(2026, 3, 3, tzinfo=timezone.utc)
+    spec = DirectSpec(
+        servers=(
+            ServerBinding(
+                server=StdioServer(name="echo", command="echo"),
+            ),
+        ),
+        operation=CallTool(name="ping", server="echo"),
+        evaluations=(EvaluationRegistration(name="quality.v1", required=True),),
+    )
+    store = InMemoryExecutionStore()
+    store.create(
+        _snapshot("in-memory-pending-trace", created),
+        specification=spec.model_dump(mode="json"),
+    )
+    store.get_trace_view = lambda _execution_id: SimpleNamespace(  # type: ignore[method-assign]
+        runtime=SimpleNamespace(kind="agent"),
+        summary=SimpleNamespace(
+            timing=SimpleNamespace(duration_ms=12),
+            successful_tool_call_count=1,
+            failed_tool_call_count=0,
+            protocol_error_count=0,
+        ),
+        tool_calls=(SimpleNamespace(server_latency_ms=SimpleNamespace(value=3)),),
+    )
+    report = store.aggregate_evaluations(
+        EvaluationQuery(
+            group_by=("harness", "evaluator"),
+            filters={"evaluator": "quality.v1"},
+        )
+    )
+    assert report.total_groups == 1
+    group = report.groups[0]
+    assert group.key["harness"] == "agent"
+    assert group.values.pending_required_count == 1
+    assert group.values.health.execution_count == 1
+    assert group.values.health.tool_calls.total == 1
+
+
+def test_required_history_does_not_change_latest_identity_or_pass_numerator() -> None:
+    created = datetime(2026, 3, 4, tzinfo=timezone.utc)
+    records = (
+        EvaluationRecord(
+            evaluation_id="required-old",
+            execution_id="required-lineage",
+            name="quality.v1",
+            status=EvaluationStatus.FAILED,
+            required=True,
+            subject_kind="json",
+            subject_digest="a" * 64,
+            created_at=created,
+        ),
+        EvaluationRecord(
+            evaluation_id="advisory-new",
+            execution_id="required-lineage",
+            name="quality.v1",
+            status=EvaluationStatus.PASSED,
+            required=False,
+            subject_kind="json",
+            subject_digest="a" * 64,
+            created_at=created + timedelta(seconds=1),
+        ),
+    )
+    report = aggregate_evaluations(
+        EvaluationQuery(group_by=("evaluator",), filters={"evaluator": "quality.v1"}),
+        records,
+        snapshots={"required-lineage": SimpleNamespace(created_at=created)},
+    )
+    assert report.totals.evaluation_count == 1
+    assert report.totals.expected_count == 1
+    assert report.totals.status_counts["passed"] == 1
+    assert report.totals.pass_rate == 1
+
+
+def test_multi_evaluator_totals_use_the_full_expected_denominator_and_empty_labels_are_valid() -> (
     None
 ):
     store = InMemoryExecutionStore()
@@ -189,7 +716,7 @@ def test_multi_evaluator_totals_are_not_a_single_rate_and_empty_labels_are_valid
     _save(store, "execution-a", "evaluation-a", "quality.v1", EvaluationStatus.PASSED)
     _save(store, "execution-a", "evaluation-b", "judge.v1", EvaluationStatus.FAILED)
     report = store.aggregate_evaluations(EvaluationQuery(group_by=("evaluator",)))
-    assert report.totals.pass_rate is None
+    assert report.totals.pass_rate == 0.5
     assert report.totals.average_score is None
     assert report.total_groups == 2
     empty = store.aggregate_evaluations(

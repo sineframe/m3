@@ -100,11 +100,19 @@ class V2ExecutionEnvelope(BaseModel):
 class V2TestResultSummary(BaseModel):
     """Pytest attempt summary associated with an execution."""
 
-    attempt_id: str
-    node_id: str
-    description: str
-    outcome: str
-    duration_seconds: float | None = None
+    attempt_id: str = Field(description="Persisted pytest attempt identity.")
+    node_id: str = Field(description="Pytest node ID for the attempt.")
+    description: str = Field(description="Test function docstring, if present.")
+    outcome: str = Field(description="Raw persisted pytest outcome.")
+    verdict: str = Field(
+        description="Normalized pytest verdict independent of evaluations."
+    )
+    effective_verdict: str = Field(
+        description="Verdict after required-evaluation and execution policy."
+    )
+    duration_seconds: float | None = Field(
+        default=None, description="Persisted test duration in seconds, if available."
+    )
 
 
 class V2ExecutionReportEnvelope(BaseModel):
@@ -173,13 +181,25 @@ class V2FeedbackEnvelope(BaseModel):
 class V2RunSummary(BaseModel):
     """Safe, compact summary of a persisted pytest run manifest."""
 
-    run_id: str
-    created_at: str | None = None
-    finished_at: str | None = None
-    status: str | None = None
-    project_id: str | None = None
-    project_name: str | None = None
-    test_count: int = 0
+    run_id: str = Field(description="Persisted pytest run identity.")
+    created_at: str | None = Field(
+        default=None, description="Run creation timestamp, if persisted."
+    )
+    finished_at: str | None = Field(
+        default=None, description="Run completion timestamp, if persisted."
+    )
+    status: str | None = Field(default=None, description="Persisted run status.")
+    project_id: str | None = Field(default=None, description="Project identity.")
+    project_name: str | None = Field(default=None, description="Project display name.")
+    test_count: int = Field(default=0, description="Number of collected pytest nodes.")
+    test_outcome_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Safe counts of raw persisted pytest outcomes.",
+    )
+    effective_verdict_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Safe counts after required-evaluation policy.",
+    )
 
 
 class V2RunListEnvelope(BaseModel):
@@ -1126,6 +1146,16 @@ def install_v2(
         def optional_string(value: object) -> str | None:
             return value if isinstance(value, str) else None
 
+        def safe_counts(value: object) -> dict[str, int]:
+            if not isinstance(value, Mapping):
+                return {}
+            return {
+                key: count
+                for key, count in value.items()
+                if isinstance(key, str) and key
+                if isinstance(count, int) and not isinstance(count, bool) and count >= 0
+            }
+
         summaries: list[V2RunSummary] = []
         for manifest in service.list_runs():
             run_id = manifest.get("run_id")
@@ -1151,6 +1181,12 @@ def install_v2(
                     project_id=optional_string(manifest.get("project_id")),
                     project_name=optional_string(manifest.get("project_name")),
                     test_count=max(0, safe_test_count),
+                    test_outcome_counts=safe_counts(
+                        manifest.get("test_outcome_counts")
+                    ),
+                    effective_verdict_counts=safe_counts(
+                        manifest.get("effective_verdict_counts")
+                    ),
                 )
             )
 
@@ -1316,6 +1352,8 @@ def install_v2(
                 "node_id": item.node_id,
                 "description": item.description,
                 "outcome": item.outcome,
+                "verdict": item.verdict,
+                "effective_verdict": item.effective_verdict,
                 "duration_seconds": item.duration_seconds,
             }
             for item in service.test_results(report)

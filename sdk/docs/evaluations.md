@@ -156,6 +156,29 @@ plain Python program. Pytest runs persist them with
 `.m3/reports/<run-id>/feedback.json`; use `--baseline RUN_ID` for a
 comparison with an earlier run.
 
+### Declaring required evaluation evidence
+
+The SDK keeps callback registration, execution expectations, and one-off
+evaluation policy separate:
+
+- `kit.register_evaluator(name, callback)` only makes executable code
+  available under a stable name. It does not make the evaluator required.
+- `EvaluationRegistration(name="quality.v1", required=True)` in an execution
+  spec declares that every execution created from that spec must produce that
+  evaluator. A terminal execution with no matching result is reported as
+  missing; while its linked pytest attempt is running, it is pending.
+- `kit.evaluate(..., required=True)` makes that exact persisted subject lineage
+  required dynamically. A later advisory reevaluation of the same lineage
+  cannot erase the requirement; an unrelated subject evaluated under the same
+  name does not become required.
+
+There is no separate evaluation-gate input or alternate evaluation API. The
+policy is derived from these existing inputs. Required `failed`, `error`,
+`inconclusive`, and `not_run` results are persisted before
+`RequiredEvaluationError` is raised. Session finalization enforces the same
+blocking result even if test code catches that exception, without rewriting
+pytest's recorded phases or outcome.
+
 ## Evaluate repeated agent trials
 
 Keep the math server deterministic and vary the cases with ordinary pytest
@@ -248,12 +271,20 @@ for group in report.groups:
     print(group.key, group.values.pass_rate, group.values.status_counts)
 ```
 
-Pass rate is `passed / (passed + failed)`. Error, inconclusive, and not-run
-results remain visible in `status_counts` but are excluded from that
-denominator. The denominator counts measured trial decisions, so ten logical
-cases across two configurations and two trials contribute 40 possible measured
-results. The aggregate also reports score counts, average score, and health
-summaries.
+Pass rate is `passed evaluations / expected evaluations`. An expected
+evaluation is either a latest saved evaluation identity, regardless of its
+status, or a required evaluation that is still missing after its execution and
+linked pytest attempt are terminal. Thus `error`, `inconclusive`, `not_run`,
+and terminal missing requirements lower the rate rather than disappearing from
+the denominator. A requirement that is still unresolved during a live attempt
+is reported as pending and does not enter the denominator yet.
+
+The aggregate exposes `evaluation_count`, `expected_count`,
+`missing_required_count`, `pending_required_count`, and `status_counts` so a UI
+can show the numerator and denominator beside the rate. Ten logical cases
+across two configurations and two trials contribute 40 expected evaluations
+when each trial expects one evaluator. Score counts, average score, and health
+summaries remain independent measurements.
 
 ### Run the live example explicitly
 

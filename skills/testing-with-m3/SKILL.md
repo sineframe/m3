@@ -118,12 +118,13 @@ harness: `-k` filters after collection and does not avoid an agent fixture
 selection error in the same collected file.
 
 Treat an evaluator as a test gate only when it uses `required=True` or asserts
-`status == EvaluationStatus.PASSED`. `required=False` records failed or error
+`status == EvaluationStatus.PASSED`. `required=False` records non-passing
 decisions without failing pytest. Keep deterministic evaluators and LLM judges
 separate in aggregates. Use ordinary pytest parameters for logical cases and
 `--trials N` for independent agent attempts; never rerun only failures and
-report the best attempt. A pass rate excludes error and inconclusive
-evaluations, so report status counts and the measured denominator as well.
+report the best attempt. Pass rate is passed evaluations divided by expected
+evaluations, so error, inconclusive, not-run, and terminal missing required
+evidence lower it. Report status and missing/pending counts with the rate.
 Small trial counts show observations, not reliable improvement estimates.
 
 ## Credentials and troubleshooting
