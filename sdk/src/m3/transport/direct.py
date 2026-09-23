@@ -34,7 +34,11 @@ from mcp.shared._httpx_utils import (
 from ..direct_trace import DirectTraceBridge
 from ..trace.redaction import is_sensitive_key
 from ..types import HTTPServer, SecretReference, TrustLevel
-from ._http_pinning import ValidatingHTTPX2Transport, canonical_hostname
+from ._http_pinning import (
+    ValidatingHTTPX2Transport,
+    canonical_hostname,
+    safe_endpoint_error_message,
+)
 
 TransportName: TypeAlias = Literal["streamable_http"]
 HostResolver: TypeAlias = Callable[[str, int], tuple[str, ...]]
@@ -115,6 +119,9 @@ class EndpointTrustError(ValueError):
                 "endpoint URL is invalid",
                 "endpoint hostname could not be resolved",
                 "endpoint URL contains credential query parameters",
+                "loopback-only MCP endpoint resolved to a non-loopback address",
+                "public MCP endpoint resolved to a non-public address",
+                "untrusted MCP endpoint resolved to a private or local address",
             }
             else "endpoint trust policy rejected the destination"
         )
@@ -218,6 +225,13 @@ def _is_private_or_local(address: str) -> bool:
     return not parsed.is_global
 
 
+def _is_loopback(address: str) -> bool:
+    try:
+        return ipaddress.ip_address(address).is_loopback
+    except ValueError:
+        return False
+
+
 def _is_credential_query_name(name: str) -> bool:
     normalized = "".join(character for character in name.lower() if character.isalnum())
     return (
@@ -271,10 +285,18 @@ def _endpoint_trust_details(
         raise EndpointTrustError("endpoint hostname could not be resolved") from None
     if not addresses:
         raise EndpointTrustError("endpoint hostname could not be resolved")
+    if server.loopback_only and any(not _is_loopback(address) for address in addresses):
+        raise EndpointTrustError(
+            "loopback-only MCP endpoint resolved to a non-loopback address"
+        )
     private = any(_is_private_or_local(address) for address in addresses)
     trusted = server.trust in {TrustLevel.TRUSTED_PRIVATE, TrustLevel.SDK_LOOPBACK}
+    if server.trust is TrustLevel.PUBLIC and private:
+        raise EndpointTrustError("public MCP endpoint resolved to a non-public address")
     if private and not trusted:
-        raise EndpointTrustError()
+        raise EndpointTrustError(
+            "untrusted MCP endpoint resolved to a private or local address"
+        )
     if for_agent and server.trust is TrustLevel.UNTRUSTED:
         raise EndpointTrustError()
     if for_agent and private and server.trust is not TrustLevel.TRUSTED_PRIVATE:
@@ -347,12 +369,24 @@ def _validated_transport_policy(
         )
         private = any(_is_private_or_local(address) for address in addresses)
         if is_primary:
+            if server.loopback_only and any(
+                not _is_loopback(address) for address in addresses
+            ):
+                raise EndpointTrustError(
+                    "loopback-only MCP endpoint resolved to a non-loopback address"
+                )
             trusted = server.trust in {
                 TrustLevel.TRUSTED_PRIVATE,
                 TrustLevel.SDK_LOOPBACK,
             }
+            if server.trust is TrustLevel.PUBLIC and private:
+                raise EndpointTrustError(
+                    "public MCP endpoint resolved to a non-public address"
+                )
             if private and not trusted:
-                raise EndpointTrustError()
+                raise EndpointTrustError(
+                    "untrusted MCP endpoint resolved to a private or local address"
+                )
             if for_agent and server.trust is TrustLevel.UNTRUSTED:
                 raise EndpointTrustError()
             if for_agent and private and server.trust is not TrustLevel.TRUSTED_PRIVATE:
@@ -710,6 +744,9 @@ class _RemoteConnection:
                 await self.aclose()
             except Exception:
                 pass
+            trust_message = safe_endpoint_error_message(exc)
+            if trust_message is not None:
+                raise EndpointTrustError(trust_message) from None
             raise TransportConnectionError(
                 self._transport, "initialize", evidence=self.evidence
             ) from None

@@ -164,6 +164,12 @@ def pytest_addoption(parser: _Any) -> None:
         "--credential-env", action="append", default=[], metavar="TARGET=SOURCE"
     )
     group.addoption("--trials", action="store", default=None, type=int)
+    group.addoption(
+        "--m3-server-selections",
+        action="store",
+        default=None,
+        help="internal JSON server selection passed by m3 test",
+    )
     group.addoption("--suite", action="store", default=None, metavar="NAME")
     group.addoption("--execution-timeout", action="store", default=None, type=float)
     group.addoption("--judge-max-requests", action="store", default=None, type=int)
@@ -190,7 +196,7 @@ def pytest_configure(config: _Any) -> None:
     config._m3_judge_max_requests = judge_limit
     config.addinivalue_line(
         "markers",
-        "m3(agents=None, trials=None, suite_name=None): select agent executions",
+        "m3(agents=None, servers=None, trials=None, suite_name=None): select agent and server executions",
     )
     suite = config.getoption("--suite")
     if suite is not None and not str(suite).strip():
@@ -352,6 +358,12 @@ def agent(request: _Any, m3_kit: _Any) -> _Any:
     return replace(selected, kit=m3_kit, entry=entry)
 
 
+@_pytest.fixture
+def server(request: _Any) -> _Any:
+    """Selected typed server for an M3 marked test."""
+    return request.param
+
+
 def _merged_m3_marker(node: _Any) -> dict[str, _Any]:
     """Merge inherited markers, with the closest marker taking precedence."""
     merged: dict[str, _Any] = {}
@@ -401,13 +413,8 @@ def _parse_cli_harnesses(config: _Any) -> list[dict[str, _Any]]:
     return result
 
 
-def pytest_generate_tests(metafunc: _Any) -> None:
+def _parameterize_agent(metafunc: _Any) -> None:
     if "agent" not in metafunc.fixturenames:
-        return
-    marker = metafunc.definition.get_closest_marker("m3")
-    if marker is None:
-        # A project may already provide an unrelated fixture named ``agent``.
-        # Leave those tests to pytest's normal fixture resolution.
         return
     config = metafunc.config
     marker_kwargs = _merged_m3_marker(metafunc.definition)
@@ -515,22 +522,128 @@ def pytest_generate_tests(metafunc: _Any) -> None:
     metafunc.parametrize("agent", expanded, indirect=True, ids=ids)
 
 
+def _server_choices(
+    config: _Any, marker_kwargs: _Mapping[str, _Any]
+) -> tuple[_Any, ...] | None:
+    raw_cli = config.getoption("--m3-server-selections")
+    if raw_cli is not None:
+        import json
+
+        try:
+            raw = json.loads(raw_cli)
+        except (TypeError, ValueError) as exc:
+            raise _pytest.UsageError(
+                "--m3-server-selections must be a JSON array"
+            ) from exc
+        if not isinstance(raw, list) or not raw:
+            raise _pytest.UsageError(
+                "--m3-server-selections must be a non-empty JSON array"
+            )
+    else:
+        raw = marker_kwargs.get("servers")
+        if raw is None:
+            return None
+    try:
+        from ._server_selection import normalize_servers
+
+        return normalize_servers(raw)
+    except (TypeError, ValueError) as exc:
+        raise _pytest.UsageError(str(exc)) from exc
+
+
+def _parametrizes_server(node: _Any) -> bool:
+    """Whether pytest already owns ``server`` through a parametrize marker."""
+    for marker in node.iter_markers(name="parametrize"):
+        names = marker.args[0] if marker.args else marker.kwargs.get("argnames")
+        if names is None:
+            continue
+        if isinstance(names, str):
+            names = names.replace(",", " ").split()
+        if "server" in names:
+            return True
+    return False
+
+
+def pytest_generate_tests(metafunc: _Any) -> None:
+    marker = metafunc.definition.get_closest_marker("m3")
+    if marker is None:
+        # Unmarked projects may define their own agent/server fixtures.
+        return
+    marker_kwargs = _merged_m3_marker(metafunc.definition)
+    selected_suite = metafunc.config.getoption("--suite")
+    if (
+        selected_suite is not None
+        and marker_kwargs.get("suite_name") != str(selected_suite).strip()
+    ):
+        # Skip validation for a suite that collection will deselect. Agent
+        # parametrization still needs an empty selection to avoid expansion.
+        _parameterize_agent(metafunc)
+        return
+
+    fixture_defs = getattr(metafunc, "_arg2fixturedefs", {}).get("server", ())
+    project_server_fixture = bool(
+        fixture_defs
+        and fixture_defs[-1].func is not getattr(server, "__wrapped__", None)
+    )
+    pytest_server_parameter = _parametrizes_server(metafunc.definition)
+    selected_servers = _server_choices(metafunc.config, marker_kwargs)
+    if "server" in metafunc.fixturenames and selected_servers is not None:
+        if project_server_fixture or pytest_server_parameter:
+            raise _pytest.UsageError(
+                "M3 server selections conflict with a project fixture or pytest parameter named 'server'"
+            )
+        ids = tuple(
+            f"server-{('http' if item.kind == 'streamable_http' else 'stdio')}-{i + 1}"
+            for i, item in enumerate(selected_servers)
+        )
+        if "agent" in metafunc.fixturenames:
+            from ._types.base import TrustLevel
+            from ._types.specs import HTTPServer
+
+            if any(
+                isinstance(item, HTTPServer) and item.trust is TrustLevel.UNTRUSTED
+                for item in selected_servers
+            ):
+                raise _pytest.UsageError(
+                    "agent HTTP server has trust=untrusted; set trust='public' (or --trust public) for a public endpoint, or trust='trusted_private' for a private endpoint you own"
+                )
+        metafunc.parametrize("server", selected_servers, indirect=True, ids=ids)
+    _parameterize_agent(metafunc)
+
+
 def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
     selected = config.getoption("--suite")
-    if selected is None:
-        return
-    selected = str(selected).strip()
-    kept: list[_Any] = []
-    deselected: list[_Any] = []
+    if selected is not None:
+        selected = str(selected).strip()
+        kept: list[_Any] = []
+        deselected: list[_Any] = []
+        for item in items:
+            marker = _merged_m3_marker(item)
+            if marker.get("suite_name") == selected:
+                kept.append(item)
+            else:
+                deselected.append(item)
+        items[:] = kept
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+
     for item in items:
-        marker = _merged_m3_marker(item)
-        if marker.get("suite_name") == selected:
-            kept.append(item)
-        else:
-            deselected.append(item)
-    items[:] = kept
-    if deselected:
-        config.hook.pytest_deselected(items=deselected)
+        if "server" not in getattr(item, "fixturenames", ()):
+            continue
+        if item.get_closest_marker("m3") is None:
+            continue
+        fixture_defs = getattr(item._fixtureinfo, "name2fixturedefs", {}).get(
+            "server", ()
+        )
+        if not fixture_defs or fixture_defs[-1].func is not getattr(
+            server, "__wrapped__", None
+        ):
+            continue
+        callspec = getattr(item, "callspec", None)
+        if "server" not in getattr(callspec, "params", {}):
+            raise _pytest.UsageError(
+                "server fixture requires --server selections or m3(servers=[...])"
+            )
 
 
 def pytest_unconfigure(config: _Any) -> None:
@@ -1594,5 +1707,6 @@ __all__ = [  # noqa: RUF022
     "pytest_generate_tests",
     "m3_kit",
     "agent",
+    "server",
     "pytest_collection_modifyitems",
 ]

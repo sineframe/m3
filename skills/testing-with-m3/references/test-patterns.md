@@ -219,14 +219,32 @@ project owns a local command and should test its subprocess boundary.
 
 ## Stdio: local command
 
-Define the server fixture yourself. The plugin supplies only the selected
-`agent` for a marked test:
+For the common case, declare the command once in the marker and request M3's
+`server` fixture. Each server entry runs as a separate case with every
+selected agent and trial:
+
+```python
+import sys
+import pytest
+from m3 import expect
+
+@pytest.mark.m3(servers=[{
+    "type": "stdio", "command": sys.executable,
+    "args": ["-m", "your_package.mcp_server"],
+}])
+def test_agent_selects_shipping_quote(agent, server):
+    result = agent.run("Get a local shipping quote", server=server,
+                       permission_policy="allow")
+    expect(result).to_have_tool_call("shipping_quote", status="success")
+```
+
+The explicit fixture below remains useful when a project needs to share a
+custom `StdioServer` with unmarked or advanced tests:
 
 ```python
 import sys
 import pytest
 from m3 import MCPTestKit, StdioServer, expect
-from m3.types import PermissionPolicy
 
 @pytest.fixture
 def shipping_server():
@@ -256,7 +274,7 @@ def test_agent_selects_shipping_quote(agent, shipping_server):
     result = agent.run(
         "Get a local shipping quote for a 2 kg parcel.",
         server=shipping_server,
-        permission_policy=PermissionPolicy(mode="allow"),
+        permission_policy="allow",
     )
     expect(result).to_have_tool_call(
         "shipping_quote", server="shipping", status="success"
@@ -300,7 +318,7 @@ with MCPTestKit() as kit:
     for agent in kit.agents(agents):
         result = agent.run(
             "Find the shipping tool", server=shipping_server,
-            permission_policy=PermissionPolicy(mode="allow"),
+            permission_policy="allow",
         )
         print(agent.harness, agent.model,
               [call.tool.value for call in result.trace_view.tool_calls])
@@ -404,7 +422,7 @@ def test_quote_choice(agent, shipping_server):
         "Use the shipping MCP service here to quote a 2 kg parcel in the "
         "local zone. What amount and currency does its calculator return?",
         server=shipping_server,
-        permission_policy=PermissionPolicy(mode="allow"),
+        permission_policy="allow",
     )
     expect(result).to_have_tool_call(
         "shipping_quote", server=shipping_server.name, status="success",
@@ -424,7 +442,7 @@ session and scope each assertion to its completed turn:
 ```python
 with agent.session(
     server=shipping_server,
-    permission_policy=PermissionPolicy(mode="allow"),
+    permission_policy="allow",
 ) as session:
     first = session.send("Get a delivery quote for 2 kg nearby.")
     second = session.send("Now check the regional price for the same parcel.")

@@ -116,6 +116,37 @@ Agent selection flags:
 | `--credential-env [KIND:]TARGET=SOURCE` | map an agent credential; use `judge:TARGET=SOURCE` for the judge |
 | `--suite NAME` or `--suite=NAME` | select tests whose inherited `m3` marker has this suite name |
 
+Server selection flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--server http` or `--server stdio` | start one server case; repeat for alternatives |
+| `--url URL` | Streamable HTTP MCP endpoint for the current HTTP case |
+| `--command CMD` and repeated `--arg VALUE` | executable and arguments for the current stdio case; write `--arg=-m` for a leading dash |
+| `--trust public\|trusted_private\|untrusted` | trust for the current HTTP case |
+| `--name NAME` | optional server name; defaults to `server` |
+
+For two harnesses, two servers, and two trials, M3 runs eight executions:
+
+```sh
+m3 test --env-file .env \
+  --harness opencode=opencode/big-pickle \
+  --harness codex=gpt-5.6-sol \
+  --server http --url https://shipping.example.com/mcp --trust public \
+  --server stdio --command python --arg=-m --arg=shipping_mcp \
+  --trials 2 -- tests/test_shipping.py
+```
+
+In a marked test, request `server` alongside `agent` and pass it to
+`agent.run(..., server=server)`. The marker can instead declare
+`servers=[{"type": "http", "url": "https://shipping.example.com/mcp",
+"trust": "public"}]`. If CLI server groups are present, they replace the
+whole marker list; no marker fields, including trust, carry over. A nonlocal
+HTTP endpoint defaults to `untrusted`, so an agent test needs explicit
+`public` or `trusted_private` trust. `localhost` and literal loopback IPs
+default to loopback-only private trust and fail if any resolved address is
+not loopback. Direct tests may use a public endpoint with default trust.
+
 Suite selection happens during pytest collection, before agent expansion. Put
 the same existing marker in each file belonging to one suite:
 

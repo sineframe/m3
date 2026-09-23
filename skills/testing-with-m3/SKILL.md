@@ -64,11 +64,16 @@ Read only the reference needed for the task:
 | An answer meets a quality rule | Explicit `kit.evaluate(...)` or `judge_response(...)` | An evaluator result that fails the test when the rule is required |
 | A change helps across cases or harnesses | Stable cases, selections, and trials plus a saved baseline | Matched test/evaluation changes, observed interface change, coverage, and limitations |
 
-Use `StdioServer` for a local subprocess and `HTTPServer` for a Streamable HTTP MCP
-endpoint. An HTTP URL is one MCP
-protocol endpoint, not a REST route. A server definition does not start a
-deployed service. For async tests, use `AsyncMCPTestKit` with `async with` and
-`await`.
+For a simple marked test, declare server cases with
+`@pytest.mark.m3(servers=[{"type": "http", "url": URL, "trust": "public"}])`
+or choose them with CLI `--server http --url URL --trust public`. Request
+`server` in the test function and pass it to `agent.run(..., server=server)`
+or `kit.direct(server)`. Each entry runs separately with each selected agent
+and trial; CLI server groups replace the marker list completely. Use
+`StdioServer` or `HTTPServer` directly for advanced settings. An HTTP URL is
+one MCP protocol endpoint, not a REST route. A server definition does not
+start a deployed service. For async tests, use `AsyncMCPTestKit` with
+`async with` and `await`.
 
 For feature and regression tests, cover the behavior that can fail: advertised
 catalog and schema, representative valid and boundary cases, expected domain
@@ -83,8 +88,12 @@ arguments, count, status, and unwanted calls where the claim needs them. A
 policy that exposes only one tool proves use, not choice. Omitted `tools`
 advertises the bound server's tools; `tools=[]` denies them.
 For a trusted test server under the native Codex harness, explicitly pass
-`permission_policy=PermissionPolicy(mode="allow")` to `agent.run` or
-`agent.session`. The default permission policy denies MCP tool approvals.
+`permission_policy="allow"` to `agent.run` or `agent.session`. The default
+permission policy denies MCP tool approvals. A nonlocal HTTP agent server
+defaults to `untrusted`; declare `trust="public"` for a public endpoint or
+`trusted_private` for a private endpoint you own. Literal loopback addresses
+and `localhost` get loopback-only private trust; a mixed DNS result containing
+any non-loopback address is rejected.
 Keep the server's tool policy and test workspace scoped to the intended
 operations.
 

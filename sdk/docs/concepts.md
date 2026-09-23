@@ -87,10 +87,13 @@ Each case runs through the normal SDK execution boundary and returns the usual
 For agent behavior, write one `@pytest.mark.m3` test that requests `agent`.
 Pass harnesses and models with repeated `m3 test --harness KIND=MODEL`
 flags, or set defaults with `@pytest.mark.m3(agents=[...])`. The selected
-agent can run against one server, a ToolMatrix `ServerCase`, or several servers
-with `agent.run(..., servers=[...])`. Ordinary pytest parameters vary servers,
-tools, and prompts. The plugin combines those parameters with every selected
-harness/model and trial.
+agent can run against one selected `server` fixture, a ToolMatrix `ServerCase`,
+or several servers with `agent.run(..., servers=[...])`. Declare alternative
+server cases with `@pytest.mark.m3(servers=[...])` or repeated CLI
+`--server http --url URL` and `--server stdio --command CMD --arg VALUE`
+groups. The CLI groups replace the marker list entirely. The plugin runs the
+Cartesian product of selected servers, harnesses/models, trials, and ordinary
+pytest parameters; each `server` fixture binds one server to an execution.
 
 For scripts and notebooks, iterate over `kit.agents([...], trials=N)` and call
 `agent.run(...)` inside a normal Python loop. No pytest installation is needed.

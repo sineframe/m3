@@ -4,7 +4,7 @@ Agent tests use `@pytest.mark.m3`; select models with CLI `--harness` and
 repeat independent executions with `--trials N`. Use `kit.agents(...)` in
 scripts and notebooks, and `ToolMatrix` for deterministic direct calls.
 For a trusted native Codex test server, pass
-`permission_policy=PermissionPolicy(mode="allow")` to `agent.run(...)` or
+`permission_policy="allow"` to `agent.run(...)` or
 `agent.session(...)` so Codex's MCP tool approval can be answered. The default
 permission policy denies it.
 
@@ -59,32 +59,54 @@ For pagination and the other direct operations, see
 
 ## 3. Run one test across native harnesses
 
-Define the server fixture your test needs, mark the test once, and select
-harnesses and models when you run it. The executable local fixture is shown in
-[`conftest.py`](../examples/tests/conftest.py):
+Declare server alternatives on the marker and M3 supplies one `server` fixture
+per test case. Select harnesses and models on the marker or from the CLI. The
+HTTP endpoint below must already be running; the stdio command is started for
+its case:
 
 ```python
+import sys
 import pytest
 from m3 import expect
 
-@pytest.mark.m3
-def test_agent_uses_shipping_quote(agent, example_server):
+@pytest.mark.m3(
+    agents=[
+        {"harness": "opencode", "models": ["opencode/big-pickle"]},
+        {"harness": "codex", "models": ["gpt-5.6-sol"]},
+    ],
+    servers=[
+        {"type": "http", "url": "https://shipping.example.com/mcp",
+         "trust": "public"},
+        {"type": "stdio", "command": sys.executable,
+         "args": ["-m", "shipping_mcp"]},
+    ],
+    trials=2,
+)
+def test_agent_uses_shipping_quote(agent, server):
     result = agent.run(
         "Use shipping_quote for a 2 kg parcel in the local zone.",
-        server=example_server,
+        server=server,
+        permission_policy="allow",
     )
-    expect(result).to_have_tool_call(
-        "shipping_quote", server=example_server.name, status="success"
-    )
+    expect(result).to_have_tool_call("shipping_quote", status="success")
 ```
+
+Run those marker selections with
+`m3 test --env-file .env -- tests/test_shipping.py`. To choose the same cases
+at the CLI instead:
 
 ```bash
 m3 test --env-file .env \
   --harness opencode=opencode/big-pickle \
-  --harness codex=gpt-5.6-sol --trials 2 -- tests/test_shipping.py
+  --harness codex=gpt-5.6-sol \
+  --server http --url https://shipping.example.com/mcp --trust public \
+  --server stdio --command python --arg=-m --arg=shipping_mcp \
+  --trials 2 -- tests/test_shipping.py
 ```
 
-This creates four independent executions. The `.env` file supplies
+This creates eight independent executions: two harnesses, two server cases,
+and two trials. CLI server groups replace the marker's entire `servers` list;
+they do not inherit marker fields, including trust. The `.env` file supplies
 `OPENCODE_API_KEY` and `OPENAI_API_KEY` when those providers use API keys;
 native login remains available where supported. For Claude Code use
 `ANTHROPIC_API_KEY`. OpenCode and Pi use the key for the provider prefix in the
@@ -92,9 +114,9 @@ model name. A custom provider can map a source variable with
 `--credential-env VENDOR_API_KEY=MY_VENDOR_KEY`; scope it to one harness with
 `opencode:VENDOR_API_KEY=MY_VENDOR_KEY`. MCP server credentials are separate.
 
-To keep defaults in code, put
-`@pytest.mark.m3(agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}])`
-on the test. CLI selections replace those defaults.
+The executable repository-local fixture remains in
+[`conftest.py`](../examples/tests/conftest.py) for tests that need a custom
+server definition.
 
 ## 4. Bring your own harness with ACP
 

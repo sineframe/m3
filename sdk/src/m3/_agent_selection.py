@@ -14,6 +14,7 @@ from collections.abc import Mapping as _Mapping
 from dataclasses import dataclass as _dataclass
 from typing import Any as _Any
 from typing import Literal as _Literal
+from typing import cast as _cast
 
 from ._types.specs import AgentSpec as _AgentSpec
 from .elicitation import ElicitationPlan as _ElicitationPlan
@@ -40,6 +41,9 @@ from .types import (
 )
 from .types import (
     OpenCode as _OpenCode,
+)
+from .types import (
+    PermissionPolicy as _PermissionPolicy,
 )
 from .types import (
     Pi as _Pi,
@@ -237,6 +241,15 @@ class _Selection:
     ) -> _AgentSpec:
         if (server is None) == (servers is None):
             raise ValueError("provide exactly one of server or servers")
+        permission = options.get("permission_policy")
+        if isinstance(permission, str):
+            if permission not in {"allow", "deny", "prompt"}:
+                raise ValueError(
+                    "permission_policy must be 'allow', 'deny', or 'prompt'"
+                )
+            options["permission_policy"] = _PermissionPolicy(
+                mode=_cast(_Literal["allow", "deny", "prompt"], permission)
+            )
         values = [server] if server is not None else list(servers)
         bindings = tuple(_binding(value) for value in values)
         policy_option = options.get("tool_policy")

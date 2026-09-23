@@ -54,23 +54,43 @@ Use an ordinary marked pytest test; the CLI supplies harness and model:
 ```python
 import pytest
 from m3 import expect
-from m3.types import PermissionPolicy
 
-@pytest.mark.m3
-def test_shipping(agent, shipping_server):
+@pytest.mark.m3(servers=[{
+    "type": "http", "url": "https://shipping.example.com/mcp", "trust": "public",
+}])
+def test_shipping(agent, server):
     """The agent uses the shipping service to quote a local parcel."""
     result = agent.run(
         "Use this shipping MCP server to quote a 2 kg parcel in its local zone.",
-        server=shipping_server,
-        permission_policy=PermissionPolicy(mode="allow"),
+        server=server,
+        permission_policy="allow",
     )
-    expect(result).to_have_tool_call("shipping_quote", server=shipping_server.name,
-                                     status="success")
+    expect(result).to_have_tool_call("shipping_quote", status="success")
 ```
 
 The native Codex harness asks for approval before an MCP tool call. Use
-`PermissionPolicy(mode="allow")` only for a trusted test server and scoped
+`permission_policy="allow"` only for a trusted test server and scoped
 workspace; the default policy denies tool approvals.
+
+M3 supplies one `server` fixture per entry in `servers=[...]`. Each entry is a
+separate test case, combined with every selected harness and trial. CLI server
+groups replace the marker list entirely:
+
+```sh
+m3 test --env-file .env \
+  --harness opencode=opencode/big-pickle \
+  --harness codex=gpt-5.6-sol \
+  --server http --url https://shipping.example.com/mcp --trust public \
+  --server stdio --command python --arg=-m --arg=shipping_mcp \
+  --trials 2 -- tests/test_shipping.py
+```
+
+That command runs eight cases: two harnesses, two servers, and two trials.
+The HTTP endpoint must already be running. Without CLI server groups, the
+test uses its marker entries. A nonlocal HTTP agent server needs explicit
+`trust="public"` or `trust="trusted_private"`; an omitted trust value works
+for `localhost` and literal loopback IPs only when they resolve exclusively
+to loopback addresses.
 
 Provider credentials are `OPENCODE_API_KEY`, `OPENAI_API_KEY`, or
 `ANTHROPIC_API_KEY` in the process environment. Use `--env-file .env` to load

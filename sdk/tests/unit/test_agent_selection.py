@@ -10,6 +10,7 @@ from m3.elicitation import expect_form
 from m3.types import (
     FullToolPolicy,
     NativeToolPolicy,
+    PermissionPolicy,
     RestrictiveToolPolicy,
     RevisionSelection,
     ServerProfileRef,
@@ -202,6 +203,30 @@ def test_run_builder_uses_full_policy_and_identity_metadata(kit: MCPTestKit) -> 
     assert isinstance(spec.tool_policy, FullToolPolicy)
     assert dict(spec.metadata)["trial"] == 2
     assert spec.harness.provider == "opencode"
+
+
+@pytest.mark.parametrize("mode", ["allow", "deny", "prompt"])
+def test_permission_policy_accepts_mode_shorthand(kit: MCPTestKit, mode: str) -> None:
+    agent = kit.agents([{"harness": "opencode", "models": ["opencode/a"]}])[0]
+    spec = agent._spec(
+        UserMessage(content="x"), server=_server(), permission_policy=mode
+    )
+    assert spec.permission_policy == PermissionPolicy(mode=mode)
+    assert isinstance(spec.permission_policy, PermissionPolicy)
+
+
+def test_permission_policy_rejects_unknown_shorthand_and_defaults_to_deny(
+    kit: MCPTestKit,
+) -> None:
+    agent = kit.agents([{"harness": "opencode", "models": ["opencode/a"]}])[0]
+    assert (
+        agent._spec(UserMessage(content="x"), server=_server()).permission_policy
+        == PermissionPolicy()
+    )
+    with pytest.raises(ValueError, match="permission_policy must be"):
+        agent._spec(
+            UserMessage(content="x"), server=_server(), permission_policy="other"
+        )
 
 
 def test_explicit_tools_are_restrictive_and_empty_denies_all(kit: MCPTestKit) -> None:

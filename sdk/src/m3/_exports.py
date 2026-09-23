@@ -582,6 +582,11 @@ PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "pytest_addoption",
         "pytest_configure",
         "pytest_unconfigure",
+        "pytest_generate_tests",
+        "m3_kit",
+        "agent",
+        "server",
+        "pytest_collection_modifyitems",
     ),
     "m3.matrix": (
         "HarnessCase",
@@ -692,6 +697,7 @@ PUBLIC_EXPORTS["m3.pytest_plugin"] = (
     "pytest_generate_tests",
     "m3_kit",
     "agent",
+    "server",
     "pytest_collection_modifyitems",
 )
 PUBLIC_EXPORTS["m3.types"] = (

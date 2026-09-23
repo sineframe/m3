@@ -26,6 +26,24 @@ the scoped `KIND:TARGET=SOURCE` form. Only names belong in flags and code.
 For a judge key under a different name, use
 `--credential-env judge:M3_JUDGE_API_KEY=SOURCE`.
 
+Choose server cases with the marker's `servers=[...]` or grouped CLI flags:
+
+```bash
+m3 test --env-file .env \
+  --harness opencode=opencode/big-pickle \
+  --harness codex=gpt-5.6-sol \
+  --server http --url https://shipping.example.com/mcp --trust public \
+  --server stdio --command python --arg=-m --arg=shipping_mcp \
+  --trials 2 -- tests/test_shipping.py
+```
+
+That selects eight cases. CLI server groups replace the whole marker server
+list, including any marker trust settings. A nonlocal HTTP agent case needs
+explicit `--trust public` or `--trust trusted_private`; the default
+`untrusted` label cannot be exposed to an agent. A `localhost` or literal
+loopback URL without explicit trust is allowed only if every resolved address
+is loopback.
+
 The project SDK and standalone CLI have different installation scopes.
 
 To compare harness releases, use `m3 test --runtime=managed
