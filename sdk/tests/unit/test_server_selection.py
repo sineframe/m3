@@ -213,6 +213,39 @@ def test_m3_server_selection_conflicts_with_pytest_server_parameter(
     assert "M3 server selections conflict" in result.stdout
 
 
+def test_later_pytest_hook_can_parametrize_server(tmp_path: Path) -> None:
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\n"
+        "@pytest.hookimpl(trylast=True)\n"
+        "def pytest_generate_tests(metafunc):\n"
+        "    if 'server' in metafunc.fixturenames:\n"
+        "        metafunc.parametrize('server', ['alpha', 'beta'])\n",
+        encoding="utf-8",
+    )
+    source = (
+        "import pytest\n"
+        "@pytest.mark.m3(agents=[{'harness':'opencode','models':['opencode/a']}])\n"
+        "def test_later_parameter(agent, server): assert server in {'alpha', 'beta'}\n"
+    )
+    result = _collect(tmp_path, source, collect_only=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+
+
+def test_missing_m3_server_selection_still_has_clear_collection_error(
+    tmp_path: Path,
+) -> None:
+    result = _collect(
+        tmp_path,
+        "import pytest\n@pytest.mark.m3\ndef test_missing(server): pass\n",
+    )
+    assert result.returncode != 0
+    assert (
+        "server fixture requires --server selections or m3(servers=[...])"
+        in result.stdout + result.stderr
+    )
+
+
 def test_suite_skips_server_validation_for_other_suites(tmp_path: Path) -> None:
     source = (
         "import pytest\n"

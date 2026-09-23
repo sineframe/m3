@@ -587,52 +587,63 @@ def pytest_generate_tests(metafunc: _Any) -> None:
     )
     pytest_server_parameter = _parametrizes_server(metafunc.definition)
     selected_servers = _server_choices(metafunc.config, marker_kwargs)
-    if "server" in metafunc.fixturenames:
-        if selected_servers is None:
-            if not project_server_fixture and not pytest_server_parameter:
-                raise _pytest.UsageError(
-                    "server fixture requires --server selections or m3(servers=[...])"
-                )
-        elif project_server_fixture or pytest_server_parameter:
+    if "server" in metafunc.fixturenames and selected_servers is not None:
+        if project_server_fixture or pytest_server_parameter:
             raise _pytest.UsageError(
                 "M3 server selections conflict with a project fixture or pytest parameter named 'server'"
             )
-        else:
-            ids = tuple(
-                f"server-{('http' if item.kind == 'streamable_http' else 'stdio')}-{i + 1}"
-                for i, item in enumerate(selected_servers)
-            )
-            if "agent" in metafunc.fixturenames:
-                from ._types.base import TrustLevel
-                from ._types.specs import HTTPServer
+        ids = tuple(
+            f"server-{('http' if item.kind == 'streamable_http' else 'stdio')}-{i + 1}"
+            for i, item in enumerate(selected_servers)
+        )
+        if "agent" in metafunc.fixturenames:
+            from ._types.base import TrustLevel
+            from ._types.specs import HTTPServer
 
-                if any(
-                    isinstance(item, HTTPServer) and item.trust is TrustLevel.UNTRUSTED
-                    for item in selected_servers
-                ):
-                    raise _pytest.UsageError(
-                        "agent HTTP server has trust=untrusted; set trust='public' (or --trust public) for a public endpoint, or trust='trusted_private' for a private endpoint you own"
-                    )
-            metafunc.parametrize("server", selected_servers, indirect=True, ids=ids)
+            if any(
+                isinstance(item, HTTPServer) and item.trust is TrustLevel.UNTRUSTED
+                for item in selected_servers
+            ):
+                raise _pytest.UsageError(
+                    "agent HTTP server has trust=untrusted; set trust='public' (or --trust public) for a public endpoint, or trust='trusted_private' for a private endpoint you own"
+                )
+        metafunc.parametrize("server", selected_servers, indirect=True, ids=ids)
     _parameterize_agent(metafunc)
 
 
 def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
     selected = config.getoption("--suite")
-    if selected is None:
-        return
-    selected = str(selected).strip()
-    kept: list[_Any] = []
-    deselected: list[_Any] = []
+    if selected is not None:
+        selected = str(selected).strip()
+        kept: list[_Any] = []
+        deselected: list[_Any] = []
+        for item in items:
+            marker = _merged_m3_marker(item)
+            if marker.get("suite_name") == selected:
+                kept.append(item)
+            else:
+                deselected.append(item)
+        items[:] = kept
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+
     for item in items:
-        marker = _merged_m3_marker(item)
-        if marker.get("suite_name") == selected:
-            kept.append(item)
-        else:
-            deselected.append(item)
-    items[:] = kept
-    if deselected:
-        config.hook.pytest_deselected(items=deselected)
+        if "server" not in getattr(item, "fixturenames", ()):
+            continue
+        if item.get_closest_marker("m3") is None:
+            continue
+        fixture_defs = getattr(item._fixtureinfo, "name2fixturedefs", {}).get(
+            "server", ()
+        )
+        if not fixture_defs or fixture_defs[-1].func is not getattr(
+            server, "__wrapped__", None
+        ):
+            continue
+        callspec = getattr(item, "callspec", None)
+        if "server" not in getattr(callspec, "params", {}):
+            raise _pytest.UsageError(
+                "server fixture requires --server selections or m3(servers=[...])"
+            )
 
 
 def pytest_unconfigure(config: _Any) -> None:
