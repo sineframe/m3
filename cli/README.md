@@ -1,15 +1,5 @@
 # M3 CLI
 
-Use `m3 test --env-file .env` to pass selected variables to pytest.
-`--credential-env` maps agent harness credentials, or judge credentials with
-the `judge:` scope. The judge reads `M3_JUDGE_API_KEY` by default; use
-`LLMJudge(api_key_env=...)` to select another target variable.
-`--judge-max-requests N` caps attempts including retries. Custom endpoints
-require explicit `api_key_env` and
-`response_mode`; loopback `auth="none"` reads no key and sends no
-`Authorization` header. Judges use Chat Completions, so the endpoint and model
-must support the selected response mode.
-
 `m3` is a standalone test runner for projects that use the M3 SDK.
 The command is distributed with the production web UI, so users do not need a
 checkout of this repository, Node.js, Vite, or `uv` in the project
@@ -17,23 +7,16 @@ being tested.
 
 ## Install
 
-Install a final release from PyPI:
+Install the `m3` command with uv:
 
 ```sh
 uv tool install sf-m3-cli
 ```
 
-To try a prerelease, select and pin it explicitly:
-
-```sh
-uv tool install --prerelease allow "sf-m3-cli==0.2.0a13"
-```
-
-The shell installer selects the highest final version, falling back to the highest prerelease until a final exists:
+Or use the shell installer on macOS or Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sineframe/m3/main/scripts/install-latest.sh | sh
-# For an explicit alpha, use: sh -s -- --tag v0.2.0a13
 ```
 
 The installer prefers `uv tool install`, and otherwise creates a dedicated
@@ -224,6 +207,12 @@ and test code. `.env` is read only when
 `--env-file` is supplied, and ambient variables take precedence. `doctor
 --env-file` checks configuration and does not provide credentials to a later
 test command.
+
+Use `LLMJudge(api_key_env=...)` to select a different judge variable.
+`--judge-max-requests N` caps attempts including retries. Custom endpoints
+require explicit `api_key_env` and `response_mode`; loopback `auth="none"`
+reads no key and sends no `Authorization` header. Judges use Chat Completions,
+so the endpoint and model must support the selected response mode.
 
 The CLI runs pytest using the project Python. It discovers that Python in this
 order:

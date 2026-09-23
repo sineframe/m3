@@ -19,12 +19,6 @@ Install from PyPI in the project being tested:
 uv add "sf-m3[pytest,judge]"
 ```
 
-To test a prerelease, choose its exact version explicitly:
-
-```sh
-uv add --prerelease allow "sf-m3[pytest,judge]==0.2.0a13"
-```
-
 The SDK requires Python 3.10 or newer. The standalone CLI is optional; install
 it separately only when you want the `m3` command or bundled UI, as
 described in the [quick start](docs/quick-start.md#install-the-standalone-cli).
