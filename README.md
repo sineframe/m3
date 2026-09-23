@@ -1,44 +1,41 @@
 # M3
 
-Test MCP servers and the agents that use them.
-
-M3 turns MCP interactions into ordinary, repeatable Python tests. Discover
-tools and schemas, exercise real calls, capture typed traces and evidence, and
-compare a new run with a saved baseline. The standalone CLI is the recommended
-starting point: it runs your existing pytest suite, records managed runs, and
-opens a local browser viewer when you need one.
-
-
 [![CI](https://github.com/sineframe/m3/actions/workflows/ci.yml/badge.svg)](https://github.com/sineframe/m3/actions/workflows/ci.yml)
 
-## Install
+**Test MCP servers and the agents that use them.**
 
-For a final release, install the standalone command and add the SDK to the project under test:
+M3 turns MCP interactions into repeatable Python tests. Run your existing
+pytest suite, capture tool calls and traces, compare runs, and explore results
+in a local browser viewer.
+
+## Install the CLI
+
+With [uv](https://docs.astral.sh/uv/):
 
 ```sh
 uv tool install sf-m3-cli
-cd your-project
-uv add "sf-m3[pytest,judge]"
-m3 setup
 ```
 
-The package names above are for PyPI. In code and at the command line, use `m3`.
-
-Choose a pinned prerelease explicitly when you want to try one:
-
-```sh
-uv tool install --prerelease allow "sf-m3-cli==0.2.0a13"
-uv add --prerelease allow "sf-m3[pytest,judge]==0.2.0a13"
-```
-
-The shell installer installs the highest final release, falling back to
-an alpha only until a final release is available. Pass `--prerelease` to select
-an alpha explicitly or `--tag vX.Y.Z` to select an exact release:
+Or use the shell installer on macOS or Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sineframe/m3/main/scripts/install-latest.sh | sh
-# For an explicit selection, add: sh -s -- --prerelease
 ```
+
+## Get started
+
+From the project you want to test:
+
+```sh
+cd your-project
+m3 init
+m3 setup
+m3 doctor
+```
+
+`m3 init` creates a starter test. Replace its placeholder with a real
+assertion, then run `m3 test -- tests/test_m3_starter.py`. `m3 setup` installs
+the matching Python SDK into the project's environment.
 
 ## What you can do
 
