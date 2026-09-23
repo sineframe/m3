@@ -9,8 +9,9 @@ from typing import Any
 
 import pytest
 
+from examples.servers.modern_mrtr_server import ADDRESS_SCHEMA
 from m3 import expect, expect_form
-from m3.types import ExecutionOutcome, StdioServer, TurnOutcome
+from m3.types import ExecutionOutcome, StdioServer
 
 pytest_plugins = ("examples.tests.pi_conftest",)
 
@@ -36,30 +37,27 @@ def test_unqualified_pi_agent_lets_model_select_the_eliciting_tool(
     agent: Any, example_server: StdioServer, pi_fixture: Path
 ) -> None:
     marker = pi_fixture
-    plan = expect_form("shipping_address").accept(
-        {"street": "1 Main Street", "city": "Pune", "postal_code": "411001"}
-    )
+    plan = expect_form(
+        "shipping_address",
+        message="Enter the delivery address.",
+        schema=ADDRESS_SCHEMA,
+    ).accept({"street": "1 Main Street", "city": "Pune", "postal_code": "411001"})
 
     # Neither the prompt nor the plan qualifies a server or operation.
     prompt = "Arrange a shipment and collect the delivery address before confirming."
-    with agent.session(server=example_server, timeout=120) as session:
-        turn = session.send(prompt, timeout=120, elicitation=plan)
+    result = agent.run(prompt, server=example_server, timeout=120, elicitation=plan)
 
-    assert turn.snapshot.outcome is TurnOutcome.COMPLETED, turn.error
-    assert session.result.snapshot.outcome is ExecutionOutcome.COMPLETED
-    expect(session.result).to_have_tool_call(
+    assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
+    expect(result).to_have_tool_call(
         "book_shipment",
-        turn=turn,
         server="modern-mrtr-example",
         status="success",
         count=1,
     )
-    view = session.result.trace_view
+    view = result.trace_view
     assert view is not None
     tool_calls = [
-        call
-        for call in view.for_turn(turn).tool_calls
-        if call.tool.value == "book_shipment"
+        call for call in view.tool_calls if call.tool.value == "book_shipment"
     ]
     eliciting = [
         call
@@ -77,7 +75,7 @@ def test_unqualified_pi_agent_lets_model_select_the_eliciting_tool(
     calls = [json.loads(line) for line in marker.read_text().splitlines()]
     assert len(calls) == 2
     assert len({call["id"] for call in calls}) == 2
-    assert all(call["arguments"] == {"weight_kg": 1, "zone": "local"} for call in calls)
+    assert all(call["arguments"] == {"weight_kg": 2, "zone": "local"} for call in calls)
     assert calls[0]["requestState"] is None
     assert calls[1]["requestState"] == "shipping-address"
     assert set(calls[1]["inputResponses"]) == {"shipping_address"}

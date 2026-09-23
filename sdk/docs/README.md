@@ -14,8 +14,10 @@ to a project does not install the `m3` command or its bundled UI.
   test, and run it with the CLI or pytest.
 - [Concepts](concepts.md) — understand server bindings, lifecycle, results,
   schemas, chained workflows, traces, and isolation.
-- [Elicitation](elicitation.md) — build action-bound MCP elicitation plans,
-  continue manual input, and inspect managed rounds and traces.
+- [Elicitation](elicitation.md) — write composable MRTR tests using real
+  either/or, optional, same-round, and later-round examples.
+- [Elicitation API reference](elicitation-api.md) — exact helpers, action
+  boundaries, manual input, managed rounds, and trace fields.
 - [Examples](examples.md) — choose the example matching a deployed endpoint,
   local stdio server, harness, ACP agent, or matrix workflow.
 - [Evaluations](evaluations.md) — define evaluators, score repeated agent

@@ -226,7 +226,7 @@ See the two-turn implementation in
 The maintained modern-protocol examples keep the server fixture and the M3
 test code visibly separate: the server is
 [`modern_mrtr_server.py`](../examples/servers/modern_mrtr_server.py), while
-the five runnable tests are:
+the six runnable test modules are:
 
 - [`test_modern_mrtr_sdk.py`](../examples/tests/test_modern_mrtr_sdk.py) —
   direct SDK input-required handling and the explicit
@@ -239,6 +239,9 @@ the five runnable tests are:
   — the same automatic operation with an unqualified plan and prompt.
 - [`test_modern_mrtr_pi_session.py`](../examples/tests/test_modern_mrtr_pi_session.py)
   — two turns, proving the plan belongs to the second `session.send` only.
+- [`test_modern_mrtr_pi_composed.py`](../examples/tests/test_modern_mrtr_pi_composed.py)
+  — one tool call with either/or, optional, or same-round address forms,
+  followed by a URL round.
 
 Run the deterministic direct/server example with plain pytest:
 
@@ -254,10 +257,11 @@ examples are the maintained reference for imports, fixture wiring, complete
 assertions, and separation between server code and test code. They use only
 public `agent` selection and session APIs.
 
+Build an intuition for composing tests in the [Elicitation guide](elicitation.md).
 The complete API inventory, signatures, response binding, action boundaries,
 manual escape hatch, managed-input status, and trace assertions are in the
-[Elicitation guide](elicitation.md). Keep server fixture code separate from
-M3 test code as shown by the maintained files above.
+[MRTR API reference](elicitation-api.md). Keep server fixture code separate
+from M3 test code as shown by the maintained files above.
 
 ## 7. Chain tool outputs
 

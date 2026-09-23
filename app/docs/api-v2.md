@@ -217,8 +217,9 @@ Action-bound MCP elicitation plans are a Python SDK operation feature: attach
 `elicitation=` to a direct call, `agent.run`, or `session.send`. They are not a
 JSON API-v2 policy field, and API-v2 currently does not expose the verified
 automatic Pi action-bound adapter. Use the SDK
-[Elicitation guide](../../sdk/docs/elicitation.md) and maintained examples for
-that protocol surface.
+[Elicitation guide](../../sdk/docs/elicitation.md),
+[MRTR API reference](../../sdk/docs/elicitation-api.md), and maintained
+examples for that protocol surface.
 
 Direct operation request and result discriminators are:
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from fixtures.modern_mrtr_server import (
@@ -405,6 +405,136 @@ def test_prompt_and_resource_mrtr_use_the_same_plan_contract() -> None:
             )
     assert prompt.messages[0]["content"]["text"] == "prompt contents"
     assert resource.text == "resource contents"
+
+
+@pytest.mark.parametrize(
+    ("operation", "target", "request_key", "url"),
+    [
+        (
+            "prompt",
+            "interactive-url-prompt",
+            "prompt_authorization",
+            "https://example.test/prompt/123",
+        ),
+        (
+            "resource",
+            "memory://interactive-url-document",
+            "resource_authorization",
+            "https://example.test/resource/123",
+        ),
+    ],
+)
+def test_sync_prompt_and_resource_url_mrtr(
+    operation: Literal["prompt", "resource"],
+    target: str,
+    request_key: str,
+    url: str,
+) -> None:
+    server = _server_binding()
+    plan = expect_url(
+        request_key,
+        url=url,
+        server=server,
+        operation_kind=operation,
+        operation_name=target,
+    ).accept()
+    with MCPTestKit(config=_modern_config(), env={}) as kit:
+        with kit.direct(server) as client:
+            if operation == "prompt":
+                prompt = client.get_prompt(target, elicitation=plan)
+                assert prompt.messages[0]["content"]["text"] == "prompt contents"
+            else:
+                resource = client.read_resource(target, elicitation=plan)
+                assert resource.text == "resource contents"
+
+
+@pytest.mark.parametrize(
+    ("operation", "target", "request_key", "expected_state"),
+    [
+        (
+            "prompt",
+            "interactive-url-prompt",
+            "prompt_authorization",
+            "prompt-url-state",
+        ),
+        (
+            "resource",
+            "memory://interactive-url-document",
+            "resource_authorization",
+            "resource-url-state",
+        ),
+    ],
+)
+@pytest.mark.parametrize("invalid", ["state", "key", "action"])
+def test_url_prompt_and_resource_reject_malformed_continuation(
+    operation: Literal["prompt", "resource"],
+    target: str,
+    request_key: str,
+    expected_state: str,
+    invalid: Literal["state", "key", "action"],
+) -> None:
+    server = _server_binding()
+    with MCPTestKit(config=_modern_config(), env={}) as kit:
+        with kit.direct(server) as client:
+            operation_call = (
+                client.get_prompt if operation == "prompt" else client.read_resource
+            )
+            pending = operation_call(target, allow_input_required=True)
+            assert pending.request_state == expected_state
+
+            response_key = "wrong_key" if invalid == "key" else request_key
+            response = types.ElicitResult(
+                action="decline" if invalid == "action" else "accept"
+            )
+            state = "wrong-state" if invalid == "state" else pending.request_state
+            with pytest.raises(ValueError, match=r"Invalid .* URL continuation"):
+                operation_call(
+                    target,
+                    request_state=state,
+                    input_responses={response_key: response},
+                )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "target", "request_key", "url"),
+    [
+        (
+            "prompt",
+            "interactive-url-prompt",
+            "prompt_authorization",
+            "https://example.test/prompt/123",
+        ),
+        (
+            "resource",
+            "memory://interactive-url-document",
+            "resource_authorization",
+            "https://example.test/resource/123",
+        ),
+    ],
+)
+async def test_async_prompt_and_resource_url_mrtr(
+    operation: Literal["prompt", "resource"],
+    target: str,
+    request_key: str,
+    url: str,
+) -> None:
+    server = _server_binding()
+    plan = expect_url(
+        request_key,
+        url=url,
+        server=server,
+        operation_kind=operation,
+        operation_name=target,
+    ).accept()
+    async with AsyncMCPTestKit(config=_modern_config(), env={}) as kit:
+        async with kit.direct(server) as client:
+            if operation == "prompt":
+                prompt = await client.get_prompt(target, elicitation=plan)
+                assert prompt.messages[0]["content"]["text"] == "prompt contents"
+            else:
+                resource = await client.read_resource(target, elicitation=plan)
+                assert resource.text == "resource contents"
 
 
 def test_round_of_accepts_all_keyed_requests_from_one_input_required_result() -> None:

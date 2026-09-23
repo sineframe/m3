@@ -529,11 +529,21 @@ In a script, use `kit.agents([...], trials=N)` and pass the same explicit
 
 ## Elicitation
 
-Use the repository's [Elicitation guide](../../../sdk/docs/elicitation.md) for
-the public API inventory, exact helper signatures, response binding, direct
-tool/prompt/resource examples, agent action binding, manual input, managed
-pending/respond methods, URL assertions, round limits, trace assertions, and
-the current support boundary.
+Copy the complete [either/or form then URL test](../../../sdk/docs/elicitation.md#one-prompt-two-elicitation-rounds-one-tool-call)
+and its [runnable source](../../../sdk/examples/tests/test_modern_mrtr_pi_composed.py).
+Build bound leaves, combine alternatives with `one_of`, and put the later URL
+in `sequence`. Keep the plan on one `agent.run`, then assert the single logical
+tool call after it completes. The same test module runs `optional(one_of(...))`
+for a skipped first round and `round_of(...)` for two keys in one round.
+
+Run the direct example with
+`uv run --project sdk --extra pytest pytest -q sdk/examples/tests/test_modern_mrtr_direct.py`.
+Run the composed Pi test with
+`uv run --project sdk --extra pytest pytest -q sdk/examples/tests/test_modern_mrtr_pi_composed.py`.
+The Pi examples skip when the required binary is unavailable; a skip is not
+evidence that the adapter passed its gate. Use the
+[MRTR API reference](../../../sdk/docs/elicitation-api.md) for prompt/resource
+calls, exact helpers, manual and managed input, URL assertions, and trace fields.
 
 The maintained runnable examples keep the server fixture separate from M3 test
 code. Start with

@@ -1,8 +1,8 @@
 """Small MCP SDK 2.0 server used by the modern MRTR examples.
 
-The server deliberately keeps the protocol behavior visible: the first call
-returns a typed ``InputRequiredResult`` and the retry completes only when the
-keyed ``shipping_address`` response is present.
+It exposes ordinary booking and a verified booking tool that can request one
+of two address forms, both forms together, or no form before a later URL round.
+Each retry validates the current round's keyed responses.
 """
 
 from __future__ import annotations
@@ -24,6 +24,18 @@ ADDRESS_SCHEMA: dict[str, Any] = {
     },
     "required": ["street", "city", "postal_code"],
 }
+VERIFIED_ADDRESSES = {
+    "home_address": {
+        "street": "1 Home Street",
+        "city": "Pune",
+        "postal_code": "411001",
+    },
+    "business_address": {
+        "street": "2 Business Street",
+        "city": "Pune",
+        "postal_code": "411002",
+    },
+}
 
 
 def build_server(
@@ -34,6 +46,18 @@ def build_server(
     async def list_tools(_context: object, _params: object) -> types.ListToolsResult:
         return types.ListToolsResult(
             tools=[
+                types.Tool(
+                    name="shipping_quote",
+                    description="Return a shipping quote for a parcel.",
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "weight_kg": {"type": "number"},
+                            "zone": {"type": "string"},
+                        },
+                        "required": ["weight_kg", "zone"],
+                    },
+                ),
                 types.Tool(
                     name="book_shipment",
                     description=(
@@ -47,7 +71,20 @@ def build_server(
                         },
                         "required": ["weight_kg", "zone"],
                     },
-                )
+                ),
+                types.Tool(
+                    name="book_verified_shipment",
+                    description="Book a shipment after optional addresses and URL verification.",
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "address_kind": {
+                                "type": "string",
+                            }
+                        },
+                        "required": ["address_kind"],
+                    },
+                ),
             ]
         )
 
@@ -92,6 +129,108 @@ def build_server(
                     )
                     + "\n"
                 )
+        if params.name == "shipping_quote":
+            return types.CallToolResult(
+                content=[
+                    types.TextContent(type="text", text="Shipping quote: USD 12.50")
+                ],
+                structured_content={"currency": "USD", "amount": 12.50},
+            )
+        if params.name == "book_verified_shipment":
+            arguments = params.arguments or {}
+            kind = arguments.get("address_kind")
+            if kind not in {"home", "business", "both", "none"}:
+                return types.CallToolResult(
+                    content=[
+                        types.TextContent(type="text", text="Invalid address kind.")
+                    ],
+                    is_error=True,
+                )
+            if kind == "both":
+                address_keys = ("home_address", "business_address")
+            elif kind == "none":
+                address_keys = ()
+            else:
+                address_keys = (f"{kind}_address",)
+
+            def verification_round() -> types.InputRequiredResult:
+                return types.InputRequiredResult(
+                    input_requests={
+                        "verification": types.ElicitRequest(
+                            params=types.ElicitRequestURLParams(
+                                message="Complete shipment verification.",
+                                url="https://example.test/verify/123",
+                            )
+                        )
+                    },
+                    request_state=f"verified-url:{kind}",
+                )
+
+            if params.request_state is None:
+                if responses:
+                    return types.CallToolResult(
+                        content=[
+                            types.TextContent(
+                                type="text", text="Unexpected first response."
+                            )
+                        ],
+                        is_error=True,
+                    )
+                if not address_keys:
+                    return verification_round()
+                return types.InputRequiredResult(
+                    input_requests={
+                        key: types.ElicitRequest(
+                            params=types.ElicitRequestFormParams(
+                                message=f"Enter the {key.split('_')[0]} delivery address.",
+                                requested_schema=ADDRESS_SCHEMA,
+                            )
+                        )
+                        for key in address_keys
+                    },
+                    request_state=f"verified-address:{kind}",
+                )
+            if params.request_state == f"verified-address:{kind}":
+                if set(responses) != set(address_keys) or any(
+                    not isinstance(responses[key], types.ElicitResult)
+                    or responses[key].action != "accept"
+                    or responses[key].content != VERIFIED_ADDRESSES[key]
+                    for key in address_keys
+                ):
+                    return types.CallToolResult(
+                        content=[
+                            types.TextContent(
+                                type="text", text="Invalid address response."
+                            )
+                        ],
+                        is_error=True,
+                    )
+                return verification_round()
+            if params.request_state == f"verified-url:{kind}":
+                verification = responses.get("verification")
+                if (
+                    set(responses) != {"verification"}
+                    or not isinstance(verification, types.ElicitResult)
+                    or verification.action != "accept"
+                ):
+                    return types.CallToolResult(
+                        content=[
+                            types.TextContent(
+                                type="text", text="Invalid verification response."
+                            )
+                        ],
+                        is_error=True,
+                    )
+                return types.CallToolResult(
+                    content=[
+                        types.TextContent(type="text", text="Verified shipment booked.")
+                    ],
+                    structured_content={"status": "booked", "address_kind": kind},
+                )
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="Invalid request state.")],
+                is_error=True,
+            )
         if not responses:
             return types.InputRequiredResult(
                 input_requests={

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import Mapping
 from typing import Any
 
 from mcp import types
@@ -19,6 +20,24 @@ ADDRESS_SCHEMA: dict[str, Any] = {
     },
     "required": ["street", "city", "postal_code"],
 }
+
+
+def _accepted_url_continuation(
+    request_state: str | None,
+    input_responses: Mapping[str, types.ElicitResult] | None,
+    *,
+    expected_state: str,
+    expected_key: str,
+) -> bool:
+    responses = input_responses or {}
+    response = responses.get(expected_key)
+    return (
+        request_state == expected_state
+        and set(responses) == {expected_key}
+        and isinstance(response, types.ElicitResult)
+        and response.action == "accept"
+        and response.content is None
+    )
 
 
 def build_modern_mrtr_server(
@@ -332,7 +351,12 @@ def build_modern_mrtr_server(
                     name="interactive-document",
                     uri="memory://interactive-document",
                     mime_type="text/plain",
-                )
+                ),
+                types.Resource(
+                    name="interactive-url-document",
+                    uri="memory://interactive-url-document",
+                    mime_type="text/plain",
+                ),
             ]
         )
 
@@ -340,7 +364,27 @@ def build_modern_mrtr_server(
         _context: object,
         params: types.ReadResourceRequestParams,
     ) -> types.ReadResourceResult | types.InputRequiredResult:
-        if not params.input_responses:
+        if params.uri == "memory://interactive-url-document":
+            if params.request_state is None and not params.input_responses:
+                return types.InputRequiredResult(
+                    input_requests={
+                        "resource_authorization": types.ElicitRequest(
+                            params=types.ElicitRequestURLParams(
+                                message="Authorize resource access",
+                                url="https://example.test/resource/123",
+                            )
+                        )
+                    },
+                    request_state="resource-url-state",
+                )
+            if not _accepted_url_continuation(
+                params.request_state,
+                params.input_responses,
+                expected_state="resource-url-state",
+                expected_key="resource_authorization",
+            ):
+                raise ValueError("Invalid resource URL continuation")
+        elif not params.input_responses:
             return types.InputRequiredResult(
                 input_requests={
                     "resource_access": types.ElicitRequest(
@@ -366,14 +410,37 @@ def build_modern_mrtr_server(
         _context: object, _params: object
     ) -> types.ListPromptsResult:
         return types.ListPromptsResult(
-            prompts=[types.Prompt(name="interactive-prompt")]
+            prompts=[
+                types.Prompt(name="interactive-prompt"),
+                types.Prompt(name="interactive-url-prompt"),
+            ]
         )
 
     async def get_prompt(
         _context: object,
         params: types.GetPromptRequestParams,
     ) -> types.GetPromptResult | types.InputRequiredResult:
-        if not params.input_responses:
+        if params.name == "interactive-url-prompt":
+            if params.request_state is None and not params.input_responses:
+                return types.InputRequiredResult(
+                    input_requests={
+                        "prompt_authorization": types.ElicitRequest(
+                            params=types.ElicitRequestURLParams(
+                                message="Authorize prompt access",
+                                url="https://example.test/prompt/123",
+                            )
+                        )
+                    },
+                    request_state="prompt-url-state",
+                )
+            if not _accepted_url_continuation(
+                params.request_state,
+                params.input_responses,
+                expected_state="prompt-url-state",
+                expected_key="prompt_authorization",
+            ):
+                raise ValueError("Invalid prompt URL continuation")
+        elif not params.input_responses:
             return types.InputRequiredResult(
                 input_requests={
                     "prompt_context": types.ElicitRequest(

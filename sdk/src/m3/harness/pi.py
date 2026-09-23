@@ -420,7 +420,7 @@ class PiHarnessAdapter(NativeRPCAdapter):
         # initialize request. Ask for state when supported, but tolerate older
         # versions that only begin after the first prompt.
         await process.write({"type": "get_state"})
-        deadline = asyncio.get_running_loop().time() + 5.0
+        deadline = asyncio.get_running_loop().time() + 15.0
         frame: Mapping[str, Any] | None = None
         while asyncio.get_running_loop().time() < deadline:
             remaining = max(0.01, deadline - asyncio.get_running_loop().time())

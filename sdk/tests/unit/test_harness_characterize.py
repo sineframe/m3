@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 import m3.harness.characterize as characterize_module
+from m3.agent_session import _require_elicitation_capability
+from m3.errors import UnsupportedFeature
 from m3.harness.acp import AcpHarnessAdapter
 from m3.harness.characterize import MAX_PROBE_OUTPUT, _run_probe
 from m3.harness.claude import ClaudeCodeHarnessAdapter
@@ -63,6 +65,21 @@ def test_real_adapter_declarations_remain_explicit() -> None:
         assert capabilities.preserves_multi_request_rounds is expected
         assert capabilities.supports_interaction_cancellation is expected
         assert capabilities.retry_owner == retry_owner
+
+
+@pytest.mark.parametrize(
+    "adapter",
+    [
+        CodexHarnessAdapter(executable="codex"),
+        ClaudeCodeHarnessAdapter(executable="claude"),
+        AcpHarnessAdapter(),
+        OpenCodeHarnessAdapter(executable="opencode"),
+    ],
+    ids=["codex", "claude", "acp", "opencode"],
+)
+def test_unverified_harness_rejects_action_bound_elicitation(adapter: object) -> None:
+    with pytest.raises(UnsupportedFeature):
+        _require_elicitation_capability(adapter)
 
 
 @pytest.mark.parametrize(

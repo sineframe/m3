@@ -55,6 +55,8 @@ class FixturePiHarnessAdapter(PiHarnessAdapter):
 def _require_pi() -> str:
     executable = os.environ.get("M3_PI_EXECUTABLE") or shutil.which("pi")
     if executable is None:
+        if os.environ.get("M3_REQUIRE_PI_MRTR") == "1":
+            pytest.fail("Pi 0.85.1 is required for the MRTR CI gate")
         pytest.skip("Pi 0.85.1 is unavailable on PATH; set M3_PI_EXECUTABLE")
     try:
         version = subprocess.run(
@@ -65,8 +67,12 @@ def _require_pi() -> str:
             timeout=5,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
+        if os.environ.get("M3_REQUIRE_PI_MRTR") == "1":
+            pytest.fail("Pi 0.85.1 could not be executed for the MRTR CI gate")
         pytest.skip("Pi 0.85.1 could not be executed at the required runtime")
     if version != "0.85.1":
+        if os.environ.get("M3_REQUIRE_PI_MRTR") == "1":
+            pytest.fail(f"Pi 0.85.1 is required for the MRTR CI gate; found {version}")
         pytest.skip(f"Pi version 0.85.1 is required; found {version or 'unknown'}")
     return executable
 
