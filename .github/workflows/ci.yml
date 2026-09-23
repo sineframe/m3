@@ -258,6 +258,21 @@ jobs:
           release_dir="$RUNNER_TEMP/m3-fixture-release"
           mkdir -p "$release_dir"
           python scripts/build_cli_release.py --ui-dist cli/tests/fixtures/ui --out-dir "$release_dir"
+      - name: Install from staged release assets
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/m3-fixture-release"
+          version=$(python scripts/build_cli_release.py --print-version)
+          python scripts/render_cli_installers.py --version "$version" --output-dir "$release_dir"
+          (cd "$release_dir" && sha256sum \
+            "sf_m3-${version}-py3-none-any.whl" \
+            "sf_m3_app-${version}-py3-none-any.whl" \
+            "sf_m3_cli-${version}-py3-none-any.whl" \
+            | sort -k2 > SHA256SUMS)
+          M3_RELEASE_BASE_URL="file://$release_dir" \
+            UV_TOOL_DIR="$RUNNER_TEMP/m3-fixture-tools" \
+            UV_TOOL_BIN_DIR="$RUNNER_TEMP/m3-fixture-bin" \
+            sh "$release_dir/install.sh"
       - name: Check dependency metadata and local installer behavior
         run: |
           version=$(python scripts/build_cli_release.py --print-version)

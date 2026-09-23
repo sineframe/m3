@@ -4,7 +4,9 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -123,7 +125,7 @@ def test_public_posix_installer_rejects_bad_checksum(tmp_path: Path) -> None:
 
 
 def _bootstrap(
-    tmp_path: Path, releases: list[dict[str, object]], *args: str
+    tmp_path: Path, releases: list[dict[str, object]], *args: str, uv_only: bool = False
 ) -> tuple[subprocess.CompletedProcess[str], str | None]:
     tmp_path.mkdir(parents=True)
     fake_bin = tmp_path / "bin"
@@ -180,18 +182,43 @@ case "$url" in
 esac
 """,
     )
+    if uv_only:
+        for name in ("cp", "mktemp", "rm", "sh"):
+            executable = shutil.which(name)
+            assert executable is not None
+            (fake_bin / name).symlink_to(executable)
+        _executable(
+            fake_bin / "uv",
+            """#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "$M3_TEST_UV_LOG"
+case "$1 $2" in
+  'python install') exit 0 ;;
+  'python find') printf '%s\\n' "$M3_TEST_PYTHON" ;;
+  *) exit 2 ;;
+esac
+""",
+        )
     env = os.environ.copy()
     env.update(
         {
-            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "PATH": str(fake_bin)
+            if uv_only
+            else f"{fake_bin}{os.pathsep}{env['PATH']}",
             "M3_TEST_RELEASES": str(release_file),
             "M3_TEST_ASSETS": str(asset_root),
             "M3_TEST_SELECTED": str(selected),
+            "M3_TEST_PYTHON": sys.executable,
+            "M3_TEST_UV_LOG": str(tmp_path / "uv.log"),
             "TMPDIR": str(tmp_path),
         }
     )
     result = subprocess.run(
-        ["sh", str(ROOT / "scripts" / "install-latest.sh"), *args],
+        [
+            "/bin/sh" if uv_only else "sh",
+            str(ROOT / "scripts" / "install-latest.sh"),
+            *args,
+        ],
         cwd=tmp_path,
         env=env,
         capture_output=True,
@@ -236,6 +263,17 @@ def test_bootstrap_alpha_fallback_and_exact_tag(tmp_path: Path) -> None:
     result, selected = _bootstrap(tmp_path / "exact", releases, "--tag", "v0.4.0a2")
     assert result.returncode == 0, result.stderr
     assert selected == "v0.4.0a2"
+
+
+def test_bootstrap_uses_uv_python_when_python3_is_absent(tmp_path: Path) -> None:
+    root = tmp_path / "uv-only"
+    result, selected = _bootstrap(root, [_release("v1.2.3")], uv_only=True)
+    assert result.returncode == 0, result.stderr
+    assert selected == "v1.2.3"
+    assert root.joinpath("uv.log").read_text().splitlines() == [
+        "python install 3.13",
+        "python find 3.13",
+    ]
 
 
 def test_bootstrap_fails_when_release_has_no_installer(tmp_path: Path) -> None:

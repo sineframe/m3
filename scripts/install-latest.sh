@@ -5,7 +5,15 @@
 set -eu
 REPOSITORY='sineframe/m3'
 command -v curl >/dev/null 2>&1 || { echo 'curl is required' >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo 'python3 is required' >&2; exit 1; }
+if command -v python3 >/dev/null 2>&1; then
+    BOOTSTRAP_PYTHON=$(command -v python3)
+elif command -v uv >/dev/null 2>&1; then
+    uv python install 3.13 >/dev/null || { echo 'uv could not install Python 3.13' >&2; exit 1; }
+    BOOTSTRAP_PYTHON=$(uv python find 3.13) || { echo 'uv could not locate Python 3.13' >&2; exit 1; }
+else
+    echo 'Python 3 or uv is required' >&2
+    exit 1
+fi
 mode=stable
 exact_tag=
 while [ "$#" -gt 0 ]; do
@@ -25,11 +33,11 @@ while :; do
     curl --fail --silent --show-error --location \
         "https://api.github.com/repos/${REPOSITORY}/releases?per_page=100&page=${page}" \
         --output "$page_file"
-    count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$page_file")
+    count=$("$BOOTSTRAP_PYTHON" -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$page_file")
     [ "$count" -eq 100 ] || break
     page=$((page + 1))
 done
-tag=$(python3 - "$TMP_DIR" "$mode" "$exact_tag" <<'PY'
+tag=$("$BOOTSTRAP_PYTHON" - "$TMP_DIR" "$mode" "$exact_tag" <<'PY'
 import json, pathlib, re, sys
 root, mode, exact = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 pattern = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?$")
@@ -73,7 +81,7 @@ base_url="https://github.com/${REPOSITORY}/releases/download/${tag}"
 curl --fail --silent --show-error --location "${base_url}/manifest.json" --output "$TMP_DIR/manifest.json"
 curl --fail --silent --show-error --location "${base_url}/install.sh" --output "$TMP_DIR/install.sh"
 curl --fail --silent --show-error --location "${base_url}/SHA256SUMS" --output "$TMP_DIR/SHA256SUMS"
-python3 - "$TMP_DIR/manifest.json" "$tag" "$TMP_DIR/install.sh" "$TMP_DIR/SHA256SUMS" <<'PY'
+"$BOOTSTRAP_PYTHON" - "$TMP_DIR/manifest.json" "$tag" "$TMP_DIR/install.sh" "$TMP_DIR/SHA256SUMS" <<'PY'
 import hashlib, json, pathlib, re, sys
 manifest=json.loads(pathlib.Path(sys.argv[1]).read_text())
 version=sys.argv[2][1:]

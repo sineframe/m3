@@ -114,9 +114,13 @@ jobs:
           python scripts/render_cli_installers.py --version "$VERSION" --output-dir "$out"
           cp scripts/install-latest.sh "$out/install-latest.sh"
           chmod 755 "$out/install-latest.sh"
-          wheels=("$out/sf_m3-${VERSION}-py3-none-any.whl" "$out/sf_m3_app-${VERSION}-py3-none-any.whl" "$out/sf_m3_cli-${VERSION}-py3-none-any.whl")
+          wheels=("sf_m3-${VERSION}-py3-none-any.whl" "sf_m3_app-${VERSION}-py3-none-any.whl" "sf_m3_cli-${VERSION}-py3-none-any.whl")
           test "${#wheels[@]}" -eq 3
-          (cd "$out" && sha256sum "${wheels[@]}" | sort -k2 > SHA256SUMS)
+          (cd "$out" && sha256sum "${wheels[@]}" | sort -k2 > SHA256SUMS && sha256sum -c SHA256SUMS)
+          M3_RELEASE_BASE_URL="file://$out" \
+            UV_TOOL_DIR="$RUNNER_TEMP/m3-installer-tools" \
+            UV_TOOL_BIN_DIR="$RUNNER_TEMP/m3-installer-bin" \
+            sh "$out/install.sh"
           python scripts/smoke_cli_uv_install.py --release-dir "$out" --version "$VERSION"
           python scripts/check_cli_standalone.py --release-dir "$out" --version "$VERSION" --ui-dir .release-ui
           python - "$out" "$VERSION" "${{ github.sha }}" "${{ steps.ui-ref.outputs.sha }}" <<'PY'
