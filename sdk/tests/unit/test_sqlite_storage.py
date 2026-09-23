@@ -9,8 +9,11 @@ import stat
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -22,6 +25,7 @@ from m3.elicitation import (
 from m3.events import EventFactory
 from m3.storage import (
     ArtifactNotFound,
+    BlobRecord,
     InMemoryArtifactStore,
     InMemoryExecutionStore,
     SQLiteExecutionStore,
@@ -30,6 +34,7 @@ from m3.storage import (
 )
 from m3.trace.redaction import RedactionConfig
 from m3.types import (
+    ArtifactRef,
     DirectSpec,
     EventKind,
     ExecutionId,
@@ -757,3 +762,109 @@ def test_failed_large_event_append_leaves_only_explicitly_collectable_orphan(
     assert len(store.events(execution_id)) == 1  # the creation event remains committed
     store.artifacts.cleanup()
     assert store.artifacts.blob_store.iter_records() == ()
+
+
+@pytest.mark.parametrize("kind", ["artifact", "payload", "raw_event"])
+def test_cleanup_waits_for_blob_reference_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    store = SQLiteExecutionStore(
+        tmp_path / "m3.sqlite",
+        blob_root=tmp_path / "blobs",
+        payload_blob_threshold=128,
+    )
+    execution_id, factory = _created(store)
+    other = SQLiteExecutionStore(
+        store.database, blob_root=store.artifacts.blob_root, payload_blob_threshold=128
+    )
+    published, cleanup_started, release = Event(), Event(), Event()
+    original_put = store.artifacts.blob_store.put
+
+    def paused_put(
+        content: bytes, *, sha256: str | None = None, size_bytes: int | None = None
+    ) -> BlobRecord:
+        blob = original_put(content, sha256=sha256, size_bytes=size_bytes)
+        published.set()
+        if not release.wait(5):
+            raise TimeoutError("writer was not released")
+        return blob
+
+    monkeypatch.setattr(store.artifacts.blob_store, "put", paused_put)
+    payload = {"large": "x" * 1024}
+
+    def write() -> None:
+        if kind == "artifact":
+            store.artifacts.put(execution_id, "race.bin", b"race artifact")
+        elif kind == "payload":
+            store.append_events([factory.create(EventKind.DIAGNOSTIC, payload=payload)])
+        else:
+            store.append_event(
+                factory.create(EventKind.DIAGNOSTIC, payload={}),
+                b"race raw evidence",
+                media_type="text/plain",
+            )
+
+    def clean() -> None:
+        cleanup_started.set()
+        other.artifacts.cleanup()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(write)
+        try:
+            assert published.wait(5)
+            cleanup = pool.submit(clean)
+            assert cleanup_started.wait(5)
+            with pytest.raises(FutureTimeoutError):
+                cleanup.result(timeout=0.2)
+        finally:
+            release.set()
+        writer.result(timeout=10)
+        cleanup.result(timeout=10)
+
+    if kind == "artifact":
+        (reference,) = tuple(store.artifacts.iter_refs(execution_id))
+        assert store.artifacts.get(reference) == b"race artifact"
+    elif kind == "payload":
+        assert store.events(execution_id)[-1].payload == payload
+    else:
+        reference = store.events(execution_id)[-1].raw_evidence_ref
+        assert reference is not None
+        assert store.read_raw_evidence(reference).content == "race raw evidence"
+
+
+def test_writer_waits_for_cleanup_before_reusing_orphan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    execution_id, _ = _created(store)
+    other = _store(tmp_path)
+    content = b"previously unreferenced"
+    store.artifacts.blob_store.put(content)
+    sweeping, writer_started, release = Event(), Event(), Event()
+    original_collect = store.artifacts.blob_store.garbage_collect
+
+    def paused_collect(references: dict[str, int]) -> tuple[str, ...]:
+        sweeping.set()
+        if not release.wait(5):
+            raise TimeoutError("collector was not released")
+        return original_collect(references)
+
+    def write_copy() -> ArtifactRef:
+        writer_started.set()
+        return other.artifacts.put(execution_id, "copy", content)
+
+    monkeypatch.setattr(store.artifacts.blob_store, "garbage_collect", paused_collect)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        cleanup = pool.submit(store.artifacts.cleanup)
+        try:
+            assert sweeping.wait(5)
+            writer = pool.submit(write_copy)
+            assert writer_started.wait(5)
+            with pytest.raises(FutureTimeoutError):
+                writer.result(timeout=0.2)
+        finally:
+            release.set()
+        cleanup.result(timeout=10)
+        reference = writer.result(timeout=10)
+
+    assert other.artifacts.get(reference) == content

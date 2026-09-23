@@ -4,11 +4,14 @@ The SQLite metadata store owns searchable metadata and the lifetime of a
 reference.  This module owns only bytes on disk.  A blob is published only
 after it has been completely written, flushed, fsynced, verified, and moved
 into its digest-derived location.  In particular, callers can safely commit
-SQLite metadata *after* :meth:`FilesystemBlobStore.put` returns.
+SQLite metadata *after* :meth:`FilesystemBlobStore.put` returns, provided they
+hold the SQLite write transaction from publication through the reference
+commit when garbage collection can run concurrently.
 
 No retention policy is applied implicitly.  ``garbage_collect`` is explicit
-and receives the current reference counts (normally from one SQLite
-transaction), so a shared blob is retained while any reference remains.
+and receives the current reference counts. SQLite callers hold the same write
+transaction during the sweep so a concurrent publisher cannot be mistaken
+for an unreferenced blob.
 """
 
 from __future__ import annotations

@@ -84,7 +84,7 @@ from ..types import (
     TurnResult,
     TurnState,
 )
-from .blobs import FilesystemBlobStore
+from .blobs import BlobRecord, FilesystemBlobStore
 from .ephemeral import (
     ArtifactNotFound,
     BlobIntegrityError,
@@ -1066,13 +1066,13 @@ class SQLiteArtifactStore(_SqliteBase):
         ):
             raise StorageError("artifact metadata could not be redacted")
         execution_key = _execution_key(execution_id)
-        blob = self._blob_store.put(safe_content)
-        digest = blob.sha256
-        path = blob.path
         artifact_id = ArtifactId(_new_id("artifact"))
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
+            blob = self._blob_store.put(safe_content)
+            digest = blob.sha256
+            path = blob.path
             if (
                 connection.execute(
                     "SELECT 1 FROM v2_executions WHERE id=?", (execution_key,)
@@ -1224,12 +1224,23 @@ class SQLiteArtifactStore(_SqliteBase):
         self.cleanup()
 
     def cleanup(self) -> None:
-        with self._connect() as connection:
+        connection = self._connect()
+        try:
+            # Writers hold the same SQLite write lock from blob publication
+            # through reference commit. Keep it until the sweep finishes so
+            # no writer can publish a blob absent from this reference set.
+            self._begin(connection, immediate=True)
             referenced = {
                 str(row[0]): int(row[1])
                 for row in connection.execute("SELECT sha256,ref_count FROM v2_blobs")
             }
-        self._blob_store.garbage_collect(referenced)
+            self._blob_store.garbage_collect(referenced)
+            self._commit(connection)
+        except BaseException:
+            self._rollback(connection)
+            raise
+        finally:
+            connection.close()
 
     @property
     def blob_store(self) -> FilesystemBlobStore:
@@ -2311,7 +2322,7 @@ class SQLiteExecutionStore(_SqliteBase):
         execution_id: str,
         events: Sequence[Event],
         *,
-        raw_evidence: tuple[EvidenceRef, Any] | None = None,
+        raw_evidence: tuple[EvidenceRef, bytes] | None = None,
     ) -> None:
         if not events:
             return
@@ -2322,45 +2333,55 @@ class SQLiteExecutionStore(_SqliteBase):
             raise StorageConflict(
                 "all events in an append must belong to one execution"
             )
-        # Keep the full semantic payload in a verified compressed blob once it
-        # crosses the configured threshold.  SQLite retains a small searchable
-        # marker and the typed reference; readers restore the original payload
-        # transparently.  A failed metadata transaction leaves only an
-        # unreferenced, explicitly-GC-able file.
-        persisted_events: list[Event] = []
-        payload_blobs: list[tuple[Event, Any]] = []
-        for event in safe_events:
-            encoded_payload = _json(event.model_dump(mode="json")["payload"]).encode(
-                "utf-8"
-            )
-            if len(encoded_payload) <= self.payload_blob_threshold:
-                persisted_events.append(event)
-                continue
-            blob = self.artifacts.blob_store.put(encoded_payload)
-            reference = PayloadRef(
-                blob_id=f"event-payload-{event.event_id.root}",
-                sha256=blob.sha256,
-                size_bytes=blob.size_bytes,
-                media_type="application/json",
-                compression="gzip",
-            )
-            persisted = event.model_copy(
-                update={
-                    "payload": {
-                        "__m3_blob__": {
-                            "sha256": blob.sha256,
-                            "size_bytes": blob.size_bytes,
-                        }
-                    },
-                    "payload_ref": reference,
-                }
-            )
-            persisted_events.append(persisted)
-            payload_blobs.append((persisted, blob))
         connection = self._connect()
         committed: tuple[Event, ...] = ()
         try:
             self._begin(connection, immediate=True)
+            # Keep the write lock from filesystem publication through the
+            # reference commit, including raw evidence supplied by append_event.
+            raw_blob: tuple[EvidenceRef, BlobRecord] | None = None
+            if raw_evidence is not None:
+                raw_reference, raw_content = raw_evidence
+                raw_blob = (
+                    raw_reference,
+                    self.artifacts.blob_store.put(
+                        raw_content,
+                        sha256=raw_reference.sha256,
+                        size_bytes=raw_reference.size_bytes,
+                    ),
+                )
+            # Large event payloads live in verified compressed blobs. A failed
+            # transaction leaves only an explicitly collectable orphan.
+            persisted_events: list[Event] = []
+            payload_blobs: list[tuple[Event, BlobRecord]] = []
+            for event in safe_events:
+                encoded_payload = _json(
+                    event.model_dump(mode="json")["payload"]
+                ).encode("utf-8")
+                if len(encoded_payload) <= self.payload_blob_threshold:
+                    persisted_events.append(event)
+                    continue
+                blob = self.artifacts.blob_store.put(encoded_payload)
+                reference = PayloadRef(
+                    blob_id=f"event-payload-{event.event_id.root}",
+                    sha256=blob.sha256,
+                    size_bytes=blob.size_bytes,
+                    media_type="application/json",
+                    compression="gzip",
+                )
+                persisted = event.model_copy(
+                    update={
+                        "payload": {
+                            "__m3_blob__": {
+                                "sha256": blob.sha256,
+                                "size_bytes": blob.size_bytes,
+                            }
+                        },
+                        "payload_ref": reference,
+                    }
+                )
+                persisted_events.append(persisted)
+                payload_blobs.append((persisted, blob))
             if (
                 connection.execute(
                     "SELECT 1 FROM v2_executions WHERE id=? AND deleted_at IS NULL",
@@ -2412,11 +2433,8 @@ class SQLiteExecutionStore(_SqliteBase):
                         _iso(event.timestamp),
                     ),
                 )
-                if (
-                    raw_evidence is not None
-                    and event.event_id == safe_events[0].event_id
-                ):
-                    raw_reference, blob = raw_evidence
+                if raw_blob is not None and event.event_id == safe_events[0].event_id:
+                    raw_reference, blob = raw_blob
                     existing_blob = connection.execute(
                         "SELECT size_bytes,storage_key,compressed_size "
                         "FROM v2_blobs WHERE sha256=?",
@@ -2521,10 +2539,10 @@ class SQLiteExecutionStore(_SqliteBase):
             self._commit(connection)
             committed = safe_events
         except Exception as exc:
-            if not _is_integrity_error(exc):
-                raise
             self._rollback(connection)
-            raise StorageConflict("event identity or sequence conflicts") from exc
+            if _is_integrity_error(exc):
+                raise StorageConflict("event identity or sequence conflicts") from exc
+            raise
         except BaseException:
             self._rollback(connection)
             raise
@@ -2575,11 +2593,14 @@ class SQLiteExecutionStore(_SqliteBase):
             remaining_bytes=max(self._capture_config.raw_execution_bytes - used, 0),
         )
         try:
-            # Blob materialization and metadata publication have one failure
-            # boundary.  A blob writer may fail after creating a temporary
-            # file, so cleanup also runs when ``put`` itself raises.
-            blob = self.artifacts.blob_store.put(prepared.content)
-            storage_key = str(blob.path.relative_to(self.artifacts.blob_root))
+            # The digest determines the final path without publishing bytes.
+            # _append publishes the blob while holding its metadata transaction.
+            digest = hashlib.sha256(prepared.content).hexdigest()
+            storage_key = str(
+                self.artifacts.blob_store.path_for(digest).relative_to(
+                    self.artifacts.blob_root
+                )
+            )
             ref = _make_evidence_ref(
                 event.event_id, prepared.content, media_type=safe_media_type
             ).model_copy(update={"storage_key": storage_key})
@@ -2595,12 +2616,10 @@ class SQLiteExecutionStore(_SqliteBase):
                         update={"raw_evidence_ref": ref, "payload": event_payload}
                     ),
                 ),
-                raw_evidence=(ref, blob),
+                raw_evidence=(ref, prepared.content),
             )
         except BaseException:
-            # The DB transaction did not publish a reference.  The explicit
-            # store GC removes this unreferenced, verified content-addressed
-            # blob; existing shared blobs are retained.
+            # A failed blob write or transaction may leave an unreferenced file.
             try:
                 self.artifacts.cleanup()
             except Exception:
