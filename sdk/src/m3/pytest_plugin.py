@@ -554,9 +554,9 @@ def _server_choices(
 def _parametrizes_server(node: _Any) -> bool:
     """Whether pytest already owns ``server`` through a parametrize marker."""
     for marker in node.iter_markers(name="parametrize"):
-        if not marker.args:
+        names = marker.args[0] if marker.args else marker.kwargs.get("argnames")
+        if names is None:
             continue
-        names = marker.args[0]
         if isinstance(names, str):
             names = names.replace(",", " ").split()
         if "server" in names:

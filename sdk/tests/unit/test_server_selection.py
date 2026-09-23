@@ -179,13 +179,19 @@ def test_marked_agent_keeps_project_server_fixture_without_selection(
 
 
 @pytest.mark.parametrize("indirect", [False, True])
+@pytest.mark.parametrize("keyword", [False, True])
 def test_marked_agent_keeps_pytest_server_parameter(
-    tmp_path: Path, indirect: bool
+    tmp_path: Path, indirect: bool, keyword: bool
 ) -> None:
+    parameter = (
+        f"argnames='server', argvalues=['alpha', 'beta'], indirect={indirect}"
+        if keyword
+        else f"'server', ['alpha', 'beta'], indirect={indirect}"
+    )
     source = (
         "import pytest\n"
         "@pytest.mark.m3(agents=[{'harness':'opencode','models':['opencode/a']}])\n"
-        f"@pytest.mark.parametrize('server', ['alpha', 'beta'], indirect={indirect})\n"
+        f"@pytest.mark.parametrize({parameter})\n"
         "def test_existing_parameter(agent, server): assert server in {'alpha', 'beta'}\n"
     )
     result = _collect(tmp_path, source, collect_only=False)
