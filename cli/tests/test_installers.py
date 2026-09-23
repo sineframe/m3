@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,258 +19,267 @@ renderer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(renderer)
 
 
-def _write_executable(path: Path, contents: str) -> None:
-    path.write_text(contents, encoding="utf-8")
+def _executable(path: Path, source: str) -> None:
+    path.write_text(source, encoding="utf-8")
     path.chmod(0o755)
 
 
-def test_renderer_writes_versioned_executable_installers(tmp_path: Path) -> None:
-    shell, powershell = renderer.render_installers("0.2.0a13", tmp_path)
+def _write_release_wheels(directory: Path, version: str, *, valid: bool = True) -> None:
+    assets = [
+        f"sf_m3_cli-{version}-py3-none-any.whl",
+        f"sf_m3-{version}-py3-none-any.whl",
+        f"sf_m3_app-{version}-py3-none-any.whl",
+    ]
+    records = []
+    for index, name in enumerate(assets):
+        payload = f"wheel-{index}".encode()
+        (directory / name).write_bytes(payload)
+        digest = hashlib.sha256(payload).hexdigest()
+        records.append(f"{digest if valid else '0' * 64}  {name}")
+    (directory / "SHA256SUMS").write_text("\n".join(records) + "\n", encoding="utf-8")
+
+
+def test_renderer_emits_one_versioned_posix_installer(tmp_path: Path) -> None:
+    shell = renderer.render_installer("0.2.0a13", tmp_path)
     assert shell.name == "install.sh"
-    assert powershell.name == "install.ps1"
     assert shell.stat().st_mode & 0o111
-    for path in (shell, powershell):
-        contents = path.read_text(encoding="utf-8")
-        assert "@M3_VERSION@" not in contents
-        assert "0.2.0a13" in contents
-        assert (
-            "m3-${VERSION}-py3-none-any.whl" in contents
-            or "m3-$Version-py3-none-any.whl" in contents
-        )
-        assert (
-            "m3_app-${VERSION}-py3-none-any.whl" in contents
-            or "m3_app-$Version-py3-none-any.whl" in contents
-        )
-        assert (
-            "m3_cli-${VERSION}-py3-none-any.whl" in contents
-            or "m3_cli-$Version-py3-none-any.whl" in contents
-        )
+    contents = shell.read_text(encoding="utf-8")
+    assert "@M3_VERSION@" not in contents
+    assert "0.2.0a13" in contents
+    assert "sf_m3-${VERSION}-py3-none-any.whl" in contents
+    assert "sf_m3_app-${VERSION}-py3-none-any.whl" in contents
+    assert "sf_m3_cli-${VERSION}-py3-none-any.whl" in contents
+    assert "gh auth" not in contents
 
 
 def test_renderer_rejects_unsafe_version(tmp_path: Path) -> None:
     with pytest.raises(renderer.InstallerRenderError):
-        renderer.render_installers("0.2.0; touch /tmp/pwned", tmp_path)
+        renderer.render_installer("0.2.0; touch /tmp/pwned", tmp_path)
 
 
-def test_renderer_requires_one_placeholder(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    template = ROOT / "scripts" / "install.sh.in"
-    monkeypatch.setattr(renderer, "PLACEHOLDER", "not-in-template")
-    with pytest.raises(renderer.InstallerRenderError, match="exactly one"):
-        renderer.render_template(template, "0.2.0a13")
+def test_rendered_shell_syntax(tmp_path: Path) -> None:
+    shell = renderer.render_installer("1.2.3", tmp_path)
+    subprocess.run(["sh", "-n", str(shell)], check=True)
 
 
-def test_rendered_posix_installer_has_valid_shell_syntax(tmp_path: Path) -> None:
-    shell, _ = renderer.render_installers("0.2.0a13", tmp_path)
-    result = subprocess.run(
-        ["sh", "-n", str(shell)], check=False, capture_output=True, text=True
+def _run_installer(tmp_path: Path, *, valid: bool) -> subprocess.CompletedProcess[str]:
+    version = "1.2.3"
+    release, fake_bin, uv_bin, uv_root = (
+        tmp_path / n for n in ("release", "bin", "uv-bin", "uv-tools")
     )
-    if result.returncode != 0:
-        pytest.fail(result.stderr or result.stdout)
-
-
-def test_installers_use_isolated_paths_and_local_wheels() -> None:
-    shell = (ROOT / "scripts" / "install.sh.in").read_text(encoding="utf-8")
-    powershell = (ROOT / "scripts" / "install.ps1.in").read_text(encoding="utf-8")
-    for contents in (shell, powershell):
-        assert "M3_RELEASE_BASE_URL" in contents
-        assert "SHA256SUMS" in contents
-        assert "--with" in contents or "Get-FileHash" in contents
-        assert "pip --user" not in contents
-        assert "sudo" not in contents
-    assert "uv tool install --force" in shell
-    assert "tool install --force" in powershell
-    assert "uv tool run" not in shell
-    assert "tool run" not in powershell
-    assert "elif command -v m3" not in shell
-    assert "ExistingCommand" not in powershell
-    assert "M3_INSTALL_ROOT" in shell
-    assert "M3_INSTALL_ROOT" in powershell
-    assert "M3_BIN_DIR" in shell
-    assert "M3_BIN_DIR" in powershell
-    assert "-m pip install" in shell
-    assert "-m pip install" in powershell
-    assert ".m3-install" in shell
-    assert ".m3-install" in powershell
-    for contents in (shell, powershell):
-        assert "[1/4] Downloading release assets" in contents
-        assert "[2/4] Verifying checksums" in contents
-        assert "[3/4] Installing into isolated tool storage" in contents
-        assert "[4/4] Verifying command and bundled UI" in contents
-        assert "Next:" in contents and "m3 setup" in contents
-        assert "Command:" in contents
-    assert "STAGE=" not in shell
-    assert "$Stage" not in powershell
-    assert "created_link=1" in shell
-    assert 'if [ "$created_link" -eq 1 ]' in shell
-    assert shell.index('"$COMMAND_PATH" --help') < shell.index("transaction_done=1")
-    assert "m3-bin" in powershell
-    assert "if (-not (Test-Path -LiteralPath $Marker))" in powershell
-    assert (
-        "-and -not (Test-Path (Join-Path $InstallRoot 'Scripts/python.exe'))"
-        not in powershell
-    )
-    assert "$CreatedCommand = $true" in powershell
-    assert "$CreatedCommand -and" in powershell
-    assert powershell.index("& $CommandPath --help") < powershell.index(
-        "Remove-Item -Recurse -Force -LiteralPath $Backup"
-    )
-
-
-def test_installers_support_authenticated_private_release_downloads() -> None:
-    shell = (ROOT / "scripts" / "install.sh.in").read_text(encoding="utf-8")
-    powershell = (ROOT / "scripts" / "install.ps1.in").read_text(encoding="utf-8")
-
-    assert 'RELEASE_TAG="v${VERSION}"' in shell
-    assert "gh auth status --hostname github.com" in shell
-    assert 'gh release download "$RELEASE_TAG"' in shell
-    assert '--repo "$REPOSITORY"' in shell
-    assert '--pattern "$artifact"' in shell
-    assert '--output "$destination"' in shell
-    assert 'download "$artifact"' in shell
-
-    assert '$ReleaseTag = "v$Version"' in powershell
-    assert "auth status --hostname github.com" in powershell
-    assert (
-        "release download $ReleaseTag --repo $Repository --pattern $Name --output $Destination"
-        in powershell
-    )
-    assert "Download $Name (Join-Path $TempDir $Name)" in powershell
-    # `exit` would terminate the caller when this script is invoked with `&`.
-    assert "exit 0" not in powershell
-
-
-def test_posix_installer_fetches_exact_private_assets_into_isolated_uv_tool(
-    tmp_path: Path,
-) -> None:
-    version = "0.2.0a13"
-    release = tmp_path / "release"
-    fake_bin = tmp_path / "bin"
-    uv_root = tmp_path / "uv-tools"
-    uv_bin = tmp_path / "uv-bin"
-    log = tmp_path / "calls.log"
-    for directory in (release, fake_bin, uv_bin, uv_root / "m3-cli" / "bin"):
+    for directory in (release, fake_bin, uv_bin, uv_root / "sf-m3-cli" / "bin"):
         directory.mkdir(parents=True)
-
-    assets = (
-        f"m3_cli-{version}-py3-none-any.whl",
-        f"m3-{version}-py3-none-any.whl",
-        f"m3_app-{version}-py3-none-any.whl",
-    )
-    checksums: list[str] = []
-    for index, name in enumerate(assets):
-        payload = f"wheel-{index}".encode()
-        (release / name).write_bytes(payload)
-        checksums.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
-    (release / "SHA256SUMS").write_text("\n".join(checksums) + "\n", encoding="utf-8")
-
-    _write_executable(
-        fake_bin / "gh",
+    _write_release_wheels(release, version, valid=valid)
+    _executable(
+        fake_bin / "curl",
         """#!/bin/sh
 set -eu
-printf 'gh %s\\n' "$*" >> "$M3_TEST_LOG"
-if [ "$1 $2" = 'auth status' ]; then exit 0; fi
-[ "$1 $2" = 'release download' ] || exit 20
-tag=$3
-shift 3
-pattern=
-output=
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --repo) [ "$2" = 'sineframe/m3' ] || exit 21; shift 2 ;;
-    --pattern) pattern=$2; shift 2 ;;
-    --output) output=$2; shift 2 ;;
-    *) exit 22 ;;
-  esac
-done
-[ "$tag" = 'v0.2.0a13' ] && [ -n "$pattern" ] && [ -n "$output" ] || exit 23
-cp "$M3_TEST_RELEASE/$pattern" "$output"
+out=
+previous=
+for arg do if [ "$previous" = output ]; then out=$arg; fi; if [ "$arg" = --output ]; then previous=output; else previous=; fi; done
+url=$*
+name=${url##*/}
+cp "$M3_TEST_RELEASE/$name" "$out"
 """,
     )
-    _write_executable(
+    _executable(
         fake_bin / "uv",
         """#!/bin/sh
 set -eu
-printf 'uv %s\\n' "$*" >> "$M3_TEST_LOG"
-if [ "$1 $2" = 'tool install' ]; then exit 0; fi
-if [ "$1 $2 ${3:-}" = 'tool dir --bin' ]; then printf '%s\\n' "$M3_TEST_UV_BIN"; exit 0; fi
-if [ "$1 $2" = 'tool dir' ]; then printf '%s\\n' "$M3_TEST_UV_ROOT"; exit 0; fi
-exit 30
+case "$1 $2 ${3:-}" in
+  'tool install '*) exit 0 ;;
+  'tool dir --bin') printf '%s\\n' "$M3_TEST_UV_BIN" ;;
+  'tool dir ') printf '%s\\n' "$M3_TEST_UV_ROOT" ;;
+  *) exit 2 ;;
+esac
 """,
     )
-    for executable in (uv_bin / "m3", uv_root / "m3-cli" / "bin" / "python"):
-        _write_executable(executable, "#!/bin/sh\nexit 0\n")
-
-    shell, _ = renderer.render_installers(version, tmp_path / "rendered")
-    environment = os.environ.copy()
-    environment.pop("M3_RELEASE_BASE_URL", None)
-    environment.update(
+    _executable(uv_bin / "m3", "#!/bin/sh\nexit 0\n")
+    _executable(uv_root / "sf-m3-cli" / "bin" / "python", "#!/bin/sh\nexit 0\n")
+    shell = renderer.render_installer(version, tmp_path / "rendered")
+    env = os.environ.copy()
+    env.update(
         {
-            "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
-            "M3_TEST_LOG": str(log),
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "M3_RELEASE_BASE_URL": "https://example.invalid/release",
             "M3_TEST_RELEASE": str(release),
             "M3_TEST_UV_BIN": str(uv_bin),
             "M3_TEST_UV_ROOT": str(uv_root),
         }
     )
+    return subprocess.run(
+        ["sh", str(shell)], cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+
+
+def test_public_posix_installer_verifies_and_installs_release(tmp_path: Path) -> None:
+    result = _run_installer(tmp_path, valid=True)
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "m3 installed with uv" in result.stdout
+
+
+def test_public_posix_installer_rejects_bad_checksum(tmp_path: Path) -> None:
+    result = _run_installer(tmp_path, valid=False)
+    assert result.returncode != 0
+    assert "checksum mismatch" in result.stderr
+
+
+def _bootstrap(
+    tmp_path: Path, releases: list[dict[str, object]], *args: str, uv_only: bool = False
+) -> tuple[subprocess.CompletedProcess[str], str | None]:
+    tmp_path.mkdir(parents=True)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    release_file = tmp_path / "releases.json"
+    release_file.write_text(json.dumps(releases), encoding="utf-8")
+    asset_root = tmp_path / "assets"
+    for release in releases:
+        tag = str(release["tag_name"])
+        if not any(asset.get("name") == "install.sh" for asset in release["assets"]):
+            continue
+        directory = asset_root / tag
+        directory.mkdir(parents=True)
+        installer = f'echo {tag} > "$M3_TEST_SELECTED"\n'
+        (directory / "install.sh").write_text(installer, encoding="utf-8")
+        checksums = "not executed by the bootstrap test\n"
+        (directory / "SHA256SUMS").write_text(checksums, encoding="utf-8")
+        version = tag[1:]
+        manifest = {
+            "version": version,
+            "assets": {
+                "install.sh": hashlib.sha256(installer.encode()).hexdigest(),
+                "SHA256SUMS": hashlib.sha256(checksums.encode()).hexdigest(),
+            },
+        }
+        (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    selected = tmp_path / "selected"
+    _executable(
+        fake_bin / "curl",
+        """#!/bin/sh
+set -eu
+out=
+previous=
+for arg do
+  if [ "$previous" = output ]; then out=$arg; previous=; continue; fi
+  if [ "$arg" = --output ]; then previous=output; fi
+done
+url=$*
+case "$url" in
+  *api.github.com*) cp "$M3_TEST_RELEASES" "$out" ;;
+  */releases/download/*/manifest.json)
+    tag=${url#*/releases/download/}; tag=${tag%%/*}
+    cp "$M3_TEST_ASSETS/$tag/manifest.json" "$out"
+    ;;
+  */releases/download/*/SHA256SUMS)
+    tag=${url#*/releases/download/}; tag=${tag%%/*}
+    cp "$M3_TEST_ASSETS/$tag/SHA256SUMS" "$out"
+    ;;
+  */releases/download/*/install.sh)
+    tag=${url#*/releases/download/}; tag=${tag%%/*}
+    cp "$M3_TEST_ASSETS/$tag/install.sh" "$out"
+    ;;
+  *) exit 4 ;;
+esac
+""",
+    )
+    if uv_only:
+        for name in ("cp", "mktemp", "rm", "sh"):
+            executable = shutil.which(name)
+            assert executable is not None
+            (fake_bin / name).symlink_to(executable)
+        _executable(
+            fake_bin / "uv",
+            """#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "$M3_TEST_UV_LOG"
+case "$1 $2" in
+  'python install') exit 0 ;;
+  'python find') printf '%s\\n' "$M3_TEST_PYTHON" ;;
+  *) exit 2 ;;
+esac
+""",
+        )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": str(fake_bin)
+            if uv_only
+            else f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "M3_TEST_RELEASES": str(release_file),
+            "M3_TEST_ASSETS": str(asset_root),
+            "M3_TEST_SELECTED": str(selected),
+            "M3_TEST_PYTHON": sys.executable,
+            "M3_TEST_UV_LOG": str(tmp_path / "uv.log"),
+            "TMPDIR": str(tmp_path),
+        }
+    )
     result = subprocess.run(
-        ["sh", str(shell)],
+        [
+            "/bin/sh" if uv_only else "sh",
+            str(ROOT / "scripts" / "install-latest.sh"),
+            *args,
+        ],
         cwd=tmp_path,
-        env=environment,
-        check=False,
+        env=env,
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, result.stderr or result.stdout
-    calls = log.read_text(encoding="utf-8").splitlines()
-    downloads = [line for line in calls if line.startswith("gh release download ")]
-    assert len(downloads) == 4
-    for name in (*assets, "SHA256SUMS"):
-        assert any(f"--pattern {name} --output " in line for line in downloads)
-    assert any(
-        line.startswith("uv tool install --force ") and line.count(" --with ") == 2
-        for line in calls
+    return result, selected.read_text().strip() if selected.exists() else None
+
+
+def _release(
+    tag: str, *, prerelease: bool = False, draft: bool = False, installer: bool = True
+) -> dict[str, object]:
+    assets = [{"name": "install.sh"}] if installer else []
+    return {"tag_name": tag, "prerelease": prerelease, "draft": draft, "assets": assets}
+
+
+def test_bootstrap_selects_highest_final_and_explicit_prerelease(
+    tmp_path: Path,
+) -> None:
+    releases = [
+        _release("v0.9.0"),
+        _release("v1.0.0a12", prerelease=True),
+        _release("v1.0.0b2", prerelease=True),
+        _release("v1.0.0"),
+    ]
+    result, selected = _bootstrap(tmp_path / "stable", releases)
+    assert result.returncode == 0, result.stderr
+    assert selected == "v1.0.0"
+    result, selected = _bootstrap(tmp_path / "pre", releases, "--prerelease")
+    assert result.returncode == 0, result.stderr
+    assert selected == "v1.0.0b2"
+
+
+def test_bootstrap_alpha_fallback_and_exact_tag(tmp_path: Path) -> None:
+    releases = [
+        _release("v0.4.0a2", prerelease=True),
+        _release("v0.4.0a12", prerelease=True),
+        _release("v2.0.0", draft=True),
+    ]
+    result, selected = _bootstrap(tmp_path / "fallback", releases)
+    assert result.returncode == 0, result.stderr
+    assert selected == "v0.4.0a12"
+    result, selected = _bootstrap(tmp_path / "exact", releases, "--tag", "v0.4.0a2")
+    assert result.returncode == 0, result.stderr
+    assert selected == "v0.4.0a2"
+
+
+def test_bootstrap_uses_uv_python_when_python3_is_absent(tmp_path: Path) -> None:
+    root = tmp_path / "uv-only"
+    result, selected = _bootstrap(root, [_release("v1.2.3")], uv_only=True)
+    assert result.returncode == 0, result.stderr
+    assert selected == "v1.2.3"
+    assert root.joinpath("uv.log").read_text().splitlines() == [
+        "python install 3.13",
+        "python find 3.13",
+    ]
+
+
+def test_bootstrap_fails_when_release_has_no_installer(tmp_path: Path) -> None:
+    result, selected = _bootstrap(
+        tmp_path / "missing", [_release("v1.0.0", installer=False)]
     )
-
-
-def test_private_install_docs_use_exact_authenticated_assets() -> None:
-    root_readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "[CLI guide](cli/README.md)" in root_readme
-
-    contents = (ROOT / "cli" / "README.md").read_text(encoding="utf-8")
-    assert "gh auth login" in contents
-    assert (
-        "gh release download vX.Y.Z --repo sineframe/m3 "
-        "--pattern install.sh --output install.sh"
-    ) in contents
-    assert "--pattern install.sh --output install.sh" in contents
-    assert "sh install.sh\nrm install.sh" in contents
-    assert "--pattern install.ps1 --output install.ps1" in contents
-    assert ".\\install.ps1\nRemove-Item install.ps1" in contents
-    assert "m3[pytest,storage,judge] @ ./.m3-download/$SDK_WHEEL" in contents
-    assert "only downloads files" in contents
-    assert "does not create or modify a" in contents
-
-
-def test_release_workflow_publishes_only_tag_runs() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "release-cli.yml").read_text(
-        encoding="utf-8"
-    )
-    assert 'tags:\n      - "v*"' in workflow
-    assert "workflow_dispatch:" in workflow
-    assert (
-        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
-        in workflow
-    )
-    assert "gh release create" in workflow
-    assert "--verify-tag" in workflow
-    assert "--generate-notes" in workflow
-    assert "upload-artifact" not in workflow
-    assert "pypi" not in workflow.lower()
-    assert "actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f" in workflow
-    assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in workflow
-    assert "repository: rishhavv/m3-ui" in workflow
-    assert "ref: ${{ steps.ui-ref.outputs.sha }}" in workflow
-    assert "--print-version" in workflow
-    assert "--expected-version" in workflow
+    assert result.returncode != 0
+    assert "no published M3 release with install.sh" in result.stderr
+    assert selected is None

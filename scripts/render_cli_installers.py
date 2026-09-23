@@ -30,7 +30,7 @@ def render_template(template: Path, version: str) -> str:
     return rendered
 
 
-def render_installers(version: str, output_dir: str | Path) -> tuple[Path, Path]:
+def render_installer(version: str, output_dir: str | Path) -> Path:
     if not VERSION_PATTERN.fullmatch(version) or any(
         character in version for character in "\r\n'\""
     ):
@@ -40,16 +40,13 @@ def render_installers(version: str, output_dir: str | Path) -> tuple[Path, Path]
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     rendered_paths: list[Path] = []
-    for source_name, destination_name in (
-        ("install.sh.in", "install.sh"),
-        ("install.ps1.in", "install.ps1"),
-    ):
+    for source_name, destination_name in (("install.sh.in", "install.sh"),):
         rendered = render_template(ROOT / "scripts" / source_name, version)
         destination = output / destination_name
         destination.write_text(rendered, encoding="utf-8", newline="\n")
         rendered_paths.append(destination)
     rendered_paths[0].chmod(0o755)
-    return rendered_paths[0], rendered_paths[1]
+    return rendered_paths[0]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,12 +55,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        shell, powershell = render_installers(args.version, args.output_dir)
+        shell = render_installer(args.version, args.output_dir)
     except (InstallerRenderError, OSError) as exc:
         print(f"installer rendering failed: {exc}", file=sys.stderr)
         return 2
     print(shell)
-    print(powershell)
     return 0
 
 

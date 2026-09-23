@@ -109,7 +109,7 @@ from m3.storage import SQLiteExecutionStore
 try:
     SQLiteExecutionStore('optional-dependency-test.sqlite')
 except ModuleNotFoundError as error:
-    assert str(error) == 'SQLite storage requires the optional dependency; install m3[storage]'
+    assert str(error) == 'SQLite storage requires the optional dependency; install sf-m3[storage]'
 else:
     raise AssertionError('SQLite storage unexpectedly initialized without SQLAlchemy')
 """

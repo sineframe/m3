@@ -3,7 +3,7 @@
 ## Response judges
 
 `m3 setup` includes judge support. If installing the SDK directly, include
-the `judge` extra (for example, `m3[pytest,judge]`). Put the judge key in `.env`
+the `judge` extra (for example, `sf-m3[pytest,judge]`). Put the judge key in `.env`
 as `M3_JUDGE_API_KEY`. For an OpenCode agent, the same file can also hold
 `OPENCODE_API_KEY`:
 

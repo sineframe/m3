@@ -21,9 +21,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECTS = {
-    "m3": ROOT / "sdk",
-    "m3_app": ROOT / "app",
-    "m3_cli": ROOT / "cli",
+    "sf_m3": ROOT / "sdk",
+    "sf_m3_app": ROOT / "app",
+    "sf_m3_cli": ROOT / "cli",
 }
 _VERSION_RE = re.compile(r"^\s*version\s*=\s*[\"']([^\"']+)[\"']\s*$", re.MULTILINE)
 _WHEEL_DIST_INFO_RE = re.compile(r"^[^/]+-[^/]+\.dist-info/METADATA$")
@@ -244,17 +244,22 @@ def _verify_wheel(
             f"wheel metadata does not match {expected_name} {expected_version}: {metadata.path.name}"
         )
     forbidden_requires = {"streamlit", "requests"}
-    if expected_name == "m3_app":
+    if expected_name == "sf_m3_app":
         forbidden = forbidden_requires.intersection(
             {_requirement_name(value) for value in metadata.requires}
         )
         if forbidden:
-            raise ReleaseBuildError("m3_app wheel has forbidden dependency")
+            raise ReleaseBuildError("sf_m3_app wheel has forbidden dependency")
         if "legacy-ui" in {_package_name(value) for value in metadata.provides_extras}:
-            raise ReleaseBuildError("m3_app wheel provides removed legacy-ui extra")
+            raise ReleaseBuildError("sf_m3_app wheel provides removed legacy-ui extra")
         if any(name.startswith("m3_app/ui/") for name in metadata.files):
-            raise ReleaseBuildError("m3_app wheel contains removed UI package")
-    elif expected_name in {"m3", "m3_cli"}:
+            raise ReleaseBuildError("sf_m3_app wheel contains removed UI package")
+        required = f"sf-m3[storage]=={expected_version}"
+        if required.lower() not in {
+            re.sub(r"\s+", "", value).lower() for value in metadata.requires
+        }:
+            raise ReleaseBuildError("app wheel must pin the matching sf-m3 SDK")
+    elif expected_name in {"sf_m3", "sf_m3_cli"}:
         forbidden = forbidden_requires.intersection(
             _mandatory_requirements(metadata.requires)
         )
@@ -262,16 +267,18 @@ def _verify_wheel(
             raise ReleaseBuildError(
                 f"{expected_name} wheel has forbidden mandatory dependency"
             )
-    if expected_name == "m3_cli":
+    if expected_name == "sf_m3_cli":
         normalized_requires = {
             re.sub(r"\s+", "", value).lower() for value in metadata.requires
         }
         required = {
-            f"m3[storage]=={expected_version}",
-            f"m3-app=={expected_version}",
+            f"sf-m3[storage]=={expected_version}",
+            f"sf-m3-app=={expected_version}",
         }
         if not required.issubset(normalized_requires):
-            raise ReleaseBuildError("CLI wheel dependencies do not pin m3 and m3-app")
+            raise ReleaseBuildError(
+                "CLI wheel dependencies do not pin m3 and sf-m3-app"
+            )
         if "m3 = m3_cli.main:main" not in metadata.entry_points:
             raise ReleaseBuildError("CLI wheel does not own the m3 entry point")
 
@@ -292,7 +299,7 @@ def verify_release(
     for name, info in metadata.items():
         _verify_wheel(info, name, expected[name])
 
-    cli_path = classified["m3_cli"]
+    cli_path = classified["sf_m3_cli"]
     source_maps_in_ui = (
         any(path.suffix.lower() == ".map" for path in ui_source_dist.rglob("*"))
         if ui_source_dist is not None
@@ -354,9 +361,9 @@ def build_release(
         raise ReleaseBuildError(
             f"project version {next(iter(expected.values()))} does not match expected version {expected_version}"
         )
-    with tempfile.TemporaryDirectory(prefix="m3-cli-release-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sf-m3-cli-release-") as temporary:
         staged = _stage_cli(ui, Path(temporary))
-        for project in (PROJECTS["m3"], PROJECTS["m3_app"], staged):
+        for project in (PROJECTS["sf_m3"], PROJECTS["sf_m3_app"], staged):
             _run_build(project, output)
     return verify_release(output, expected, ui_source_dist=ui)
 
@@ -392,7 +399,7 @@ def main(argv: list[str] | None = None) -> int:
     except ReleaseBuildError as exc:
         print(f"release build failed: {exc}", file=sys.stderr)
         return 2
-    for name in ("m3", "m3_app", "m3_cli"):
+    for name in ("sf_m3", "sf_m3_app", "sf_m3_cli"):
         print(f"{name}: {artifacts[name]}")
     return 0
 

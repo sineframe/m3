@@ -127,7 +127,7 @@ def _sqlalchemy() -> Any:
         from sqlalchemy.pool import NullPool
     except ImportError as exc:  # pragma: no cover - exercised in a minimal env
         raise ModuleNotFoundError(
-            "SQLite storage requires the optional dependency; install m3[storage]"
+            "SQLite storage requires the optional dependency; install sf-m3[storage]"
         ) from exc
     return create_engine, NullPool
 

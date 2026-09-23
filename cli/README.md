@@ -17,34 +17,28 @@ being tested.
 
 ## Install
 
-The repository is private, so authenticate GitHub CLI once before downloading a
-release (the token needs read access to repository contents):
+Install a final release from PyPI:
 
 ```sh
-gh auth login && gh auth status
+uv tool install sf-m3-cli
 ```
 
-Replace `X.Y.Z` with the exact release you want, then download and run its
-installer:
+To try a prerelease, select and pin it explicitly:
 
 ```sh
-gh release download vX.Y.Z --repo sineframe/m3 --pattern install.sh --output install.sh
-sh install.sh
-rm install.sh
+uv tool install --prerelease allow "sf-m3-cli==0.2.0a13"
 ```
-On Windows:
-```powershell
-gh release download vX.Y.Z --repo sineframe/m3 --pattern install.ps1 --output install.ps1
-.\install.ps1
-Remove-Item install.ps1
+
+The shell installer selects the highest final version, falling back to the highest prerelease until a final exists:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sineframe/m3/main/scripts/install-latest.sh | sh
+# For an explicit alpha, use: sh -s -- --tag v0.2.0a13
 ```
 
 The installer prefers `uv tool install`, and otherwise creates a dedicated
 virtual environment. The machine-level CLI and bundled UI stay isolated from
-global Python and from every project environment. Releases are currently
-pre-releases, so select an explicit release tag.
-The authenticated `gh` session downloads exact release assets; `gh release
-download` only downloads files from an existing release and does not create or modify a release.
+global Python and every project environment.
 
 ## Set up a project
 
@@ -71,48 +65,22 @@ do not already have one; otherwise add only the keys your tests need. Add
 missing. The first skipped run confirms collection but exits 1 under `m3 test`
 because no test executed. Replace the starter before using the run as a CI gate.
 
-`m3 setup` installs `m3[pytest,storage,judge]` into the project
-environment. It selects `--python`, then an active `VIRTUAL_ENV` or
+`m3 setup` installs the matching SDK with pytest, storage, and judge support
+into the project environment. It selects `--python`, then an active `VIRTUAL_ENV` or
 `CONDA_PREFIX`, then `.venv`, creating `.venv` when needed. It never installs
 the CLI or bundled app there, never edits dependency manifests or lockfiles,
-and verifies the exact SDK version and release checksum. Judge support is
-included. If you recreate or sync the environment, run setup again until PyPI
-publishing is available. Rerunning setup also adds judge support to an older
+and verifies the exact SDK version installed from PyPI. Judge support is
+included. If you recreate or sync the environment, run setup again. Rerunning setup also adds judge support to an older
 project environment.
 
-<details>
-<summary>Advanced recovery: install the SDK wheel manually</summary>
-
-This is only needed when setup is unavailable. Keep the exact release version
-and remove the temporary download after installation:
+For an isolated pip environment without the `m3` command, install the SDK directly:
 
 ```sh
-VERSION=X.Y.Z
-SDK_WHEEL="m3-${VERSION}-py3-none-any.whl"
-mkdir -p .m3-download
-gh release download "v${VERSION}" -R sineframe/m3 -p "$SDK_WHEEL" \
-  -O ".m3-download/$SDK_WHEEL"
-uv venv .venv
+python3 -m venv .venv
 . .venv/bin/activate
-uv pip install "m3[pytest,storage,judge] @ ./.m3-download/$SDK_WHEEL"
-rm ".m3-download/$SDK_WHEEL"
-rmdir .m3-download 2>/dev/null || true
+python -m pip install "sf-m3[pytest,judge]"
 ```
 
-On Windows:
-
-```powershell
-$Version = 'X.Y.Z'
-$SdkWheel = "m3-$Version-py3-none-any.whl"
-New-Item -ItemType Directory -Force .m3-download | Out-Null
-gh release download "v$Version" -R sineframe/m3 -p $SdkWheel -O ".m3-download/$SdkWheel"
-if ($LASTEXITCODE -ne 0) { throw 'gh release download failed' }
-uv venv .venv
-. .venv\Scripts\Activate.ps1
-uv pip install "m3[pytest,storage,judge] @ ./.m3-download/$SdkWheel"
-Remove-Item -Recurse -Force .m3-download
-```
-</details>
 
 ## Commands
 

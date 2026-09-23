@@ -152,7 +152,7 @@ def wheel_paths(
         raise StandaloneGateError("release directory is unavailable")
     expected = tuple(
         release / f"{prefix}-{version}-py3-none-any.whl"
-        for prefix in ("m3_cli", "m3", "m3_app")
+        for prefix in ("sf_m3_cli", "sf_m3", "sf_m3_app")
     )
     if (
         any(not path.is_file() for path in expected)
@@ -193,7 +193,7 @@ def _wheel_requirements(
     """
 
     requirements: set[str] = set()
-    local_names = {"m3", "m3-app", "m3-cli"}
+    local_names = {"sf-m3", "sf-m3-app", "sf-m3-cli"}
     for wheel in wheels:
         try:
             with zipfile.ZipFile(wheel) as archive:
@@ -296,7 +296,7 @@ ui = resources.files("m3_cli").joinpath("ui")
 payload = {
     "required": required,
     "forbidden": forbidden,
-    "version": metadata.version("m3"),
+    "version": metadata.version("sf-m3"),
     "ui": ui.joinpath("index.html").is_file() and any(item.is_file() for item in ui.joinpath("assets").iterdir()),
     "source_absent": all("__SOURCE_ROOT__" not in item for item in sys.path),
     "kit_imported": MCPTestKit.__name__ == "MCPTestKit",
@@ -344,16 +344,19 @@ def _project_probe(
     env: Mapping[str, str],
     source_root: Path,
 ) -> None:
-    code = r"""
+    code = (
+        r"""
 import importlib.metadata as metadata
 import importlib.util
 import json
 import sys
 from m3 import MCPTestKit
 
-required = {}
-for name in ("pytest", "m3", "m3.pytest_plugin"):
-    required[name] = importlib.util.find_spec(name) is not None
+required = {
+    "pytest": importlib.util.find_spec("pytest") is not None,
+    "sf-m3": metadata.version("sf-m3") == "__EXPECTED_VERSION__",
+    "m3.pytest_plugin": importlib.util.find_spec("m3.pytest_plugin") is not None,
+}
 try:
     from m3.storage import SQLiteExecutionStore
 except Exception:
@@ -368,9 +371,10 @@ reopened = SQLiteExecutionStore(probe_path)
 reopened.close()
 import os
 os.unlink(probe_path)
-print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("m3"), "source_absent": all("__SOURCE_ROOT__" not in item for item in sys.path), "kit_imported": MCPTestKit.__name__ == "MCPTestKit"}, sort_keys=True))
-""".replace("__SOURCE_ROOT__", str(source_root)).replace(
-        "__PROBE_PATH__", str(cwd / "m3-probe.sqlite")
+print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("sf-m3"), "source_absent": all("__SOURCE_ROOT__" not in item for item in sys.path), "kit_imported": MCPTestKit.__name__ == "MCPTestKit"}, sort_keys=True))
+""".replace("__SOURCE_ROOT__", str(source_root))
+        .replace("__PROBE_PATH__", str(cwd / "m3-probe.sqlite"))
+        .replace("__EXPECTED_VERSION__", expected_version)
     )
     result = _run([str(project_python), "-c", code], cwd=cwd, env=dict(env))
     try:
@@ -384,7 +388,7 @@ print(json.dumps({"required": required, "forbidden": forbidden, "version": metad
         required.get(name)
         for name in (
             "pytest",
-            "m3",
+            "sf-m3",
             "m3.pytest_plugin",
             "SQLiteExecutionStore",
         )
@@ -1116,7 +1120,7 @@ def check(
     if uv is None:
         raise StandaloneGateError("uv is required for the standalone gate")
 
-    with tempfile.TemporaryDirectory(prefix="m3-cli-standalone-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sf-m3-cli-standalone-") as temporary:
         # macOS commonly exposes the temporary directory through /var ->
         # /private/var. SQLite intentionally rejects symlinked database paths,
         # so use the physical temporary path throughout the gate.
@@ -1195,7 +1199,11 @@ def check(
                 env=dict(env),
             )
             setup_env = dict(env)
-            setup_env["M3_RELEASE_BASE_URL"] = release.as_uri()
+            # The release SDK is not yet on PyPI while this gate runs in PR CI.
+            # Resolve its exact version from the wheel we just built, while
+            # leaving third-party dependencies on their normal public index.
+            setup_env["UV_FIND_LINKS"] = str(release)
+            setup_env["PIP_FIND_LINKS"] = str(release)
             _run(
                 [str(executable), "setup", "--project-root", str(version_repo)],
                 cwd=version_repo,

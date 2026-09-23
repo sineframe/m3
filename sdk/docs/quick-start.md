@@ -130,14 +130,13 @@ with MCPTestKit(env={}) as kit, kit.direct(server) as client:
 
 ## Install the project SDK
 
-Choose a release version and add the SDK wheel with pytest support to the
-project being tested:
+Add the SDK with pytest support to the project being tested:
 
 ```bash
-VERSION=X.Y.Z
-uv add \
-  "m3[pytest] @ https://github.com/sineframe/m3/releases/download/v${VERSION}/m3-${VERSION}-py3-none-any.whl"
+uv add "sf-m3[pytest]"
 ```
+
+For an explicitly pinned alpha, use `uv add --prerelease allow "sf-m3[pytest]==0.2.0a13"`.
 
 The SDK requires Python 3.10 or newer.
 
@@ -147,10 +146,15 @@ the standalone `m3` command or the bundled UI.
 ## Install the standalone CLI
 
 Install the CLI separately when you want CLI-managed test runs, persistent run
-history, or the local UI. The CLI is a machine-level tool isolated from the
-project environment; its release installer includes the production UI. Follow
-the [CLI installation guide](../../cli/README.md#install), which covers GitHub
-authentication and macOS, Linux, and Windows installation.
+history, or the local UI:
+
+```bash
+uv tool install sf-m3-cli
+```
+
+For a pinned alpha, use `uv tool install --prerelease allow "sf-m3-cli==0.2.0a13"`.
+The [CLI installation guide](../../cli/README.md#install) also documents the
+macOS/Linux shell installer.
 
 If you install the CLI, it can prepare the project environment and verify that
 the SDK version matches the CLI:
@@ -161,7 +165,7 @@ m3 setup
 m3 doctor
 ```
 
-`m3 setup` installs the matching `m3[pytest,storage,judge]` SDK into the
+`m3 setup` installs the matching SDK with pytest, storage, and judge support into the
 selected project environment. It does not install the CLI there and does not
 edit dependency manifests or lockfiles. This setup step is separate from both
 the machine-level CLI installation and declaring the SDK as a project
@@ -271,13 +275,10 @@ Persistence is optional when the SDK is used directly. An `MCPTestKit` with no
 configured store keeps execution data in memory for the lifetime of the kit;
 closing the kit does not leave a saved run history.
 
-Direct SDK users who choose SQLite can include storage support when adding the
-release wheel:
+Direct SDK users who choose SQLite can include storage support:
 
 ```bash
-VERSION=X.Y.Z
-uv add \
-  "m3[pytest,storage,judge] @ https://github.com/sineframe/m3/releases/download/v${VERSION}/m3-${VERSION}-py3-none-any.whl"
+uv add "sf-m3[pytest,storage,judge]"
 ```
 
 `m3 test` makes a different product-level choice: it always enables the

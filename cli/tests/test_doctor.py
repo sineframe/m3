@@ -191,7 +191,7 @@ def test_doctor_checks_discovered_project_python(capsys) -> None:
     assert main(["doctor", "--python", "./.venv/bin/python", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["project_python"]["status"] == "ready"
-    assert report["project_python"]["version"] == metadata.version("m3")
+    assert report["project_python"]["version"] == metadata.version("sf-m3")
     assert report["project_python"]["source"] == "--python"
     assert report["project_python"]["executable"].endswith("/.venv/bin/python")
 

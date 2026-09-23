@@ -20,7 +20,7 @@ def _hypothesis() -> Any:
         from hypothesis import strategies as st
     except ImportError:
         raise ImportError(
-            "schema strategies require the 'property' extra: m3[property]"
+            "schema strategies require the 'property' extra: sf-m3[property]"
         ) from None
     return st
 

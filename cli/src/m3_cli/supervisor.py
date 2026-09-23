@@ -338,7 +338,7 @@ except Exception:
 else:
     checks["SQLiteExecutionStore"] = True
 try:
-    version = importlib.metadata.version("m3")
+    version = importlib.metadata.version("sf-m3")
 except Exception:
     version = None
 print(json.dumps({"checks": checks, "version": version}, sort_keys=True))
@@ -347,10 +347,10 @@ print(json.dumps({"checks": checks, "version": version}, sort_keys=True))
 
 def _cli_sdk_version() -> str:
     try:
-        return importlib.metadata.version("m3")
+        return importlib.metadata.version("sf-m3")
     except importlib.metadata.PackageNotFoundError as exc:
         raise ProjectPythonError(
-            "the CLI SDK version is unavailable; reinstall m3-cli"
+            "the CLI SDK version is unavailable; reinstall sf-m3-cli"
         ) from exc
 
 

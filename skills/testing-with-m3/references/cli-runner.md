@@ -45,57 +45,33 @@ with `m3 test --env-file .env`.
 
 | Component | Install scope | Provides |
 |---|---|---|
-| `m3[pytest,storage,judge]` | Project environment via `m3 setup` | Python SDK, pytest, SQLite, and judge support |
+| M3 SDK | Project environment via `m3 setup` | Python SDK, pytest, SQLite, and judge support |
 | M3 CLI | Machine-level isolated environment | `m3` command and bundled UI |
 
-Adding the SDK with `uv add` or `pip install` does not install the CLI. The CLI
-project is distributed as `m3-cli`, but install it from an exact release
-with the release installer rather than adding it to the tested project.
-
-## Install the CLI
-
-The repository is private. Check GitHub CLI authentication first:
+Adding the SDK with `uv add` or `pip install` does not install the CLI. Install
+the CLI from PyPI for final releases:
 
 ```bash
-gh auth status
+uv tool install sf-m3-cli
 ```
 
-If authentication is missing, ask the user to complete `gh auth login`; do not
-attempt to automate an interactive login. Determine the exact release tag from
-the user, the project's required SDK version, or the repository's releases.
-Do not guess a version, and do not silently replace an existing CLI with a
-different release.
+Choose a pinned prerelease only when you intend to test one:
 
 ```bash
-gh release list --repo sineframe/m3 --limit 10
+uv tool install --prerelease allow "sf-m3-cli==0.2.0a13"
 ```
 
-For a project that already pins M3, select the matching release. For a new
-setup without a pinned version, use the most recent intended release from this
-list; releases are currently prereleases, so do not rely on GitHub's implicit
-`latest` release selection.
-
-On macOS or Linux, replace `X.Y.Z` with that exact version:
+On macOS or Linux, the shell installer installs the highest final
+release and falls back to a prerelease only when no final release exists:
 
 ```bash
-gh release download vX.Y.Z --repo sineframe/m3 \
-  --pattern install.sh --output install.sh
-sh install.sh
-rm install.sh
+curl -fsSL https://raw.githubusercontent.com/sineframe/m3/main/scripts/install-latest.sh | sh
+# For an explicit selection, add: sh -s -- --prerelease
 ```
 
-On Windows PowerShell:
-
-```powershell
-gh release download vX.Y.Z --repo sineframe/m3 `
-  --pattern install.ps1 --output install.ps1
-.\install.ps1
-Remove-Item install.ps1
-```
-
-The installer keeps the CLI and bundled UI outside the project environment. It
-prefers `uv tool install` and otherwise creates a dedicated virtual
-environment.
+Pass `--prerelease` to choose an alpha explicitly or `--tag vX.Y.Z` to select
+an exact release. The installer keeps the CLI and bundled UI outside the
+project environment.
 
 ## Prepare a project
 
@@ -120,7 +96,7 @@ check. Both name flags suppress interactive questions for an agent. A person
 running `m3 init` without flags receives the questions one by one.
 Repeating it preserves existing files and creates `.env.example` if missing.
 
-`m3 setup` installs the exact matching `m3[pytest,storage,judge]` SDK into
+`m3 setup` installs the exact matching SDK with pytest, storage, and judge support into
 the selected project environment. It does not install the CLI there and does
 not edit the project's dependency manifest or lockfile. The CLI and project
 SDK versions must match; do not work around a mismatch by bypassing `doctor`.
@@ -177,8 +153,8 @@ uv run pytest -p m3.pytest_plugin \
   --results-db .m3/executions.sqlite tests/test_shipping.py
 ```
 
-Direct SQLite use requires the `m3[storage]` extra; install
-`m3[pytest,storage]` when both pytest and SQLite support are needed.
+Direct SQLite use requires the `sf-m3[storage]` extra; install
+`sf-m3[pytest,storage]` when both pytest and SQLite support are needed.
 
 The SQLite history contains SDK executions, specifications, recorded events
 and traces, sessions/turns, saved artifacts/evidence, and evaluations

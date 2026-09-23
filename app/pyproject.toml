@@ -1,12 +1,12 @@
 [project]
-name = "m3-app"
+name = "sf-m3-app"
 version = "0.2.0a13"
 description = "Local web application for viewing M3 test runs"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-  "m3[storage]",
+  "sf-m3[storage]==0.2.0a13",
   "fastapi>=0.115,<1",
   "pydantic-settings>=2.4,<3",
   "uvicorn[standard]>=0.30,<1",
@@ -28,7 +28,7 @@ strict = true
 pretty = true
 
 [tool.uv.sources]
-m3 = { workspace = true }
+sf-m3 = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

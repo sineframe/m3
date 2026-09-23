@@ -365,7 +365,7 @@ for _compat_name in getattr(_types_module, "_COMPAT_EXPORTS", ()):
         globals()[_compat_name] = getattr(_types_module, _compat_name)
 del _compat_name, _types_module
 
-__version__ = _distribution_version("m3")
+__version__ = _distribution_version("sf-m3")
 
 # Explicit manifest keeps the public re-exports intentional.
 from ._exports import PUBLIC_EXPORTS as _PUBLIC_EXPORTS

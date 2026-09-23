@@ -39,7 +39,7 @@ def inspect_artifacts(wheel: Path, sdist: Path) -> None:
             name for name in names if name.endswith(".dist-info/METADATA")
         )
         metadata = email.message_from_bytes(archive.read(metadata_name))
-        assert metadata["Name"] == "m3"
+        assert metadata["Name"] == "sf-m3"
         assert metadata["Version"] == EXPECTED_VERSION
         assert metadata["Requires-Python"] == ">=3.10"
         assert metadata["License-Expression"] == "Apache-2.0"
@@ -89,7 +89,7 @@ def inspect_artifacts(wheel: Path, sdist: Path) -> None:
             for line in entry_points.splitlines()
             if "=" in line and not line.lstrip().startswith("[")
         }
-        assert "m3" not in console_scripts
+        assert "sf-m3" not in console_scripts
         assert (
             sum(name == "m3/schemas/m3.harness.v1.schema.json" for name in names) == 1
         )
@@ -140,7 +140,7 @@ def extract_sdist(sdist: Path, destination: Path) -> Path:
     extracted = [
         path
         for path in destination.iterdir()
-        if path.is_dir() and path.name.startswith("m3-")
+        if path.is_dir() and path.name == sdist.name.removesuffix(".tar.gz")
     ]
     assert len(extracted) == 1
     return extracted[0]
@@ -218,7 +218,7 @@ def installed_import_smoke(
                 return importlib.util.find_spec(name) is None
             except ModuleNotFoundError:
                 return True
-        assert m3.__version__ == metadata.version("m3") == {expected_version!r}
+        assert m3.__version__ == metadata.version("sf-m3") == {expected_version!r}
         assert os.environ.get("M3_IMPORT_SMOKE_SENTINEL") is None
         for removed in ("m3.api", "m3.ui", "m3.main", "m3.config", "m3.persistence", "m3.services.run_manager", "m3.harness.claude_cli", "m3.harness.opencode_cli", "m3.domain.events", "m3.bridge", "m3.bridge.reference"):
             assert module_missing(removed), removed
@@ -263,7 +263,7 @@ def main() -> None:
             smoke_dir.mkdir()
             installed_import_smoke(python, smoke_dir, EXPECTED_VERSION)
             scripts = python.parent
-            assert not script_executable(scripts, "m3").exists()
+            assert not script_executable(scripts, "sf-m3").exists()
             run([str(python), "-m", "m3.harness.cli", "--help"], cwd=smoke_dir)
             run([str(python), "-m", "m3.fixtures.acp_agent", "--help"], cwd=smoke_dir)
             assert [path.name for path in smoke_dir.iterdir()] == [".env"], (

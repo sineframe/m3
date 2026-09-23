@@ -140,7 +140,7 @@ links back to it and contains only the testing workflow around those examples.
 
 | Needed for | Source |
 |---|---|
-| Downloading private CLI/SDK release assets | Authenticated `gh` session with repository access |
+| Installing the CLI and SDK | Public PyPI packages for final releases; explicitly pinned prereleases when requested |
 | Selected model provider | Its named environment variable or a supported native harness login |
 | `LLMJudge` | `M3_JUDGE_API_KEY` by default; separate from the agent key |
 | Authenticated MCP endpoint | `SecretReference` in `HTTPServer.headers` for agent access, or a direct-client bearer reference |

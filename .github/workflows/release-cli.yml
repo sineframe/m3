@@ -2,24 +2,35 @@ name: Release CLI
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Build a verification artifact, or recover publication from the existing draft
+        type: choice
+        options: [build, recover_tag]
+        default: build
+        required: true
+      tag:
+        description: Existing version tag (required for recover_tag)
+        type: string
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-cli-${{ github.ref }}
+  group: release-cli-${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'recover_tag' && inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build and verify CLI release
+  build:
+    name: Build and verify immutable release assets
+    if: github.event_name == 'push' || inputs.operation == 'build'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     permissions:
-      contents: write
+      contents: read
     env:
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
@@ -27,26 +38,20 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Validate the pinned UI commit
+      - name: Validate pinned UI reference and secret
         id: ui-ref
-        shell: bash
         env:
           UI_REPOSITORY_TOKEN: ${{ secrets.MCPPAL_UI_TOKEN }}
         run: |
           set -euo pipefail
           if [[ -z "$UI_REPOSITORY_TOKEN" ]]; then
-            echo 'MCPPAL_UI_TOKEN must be configured with read access to the private m3-ui repository' >&2
+            echo 'MCPPAL_UI_TOKEN is required to build the production UI from rishhavv/m3-ui' >&2
             exit 1
           fi
           ui_ref=$(tr -d '\r\n' < cli/UI_REF)
-          if [[ ! "$ui_ref" =~ ^[0-9a-f]{40}$ ]]; then
-            echo 'cli/UI_REF must contain exactly 40 lowercase hexadecimal characters' >&2
-            exit 1
-          fi
-          printf 'sha=%s\n' "$ui_ref" >> "$GITHUB_OUTPUT"
-
-      - name: Check out the pinned UI
+          [[ "$ui_ref" =~ ^[0-9a-f]{40}$ ]] || { echo 'cli/UI_REF must be a 40-character lowercase commit SHA' >&2; exit 1; }
+          echo "sha=$ui_ref" >> "$GITHUB_OUTPUT"
+      - name: Check out pinned UI
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rishhavv/m3-ui
@@ -54,112 +59,265 @@ jobs:
           path: .release-ui
           token: ${{ secrets.MCPPAL_UI_TOKEN }}
           persist-credentials: false
-
       - name: Install uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.7"
           python-version: "3.13"
-          enable-cache: true
-
       - name: Install Node.js
         uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: .release-ui/package-lock.json
-
-      - name: Install and build the UI
+      - name: Build production UI
         working-directory: .release-ui
         run: |
           npm ci
           npm run build
-
-      - name: Derive the release version
+          npx playwright install --with-deps chromium
+      - name: Derive and validate tag version
         id: version
+        env:
+          GH_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then version=${GH_REF_NAME#v}; else version=$(python scripts/build_cli_release.py --print-version); fi
+          uv run --no-project --with packaging python - "$version" <<'PY'
+          from packaging.version import Version
+          import sys
+          value = Version(sys.argv[1])
+          if str(value) != sys.argv[1] or value.epoch or value.post is not None or value.dev is not None:
+              raise SystemExit("release tags must be canonical final, aN, bN, or rcN versions")
+          if value.pre is not None and value.pre[0] not in {"a", "b", "rc"}:
+              raise SystemExit("unsupported prerelease tag")
+          PY
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          uv run --no-project --with packaging python -c 'from packaging.version import Version; import os,sys; print("prerelease=" + str(Version(sys.argv[1]).is_prerelease).lower(), file=open(os.environ["GITHUB_OUTPUT"], "a"))' "$version"
+      - name: Prepare tag version in disposable checkout
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: uv run --no-project --with packaging python scripts/prepare_release.py "$VERSION"
+      - name: Validate prepared release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python scripts/build_cli_release.py --print-version --expected-version "$VERSION"
+      - name: Build wheels and installer
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/m3-release"
+          mkdir -p "$out"
+          python scripts/build_cli_release.py --ui-dist .release-ui/dist --out-dir "$out" --expected-version "$VERSION"
+          python scripts/render_cli_installers.py --version "$VERSION" --output-dir "$out"
+          cp scripts/install-latest.sh "$out/install-latest.sh"
+          chmod 755 "$out/install-latest.sh"
+          wheels=("sf_m3-${VERSION}-py3-none-any.whl" "sf_m3_app-${VERSION}-py3-none-any.whl" "sf_m3_cli-${VERSION}-py3-none-any.whl")
+          test "${#wheels[@]}" -eq 3
+          (cd "$out" && sha256sum "${wheels[@]}" | sort -k2 > SHA256SUMS && sha256sum -c SHA256SUMS)
+          M3_RELEASE_BASE_URL="file://$out" \
+            UV_TOOL_DIR="$RUNNER_TEMP/m3-installer-tools" \
+            UV_TOOL_BIN_DIR="$RUNNER_TEMP/m3-installer-bin" \
+            sh "$out/install.sh"
+          python scripts/smoke_cli_uv_install.py --release-dir "$out" --version "$VERSION"
+          python scripts/check_cli_standalone.py --release-dir "$out" --version "$VERSION" --ui-dir .release-ui
+          python - "$out" "$VERSION" "${{ github.sha }}" "${{ steps.ui-ref.outputs.sha }}" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); names=[p.name for p in root.iterdir() if p.is_file() and p.name != "manifest.json"]
+          manifest={"version":sys.argv[2],"source_commit":sys.argv[3],"ui_commit":sys.argv[4],"assets":{n:hashlib.sha256((root/n).read_bytes()).hexdigest() for n in sorted(names)}}
+          (root/"manifest.json").write_text(json.dumps(manifest,sort_keys=True,indent=2)+"\n")
+          PY
+      - name: Upload immutable release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: m3-release-${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/m3-release/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    name: Stage draft and publish wheels to PyPI
+    needs: [build]
+    # Recovery uses the existing GitHub draft assets and does not require build.
+    if: always() && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'recover_tag'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: pypi
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out source scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
+          persist-credentials: false
+      - name: Derive release tag and version
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          GH_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then tag=$GH_REF_NAME; else tag=$INPUT_TAG; fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(a[0-9]+|b[0-9]+|rc[0-9]+)?$ ]] || { echo 'invalid version tag' >&2; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+      - name: Download build artifact
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: m3-release-${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/m3-release
+      - name: Download existing draft assets for recovery
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/m3-release"
+          gh release view "$TAG" --repo sineframe/m3 --json isDraft --jq '.isDraft' | grep -Fx true
+          gh release download "$TAG" --repo sineframe/m3 --dir "$RUNNER_TEMP/m3-release"
+      - name: Verify original bytes and stage draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/m3-release"
+          tag_commit=$(git rev-parse "$TAG^{commit}")
+          python - "$dir" "$VERSION" "$tag_commit" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); version=sys.argv[2]; commit=sys.argv[3]
+          manifest=json.loads((root/"manifest.json").read_text())
+          if manifest.get("version") != version: raise SystemExit("manifest version mismatch")
+          if manifest.get("source_commit") != commit: raise SystemExit("manifest source commit does not match tag")
+          expected={f"sf_m3-{version}-py3-none-any.whl",f"sf_m3_app-{version}-py3-none-any.whl",f"sf_m3_cli-{version}-py3-none-any.whl","install.sh","install-latest.sh","SHA256SUMS"}
+          if set(manifest.get("assets",{})) != expected: raise SystemExit("manifest asset set is incomplete or unexpected")
+          actual={p.name for p in root.iterdir() if p.is_file() and p.name != "manifest.json"}
+          if actual != expected: raise SystemExit("draft release asset set is incomplete or unexpected")
+          for name,digest in manifest["assets"].items():
+              if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest: raise SystemExit(f"asset hash mismatch: {name}")
+          PY
+          (cd "$dir" && sha256sum -c SHA256SUMS)
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            prerelease=()
+            [[ "${VERSION}" =~ (a|b|rc)[0-9]+$ ]] && prerelease=(--prerelease)
+            gh release create "$TAG" --verify-tag --draft --generate-notes "${prerelease[@]}" "$dir"/*
+          fi
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.13"
+      - name: Verify existing PyPI files match staged bytes
+        run: uv run --no-project --with packaging python scripts/pypi_preflight.py "$RUNNER_TEMP"/m3-release/*.whl
+      - name: Publish wheels with PyPI Trusted Publishing
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ "$RUNNER_TEMP"/m3-release/*.whl
+
+  verify-pypi:
+    name: Clean PyPI install matrix / ${{ matrix.os }} / Python ${{ matrix.python }}
+    needs: [publish]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.10" }
+          - { os: macos-latest, python: "3.13" }
+    steps:
+      - name: Check out tagged smoke script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.publish.outputs.tag }}
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: ${{ matrix.python }}
+      - name: Exercise independent clean PyPI install methods
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: uv run --no-project --python "${{ matrix.python }}" --with packaging python scripts/smoke_pypi_install.py --version "$VERSION"
+
+  promote:
+    name: Publish GitHub draft after PyPI checks
+    needs: [verify-pypi, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish GitHub draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.publish.outputs.tag }}
+        run: gh release edit "$TAG" --repo sineframe/m3 --draft=false
+
+  public-install-smoke:
+    name: Public installer / ${{ matrix.os }} / uv ${{ matrix.uv }}
+    needs: [promote, publish]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, uv: present }
+          - { os: ubuntu-latest, uv: absent }
+          - { os: macos-latest, uv: present }
+          - { os: macos-latest, uv: absent }
+    steps:
+      - name: Install Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - name: Install uv for the selected matrix entries
+        if: matrix.uv == 'present'
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+      - name: Run public bootstrap and exact installer
+        env:
+          TAG: ${{ needs.publish.outputs.tag }}
+          UV_PRESENT: ${{ matrix.uv }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
-            case "$GITHUB_REF_NAME" in
-              v*) expected_version=${GITHUB_REF_NAME#v} ;;
-              *) echo 'release workflow received a non-version tag' >&2; exit 1 ;;
-            esac
+          python_bin=$(command -v python)
+          test -x "$python_bin"
+          if [[ "$UV_PRESENT" == absent ]]; then
+            clean_path="$(dirname "$python_bin"):/usr/bin:/bin:/usr/sbin:/sbin"
+            bootstrap_runner=(env PATH="$clean_path" M3_PYTHON="$python_bin")
+            exact_runner=(env PATH="$clean_path" M3_PYTHON="$python_bin")
           else
-            expected_version=$(python scripts/build_cli_release.py --print-version)
+            bootstrap_runner=(env M3_PYTHON="$python_bin" UV_TOOL_DIR="$RUNNER_TEMP/bootstrap-tools" UV_TOOL_BIN_DIR="$RUNNER_TEMP/bootstrap-bin")
+            exact_runner=(env M3_PYTHON="$python_bin" UV_TOOL_DIR="$RUNNER_TEMP/exact-tools" UV_TOOL_BIN_DIR="$RUNNER_TEMP/exact-bin")
           fi
-          printf 'version=%s\n' "$expected_version" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare the tag version in the disposable checkout
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          uv run --no-project --with packaging \
-            python scripts/prepare_release.py "$VERSION"
-
-      - name: Validate the prepared release version
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          python scripts/build_cli_release.py \
-            --print-version \
-            --expected-version "$VERSION" >/dev/null
-
-      - name: Build and inspect the three release wheels
-        run: |
-          set -euo pipefail
-          release_dir="$RUNNER_TEMP/m3-release"
-          rm -rf "$release_dir"
-          mkdir -p "$release_dir"
-          python scripts/build_cli_release.py \
-            --ui-dist .release-ui/dist \
-            --out-dir "$release_dir" \
-            --expected-version '${{ steps.version.outputs.version }}'
-          python scripts/render_cli_installers.py \
-            --version '${{ steps.version.outputs.version }}' \
-            --output-dir "$release_dir"
-          mapfile -t wheels < <(find "$release_dir" -maxdepth 1 -type f -name '*.whl' -printf '%f\n' | sort)
-          test "${#wheels[@]}" -eq 3
-          printf '%s\n' "${wheels[@]}" | grep -Fx \
-            "m3-${{ steps.version.outputs.version }}-py3-none-any.whl"
-          printf '%s\n' "${wheels[@]}" | grep -Fx \
-            "m3_app-${{ steps.version.outputs.version }}-py3-none-any.whl"
-          printf '%s\n' "${wheels[@]}" | grep -Fx \
-            "m3_cli-${{ steps.version.outputs.version }}-py3-none-any.whl"
-          (cd "$release_dir" && sha256sum "${wheels[@]}" > SHA256SUMS)
-          test "$(wc -l < "$release_dir/SHA256SUMS")" -eq 3
-          python scripts/smoke_cli_uv_install.py \
-            --release-dir "$release_dir" \
-            --version '${{ steps.version.outputs.version }}'
-
-      - name: Run the isolated two-environment standalone gate
-        run: |
-          set -euo pipefail
-          release_dir="$RUNNER_TEMP/m3-release"
-          python scripts/check_cli_standalone.py \
-            --release-dir "$release_dir" \
-            --version '${{ steps.version.outputs.version }}'
-
-      - name: Publish the GitHub Release for a version tag
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          release_dir="$RUNNER_TEMP/m3-release"
-          prerelease=()
-          case "$VERSION" in
-            *a*|*b*|*rc*|*dev*) prerelease=(--prerelease) ;;
-          esac
-          gh release create "v${VERSION}" \
-            --verify-tag \
-            --generate-notes \
-            "${prerelease[@]}" \
-            "$release_dir/m3-${VERSION}-py3-none-any.whl" \
-            "$release_dir/m3_app-${VERSION}-py3-none-any.whl" \
-            "$release_dir/m3_cli-${VERSION}-py3-none-any.whl" \
-            "$release_dir/SHA256SUMS" \
-            "$release_dir/install.sh" \
-            "$release_dir/install.ps1"
+          bootstrap="$RUNNER_TEMP/install-latest.sh"
+          installer="$RUNNER_TEMP/install.sh"
+          curl --fail --silent --show-error --location "https://github.com/sineframe/m3/releases/download/${TAG}/install-latest.sh" --output "$bootstrap"
+          M3_INSTALL_ROOT="$RUNNER_TEMP/bootstrap-env" M3_BIN_DIR="$RUNNER_TEMP/bootstrap-bin" "${bootstrap_runner[@]}" sh "$bootstrap" --tag "$TAG"
+          "$RUNNER_TEMP/bootstrap-bin/m3" --help >/dev/null
+          if [[ "$UV_PRESENT" == present ]]; then
+            bootstrap_python="$RUNNER_TEMP/bootstrap-tools/sf-m3-cli/bin/python"
+          else
+            bootstrap_python="$RUNNER_TEMP/bootstrap-env/bin/python"
+          fi
+          "$bootstrap_python" -c 'from importlib import resources; ui=resources.files("m3_cli").joinpath("ui"); assert ui.joinpath("index.html").is_file() and any(ui.joinpath("assets").iterdir())'
+          curl --fail --silent --show-error --location "https://github.com/sineframe/m3/releases/download/${TAG}/install.sh" --output "$installer"
+          M3_INSTALL_ROOT="$RUNNER_TEMP/exact-env" M3_BIN_DIR="$RUNNER_TEMP/exact-bin" "${exact_runner[@]}" sh "$installer"
+          "$RUNNER_TEMP/exact-bin/m3" --help >/dev/null
+          mkdir "$RUNNER_TEMP/bootstrap-project" "$RUNNER_TEMP/install-project"
+          M3_PYTHON="$python_bin" "$RUNNER_TEMP/bootstrap-bin/m3" setup --project-root "$RUNNER_TEMP/bootstrap-project"
+          M3_PYTHON="$python_bin" "$RUNNER_TEMP/bootstrap-bin/m3" doctor --project-root "$RUNNER_TEMP/bootstrap-project"
+          M3_PYTHON="$python_bin" "$RUNNER_TEMP/exact-bin/m3" setup --project-root "$RUNNER_TEMP/install-project"
+          M3_PYTHON="$python_bin" "$RUNNER_TEMP/exact-bin/m3" doctor --project-root "$RUNNER_TEMP/install-project"

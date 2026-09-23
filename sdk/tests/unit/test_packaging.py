@@ -13,7 +13,7 @@ import m3
 
 
 def test_runtime_version_comes_from_distribution_metadata() -> None:
-    assert m3.__version__ == importlib.metadata.version("m3")
+    assert m3.__version__ == importlib.metadata.version("sf-m3")
 
 
 def test_runtime_schema_is_packaged() -> None:

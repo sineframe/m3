@@ -25,11 +25,13 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
 def fake_runtime_server(tmp_path: Path):
     target = detect_target("opencode")
     system, arch = target.split("-", 2)[:2]
-    suffix = (
-        f"{system}-{arch}-{target.split('-', 3)[2]}-{target.split('-', 3)[3]}"
-        if system == "linux"
-        else f"{system}-{arch}"
-    )
+    suffix = f"{system}-{arch}"
+    if system == "linux":
+        _, _, libc, variant = target.split("-")
+        if arch == "x64" and variant == "baseline":
+            suffix += "-baseline"
+        if libc == "musl":
+            suffix += "-musl"
     asset = tmp_path / f"opencode-{suffix}.tar.gz"
     executable = b"#!/bin/sh\nprintf 'opencode 1.2.3\\n'\n"
     with tarfile.open(asset, "w:gz") as archive:

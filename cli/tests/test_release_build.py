@@ -69,18 +69,18 @@ def test_build_release_rejects_tag_version_mismatch(tmp_path: Path) -> None:
 
 def test_project_versions_are_common() -> None:
     versions = release.project_versions()
-    assert set(versions) == {"m3", "m3_app", "m3_cli"}
+    assert set(versions) == {"sf_m3", "sf_m3_app", "sf_m3_cli"}
     assert len(set(versions.values())) == 1
 
 
 def test_classify_wheels_does_not_use_prefix_matching(tmp_path: Path) -> None:
-    app = tmp_path / "m3_app-1.0-py3-none-any.whl"
-    sdk = tmp_path / "m3-1.0-py3-none-any.whl"
+    app = tmp_path / "sf_m3_app-1.0-py3-none-any.whl"
+    sdk = tmp_path / "sf_m3-1.0-py3-none-any.whl"
     result = release.classify_wheels(
         [app, sdk],
-        {"m3": "1.0", "m3_app": "1.0"},
+        {"sf_m3": "1.0", "sf_m3_app": "1.0"},
     )
-    assert result == {"m3": sdk, "m3_app": app}
+    assert result == {"sf_m3": sdk, "sf_m3_app": app}
 
 
 def _wheel(
@@ -129,29 +129,30 @@ def _synthetic_release(
     app_ui: bool = False,
 ) -> tuple[dict[str, str], Path]:
     version = "1.0"
-    _wheel(root, "m3", "m3", version)
+    _wheel(root, "sf_m3", "sf-m3", version)
     _wheel(
         root,
-        "m3_app",
-        "m3-app",
+        "sf_m3_app",
+        "sf-m3-app",
         version,
-        requires=app_requires,
+        requires=app_requires or (f"sf-m3[storage]=={version}",),
         provides_extras=app_provides_extras,
         app_ui=app_ui,
     )
     _wheel(
         root,
-        "m3_cli",
-        "m3-cli",
+        "sf_m3_cli",
+        "sf-m3-cli",
         version,
-        requires=cli_requires or (f"m3[storage]=={version}", f"m3-app=={version}"),
+        requires=cli_requires
+        or (f"sf-m3[storage]=={version}", f"sf-m3-app=={version}"),
         entry_point=cli_entry_point,
         ui=cli_ui,
     )
     return {
-        "m3": version,
-        "m3_app": version,
-        "m3_cli": version,
+        "sf_m3": version,
+        "sf_m3_app": version,
+        "sf_m3_cli": version,
     }, _valid_ui(root)
 
 
@@ -159,30 +160,30 @@ def test_verify_release_checks_metadata_entry_point_dependencies_and_ui(
     tmp_path: Path,
 ) -> None:
     version = "1.0"
-    _wheel(tmp_path, "m3", "m3", version)
+    _wheel(tmp_path, "sf_m3", "sf-m3", version)
     _wheel(
         tmp_path,
-        "m3_app",
-        "m3-app",
+        "sf_m3_app",
+        "sf-m3-app",
         version,
-        requires=(),
+        requires=(f"sf-m3[storage]=={version}",),
     )
     _wheel(
         tmp_path,
-        "m3_cli",
-        "m3-cli",
+        "sf_m3_cli",
+        "sf-m3-cli",
         version,
-        requires=(f"m3[storage]=={version}", f"m3-app=={version}"),
+        requires=(f"sf-m3[storage]=={version}", f"sf-m3-app=={version}"),
         entry_point="m3 = m3_cli.main:main",
         ui=True,
     )
     ui = _valid_ui(tmp_path)
     result = release.verify_release(
         tmp_path,
-        {"m3": version, "m3_app": version, "m3_cli": version},
+        {"sf_m3": version, "sf_m3_app": version, "sf_m3_cli": version},
         ui_source_dist=ui,
     )
-    assert set(result) == {"m3", "m3_app", "m3_cli"}
+    assert set(result) == {"sf_m3", "sf_m3_app", "sf_m3_cli"}
 
 
 def test_verify_release_rejects_cli_without_packaged_ui(tmp_path: Path) -> None:
@@ -194,9 +195,9 @@ def test_verify_release_rejects_cli_without_packaged_ui(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("requires", "entry_point", "message"),
     [
-        (("m3[storage]==1.0",), "m3 = m3_cli.main:main", "dependencies"),
+        (("sf-m3[storage]==1.0",), "m3 = m3_cli.main:main", "dependencies"),
         (
-            ("m3[storage]==1.0", "m3-app==1.0"),
+            ("sf-m3[storage]==1.0", "sf-m3-app==1.0"),
             None,
             "entry point",
         ),
@@ -260,8 +261,8 @@ def test_verify_release_rejects_forbidden_cli_dependencies(
     expected, ui = _synthetic_release(
         tmp_path,
         cli_requires=(
-            "m3[storage]==1.0",
-            "m3-app==1.0",
+            "sf-m3[storage]==1.0",
+            "sf-m3-app==1.0",
             dependency,
         ),
     )

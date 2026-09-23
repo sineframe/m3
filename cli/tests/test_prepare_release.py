@@ -19,6 +19,7 @@ def test_repository_release_metadata_is_synchronized() -> None:
 
     assert set(state.versions.values()) == {state.current_version}
     assert set(state.cli_dependencies.values()) == {state.current_version}
+    assert state.cli_dependencies["app:sf-m3"] == state.current_version
 
 
 def _repo(tmp_path: Path, *, version: str = "1.2.3") -> Path:
@@ -27,14 +28,19 @@ def _repo(tmp_path: Path, *, version: str = "1.2.3") -> Path:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            f'[project]\nname = "{relative.split("/")[0]}"\nversion = "{version}"\n',
+            f'[project]\nname = "{relative.split("/")[0]}"\nversion = "{version}"\n'
+            + (
+                f'dependencies = [\n  "sf-m3[storage]=={version}",\n]\n'
+                if relative.startswith("app/")
+                else ""
+            ),
             encoding="utf-8",
         )
     cli = root / "cli/pyproject.toml"
     cli.parent.mkdir(parents=True, exist_ok=True)
     cli.write_text(
         f'[project]\nname = "cli"\nversion = "{version}"\ndependencies = [\n'
-        f'  "m3[storage]=={version}",\n  "m3-app=={version}",\n]\n',
+        f'  "sf-m3[storage]=={version}",\n  "sf-m3-app=={version}",\n]\n',
         encoding="utf-8",
     )
     (root / "uv.lock").write_text("lock\n", encoding="utf-8")
@@ -61,9 +67,10 @@ def test_prepare_updates_projects_and_runs_lock_checks(tmp_path: Path) -> None:
     assert version == "2.0.0a1"
     assert len(files) == 4
     assert 'version = "2.0.0a1"' in (root / "sdk/pyproject.toml").read_text()
+    assert '"sf-m3[storage]==2.0.0a1"' in (root / "app/pyproject.toml").read_text()
     cli = (root / "cli/pyproject.toml").read_text()
-    assert '"m3[storage]==2.0.0a1"' in cli
-    assert '"m3-app==2.0.0a1"' in cli
+    assert '"sf-m3[storage]==2.0.0a1"' in cli
+    assert '"sf-m3-app==2.0.0a1"' in cli
     assert calls == [["uv", "lock"], ["uv", "lock", "--check"]]
 
 
@@ -95,7 +102,7 @@ def test_missing_cli_dependency_pin_is_rejected(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     path = root / "cli/pyproject.toml"
     path.write_text(
-        path.read_text().replace('  "m3-app==1.2.3",\n', ""),
+        path.read_text().replace('  "sf-m3-app==1.2.3",\n', ""),
         encoding="utf-8",
     )
 
@@ -123,7 +130,7 @@ def test_mismatched_cli_dependency_pin_is_rejected(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     path = root / "cli/pyproject.toml"
     path.write_text(
-        path.read_text().replace("m3-app==1.2.3", "m3-app==9.9.9"),
+        path.read_text().replace("sf-m3-app==1.2.3", "sf-m3-app==9.9.9"),
         encoding="utf-8",
     )
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -168,7 +167,7 @@ def test_install_prefers_uv_and_uses_pep508_local_reference(
     target = setup.EnvironmentTarget(
         tmp_path / ".venv", tmp_path / ".venv" / "bin" / "python", "project .venv"
     )
-    installer = setup._install_sdk(target, tmp_path / "sdk wheel.whl")
+    installer = setup._install_sdk(target, "1.2.3")
     assert installer == "uv"
     assert calls == [
         [
@@ -177,8 +176,7 @@ def test_install_prefers_uv_and_uses_pep508_local_reference(
             "install",
             "--python",
             str(target.python),
-            "m3[pytest,storage,judge] @ "
-            + (tmp_path / "sdk wheel.whl").resolve().as_uri(),
+            "sf-m3[pytest,storage,judge]==1.2.3",
         ]
     ]
 
@@ -198,23 +196,21 @@ def test_install_falls_back_to_environment_pip(
     target = setup.EnvironmentTarget(
         tmp_path / ".venv", tmp_path / ".venv" / "bin" / "python", "project .venv"
     )
-    assert setup._install_sdk(target, tmp_path / "sdk.whl") == "venv/pip"
+    assert setup._install_sdk(target, "1.2.3") == "venv/pip"
     assert calls[0][:4] == [str(target.python), "-m", "pip", "install"]
-    assert calls[0][-1] == (
-        "m3[pytest,storage,judge] @ " + (tmp_path / "sdk.whl").resolve().as_uri()
-    )
+    assert calls[0][-1] == ("sf-m3[pytest,storage,judge]==1.2.3")
 
 
 def test_cli_version_requires_matching_distributions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    values = {"m3": "1.2.3", "m3-cli": "1.2.4"}
+    values = {"sf-m3": "1.2.3", "sf-m3-cli": "1.2.4"}
     monkeypatch.setattr(setup.importlib.metadata, "version", lambda name: values[name])
     with pytest.raises(setup.SetupError, match="versions do not match"):
         setup._cli_version()
 
 
-def test_setup_ready_environment_skips_download(
+def test_setup_ready_environment_skips_install(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     target = setup.EnvironmentTarget(
@@ -225,13 +221,13 @@ def test_setup_ready_environment_skips_download(
     monkeypatch.setattr(setup, "_ready", lambda *_args: True)
     monkeypatch.setattr(
         setup,
-        "_download_release",
-        lambda *_args: pytest.fail("downloaded despite ready environment"),
+        "_install_sdk",
+        lambda *_args: pytest.fail("installed despite ready environment"),
     )
     assert setup.run(SimpleNamespace(project_root=tmp_path, python=None)) == 0
     output = capsys.readouterr().out
     assert "Project environment ready" in output
-    assert "no download, install, or checksum verification" in output
+    assert "Installer: skipped; environment is already ready" in output
 
 
 def test_setup_mismatch_installs_and_existing_environment_survives_failure(
@@ -244,9 +240,6 @@ def test_setup_mismatch_installs_and_existing_environment_survives_failure(
     monkeypatch.setattr(setup, "_cli_version", lambda: "1.2.3")
     monkeypatch.setattr(setup, "resolve_target", lambda *_args, **_kwargs: target)
     monkeypatch.setattr(setup, "_ready", lambda *_args: False)
-    monkeypatch.setattr(
-        setup, "_download_release", lambda _version, directory: directory / "sdk.whl"
-    )
     monkeypatch.setattr(setup, "_install_sdk", lambda *_args: "uv")
     with pytest.raises(setup.SetupError):
         setup.run(SimpleNamespace(project_root=tmp_path, python=None))
@@ -273,153 +266,6 @@ def test_setup_failure_removes_only_new_environment(
     with pytest.raises(setup.SetupError):
         setup.run(SimpleNamespace(project_root=tmp_path, python=None))
     assert not target.path.exists()
-
-
-def test_setup_temporary_directory_failure_rolls_back_new_environment(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    target = setup.EnvironmentTarget(
-        tmp_path / ".venv",
-        tmp_path / ".venv" / "bin" / "python",
-        "new project .venv",
-        created=True,
-    )
-    monkeypatch.setattr(setup, "_cli_version", lambda: "1.2.3")
-    monkeypatch.setattr(setup, "resolve_target", lambda *_args, **_kwargs: target)
-
-    def create(value: setup.EnvironmentTarget) -> setup.EnvironmentTarget:
-        value.path.mkdir()
-        return value
-
-    monkeypatch.setattr(setup, "_create_environment", create)
-    monkeypatch.setattr(
-        setup.tempfile,
-        "TemporaryDirectory",
-        lambda **_kwargs: (_ for _ in ()).throw(OSError("secret-temp-path")),
-    )
-    with pytest.raises(setup.SetupError, match="temporary setup files"):
-        setup.run(SimpleNamespace(project_root=tmp_path, python=None))
-    assert not target.path.exists()
-
-
-def test_checksum_download_uses_override_and_verifies(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    sdk = tmp_path / "m3-1.2.3-py3-none-any.whl"
-    data = b"wheel"
-    digest = hashlib.sha256(data).hexdigest()
-
-    class Response:
-        def __init__(self, value: bytes) -> None:
-            self.value = value
-
-        def __enter__(self) -> Response:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read(self, size: int = -1) -> bytes:
-            if self.value is None:
-                return b""
-            value, self.value = self.value, None
-            return value
-
-    monkeypatch.setenv("M3_RELEASE_BASE_URL", "https://mirror.invalid/release")
-
-    def open_url(request: object, timeout: int) -> Response:
-        del timeout
-        name = request.full_url.rsplit("/", 1)[-1]  # type: ignore[attr-defined]
-        values = {
-            "m3-1.2.3-py3-none-any.whl": data,
-            "SHA256SUMS": (
-                f"{'0' * 64}  m3_cli-1.2.3-py3-none-any.whl\n{digest}  m3-1.2.3-py3-none-any.whl\n{'1' * 64}  m3_app-1.2.3-py3-none-any.whl\n"
-            ).encode(),
-        }
-        return Response(values[name])
-
-    monkeypatch.setattr(setup, "urlopen", open_url)
-    result = setup._download_release("1.2.3", tmp_path)
-    assert result == sdk
-    assert sdk.read_bytes() == data
-
-
-@pytest.mark.parametrize(
-    "manifest",
-    [
-        "0" * 64 + "  m3-1.2.3-py3-none-any.whl\n",
-        "0" * 64
-        + "  m3_cli-1.2.3-py3-none-any.whl\n"
-        + "0" * 64
-        + "  m3_cli-1.2.3-py3-none-any.whl\n"
-        + "1" * 64
-        + "  m3_app-1.2.3-py3-none-any.whl\n",
-    ],
-)
-def test_checksum_manifest_rejects_missing_or_duplicate_records(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest: str
-) -> None:
-    data = b"wheel"
-    monkeypatch.setenv("M3_RELEASE_BASE_URL", "https://mirror.invalid/release")
-
-    class Response:
-        def __init__(self, value: bytes) -> None:
-            self.value = value
-
-        def __enter__(self) -> Response:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read(self, size: int = -1) -> bytes:
-            value, self.value = self.value, b""
-            return value
-
-    def open_url(request: object, timeout: int) -> Response:
-        del timeout
-        name = request.full_url.rsplit("/", 1)[-1]  # type: ignore[attr-defined]
-        value = data if name.endswith(".whl") else manifest.encode()
-        return Response(value)
-
-    monkeypatch.setattr(setup, "urlopen", open_url)
-    with pytest.raises(setup.SetupError, match="checksum manifest"):
-        setup._download_release("1.2.3", tmp_path)
-
-
-def test_authenticated_gh_download_checks_auth_once_and_uses_exact_tag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("M3_RELEASE_BASE_URL", raising=False)
-    monkeypatch.setattr(
-        setup.shutil, "which", lambda name: "/usr/bin/gh" if name == "gh" else None
-    )
-    payload = b"wheel"
-    digest = hashlib.sha256(payload).hexdigest()
-    calls: list[list[str]] = []
-
-    def run(command: list[str], **kwargs: object) -> object:
-        calls.append(command)
-        if command[1:3] == ["auth", "status"]:
-            return type("Result", (), {"returncode": 0})()
-        destination = Path(command[-1])
-        if destination.name == "SHA256SUMS":
-            destination.write_text(
-                f"{'0' * 64}  m3_cli-1.2.3-py3-none-any.whl\n{digest}  m3-1.2.3-py3-none-any.whl\n{'1' * 64}  m3_app-1.2.3-py3-none-any.whl\n",
-                encoding="utf-8",
-            )
-        else:
-            destination.write_bytes(payload)
-        return type("Result", (), {"returncode": 0})()
-
-    monkeypatch.setattr(setup.subprocess, "run", run)
-    setup._download_release("1.2.3", tmp_path)
-    assert sum(command[1:3] == ["auth", "status"] for command in calls) == 1
-    downloads = [
-        command for command in calls if command[1:3] == ["release", "download"]
-    ]
-    assert len(downloads) == 2
-    assert all(command[3] == "v1.2.3" for command in downloads)
 
 
 def test_setup_invalid_secret_path_is_not_echoed(
