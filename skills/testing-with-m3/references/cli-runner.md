@@ -49,29 +49,19 @@ with `m3 test --env-file .env`.
 | M3 CLI | Machine-level isolated environment | `m3` command and bundled UI |
 
 Adding the SDK with `uv add` or `pip install` does not install the CLI. Install
-the CLI from PyPI for final releases:
+the CLI from PyPI:
 
 ```bash
 uv tool install sf-m3-cli
 ```
 
-Choose a pinned prerelease only when you intend to test one:
-
-```bash
-uv tool install --prerelease allow "sf-m3-cli==0.2.0a13"
-```
-
-On macOS or Linux, the shell installer installs the highest final
-release and falls back to a prerelease only when no final release exists:
+Or use the shell installer on macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sineframe/m3/main/scripts/install-latest.sh | sh
-# For an explicit selection, add: sh -s -- --prerelease
 ```
 
-Pass `--prerelease` to choose an alpha explicitly or `--tag vX.Y.Z` to select
-an exact release. The installer keeps the CLI and bundled UI outside the
-project environment.
+The installer keeps the CLI and bundled UI outside the project environment.
 
 ## Prepare a project
 
