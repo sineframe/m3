@@ -98,10 +98,11 @@ def test_attached_recorder_continues_persistent_clock_offset(tmp_path: Path) -> 
     execution_id = ExecutionId("execution-attached-clock")
     store = SQLiteExecutionStore(tmp_path / "attached-clock.sqlite")
     initial = ExecutionTraceRecorder(store, execution_id)
+    initial_offset = initial.events()[0].monotonic_offset_ms
     factory = EventFactory(execution_id)
     prior = factory.create(
         EventKind.DIAGNOSTIC,
-        monotonic_offset_ms=42.0,
+        monotonic_offset_ms=initial_offset + 42.0,
         payload={"source": "prior-process"},
     ).model_copy(update={"sequence": 1})
     store.append_events((prior,))

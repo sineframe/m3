@@ -56,9 +56,10 @@ M3_RUN_LIVE_MANAGED_ASSETS=1 M3_LIVE_MANAGED_KIND=opencode \
   pytest -q sdk/tests/e2e/test_live_managed_asset_download.py
 ```
 
-The [CI workflow](../../../.github/workflows/ci.yml) runs this check on Linux,
-macOS, and Windows when dispatched manually. It runs one Codex binary check
-on Windows and makes no provider calls.
+The [CI workflow](../../../.github/workflows/ci.yml) runs the complete seven-case
+matrix on Linux, macOS, and Windows when dispatched manually. Release
+verification runs the OpenCode/Linux, Claude/macOS, and Codex/Windows cases
+before publishing. These checks make no provider calls.
 The workflow supplies `M3_GITHUB_TOKEN` for release metadata so shared CI
 runner IP addresses do not exhaust GitHub's anonymous API allowance.
 

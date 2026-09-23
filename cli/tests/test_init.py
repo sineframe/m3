@@ -8,7 +8,11 @@ import uuid
 from pathlib import Path
 
 import pytest
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
+    import tomli as tomllib  # type: ignore[no-redef]
 
 from m3_cli import init as init_command
 from m3_cli import main

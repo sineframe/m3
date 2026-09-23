@@ -13,6 +13,18 @@ git push origin v0.2.0
 
 For an alpha, use a PEP 440 prerelease tag such as `v0.3.0a1`. The workflow builds the three matching wheels and installer, stages them in a draft GitHub Release, publishes the wheels to PyPI, and runs fresh install checks before publishing the GitHub Release.
 
+CI runs source checks and a fast test selection when a pull request is opened
+or updated. A push to `main` runs the complete non-live suite, including SDK
+process lifecycle tests serially, and compatibility checks. These results are
+advisory and do not block merging. CI has no scheduled runs; provider-backed
+live tests remain manual.
+
+Before publishing a tag, release verification runs the complete non-live suite
+on Python 3.10 through 3.13 and checks the managed OpenCode asset on Linux,
+Claude asset on macOS, and Codex asset on Windows. The full seven-case managed
+asset matrix remains available by manually dispatching CI. Post-publication
+PyPI and public installer checks still run after upload.
+
 Assets include the three wheels, versioned `install.sh`, stable first `install-latest.sh`, `SHA256SUMS`, and `manifest.json`. The shell installer chooses the highest final version and falls back to prereleases only when no final release exists. Use `--prerelease` for an alpha, or `--tag vX.Y.Z` for an exact tag.
 
 ## Recovery after partial publication

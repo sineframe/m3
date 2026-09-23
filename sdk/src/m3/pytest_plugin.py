@@ -1169,14 +1169,21 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         collected = {str(item) for item in record.get("collected_node_ids", ())}
         attempts = store.list_test_results(run_id.root)
         recorded = {str(item.get("node_id")) for item in attempts}
-        no_executed_tests = (
-            effective_exitstatus == 0
-            and not config.getoption("collectonly")
-            and not any(
-                item.get("outcome") in {"passed", "failed", "error"}
-                for item in attempts
+        # A genuine xfail is represented as a skipped call phase by pytest,
+        # but the test did execute. Ordinary skips still do not count.
+        executed_attempt = any(
+            item.get("outcome") in {"passed", "failed", "error"}
+            or (
+                item.get("outcome") == "skipped"
+                and isinstance(item.get("phases"), _Mapping)
+                and any(
+                    isinstance(phase, _Mapping) and phase.get("wasxfail")
+                    for phase in item["phases"].values()
+                )
             )
+            for item in attempts
         )
+        no_executed_tests = effective_exitstatus == 0 and not executed_attempt
         if no_executed_tests:
             effective_exitstatus = 1
         worker_errors = list(record.get("worker_errors", ()))

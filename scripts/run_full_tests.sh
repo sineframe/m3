@@ -16,7 +16,10 @@ uv sync --locked --all-packages \
   --group test --group typecheck
 
 uv run --locked --no-sync --project sdk \
-  pytest -q -n 2 --dist worksteal -m "not live" sdk/tests
+  pytest -q -n 2 --dist worksteal \
+  -m "not live and not process_lifecycle" sdk/tests
+uv run --locked --no-sync --project sdk \
+  pytest -q -m "not live and process_lifecycle" sdk/tests
 uv run --locked --no-sync --project sdk \
   pytest -q -n 2 --dist worksteal -m "not live" sdk/examples/tests
 uv run --locked --no-sync --project app \
