@@ -466,6 +466,7 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
                 "test_count": 0,
                 "test_outcome_counts": {},
                 "effective_verdict_counts": {},
+                "suites": [],
             },
             {
                 "run_id": "old-run",
@@ -477,12 +478,56 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
                 "test_count": 1,
                 "test_outcome_counts": {"passed": 1},
                 "effective_verdict_counts": {"passed": 1},
+                "suites": [],
             },
         ],
+        "total": 2,
+        "limit": None,
+        "offset": 0,
     }
     assert "project_root" not in response.text
     assert "selection" not in response.text
     assert "capture" not in response.text
+    store.close()
+
+
+def test_v2_runs_page_lists_every_suite_and_filters_by_suite(tmp_path):
+    database = Path(tmp_path).resolve() / "suites.sqlite"
+    store = SQLiteExecutionStore(database)
+    for run_id, day, suite_names in (
+        ("run-a", "2026-09-18", ("alpha",)),
+        ("run-b", "2026-09-19", ("alpha", "beta")),
+        ("run-c", "2026-09-20", ()),
+    ):
+        store.save_test_run(
+            run_id, {"run_id": run_id, "created_at": f"{day}T10:00:00+00:00"}
+        )
+        for index, suite_name in enumerate(suite_names):
+            store.save_test_result(
+                run_id,
+                f"{run_id}-{index}",
+                {"node_id": f"test_{index}", "suite_name": suite_name},
+            )
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        suites = client.get("/api/v2/suites").json()["suites"]
+        by_name = {item["suite_name"]: item["suite_id"] for item in suites}
+        assert set(by_name) == {"alpha", "beta"}
+
+        page = client.get("/api/v2/runs", params={"limit": 2}).json()
+        assert [run["run_id"] for run in page["runs"]] == ["run-c", "run-b"]
+        assert (page["total"], page["limit"], page["offset"]) == (3, 2, 0)
+        assert [s["suite_name"] for s in page["runs"][1]["suites"]] == [
+            "alpha",
+            "beta",
+        ]
+        assert page["runs"][0]["suites"] == []
+
+        alpha = client.get("/api/v2/runs", params={"suite_id": by_name["alpha"]})
+        assert [run["run_id"] for run in alpha.json()["runs"]] == ["run-b", "run-a"]
+        beta = client.get("/api/v2/runs", params={"suite_id": by_name["beta"]})
+        assert [run["run_id"] for run in beta.json()["runs"]] == ["run-b"]
+        assert client.get("/api/v2/runs", params={"limit": 0}).status_code == 422
     store.close()
 
 

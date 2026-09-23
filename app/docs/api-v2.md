@@ -29,13 +29,22 @@ there is no replacement discriminator or variant. `AgentSpec` is not a Python
 SDK construction surface for ordinary test authors, but API-v2 clients must
 continue to send and receive the existing `DirectSpec`/`AgentSpec` JSON shapes.
 
-`GET /api/v2/runs` returns an unpaginated, newest first list of safe pytest
-run summaries. Each item contains `run_id`, `created_at`, `finished_at`,
-`status`, optional project identifiers and name, `test_count`, independent
-`test_outcome_counts`, and derived `effective_verdict_counts`. Manifest paths,
+`GET /api/v2/runs` returns a newest first list of safe pytest run summaries.
+Each item contains `run_id`, `created_at`, `finished_at`, `status`, optional
+project identifiers and name, `test_count`, independent `test_outcome_counts`,
+derived `effective_verdict_counts`, and `suites`. `suites` lists every
+`{suite_id, suite_name}` of the run's saved tests, because one run can span
+several suites; it is empty when no saved test names a suite. Manifest paths,
 selection arguments, capture settings, and other raw manifest fields are not
 exposed. Runs are listed even when they have no executions or saved
 evaluations.
+
+The list is unpaginated by default. Optional `limit` (1-100) and `offset` page
+it, and optional `suite_id` and `project_id` filter it; a `suite_id` filter
+keeps every run with at least one test in that suite. The envelope reports
+`total` (runs matching the filters), `limit` (`null` when unpaginated), and
+`offset`. `GET /api/v2/suites` lists the registered `{suite_id, suite_name}`
+pairs for building suite filters.
 
 `test_outcome_counts` is an independent count of raw persisted pytest
 outcomes. `effective_verdict_counts` is the count after applying required

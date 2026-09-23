@@ -10,7 +10,6 @@ import json
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict
-from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Body, Depends, Query, Request, status
@@ -178,6 +177,11 @@ class V2FeedbackEnvelope(BaseModel):
     feedback: Feedback
 
 
+class V2SuiteRef(BaseModel):
+    suite_id: int = Field(description="Registered suite identity.")
+    suite_name: str = Field(description="Registered suite display name.")
+
+
 class V2RunSummary(BaseModel):
     """Safe, compact summary of a persisted pytest run manifest."""
 
@@ -200,11 +204,23 @@ class V2RunSummary(BaseModel):
         default_factory=dict,
         description="Safe counts after required-evaluation policy.",
     )
+    suites: tuple[V2SuiteRef, ...] = Field(
+        default=(),
+        description="Suites of this run's saved tests; a run can span several suites.",
+    )
 
 
 class V2RunListEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     runs: tuple[V2RunSummary, ...]
+    total: int = Field(default=0, description="Runs matching the filters.")
+    limit: int | None = Field(default=None, description="Page size; null means all.")
+    offset: int = Field(default=0, description="Runs skipped before this page.")
+
+
+class V2SuiteListEnvelope(BaseModel):
+    version: Literal["v2"] = "v2"
+    suites: tuple[V2SuiteRef, ...]
 
 
 class V2DeletedEnvelope(BaseModel):
@@ -1140,6 +1156,12 @@ def install_v2(
 
     @runs_router.get("", response_model=V2RunListEnvelope)
     def list_runs(
+        limit: int | None = Query(None, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+        suite_id: int | None = Query(None, description="filter by suite identity"),
+        project_id: uuid.UUID | None = Query(
+            None, description="filter by project identity"
+        ),
         service: AppExecutionService = Depends(get_service),
     ) -> V2RunListEnvelope:
         def optional_string(value: object) -> str | None:
@@ -1155,8 +1177,14 @@ def install_v2(
                 if isinstance(count, int) and not isinstance(count, bool) and count >= 0
             }
 
+        manifests, total = service.list_run_page(
+            limit=limit,
+            offset=offset,
+            suite_id=suite_id,
+            project_id=str(project_id) if project_id else None,
+        )
         summaries: list[V2RunSummary] = []
-        for manifest in service.list_runs():
+        for manifest in manifests:
             run_id = manifest.get("run_id")
             if not isinstance(run_id, str) or not run_id:
                 continue
@@ -1186,22 +1214,16 @@ def install_v2(
                     effective_verdict_counts=safe_counts(
                         manifest.get("effective_verdict_counts")
                     ),
+                    suites=tuple(
+                        V2SuiteRef.model_validate(item)
+                        for item in cast(list[object], manifest.get("suites") or [])
+                    ),
                 )
             )
 
-        def sort_key(item: V2RunSummary) -> tuple[datetime, str]:
-            try:
-                timestamp = (item.created_at or "").replace("Z", "+00:00")
-                value = datetime.fromisoformat(timestamp)
-                if value.tzinfo is None:
-                    value = value.replace(tzinfo=timezone.utc)
-                value = value.astimezone(timezone.utc)
-            except (OverflowError, ValueError):
-                value = datetime.min.replace(tzinfo=timezone.utc)
-            return value, item.run_id
-
-        summaries.sort(key=sort_key, reverse=True)
-        return V2RunListEnvelope(runs=tuple(summaries))
+        return V2RunListEnvelope(
+            runs=tuple(summaries), total=total, limit=limit, offset=offset
+        )
 
     application.include_router(runs_router)
 
@@ -1370,6 +1392,18 @@ def install_v2(
 
     application.include_router(router)
     suite_router = APIRouter(prefix="/api/v2/suites", tags=["suites-v2"])
+
+    @suite_router.get("", response_model=V2SuiteListEnvelope)
+    def list_suites(
+        service: AppExecutionService = Depends(get_service),
+    ) -> V2SuiteListEnvelope:
+        return V2SuiteListEnvelope(
+            suites=tuple(
+                V2SuiteRef(suite_id=suite.id.root, suite_name=suite.name)
+                for suite in service.list_suites()
+            )
+        )
+
     suite_router.add_api_route(
         "/{suite_id}/executions",
         _list_suite_executions,
@@ -1481,7 +1515,8 @@ def install_v2(
             "/api/v2/executions/{execution_id}": "Read an execution snapshot or delete it after it reaches a terminal state.",
             "/api/v2/executions/{execution_id}/cancel": "Request cancellation of an active execution.",
             "/api/v2/executions/{execution_id}/report": "Read a terminal execution report, trace, test summaries, and bounded event or artifact pages.",
-            "/api/v2/runs": "List safe, newest-first pytest run summaries, including runs with no executions or evaluations.",
+            "/api/v2/runs": "List safe, newest-first pytest run summaries with their suites, including runs with no executions or evaluations. Optional limit, offset, suite_id, and project_id.",
+            "/api/v2/suites": "List registered suites for run filters.",
             "/api/v2/suites/{suite_id}/executions": "Page through saved executions belonging to an integer suite ID.",
             "/api/v2/evaluations/aggregate": "Calculate a read-only aggregate from evaluation results already saved by the SDK or CLI.",
             "/api/v2/feedback/{run_id}": "Read saved feedback for a run and optionally compare it with a saved baseline run.",
@@ -1702,6 +1737,7 @@ def install_v2(
             ("get", "/api/v2/executions/{execution_id}"),
             ("get", "/api/v2/executions/{execution_id}/report"),
             ("get", "/api/v2/runs"),
+            ("get", "/api/v2/suites"),
             ("post", "/api/v2/evaluations/aggregate"),
             ("get", "/api/v2/feedback/{run_id}"),
             ("post", "/api/v2/evidence/read"),
@@ -1724,6 +1760,7 @@ def install_v2(
             ("delete", "/api/v2/executions/{execution_id}"),
             ("post", "/api/v2/executions/{execution_id}/cancel"),
             ("get", "/api/v2/executions/{execution_id}/report"),
+            ("get", "/api/v2/runs"),
             ("get", "/api/v2/suites/{suite_id}/executions"),
             ("post", "/api/v2/evaluations/aggregate"),
             ("post", "/api/v2/evidence/read"),

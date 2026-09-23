@@ -80,7 +80,7 @@ def test_openapi_matches_standard_and_viewer_surfaces(tmp_path: Path) -> None:
         for method in item
         if method in {"get", "post", "patch", "delete"}
     }
-    assert len(standard_ops) == 33
+    assert len(standard_ops) == 34
     expected_viewer_ops = {
         ("get", path)
         for path in (
@@ -97,6 +97,7 @@ def test_openapi_matches_standard_and_viewer_surfaces(tmp_path: Path) -> None:
             "/api/v2/runs",
             "/api/v2/executions/{execution_id}",
             "/api/v2/executions/{execution_id}/report",
+            "/api/v2/suites",
             "/api/v2/suites/{suite_id}/executions",
             "/api/v2/feedback/{run_id}",
         )

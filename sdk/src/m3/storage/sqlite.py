@@ -94,6 +94,7 @@ from .ephemeral import (
     StorageError,
     _execution_key,
     _report_fields,
+    run_sort_key,
 )
 from .evidence import (
     evidence_id_for as _evidence_id_for,
@@ -1687,13 +1688,16 @@ class SQLiteExecutionStore(_SqliteBase):
         if not isinstance(safe, Mapping):
             raise StorageError("test run manifest could not be redacted")
         now = _iso(_utcnow())
+        # The created_at column is the run's sort key: the manifest start time
+        # normalized to UTC, or "" so undated runs sort last.
+        sort_key = run_sort_key(safe.get("created_at"))
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
             connection.execute(
                 "INSERT INTO v2_test_runs(run_id,record_json,created_at,updated_at,project_id) VALUES(?,?,?,?,?) "
-                "ON CONFLICT(run_id) DO UPDATE SET record_json=excluded.record_json,updated_at=excluded.updated_at,project_id=excluded.project_id",
-                (key, _json(safe), now, now, safe.get("project_id")),
+                "ON CONFLICT(run_id) DO UPDATE SET record_json=excluded.record_json,created_at=excluded.created_at,updated_at=excluded.updated_at,project_id=excluded.project_id",
+                (key, _json(safe), sort_key, now, safe.get("project_id")),
             )
             self._commit(connection)
         except BaseException:
@@ -1724,6 +1728,62 @@ class SQLiteExecutionStore(_SqliteBase):
             if isinstance(value, Mapping):
                 values.append(dict(value))
         return tuple(values)
+
+    def list_test_run_page(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        suite_id: int | None = None,
+        project_id: str | None = None,
+    ) -> tuple[tuple[Mapping[str, object], ...], int]:
+        """Return newest-first run manifests with their suites, and the total.
+
+        Suites come from saved test results, so a run appears under every
+        suite its tests belong to, including tests with no execution.
+        """
+        clauses: list[str] = []
+        params: list[object] = []
+        if suite_id is not None:
+            clauses.append(
+                "run_id IN (SELECT run_id FROM v2_test_results WHERE suite_id=?)"
+            )
+            params.append(int(suite_id))
+        if project_id is not None:
+            clauses.append("project_id=?")
+            params.append(str(project_id))
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM v2_test_runs{where}", params
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"SELECT run_id,record_json FROM v2_test_runs{where}"
+                " ORDER BY created_at DESC,run_id DESC LIMIT ? OFFSET ?",
+                [*params, -1 if limit is None else int(limit), int(offset)],
+            ).fetchall()
+            run_ids = [str(row[0]) for row in rows]
+            suites: dict[str, list[dict[str, object]]] = {}
+            if run_ids:
+                # One JSON parameter keeps this under SQLite's variable limit.
+                for row in connection.execute(
+                    "SELECT DISTINCT t.run_id,s.id,s.suite_name FROM v2_test_results t"
+                    " JOIN v2_suites s ON s.id=t.suite_id"
+                    " WHERE t.run_id IN (SELECT value FROM json_each(?))"
+                    " ORDER BY s.suite_name,s.id",
+                    (json.dumps(run_ids),),
+                ):
+                    suites.setdefault(str(row[0]), []).append(
+                        {"suite_id": int(row[1]), "suite_name": str(row[2])}
+                    )
+        values: list[Mapping[str, object]] = []
+        for row in rows:
+            value = _loads(row[1])
+            if isinstance(value, Mapping):
+                values.append({**value, "suites": suites.get(str(row[0]), [])})
+        return tuple(values), total
 
     def save_test_result(
         self, run_id: str, attempt_id: str, value: Mapping[str, object]
@@ -1774,7 +1834,7 @@ class SQLiteExecutionStore(_SqliteBase):
                                 "finished_at": None,
                             }
                         ),
-                        now,
+                        run_sort_key(now),
                         now,
                         safe.get("project_id"),
                     ),
