@@ -33,14 +33,28 @@ from m3 import (
     TraceView,
     build_feedback,
 )
-from m3._types.specs import AgentSpec
+from m3._types.specs import AgentSpec, CallTool, ServerBinding
 from m3.feedback import project_test_attempts
+from m3.observability import ObservationState, ToolCallEntry
 from m3.services.profiles import ProfileResolutionError
 from m3.storage import ExecutionStore, StorageConflict, StorageError
 from m3.suites import Suite
 
 _CANCEL_SETTLE_TIMEOUT_SECONDS = 2.0
 _CANCEL_SETTLE_POLL_SECONDS = 0.01
+
+# Spec metadata is flat scalars, so replay provenance uses dotted keys.
+REPLAYED_FROM_EXECUTION = "replayed_from.execution_id"
+REPLAYED_FROM_ENTRY = "replayed_from.entry_id"
+
+
+def _binding_selector(binding: ServerBinding) -> str | None:
+    """Return the selector a trace entry records for this binding."""
+    if binding.alias:
+        return binding.alias
+    if binding.server is not None:
+        return binding.server.name
+    return binding.profile.server_name if binding.profile is not None else None
 
 
 class AppExecutionError(RuntimeError):
@@ -301,6 +315,82 @@ class AppExecutionService:
                 "trace_unavailable", "execution trace is unavailable"
             )
         return view
+
+    def replay_tool_call(
+        self,
+        execution_id: ExecutionId | str,
+        entry_id: str,
+        arguments: Mapping[str, object] | None = None,
+    ) -> ExecutionReport:
+        """Submit one recorded tool call again as a new direct execution.
+
+        Only the matching server binding is copied. Environment references
+        stay references, so the runtime resolves them from the current
+        process. Test-run and suite identity are not copied.
+        """
+
+        trace = self.trace_view(execution_id)
+        entry = next(
+            (item for item in trace.timeline if item.entry_id == entry_id), None
+        )
+        if entry is None:
+            raise AppExecutionError("tool_call_not_found", "tool call was not found")
+        if not isinstance(entry, ToolCallEntry):
+            raise AppExecutionError(
+                "tool_call_not_replayable", "trace entry is not a tool call"
+            )
+        observed = ObservationState.OBSERVED
+        if entry.tool.state is not observed or not entry.tool.value:
+            raise AppExecutionError(
+                "tool_call_not_replayable", "tool name was not observed"
+            )
+        if arguments is None:
+            if entry.arguments.state is not observed or not isinstance(
+                entry.arguments.value, Mapping
+            ):
+                raise AppExecutionError(
+                    "tool_call_not_replayable",
+                    "tool arguments were not observed; supply arguments",
+                )
+            arguments = entry.arguments.value
+        try:
+            source = self.store.get_execution_spec(trace.execution_id)
+        except (StorageError, TypeError, ValueError) as exc:
+            raise AppExecutionError(
+                "replay_source_unavailable", "source execution spec cannot be loaded"
+            ) from exc
+        selector = entry.server_binding
+        binding = next(
+            (
+                item
+                for item in (source.servers if source is not None else ())
+                if selector is not None and _binding_selector(item) == selector
+            ),
+            None,
+        )
+        if source is None or binding is None:
+            raise AppExecutionError(
+                "replay_source_unavailable", "source server binding is unavailable"
+            )
+        try:
+            spec = DirectSpec(
+                project_id=source.project_id,
+                project_name=source.project_name,
+                servers=(binding,),
+                protocol=source.protocol,
+                operation=CallTool(
+                    server=selector, name=entry.tool.value, arguments=arguments
+                ),
+                metadata={
+                    REPLAYED_FROM_EXECUTION: trace.execution_id.root,
+                    REPLAYED_FROM_ENTRY: entry_id,
+                },
+            )
+        except ValueError as exc:
+            raise AppExecutionError(
+                "replay_source_unavailable", "replay spec could not be built"
+            ) from exc
+        return self.create(spec)
 
     def read_raw_evidence(
         self, reference: EvidenceRef, *, max_bytes: int = 1_048_576

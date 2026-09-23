@@ -35,7 +35,10 @@ from m3 import (
     ExecutionState,
     ExecutionStatus,
     Feedback,
+    HTTPServer,
     RawEvidence,
+    SecretReference,
+    StdioServer,
     TraceView,
 )
 from m3_app.api.report_payloads import build_execution_envelope, build_report_envelope
@@ -46,6 +49,7 @@ from m3_app.api.wire import (
 )
 from m3_app.services.app_service import AppRuntimeService
 from m3_app.services.execution_service import (
+    REPLAYED_FROM_EXECUTION,
     AppExecutionError,
     AppExecutionService,
 )
@@ -62,6 +66,49 @@ class V2ExecutionCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     spec: ExecutionSpec
+
+
+class V2ToolCallReplay(BaseModel):
+    """Optional replay input; omitted arguments reuse the recorded ones."""
+
+    model_config = ConfigDict(extra="forbid")
+    arguments: dict[str, JsonValue] | None = None
+
+
+_REDACTED = "redacted"
+
+
+def _visible_spec(spec: ExecutionSpec | None) -> ExecutionSpec | None:
+    """Hide the inline server launch details of a replay execution.
+
+    A replay copies a test-run server binding that clients never received.
+    Environment references stay visible; literal values do not.
+    """
+    if spec is None or REPLAYED_FROM_EXECUTION not in spec.metadata:
+        return spec
+
+    def hidden(values: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            key: value if isinstance(value, SecretReference) else _REDACTED
+            for key, value in values.items()
+        }
+
+    servers = []
+    for binding in spec.servers:
+        server = binding.server
+        if isinstance(server, StdioServer):
+            server = server.model_copy(
+                update={
+                    "command": _REDACTED,
+                    "args": (),
+                    "cwd": None,
+                    "environment": hidden(server.environment),
+                }
+            )
+        elif isinstance(server, HTTPServer):
+            server = server.model_copy(update={"headers": hidden(server.headers)})
+        servers.append(binding.model_copy(update={"server": server}))
+    return spec.model_copy(update={"servers": tuple(servers)})
 
 
 class V2Error(BaseModel):
@@ -462,6 +509,10 @@ class V2CapabilitiesOut(BaseModel):
     run_ready: bool
     storage: V2StorageHealth
     harnesses: tuple[V2HarnessCapability, ...]
+    tool_call_replay: bool = Field(
+        default=False,
+        description="True when POST .../tool-calls/{entry_id}/replay is served.",
+    )
 
 
 class V2ReadinessOut(V2CapabilitiesOut):
@@ -642,6 +693,9 @@ def _service_fault(error: AppExecutionError) -> V2Fault:
         "feedback_baseline_not_found": 404,
         "feedback_data_unavailable": 500,
         "profile_resolution_failed": 422,
+        "tool_call_not_found": 404,
+        "tool_call_not_replayable": 409,
+        "replay_source_unavailable": 422,
     }
     resolution_reason = error.details.get("reason")
     if error.code == "profile_resolution_failed":
@@ -1031,6 +1085,7 @@ def install_v2(
 
     @profile_router.get("/capabilities", response_model=dict[str, JsonValue])
     def capabilities(
+        request: Request,
         runtime: AppRuntimeService = Depends(get_runtime),
     ) -> dict[str, JsonValue]:
         snapshot = runtime.capabilities()
@@ -1043,6 +1098,9 @@ def install_v2(
                 "run_ready": snapshot.run_ready,
                 "storage": _readiness_value(snapshot.storage),
                 "harnesses": harnesses,
+                "tool_call_replay": not getattr(
+                    request.app.state, "viewer_read_only", False
+                ),
             },
         )
 
@@ -1346,7 +1404,7 @@ def install_v2(
         return V2ExecutionEnvelope.model_validate(
             build_execution_envelope(
                 report.snapshot,
-                service.specification(report.snapshot.execution_id),
+                _visible_spec(service.specification(report.snapshot.execution_id)),
                 project_name(service, report),
                 public=False,
             )
@@ -1420,7 +1478,7 @@ def install_v2(
         return V2ExecutionEnvelope.model_validate(
             build_execution_envelope(
                 report.snapshot,
-                service.specification(report.snapshot.execution_id),
+                _visible_spec(service.specification(report.snapshot.execution_id)),
                 project_name(service, report),
                 public=False,
             )
@@ -1436,7 +1494,30 @@ def install_v2(
         return V2ExecutionEnvelope.model_validate(
             build_execution_envelope(
                 report.snapshot,
-                service.specification(report.snapshot.execution_id),
+                _visible_spec(service.specification(report.snapshot.execution_id)),
+                project_name(service, report),
+                public=False,
+            )
+        )
+
+    @router.post(
+        "/{execution_id}/tool-calls/{entry_id}/replay",
+        response_model=V2ExecutionEnvelope,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def replay_tool_call(
+        execution_id: str,
+        entry_id: str,
+        body: V2ToolCallReplay | None = Body(None),
+        service: AppExecutionService = Depends(get_service),
+    ) -> V2ExecutionEnvelope:
+        report = service.replay_tool_call(
+            execution_id, entry_id, body.arguments if body is not None else None
+        )
+        return V2ExecutionEnvelope.model_validate(
+            build_execution_envelope(
+                report.snapshot,
+                _visible_spec(service.specification(report.snapshot.execution_id)),
                 project_name(service, report),
                 public=False,
             )
@@ -1464,7 +1545,7 @@ def install_v2(
             artifact_limit=artifact_limit,
         )
         trace = service.trace_view(execution_id)
-        spec = service.specification(execution_id)
+        spec = _visible_spec(service.specification(execution_id))
         test_results = tuple(
             {
                 "attempt_id": item.attempt_id,
@@ -1616,6 +1697,7 @@ def install_v2(
             "/api/v2/executions": "Submit an asynchronous direct or agent execution, or page through saved executions.",
             "/api/v2/executions/{execution_id}": "Read an execution snapshot or delete it after it reaches a terminal state.",
             "/api/v2/executions/{execution_id}/cancel": "Request cancellation of an active execution.",
+            "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay": "Replay one recorded tool call as a new direct execution and return 202. Only the matching server binding is reused; environment references resolve from the server process. The replay has no run, case, or suite identity; spec metadata replayed_from.execution_id and replayed_from.entry_id record its source. An optional {arguments} body replaces the recorded arguments. Inline server launch details are redacted in responses.",
             "/api/v2/executions/{execution_id}/report": "Read a terminal execution report, trace, test summaries, and bounded event or artifact pages.",
             "/api/v2/runs": "List safe, newest-first pytest run summaries with their suites, including runs with no executions or evaluations. Optional limit, offset, suite_id, project_id, and page-scoped group.",
             "/api/v2/suites": "List registered suites for run filters.",
@@ -1679,6 +1761,10 @@ def install_v2(
                     "limit": 100,
                     "offset": 0,
                 },
+            },
+            "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay": {
+                "summary": "Replay with replacement arguments",
+                "value": {"arguments": {"text": "hello again"}},
             },
             "/api/v2/evidence/read": {
                 "summary": "Read a bounded evidence reference",
@@ -1816,6 +1902,7 @@ def install_v2(
             ("delete", "/api/v2/executions/{execution_id}"),
             ("post", "/api/v2/executions/{execution_id}/cancel"),
             ("get", "/api/v2/executions/{execution_id}/report"),
+            ("post", "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay"),
             ("get", "/api/v2/runs"),
             ("get", "/api/v2/suites/{suite_id}/executions"),
             ("get", "/api/v2/feedback/{run_id}"),
@@ -1833,11 +1920,13 @@ def install_v2(
             ("delete", "/api/v2/executions/{execution_id}"),
             ("post", "/api/v2/executions/{execution_id}/cancel"),
             ("get", "/api/v2/executions/{execution_id}/report"),
+            ("post", "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay"),
         }
         internal_error_operations = {
             ("post", "/api/v2/executions"),
             ("get", "/api/v2/executions/{execution_id}"),
             ("get", "/api/v2/executions/{execution_id}/report"),
+            ("post", "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay"),
             ("get", "/api/v2/runs"),
             ("get", "/api/v2/suites"),
             ("post", "/api/v2/evaluations/aggregate"),
@@ -1862,6 +1951,7 @@ def install_v2(
             ("delete", "/api/v2/executions/{execution_id}"),
             ("post", "/api/v2/executions/{execution_id}/cancel"),
             ("get", "/api/v2/executions/{execution_id}/report"),
+            ("post", "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay"),
             ("get", "/api/v2/runs"),
             ("get", "/api/v2/suites/{suite_id}/executions"),
             ("post", "/api/v2/evaluations/aggregate"),
