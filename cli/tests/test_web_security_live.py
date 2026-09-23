@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
 _ARCHIVE_PATH = "/api/v2/profiles/nonexistent-profile/archive"
+_CLI_TOKEN = "C" * 43
 _OPENER = build_opener(ProxyHandler({}))
 
 
@@ -44,7 +45,9 @@ def _status(
 
 
 @contextmanager
-def _server(command: list[str], env: dict[str, str], port: int) -> Iterator[str]:
+def _server(
+    command: list[str], env: dict[str, str], port: int, *, auth_token: str | None = None
+) -> Iterator[str]:
     process = subprocess.Popen(
         command,
         env=env,
@@ -60,7 +63,18 @@ def _server(command: list[str], env: dict[str, str], port: int) -> Iterator[str]
                 _out, error = process.communicate()
                 raise AssertionError(f"security gate server exited early: {error}")
             try:
-                if _status(base, "/api/v2/health") == 200:
+                if (
+                    _status(
+                        base,
+                        "/api/v2/health",
+                        headers=(
+                            {"Authorization": f"Bearer {auth_token}"}
+                            if auth_token is not None
+                            else None
+                        ),
+                    )
+                    == 200
+                ):
                     break
             except OSError:
                 pass
@@ -77,13 +91,17 @@ def _server(command: list[str], env: dict[str, str], port: int) -> Iterator[str]
             process.wait(timeout=5)
 
 
-def _assert_local_boundary(base: str) -> None:
+def _assert_local_boundary(base: str, auth_token: str | None = None) -> None:
     port = base.rsplit(":", 1)[1]
+    credentials = (
+        {"Authorization": f"Bearer {auth_token}"} if auth_token is not None else {}
+    )
     assert (
         _status(
             base,
             "/api/v2/executions",
             headers={
+                **credentials,
                 "Host": f"attacker.example:{port}",
                 "Origin": f"http://attacker.example:{port}",
                 "Sec-Fetch-Site": "same-origin",
@@ -97,6 +115,7 @@ def _assert_local_boundary(base: str) -> None:
             _ARCHIVE_PATH,
             method="POST",
             headers={
+                **credentials,
                 "Origin": "https://attacker.example",
                 "Sec-Fetch-Site": "cross-site",
             },
@@ -109,6 +128,7 @@ def _assert_local_boundary(base: str) -> None:
             _ARCHIVE_PATH,
             method="POST",
             headers={
+                **credentials,
                 "Origin": base,
                 "Sec-Fetch-Site": "same-origin",
             },
@@ -165,15 +185,20 @@ def test_raw_asgi_and_cli_apps_enforce_local_security_over_real_http(
         "TEST_WEB_SECURITY_DATABASE": str(tmp_path / "cli.sqlite"),
         "TEST_WEB_SECURITY_UI": str(root / "cli/tests/fixtures/ui"),
         "TEST_WEB_SECURITY_PORT": str(cli_port),
+        "TEST_WEB_SECURITY_TOKEN": _CLI_TOKEN,
     }
     cli_program = (
         "import os, uvicorn; "
         "from m3_cli.web import create_web_app; "
         "uvicorn.run(create_web_app("
         "os.environ['TEST_WEB_SECURITY_DATABASE'], "
+        "auth_token=os.environ['TEST_WEB_SECURITY_TOKEN'], "
         "ui_dir=os.environ['TEST_WEB_SECURITY_UI']), "
         "host='127.0.0.1', port=int(os.environ['TEST_WEB_SECURITY_PORT']), "
         "log_level='error')"
     )
-    with _server([sys.executable, "-c", cli_program], cli_env, cli_port) as base:
-        _assert_local_boundary(base)
+    with _server(
+        [sys.executable, "-c", cli_program], cli_env, cli_port, auth_token=_CLI_TOKEN
+    ) as base:
+        assert _status(base, "/api/v2/health") == 401
+        _assert_local_boundary(base, _CLI_TOKEN)

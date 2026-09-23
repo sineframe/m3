@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import socket
 import sys
 from importlib import resources
 from pathlib import Path
@@ -15,15 +16,20 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 
+_AUTH_TOKEN_MAX_BYTES = 256
+_AUTH_TOKEN_PATTERN = re.compile(rb"^[A-Za-z0-9_-]{32,256}$")
+
 
 def _fail(message: str) -> NoReturn:
     raise ValueError(message)
 
 
-def _safe_startup_error(error: Exception) -> str:
+def _safe_startup_error(error: Exception, auth_token: str | None = None) -> str:
     """Keep startup failures useful without echoing ambient credentials."""
 
     message = str(error)[:1000]
+    if auth_token:
+        message = message.replace(auth_token, "<redacted>")
     for key, value in os.environ.items():
         if (
             value
@@ -56,9 +62,17 @@ def ui_directory(value: str | os.PathLike[str] | None = None) -> Path:
 
 
 def create_web_app(
-    database: str | os.PathLike[str], *, ui_dir: str | os.PathLike[str] | None = None
+    database: str | os.PathLike[str],
+    *,
+    auth_token: str,
+    ui_dir: str | os.PathLike[str] | None = None,
 ) -> FastAPI:
     """Create the full application and mount the production SPA last."""
+
+    if not isinstance(auth_token, str) or not re.fullmatch(
+        r"[A-Za-z0-9_-]{32,256}", auth_token
+    ):
+        raise ValueError("invalid local UI credentials")
 
     from m3_app.api import create_app
     from m3_app.settings import Settings
@@ -67,6 +81,7 @@ def create_web_app(
     application = create_app(
         Settings(database_path=str(Path(database).absolute())),
         v2_embedded_worker=True,
+        auth_token=auth_token,
     )
     application.mount(
         "/assets", StaticFiles(directory=str(root / "assets")), name="assets"
@@ -93,21 +108,55 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _read_auth_token(stream: object) -> str:
+    """Read one bounded token line from the supervisor's private stdin pipe."""
+
+    read = getattr(stream, "readline", None)
+    if not callable(read):
+        raise ValueError("missing local UI credentials")
+    raw = read(_AUTH_TOKEN_MAX_BYTES + 2)
+    if not isinstance(raw, bytes):
+        raise ValueError("invalid local UI credentials")
+    token = raw.rstrip(b"\r\n")
+    if (
+        not raw.endswith(b"\n")
+        or len(raw) > _AUTH_TOKEN_MAX_BYTES + 1
+        or not _AUTH_TOKEN_PATTERN.fullmatch(token)
+    ):
+        raise ValueError("invalid local UI credentials")
+    if read(1) != b"":
+        raise ValueError("invalid local UI credentials")
+    return token.decode("ascii")
+
+
 def main(argv: list[str] | None = None) -> int:
+    auth_token: str | None = None
     try:
         args = _parser().parse_args(argv)
         if not 1 <= args.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
         import uvicorn
 
-        application = create_web_app(args.database_path)
-        uvicorn.run(application, host="127.0.0.1", port=args.port, log_level="warning")
+        auth_token = _read_auth_token(sys.stdin.buffer)
+        application = create_web_app(args.database_path, auth_token=auth_token)
+
+        class _ReadinessServer(uvicorn.Server):
+            async def startup(self, sockets: list[socket.socket] | None = None) -> None:
+                await super().startup(sockets=sockets)
+                if self.started:
+                    sys.stdout.write("\x00M3_UI_SERVER_READY\x00\n")
+                    sys.stdout.flush()
+
+        config = uvicorn.Config(
+            application, host="127.0.0.1", port=args.port, log_level="warning"
+        )
+        _ReadinessServer(config).run()
         return 0
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
     except Exception as exc:
         print(
-            f"m3 web: unable to start local UI ({_safe_startup_error(exc)})",
+            f"m3 web: unable to start local UI ({_safe_startup_error(exc, auth_token)})",
             file=sys.stderr,
         )
         return 2

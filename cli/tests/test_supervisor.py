@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import signal
+import socket
 import sys
 from collections import deque
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from types import SimpleNamespace
 from typing import ClassVar
 
@@ -14,6 +18,104 @@ import pytest
 
 from m3_cli import main, supervisor
 from m3_cli.branding import M3_ASCII_ART
+
+
+def test_readiness_signal_does_not_contact_ambient_http_proxy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observed_proxy_requests: list[tuple[str, str | None]] = []
+
+    class ProxyHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            observed_proxy_requests.append(
+                (self.path, self.headers.get("Authorization"))
+            )
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            pass
+
+    proxy_server = ThreadingHTTPServer(("127.0.0.1", 0), ProxyHandler)
+    proxy_thread = Thread(target=proxy_server.serve_forever, daemon=True)
+    proxy_thread.start()
+    proxy_url = f"http://127.0.0.1:{proxy_server.server_port}"
+    monkeypatch.setenv("HTTP_PROXY", proxy_url)
+    monkeypatch.setenv("http_proxy", proxy_url)
+    monkeypatch.setenv("NO_PROXY", "")
+    monkeypatch.setenv("no_proxy", "")
+
+    port_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    port_socket.bind(("127.0.0.1", 0))
+    port = port_socket.getsockname()[1]
+    port_socket.close()
+    token = "readiness-secret-token-1234567890"
+    _use_fixture_ui_in_child(monkeypatch, Path(__file__).parent / "fixtures" / "ui")
+    child = supervisor._ServerChild(tmp_path / "results.sqlite", port, token)
+    try:
+        ready = supervisor._wait_ready(child, timeout=5)
+        if ready:
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+            connection.request(
+                "GET", "/api/v2/health", headers={"Authorization": f"Bearer {token}"}
+            )
+            response = connection.getresponse()
+            response.read()
+            connection.close()
+        else:
+            response = None
+    finally:
+        supervisor._stop_server(child)
+        proxy_server.shutdown()
+        proxy_server.server_close()
+        proxy_thread.join(timeout=1)
+
+    assert ready is True
+    assert response is not None and response.status == 200
+    assert observed_proxy_requests == []
+
+
+def test_competing_listener_never_receives_launch_token_or_ui_link(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """A listener that wins the port race must not be treated as the web child."""
+
+    observed_authorization: list[str | None] = []
+
+    class CompetingHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            observed_authorization.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            pass
+
+    released = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    released.bind(("127.0.0.1", 0))
+    port = released.getsockname()[1]
+    released.close()
+    competitor = ThreadingHTTPServer(("127.0.0.1", port), CompetingHandler)
+    competitor_thread = Thread(target=competitor.serve_forever, daemon=True)
+    competitor_thread.start()
+
+    _use_fixture_ui_in_child(monkeypatch, Path(__file__).parent / "fixtures" / "ui")
+    monkeypatch.setattr(
+        supervisor.secrets, "token_urlsafe", lambda _size: "fixed-launch-token-123456"
+    )
+    try:
+        result = supervisor._run_ui_server(tmp_path / "results.sqlite", port, 1, (), ())
+    finally:
+        competitor.shutdown()
+        competitor.server_close()
+        competitor_thread.join(timeout=1)
+    captured = capsys.readouterr()
+    assert result == 2
+    assert observed_authorization == []
+    assert "UI:" not in captured.out
+    assert "fixed-launch-token-123456" not in captured.out + captured.err
 
 
 @pytest.mark.parametrize("value", ["codex=", "unknown=model", "opencode=a,,b"])
@@ -127,10 +229,14 @@ def test_ui_server_prints_links_and_returns_original_failure(
     runs = (_run("run id/1", 1), _run("run-two", 2))
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 1, runs, ()) == 1
     output = capsys.readouterr().out
-    assert output.splitlines() == [
-        *M3_ASCII_ART.splitlines(),
-        "Run: http://127.0.0.1:8123/reports/runs/run%20id%2F1",
-        "Run: http://127.0.0.1:8123/reports/runs/run-two",
+    lines = output.splitlines()
+    art_lines = M3_ASCII_ART.splitlines()
+    assert lines[: len(art_lines)] == art_lines
+    assert lines[len(art_lines)].startswith("UI: http://127.0.0.1:8123/#m3_token=")
+    token = lines[len(art_lines)].split("m3_token=", 1)[1]
+    assert lines[len(art_lines) + 1 :] == [
+        f"Run: http://127.0.0.1:8123/reports/runs/run%20id%2F1#m3_token={token}",
+        f"Run: http://127.0.0.1:8123/reports/runs/run-two#m3_token={token}",
     ]
 
 
@@ -152,10 +258,12 @@ def test_ui_server_zero_runs_prints_message(
         lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 0, (), ()) == 0
-    assert capsys.readouterr().out.splitlines() == [
-        *M3_ASCII_ART.splitlines(),
-        "No new stored runs.",
-    ]
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[: len(M3_ASCII_ART.splitlines())] == M3_ASCII_ART.splitlines()
+    assert lines[len(M3_ASCII_ART.splitlines())].startswith(
+        "UI: http://127.0.0.1:8123/#m3_token="
+    )
+    assert lines[-1] == "No new stored runs."
 
 
 @pytest.mark.parametrize("exit_code", [2, 130, 143])
@@ -210,14 +318,19 @@ def test_ui_launches_for_ordinary_pytest_failure_and_keeps_status(
 def test_ui_server_readiness_failure_is_cleaned_up(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    token = "Z" * 43
+
     class Child:
         process = SimpleNamespace(poll=lambda: None)
-        lines: ClassVar = deque(["API_KEY=top-secret", "safe startup failure"])
+        lines: ClassVar = deque(
+            ["API_KEY=top-secret", f"echoed token {token}", "safe startup failure"]
+        )
 
         def alive(self) -> bool:
             return True
 
     child = Child()
+    monkeypatch.setattr(supervisor.secrets, "token_urlsafe", lambda _size: token)
     stopped: list[object] = []
     monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: child)
     monkeypatch.setattr(supervisor, "_wait_ready", lambda *_args: False)
@@ -230,6 +343,7 @@ def test_ui_server_readiness_failure_is_cleaned_up(
     assert "readiness failed" in error
     assert "safe startup failure" in error
     assert "top-secret" not in error
+    assert token not in error
 
 
 def test_ui_server_environment_excludes_project_settings_and_credentials() -> None:
@@ -257,6 +371,27 @@ def test_server_command_never_starts_node_or_npm() -> None:
 
 def _run(run_id: str, second: int) -> supervisor.StoredRun:
     return supervisor.StoredRun(run_id, datetime.fromtimestamp(second, tz=timezone.utc))
+
+
+def _use_fixture_ui_in_child(monkeypatch: pytest.MonkeyPatch, fixture_ui: Path) -> None:
+    child_code = (
+        "import sys; from pathlib import Path; import m3_cli.web as web; "
+        f"web.ui_directory = lambda _value=None: Path({str(fixture_ui)!r}); "
+        "raise SystemExit(web.main(sys.argv[1:]))"
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_server_command",
+        lambda database, port: [
+            sys.executable,
+            "-c",
+            child_code,
+            "--database-path",
+            str(database),
+            "--port",
+            str(port),
+        ],
+    )
 
 
 def test_find_new_runs_excludes_existing_and_sorts_stably() -> None:
@@ -321,6 +456,9 @@ def test_list_stored_runs_returns_safe_warning_for_unreadable_database(
 def test_run_url_encodes_every_path_separator_character() -> None:
     assert supervisor.build_run_url("run id/with?unsafe#chars", 8123) == (
         "http://127.0.0.1:8123/reports/runs/run%20id%2Fwith%3Funsafe%23chars"
+    )
+    assert supervisor.build_run_url("run-1", 8123, "A" * 43).endswith(
+        "run-1#m3_token=" + "A" * 43
     )
 
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import subprocess
@@ -24,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from m3.storage import SQLiteExecutionStore
 
@@ -168,15 +169,21 @@ def _seed_legacy_database(
         connection.close()
 
 
-def _json_get(origin: str, path: str) -> Any:
+def _json_get(origin: str, path: str, auth_token: str) -> Any:
     try:
-        with urlopen(origin + path, timeout=5) as response:
+        request = Request(
+            origin + path,
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        with urlopen(request, timeout=5) as response:
             return json.load(response)
     except (HTTPError, URLError, OSError, ValueError) as exc:
         raise GateError(f"could not read {path}") from exc
 
 
-def _wait_for_migration(process: subprocess.Popen[bytes], origin: str) -> None:
+def _wait_for_migration(
+    process: subprocess.Popen[bytes], origin: str, auth_token: str
+) -> None:
     deadline = time.monotonic() + READY_TIMEOUT
     next_report = 0.0
     while time.monotonic() < deadline:
@@ -189,9 +196,9 @@ def _wait_for_migration(process: subprocess.Popen[bytes], origin: str) -> None:
             )
             next_report = time.monotonic() + 5
         try:
-            profiles = _json_get(origin, "/api/v2/profiles")
-            harnesses = _json_get(origin, "/api/v2/harness-profiles")
-            capabilities = _json_get(origin, "/api/v2/capabilities")
+            profiles = _json_get(origin, "/api/v2/profiles", auth_token)
+            harnesses = _json_get(origin, "/api/v2/harness-profiles", auth_token)
+            capabilities = _json_get(origin, "/api/v2/capabilities", auth_token)
         except GateError:
             time.sleep(0.2)
             continue
@@ -360,9 +367,12 @@ def check() -> str:
         }
         server_env["OPENCODE_API_KEY"] = os.environ["OPENCODE_API_KEY"]
         server_env["OPENCODE_GATE_CONFIG"] = str(config_path)
+        auth_token = secrets.token_urlsafe(32)
+        server_env["MCP_PAL_LIVE_AUTH_TOKEN"] = auth_token
         server_code = (
-            "import sys,uvicorn; from m3_cli.web import create_web_app; "
-            "uvicorn.run(create_web_app(sys.argv[1],ui_dir=sys.argv[2]),"
+            "import os,sys,uvicorn; from m3_cli.web import create_web_app; "
+            "uvicorn.run(create_web_app(sys.argv[1],"
+            "auth_token=os.environ['MCP_PAL_LIVE_AUTH_TOKEN'],ui_dir=sys.argv[2]),"
             "host='127.0.0.1',port=int(sys.argv[3]),log_level='warning')"
         )
         app_log_path = root / "app.log"
@@ -382,11 +392,13 @@ def check() -> str:
             output_path=app_log_path,
         )
         process = app_child.process
-        _wait_for_migration(process, origin)
+        _wait_for_migration(process, origin, auth_token)
         print("gate: migrated profiles and ACP capability are ready", flush=True)
         browser_env.update(
             {
                 "MCP_PAL_LIVE_UI_BASE_URL": origin,
+                "MCP_PAL_LIVE_AUTH_URL": f"{origin}/#m3_token={auth_token}",
+                "MCP_PAL_LIVE_AUTH_TOKEN": auth_token,
                 "MCP_PAL_LIVE_MIGRATED_PROFILE_NAME": PROFILE_NAME,
                 "MCP_PAL_LIVE_MIGRATED_SERVER_NAME": SERVER_NAME,
                 "MCP_PAL_LIVE_MIGRATED_SERVER_PROFILE_ID": SERVER_PROFILE_ID,

@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import secrets
 import shutil
 import signal
 import socket
@@ -22,10 +23,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
-from urllib.error import URLError
+from typing import Any
 from urllib.parse import quote
-from urllib.request import Request, urlopen
 
 from .branding import M3_ASCII_ART
 
@@ -607,12 +606,19 @@ def find_new_runs(before: StoredRuns, after: StoredRuns) -> tuple[StoredRun, ...
     return tuple(sorted(unique.values(), key=lambda run: (run.created_at, run.run_id)))
 
 
-def build_run_url(run_id: str, port: int) -> str:
+def build_run_url(run_id: str, port: int, auth_token: str | None = None) -> str:
     """Build an encoded feedback report URL for the local UI."""
 
     origin = f"http://127.0.0.1:{port}"
     encoded_run_id = quote(str(run_id), safe="")
-    return f"{origin}/reports/runs/{encoded_run_id}"
+    url = f"{origin}/reports/runs/{encoded_run_id}"
+    return f"{url}#m3_token={auth_token}" if auth_token is not None else url
+
+
+def build_home_url(port: int, auth_token: str) -> str:
+    """Build the CLI's authenticated UI entry link."""
+
+    return f"http://127.0.0.1:{port}/#m3_token={auth_token}"
 
 
 def _validate_port(port: int) -> str | None:
@@ -652,11 +658,14 @@ def _server_command(database: Path, port: int) -> list[str]:
 
 
 class _ServerChild:
-    def __init__(self, database: Path, port: int) -> None:
+    _READY_MARKER = "\x00M3_UI_SERVER_READY\x00"
+
+    def __init__(self, database: Path, port: int, auth_token: str) -> None:
         kwargs: dict[str, Any] = {
             "env": _server_environment(),
             "stdout": subprocess.PIPE,
             "stderr": subprocess.STDOUT,
+            "stdin": subprocess.PIPE,
             "text": True,
             "bufsize": 1,
         }
@@ -667,7 +676,22 @@ class _ServerChild:
             if flags:
                 kwargs["creationflags"] = flags
         self.lines: deque[str] = deque(maxlen=20)
+        self._startup_ready = threading.Event()
         self.process = subprocess.Popen(_server_command(database, port), **kwargs)
+        if self.process.stdin is None:
+            _terminate_process(self.process)
+            raise OSError("could not deliver local UI credentials")
+        try:
+            self.process.stdin.write(auth_token + "\n")
+            self.process.stdin.flush()
+        except (OSError, ValueError):
+            _terminate_process(self.process)
+            raise OSError("could not deliver local UI credentials") from None
+        finally:
+            try:
+                self.process.stdin.close()
+            except (OSError, ValueError):
+                pass
         threading.Thread(target=self._read, daemon=True).start()
 
     def _read(self) -> None:
@@ -676,7 +700,11 @@ class _ServerChild:
             return
         try:
             for line in stream:
-                self.lines.append(line.rstrip("\r\n"))
+                line = line.rstrip("\r\n")
+                if line == self._READY_MARKER:
+                    self._startup_ready.set()
+                else:
+                    self.lines.append(line)
         except (OSError, ValueError):
             pass
 
@@ -684,22 +712,14 @@ class _ServerChild:
         return self.process.poll() is None
 
 
-def _ready(url: str) -> bool:
-    try:
-        with urlopen(Request(url, method="GET"), timeout=0.5) as response:
-            return 200 <= cast(int, response.status) < 300
-    except (OSError, URLError):
-        return False
-
-
-def _wait_ready(child: _ServerChild, url: str, timeout: float = 20.0) -> bool:
+def _wait_ready(child: _ServerChild, timeout: float = 20.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not child.alive():
             return False
-        if _ready(url):
-            return True
-        time.sleep(0.05)
+        remaining = deadline - time.monotonic()
+        if child._startup_ready.wait(min(remaining, 0.05)):
+            return child.alive()
     return False
 
 
@@ -724,7 +744,9 @@ def _server_environment(source: Mapping[str, str] | None = None) -> dict[str, st
     }
 
 
-def _server_diagnostics(child: _ServerChild) -> tuple[str, ...]:
+def _server_diagnostics(
+    child: _ServerChild, auth_token: str | None = None
+) -> tuple[str, ...]:
     """Return bounded server output with ambient credentials removed."""
 
     secret_values = tuple(
@@ -737,6 +759,8 @@ def _server_diagnostics(child: _ServerChild) -> tuple[str, ...]:
     safe: list[str] = []
     for raw in child.lines:
         line = raw[:1000]
+        if auth_token:
+            line = line.replace(auth_token, "<redacted>")
         for value in secret_values:
             line = line.replace(value, "<redacted>")
         line = re.sub(
@@ -1043,15 +1067,19 @@ def _stop_server(child: _ServerChild | None) -> None:
 
 
 def _print_ui_output(
-    port: int, new_runs: Sequence[StoredRun], warnings: Sequence[str]
+    port: int,
+    auth_token: str,
+    new_runs: Sequence[StoredRun],
+    warnings: Sequence[str],
 ) -> None:
     for warning in dict.fromkeys(warnings):
         print(f"Warning: {warning}", file=sys.stderr)
+    print(f"UI: {build_home_url(port, auth_token)}", flush=True)
     if not new_runs:
         print("No new stored runs.", flush=True)
         return
     for run in new_runs:
-        print(f"Run: {build_run_url(run.run_id, port)}", flush=True)
+        print(f"Run: {build_run_url(run.run_id, port, auth_token)}", flush=True)
 
 
 def _run_ui_server(
@@ -1062,16 +1090,16 @@ def _run_ui_server(
     warnings: Sequence[str],
 ) -> int:
     child: _ServerChild | None = None
+    auth_token = secrets.token_urlsafe(32)
     try:
-        child = _ServerChild(database, port)
-        origin = f"http://127.0.0.1:{port}"
-        if not _wait_ready(child, origin + "/api/v2/executions"):
+        child = _ServerChild(database, port, auth_token)
+        if not _wait_ready(child):
             print("m3: UI server readiness failed", file=sys.stderr)
-            for line in _server_diagnostics(child):
+            for line in _server_diagnostics(child, auth_token):
                 print(f"m3: UI server: {line}", file=sys.stderr)
             return OPERATIONAL_ERROR
         print(M3_ASCII_ART, flush=True)
-        _print_ui_output(port, new_runs, warnings)
+        _print_ui_output(port, auth_token, new_runs, warnings)
         with _termination_signal_handlers():
             while True:
                 if not child.alive():

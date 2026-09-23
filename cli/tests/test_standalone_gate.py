@@ -95,11 +95,21 @@ def test_redact_diagnostics_hides_secret_like_values() -> None:
     assert "SAFE=visible" in redacted
 
 
+def test_redact_diagnostics_hides_bearer_tokens_in_links_and_headers() -> None:
+    token = "T" * 43
+    redacted = _GATE._redact_diagnostics(
+        f"authorization: Bearer {token} url#m3_token={token}", {}
+    )
+    assert token not in redacted
+    assert "m3_token=<redacted>" in redacted
+
+
 def test_parse_ui_links_uses_the_complete_encoded_run_suffix() -> None:
-    output = "Run: http://127.0.0.1:8123/reports/runs/run%20id%2Fpart"
+    token = "A" * 43
+    output = f"Run: http://127.0.0.1:8123/reports/runs/run%20id%2Fpart#m3_token={token}"
     assert _GATE._parse_ui_links(
         output, "http://127.0.0.1:8123", "run id/part"
-    ).endswith("run%20id%2Fpart")
+    ).endswith("run%20id%2Fpart#m3_token=" + token)
     with pytest.raises(_GATE.StandaloneGateError, match="selected loopback origin"):
         _GATE._parse_ui_links(
             output.replace("8123/reports", "8124/reports"),
@@ -119,6 +129,14 @@ def test_standalone_gate_exercises_public_setup_command() -> None:
     assert '"M3_GATE_PYTHONS", "3.10,3.13"' in source
 
 
+def test_ci_standalone_gate_runs_pinned_ui_auth_playwright_spec() -> None:
+    workflow = (_SCRIPT.parents[1] / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "npx playwright install --with-deps chromium" in workflow
+    assert "--ui-dir .release-ui" in workflow
+
+
 def test_optional_playwright_gate_checks_real_report_and_browser(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -132,10 +150,71 @@ def test_optional_playwright_gate_checks_real_report_and_browser(
     )
 
     _GATE._run_playwright_contract(
-        tmp_path, "http://127.0.0.1:8123", "execution-1", {"PATH": "/usr/bin"}
+        tmp_path,
+        "http://127.0.0.1:8123",
+        "execution-1",
+        "A" * 43,
+        {"PATH": "/usr/bin"},
     )
 
     assert commands[0][0:2] == ["/usr/bin/node", "-e"]
     assert "trace_view" in commands[0][2]
     assert "chromium.launch" in commands[0][2]
     assert commands[0][-2:] == ["http://127.0.0.1:8123", "execution-1"]
+    assert "Authorization" in commands[0][2]
+
+
+def test_auth_playwright_gate_uses_full_link_in_environment_and_requires_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "node_modules" / "@playwright" / "test").mkdir(parents=True)
+    commands: list[tuple[list[str], dict[str, str]]] = []
+
+    class Result:
+        stdout = "Running 1 test using 1 worker\n  1 passed (2s)\n"
+
+    monkeypatch.setattr(_GATE.shutil, "which", lambda name: "/usr/bin/npm")
+    monkeypatch.setattr(
+        _GATE,
+        "_run",
+        lambda command, **kwargs: (commands.append((command, kwargs["env"])), Result())[
+            1
+        ],
+    )
+    token = "T" * 43
+    auth_url = f"http://127.0.0.1:8123/reports/runs/run-1#m3_token={token}"
+    _GATE._run_playwright_auth_e2e(
+        tmp_path, "http://127.0.0.1:8123", auth_url, {"PATH": "/usr/bin"}
+    )
+    command, env = commands[0]
+    assert command[1:] == [
+        "run",
+        "test:e2e",
+        "--",
+        "e2e/auth-cli.spec.ts",
+        "--project",
+        "desktop",
+    ]
+    assert token not in command
+    assert env["MCP_PAL_LIVE_AUTH_URL"] == auth_url
+    assert env["MCP_PAL_LIVE_UI_BASE_URL"] == "http://127.0.0.1:8123"
+
+
+def test_auth_playwright_gate_rejects_skipped_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "node_modules" / "@playwright" / "test").mkdir(parents=True)
+
+    class Result:
+        stdout = "Running 1 test using 1 worker\n  1 skipped (2s)\n"
+
+    monkeypatch.setattr(_GATE.shutil, "which", lambda name: "/usr/bin/npm")
+    monkeypatch.setattr(_GATE, "_run", lambda *_args, **_kwargs: Result())
+    token = "T" * 43
+    with pytest.raises(_GATE.StandaloneGateError, match="did not run exactly once"):
+        _GATE._run_playwright_auth_e2e(
+            tmp_path,
+            "http://127.0.0.1:8123",
+            f"http://127.0.0.1:8123/#m3_token={token}",
+            {"PATH": "/usr/bin"},
+        )

@@ -372,10 +372,11 @@ m3 test --ui
 
 This starts one FastAPI server and one loopback port. The production UI is
 bundled inside the CLI wheel; Node.js, npm, and Vite are not run at runtime.
-The command prints report links like this:
+The command prints a home link and report links like this:
 
 ```text
-Run: http://127.0.0.1:8000/reports/runs/<runId>
+UI: http://127.0.0.1:8000/#m3_token=<token>
+Run: http://127.0.0.1:8000/reports/runs/<runId>#m3_token=<token>
 ```
 
 The `<runId>` in the direct link is the pytest run ID stored in the test-run
@@ -385,13 +386,20 @@ still opens the UI and keeps that pytest exit code. Collection/configuration
 errors, interruption, server startup errors, and invalid configuration return
 an operational failure.
 
+Open a link printed by the current CLI process to authorize the browser. The
+browser removes the token fragment from its address bar and keeps the token in
+the current tab's session storage for API requests. A new CLI launch uses a new
+token, so old links stop working. The home link is printed even when the test
+run saves no results. Treat the printed links as credentials while the server
+is running.
+
 When stdout is an interactive terminal, the SDK plugin shows a compact test
 progress bar. It is disabled for non-TTY output and for verbose pytest modes,
 where pytest's normal output remains available.
 
-The server binds only to `127.0.0.1`. It is intended for local use; do not
-expose it through a public interface or reverse proxy without adding your own
-authentication and network controls.
+The server binds only to `127.0.0.1` and requires the launch token for API
+requests. It is intended for local use; do not expose it through a public
+interface or reverse proxy without suitable network controls.
 
 ## Troubleshooting
 

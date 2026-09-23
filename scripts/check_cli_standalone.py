@@ -28,7 +28,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -73,11 +73,17 @@ def _redact_diagnostics(value: str, env: Mapping[str, str]) -> str:
     for key, candidate in env.items():
         if candidate and any(part in key.upper() for part in _SECRET_NAME_PARTS):
             redacted = redacted.replace(candidate, "<redacted>")
-    return re.sub(
+    redacted = re.sub(
         r"(?i)(\b(?:api[_-]?key|token|secret|password|credential)\b\s*(?:=|:)\s*)[^\s,;]+",
         r"\1<redacted>",
         redacted,
     )
+    redacted = re.sub(
+        r"(?i)(authorization\s*[:=]\s*bearer\s+)[A-Za-z0-9_-]+",
+        r"\1<redacted>",
+        redacted,
+    )
+    return re.sub(r"(?i)(m3_token=)[A-Za-z0-9_-]+", r"\1<redacted>", redacted)
 
 
 def _safe_diagnostics(value: str, env: Mapping[str, str]) -> str:
@@ -541,12 +547,16 @@ def _parse_ui_links(output: str, origin: str, expected_id: str) -> str:
         effective_port = parsed.port
     except ValueError as exc:
         raise StandaloneGateError("CLI direct link has an invalid port") from exc
+    fragment_values = parse_qs(parsed.fragment, keep_blank_values=True)
+    token_values = fragment_values.get("m3_token", [])
     if (
         parsed.scheme != selected.scheme
         or parsed.hostname != selected.hostname
         or effective_port != selected.port
         or parsed.query
-        or parsed.fragment
+        or set(fragment_values) != {"m3_token"}
+        or len(token_values) != 1
+        or not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", token_values[0])
     ):
         raise StandaloneGateError(
             "CLI direct link does not match the selected loopback origin"
@@ -562,9 +572,16 @@ def _parse_ui_links(output: str, origin: str, expected_id: str) -> str:
     return direct_url
 
 
-def _http(url: str) -> tuple[int, str, bytes]:
+def _http(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: Mapping[str, str] | None = None,
+) -> tuple[int, str, bytes]:
     try:
-        with urlopen(Request(url, method="GET"), timeout=5) as response:
+        with urlopen(
+            Request(url, method=method, headers=dict(headers or {})), timeout=5
+        ) as response:
             body = response.read(2_000_000)
             return response.status, response.headers.get("Content-Type", ""), body
     except HTTPError as exc:
@@ -719,13 +736,24 @@ def _run_ui_gate(
     except StandaloneGateError:
         _terminate(process)
         raise
-    status, content_type, body = _http(origin + "/api/v2/executions")
+    auth_token = parse_qs(urlsplit(direct_url).fragment)["m3_token"][0]
+    auth_headers = {"Authorization": f"Bearer {auth_token}"}
+    status, _, _ = _http(origin + "/api/v2/executions")
+    if status != 401:
+        _terminate(process)
+        raise StandaloneGateError(
+            "executions API accepted a request without credentials"
+        )
+    status, content_type, body = _http(
+        origin + "/api/v2/executions", headers=auth_headers
+    )
     if status != 200 or "json" not in content_type.lower():
         _terminate(process)
         raise StandaloneGateError("executions API did not return JSON")
     _assert_json_execution(body, expected_id)
     status, content_type, body = _http(
-        f"{origin}/api/v2/feedback/{quote(verdict_run_id, safe='')}"
+        f"{origin}/api/v2/feedback/{quote(verdict_run_id, safe='')}",
+        headers=auth_headers,
     )
     if status != 200 or "json" not in content_type.lower():
         _terminate(process)
@@ -770,8 +798,11 @@ def _run_ui_gate(
 
     if ui_dir is not None:
         try:
-            _run_playwright_contract(ui_dir, origin, expected_id, env)
-            _run_playwright_verdict_contract(ui_dir, origin, verdict_run_id, env)
+            _run_playwright_auth_e2e(ui_dir, origin, direct_url, env)
+            _run_playwright_contract(ui_dir, origin, expected_id, auth_token, env)
+            _run_playwright_verdict_contract(
+                ui_dir, origin, verdict_run_id, auth_token, env
+            )
         except StandaloneGateError:
             _terminate(process)
             raise
@@ -794,7 +825,11 @@ def _run_ui_gate(
 
 
 def _run_playwright_contract(
-    ui_dir: Path, origin: str, execution_id: str, env: Mapping[str, str]
+    ui_dir: Path,
+    origin: str,
+    execution_id: str,
+    auth_token: str,
+    env: Mapping[str, str],
 ) -> None:
     """Verify a real v2 report and its bundled UI rendering in Chromium."""
 
@@ -804,10 +839,11 @@ def _run_playwright_contract(
     code = r"""
 const { chromium } = require('playwright');
 const [origin, executionId] = process.argv.slice(1);
+const token = process.env.MCP_PAL_LIVE_AUTH_TOKEN;
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, extraHTTPHeaders: { Authorization: `Bearer ${token}` } });
     const report = await page.request.get(`${origin}/api/v2/executions/${encodeURIComponent(executionId)}/report`);
     if (!report.ok()) throw new Error(`v2 report returned ${report.status()}`);
     const body = await report.json();
@@ -815,7 +851,7 @@ const [origin, executionId] = process.argv.slice(1);
     if (!body.report?.events?.every((event) => event.schema === 'event')) {
       throw new Error('v2 event schemas are not neutral');
     }
-    await page.goto(`${origin}/history`);
+    await page.goto(`${origin}/history#m3_token=${token}`);
     const row = page.locator('tr').filter({ hasText: executionId });
     await row.waitFor({ state: 'visible', timeout: 15000 });
     await row.getByRole('button', { name: `Open ${executionId}` }).click();
@@ -830,13 +866,45 @@ const [origin, executionId] = process.argv.slice(1);
     _run(
         [node, "-e", code, origin, execution_id],
         cwd=ui_dir,
-        env=dict(env),
+        env={**env, "MCP_PAL_LIVE_AUTH_TOKEN": auth_token},
         timeout=_UI_TIMEOUT,
     )
 
 
+def _run_playwright_auth_e2e(
+    ui_dir: Path, origin: str, auth_url: str, env: Mapping[str, str]
+) -> None:
+    """Run the pinned UI's fail-closed auth spec against the installed CLI."""
+
+    npm = shutil.which("npm")
+    if npm is None or not (ui_dir / "node_modules" / "@playwright" / "test").exists():
+        raise StandaloneGateError("Node.js and UI Playwright Test must be installed")
+    live_env = {
+        **env,
+        "MCP_PAL_LIVE_UI_BASE_URL": origin,
+        "MCP_PAL_LIVE_AUTH_URL": auth_url,
+        "MCP_PAL_LIVE_AUTH_TOKEN": parse_qs(urlsplit(auth_url).fragment)["m3_token"][0],
+    }
+    result = _run(
+        [
+            npm,
+            "run",
+            "test:e2e",
+            "--",
+            "e2e/auth-cli.spec.ts",
+            "--project",
+            "desktop",
+        ],
+        cwd=ui_dir,
+        env=live_env,
+        timeout=_UI_TIMEOUT,
+    )
+    if not re.search(r"(?m)^\s*1 passed(?:\s|$)", result.stdout):
+        raise StandaloneGateError("CLI auth Playwright spec did not run exactly once")
+
+
 def _run_playwright_verdict_contract(
-    ui_dir: Path, origin: str, run_id: str, env: Mapping[str, str]
+    ui_dir: Path, origin: str, run_id: str, auth_token: str, env: Mapping[str, str]
 ) -> None:
     """Read the installed UI's real Reports page for the mixed verdict run."""
 
@@ -846,21 +914,22 @@ def _run_playwright_verdict_contract(
     code = r"""
 const { chromium } = require('playwright');
 const [origin, runId] = process.argv.slice(1);
+const token = process.env.MCP_PAL_LIVE_AUTH_TOKEN;
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    await page.goto(`${origin}/reports/runs/${encodeURIComponent(runId)}`);
-    await page.getByRole('heading', { name: runId }).waitFor({ state: 'visible', timeout: 15000 });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, extraHTTPHeaders: { Authorization: `Bearer ${token}` } });
+    await page.goto(`${origin}/reports/runs/${encodeURIComponent(runId)}#m3_token=${token}`);
+    await page.getByText(runId, { exact: true }).first().waitFor({ state: 'visible', timeout: 15000 });
     const expected = [
-      ['test_expected_tool_error', 'Passed'],
-      ['test_failed_matcher', 'Failed Assertion'],
-      ['test_protocol_error', 'Protocol Error'],
-      ['test_setup_error', 'Setup Error'],
-      ['test_plain_pass', 'Passed'],
+      'test_expected_tool_error',
+      'test_failed_matcher',
+      'test_protocol_error',
+      'test_setup_error',
+      'test_plain_pass',
     ];
-    for (const [name, verdict] of expected) {
-      const row = page.getByRole('button', { name: new RegExp(`Test: .*${name}\\. Result: ${verdict}\\.`) });
+    for (const name of expected) {
+      const row = page.getByRole('button', { name: new RegExp(`Test: .*${name}\\. Effective case verdict: `) });
       await row.waitFor({ state: 'visible', timeout: 15000 });
       if (name === 'test_expected_tool_error' && !(await row.getByText('Tool error result').isVisible())) {
         throw new Error('expected tool error is missing from Reports');
@@ -879,7 +948,7 @@ const [origin, runId] = process.argv.slice(1);
     _run(
         [node, "-e", code, origin, run_id],
         cwd=ui_dir,
-        env=dict(env),
+        env={**env, "MCP_PAL_LIVE_AUTH_TOKEN": auth_token},
         timeout=_UI_TIMEOUT,
     )
 

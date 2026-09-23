@@ -7,7 +7,7 @@ is the supported distribution channel.
 
 ## Prerequisite
 
-The production UI comes from the private `rishhavv/mcppal-ui` repository at the
+The production UI comes from the private `rishhavv/m3-ui` repository at the
 commit pinned in [`cli/UI_REF`](../cli/UI_REF). Configure the
 `MCPPAL_UI_TOKEN` Actions secret with read-only access to that repository. CI
 and the release workflow both verify and build that exact commit; the token is

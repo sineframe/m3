@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 from urllib.parse import urlsplit
 
@@ -88,11 +89,44 @@ def _is_loopback_client(scope: Scope) -> bool:
     return bool(mapped is not None and mapped.is_loopback)
 
 
-class LocalSecurityMiddleware:
-    """Enforce the network and browser boundary for the local, loginless API."""
+def _path_relative_to_root(scope: Scope) -> str:
+    """Return the application path after removing its ASGI root path."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    path = str(scope.get("path", ""))
+    root_path = str(scope.get("root_path", "")).rstrip("/")
+    if root_path and (path == root_path or path.startswith(f"{root_path}/")):
+        return path[len(root_path) :] or "/"
+    return path
+
+
+class LocalSecurityMiddleware:
+    """Enforce the network and browser boundary for local API applications."""
+
+    def __init__(self, app: ASGIApp, auth_token: str | None = None) -> None:
         self.app = app
+        self.auth_token = auth_token
+
+    def _authorized(self, scope: Scope) -> bool:
+        """Check one raw Authorization header without accepting duplicates."""
+
+        authorization_values = [
+            value.decode("latin-1")
+            for name, value in scope.get("headers", ())
+            if name.lower() == b"authorization"
+        ]
+        if len(authorization_values) != 1:
+            return False
+        scheme, separator, credential = authorization_values[0].partition(" ")
+        if (
+            not separator
+            or scheme.lower() != "bearer"
+            or not credential
+            or any(character.isspace() for character in credential)
+        ):
+            return False
+        return hmac.compare_digest(
+            credential.encode("utf-8"), (self.auth_token or "").encode("utf-8")
+        )
 
     @staticmethod
     async def _reject(
@@ -167,13 +201,57 @@ class LocalSecurityMiddleware:
                 )
                 return
 
+        # Keep auth after all local network, Host, and Origin checks so those
+        # protections retain their existing response precedence. Applying it
+        # here, before routing, also covers unknown API paths and SPA fallbacks.
+        routed_path = _path_relative_to_root(scope)
+        if (
+            self.auth_token is not None
+            and scope["type"] == "http"
+            and routed_path.startswith("/api/")
+            and not self._authorized(scope)
+        ):
+            response = JSONResponse(
+                {"detail": "Unauthorized"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            await response(scope, receive, send)
+            return
+
         await self.app(scope, receive, send)
 
 
-def install_local_security(application: FastAPI) -> None:
+def install_local_security(
+    application: FastAPI, *, auth_token: str | None = None
+) -> None:
     """Install the mandatory boundary on a local FastAPI application."""
 
-    application.add_middleware(LocalSecurityMiddleware)
+    if auth_token is not None and (not isinstance(auth_token, str) or not auth_token):
+        raise ValueError("auth_token must be a non-empty string when provided")
+    application.add_middleware(LocalSecurityMiddleware, auth_token=auth_token)
+    if auth_token is not None:
+        original_openapi = application.openapi
+
+        def openapi_with_bearer_security() -> dict[str, object]:
+            schema = original_openapi()
+            components = schema.setdefault("components", {})
+            security_schemes = components.setdefault("securitySchemes", {})
+            security_schemes["BearerAuth"] = {
+                "type": "http",
+                "scheme": "bearer",
+            }
+            for path, path_item in schema.get("paths", {}).items():
+                if not path.startswith("/api/") or not isinstance(path_item, dict):
+                    continue
+                for operation in path_item.values():
+                    if isinstance(operation, dict) and "responses" in operation:
+                        operation["security"] = [{"BearerAuth": []}]
+            application.openapi_schema = schema
+            return schema
+
+        # FastAPI explicitly supports overriding this bound method per instance.
+        application.openapi = openapi_with_bearer_security  # type: ignore[method-assign]
 
 
 __all__ = ["LocalSecurityMiddleware", "install_local_security"]

@@ -254,7 +254,7 @@ jobs:
     name: Standalone CLI gate
     runs-on: ubuntu-latest
     if: github.event_name != 'schedule'
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -270,7 +270,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$UI_REPOSITORY_TOKEN" ]]; then
-            echo 'MCPPAL_UI_TOKEN must be configured with read access to the private mcppal-ui repository' >&2
+            echo 'MCPPAL_UI_TOKEN must be configured with read access to the private m3-ui repository' >&2
             exit 1
           fi
           ui_ref=$(tr -d '\r\n' < cli/UI_REF)
@@ -283,7 +283,7 @@ jobs:
       - name: Check out the pinned UI
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: rishhavv/mcppal-ui
+          repository: rishhavv/m3-ui
           ref: ${{ steps.ui-ref.outputs.sha }}
           path: .release-ui
           token: ${{ secrets.MCPPAL_UI_TOKEN }}
@@ -308,6 +308,7 @@ jobs:
         run: |
           npm ci
           npm run build
+          npx playwright install --with-deps chromium
 
       - name: Build the three production wheels
         id: release
@@ -341,7 +342,8 @@ jobs:
         run: |
           python scripts/check_cli_standalone.py \
             --release-dir '${{ steps.release.outputs.dir }}' \
-            --version '${{ steps.release.outputs.version }}'
+            --version '${{ steps.release.outputs.version }}' \
+            --ui-dir .release-ui
 
   managed-runtime-assets:
     if: github.event_name == 'workflow_dispatch'

@@ -267,7 +267,7 @@ def test_release_workflow_publishes_only_tag_runs() -> None:
     assert "pypi" not in workflow.lower()
     assert "actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f" in workflow
     assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in workflow
-    assert "repository: rishhavv/mcppal-ui" in workflow
+    assert "repository: rishhavv/m3-ui" in workflow
     assert "ref: ${{ steps.ui-ref.outputs.sha }}" in workflow
     assert "--print-version" in workflow
     assert "--expected-version" in workflow

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from m3_cli import web
 from m3_cli.web import create_web_app, ui_directory
 
 _FIXTURE_UI = Path(__file__).parent / "fixtures" / "ui"
+_AUTH_TOKEN = "A" * 43
 
 
 def test_ui_directory_requires_index_and_assets(tmp_path: Path) -> None:
@@ -30,7 +32,7 @@ def test_full_app_uses_same_database_and_serves_spa_without_api_fallback(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "shared.sqlite"
-    application = create_web_app(database, ui_dir=_FIXTURE_UI)
+    application = create_web_app(database, auth_token=_AUTH_TOKEN, ui_dir=_FIXTURE_UI)
     assert not any(
         getattr(route, "path", "").startswith("/api/cli")
         for route in application.routes
@@ -43,6 +45,8 @@ def test_full_app_uses_same_database_and_serves_spa_without_api_fallback(
         base_url="http://127.0.0.1",
         client=("127.0.0.1", 50000),
     ) as client:
+        assert client.get("/api/v2/executions").status_code == 401
+        client.headers["Authorization"] = f"Bearer {_AUTH_TOKEN}"
         executions = client.get("/api/v2/executions")
         assert executions.status_code == 200
         assert executions.headers["content-type"].startswith("application/json")
@@ -58,12 +62,15 @@ def test_full_app_uses_same_database_and_serves_spa_without_api_fallback(
 
 
 def test_local_host_and_origin_protection(tmp_path: Path) -> None:
-    application = create_web_app(tmp_path / "shared.sqlite", ui_dir=_FIXTURE_UI)
+    application = create_web_app(
+        tmp_path / "shared.sqlite", auth_token=_AUTH_TOKEN, ui_dir=_FIXTURE_UI
+    )
     with TestClient(
         application,
         base_url="http://127.0.0.1:8123",
         client=("127.0.0.1", 50000),
     ) as client:
+        client.headers["Authorization"] = f"Bearer {_AUTH_TOKEN}"
         assert client.get("/api/v2/executions").status_code == 200
         assert (
             client.get(
@@ -120,12 +127,15 @@ def test_local_host_and_origin_protection(tmp_path: Path) -> None:
 
 
 def test_same_origin_default_ports_are_normalized(tmp_path: Path) -> None:
-    application = create_web_app(tmp_path / "shared.sqlite", ui_dir=_FIXTURE_UI)
+    application = create_web_app(
+        tmp_path / "shared.sqlite", auth_token=_AUTH_TOKEN, ui_dir=_FIXTURE_UI
+    )
     with TestClient(
         application,
         base_url="http://localhost",
         client=("127.0.0.1", 50000),
     ) as client:
+        client.headers["Authorization"] = f"Bearer {_AUTH_TOKEN}"
         response = client.delete(
             "/api/v2/executions/missing", headers={"origin": "http://localhost:80"}
         )
@@ -156,10 +166,25 @@ def test_web_startup_error_is_bounded_and_redacted(
     monkeypatch.setattr(
         web,
         "create_web_app",
-        lambda _database: (_ for _ in ()).throw(RuntimeError(f"API_KEY={secret}")),
+        lambda _database, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError(f"API_KEY={secret}")
+        ),
+    )
+
+    monkeypatch.setattr(
+        web.sys, "stdin", io.TextIOWrapper(io.BytesIO(b"A" * 43 + b"\n"))
     )
 
     assert web.main(["--database-path", "results.sqlite", "--port", "8123"]) == 2
     error = capsys.readouterr().err
     assert "RuntimeError" in error
     assert secret not in error
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"", b"short\n", b"A" * 43, b"A" * 257 + b"\n", b"A" * 43 + b"\nextra"],
+)
+def test_web_auth_token_input_fails_closed(raw: bytes) -> None:
+    with pytest.raises(ValueError):
+        web._read_auth_token(io.BytesIO(raw))

@@ -30,6 +30,7 @@ def _create_app(
     *,
     v2_embedded_worker: bool = True,
     runtime: AppRuntimeService | None = None,
+    auth_token: str | None = None,
 ) -> FastAPI:
     """Build the API around one application runtime.
 
@@ -59,8 +60,13 @@ def _create_app(
         title="Test Results API",
         version=_package_version(),
         description=(
-            "Local, unauthenticated API for test execution results. "
-            "Bind this service to loopback (127.0.0.1); the application "
+            "Local API for test execution results. "
+            + (
+                "API requests require a bearer token. "
+                if auth_token is not None
+                else "This instance does not require API authentication. "
+            )
+            + "Bind this service to loopback (127.0.0.1); the application "
             "enforces loopback clients, an approved Host header, and same-origin "
             "browser mutations. Use /docs for Swagger UI, /redoc for ReDoc, "
             "and /openapi.json for the generated OpenAPI 3.1 contract."
@@ -117,6 +123,7 @@ def create_app(
     *,
     v2_embedded_worker: bool = True,
     runtime: AppRuntimeService | None = None,
+    auth_token: str | None = None,
 ) -> FastAPI:
     """Create the supported local v2 API with its security boundary."""
     application = _create_app(
@@ -127,8 +134,9 @@ def create_app(
         v2_kit=v2_kit,
         v2_embedded_worker=v2_embedded_worker,
         runtime=runtime,
+        auth_token=auth_token,
     )
-    install_local_security(application)
+    install_local_security(application, auth_token=auth_token)
     return application
 
 
