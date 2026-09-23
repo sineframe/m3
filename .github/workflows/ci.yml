@@ -23,7 +23,7 @@ env:
 
 jobs:
   pr-tests:
-    name: PR unit tests (Python 3.10)
+    name: PR tests (3.10)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -59,7 +59,7 @@ jobs:
           cli/tests/test_doctor.py cli/tests/test_web.py
 
   main-sdk-tests:
-    name: SDK tests (Python 3.10)
+    name: Main SDK tests (3.10)
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -86,7 +86,7 @@ jobs:
           sdk/tests
 
   main-sdk-lifecycle:
-    name: SDK process lifecycle tests (Python 3.10, serial)
+    name: Main SDK processes (3.10)
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -112,7 +112,7 @@ jobs:
           pytest -q -m "not live and process_lifecycle" sdk/tests
 
   main-sdk-examples:
-    name: SDK examples (Python 3.10)
+    name: Main SDK examples (3.10)
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -138,7 +138,7 @@ jobs:
           pytest -q -n 2 --dist worksteal -m "not live" sdk/examples/tests
 
   main-app-tests:
-    name: Application tests (Python 3.10)
+    name: Main app tests (3.10)
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -164,7 +164,7 @@ jobs:
           pytest -q -n 2 --dist worksteal -m "not live" app/tests
 
   main-cli-tests:
-    name: CLI tests (Python 3.10)
+    name: Main CLI tests (3.10)
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -188,7 +188,7 @@ jobs:
         run: uv run --locked --no-sync --project cli pytest -q cli/tests
 
   main-python-compatibility:
-    name: Main compatibility tests (Python 3.13)
+    name: Main compatibility (3.13)
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -224,7 +224,7 @@ jobs:
           cli/tests/test_doctor.py cli/tests/test_web.py
 
   quality:
-    name: Source and lock checks
+    name: Source checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -303,7 +303,7 @@ jobs:
         run: uv run --locked --no-sync --project sdk python scripts/check_packaging.py
 
   public-packaging:
-    name: Public packaging and installer checks
+    name: Main installer smoke
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     timeout-minutes: 20
@@ -350,7 +350,7 @@ jobs:
           python scripts/check_cli_standalone.py --release-dir "$RUNNER_TEMP/m3-fixture-release" --version "$version"
 
   cli-standalone:
-    name: Private pinned UI gate
+    name: Main UI package
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     timeout-minutes: 20
@@ -446,7 +446,7 @@ jobs:
 
   managed-runtime-assets:
     if: github.event_name == 'workflow_dispatch'
-    name: Managed asset checks (manual dispatch)
+    name: Manual managed assets
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:

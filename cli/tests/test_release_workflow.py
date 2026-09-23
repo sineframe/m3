@@ -13,16 +13,16 @@ def _workflow() -> str:
 def test_release_builds_and_gates_exact_tagged_assets_before_publication() -> None:
     workflow = _workflow()
     for required in (
-        "name: Build and verify immutable release assets",
+        "name: Build assets",
         'python scripts/check_cli_standalone.py --release-dir "$out" --version "$VERSION" --ui-dir .release-ui',
         "name: Upload immutable release artifact",
-        "name: Stage draft and publish wheels to PyPI",
+        "name: Publish to PyPI",
         "name: Publish wheels with PyPI Trusted Publishing",
     ):
         assert required in workflow
-    assert workflow.index(
-        "name: Build and verify immutable release assets"
-    ) < workflow.index("name: Stage draft and publish wheels to PyPI")
+    assert workflow.index("name: Build assets") < workflow.index(
+        "name: Publish to PyPI"
+    )
     assert workflow.index(
         "name: Verify original bytes and stage draft release"
     ) < workflow.index("name: Publish wheels with PyPI Trusted Publishing")
@@ -101,13 +101,13 @@ def test_draft_recovery_verifies_original_asset_manifest_and_tag_commit() -> Non
 def test_public_smoke_follows_pypi_install_checks_and_release_promotion() -> None:
     workflow = _workflow()
 
-    assert "name: Clean PyPI install matrix" in workflow
+    assert "name: PyPI installs (" in workflow
     smoke = ROOT.joinpath("scripts/smoke_pypi_install.py").read_text()
     for method in ("# uv add:", "# uv pip:", "# uvx:", "# pip:"):
         assert method in smoke
     assert '"tool",\n                "install"' in smoke
-    assert "name: Publish GitHub draft after PyPI checks" in workflow
-    assert "name: Public installer /" in workflow
+    assert "name: Publish GitHub release" in workflow
+    assert "name: Public installer (" in workflow
     assert workflow.index(
         'gh release edit "$TAG" --repo sineframe/m3 --draft=false'
-    ) < workflow.index("name: Public installer /")
+    ) < workflow.index("name: Public installer (")

@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   release-source-checks:
-    name: Release source checks
+    name: Source checks
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'build')
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -71,7 +71,7 @@ jobs:
           sh -n scripts/install.sh.in scripts/install-latest.sh
 
   release-tests:
-    name: Release tests / Python ${{ matrix.python-version }}
+    name: Tests (Python ${{ matrix.python-version }})
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'build')
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -113,7 +113,7 @@ jobs:
           uv run --locked --no-sync --project cli pytest -q -m "not live" cli/tests
 
   release-managed-assets:
-    name: Managed asset / ${{ matrix.os }} / ${{ matrix.kind }}
+    name: Managed assets (${{ matrix.os }}, ${{ matrix.kind }})
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'build')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
@@ -147,7 +147,7 @@ jobs:
           sdk/tests/e2e/test_live_managed_asset_download.py
 
   build:
-    name: Build and verify immutable release assets
+    name: Build assets
     if: github.event_name == 'push' || inputs.operation == 'build'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -265,7 +265,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
-    name: Stage draft and publish wheels to PyPI
+    name: Publish to PyPI
     needs: [build, release-source-checks, release-tests, release-managed-assets]
     # Recovery uses existing GitHub draft assets and does not require build or preflight jobs.
     if: always() && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' && needs.release-source-checks.result == 'success' && needs.release-tests.result == 'success' && needs.release-managed-assets.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'recover_tag'))
@@ -347,7 +347,7 @@ jobs:
         run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ "$RUNNER_TEMP"/m3-release/*.whl
 
   verify-pypi:
-    name: Clean PyPI install matrix / ${{ matrix.os }} / Python ${{ matrix.python }}
+    name: PyPI installs (${{ matrix.os }}, Python ${{ matrix.python }})
     needs: [publish]
     if: always() && needs.publish.result == 'success'
     runs-on: ${{ matrix.os }}
@@ -375,7 +375,7 @@ jobs:
         run: uv run --no-project --python "${{ matrix.python }}" --with packaging python scripts/smoke_pypi_install.py --version "$VERSION"
 
   promote:
-    name: Publish GitHub draft after PyPI checks
+    name: Publish GitHub release
     needs: [verify-pypi, publish]
     if: always() && needs.verify-pypi.result == 'success' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
@@ -389,7 +389,7 @@ jobs:
         run: gh release edit "$TAG" --repo sineframe/m3 --draft=false
 
   public-install-smoke:
-    name: Public installer / ${{ matrix.os }} / uv ${{ matrix.uv }}
+    name: Public installer (${{ matrix.os }}, uv ${{ matrix.uv }})
     needs: [promote, publish]
     if: always() && needs.promote.result == 'success' && needs.publish.result == 'success'
     runs-on: ${{ matrix.os }}
