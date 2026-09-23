@@ -125,8 +125,10 @@ jobs:
           python scripts/check_cli_standalone.py --release-dir "$out" --version "$VERSION" --ui-dir .release-ui
           python - "$out" "$VERSION" "${{ github.sha }}" "${{ steps.ui-ref.outputs.sha }}" <<'PY'
           import hashlib,json,pathlib,sys
-          root=pathlib.Path(sys.argv[1]); names=[p.name for p in root.iterdir() if p.is_file() and p.name != "manifest.json"]
-          manifest={"version":sys.argv[2],"source_commit":sys.argv[3],"ui_commit":sys.argv[4],"assets":{n:hashlib.sha256((root/n).read_bytes()).hexdigest() for n in sorted(names)}}
+          root=pathlib.Path(sys.argv[1]); version=sys.argv[2]
+          names={f"sf_m3-{version}-py3-none-any.whl",f"sf_m3_app-{version}-py3-none-any.whl",f"sf_m3_cli-{version}-py3-none-any.whl","install.sh","install-latest.sh","SHA256SUMS"}
+          if any(not (root/name).is_file() for name in names): raise SystemExit("release asset set is incomplete")
+          manifest={"version":version,"source_commit":sys.argv[3],"ui_commit":sys.argv[4],"assets":{n:hashlib.sha256((root/n).read_bytes()).hexdigest() for n in sorted(names)}}
           (root/"manifest.json").write_text(json.dumps(manifest,sort_keys=True,indent=2)+"\n")
           PY
       - name: Upload immutable release artifact
