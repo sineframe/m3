@@ -2,10 +2,6 @@
 
 M3 publishes version matched `sf-m3`, `sf-m3-app`, and `sf-m3-cli` wheels to PyPI. The `m3` Python import and `m3` command remain stable public interfaces. The tag controls whether a GitHub Release is final or a prerelease: `v0.2.0` is final and `v0.3.0a1` is an alpha.
 
-## One-time setup
-
-Sign in to PyPI with the account that will own the packages, creating one if needed. In the account's **Publishing** page, add three pending Trusted Publishers for `sf-m3`, `sf-m3-app`, and `sf-m3-cli`. For each, enter GitHub owner `sineframe`, repository `m3`, workflow `release-cli.yml`, and environment `pypi`. The first successful upload creates each PyPI project.
-
 ## Release from a tag
 
 Prepare a final or prerelease tag from the reviewed default-branch commit and push it:
