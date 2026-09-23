@@ -22,6 +22,8 @@ uv add "sf-m3[pytest,judge]"
 m3 setup
 ```
 
+The package names above are for PyPI. In code and at the command line, use `m3`.
+
 Choose a pinned prerelease explicitly when you want to try one:
 
 ```sh
@@ -29,7 +31,7 @@ uv tool install --prerelease allow "sf-m3-cli==0.2.0a13"
 uv add --prerelease allow "sf-m3[pytest,judge]==0.2.0a13"
 ```
 
-The public POSIX bootstrap installs the highest final release, falling back to
+The shell installer installs the highest final release, falling back to
 an alpha only until a final release is available. Pass `--prerelease` to select
 an alpha explicitly or `--tag vX.Y.Z` to select an exact release:
 
@@ -120,10 +122,8 @@ for the manifest shape, probes, and executable test.
 
 If you use a coding agent, M3 includes a reusable
 [`testing-with-m3`](skills/testing-with-m3/SKILL.md) skill. Ask your
-preferred agent to install the skill from this public repository and use it to
-create tests for your server or agent workflow. A local checkout works too;
-point the agent to `skills/testing-with-m3/SKILL.md` and that directory's
-`references/` files.
+preferred agent to install the skill from this repository and use it to
+create tests for your server or agent workflow.
 
 The skill helps an agent inspect the real MCP contract, choose direct server
 tests or agent-behavior tests, assert captured tool evidence, and iterate using
@@ -133,9 +133,6 @@ run the tests and inspect persistent history or the local UI.
 ```text
 Install and use the M3 skill from
 https://github.com/sineframe/m3/tree/main/skills/testing-with-m3
-(no GitHub login is required).
-If this repository is available only as a local checkout, read
-skills/testing-with-m3/SKILL.md and its references/ directory instead.
 Read its testing patterns, then add and run the smallest tests that verify
 <the behavior I care about> against <my MCP server or agent workflow>.
 If this project has no M3 test yet, run m3 init first and replace

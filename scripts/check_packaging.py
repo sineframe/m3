@@ -140,7 +140,7 @@ def extract_sdist(sdist: Path, destination: Path) -> Path:
     extracted = [
         path
         for path in destination.iterdir()
-        if path.is_dir() and path.name.startswith("m3-")
+        if path.is_dir() and path.name == sdist.name.removesuffix(".tar.gz")
     ]
     assert len(extracted) == 1
     return extracted[0]

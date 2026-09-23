@@ -29,7 +29,7 @@ To try a prerelease, select and pin it explicitly:
 uv tool install --prerelease allow "sf-m3-cli==0.2.0a13"
 ```
 
-The POSIX installer downloads and verifies exact GitHub Release assets. Its public bootstrap chooses the highest final version, falling back to the highest prerelease until a final exists:
+The shell installer selects the highest final version, falling back to the highest prerelease until a final exists:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sineframe/m3/main/scripts/install-latest.sh | sh
@@ -65,8 +65,8 @@ do not already have one; otherwise add only the keys your tests need. Add
 missing. The first skipped run confirms collection but exits 1 under `m3 test`
 because no test executed. Replace the starter before using the run as a CI gate.
 
-`m3 setup` installs `sf-m3[pytest,storage,judge]` into the project
-environment. It selects `--python`, then an active `VIRTUAL_ENV` or
+`m3 setup` installs the matching SDK with pytest, storage, and judge support
+into the project environment. It selects `--python`, then an active `VIRTUAL_ENV` or
 `CONDA_PREFIX`, then `.venv`, creating `.venv` when needed. It never installs
 the CLI or bundled app there, never edits dependency manifests or lockfiles,
 and verifies the exact SDK version installed from PyPI. Judge support is

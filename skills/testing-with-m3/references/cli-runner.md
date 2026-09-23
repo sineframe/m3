@@ -45,7 +45,7 @@ with `m3 test --env-file .env`.
 
 | Component | Install scope | Provides |
 |---|---|---|
-| `sf-m3[pytest,storage,judge]` | Project environment via `m3 setup` | Python SDK, pytest, SQLite, and judge support |
+| M3 SDK | Project environment via `m3 setup` | Python SDK, pytest, SQLite, and judge support |
 | M3 CLI | Machine-level isolated environment | `m3` command and bundled UI |
 
 Adding the SDK with `uv add` or `pip install` does not install the CLI. Install
@@ -61,7 +61,7 @@ Choose a pinned prerelease only when you intend to test one:
 uv tool install --prerelease allow "sf-m3-cli==0.2.0a13"
 ```
 
-On macOS or Linux, the public shell bootstrap installs the highest final
+On macOS or Linux, the shell installer installs the highest final
 release and falls back to a prerelease only when no final release exists:
 
 ```bash
@@ -96,7 +96,7 @@ check. Both name flags suppress interactive questions for an agent. A person
 running `m3 init` without flags receives the questions one by one.
 Repeating it preserves existing files and creates `.env.example` if missing.
 
-`m3 setup` installs the exact matching `sf-m3[pytest,storage,judge]` SDK into
+`m3 setup` installs the exact matching SDK with pytest, storage, and judge support into
 the selected project environment. It does not install the CLI there and does
 not edit the project's dependency manifest or lockfile. The CLI and project
 SDK versions must match; do not work around a mismatch by bypassing `doctor`.

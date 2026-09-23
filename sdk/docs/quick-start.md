@@ -154,7 +154,7 @@ uv tool install sf-m3-cli
 
 For a pinned alpha, use `uv tool install --prerelease allow "sf-m3-cli==0.2.0a13"`.
 The [CLI installation guide](../../cli/README.md#install) also documents the
-public macOS/Linux shell installer.
+macOS/Linux shell installer.
 
 If you install the CLI, it can prepare the project environment and verify that
 the SDK version matches the CLI:
@@ -165,7 +165,7 @@ m3 setup
 m3 doctor
 ```
 
-`m3 setup` installs the matching `sf-m3[pytest,storage,judge]` SDK into the
+`m3 setup` installs the matching SDK with pytest, storage, and judge support into the
 selected project environment. It does not install the CLI there and does not
 edit dependency manifests or lockfiles. This setup step is separate from both
 the machine-level CLI installation and declaring the SDK as a project
