@@ -24,6 +24,18 @@ ADDRESS_SCHEMA: dict[str, Any] = {
     },
     "required": ["street", "city", "postal_code"],
 }
+VERIFIED_ADDRESSES = {
+    "home_address": {
+        "street": "1 Home Street",
+        "city": "Pune",
+        "postal_code": "411001",
+    },
+    "business_address": {
+        "street": "2 Business Street",
+        "city": "Pune",
+        "postal_code": "411002",
+    },
+}
 
 
 def build_server(
@@ -182,6 +194,7 @@ def build_server(
                 if set(responses) != set(address_keys) or any(
                     not isinstance(responses[key], types.ElicitResult)
                     or responses[key].action != "accept"
+                    or responses[key].content != VERIFIED_ADDRESSES[key]
                     for key in address_keys
                 ):
                     return types.CallToolResult(

@@ -8,9 +8,21 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from mcp import types
 
-from examples.servers.modern_mrtr_server import ADDRESS_SCHEMA
-from m3 import expect, expect_form, expect_url, one_of, optional, round_of, sequence
+from examples.servers.modern_mrtr_server import ADDRESS_SCHEMA, build_server
+from m3 import (
+    Config,
+    InProcessServer,
+    MCPTestKit,
+    expect,
+    expect_form,
+    expect_url,
+    one_of,
+    optional,
+    round_of,
+    sequence,
+)
 from m3.types import ExecutionOutcome, StdioServer
 
 pytest_plugins = ("examples.tests.pi_conftest",)
@@ -117,6 +129,10 @@ def test_address_choice_then_url_in_one_tool_call(
         {f"{address_kind}_address"},
         {"verification"},
     ]
+    expected_address = HOME_ADDRESS if address_kind == "home" else BUSINESS_ADDRESS
+    assert wire[1]["inputResponses"][f"{address_kind}_address"]["content"] == (
+        expected_address
+    )
 
 
 @pytest.mark.parametrize("address_kind", ["none", "home", "business"])
@@ -167,6 +183,11 @@ def test_optional_address_choice_then_url(
         else [set(), {f"{address_kind}_address"}, {"verification"}]
     )
     assert [set(attempt["inputResponses"]) for attempt in wire] == expected_responses
+    if address_kind != "none":
+        expected_address = HOME_ADDRESS if address_kind == "home" else BUSINESS_ADDRESS
+        assert wire[1]["inputResponses"][f"{address_kind}_address"]["content"] == (
+            expected_address
+        )
 
 
 @pytest.mark.m3(agents=[{"harness": "pi", "models": ["fixture-model"]}])
@@ -204,3 +225,32 @@ def test_two_addresses_in_one_round_then_url(
         {"home_address", "business_address"},
         {"verification"},
     ]
+    assert wire[1]["inputResponses"]["home_address"]["content"] == HOME_ADDRESS
+    assert wire[1]["inputResponses"]["business_address"]["content"] == (
+        BUSINESS_ADDRESS
+    )
+
+
+def test_server_rejects_swapped_address_payloads() -> None:
+    server = InProcessServer(name="modern-mrtr-example", factory=build_server)
+    arguments = {"address_kind": "both"}
+    with MCPTestKit(config=Config(protocol_revision="2026-07-28"), env={}) as kit:
+        with kit.direct(server) as client:
+            pending = client.call_tool(
+                "book_verified_shipment", arguments, allow_input_required=True
+            )
+            assert pending.request_state == "verified-address:both"
+            result = client.call_tool(
+                "book_verified_shipment",
+                arguments,
+                request_state=pending.request_state,
+                input_responses={
+                    "home_address": types.ElicitResult(
+                        action="accept", content=BUSINESS_ADDRESS
+                    ),
+                    "business_address": types.ElicitResult(
+                        action="accept", content=HOME_ADDRESS
+                    ),
+                },
+            )
+    assert result.is_error is True

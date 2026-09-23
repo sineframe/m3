@@ -448,6 +448,53 @@ def test_sync_prompt_and_resource_url_mrtr(
                 assert resource.text == "resource contents"
 
 
+@pytest.mark.parametrize(
+    ("operation", "target", "request_key", "expected_state"),
+    [
+        (
+            "prompt",
+            "interactive-url-prompt",
+            "prompt_authorization",
+            "prompt-url-state",
+        ),
+        (
+            "resource",
+            "memory://interactive-url-document",
+            "resource_authorization",
+            "resource-url-state",
+        ),
+    ],
+)
+@pytest.mark.parametrize("invalid", ["state", "key", "action"])
+def test_url_prompt_and_resource_reject_malformed_continuation(
+    operation: Literal["prompt", "resource"],
+    target: str,
+    request_key: str,
+    expected_state: str,
+    invalid: Literal["state", "key", "action"],
+) -> None:
+    server = _server_binding()
+    with MCPTestKit(config=_modern_config(), env={}) as kit:
+        with kit.direct(server) as client:
+            operation_call = (
+                client.get_prompt if operation == "prompt" else client.read_resource
+            )
+            pending = operation_call(target, allow_input_required=True)
+            assert pending.request_state == expected_state
+
+            response_key = "wrong_key" if invalid == "key" else request_key
+            response = types.ElicitResult(
+                action="decline" if invalid == "action" else "accept"
+            )
+            state = "wrong-state" if invalid == "state" else pending.request_state
+            with pytest.raises(ValueError, match=r"Invalid .* URL continuation"):
+                operation_call(
+                    target,
+                    request_state=state,
+                    input_responses={response_key: response},
+                )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("operation", "target", "request_key", "url"),
