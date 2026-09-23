@@ -400,8 +400,10 @@ jobs:
         include:
           - { os: ubuntu-latest, uv: present }
           - { os: ubuntu-latest, uv: absent }
-          - { os: macos-latest, uv: present }
-          - { os: macos-latest, uv: absent }
+          # macOS hosted runners currently get HTTP 403 for public release assets.
+          # Re-enable these after GitHub asset downloads work on those runners.
+          # - { os: macos-latest, uv: present }
+          # - { os: macos-latest, uv: absent }
     steps:
       - name: Install Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
