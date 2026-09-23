@@ -18,7 +18,7 @@ from .v2 import install_v2
 
 
 def _package_version() -> str:
-    return distribution_version("m3")
+    return distribution_version("sf-m3")
 
 
 def _create_app(

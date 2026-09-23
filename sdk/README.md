@@ -13,18 +13,17 @@ persistent storage.
 
 ## Install the SDK
 
-Choose a release version and add the SDK wheel with pytest and judge support to the
-project being tested:
+Install from PyPI in the project being tested:
 
-```bash
-VERSION=X.Y.Z
-uv add \
-  "m3[pytest,judge] @ https://github.com/sineframe/m3/releases/download/v${VERSION}/m3-${VERSION}-py3-none-any.whl"
+```sh
+uv add "sf-m3[pytest,judge]"
 ```
 
-If you use the standalone CLI, `m3 setup` installs pytest, storage, and judge
-support together. Run it again to upgrade a project environment created by an
-older CLI.
+To test a prerelease, choose its exact version explicitly:
+
+```sh
+uv add --prerelease allow "sf-m3[pytest,judge]==0.2.0a13"
+```
 
 The SDK requires Python 3.10 or newer. The standalone CLI is optional; install
 it separately only when you want the `m3` command or bundled UI, as

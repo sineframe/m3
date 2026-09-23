@@ -31,8 +31,8 @@ responsibilities:
 | Directory | Distribution | Responsibility |
 | --- | --- | --- |
 | [`sdk/`](../sdk/) | `m3` | Public Python API, direct MCP clients, agent sessions, harness adapters, traces, assertions, pytest integration, and storage interfaces. |
-| [`cli/`](../cli/) | `m3-cli` | The `m3` command, project-environment discovery, pytest supervision, release packaging, and the bundled browser UI. |
-| [`app/`](../app/) | `m3-app` | Internal FastAPI services and API adapters used by the standalone CLI. |
+| [`cli/`](../cli/) | `sf-m3-cli` | The `m3` command, project-environment discovery, pytest supervision, release packaging, and the bundled browser UI. |
+| [`app/`](../app/) | `sf-m3-app` | FastAPI services and API adapters packaged with the standalone CLI. |
 
 The CLI depends on the SDK and app at matching versions. A project that uses
 only the library does not need the CLI or the app.

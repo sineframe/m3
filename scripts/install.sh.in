@@ -12,9 +12,9 @@ HAS_BASE_URL=0
 BASE_URL=${M3_RELEASE_BASE_URL:-"https://github.com/${REPOSITORY}/releases/download/v${VERSION}"}
 BASE_URL=${BASE_URL%/}
 
-CLI_WHEEL="m3_cli-${VERSION}-py3-none-any.whl"
-SDK_WHEEL="m3-${VERSION}-py3-none-any.whl"
-APP_WHEEL="m3_app-${VERSION}-py3-none-any.whl"
+CLI_WHEEL="sf_m3_cli-${VERSION}-py3-none-any.whl"
+SDK_WHEEL="sf_m3-${VERSION}-py3-none-any.whl"
+APP_WHEEL="sf_m3_app-${VERSION}-py3-none-any.whl"
 CHECKSUMS='SHA256SUMS'
 
 die() {
@@ -38,23 +38,6 @@ download() {
     artifact=$1
     destination=$2
 
-    # A release from the private repository must be fetched through the user's
-    # authenticated gh session.  The base URL override remains available for
-    # local release tests and public mirrors.
-    if [ "$HAS_BASE_URL" -eq 0 ]; then
-        if command -v gh >/dev/null 2>&1; then
-            if gh auth status --hostname github.com >/dev/null 2>&1; then
-                gh release download "$RELEASE_TAG" \
-                    --repo "$REPOSITORY" \
-                    --pattern "$artifact" \
-                    --output "$destination" \
-                    >/dev/null \
-                    || die "could not download ${artifact} with gh; check repository access"
-                [ -f "$destination" ] || die "gh did not create ${artifact}"
-                return 0
-            fi
-        fi
-    fi
 
     url="${BASE_URL}/${artifact}"
     if command -v curl >/dev/null 2>&1; then
@@ -62,7 +45,7 @@ download() {
     elif command -v wget >/dev/null 2>&1; then
         wget --quiet --output-document="$destination" "$url" || die "could not download ${artifact}"
     else
-        die 'gh, curl, or wget is required to download the release'
+        die 'curl or wget is required to download the release'
     fi
 }
 
@@ -129,7 +112,7 @@ if command -v uv >/dev/null 2>&1; then
     fi
     UV_TOOL_ROOT=$(uv tool dir 2>/dev/null || true)
     [ -n "$UV_TOOL_ROOT" ] || die 'could not locate the installed uv tool environment'
-    UV_TOOL_PYTHON="${UV_TOOL_ROOT}/m3-cli/bin/python"
+    UV_TOOL_PYTHON="${UV_TOOL_ROOT}/sf-m3-cli/bin/python"
     [ -x "$UV_TOOL_PYTHON" ] || die 'uv tool environment Python is missing'
     "$UV_TOOL_PYTHON" -c "$ui_check" || die 'packaged UI could not be imported from the CLI wheel'
     printf '%s\n' 'm3 installed with uv in isolated tool storage.'

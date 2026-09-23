@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SECRET = "m3-cli-secret-sentinel-7f2c"
+SECRET = "sf-m3-cli-secret-sentinel-7f2c"
 
 
 def _cli_case(

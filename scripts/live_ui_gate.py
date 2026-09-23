@@ -263,7 +263,7 @@ def _tool_command(tool_bin: Path) -> Path:
 
 
 def _tool_python(tool_dir: Path) -> Path:
-    directory = tool_dir / "m3-cli" / ("Scripts" if os.name == "nt" else "bin")
+    directory = tool_dir / "sf-m3-cli" / ("Scripts" if os.name == "nt" else "bin")
     path = directory / ("python.exe" if os.name == "nt" else "python")
     if not path.is_file():
         raise GateFailure("uv tool environment Python is missing")
@@ -282,7 +282,7 @@ from importlib import resources
 required = {name: importlib.util.find_spec(name) is not None for name in ("m3_cli", "m3", "m3_app")}
 forbidden = {name: importlib.util.find_spec(name) is None for name in ("pytest", "streamlit", "requests")}
 ui = resources.files("m3_cli").joinpath("ui")
-print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("m3-cli"), "ui": ui.joinpath("index.html").is_file() and any(item.is_file() for item in ui.joinpath("assets").iterdir())}, sort_keys=True))
+print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("sf-m3-cli"), "ui": ui.joinpath("index.html").is_file() and any(item.is_file() for item in ui.joinpath("assets").iterdir())}, sort_keys=True))
 """
     result = _run([str(tool_python), "-c", code], cwd=cwd, env=env)
     try:
@@ -323,7 +323,7 @@ except Exception:
 else:
     required["SQLiteExecutionStore"] = True
 forbidden = {name: importlib.util.find_spec(name) is None for name in ("m3_cli", "m3_app")}
-print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("m3")}, sort_keys=True))
+print(json.dumps({"required": required, "forbidden": forbidden, "version": metadata.version("sf-m3")}, sort_keys=True))
 """
     result = _run([str(project_python), "-c", code], cwd=cwd, env=env)
     try:
@@ -1255,7 +1255,7 @@ def check(
         project_python = _python_path(project_venv)
         # Put extras on the package name in a PEP 508 direct reference so the
         # requirement remains portable across uv and pip.
-        sdk_requirement = f"m3[pytest,storage] @ {sdk_wheel.as_uri()}"
+        sdk_requirement = f"sf-m3[pytest,storage] @ {sdk_wheel.as_uri()}"
         _run(
             [uv, "pip", "install", "--python", str(project_python), sdk_requirement],
             cwd=repo,

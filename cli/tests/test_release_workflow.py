@@ -10,74 +10,66 @@ def _workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_release_workflow_runs_the_exact_built_release_through_standalone_gate() -> (
-    None
-):
+def test_release_builds_and_gates_exact_tagged_assets_before_publication() -> None:
     workflow = _workflow()
-    gate = """      - name: Run the isolated two-environment standalone gate
-        run: |
-          set -euo pipefail
-          release_dir="$RUNNER_TEMP/m3-release"
-          python scripts/check_cli_standalone.py \\
-            --release-dir "$release_dir" \\
-            --version '${{ steps.version.outputs.version }}'
-"""
-
-    assert gate in workflow
-    assert workflow.count("python scripts/check_cli_standalone.py") == 1
-
-
-def test_release_workflow_publishes_only_after_the_standalone_gate() -> None:
-    workflow = _workflow()
-    gate_position = workflow.index(
-        "- name: Run the isolated two-environment standalone gate"
-    )
-    publish_position = workflow.index(
-        "- name: Publish the GitHub Release for a version tag"
-    )
-
-    assert gate_position < publish_position
-    publish_block = workflow[publish_position:]
-    assert (
-        "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
-        in publish_block
-    )
-    assert "gh release create" in publish_block
+    for required in (
+        "name: Build and verify immutable release assets",
+        'python scripts/check_cli_standalone.py --release-dir "$out" --version "$VERSION" --ui-dir .release-ui',
+        "name: Upload immutable release artifact",
+        "name: Stage draft and publish wheels to PyPI",
+        "name: Publish wheels with PyPI Trusted Publishing",
+    ):
+        assert required in workflow
+    assert workflow.index(
+        "name: Build and verify immutable release assets"
+    ) < workflow.index("name: Stage draft and publish wheels to PyPI")
+    assert workflow.index(
+        "name: Verify original bytes and stage draft release"
+    ) < workflow.index("name: Publish wheels with PyPI Trusted Publishing")
 
 
-def test_release_workflow_builds_ui_without_running_ui_quality_suites() -> None:
+def test_release_builds_production_ui_and_skips_ui_quality_suites() -> None:
     workflow = _workflow()
 
-    assert "- name: Install and build the UI" in workflow
     assert "npm ci" in workflow
     assert "npm run build" in workflow
     assert "npm test" not in workflow
     assert "npm run typecheck" not in workflow
     assert "npm run lint" not in workflow
+    assert "--ui-dir .release-ui" in workflow
 
 
-def test_release_workflow_uses_the_tag_as_the_package_version() -> None:
+def test_release_uses_pep440_tag_version_and_does_not_commit_preparation() -> None:
     workflow = _workflow()
-    derive_position = workflow.index("- name: Derive the release version")
-    prepare_position = workflow.index(
-        "- name: Prepare the tag version in the disposable checkout"
-    )
-    validate_position = workflow.index("- name: Validate the prepared release version")
-    build_position = workflow.index(
-        "- name: Build and inspect the three release wheels"
-    )
 
-    assert "expected_version=${GITHUB_REF_NAME#v}" in workflow
-    assert 'python scripts/prepare_release.py "$VERSION"' in workflow
+    assert "from packaging.version import Version" in workflow
     assert (
-        "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+        'uv run --no-project --with packaging python scripts/prepare_release.py "$VERSION"'
         in workflow
     )
-    assert derive_position < prepare_position < validate_position < build_position
-
-
-def test_release_workflow_does_not_commit_prepared_versions() -> None:
-    workflow = _workflow()
-
     assert "git commit" not in workflow
     assert "git push" not in workflow
+
+
+def test_draft_recovery_verifies_original_asset_manifest_and_tag_commit() -> None:
+    workflow = _workflow()
+
+    assert "Download existing draft assets for recovery" in workflow
+    assert 'manifest.get("source_commit") != commit' in workflow
+    assert "draft release asset set is incomplete or unexpected" in workflow
+    assert 'raise SystemExit(f"asset hash mismatch: {name}")' in workflow
+
+
+def test_public_smoke_follows_pypi_install_checks_and_release_promotion() -> None:
+    workflow = _workflow()
+
+    assert "name: Clean PyPI install matrix" in workflow
+    smoke = ROOT.joinpath("scripts/smoke_pypi_install.py").read_text()
+    for method in ("# uv add:", "# uv pip:", "# uvx:", "# pip:"):
+        assert method in smoke
+    assert '"tool",\n                "install"' in smoke
+    assert "name: Publish GitHub draft after PyPI checks" in workflow
+    assert "name: Public installer /" in workflow
+    assert workflow.index(
+        'gh release edit "$TAG" --repo sineframe/m3 --draft=false'
+    ) < workflow.index("name: Public installer /")

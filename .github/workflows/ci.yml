@@ -204,7 +204,7 @@ jobs:
       - name: Import SDK judge without optional dependencies
         run: >-
           uv run --isolated --no-project
-          --with "m3 @ file://${GITHUB_WORKSPACE}/sdk"
+          --with "sf-m3 @ file://${GITHUB_WORKSPACE}/sdk"
           python -c "import importlib.util; from m3.judges import LLMJudge; assert importlib.util.find_spec('openai') is None; print(LLMJudge.__name__)"
 
       - name: Compile CLI
@@ -218,29 +218,8 @@ jobs:
           uv run --isolated --python 3.10 --locked --project cli --group test
           pytest -q -c cli/pyproject.toml cli/tests/test_web_security_live.py
 
-      - name: Render and parse PowerShell installer
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $project = Get-Content -Raw -LiteralPath 'cli/pyproject.toml'
-          $versionMatch = [regex]::Match($project, '(?m)^version = "([^"]+)"\r?$')
-          if (-not $versionMatch.Success) { throw 'Could not read the CLI version' }
-          $version = $versionMatch.Groups[1].Value
-          $outputDir = Join-Path $env:RUNNER_TEMP 'm3-installer'
-          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
-          $installer = Join-Path $outputDir 'install.ps1'
-          $template = Get-Content -Raw -LiteralPath 'scripts/install.ps1.in'
-          if (($template.Split('@M3_VERSION@').Count - 1) -ne 1) {
-            throw 'PowerShell installer template must contain one version placeholder'
-          }
-          Set-Content -NoNewline -LiteralPath $installer -Value ($template.Replace('@M3_VERSION@', $version))
-          $tokens = $null
-          $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile($installer, [ref] $tokens, [ref] $parseErrors) | Out-Null
-          if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
-            $messages = $parseErrors | ForEach-Object { $_.Message }
-            throw "PowerShell parser found syntax errors in ${installer}: $($messages -join '; ')"
-          }
+      - name: Check shell installer syntax
+        run: sh -n scripts/install.sh.in scripts/install-latest.sh
 
       - name: Build application distributions
         if: github.event_name != 'schedule'
@@ -250,10 +229,44 @@ jobs:
         if: github.event_name != 'schedule'
         run: uv run --locked --no-sync --project sdk python scripts/check_packaging.py
 
-  cli-standalone:
-    name: Standalone CLI gate
+  public-packaging:
+    name: Public packaging and installer checks
     runs-on: ubuntu-latest
     if: github.event_name != 'schedule'
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.13"
+      - name: Install public test workspace
+        run: >-
+          uv sync --locked --all-packages
+          --extra pytest --extra judge --extra storage --extra property
+          --group test --group typecheck
+      - name: Run CLI tests
+        run: uv run --locked --no-sync --project cli pytest -q cli/tests
+      - name: Check POSIX scripts
+        run: sh -n scripts/install.sh.in scripts/install-latest.sh
+      - name: Build fixture UI wheels
+        run: |
+          release_dir="$RUNNER_TEMP/m3-fixture-release"
+          mkdir -p "$release_dir"
+          python scripts/build_cli_release.py --ui-dist cli/tests/fixtures/ui --out-dir "$release_dir"
+      - name: Check dependency metadata and local installer behavior
+        run: |
+          python scripts/check_cli_standalone.py --release-dir "$RUNNER_TEMP/m3-fixture-release"
+          uv run --locked --no-sync --project cli pytest -q cli/tests/test_installers.py cli/tests/test_release_build.py
+
+  cli-standalone:
+    name: Private pinned UI gate
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     timeout-minutes: 20
 
     steps:
@@ -315,7 +328,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          release_dir="$RUNNER_TEMP/m3-cli-release"
+          release_dir="$RUNNER_TEMP/sf-m3-cli-release"
           mkdir -p "$release_dir"
           version=$(python scripts/build_cli_release.py --print-version)
           python scripts/build_cli_release.py \
@@ -324,9 +337,9 @@ jobs:
             --expected-version "$version"
           python scripts/render_cli_installers.py --version "$version" --output-dir "$release_dir"
           wheels=(
-            "m3-${version}-py3-none-any.whl"
-            "m3_app-${version}-py3-none-any.whl"
-            "m3_cli-${version}-py3-none-any.whl"
+            "sf_m3-${version}-py3-none-any.whl"
+            "sf_m3_app-${version}-py3-none-any.whl"
+            "sf_m3_cli-${version}-py3-none-any.whl"
           )
           (cd "$release_dir" && sha256sum "${wheels[@]}" | sort -k2 > SHA256SUMS)
           test "$(wc -l < "$release_dir/SHA256SUMS")" -eq 3

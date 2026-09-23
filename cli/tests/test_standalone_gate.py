@@ -23,9 +23,9 @@ def _wheel(path: Path, *, ui: bool = True) -> None:
 def test_wheel_paths_requires_the_exact_three_release_wheels(tmp_path: Path) -> None:
     version = "1.2.3"
     names = (
-        "m3_cli",
-        "m3",
-        "m3_app",
+        "sf_m3_cli",
+        "sf_m3",
+        "sf_m3_app",
     )
     for name in names:
         (tmp_path / f"{name}-{version}-py3-none-any.whl").touch()
@@ -56,9 +56,9 @@ def test_wheel_requirements_selects_requested_extra_without_local_packages(
         archive.writestr(
             "m3-1.2.3.dist-info/METADATA",
             """Metadata-Version: 2.3
-Name: m3
+Name: sf-m3
 Version: 1.2.3
-Requires-Dist: m3-app==1.2.3
+Requires-Dist: sf-m3-app==1.2.3
 Requires-Dist: SQLAlchemy<3,>=2.0; extra == 'storage'
 Requires-Dist: pytest>=8; extra == 'pytest'
 """,
@@ -121,7 +121,8 @@ def test_parse_ui_links_uses_the_complete_encoded_run_suffix() -> None:
 def test_standalone_gate_exercises_public_setup_command() -> None:
     source = _SCRIPT.read_text(encoding="utf-8")
     assert '"setup", "--project-root"' in source
-    assert "M3_RELEASE_BASE_URL" in source
+    assert 'setup_env["UV_FIND_LINKS"] = str(release)' in source
+    assert 'setup_env["PIP_FIND_LINKS"] = str(release)' in source
     assert '"--no-index"' in source
     assert '"--find-links"' in source
     assert '"m3.pytest_plugin"' in source

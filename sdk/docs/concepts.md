@@ -250,7 +250,7 @@ SDK persistence is selected at the toolkit boundary:
   `-p m3.pytest_plugin --results-db PATH`.
 
 `SQLiteExecutionStore` and the pytest database flag require the optional
-`m3[storage]` dependency; `m3[pytest,storage]` installs both direct
+`sf-m3[storage]` dependency; `sf-m3[pytest,storage]` installs both direct
 pytest support and SQLite storage.
 
 The pytest flag installs a default store factory. An explicit `store=` passed

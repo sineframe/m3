@@ -36,13 +36,16 @@ except (
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_FILES = {
-    "m3": Path("sdk/pyproject.toml"),
-    "m3-app": Path("app/pyproject.toml"),
-    "m3-cli": Path("cli/pyproject.toml"),
+    "sf-m3": Path("sdk/pyproject.toml"),
+    "sf-m3-app": Path("app/pyproject.toml"),
+    "sf-m3-cli": Path("cli/pyproject.toml"),
+}
+APP_INTERNAL_DEPENDENCIES = {
+    "sf-m3": re.compile(r'(?m)^(\s*"sf-m3\[storage\]==)([^"\r\n]+)("\s*,?\s*)$'),
 }
 CLI_INTERNAL_DEPENDENCIES = {
-    "m3": re.compile(r'(?m)^(\s*"m3\[storage\]==)([^"\r\n]+)("\s*,?\s*)$'),
-    "m3-app": re.compile(r'(?m)^(\s*"m3-app==)([^"\r\n]+)("\s*,?\s*)$'),
+    "sf-m3": re.compile(r'(?m)^(\s*"sf-m3\[storage\]==)([^"\r\n]+)("\s*,?\s*)$'),
+    "sf-m3-app": re.compile(r'(?m)^(\s*"sf-m3-app==)([^"\r\n]+)("\s*,?\s*)$'),
 }
 VERSION_PATTERN = re.compile(r'(?m)^(\s*version\s*=\s*["\'])([^"\']+)(["\']\s*)$')
 
@@ -110,8 +113,8 @@ def read_state(root: Path = ROOT) -> ReleaseState:
             VERSION_PATTERN, text, "project version", path
         ).group(2)
 
-    cli_path = root / PROJECT_FILES["m3-cli"]
-    cli_text = contents["m3-cli"]
+    cli_path = root / PROJECT_FILES["sf-m3-cli"]
+    cli_text = contents["sf-m3-cli"]
     dependencies: dict[str, str] = {}
     for name, pattern in CLI_INTERNAL_DEPENDENCIES.items():
         dependencies[name] = _single_match(
@@ -120,6 +123,16 @@ def read_state(root: Path = ROOT) -> ReleaseState:
             f"CLI dependency pin for {name}",
             cli_path,
         ).group(2)
+
+    app_path = root / PROJECT_FILES["sf-m3-app"]
+    app_text = contents["sf-m3-app"]
+    app_dependency = _single_match(
+        APP_INTERNAL_DEPENDENCIES["sf-m3"],
+        app_text,
+        "app dependency pin for sf-m3",
+        app_path,
+    ).group(2)
+    dependencies["app:sf-m3"] = app_dependency
 
     state = ReleaseState(versions, dependencies)
     current = state.current_version
@@ -145,8 +158,18 @@ def _updated_contents(root: Path, target: str) -> dict[Path, str]:
         match = _single_match(VERSION_PATTERN, text, "project version", path)
         updated[path] = text[: match.start(2)] + target + text[match.end(2) :]
 
-    cli_path = root / PROJECT_FILES["m3-cli"]
+    cli_path = root / PROJECT_FILES["sf-m3-cli"]
     cli_text = updated[cli_path]
+    for _name, pattern in APP_INTERNAL_DEPENDENCIES.items():
+        app_path = root / PROJECT_FILES["sf-m3-app"]
+        app_text = updated[app_path]
+        match = _single_match(
+            pattern, app_text, f"app dependency pin for {_name}", app_path
+        )
+        updated[app_path] = (
+            app_text[: match.start(2)] + target + app_text[match.end(2) :]
+        )
+
     for _name, pattern in CLI_INTERNAL_DEPENDENCIES.items():
         match = _single_match(
             pattern, cli_text, f"CLI dependency pin for {_name}", cli_path

@@ -7,23 +7,17 @@ the CLI or application package into that environment.
 
 from __future__ import annotations
 
-import hashlib
 import importlib.metadata
 import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
-from urllib.request import Request, urlopen
 
-REPOSITORY = "sineframe/m3"
-_RELEASE_BASE_ENV = "M3_RELEASE_BASE_URL"
-_CHECKSUMS = "SHA256SUMS"
 _VALIDATE_SCRIPT = r"""
 import importlib
 import importlib.metadata
@@ -44,7 +38,7 @@ except Exception:
 else:
     checks["SQLiteExecutionStore"] = True
 try:
-    version = importlib.metadata.version("m3")
+    version = importlib.metadata.version("sf-m3")
 except Exception:
     version = None
 print(json.dumps({"checks": checks, "version": version}, sort_keys=True))
@@ -244,128 +238,16 @@ def _create_environment(target: EnvironmentTarget) -> EnvironmentTarget:
 
 def _cli_version() -> str:
     try:
-        sdk = importlib.metadata.version("m3")
-        cli = importlib.metadata.version("m3-cli")
+        sdk = importlib.metadata.version("sf-m3")
+        cli = importlib.metadata.version("sf-m3-cli")
     except importlib.metadata.PackageNotFoundError:
         raise SetupError(
-            "the bundled M3 SDK version is unavailable; reinstall m3-cli"
+            "the bundled M3 SDK version is unavailable; reinstall sf-m3-cli"
         ) from None
     if sdk != cli:
         raise SetupError(
-            "the bundled CLI and SDK versions do not match; reinstall m3-cli"
+            "the bundled CLI and SDK versions do not match; reinstall sf-m3-cli"
         )
-    return sdk
-
-
-def _download_release(version: str, directory: Path) -> Path:
-    sdk_name = f"m3-{version}-py3-none-any.whl"
-    cli_name = f"m3_cli-{version}-py3-none-any.whl"
-    app_name = f"m3_app-{version}-py3-none-any.whl"
-    checksums = directory / _CHECKSUMS
-    sdk = directory / sdk_name
-    base = os.environ.get(_RELEASE_BASE_ENV)
-
-    def download_with_url(name: str, destination: Path) -> None:
-        if not base:
-            raise SetupError(
-                "authenticated GitHub access is required; run gh auth login"
-            )
-        url = f"{base.rstrip('/')}/{name}"
-        try:
-            with (
-                urlopen(Request(url, method="GET"), timeout=30) as response,
-                destination.open("wb") as handle,
-            ):
-                shutil.copyfileobj(response, handle)
-        except (OSError, ValueError):
-            raise SetupError("could not download the matching M3 SDK release") from None
-
-    downloads = ((sdk_name, sdk), (_CHECKSUMS, checksums))
-    gh: str | None = None
-    if not base:
-        gh = shutil.which("gh")
-        if not gh:
-            raise SetupError(
-                "authenticated GitHub access is required; run gh auth login"
-            )
-        try:
-            auth = subprocess.run(
-                [gh, "auth", "status", "--hostname", "github.com"],
-                capture_output=True,
-                check=False,
-                timeout=15,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            raise SetupError(
-                "authenticated GitHub access is required; run gh auth login"
-            ) from None
-        if auth.returncode != 0:
-            raise SetupError(
-                "authenticated GitHub access is required; run gh auth login"
-            )
-    for name, destination in downloads:
-        if base:
-            download_with_url(name, destination)
-            continue
-        try:
-            assert gh is not None
-            result = subprocess.run(
-                [
-                    gh,
-                    "release",
-                    "download",
-                    f"v{version}",
-                    "--repo",
-                    REPOSITORY,
-                    "--pattern",
-                    name,
-                    "--output",
-                    str(destination),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=120,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            raise SetupError("could not download the matching M3 SDK release") from None
-        if result.returncode != 0 or not destination.is_file():
-            raise SetupError("could not download the matching M3 SDK release")
-
-    expected: str | None = None
-    expected_names = {cli_name, sdk_name, app_name}
-    seen: set[str] = set()
-    try:
-        records = checksums.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        raise SetupError("SDK release checksum manifest is unavailable") from None
-    for record in records:
-        parts = record.split()
-        if (
-            len(parts) != 2
-            or len(parts[0]) != 64
-            or any(char not in "0123456789abcdefABCDEF" for char in parts[0])
-            or parts[1] not in expected_names
-            or parts[1] in seen
-        ):
-            raise SetupError("SDK release checksum manifest is invalid")
-        seen.add(parts[1])
-        if parts[1] == sdk_name:
-            expected = parts[0].lower()
-    if len(records) != 3 or seen != expected_names:
-        raise SetupError("SDK release checksum manifest is invalid")
-    if (
-        expected is None
-        or len(expected) != 64
-        or any(char not in "0123456789abcdef" for char in expected)
-    ):
-        raise SetupError("SDK release checksum manifest is invalid")
-    try:
-        actual = hashlib.sha256(sdk.read_bytes()).hexdigest()
-    except OSError:
-        raise SetupError("M3 SDK release is unavailable") from None
-    if actual != expected:
-        raise SetupError("M3 SDK checksum verification failed")
     return sdk
 
 
@@ -406,8 +288,8 @@ def _ready(python: Path, version: str, project_root: Path) -> bool:
         return False
 
 
-def _install_sdk(target: EnvironmentTarget, sdk: Path) -> str:
-    requirement = f"m3[pytest,storage,judge] @ {sdk.resolve().as_uri()}"
+def _install_sdk(target: EnvironmentTarget, version: str) -> str:
+    requirement = f"sf-m3[pytest,storage,judge]=={version}"
     uv = shutil.which("uv")
     command = (
         [uv, "pip", "install", "--python", str(target.python), requirement]
@@ -426,11 +308,9 @@ def _install_sdk(target: EnvironmentTarget, sdk: Path) -> str:
             command, capture_output=True, text=True, check=False, timeout=300
         )
     except (OSError, subprocess.TimeoutExpired):
-        raise SetupError(
-            "could not install the M3 SDK in the project environment"
-        ) from None
+        raise SetupError("could not install the matching M3 SDK from PyPI") from None
     if result.returncode != 0:
-        raise SetupError("could not install the M3 SDK in the project environment")
+        raise SetupError("could not install the matching M3 SDK from PyPI")
     return "uv" if uv else "venv/pip"
 
 
@@ -443,38 +323,29 @@ def run(args: Any) -> int:
     if not target.created and _ready(target.python, version, root):
         print(f"Project environment ready: {target.path}")
         print(f"M3 SDK: {version}")
-        print(
-            "Installer: skipped; environment is already ready (no download, install, or checksum verification)"
-        )
+        print("Installer: skipped; environment is already ready")
         print("Next:\n  m3 doctor\n  m3 test --ui -- -q")
         return 0
 
     created = target.created
     try:
         if created:
-            print("[1/4] Creating project environment")
+            print("[1/3] Creating project environment")
             target = _create_environment(target)
         else:
-            print("[1/4] Selecting project environment")
-        with tempfile.TemporaryDirectory(prefix="m3-setup-") as temporary:
-            print("[2/4] Downloading and verifying release assets")
-            sdk = _download_release(version, Path(temporary))
-            print("[3/4] Installing SDK")
-            installer = _install_sdk(target, sdk)
-        print("[4/4] Verifying project environment")
+            print("[1/3] Selecting project environment")
+        print("[2/3] Installing matching SDK from PyPI")
+        installer = _install_sdk(target, version)
+        print("[3/3] Verifying project environment")
         if not _ready(target.python, version, root):
             raise SetupError("project environment did not pass the M3 SDK checks")
     except SetupError:
         if created and target.path.exists():
             shutil.rmtree(target.path, ignore_errors=True)
         raise
-    except OSError:
-        if created and target.path.exists():
-            shutil.rmtree(target.path, ignore_errors=True)
-        raise SetupError("could not prepare temporary setup files") from None
     print(f"Project environment ready: {target.path}")
     print(f"M3 SDK: {version}")
-    print(f"Installer: {installer}; checksum: verified")
+    print(f"Installer: {installer}")
     print("Next:\n  m3 doctor\n  m3 test --ui -- -q")
     return 0
 

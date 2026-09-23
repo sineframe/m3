@@ -1,10 +1,10 @@
 # M3 app
 
-`m3-app` is the repository's internal application package. It contains the
-FastAPI viewer API, application services, and persistence adapters. It is not a
-public package that M3 users install directly.
+`sf-m3-app` is the distribution used by the standalone CLI. It contains the
+FastAPI viewer API, application services, and persistence adapters. It is distributed on PyPI as a dependency of the standalone CLI; M3 users
+typically install `sf-m3-cli` instead of this support package directly.
 
-The standalone [`m3-cli`](../cli/README.md) installs the matching app
+The standalone [`sf-m3-cli`](../cli/README.md) installs the matching app
 runtime in its isolated environment and bundles the production frontend. The
 [`m3` SDK](../sdk/README.md) remains the public testing API and owns the
 execution, trace, and assertion contracts used by the app.

@@ -228,11 +228,11 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
 
     root = (args.project_root or Path.cwd()).resolve()
     try:
-        cli_version = importlib.metadata.version("m3-cli")
-        bundled_sdk_version = importlib.metadata.version("m3")
+        cli_version = importlib.metadata.version("sf-m3-cli")
+        bundled_sdk_version = importlib.metadata.version("sf-m3")
     except importlib.metadata.PackageNotFoundError:
         raise DoctorCLIError(
-            "the CLI installation is incomplete; reinstall m3-cli"
+            "the CLI installation is incomplete; reinstall sf-m3-cli"
         ) from None
     cli = {
         "status": "ready" if cli_version == bundled_sdk_version else "not ready",
@@ -346,7 +346,7 @@ def print_human(report: dict[str, Any]) -> None:
     if not report.get("ready"):
         if cli := report.get("cli"):
             if cli.get("status") != "ready":
-                print("Next: reinstall m3-cli")
+                print("Next: reinstall sf-m3-cli")
                 return
         if project_python is not None and project_python.get("status") != "ready":
             print("Next: m3 setup")

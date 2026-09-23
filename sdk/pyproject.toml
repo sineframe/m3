@@ -1,5 +1,5 @@
 [project]
-name = "m3"
+name = "sf-m3"
 version = "0.2.0a13"
 description = "Python SDK for testing MCP servers and agent harnesses"
 readme = "README.md"
@@ -9,7 +9,6 @@ license-files = ["LICENSE"]
 authors = [{ name = "M3 contributors" }]
 keywords = ["mcp", "model-context-protocol", "testing", "pytest", "agents"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",

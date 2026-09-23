@@ -466,7 +466,7 @@ def _openai_sync(
         raise
     except ImportError as exc:
         raise _JudgeFailure(
-            "missing_dependency", "install m3[judge] to use LLMJudge"
+            "missing_dependency", "install sf-m3[judge] to use LLMJudge"
         ) from exc
     except Exception as exc:
         raise _provider_error(exc) from exc
@@ -500,7 +500,7 @@ async def _openai_async(
         raise
     except ImportError as exc:
         raise _JudgeFailure(
-            "missing_dependency", "install m3[judge] to use LLMJudge"
+            "missing_dependency", "install sf-m3[judge] to use LLMJudge"
         ) from exc
     except Exception as exc:
         raise _provider_error(exc) from exc

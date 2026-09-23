@@ -29,7 +29,7 @@ def run(command: list[str], *, env: dict[str, str], cwd: Path) -> None:
 def wheel_paths(release_dir: Path, version: str) -> tuple[Path, Path, Path]:
     paths = tuple(
         release_dir / f"{prefix}-{version}-py3-none-any.whl"
-        for prefix in ("m3_cli", "m3", "m3_app")
+        for prefix in ("sf_m3_cli", "sf_m3", "sf_m3_app")
     )
     if any(not path.is_file() for path in paths):
         raise SmokeError("release directory is missing one of the three exact wheels")
@@ -65,7 +65,7 @@ def smoke(release_dir: str | Path, version: str) -> None:
     uv = shutil.which("uv")
     if uv is None:
         raise SmokeError("uv is required for the isolated release smoke test")
-    with tempfile.TemporaryDirectory(prefix="m3-cli-uv-smoke-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sf-m3-cli-uv-smoke-") as temporary:
         root = Path(temporary)
         tool_dir = root / "tool"
         tool_bin = root / "bin"
@@ -100,7 +100,9 @@ def smoke(release_dir: str | Path, version: str) -> None:
                 "uv did not create the m3 tool command in isolated storage"
             )
         run([str(executable), "--help"], env=env, cwd=root)
-        tool_python = installed_ui_check(tool_dir / "m3-cli", windows=os.name == "nt")
+        tool_python = installed_ui_check(
+            tool_dir / "sf-m3-cli", windows=os.name == "nt"
+        )
         run(
             [
                 str(tool_python),

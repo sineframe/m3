@@ -1,5 +1,5 @@
 [project]
-name = "m3-cli"
+name = "sf-m3-cli"
 version = "0.2.0a13"
 description = "Standalone command line interface for M3"
 readme = "README.md"
@@ -7,16 +7,16 @@ requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-  "m3[storage]==0.2.0a13",
-  "m3-app==0.2.0a13",
+  "sf-m3[storage]==0.2.0a13",
+  "sf-m3-app==0.2.0a13",
 ]
 
 [project.scripts]
 m3 = "m3_cli.main:main"
 
 [tool.uv.sources]
-m3 = { workspace = true }
-m3-app = { workspace = true }
+sf-m3 = { workspace = true }
+sf-m3-app = { workspace = true }
 
 [dependency-groups]
 test = [

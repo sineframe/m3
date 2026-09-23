@@ -56,7 +56,7 @@ tests/catalog_prompts.py`. Combine this with `--harness`, `--trials`, `-k`, and
 the exact trimmed name. For a standalone SDK run, pass `suite_name` to
 `MCPTestKit` or the execution specification instead.
 
-The private SDK release is not installed by bare `uv add "m3[pytest]"`.
+Install the SDK from PyPI with `uv add "sf-m3[pytest]"`; select and pin a prerelease explicitly when needed.
 Follow [cli-runner.md](cli-runner.md) and `m3 setup` for a version-matched
 project SDK. If the user specifically needs
 SDK-only use, install the exact release wheel through the target project's

@@ -141,7 +141,7 @@ def _pytest_parametrize(
             raise
         raise ImportError(
             "matrix.parametrize() requires the optional pytest dependency; "
-            "install it with m3[pytest]"
+            "install it with sf-m3[pytest]"
         ) from exc
     return _pytest_runtime.mark.parametrize(
         argname,
