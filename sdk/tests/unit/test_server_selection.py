@@ -178,6 +178,35 @@ def test_marked_agent_keeps_project_server_fixture_without_selection(
     assert "1 passed" in result.stdout
 
 
+@pytest.mark.parametrize("indirect", [False, True])
+def test_marked_agent_keeps_pytest_server_parameter(
+    tmp_path: Path, indirect: bool
+) -> None:
+    source = (
+        "import pytest\n"
+        "@pytest.mark.m3(agents=[{'harness':'opencode','models':['opencode/a']}])\n"
+        f"@pytest.mark.parametrize('server', ['alpha', 'beta'], indirect={indirect})\n"
+        "def test_existing_parameter(agent, server): assert server in {'alpha', 'beta'}\n"
+    )
+    result = _collect(tmp_path, source, collect_only=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+
+
+def test_m3_server_selection_conflicts_with_pytest_server_parameter(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "import pytest\n"
+        "@pytest.mark.m3(servers=[{'type':'stdio','command':'selected'}])\n"
+        "@pytest.mark.parametrize('server', ['alpha'])\n"
+        "def test_conflict(server): pass\n"
+    )
+    result = _collect(tmp_path, source)
+    assert result.returncode != 0
+    assert "M3 server selections conflict" in result.stdout
+
+
 def test_suite_skips_server_validation_for_other_suites(tmp_path: Path) -> None:
     source = (
         "import pytest\n"

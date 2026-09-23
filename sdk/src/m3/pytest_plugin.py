@@ -551,6 +551,19 @@ def _server_choices(
         raise _pytest.UsageError(str(exc)) from exc
 
 
+def _parametrizes_server(node: _Any) -> bool:
+    """Whether pytest already owns ``server`` through a parametrize marker."""
+    for marker in node.iter_markers(name="parametrize"):
+        if not marker.args:
+            continue
+        names = marker.args[0]
+        if isinstance(names, str):
+            names = names.replace(",", " ").split()
+        if "server" in names:
+            return True
+    return False
+
+
 def pytest_generate_tests(metafunc: _Any) -> None:
     marker = metafunc.definition.get_closest_marker("m3")
     if marker is None:
@@ -572,16 +585,17 @@ def pytest_generate_tests(metafunc: _Any) -> None:
         fixture_defs
         and fixture_defs[-1].func is not getattr(server, "__wrapped__", None)
     )
+    pytest_server_parameter = _parametrizes_server(metafunc.definition)
     selected_servers = _server_choices(metafunc.config, marker_kwargs)
     if "server" in metafunc.fixturenames:
         if selected_servers is None:
-            if not project_server_fixture:
+            if not project_server_fixture and not pytest_server_parameter:
                 raise _pytest.UsageError(
                     "server fixture requires --server selections or m3(servers=[...])"
                 )
-        elif project_server_fixture:
+        elif project_server_fixture or pytest_server_parameter:
             raise _pytest.UsageError(
-                "M3 server selections conflict with a user fixture named 'server'"
+                "M3 server selections conflict with a project fixture or pytest parameter named 'server'"
             )
         else:
             ids = tuple(
