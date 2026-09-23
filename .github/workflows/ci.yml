@@ -260,7 +260,8 @@ jobs:
           python scripts/build_cli_release.py --ui-dist cli/tests/fixtures/ui --out-dir "$release_dir"
       - name: Check dependency metadata and local installer behavior
         run: |
-          python scripts/check_cli_standalone.py --release-dir "$RUNNER_TEMP/m3-fixture-release"
+          version=$(python scripts/build_cli_release.py --print-version)
+          python scripts/check_cli_standalone.py --release-dir "$RUNNER_TEMP/m3-fixture-release" --version "$version"
           uv run --locked --no-sync --project cli pytest -q cli/tests/test_installers.py cli/tests/test_release_build.py
 
   cli-standalone:
