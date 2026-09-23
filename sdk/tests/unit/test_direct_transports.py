@@ -108,6 +108,60 @@ def test_private_endpoint_requires_explicit_trust_and_agent_exposure_is_stricter
     )
 
 
+def test_loopback_only_rejects_mixed_dns_answers_and_rebinding_without_values() -> None:
+    server = HTTPServer(
+        name="local",
+        url="http://localhost:8765/mcp",
+        trust=TrustLevel.TRUSTED_PRIVATE,
+        loopback_only=True,
+    )
+    mixed = ("127.0.0.1", "10.0.0.5")
+    message = "loopback-only MCP endpoint resolved to a non-loopback address"
+    with pytest.raises(EndpointTrustError) as caught:
+        validate_endpoint_trust(server, resolve_host=lambda host, port: mixed)
+    assert str(caught.value) == message
+    assert all(
+        part not in str(caught.value) for part in ("localhost", *mixed, server.url)
+    )
+
+    answers = iter((("127.0.0.1",), ("127.0.0.1", "192.168.1.8")))
+    _origin, guarded_resolver = direct_module._validated_transport_policy(
+        server,
+        for_agent=False,
+        resolve_host=lambda host, port: next(answers),
+    )
+    assert guarded_resolver("localhost", 8765) == ("127.0.0.1",)
+    with pytest.raises(EndpointTrustError) as rebound:
+        guarded_resolver("localhost", 8765)
+    assert str(rebound.value) == message
+
+
+@pytest.mark.parametrize(
+    ("trust", "expected"),
+    (
+        (
+            TrustLevel.UNTRUSTED,
+            "untrusted MCP endpoint resolved to a private or local address",
+        ),
+        (
+            TrustLevel.PUBLIC,
+            "public MCP endpoint resolved to a non-public address",
+        ),
+    ),
+)
+def test_direct_trust_failures_are_safe_and_specific(
+    trust: TrustLevel, expected: str
+) -> None:
+    server = HTTPServer(name="remote", url="https://private.example/mcp", trust=trust)
+    with pytest.raises(EndpointTrustError) as caught:
+        validate_endpoint_trust(server, resolve_host=lambda host, port: ("10.0.0.9",))
+    assert str(caught.value) == expected
+    assert all(
+        value not in str(caught.value)
+        for value in (server.url, "private.example", "10.0.0.9")
+    )
+
+
 def test_credential_query_parameters_are_rejected_before_connecting() -> None:
     server = HTTPServer(
         name="remote", url="https://example.test/mcp?access_token=fixture"

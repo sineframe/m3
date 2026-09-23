@@ -26,7 +26,11 @@ from m3.trace.capture import CaptureWriter, parse_json_payload
 from m3.trace.redaction import is_sensitive_key
 from m3.types import ToolPolicy
 
-from ._http_pinning import ValidatingHTTPXTransport, canonical_hostname
+from ._http_pinning import (
+    ValidatingHTTPXTransport,
+    canonical_hostname,
+    safe_endpoint_error_message,
+)
 from .tool_policy import ProxyToolPolicy
 
 HOP_BY_HOP = {
@@ -75,15 +79,13 @@ def _resolve_public_host(hostname: str, port: int) -> tuple[str, ...]:
             port,
             type=socket.SOCK_STREAM,
         )
-    except socket.gaierror as exc:
-        raise UnsafeUpstreamError(
-            f"MCP upstream host could not be resolved: {hostname}"
-        ) from exc
+    except socket.gaierror:
+        raise UnsafeUpstreamError("MCP upstream host could not be resolved") from None
     for address in addresses:
         ip = ipaddress.ip_address(address[4][0])
         if not ip.is_global:
             raise UnsafeUpstreamError(
-                f"MCP upstream resolves to a blocked non-public address: {ip}"
+                "public MCP endpoint resolved to a non-public address"
             )
     return tuple(dict.fromkeys(str(address[4][0]) for address in addresses))
 
@@ -105,6 +107,25 @@ def validate_public_upstream(url: str) -> tuple[str, ...]:
     return _resolve_public_host(parsed.hostname, port)
 
 
+def _resolve_loopback_host(hostname: str, port: int) -> tuple[str, ...]:
+    try:
+        records = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    except (OSError, ValueError):
+        raise UnsafeUpstreamError("MCP upstream host could not be resolved") from None
+    addresses = tuple(dict.fromkeys(str(item[4][0]) for item in records))
+    if not addresses:
+        raise UnsafeUpstreamError("MCP upstream host could not be resolved")
+    try:
+        safe = all(ipaddress.ip_address(address).is_loopback for address in addresses)
+    except ValueError:
+        safe = False
+    if not safe:
+        raise UnsafeUpstreamError(
+            "loopback-only MCP endpoint resolved to a non-loopback address"
+        )
+    return addresses
+
+
 class McpHttpProxy:
     def __init__(
         self,
@@ -115,6 +136,7 @@ class McpHttpProxy:
         capture_path: str,
         baseline_ns: int,
         allow_private: bool = False,
+        loopback_only: bool = False,
         secrets: set[str] | None = None,
         tool_policy: ToolPolicy | None = None,
         server_alias: str = "server",
@@ -141,6 +163,7 @@ class McpHttpProxy:
         if secrets is not None:
             secrets.update(writer_secrets)
         self.allow_private = allow_private
+        self.loopback_only = loopback_only
         self._tool_policy = (
             ProxyToolPolicy(
                 tool_policy,
@@ -165,15 +188,18 @@ class McpHttpProxy:
     async def start(self) -> str:
         upstream, upstream_port = _parse_upstream(self.upstream_url)
         assert upstream.hostname is not None
-        if self.allow_private:
+        if self.allow_private and not self.loopback_only:
             # This explicit opt-out is used for loopback fixtures and deliberately
             # does not apply the public-upstream SSRF boundary.
             self.client = httpx.AsyncClient(follow_redirects=False, timeout=None)
         else:
+            resolver = (
+                _resolve_loopback_host if self.loopback_only else _resolve_public_host
+            )
             try:
                 with anyio.fail_after(_UPSTREAM_CONNECT_TIMEOUT):
                     initial_addresses = await anyio.to_thread.run_sync(
-                        _resolve_public_host,
+                        resolver,
                         upstream.hostname,
                         upstream_port,
                         abandon_on_cancel=True,
@@ -196,7 +222,7 @@ class McpHttpProxy:
                     ):
                         initial_available = False
                         return initial_addresses
-                return _resolve_public_host(hostname, requested_port)
+                return resolver(hostname, requested_port)
 
             self.client = httpx.AsyncClient(
                 follow_redirects=False,
@@ -462,6 +488,7 @@ class McpHttpProxy:
         try:
             response = await self.client.send(outbound, stream=True)
         except httpx.HTTPError as exc:
+            trust_message = safe_endpoint_error_message(exc)
             self.writer.write(
                 transport=self.transport,
                 direction="proxy_error",
@@ -469,7 +496,9 @@ class McpHttpProxy:
                 kind="error",
                 metadata={"url": target},
             )
-            return Response("MCP upstream request failed", status_code=502)
+            return Response(
+                trust_message or "MCP upstream request failed", status_code=502
+            )
 
         content_type = response.headers.get("content-type", "")
         if "text/event-stream" in content_type:

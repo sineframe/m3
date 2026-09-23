@@ -114,32 +114,22 @@ in the server definition or assertions.
 
 ## Expose the endpoint to an agent
 
-An agent can use an HTTP MCP endpoint through the same selected `agent`
-fixture as a local server. Mark the test and pass the server explicitly. A
-public endpoint exposed to an agent requires `TrustLevel.PUBLIC`:
+An agent can use an HTTP MCP endpoint through the selected `agent` and `server`
+fixtures. A public endpoint exposed to an agent needs `trust="public"`:
 
 ```python
 import pytest
 from m3 import expect
-from m3.types import HTTPServer, TrustLevel
 
-@pytest.fixture
-def deepwiki_server():
-    return HTTPServer(
-        name="deepwiki",
-        url="https://mcp.deepwiki.com/mcp",
-        trust=TrustLevel.PUBLIC,
-    )
-
-@pytest.mark.m3
-def test_agent_reads_wiki_structure(agent, deepwiki_server):
+@pytest.mark.m3(servers=[{
+    "type": "http", "url": "https://mcp.deepwiki.com/mcp", "trust": "public",
+}])
+def test_agent_reads_wiki_structure(agent, server):
     result = agent.run(
         "Inspect the wiki structure for modelcontextprotocol/python-sdk.",
-        server=deepwiki_server,
+        server=server,
     )
-    expect(result).to_have_tool_call(
-        "read_wiki_structure", server="deepwiki", status="success"
-    )
+    expect(result).to_have_tool_call("read_wiki_structure", status="success")
 ```
 
 Set the model provider key in the process environment, or use an explicitly
@@ -221,6 +211,22 @@ be used. When an agent may reach a public endpoint, set `TrustLevel.PUBLIC` to
 record that explicit exposure decision. A private or localhost endpoint that
 you own requires `TrustLevel.TRUSTED_PRIVATE`. These labels describe the real
 ownership and exposure of the endpoint; they are not validation bypasses.
+
+For M3's `servers=[...]` and CLI `--server http` shorthand, nonlocal URLs
+default to `UNTRUSTED`. An agent test must add `"trust": "public"` or
+`--trust public` for a public endpoint, or `trusted_private` for a private
+endpoint you own. An omitted trust value for `localhost` or a literal loopback
+IP grants loopback-only access: every resolved address must be loopback, and a
+mixed DNS result is rejected before connecting. An explicit `HTTPServer`
+retains its existing trust default.
+
+An agent test with a nonlocal HTTP selection and no explicit trust stops at
+collection with `agent HTTP server has trust=untrusted`. If a public selection
+resolves to a non-public address, M3 reports
+`public MCP endpoint resolved to a non-public address`; if an inferred
+loopback selection resolves anywhere outside loopback, it reports
+`loopback-only MCP endpoint resolved to a non-loopback address`. These errors
+omit endpoint and address values.
 
 `MCPTestKit` owns connection and client cleanup and finalizes the trace, but it
 does not start or stop a deployed HTTP service. The endpoint must already be

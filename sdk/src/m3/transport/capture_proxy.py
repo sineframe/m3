@@ -307,6 +307,7 @@ class McpCaptureManager:
         *,
         baseline_ns: int | None = None,
         trusted_private_keys: Iterable[str] = (),
+        loopback_only_keys: Iterable[str] = (),
         tool_policy: ToolPolicy | None = None,
         server_aliases: Iterable[str] = (),
         tools_by_server: Mapping[str, Iterable[str]] | None = None,
@@ -322,6 +323,7 @@ class McpCaptureManager:
             baseline_ns if baseline_ns is not None else time.perf_counter_ns()
         )
         self._trusted_private = frozenset(trusted_private_keys)
+        self._loopback_only = frozenset(loopback_only_keys)
         # Restrictive policy is deny-by-default, including an empty policy.
         # Native policy remains provider-owned and is deliberately not handed
         # to a portable proxy.
@@ -477,6 +479,10 @@ class McpCaptureManager:
                     capture_path=str(target.path),
                     baseline_ns=self.baseline_ns,
                     allow_private=key in self._trusted_private,
+                    loopback_only=(
+                        key in self._loopback_only
+                        or bool(getattr(configuration, "loopback_only", False))
+                    ),
                     secrets=set(resolved_secrets) if resolved_secrets else None,
                     tool_policy=self._tool_policy,
                     server_alias=alias,

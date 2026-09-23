@@ -11,6 +11,7 @@ from typing import NoReturn
 from . import doctor, init, runtime, setup
 from .branding import M3_ASCII_ART
 from .errors import CLIError
+from .server_options import add_server_arguments, normalize_server_groups
 
 
 class _RedactingArgumentParser(argparse.ArgumentParser):
@@ -97,6 +98,7 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         metavar="KIND[@VERSION]=MODEL[,MODEL...]",
     )
+    add_server_arguments(test)
     test.add_argument("--harness-cache-dir", type=Path, default=None, metavar="PATH")
     test.add_argument("--trials", type=int, default=None, metavar="N")
     test.add_argument("--suite", type=str, default=None, metavar="NAME")
@@ -168,6 +170,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "test":
             from .supervisor import run_test
 
+            server_selections = normalize_server_groups(
+                getattr(args, "_server_groups", None)
+            )
             return run_test(
                 python=args.python,
                 project_root=args.project_root,
@@ -177,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
                 port=args.port,
                 baseline=args.baseline,
                 harnesses=args.harness,
+                server_selections=server_selections,
                 trials=args.trials,
                 suite=args.suite,
                 credential_env=args.credential_env,
@@ -246,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     except doctor.DoctorCLIError as exc:
         print(f"m3 doctor: {exc}", file=sys.stderr)
         return 2
-    except CLIError:
+    except CLIError as exc:
         if "--json" in effective_argv:
             print(
                 json.dumps(
@@ -254,7 +260,13 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         else:
-            print(_command_error_message(command_name), file=sys.stderr)
+            if (
+                command_name == "test"
+                and str(exc) != "invalid command or configuration"
+            ):
+                print(f"m3 test: {exc}", file=sys.stderr)
+            else:
+                print(_command_error_message(command_name), file=sys.stderr)
         return 2
     except Exception:
         if "--json" in effective_argv:

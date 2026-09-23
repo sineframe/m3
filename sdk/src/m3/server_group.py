@@ -83,6 +83,7 @@ class HarnessServerConfig:
     reason: str | None = None
     cwd: str | None = None
     tools: tuple[str, ...] = ()
+    loopback_only: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "environment", dict(self.environment))
@@ -495,8 +496,14 @@ class ServerGroupManager:
                 in {TrustLevel.TRUSTED_PRIVATE, TrustLevel.SDK_LOOPBACK}
                 and record.transport in {TransportKind.STREAMABLE_HTTP}
             }
+            loopback_only = {
+                record.connection_id
+                for record in records
+                if isinstance(record.server, HTTPServer) and record.server.loopback_only
+            }
             self._capture = McpCaptureManager(
                 trusted_private_keys=trusted_private,
+                loopback_only_keys=loopback_only,
                 tool_policy=self._tool_policy,
                 server_aliases=tuple(record.key for record in records),
                 tools_by_server={record.key: record.tools for record in records},
@@ -585,6 +592,7 @@ class ServerGroupManager:
                         connection_id=record.connection_id,
                         endpoint=record.endpoint or server.url,
                         headers=server.headers,
+                        loopback_only=server.loopback_only,
                         reason=record.reason,
                         tools=record.tools,
                     )

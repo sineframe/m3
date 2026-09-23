@@ -780,6 +780,7 @@ def pytest_command(
     baseline: str | None = None,
     project_root: Path | None = None,
     harnesses: Sequence[str] = (),
+    server_selections: Sequence[Mapping[str, object]] = (),
     trials: int | None = None,
     suite: str | None = None,
     credential_env: Sequence[str] = (),
@@ -804,6 +805,8 @@ def pytest_command(
         command.extend(("--rootdir", str(project_root)))
     for value in harnesses:
         command.extend(("--harness", value))
+    if server_selections:
+        command.extend(("--m3-server-selections", json.dumps(list(server_selections))))
     if runtime == "managed":
         command.extend(("--runtime", "managed"))
     for value in credential_env:
@@ -864,6 +867,7 @@ def _run_pytest_process(
     baseline: str | None = None,
     project_root: Path | None = None,
     harnesses: Sequence[str] = (),
+    server_selections: Sequence[Mapping[str, object]] = (),
     trials: int | None = None,
     suite: str | None = None,
     credential_env: Sequence[str] = (),
@@ -921,6 +925,7 @@ def _run_pytest_process(
                     baseline=baseline,
                     project_root=project_root,
                     harnesses=harnesses,
+                    server_selections=server_selections,
                     trials=trials,
                     suite=suite,
                     credential_env=credential_env,
@@ -1128,6 +1133,7 @@ def run_test_with_runs(
     project_root: Path | None = None,
     baseline: str | None = None,
     harnesses: Sequence[str] = (),
+    server_selections: Sequence[Mapping[str, object]] = (),
     trials: int | None = None,
     suite: str | None = None,
     credential_env: Sequence[str] = (),
@@ -1202,6 +1208,7 @@ def run_test_with_runs(
         baseline=baseline,
         project_root=root,
         harnesses=harnesses,
+        server_selections=server_selections,
         trials=trials,
         credential_env=credential_env,
         execution_timeout=execution_timeout,
@@ -1239,6 +1246,7 @@ def run_test(
     project_root: Path | None = None,
     baseline: str | None = None,
     harnesses: Sequence[str] = (),
+    server_selections: Sequence[Mapping[str, object]] = (),
     trials: int | None = None,
     suite: str | None = None,
     credential_env: Sequence[str] = (),
@@ -1272,6 +1280,7 @@ def run_test(
             project_root=project_root,
             baseline=baseline,
             harnesses=harnesses,
+            server_selections=server_selections,
             trials=trials,
             suite=suite,
             credential_env=credential_env,
@@ -1307,6 +1316,7 @@ def run_test(
         baseline=baseline,
         project_root=root,
         harnesses=harnesses,
+        server_selections=server_selections,
         trials=trials,
         credential_env=credential_env,
         execution_timeout=execution_timeout,

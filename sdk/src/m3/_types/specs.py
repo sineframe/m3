@@ -93,6 +93,9 @@ class HTTPServer(ServerDefinition):
     kind: _Literal["streamable_http"] = "streamable_http"
     url: str = _Field(min_length=1)
     headers: _Mapping[str, SecretReference | str] = _Field(default_factory=dict)
+    # Set only when localhost/literal-loopback shorthand inferred trusted
+    # private trust. This constrains every DNS resolution to loopback addresses.
+    loopback_only: bool = False
 
 
 class InProcessServer(ServerDefinition):

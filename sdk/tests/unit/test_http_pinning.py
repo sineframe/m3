@@ -425,8 +425,12 @@ async def test_capture_proxy_rejects_private_address_during_bounded_preflight(
         capture_path=str(tmp_path / "capture.jsonl"),
         baseline_ns=0,
     )
-    with pytest.raises(UnsafeUpstreamError, match="non-public"):
+    with pytest.raises(
+        UnsafeUpstreamError,
+        match=r"^public MCP endpoint resolved to a non-public address$",
+    ) as caught:
         await proxy.start()
+    assert "rebind.example" not in str(caught.value)
     assert answers == 1
 
 
@@ -561,6 +565,128 @@ def test_direct_public_policy_rejects_non_global_shared_address_space() -> None:
 
     with pytest.raises(EndpointTrustError):
         guarded_resolver("resource.example", 443)
+
+
+def test_direct_loopback_policy_rejects_mixed_and_rebound_dns_answers() -> None:
+    answers = iter((("127.0.0.1",), ("127.0.0.1", "192.168.1.10")))
+    _origin, guarded_resolver = _validated_transport_policy(
+        HTTPServer(
+            name="localhost",
+            url="http://localhost/mcp",
+            trust=TrustLevel.TRUSTED_PRIVATE,
+            loopback_only=True,
+        ),
+        for_agent=False,
+        resolve_host=lambda host, port: next(answers),
+    )
+    assert guarded_resolver("localhost", 80) == ("127.0.0.1",)
+    with pytest.raises(
+        EndpointTrustError,
+        match=r"^loopback-only MCP endpoint resolved to a non-loopback address$",
+    ) as caught:
+        guarded_resolver("localhost", 80)
+    assert "localhost" not in str(caught.value)
+    assert "192.168.1.10" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_capture_proxy_loopback_only_rejects_mixed_answers_before_connect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mixed = [
+        (
+            socket.AF_INET,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            ("127.0.0.1", 80),
+        ),
+        (
+            socket.AF_INET,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            ("192.168.1.10", 80),
+        ),
+    ]
+
+    def getaddrinfo(host: str, port: int, *args: Any, **kwargs: Any) -> list[Any]:
+        return mixed
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    proxy = McpHttpProxy(
+        upstream_url="http://localhost/mcp",
+        configured_headers=None,
+        transport="streamable_http",
+        capture_path=str(tmp_path / "capture.jsonl"),
+        baseline_ns=0,
+        allow_private=True,
+        loopback_only=True,
+    )
+    with pytest.raises(
+        UnsafeUpstreamError,
+        match=r"^loopback-only MCP endpoint resolved to a non-loopback address$",
+    ) as caught:
+        await proxy.start()
+    assert "localhost" not in str(caught.value)
+    assert "192.168.1.10" not in str(caught.value)
+    assert proxy.client is None
+
+
+@pytest.mark.asyncio
+async def test_capture_proxy_loopback_only_revalidates_dns_after_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_getaddrinfo = socket.getaddrinfo
+    answers = iter(("127.0.0.1", "127.0.0.1", "10.0.0.2"))
+    captured_resolver: list[Any] = []
+
+    def rebinding_getaddrinfo(
+        host: str, port: int, *args: Any, **kwargs: Any
+    ) -> list[Any]:
+        if host != "localhost":
+            return original_getaddrinfo(host, port, *args, **kwargs)
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                (next(answers), port),
+            )
+        ]
+
+    def transport_factory(**kwargs: Any) -> httpx.AsyncBaseTransport:
+        captured_resolver.append(kwargs["resolve_addresses"])
+        return httpx.MockTransport(lambda request: httpx.Response(200))
+
+    monkeypatch.setattr(socket, "getaddrinfo", rebinding_getaddrinfo)
+    monkeypatch.setattr(
+        http_proxy_module, "ValidatingHTTPXTransport", transport_factory
+    )
+    proxy = McpHttpProxy(
+        upstream_url="http://localhost/mcp",
+        configured_headers=None,
+        transport="streamable_http",
+        capture_path=str(tmp_path / "capture.jsonl"),
+        baseline_ns=0,
+        allow_private=True,
+        loopback_only=True,
+    )
+    await proxy.start()
+    try:
+        resolver = captured_resolver[0]
+        assert resolver("localhost", 80) == ("127.0.0.1",)
+        assert resolver("localhost", 80) == ("127.0.0.1",)
+        with pytest.raises(
+            UnsafeUpstreamError,
+            match=r"^loopback-only MCP endpoint resolved to a non-loopback address$",
+        ) as caught:
+            resolver("localhost", 80)
+        assert "localhost" not in str(caught.value)
+        assert "10.0.0.2" not in str(caught.value)
+    finally:
+        await proxy.stop()
 
 
 @pytest.mark.asyncio

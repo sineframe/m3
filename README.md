@@ -55,28 +55,20 @@ Mark one ordinary pytest test and let the CLI supply each harness and model:
 ```python
 import pytest
 from m3 import expect
-from m3.types import HTTPServer, PermissionPolicy, TrustLevel
 
-@pytest.fixture
-def shipping_server():
-    return HTTPServer(
-        name="shipping",
-        url="https://shipping.example.com/mcp",
-        trust=TrustLevel.PUBLIC,
-    )
-
-@pytest.mark.m3
-def test_shipping(agent, shipping_server):
+@pytest.mark.m3(servers=[{
+    "type": "http", "url": "https://shipping.example.com/mcp", "trust": "public",
+}])
+def test_shipping(agent, server):
     result = agent.run(
         "Get a local shipping quote",
-        server=shipping_server,
-        permission_policy=PermissionPolicy(mode="allow"),
+        server=server,
+        permission_policy="allow",
     )
     expect(result).to_have_tool_call("shipping_quote")
 ```
 
-Replace the URL with your MCP endpoint. Your fixture supplies `shipping_server`;
-M3 supplies `agent`.
+Replace the URL with your MCP endpoint. M3 supplies `agent` and `server`.
 
 Set credentials with exported `OPENCODE_API_KEY` and `OPENAI_API_KEY`, or use
 an explicitly requested `.env` file. Then run two selections for two trials:

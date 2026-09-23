@@ -18,6 +18,27 @@ import idna
 AddressResolver = Callable[[str, int], tuple[str, ...]]
 MAX_ADDRESS_CANDIDATES = 8
 MAX_PARALLEL_CONNECTS = 2
+_SAFE_ENDPOINT_ERRORS = frozenset(
+    {
+        "loopback-only MCP endpoint resolved to a non-loopback address",
+        "public MCP endpoint resolved to a non-public address",
+        "untrusted MCP endpoint resolved to a private or local address",
+    }
+)
+
+
+def safe_endpoint_error_message(error: BaseException) -> str | None:
+    """Return an approved value-free endpoint error from an exception chain."""
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current)
+        if message in _SAFE_ENDPOINT_ERRORS:
+            return message
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def canonical_hostname(hostname: str) -> str:
@@ -87,8 +108,9 @@ class _ValidatingNetworkBackend:
                         abandon_on_cancel=True,
                     )
                 except Exception as exc:
+                    safe_message = safe_endpoint_error_message(exc)
                     raise self._connect_error(
-                        "destination rejected by endpoint policy"
+                        safe_message or "destination rejected by endpoint policy"
                     ) from exc
                 if not addresses:
                     raise self._connect_error("destination did not resolve")
