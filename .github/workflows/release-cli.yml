@@ -227,6 +227,7 @@ jobs:
   verify-pypi:
     name: Clean PyPI install matrix / ${{ matrix.os }} / Python ${{ matrix.python }}
     needs: [publish]
+    if: always() && needs.publish.result == 'success'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     strategy:
@@ -254,6 +255,7 @@ jobs:
   promote:
     name: Publish GitHub draft after PyPI checks
     needs: [verify-pypi, publish]
+    if: always() && needs.verify-pypi.result == 'success' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -267,6 +269,7 @@ jobs:
   public-install-smoke:
     name: Public installer / ${{ matrix.os }} / uv ${{ matrix.uv }}
     needs: [promote, publish]
+    if: always() && needs.promote.result == 'success' && needs.publish.result == 'success'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
