@@ -649,6 +649,50 @@ class InMemoryExecutionStore:
         )
         return tuple(dict(value) for value in values)
 
+    def list_test_run_page(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        suite_id: int | None = None,
+        project_id: str | None = None,
+    ) -> tuple[tuple[Mapping[str, object], ...], int]:
+        """Return newest-first run manifests with their suites, and the total."""
+        with self._lock:
+            runs = copy.deepcopy(list(self._test_runs.items()))
+            suites_by_run: dict[str, list[dict[str, object]]] = {}
+            for run_id, results in self._test_results.items():
+                seen = {
+                    (int(item["suite_id"]), str(item["suite_name"]))
+                    for item in results.values()
+                    if item.get("suite_id") is not None
+                }
+                suites_by_run[run_id] = [
+                    {"suite_id": sid, "suite_name": name}
+                    for sid, name in sorted(seen, key=lambda pair: (pair[1], pair[0]))
+                ]
+        values = [
+            {**value, "suites": suites_by_run.get(run_id, [])}
+            for run_id, value in runs
+            if (project_id is None or value.get("project_id") == str(project_id))
+            and (
+                suite_id is None
+                or any(
+                    item["suite_id"] == int(suite_id)
+                    for item in suites_by_run.get(run_id, [])
+                )
+            )
+        ]
+        values.sort(
+            key=lambda item: (
+                str(item.get("created_at", "")),
+                str(item.get("run_id", "")),
+            ),
+            reverse=True,
+        )
+        end = None if limit is None else offset + limit
+        return tuple(values[offset:end]), len(values)
+
     def save_test_result(
         self, run_id: str, attempt_id: str, value: Mapping[str, object]
     ) -> None:

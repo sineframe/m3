@@ -162,6 +162,17 @@ class AppExecutionStore(Protocol):
 
     def list_test_runs(self) -> tuple[Mapping[str, object], ...]: ...
 
+    def list_test_run_page(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        suite_id: int | None = None,
+        project_id: str | None = None,
+    ) -> tuple[tuple[Mapping[str, object], ...], int]: ...
+
+    def list_suites(self) -> tuple[Suite, ...]: ...
+
 
 class AppExecutionKit(Protocol):
     """Minimal public synchronous SDK toolkit surface required by the app."""
@@ -459,6 +470,35 @@ class AppExecutionService:
             return ()
         try:
             return tuple(getter())
+        except StorageError as exc:
+            raise AppExecutionError(
+                "run_data_unavailable", "run data is unavailable"
+            ) from exc
+
+    def list_run_page(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        suite_id: int | None = None,
+        project_id: str | None = None,
+    ) -> tuple[tuple[Mapping[str, object], ...], int]:
+        """Return one newest-first page of run manifests with their suites."""
+        self._ensure_open()
+        try:
+            return self.store.list_test_run_page(
+                limit=limit, offset=offset, suite_id=suite_id, project_id=project_id
+            )
+        except StorageError as exc:
+            raise AppExecutionError(
+                "run_data_unavailable", "run data is unavailable"
+            ) from exc
+
+    def list_suites(self) -> tuple[Suite, ...]:
+        """Return every registered suite."""
+        self._ensure_open()
+        try:
+            return tuple(self.store.list_suites())
         except StorageError as exc:
             raise AppExecutionError(
                 "run_data_unavailable", "run data is unavailable"
