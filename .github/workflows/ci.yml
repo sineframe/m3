@@ -5,17 +5,14 @@ on:
   push:
     branches:
       - main
-  schedule:
-    # 02:00 and 14:00 Asia/Kolkata (GitHub schedules use UTC).
-    - cron: "30 8,20 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   PYTHONDONTWRITEBYTECODE: "1"
@@ -25,130 +22,206 @@ env:
   OPENCODE_API_KEY: ""
 
 jobs:
-  test:
-    # Compatibility is intentionally scheduled rather than attached to pushes.
-    # The local pre-push hook runs Ruff and mypy; workflow_dispatch allows an
-    # explicit remote compatibility run.
-    needs: quality
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    name: Compatibility tests (Python ${{ matrix.python-version }})
+  pr-tests:
+    name: PR unit tests (Python 3.10)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version:
-          - "3.10"
-          - "3.11"
-
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - name: Install uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.7"
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.10"
           enable-cache: true
-
       - name: Install locked test workspace
         run: >-
           uv sync --locked --all-packages
           --extra pytest --extra judge --extra storage --extra property
           --group test --group typecheck
+      - name: Run SDK unit tests without live providers or process lifecycle
+        run: >-
+          uv run --locked --no-sync --project sdk --extra judge
+          pytest -q -n 2 --dist worksteal -m "not live and not process_lifecycle"
+          sdk/tests/unit
+      - name: Run application unit tests without live providers
+        run: >-
+          uv run --locked --no-sync --project app
+          pytest -q -n 2 --dist worksteal -m "not live" app/tests/unit
+      - name: Run CLI smoke tests
+        run: >-
+          uv run --locked --no-sync --project cli pytest -q
+          cli/tests/test_init.py cli/tests/test_setup.py
+          cli/tests/test_doctor.py cli/tests/test_web.py
 
-      - name: Run SDK tests without live providers
-        run: |
-          set -o pipefail
-          log="$RUNNER_TEMP/sdk-tests.log"
-          set +e
-          timeout 8m uv run --locked --no-sync --project sdk --extra judge \
-            pytest -q -n 2 --dist worksteal --durations=25 --durations-min=1 \
-            -m "not live and not process_lifecycle" sdk/tests 2>&1 | tee "$log"
-          status=${PIPESTATUS[0]}
-          set -e
-          slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
-          [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
-          {
-            echo '### SDK tests (slowest tests over 1s)'
-            printf '%s\n' "$slowest"
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+  main-sdk-tests:
+    name: SDK tests (Python 3.10)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.10"
+          enable-cache: true
+      - name: Install locked test workspace
+        run: >-
+          uv sync --locked --all-packages
+          --extra pytest --extra judge --extra storage --extra property
+          --group test --group typecheck
+      - name: Run SDK tests without live providers or process lifecycle
+        run: >-
+          uv run --locked --no-sync --project sdk --extra judge
+          pytest -q -n 2 --dist worksteal -m "not live and not process_lifecycle"
+          sdk/tests
 
-      - name: Run SDK process lifecycle tests serially
-        run: |
-          set -o pipefail
-          log="$RUNNER_TEMP/sdk-process-lifecycle-tests.log"
-          set +e
-          timeout 8m uv run --locked --no-sync --project sdk --extra judge \
-            pytest -q --durations=25 --durations-min=1 \
-            -m "not live and process_lifecycle" sdk/tests 2>&1 | tee "$log"
-          status=${PIPESTATUS[0]}
-          set -e
-          slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
-          [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
-          {
-            echo '### SDK process lifecycle tests (slowest tests over 1s)'
-            printf '%s\n' "$slowest"
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+  main-sdk-lifecycle:
+    name: SDK process lifecycle tests (Python 3.10, serial)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.10"
+          enable-cache: true
+      - name: Install locked test workspace
+        run: >-
+          uv sync --locked --all-packages
+          --extra pytest --extra judge --extra storage --extra property
+          --group test --group typecheck
+      - name: Run process lifecycle tests serially
+        run: >-
+          uv run --locked --no-sync --project sdk --extra judge
+          pytest -q -m "not live and process_lifecycle" sdk/tests
 
+  main-sdk-examples:
+    name: SDK examples (Python 3.10)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.10"
+          enable-cache: true
+      - name: Install locked test workspace
+        run: >-
+          uv sync --locked --all-packages
+          --extra pytest --extra judge --extra storage --extra property
+          --group test --group typecheck
       - name: Run SDK examples without live providers
-        run: |
-          set -o pipefail
-          log="$RUNNER_TEMP/sdk-examples.log"
-          set +e
-          timeout 3m uv run --locked --no-sync --project sdk --extra judge \
-            pytest -q -n 2 --dist worksteal --durations=25 --durations-min=1 \
-            -m "not live" sdk/examples/tests 2>&1 | tee "$log"
-          status=${PIPESTATUS[0]}
-          set -e
-          slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
-          [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
-          {
-            echo '### SDK examples (slowest tests over 1s)'
-            printf '%s\n' "$slowest"
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+        run: >-
+          uv run --locked --no-sync --project sdk --extra judge
+          pytest -q -n 2 --dist worksteal -m "not live" sdk/examples/tests
 
+  main-app-tests:
+    name: Application tests (Python 3.10)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.10"
+          enable-cache: true
+      - name: Install locked test workspace
+        run: >-
+          uv sync --locked --all-packages
+          --extra pytest --extra judge --extra storage --extra property
+          --group test --group typecheck
       - name: Run application tests without live providers
-        run: |
-          set -o pipefail
-          log="$RUNNER_TEMP/application-tests.log"
-          set +e
-          timeout 10m uv run --locked --no-sync --project app \
-            pytest -q -n 2 --dist worksteal \
-            --durations=25 --durations-min=1 -m "not live" app/tests 2>&1 \
-            | tee "$log"
-          status=${PIPESTATUS[0]}
-          set -e
-          slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
-          [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
-          {
-            echo '### Application tests (slowest tests over 1s)'
-            printf '%s\n' "$slowest"
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+        run: >-
+          uv run --locked --no-sync --project app
+          pytest -q -n 2 --dist worksteal -m "not live" app/tests
 
-      - name: Run standalone CLI tests
-        run: |
-          set -o pipefail
-          log="$RUNNER_TEMP/cli-tests.log"
-          set +e
-          timeout 4m uv run --locked --no-sync --project cli pytest -q \
-            --durations=25 --durations-min=1 cli/tests 2>&1 | tee "$log"
-          status=${PIPESTATUS[0]}
-          set -e
-          slowest=$(sed -n '/slowest .* durations/,$p' "$log" | tail -n 30)
-          [[ -n "$slowest" ]] || slowest=$(tail -n 30 "$log")
-          {
-            echo '### CLI tests (slowest tests over 1s)'
-            printf '%s\n' "$slowest"
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+  main-cli-tests:
+    name: CLI tests (Python 3.10)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.10"
+          enable-cache: true
+      - name: Install locked test workspace
+        run: >-
+          uv sync --locked --all-packages
+          --extra pytest --extra judge --extra storage --extra property
+          --group test --group typecheck
+      - name: Run complete CLI suite
+        run: uv run --locked --no-sync --project cli pytest -q cli/tests
+
+  main-python-compatibility:
+    name: PR unit tests (Python 3.13)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install locked test workspace
+        run: >-
+          uv sync --locked --all-packages
+          --extra pytest --extra judge --extra storage --extra property
+          --group test --group typecheck
+      - name: Run SDK unit tests without live providers or process lifecycle
+        run: >-
+          uv run --locked --no-sync --project sdk --extra judge
+          pytest -q -n 2 --dist worksteal -m "not live and not process_lifecycle"
+          sdk/tests/unit
+      - name: Run application unit tests without live providers
+        run: >-
+          uv run --locked --no-sync --project app
+          pytest -q -n 2 --dist worksteal -m "not live" app/tests/unit
+      - name: Run CLI smoke tests
+        run: >-
+          uv run --locked --no-sync --project cli pytest -q
+          cli/tests/test_init.py cli/tests/test_setup.py
+          cli/tests/test_doctor.py cli/tests/test_web.py
 
   quality:
     name: Source and lock checks
@@ -222,17 +295,17 @@ jobs:
         run: sh -n scripts/install.sh.in scripts/install-latest.sh
 
       - name: Build application distributions
-        if: github.event_name != 'schedule'
+        if: github.event_name == 'push'
         run: uv build --project app
 
       - name: Build and smoke-test SDK distributions
-        if: github.event_name != 'schedule'
+        if: github.event_name == 'push'
         run: uv run --locked --no-sync --project sdk python scripts/check_packaging.py
 
   public-packaging:
     name: Public packaging and installer checks
     runs-on: ubuntu-latest
-    if: github.event_name != 'schedule'
+    if: github.event_name == 'push'
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -249,8 +322,6 @@ jobs:
           uv sync --locked --all-packages
           --extra pytest --extra judge --extra storage --extra property
           --group test --group typecheck
-      - name: Run CLI tests
-        run: uv run --locked --no-sync --project cli pytest -q cli/tests
       - name: Check POSIX scripts
         run: sh -n scripts/install.sh.in scripts/install-latest.sh
       - name: Build fixture UI wheels
@@ -277,12 +348,11 @@ jobs:
         run: |
           version=$(python scripts/build_cli_release.py --print-version)
           python scripts/check_cli_standalone.py --release-dir "$RUNNER_TEMP/m3-fixture-release" --version "$version"
-          uv run --locked --no-sync --project cli pytest -q cli/tests/test_installers.py cli/tests/test_release_build.py
 
   cli-standalone:
     name: Private pinned UI gate
     runs-on: ubuntu-latest
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name == 'push'
     timeout-minutes: 20
 
     steps:
