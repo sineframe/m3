@@ -446,7 +446,7 @@ jobs:
 
   managed-runtime-assets:
     if: github.event_name == 'workflow_dispatch'
-    name: Managed asset / ${{ matrix.os }} / ${{ matrix.kind }}
+    name: Managed asset checks (manual dispatch)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
