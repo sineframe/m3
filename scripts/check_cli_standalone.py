@@ -935,7 +935,7 @@ const token = process.env.MCP_PAL_LIVE_AUTH_TOKEN;
     for (const name of expected) {
       const row = page.getByRole('button', { name: new RegExp(`Test: .*${name}\\. Effective case verdict: `) });
       await row.waitFor({ state: 'visible', timeout: 15000 });
-      if (name === 'test_expected_tool_error' && !(await row.getByText('Tool error result').isVisible())) {
+      if (name === 'test_expected_tool_error' && !(await row.getByText(/returned an error(?: result)?$/).isVisible())) {
         throw new Error('expected tool error is missing from Reports');
       }
     }
