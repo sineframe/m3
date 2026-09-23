@@ -55,24 +55,41 @@ Mark one ordinary pytest test and let the CLI supply each harness and model:
 ```python
 import pytest
 from m3 import expect
+from m3.types import HTTPServer, PermissionPolicy, TrustLevel
+
+@pytest.fixture
+def shipping_server():
+    return HTTPServer(
+        name="shipping",
+        url="https://shipping.example.com/mcp",
+        trust=TrustLevel.PUBLIC,
+    )
 
 @pytest.mark.m3
 def test_shipping(agent, shipping_server):
-    result = agent.run("Get a local shipping quote", server=shipping_server)
-    expect(result).to_have_tool_call("shipping_quote", server=shipping_server.name,
-                                     status="success")
+    result = agent.run(
+        "Get a local shipping quote",
+        server=shipping_server,
+        permission_policy=PermissionPolicy(mode="allow"),
+    )
+    expect(result).to_have_tool_call("shipping_quote")
 ```
+
+Replace the URL with your MCP endpoint. Your fixture supplies `shipping_server`;
+M3 supplies `agent`.
 
 Set credentials with exported `OPENCODE_API_KEY` and `OPENAI_API_KEY`, or use
 an explicitly requested `.env` file. Then run two selections for two trials:
 
 ```bash
-m3 test --env-file .env --harness opencode=opencode/big-pickle \
-  --harness codex=gpt-5.6-sol --trials 2 -- tests/test_shipping.py
+m3 test --env-file .env \
+  --harness opencode=opencode/big-pickle \
+  --harness codex=gpt-5.6-sol \
+  --trials 2 \
+  -- tests/test_shipping.py
 ```
 
-This collects four agent items and performs four executions. The fixture
-supplies the selected agent; the test supplies the MCP server and assertion.
+This collects four agent items and performs four executions.
 
 To test specific harness releases, select a managed runtime and put each
 version after the harness name:
