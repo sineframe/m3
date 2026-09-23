@@ -129,12 +129,31 @@ Small trial counts show observations, not reliable improvement estimates.
 
 ## Elicitation
 
-Read the repository's [Elicitation guide](../../sdk/docs/elicitation.md) before
-writing an elicitation test. It is the single reference for the public models,
-helper signatures, response binding, action-bound direct and agent calls,
-manual input, managed pending/respond calls, URL behavior, round limits, and
-trace assertions. The [test-patterns reference](references/test-patterns.md)
-links back to it and contains only the testing workflow around those examples.
+Start with the complete [Elicitation guide](../../sdk/docs/elicitation.md#one-prompt-two-elicitation-rounds-one-tool-call).
+Its runnable test sends one prompt, answers either an address form or its
+alternative, then answers a URL request on a later retry. It asserts one
+successful logical tool call after `agent.run` returns. Copy the maintained
+[composed tests](../../sdk/examples/tests/test_modern_mrtr_pi_composed.py),
+which also run the optional-address and two-addresses-in-one-round variants.
+
+To write a new test, first build a deterministic server fixture that emits
+keyed `InputRequiredResult` requests and validates the next call's
+`requestState` and `inputResponses`. Bind each form or URL leaf to a response.
+Use `one_of` for alternatives in one round, `round_of` for multiple keys in
+one round, `optional` for a round that may be skipped, and `sequence` for
+successive rounds. Attach the complete plan to `client.call_tool`,
+`agent.run`, or the exact `session.send` that can elicit. Assert the final
+operation result or `expect(result).to_have_tool_call(...)`; inspect attempts
+and elicitation entries when order matters. The tool assertion runs after the
+action because one logical call owns all retries.
+
+The maintained [server](../../sdk/examples/servers/modern_mrtr_server.py),
+[direct test](../../sdk/examples/tests/test_modern_mrtr_direct.py), and
+[session test](../../sdk/examples/tests/test_modern_mrtr_pi_session.py) show
+those action boundaries. Pi 0.85.1 is the verified agent baseline, and the
+example suite supplies a local provider. For exact helper signatures,
+prompt/resource actions, manual and managed input, URL details, and trace
+fields, use the [MRTR API reference](../../sdk/docs/elicitation-api.md).
 
 ## Credentials and troubleshooting
 

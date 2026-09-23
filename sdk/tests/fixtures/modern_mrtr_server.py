@@ -332,7 +332,12 @@ def build_modern_mrtr_server(
                     name="interactive-document",
                     uri="memory://interactive-document",
                     mime_type="text/plain",
-                )
+                ),
+                types.Resource(
+                    name="interactive-url-document",
+                    uri="memory://interactive-url-document",
+                    mime_type="text/plain",
+                ),
             ]
         )
 
@@ -341,6 +346,18 @@ def build_modern_mrtr_server(
         params: types.ReadResourceRequestParams,
     ) -> types.ReadResourceResult | types.InputRequiredResult:
         if not params.input_responses:
+            if params.uri == "memory://interactive-url-document":
+                return types.InputRequiredResult(
+                    input_requests={
+                        "resource_authorization": types.ElicitRequest(
+                            params=types.ElicitRequestURLParams(
+                                message="Authorize resource access",
+                                url="https://example.test/resource/123",
+                            )
+                        )
+                    },
+                    request_state="resource-url-state",
+                )
             return types.InputRequiredResult(
                 input_requests={
                     "resource_access": types.ElicitRequest(
@@ -366,7 +383,10 @@ def build_modern_mrtr_server(
         _context: object, _params: object
     ) -> types.ListPromptsResult:
         return types.ListPromptsResult(
-            prompts=[types.Prompt(name="interactive-prompt")]
+            prompts=[
+                types.Prompt(name="interactive-prompt"),
+                types.Prompt(name="interactive-url-prompt"),
+            ]
         )
 
     async def get_prompt(
@@ -374,6 +394,18 @@ def build_modern_mrtr_server(
         params: types.GetPromptRequestParams,
     ) -> types.GetPromptResult | types.InputRequiredResult:
         if not params.input_responses:
+            if params.name == "interactive-url-prompt":
+                return types.InputRequiredResult(
+                    input_requests={
+                        "prompt_authorization": types.ElicitRequest(
+                            params=types.ElicitRequestURLParams(
+                                message="Authorize prompt access",
+                                url="https://example.test/prompt/123",
+                            )
+                        )
+                    },
+                    request_state="prompt-url-state",
+                )
             return types.InputRequiredResult(
                 input_requests={
                     "prompt_context": types.ElicitRequest(

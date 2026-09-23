@@ -53,21 +53,42 @@ def open_provider(run: ProviderRun) -> Iterator[str]:
             if requested_tool is None and "delivery address" in user_text.lower():
                 requested_tool = "book_shipment"
             tool_call = None
+            current_turn = messages[
+                1
+                + max(
+                    (
+                        index
+                        for index, item in enumerate(messages)
+                        if item.get("role") == "user"
+                    ),
+                    default=-1,
+                ) :
+            ]
             if requested_tool and not any(
-                item.get("role") == "tool" for item in messages
+                item.get("role") == "tool" for item in current_turn
             ):
                 for item in request.get("tools", []):
                     function = item.get("function", {})
                     description = str(function.get("description", ""))
                     if (
-                        requested_tool in function.get("name", "")
+                        requested_tool[:20] in function.get("name", "")
                         or requested_tool in description
                     ):
-                        arguments = (
-                            '{"weight_kg":1,"zone":"local"}'
-                            if requested_tool == "book_shipment"
-                            else "{}"
-                        )
+                        if requested_tool == "book_verified_shipment":
+                            prompt = user_text.lower()
+                            if "both addresses" in prompt:
+                                kind = "both"
+                            elif "without an address" in prompt:
+                                kind = "none"
+                            elif "business" in prompt:
+                                kind = "business"
+                            else:
+                                kind = "home"
+                            arguments = f'{{"address_kind":"{kind}"}}'
+                        elif requested_tool in {"book_shipment", "shipping_quote"}:
+                            arguments = '{"weight_kg":2,"zone":"local"}'
+                        else:
+                            arguments = "{}"
                         tool_call = {
                             "index": 0,
                             "id": f"m3-call-{len(run.requests)}",

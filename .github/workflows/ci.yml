@@ -43,11 +43,31 @@ jobs:
           uv sync --locked --all-packages
           --extra pytest --extra judge --extra storage --extra property
           --group test --group typecheck
+      - name: Install Node for installed-Pi tests
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 24
+      - name: Install verified Pi version
+        run: npm install --global @earendil-works/pi-coding-agent@0.85.1
       - name: Run SDK unit tests without live providers or process lifecycle
         run: >-
           uv run --locked --no-sync --project sdk --extra judge
           pytest -q -n 2 --dist worksteal -m "not live and not process_lifecycle"
           sdk/tests/unit
+      - name: Run direct and installed-Pi MRTR tests
+        env:
+          M3_REQUIRE_PI_MRTR: "1"
+        run: >-
+          uv run --locked --no-sync --project sdk --extra judge pytest -q
+          sdk/tests/integration/test_direct_client_mrtr.py
+          sdk/tests/integration/test_examples_contract.py
+          sdk/tests/e2e/test_real_pi_mrtr_gate.py
+          sdk/examples/tests/test_modern_mrtr_sdk.py
+          sdk/examples/tests/test_modern_mrtr_direct.py
+          sdk/examples/tests/test_modern_mrtr_pi_qualified.py
+          sdk/examples/tests/test_modern_mrtr_pi_unqualified.py
+          sdk/examples/tests/test_modern_mrtr_pi_session.py
+          sdk/examples/tests/test_modern_mrtr_pi_composed.py
       - name: Run application unit tests without live providers
         run: >-
           uv run --locked --no-sync --project app
@@ -106,7 +126,15 @@ jobs:
           uv sync --locked --all-packages
           --extra pytest --extra judge --extra storage --extra property
           --group test --group typecheck
+      - name: Install Node for installed-Pi tests
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 24
+      - name: Install verified Pi version
+        run: npm install --global @earendil-works/pi-coding-agent@0.85.1
       - name: Run process lifecycle tests serially
+        env:
+          M3_REQUIRE_PI_MRTR: "1"
         run: >-
           uv run --locked --no-sync --project sdk --extra judge
           pytest -q -m "not live and process_lifecycle" sdk/tests
@@ -132,7 +160,15 @@ jobs:
           uv sync --locked --all-packages
           --extra pytest --extra judge --extra storage --extra property
           --group test --group typecheck
+      - name: Install Node for installed-Pi examples
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 24
+      - name: Install verified Pi version
+        run: npm install --global @earendil-works/pi-coding-agent@0.85.1
       - name: Run SDK examples without live providers
+        env:
+          M3_REQUIRE_PI_MRTR: "1"
         run: >-
           uv run --locked --no-sync --project sdk --extra judge
           pytest -q -n 2 --dist worksteal -m "not live" sdk/examples/tests
