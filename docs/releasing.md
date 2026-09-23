@@ -4,7 +4,7 @@ M3 publishes version matched `sf-m3`, `sf-m3-app`, and `sf-m3-cli` wheels to PyP
 
 ## One-time setup
 
-Before the first tag, configure three PyPI Trusted Publishers for owner `sineframe`, repository `m3`, workflow `release-cli.yml`, and the GitHub environment `pypi`, for projects `sf-m3`, `sf-m3-app`, and `sf-m3-cli`. Use PyPI's pending publisher setup for names that have not yet been created.
+Sign in to PyPI with the account that will own the packages, creating one if needed. In the account's **Publishing** page, add three pending Trusted Publishers for `sf-m3`, `sf-m3-app`, and `sf-m3-cli`. For each, enter GitHub owner `sineframe`, repository `m3`, workflow `release-cli.yml`, and environment `pypi`. The first successful upload creates each PyPI project.
 
 ## Release from a tag
 
