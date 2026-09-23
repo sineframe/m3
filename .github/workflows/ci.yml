@@ -188,7 +188,7 @@ jobs:
         run: uv run --locked --no-sync --project cli pytest -q cli/tests
 
   main-python-compatibility:
-    name: PR unit tests (Python 3.13)
+    name: Main compatibility tests (Python 3.13)
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
