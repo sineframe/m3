@@ -12,7 +12,6 @@ from pydantic import TypeAdapter
 
 from m3 import (
     ACPAgent,
-    AgentSpec,
     CallTool,
     DirectSpec,
     ExecutionReport,
@@ -25,6 +24,7 @@ from m3 import (
     TraceView,
     UserMessage,
 )
+from m3._types.specs import AgentSpec
 from m3.storage import SQLiteExecutionStore
 from m3_app.api.app import create_app
 from m3_app.api.wire import internalize_request

@@ -81,7 +81,7 @@ describing the executable, arguments, protocol version, and environment-variable
 ```
 
 Bind the MCP server using a transport the agent advertises and supports;
-Streamable HTTP, stdio, and SSE are available where applicable. M3
+Streamable HTTP and stdio are available where applicable. M3
 validates the manifest, can check local readiness and probe the configured
 process, then records the agent turn and captured MCP tool evidence using the
 same assertions as native harnesses.

@@ -15,11 +15,8 @@ import pytest
 
 from m3.async_api import AsyncMCPTestKit
 from m3.errors import OperationCancelled
-from m3.transport.direct import TransportConnectionError
 from m3.types import (
     HTTPServer,
-    SecretReference,
-    SSEServer,
     StdioServer,
     TrustLevel,
 )
@@ -37,127 +34,6 @@ def _jsonrpc_response(request: dict[str, Any], result: dict[str, Any]) -> bytes:
         {"jsonrpc": "2.0", "id": request["id"], "result": result},
         separators=(",", ":"),
     ).encode()
-
-
-class _LiveSSEFixture:
-    """Small real TCP server implementing only the official SSE wire shape."""
-
-    def __init__(self, *, token: str) -> None:
-        self.token = token
-        self.initialized = asyncio.Event()
-        self.closed = asyncio.Event()
-        self._sse_writer: asyncio.StreamWriter | None = None
-        self._writers: set[asyncio.StreamWriter] = set()
-        self._sse_lock = asyncio.Lock()
-
-    async def _read_request(
-        self, reader: asyncio.StreamReader
-    ) -> tuple[str, str, dict[str, str], bytes]:
-        header_bytes = await reader.readuntil(b"\r\n\r\n")
-        lines = header_bytes[:-4].split(b"\r\n")
-        method, target, _version = lines[0].decode().split(" ", 2)
-        headers: dict[str, str] = {}
-        for line in lines[1:]:
-            name, value = line.decode().split(":", 1)
-            headers[name.lower()] = value.strip()
-        length = int(headers.get("content-length", "0"))
-        body = await reader.readexactly(length) if length else b""
-        return method, target, headers, body
-
-    @staticmethod
-    async def _response(
-        writer: asyncio.StreamWriter,
-        status: str,
-        body: bytes = b"",
-        *,
-        content_type: str = "application/json",
-    ) -> None:
-        writer.write(
-            f"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\n"
-            f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
-            + body
-        )
-        await writer.drain()
-
-    async def _send_message(self, payload: bytes) -> None:
-        writer = self._sse_writer
-        if writer is None or writer.is_closing():
-            return
-        async with self._sse_lock:
-            writer.write(b"event: message\ndata: " + payload + b"\n\n")
-            await writer.drain()
-
-    async def __call__(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
-        self._writers.add(writer)
-        try:
-            method, target, headers, body = await self._read_request(reader)
-            if headers.get("authorization") != f"Bearer {self.token}":
-                await self._response(writer, "401 Unauthorized")
-                return
-            if method == "GET" and target.split("?", 1)[0] == "/sse":
-                self._sse_writer = writer
-                writer.write(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
-                    b"Cache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n"
-                    b"event: endpoint\ndata: /messages?session_id=fixture\n\n"
-                )
-                await writer.drain()
-                await self.closed.wait()
-                return
-            if method != "POST" or target != "/messages?session_id=fixture":
-                await self._response(writer, "404 Not Found")
-                return
-            request = json.loads(body)
-            await self._response(writer, "202 Accepted")
-            if request.get("method") == "initialize":
-                self.initialized.set()
-                await self._send_message(
-                    _jsonrpc_response(
-                        request,
-                        {
-                            "protocolVersion": _PROTOCOL,
-                            "capabilities": {},
-                            "serverInfo": {"name": "live-sse", "version": "1"},
-                        },
-                    )
-                )
-            elif request.get("method") == "tools/list":
-                await self._send_message(
-                    _jsonrpc_response(
-                        request,
-                        {
-                            "tools": [
-                                {
-                                    "name": "fixture_tool",
-                                    # Deliberately echo the bearer under an
-                                    # ordinary field so the trace boundary is
-                                    # tested rather than only header metadata.
-                                    "description": self.token,
-                                    "inputSchema": {"type": "object", "properties": {}},
-                                }
-                            ]
-                        },
-                    )
-                )
-        except (asyncio.IncompleteReadError, ConnectionError):
-            return
-        finally:
-            self._writers.discard(writer)
-            if writer is not self._sse_writer:
-                writer.close()
-                await writer.wait_closed()
-
-    async def aclose(self) -> None:
-        self.closed.set()
-        for writer in tuple(self._writers):
-            writer.close()
-        for writer in tuple(self._writers):
-            try:
-                await writer.wait_closed()
-            except ConnectionError:
-                pass
 
 
 class _BearerAuth(httpx2.Auth):
@@ -267,89 +143,6 @@ async def test_streamable_http_live_matrix_with_bearer_and_tools() -> None:
         assert "fixture-token" not in repr(client.transport_evidence)
     finally:
         await kit.aclose()
-        server.close()
-        await server.wait_closed()
-
-
-@pytest.mark.asyncio
-async def test_sse_live_matrix_uses_bearer_secret_and_closes_cleanly() -> None:
-    fixture = _LiveSSEFixture(token="fixture-token")
-    server, port = await _start_server(fixture)
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
-    try:
-        binding = SSEServer(
-            name="live-sse",
-            url=f"http://127.0.0.1:{port}/sse",
-            headers={"X-Fixture": "live"},
-            trust=TrustLevel.TRUSTED_PRIVATE,
-        )
-        reference = SecretReference(source="provider", name="fixture-token")
-
-        class Resolver:
-            def resolve(self, value: SecretReference) -> str:
-                assert value == reference
-                return "fixture-token"
-
-        async with kit.direct(
-            binding, secret_resolver=Resolver(), bearer_token=reference
-        ) as client:
-            assert client.initialization is not None
-            assert client.initialization.server_info["name"] == "live-sse"
-            assert (await client.list_tools()).tools[0].name == "fixture_tool"
-            assert client.trace is not None
-            assert any(
-                event.kind.value == "mcp.request" for event in client.trace.events
-            )
-            assert any(
-                event.kind.value == "mcp.response" for event in client.trace.events
-            )
-            assert client.transport_evidence is not None
-            assert client.transport_evidence.state == "initialized"
-        assert client.transport_evidence.state == "closed"
-        assert client.final_trace is not None
-        assert fixture.initialized.is_set()
-        assert "fixture-token" not in repr(client.transport_evidence)
-        assert "fixture-token" not in repr(client.final_trace)
-        assert client._bearer_token is None
-        assert client._secret_resolver is None
-    finally:
-        await kit.aclose()
-        await fixture.aclose()
-        server.close()
-        await server.wait_closed()
-
-
-@pytest.mark.asyncio
-async def test_remote_auth_rejection_retains_sanitized_partial_evidence() -> None:
-    fixture = _LiveSSEFixture(token="expected-token")
-    server, port = await _start_server(fixture)
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
-    try:
-        binding = SSEServer(
-            name="rejected-sse",
-            url=f"http://127.0.0.1:{port}/sse",
-            trust=TrustLevel.TRUSTED_PRIVATE,
-        )
-        client = kit.direct(
-            binding,
-            bearer_token=SecretReference(source="provider", name="wrong-secret"),
-        )
-        with pytest.raises(TransportConnectionError) as caught:
-            await client.__aenter__()
-        assert caught.value.evidence is not None
-        assert caught.value.evidence.state == "failed"
-        evidence = client.transport_evidence
-        assert evidence is not None
-        assert evidence.state == "failed"
-        assert evidence.error_type == "TransportError"
-        assert "wrong-secret" not in repr(evidence)
-        assert "wrong-secret" not in str(evidence)
-        assert client.final_trace is not None
-        assert client.final_trace.events[-1].kind.value == "execution.finished"
-        assert client.final_trace.events[-1].payload["outcome"] == "failed"
-    finally:
-        await kit.aclose()
-        await fixture.aclose()
         server.close()
         await server.wait_closed()
 

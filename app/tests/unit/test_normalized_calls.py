@@ -118,7 +118,7 @@ def test_opencode_wrappers_recovery_duplicates_and_unknown_timing():
             },
         },
     ]
-    calls = from_opencode_events(events, "draw", "sse")
+    calls = from_opencode_events(events, "draw", "http")
     assert (
         len(calls) == 2
         and calls[0]["tool"] == "paint"
@@ -132,11 +132,11 @@ def test_opencode_wrappers_recovery_duplicates_and_unknown_timing():
         and calls[1]["duration_ms"] is None
     )
     trace = build_opencode_trace(
-        events=events, selected_server="draw", transport="sse", status="completed"
+        events=events, selected_server="draw", transport="http", status="completed"
     )
     assert (
         trace["mcp_calls_schema"] == SCHEMA_VERSION
-        and trace["summary"]["transport"] == "sse"
+        and trace["summary"]["transport"] == "http"
     )
     assert trace["mcp_calls"][0]["wire_request"] is None and trace["limitations"]
 

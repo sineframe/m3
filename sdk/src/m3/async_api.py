@@ -28,6 +28,7 @@ from uuid import uuid4 as _uuid4
 
 import httpx2
 from mcp import ClientSession as _ClientSession
+from mcp.types import LATEST_PROTOCOL_VERSION as _MCP_LATEST_PROTOCOL_VERSION
 
 from ._check_recording import (
     bind_execution as _bind_execution,
@@ -47,6 +48,7 @@ from ._default_store import (
 from ._default_store import (
     make_default_store as _make_default_store,
 )
+from ._types.specs import AgentSpec as _AgentSpec
 from .agent_session import AgentAdapter as _AgentAdapter
 from .agent_session import AsyncAgentSession as _CoreAsyncAgentSession
 from .agent_session import HarnessAdapter
@@ -58,9 +60,8 @@ from .configuration import (
     load_config,
 )
 from .direct_client import (
-    AsyncDirectClient as _CoreAsyncDirectClient,
-)
-from .direct_client import (
+    _ELICITATION_CALLBACK_REMOVED_MESSAGE,
+    _REMOVED_ELICITATION_CALLBACK,
     CallToolResult,
     CompletionResult,
     EmptyResult,
@@ -91,8 +92,27 @@ from .direct_client import (
     ToolInfo,
     ToolPage,
     ToolsPage,
+    _RemovedElicitationCallback,
+)
+from .direct_client import (
+    AsyncDirectClient as _CoreAsyncDirectClient,
 )
 from .direct_trace import DirectTraceBridge as _DirectTraceBridge
+from .elicitation import (
+    ElicitationPlan,
+    ElicitationResponse,
+    FormElicitationRequest,
+    PendingElicitationRound,
+    UrlElicitationRequest,
+    expect_form,
+    expect_url,
+    maybe_form,
+    maybe_url,
+    one_of,
+    optional,
+    round_of,
+    sequence,
+)
 from .errors import (
     ExecutionNotFound as _ExecutionNotFound,
 )
@@ -141,9 +161,6 @@ from .harness.contracts import (
 )
 from .interaction_handlers import (
     AllowedCommands,
-    ElicitationHandler,
-    ElicitationRequest,
-    ElicitationResult,
     FilesystemHandler,
     FilesystemRequest,
     FilesystemResult,
@@ -162,6 +179,8 @@ from .interaction_handlers import (
     WorkspaceFiles,
 )
 from .judges import LLMJudge as _LLMJudge
+from .managed_input_api import HumanInput as _HumanInput
+from .managed_input_api import validate_human_input as _validate_human_input
 from .observability import *  # noqa: F403 - re-exported by the public API
 from .observability import RawEvidence, TraceView
 from .observability import __all__ as _OBSERVABILITY_EXPORTS
@@ -207,9 +226,6 @@ from .transport.local import (
 )
 from .transport.local import (
     StdioMCPTransport as _StdioMCPTransport,
-)
-from .types import (
-    AgentSpec as _AgentSpec,
 )
 from .types import (
     Capability as _Capability,
@@ -262,9 +278,6 @@ from .types import (
     ServerValue as _ServerValue,
 )
 from .types import (
-    SSEServer as _SSEServer,
-)
-from .types import (
     StdioServer as _StdioServer,
 )
 from .types import (
@@ -274,7 +287,7 @@ from .types import (
     TransportKind as _TransportKind,
 )
 
-_CURRENT_MCP_PROTOCOL = "2025-11-25"
+_CURRENT_MCP_PROTOCOL = _MCP_LATEST_PROTOCOL_VERSION
 _SERVER_FAILURE_SETTLE_TIMEOUT = 0.05
 
 
@@ -498,6 +511,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
         trace_owner: bool = True,
         workspace_root: str | None = None,
         server_bindings: _Iterable[_Mapping[str, _Any]] = (),
+        prefer_modern_protocol: bool = False,
     ) -> None:
         self._kit = kit
         self._server: _ServerValue | None = server
@@ -556,6 +570,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
         self._closed = False
         self._initialized = None
         self._closed_transport_evidence: _Any = None
+        self._prefer_modern_protocol = prefer_modern_protocol
 
     def __getattribute__(self, name: str) -> _Any:
         value = super().__getattribute__(name)
@@ -724,7 +739,7 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
                 await connection.close()
 
             return owner, connection, session, cleanup
-        elif isinstance(server, (_HTTPServer, _SSEServer)):
+        elif isinstance(server, _HTTPServer):
             kwargs: dict[str, _Any] = {
                 "resolver": self._secret_resolver,
                 "bearer_token": self._bearer_token,
@@ -765,8 +780,6 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
             transport = _TransportKind.STDIO
         elif isinstance(server, _HTTPServer):
             transport = _TransportKind.STREAMABLE_HTTP
-        elif isinstance(server, _SSEServer):
-            transport = _TransportKind.SSE
         else:
             raise _UnsupportedFeature("unsupported direct server transport")
         # The lifecycle has opened the underlying connection and entered the
@@ -1293,10 +1306,15 @@ class AsyncMCPTestKit:
         selected = self._with_run_id(spec)
         return await self._execution_controller.run(selected, run_id=self._run_id.root)
 
-    def submit(self, spec: _ExecutionSpec) -> AsyncExecutionHandle:
+    def submit(
+        self, spec: _ExecutionSpec, *, human_input: _HumanInput = "fail"
+    ) -> AsyncExecutionHandle:
         self._ensure_open()
+        _validate_human_input(human_input)
         selected = self._with_run_id(spec)
-        return self._execution_controller.submit(selected, run_id=self._run_id.root)
+        return self._execution_controller.submit(
+            selected, run_id=self._run_id.root, human_input=human_input
+        )
 
     def _direct_closed(self, client: AsyncDirectClient) -> None:
         self._active_direct.discard(client)
@@ -1329,7 +1347,7 @@ class AsyncMCPTestKit:
         resolve_host: _HostResolver | None = None,
         raise_server_exceptions: bool = True,
         sampling_callback: _Any = None,
-        elicitation_callback: _Any = None,
+        elicitation_callback: _RemovedElicitationCallback = _REMOVED_ELICITATION_CALLBACK,
         list_roots_callback: _Any = None,
         logging_callback: _Any = None,
         message_handler: _Any = None,
@@ -1344,6 +1362,8 @@ class AsyncMCPTestKit:
         trace_owner: bool = True,
         workspace_root: str | None = None,
     ) -> AsyncDirectClient:
+        if elicitation_callback is not _REMOVED_ELICITATION_CALLBACK:
+            raise TypeError(_ELICITATION_CALLBACK_REMOVED_MESSAGE)
         self._ensure_open()
         if timeout is not None and (not _math.isfinite(timeout) or timeout <= 0):
             raise ValueError("timeout must be positive and finite")
@@ -1370,7 +1390,7 @@ class AsyncMCPTestKit:
             )
             profile_provenance = resolved_profile.provenance
         if selected is None or not isinstance(
-            selected, (_InProcessServer, _StdioServer, _HTTPServer, _SSEServer)
+            selected, (_InProcessServer, _StdioServer, _HTTPServer)
         ):
             raise _UnsupportedFeature(
                 "direct server profiles require runtime resolution"
@@ -1390,7 +1410,6 @@ class AsyncMCPTestKit:
             _InProcessServer: _TransportKind.IN_PROCESS,
             _StdioServer: _TransportKind.STDIO,
             _HTTPServer: _TransportKind.STREAMABLE_HTTP,
-            _SSEServer: _TransportKind.SSE,
         }[type(selected)]
         if (
             requested_transport is not None
@@ -1430,11 +1449,17 @@ class AsyncMCPTestKit:
                     ),
                 },
             ),
+            prefer_modern_protocol=(
+                requested_revision == _CURRENT_MCP_PROTOCOL
+                or (
+                    requested_revision in {None, "", "auto"}
+                    and self.config.protocol_revision == _CURRENT_MCP_PROTOCOL
+                )
+            ),
             session_options={
                 key: value
                 for key, value in {
                     "sampling_callback": _adapt_callback(sampling_callback),
-                    "elicitation_callback": _adapt_callback(elicitation_callback),
                     "list_roots_callback": _adapt_callback(list_roots_callback),
                     "logging_callback": _adapt_callback(logging_callback),
                     "message_handler": _adapt_callback(message_handler),
@@ -1466,6 +1491,7 @@ class AsyncMCPTestKit:
         _trace_owner: bool = True,
         _execution_id: _Any = None,
         _artifact_store: _ArtifactStore | None = None,
+        _managed_input_runtime: _Any = None,
         harness_cache_dir: str | _Path | None = None,
     ) -> AsyncAgentSession:
         self._ensure_open()
@@ -1503,7 +1529,6 @@ class AsyncMCPTestKit:
         manager = _ServerGroupManager(bindings, tool_policy=spec.tool_policy)
         interactions = Interactions(
             permission_policy=spec.permission_policy,
-            elicitation_policy=spec.elicitation_policy,
             sampling_policy=spec.sampling_policy,
             filesystem_policy=spec.filesystem_policy,
             terminal_policy=spec.terminal_policy,
@@ -1582,6 +1607,7 @@ class AsyncMCPTestKit:
             ),
             runtime_invocation_dir=self._runtime_invocation_dir,
             runtime_project_root=self._runtime_project_root,
+            managed_input_runtime=_managed_input_runtime,
         )
         if self._record_checks:
             _bind_execution(
@@ -1641,9 +1667,6 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "ToolsPage",
     "load_config",
     "AllowedCommands",
-    "ElicitationRequest",
-    "ElicitationResult",
-    "ElicitationHandler",
     "FilesystemHandler",
     "FilesystemRequest",
     "FilesystemResult",
@@ -1660,6 +1683,19 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "TerminalRequest",
     "TerminalResult",
     "WorkspaceFiles",
+    "ElicitationPlan",
+    "ElicitationResponse",
+    "FormElicitationRequest",
+    "PendingElicitationRound",
+    "UrlElicitationRequest",
+    "expect_form",
+    "expect_url",
+    "maybe_form",
+    "maybe_url",
+    "one_of",
+    "optional",
+    "round_of",
+    "sequence",
 ]
 
 __all__ = [*__all__, *_OBSERVABILITY_EXPORTS]

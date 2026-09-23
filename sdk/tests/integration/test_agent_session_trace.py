@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.agent_session import (
     AdapterTurn,
     AsyncAgentSession,
@@ -22,7 +23,6 @@ from m3.storage import SQLiteExecutionStore
 from m3.sync_api import MCPTestKit
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     ArtifactPolicy,
     ErrorCode,
     ErrorInfo,

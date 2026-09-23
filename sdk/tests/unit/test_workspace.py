@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
 from m3.harness import DeterministicHarnessAdapter
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     ArtifactPolicy,
     ExecutionId,
     ExecutionOutcome,

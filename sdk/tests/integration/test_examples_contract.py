@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 from pathlib import Path
 
 _SDK = Path(__file__).parents[2]
 _EXAMPLES = _SDK / "examples"
+_REPO = _SDK.parent
 
 
 def test_examples_docs_are_goal_oriented_and_not_a_synthetic_catalog() -> None:
@@ -55,3 +58,200 @@ def test_live_math_matrix_example_remains_opt_in_and_outside_ci_catalog() -> Non
     )
     assert "_TRIALS_PER_CASE = 2" in text
     assert not (_EXAMPLES / "tests" / example.name).exists()
+
+
+def test_modern_mrtr_examples_are_complete_public_action_bound_examples() -> None:
+    maintained = {
+        "test_modern_mrtr_sdk.py": {
+            "pytest.fixture",
+            "InputRequiredResult",
+            "request_state",
+            "input_responses",
+        },
+        "test_modern_mrtr_direct.py": {
+            "client.call_tool",
+            "elicitation=plan",
+        },
+        "test_modern_mrtr_pi_qualified.py": {
+            "pytest.mark.m3(agents=",
+            "agent.session",
+            "server=example_server",
+            "elicitation=plan",
+            "to_have_tool_call",
+        },
+        "test_modern_mrtr_pi_unqualified.py": {
+            "pytest.mark.m3(agents=",
+            "agent.session",
+            "elicitation=plan",
+            "to_have_tool_call",
+        },
+        "test_modern_mrtr_pi_session.py": {
+            "pytest.mark.m3(agents=",
+            "agent.session(server=example_server, timeout=120)",
+            "session.send(",
+            "elicitation=plan",
+            "to_have_tool_call",
+        },
+    }
+    server = _EXAMPLES / "servers" / "modern_mrtr_server.py"
+    assert server.exists()
+    server_text = server.read_text(encoding="utf-8")
+    assert "from mcp import types" in server_text
+    assert "types.InputRequiredResult" in server_text
+    assert "asyncio.run(_serve_stdio())" in server_text
+    for filename, required in maintained.items():
+        path = _EXAMPLES / "tests" / filename
+        assert path.exists(), filename
+        text = path.read_text(encoding="utf-8")
+        assert not path.read_text(encoding="utf-8").count("AgentSpec")
+        assert "ElicitationScript" not in text
+        assert all(token in text for token in required), filename
+
+
+def test_modern_mrtr_pi_examples_collect_with_plain_pytest_command() -> None:
+    modules = [
+        "examples/tests/test_modern_mrtr_pi_qualified.py",
+        "examples/tests/test_modern_mrtr_pi_unqualified.py",
+        "examples/tests/test_modern_mrtr_pi_session.py",
+    ]
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", *modules],
+        cwd=_SDK,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert completed.stdout.count("pi-fixture-model-pi-trial-1") == 3
+
+
+def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> None:
+    examples = (_SDK / "docs" / "examples.md").read_text(encoding="utf-8")
+    concepts = (_SDK / "docs" / "concepts.md").read_text(encoding="utf-8")
+    elicitation = (_SDK / "docs" / "elicitation.md").read_text(encoding="utf-8")
+    index = (_SDK / "docs" / "README.md").read_text(encoding="utf-8")
+    api = (_REPO / "app" / "docs" / "api-v2.md").read_text(encoding="utf-8")
+    skill = (_REPO / "skills" / "testing-with-m3" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    patterns = (
+        _REPO / "skills" / "testing-with-m3" / "references" / "test-patterns.md"
+    ).read_text(encoding="utf-8")
+
+    for filename in (
+        "test_modern_mrtr_sdk.py",
+        "test_modern_mrtr_direct.py",
+        "test_modern_mrtr_pi_qualified.py",
+        "test_modern_mrtr_pi_unqualified.py",
+        "test_modern_mrtr_pi_session.py",
+    ):
+        assert filename in examples
+    assert "modern_mrtr_server.py" in examples
+    assert "## Modern MRTR elicitation" not in concepts
+    assert "elicitation" not in concepts.lower()
+    assert "[Elicitation](elicitation.md)" in index
+    assert elicitation.startswith("# Elicitation\n")
+    assert (
+        "https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation"
+        in elicitation
+    )
+    assert "AgentSpec" not in elicitation
+    assert "Modern MRTR" not in elicitation
+    assert all(
+        term in elicitation
+        for term in (
+            "ElicitationPlan",
+            "ElicitationResponse",
+            "FormElicitationRequest",
+            "UrlElicitationRequest",
+            "PendingElicitationRound",
+            "expect_form",
+            "maybe_form",
+            "expect_url",
+            "maybe_url",
+            "sequence",
+            "optional",
+            "one_of",
+            "round_of",
+            "call_tool",
+            "get_prompt",
+            "read_resource",
+            "allow_input_required",
+            "agent.run",
+            "agent.submit",
+            "session.send",
+            "pending_elicitation",
+            "respond_elicitation",
+            "ElicitationEntry",
+            "ProtocolCallAttempt",
+            "ToolCallAttempt",
+            "TraceView.elicitations",
+            "ToolCallEntry.attempts",
+            "input_required",
+            "never perform",
+            "trace",
+            "Pi 0.85.1",
+            "SQLiteExecutionStore",
+            "same-worker",
+            "form, multi-round, and URL",
+            "terminal recovery error",
+            "Restart/recovery",
+        )
+    )
+    assert "elicitation_policy" not in api
+    assert "ElicitationPolicy" not in api
+    assert "ExecutionSpec" in api
+    assert "DirectSpec" in api
+    assert "AgentSpec" in api
+    assert "sends a `DirectSpec` or `AgentSpec` through `MCPTestKit`" in api
+    assert "no replacement discriminator or variant" in api
+    assert "Elicitation guide" in skill
+    assert "Elicitation guide" in patterns
+    assert "AgentSpec" not in skill
+    assert "AgentSpec" not in patterns
+
+
+def test_elicitation_python_snippets_compile() -> None:
+    """Documentation Python examples stay syntactically executable."""
+
+    text = (_SDK / "docs" / "elicitation.md").read_text(encoding="utf-8")
+    snippets: list[str] = []
+    in_python = False
+    current: list[str] = []
+    for line in text.splitlines():
+        if line == "~~~python":
+            assert not in_python, "nested Python documentation fence"
+            in_python = True
+            current = []
+        elif line == "~~~" and in_python:
+            snippets.append("\n".join(current))
+            in_python = False
+        elif in_python:
+            current.append(line)
+    assert not in_python, "unterminated Python documentation fence"
+    assert snippets
+    assert "\ntry:\ntry:" not in text
+    headings = [line for line in text.splitlines() if line.startswith("### ")]
+    assert len(headings) == len(set(headings)), "duplicate elicitation heading"
+    assert sum("Inventory 21" in heading for heading in headings) == 1
+    assert text.count('assert view.elicitations[0].request_key == "address"') == 1
+    for index, snippet in enumerate(snippets):
+        compile(snippet, f"<elicitation-doc-snippet-{index}>", "exec")
+
+
+def test_direct_elicitation_docs_select_current_protocol() -> None:
+    """Direct MRTR examples opt into the protocol that carries elicitation."""
+
+    text = (_SDK / "docs" / "elicitation.md").read_text(encoding="utf-8")
+    action_section = text.split("direct action parameters", 1)[1].split(
+        "### Manual escape hatch", 1
+    )[0]
+    manual_section = text.split("### Manual escape hatch", 1)[1].split(
+        "### Inventory 24", 1
+    )[0]
+    trace_section = text.split("## Trace assertions", 1)[1]
+    selected = 'with kit.direct(server, protocol="2026-07-28") as client:'
+
+    assert selected in action_section
+    assert selected in manual_section
+    assert selected in trace_section

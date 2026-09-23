@@ -37,7 +37,7 @@ def _parser() -> argparse.ArgumentParser:
     probe = sub.add_parser("probe", help="run an opt-in ACP protocol or full probe")
     probe.add_argument("manifest", help="JSON path, or - for stdin")
     probe.add_argument("--kind", choices=("protocol", "full"), default="protocol")
-    probe.add_argument("--transport", choices=("stdio", "http", "sse"), default="stdio")
+    probe.add_argument("--transport", choices=("stdio", "http"), default="stdio")
     probe.add_argument("--mode-id")
     probe.add_argument(
         "--session-config", default="{}", help="JSON object of ACP config options"
@@ -53,9 +53,7 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="allow launching the configured ACP executable",
     )
-    characterize.add_argument(
-        "--transport", choices=("stdio", "http", "sse"), default="stdio"
-    )
+    characterize.add_argument("--transport", choices=("stdio", "http"), default="stdio")
     characterize.add_argument("--mode-id")
     characterize.add_argument(
         "--session-config", default="{}", help="JSON object of ACP config options"

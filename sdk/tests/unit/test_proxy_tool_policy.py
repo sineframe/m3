@@ -341,6 +341,96 @@ async def test_http_policy_denies_before_upstream_and_preserves_id(
 
 
 @pytest.mark.asyncio
+async def test_http_capture_forwards_input_required_without_answering_or_retrying(
+    tmp_path: Path,
+) -> None:
+    import httpx
+
+    from m3.trace.capture import read_capture
+
+    path = tmp_path / "input-required.jsonl"
+    proxy = McpHttpProxy(
+        upstream_url="http://127.0.0.1:9/mcp",
+        configured_headers={},
+        transport="streamable_http",
+        capture_path=str(path),
+        baseline_ns=0,
+        allow_private=True,
+    )
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        return httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "resultType": "input_required",
+                    "inputRequests": {
+                        "address": {
+                            "method": "elicitation/create",
+                            "params": {
+                                "mode": "form",
+                                "message": "Enter address",
+                                "requestedSchema": {"type": "object"},
+                            },
+                        }
+                    },
+                    "requestState": "opaque-state",
+                },
+            },
+        )
+
+    proxy.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream), follow_redirects=False
+    )
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "book_shipment"},
+        }
+    ).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [(b"content-type", b"application/json")],
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("127.0.0.1", 1),
+            "client": ("127.0.0.1", 1),
+        },
+        receive=receive,
+    )
+
+    try:
+        response = await proxy._forward(request)
+        assert response.status_code == 200
+        payload = json.loads(bytes(response.body))
+        assert payload["result"]["resultType"] == "input_required"
+        records = read_capture(str(path))
+        assert [item["direction"] for item in records] == [
+            "client_to_server",
+            "server_to_client",
+        ]
+        assert not any(
+            item["direction"] == "client_to_server"
+            and item["payload"].get("method") == "tools/call"
+            for item in records[1:]
+        )
+    finally:
+        await proxy.stop()
+
+
+@pytest.mark.asyncio
 async def test_http_policy_batch_and_notification_fail_closed(tmp_path: Path) -> None:
     proxy = McpHttpProxy(
         upstream_url="http://127.0.0.1:9/mcp",

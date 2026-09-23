@@ -121,7 +121,6 @@ _INPUT_FIELDS = {
     "matcher",
     "evaluations",
     "permission_policy",
-    "elicitation_policy",
     "sampling_policy",
     "filesystem_policy",
     "terminal_policy",

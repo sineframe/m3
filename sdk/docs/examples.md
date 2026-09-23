@@ -199,6 +199,44 @@ The list uses wire-observed calls by default. Pass `server=`, `turn=`, or
 See the two-turn implementation in
 [`test_harness_trace_view.py`](../examples/tests/test_harness_trace_view.py).
 
+## Elicitation examples
+
+The maintained modern-protocol examples keep the server fixture and the M3
+test code visibly separate: the server is
+[`modern_mrtr_server.py`](../examples/servers/modern_mrtr_server.py), while
+the five runnable tests are:
+
+- [`test_modern_mrtr_sdk.py`](../examples/tests/test_modern_mrtr_sdk.py) —
+  direct SDK input-required handling and the explicit
+  `allow_input_required=True` escape hatch.
+- [`test_modern_mrtr_direct.py`](../examples/tests/test_modern_mrtr_direct.py)
+  — a direct `call_tool(..., elicitation=plan)` retry with keyed responses.
+- [`test_modern_mrtr_pi_qualified.py`](../examples/tests/test_modern_mrtr_pi_qualified.py)
+  — a qualified automatic Pi elicitation operation.
+- [`test_modern_mrtr_pi_unqualified.py`](../examples/tests/test_modern_mrtr_pi_unqualified.py)
+  — the same automatic operation with an unqualified plan and prompt.
+- [`test_modern_mrtr_pi_session.py`](../examples/tests/test_modern_mrtr_pi_session.py)
+  — two turns, proving the plan belongs to the second `session.send` only.
+
+Run the deterministic direct/server example with plain pytest:
+
+```bash
+uv run --project sdk --extra pytest pytest -q \
+  sdk/examples/tests/test_modern_mrtr_sdk.py \
+  sdk/examples/tests/test_modern_mrtr_direct.py
+```
+
+The Pi files use the repository's deterministic fixture selection and are
+collected by plain pytest; run them with the Pi 0.85.1 gate available. These
+examples are the maintained reference for imports, fixture wiring, complete
+assertions, and separation between server code and test code. They use only
+public `agent` selection and session APIs.
+
+The complete API inventory, signatures, response binding, action boundaries,
+manual escape hatch, managed-input status, and trace assertions are in the
+[Elicitation guide](elicitation.md). Keep server fixture code separate from
+M3 test code as shown by the maintained files above.
+
 ## 7. Chain tool outputs
 
 Write a chained test when later tools depend on earlier output or shared server

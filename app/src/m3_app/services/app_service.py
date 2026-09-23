@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from m3 import (
-    AgentSpec,
     ExecutionId,
     ExecutionOutcome,
     ExecutionPage,
@@ -23,6 +22,7 @@ from m3 import (
     RevisionId,
     RevisionSelection,
 )
+from m3._types.specs import AgentSpec
 from m3.harness import (
     AcpHarnessAdapter,
     ClaudeCodeHarnessAdapter,

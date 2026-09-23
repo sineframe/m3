@@ -89,7 +89,7 @@ class ACPProbeDimension(FrozenModel):
     @classmethod
     def _transport(cls, value: Any) -> str:
         normalized = str(value).strip().lower()
-        if normalized not in {"stdio", "http", "sse"}:
+        if normalized not in {"stdio", "http"}:
             raise ValueError("unsupported ACP transport")
         return normalized
 

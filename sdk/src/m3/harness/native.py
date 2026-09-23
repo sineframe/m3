@@ -189,7 +189,7 @@ def _server_configuration(
             if config.endpoint is None:
                 raise HarnessStartupError("MCP server endpoint is unavailable")
             servers[config.key] = {
-                "type": "sse" if config.transport.value == "sse" else "http",
+                "type": "http",
                 "url": (
                     _resolve_runtime_value(
                         config.endpoint, secrets=secrets, environment=environment

@@ -46,6 +46,7 @@ from ..types import (
 from .contracts import (
     HarnessAdapterCapabilities,
     HarnessAdapterError,
+    HarnessInteractionCapabilities,
     HarnessLaunch,
     HarnessSession,
     HarnessStartupError,
@@ -125,11 +126,6 @@ def opencode_configuration(
     launch: HarnessLaunch, *, dialect: str = "legacy"
 ) -> dict[str, Any]:
     """Render OpenCode's config dialect (never Claude's ``mcpServers``)."""
-    if dialect == "v2" and any(
-        config.transport.value == "sse" for config in launch.configurations
-    ):
-        # V2 documents only Streamable HTTP for remote MCP servers.
-        raise HarnessStartupError("OpenCode V2 does not support SSE MCP servers")
     # Keep credentials as OpenCode's documented `{env:NAME}` substitutions in
     # the transient config.  Resolving a SecretReference to its value here
     # would put the secret in a file that OpenCode (and a fixture) can read.
@@ -316,6 +312,7 @@ class OpenCodeHarnessAdapter:
     """One isolated OpenCode server and attached conversation session."""
 
     managed_runtime_supported = True
+    interaction_capabilities = HarnessInteractionCapabilities()
 
     def __init__(
         self,
@@ -335,6 +332,7 @@ class OpenCodeHarnessAdapter:
             # requested/enforced/observed evidence by this adapter.
             supports_tool_policy=False,
             supports_streaming=True,
+            interaction=self.interaction_capabilities,
         )
         self._owner: ProcessOwner | None = None
         self._client: httpx.AsyncClient | None = None

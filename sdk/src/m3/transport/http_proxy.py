@@ -1,4 +1,4 @@
-"""Per-run reverse proxy for streamable HTTP and legacy SSE MCP transports."""
+"""Per-run reverse proxy for Streamable HTTP MCP transport."""
 
 from __future__ import annotations
 
@@ -333,7 +333,7 @@ class McpHttpProxy:
         assert self.client is not None
         body = await request.body()
         target = self._target_url(request)
-        # Capture every MCP exchange, including GET-based SSE handshakes.
+        # Capture every MCP exchange.
         # Header values are intentionally not persisted; CaptureWriter redacts
         # the URL query and credential-shaped metadata fields.
         payload = parse_json_payload(body) if body else None

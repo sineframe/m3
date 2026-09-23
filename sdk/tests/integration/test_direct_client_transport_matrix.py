@@ -24,7 +24,6 @@ from m3.async_api import (
 from m3.types import (
     HTTPServer,
     InProcessServer,
-    SSEServer,
     StdioServer,
     TrustLevel,
 )
@@ -34,7 +33,7 @@ pytestmark = pytest.mark.process_lifecycle
 
 _ROOT = Path(__file__).parents[2]
 _STDIO_FIXTURE = Path(__file__).parents[1] / "fixtures" / "matrix_stdio_server.py"
-TransportKind = Literal["inprocess", "stdio", "streamable_http", "sse"]
+TransportKind = Literal["inprocess", "stdio", "streamable_http"]
 
 
 def _cursor(params: Any) -> str | None:
@@ -222,7 +221,7 @@ def _wire_result(request: dict[str, Any]) -> dict[str, Any]:
 
 
 class _RemoteMatrixFixture:
-    def __init__(self, transport: Literal["streamable_http", "sse"]) -> None:
+    def __init__(self, transport: Literal["streamable_http"]) -> None:
         self.transport = transport
         self.server: asyncio.AbstractServer | None = None
         self.writer: asyncio.StreamWriter | None = None
@@ -234,7 +233,7 @@ class _RemoteMatrixFixture:
     async def start(self) -> str:
         self.server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
         port = int(self.server.sockets[0].getsockname()[1])
-        return f"http://127.0.0.1:{port}/{'sse' if self.transport == 'sse' else 'mcp'}"
+        return f"http://127.0.0.1:{port}/mcp"
 
     async def _request(self, reader: asyncio.StreamReader) -> tuple[str, str, bytes]:
         header_bytes = await reader.readuntil(b"\r\n\r\n")
@@ -255,43 +254,17 @@ class _RemoteMatrixFixture:
         self.writers.add(writer)
         keep_open = False
         try:
-            method, _target, body = await self._request(reader)
-            if self.transport == "sse" and method == "GET":
-                self.writer = writer
-                self.ready.set()
-                writer.write(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: keep-alive\r\n\r\n"
-                )
-                writer.write(b"event: endpoint\ndata: /messages?session_id=matrix\n\n")
-                await writer.drain()
-                keep_open = True
-                await self.closed.wait()
-                return
+            _method, _target, body = await self._request(reader)
             request = json.loads(body or b"{}")
             response = _wire_result(request)
-            if self.transport == "sse":
-                await self.ready.wait()
-                writer.write(
-                    b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                )
-                await writer.drain()
-                if self.writer is not None:
-                    async with self.lock:
-                        self.writer.write(
-                            b"data: "
-                            + json.dumps(response, separators=(",", ":")).encode()
-                            + b"\n\n"
-                        )
-                        await self.writer.drain()
-            else:
-                encoded = json.dumps(response, separators=(",", ":")).encode()
-                writer.write(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
-                    + str(len(encoded)).encode()
-                    + b"\r\nMcp-Session-Id: matrix\r\n\r\n"
-                    + encoded
-                )
-                await writer.drain()
+            encoded = json.dumps(response, separators=(",", ":")).encode()
+            writer.write(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                + str(len(encoded)).encode()
+                + b"\r\nMcp-Session-Id: matrix\r\n\r\n"
+                + encoded
+            )
+            await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionError, json.JSONDecodeError):
             pass
         finally:
@@ -334,12 +307,8 @@ async def _client_for(kind: TransportKind) -> AsyncIterator[AsyncDirectClient]:
     else:
         fixture = _RemoteMatrixFixture(kind)
         url = await fixture.start()
-        binding = (
-            HTTPServer(name="matrix-remote", url=url, trust=TrustLevel.TRUSTED_PRIVATE)
-            if kind == "streamable_http"
-            else SSEServer(
-                name="matrix-remote", url=url, trust=TrustLevel.TRUSTED_PRIVATE
-            )
+        binding = HTTPServer(
+            name="matrix-remote", url=url, trust=TrustLevel.TRUSTED_PRIVATE
         )
     kit = AsyncMCPTestKit(env={}, cwd=str(_ROOT))
     try:
@@ -397,7 +366,7 @@ async def _assert_matrix_contract(client: AsyncDirectClient) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["inprocess", "stdio", "streamable_http", "sse"])
+@pytest.mark.parametrize("kind", ["inprocess", "stdio", "streamable_http"])
 async def test_direct_client_contract_is_transport_parity(kind: TransportKind) -> None:
     async with _client_for(kind) as client:
         await _assert_matrix_contract(client)

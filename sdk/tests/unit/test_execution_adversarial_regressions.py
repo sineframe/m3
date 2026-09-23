@@ -9,6 +9,7 @@ from typing import cast
 import pytest
 from mcp.server.lowlevel import Server
 
+from m3._types.specs import AgentSpec
 from m3.agent_session import AdapterTurn, AsyncAgentSession
 from m3.async_api import AsyncMCPTestKit
 from m3.errors import KitClosed
@@ -16,7 +17,6 @@ from m3.harness import DeterministicHarnessAdapter, HarnessAdapterRegistry
 from m3.types import (
     ACPAgent,
     ActivityHealth,
-    AgentSpec,
     EventKind,
     ExecutionOutcome,
     InProcessServer,

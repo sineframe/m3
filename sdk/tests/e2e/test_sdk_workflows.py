@@ -26,6 +26,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from m3 import MCPTestKit
+from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
 from m3.errors import UnsupportedFeature
 from m3.execution_trace import ExecutionTraceRecorder
@@ -40,7 +41,6 @@ from m3.sync_api import (
 from m3.testing import FaultInjector
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     ArtifactPolicy,
     CallTool,
     CallToolResult,

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.agent_session import AdapterTurn, AsyncAgentSession
 from m3.errors import UnsupportedFeature
 from m3.policy import ToolDescriptor, ToolPolicyEvidence
@@ -11,7 +12,6 @@ from m3.server_group import ServerGroupManager
 from m3.types import (
     ACPAgent,
     ActivityHealth,
-    AgentSpec,
     ErrorCode,
     EventKind,
     RestrictiveToolPolicy,

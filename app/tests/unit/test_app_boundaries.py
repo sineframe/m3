@@ -11,3 +11,9 @@ def test_application_openapi_uses_distribution_version() -> None:
     from m3_app.api import create_app
 
     assert create_app().openapi()["info"]["version"] == importlib.metadata.version("m3")
+
+
+def test_validation_location_does_not_keep_legacy_elicitation_policy() -> None:
+    from m3_app.api.v2 import _safe_validation_location
+
+    assert _safe_validation_location(("body", "elicitation_policy")) == "body.field"

@@ -16,14 +16,17 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 from uuid import uuid4
 
 from ._types.agent_identity import project_agent_identity
+from ._types.specs import AgentSpec
+from .elicitation import ElicitationPlan
 from .errors import (
     CleanupError,
     KitClosed,
     MCPError,
+    ModelValidationError,
     OperationCancelled,
     OperationTimeout,
     SessionBusy,
@@ -43,7 +46,6 @@ from .storage import ArtifactStore, InMemoryExecutionStore
 from .trace.redaction import redact_for_api
 from .types import (
     ActivityHealth,
-    AgentSpec,
     ErrorCode,
     ErrorInfo,
     EventDirection,
@@ -75,6 +77,7 @@ from .workspace import WorkspaceCapture, WorkspaceError, WorkspaceManager
 if TYPE_CHECKING:
     from .harness.contracts import HarnessLaunch, HarnessSession
     from .harness.observations import TurnEvidence
+    from .managed_runtime import ManagedInputRuntime
 
 
 class HarnessAdapter(Protocol):
@@ -123,6 +126,76 @@ class ControllerHarnessAdapter(Protocol):
 
 
 AgentAdapter: TypeAlias = HarnessAdapter | ControllerHarnessAdapter
+
+
+class _ElicitationSender(Protocol):
+    """Optional adapter call shape for action-bound elicitation turns.
+
+    The ordinary :class:`HarnessAdapter` contract intentionally does not
+    require these Pi/MRTR-only keyword arguments.  The session validates the
+    capability before using this narrower structural boundary and casts only
+    that branch, so ordinary adapters keep their existing contract.
+    """
+
+    async def __call__(
+        self,
+        message: UserMessage,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
+    ) -> TurnResponse | AdapterTurn: ...
+
+
+def _validate_elicitation_arguments(
+    elicitation: ElicitationPlan | None, elicitation_round_limit: int
+) -> None:
+    if (
+        isinstance(elicitation_round_limit, bool)
+        or not isinstance(elicitation_round_limit, int)
+        or elicitation_round_limit <= 0
+    ):
+        raise ModelValidationError("elicitation_round_limit must be a positive integer")
+    if elicitation is not None and not elicitation.is_complete:
+        raise ModelValidationError("elicitation plan must be complete")
+
+
+def _validate_managed_input_round_limit(
+    adapter: object,
+    managed_input_runtime: object | None,
+    elicitation: ElicitationPlan | None,
+    round_limit: int,
+) -> None:
+    """Reject managed round limits the adapter's control transport cannot carry."""
+
+    if managed_input_runtime is None or elicitation is not None:
+        return
+    maximum = getattr(adapter, "managed_input_round_limit_max", None)
+    if (
+        isinstance(maximum, bool)
+        or not isinstance(maximum, int)
+        or round_limit <= maximum
+    ):
+        return
+    raise ModelValidationError(
+        f"managed Pi elicitation_round_limit must be at most {maximum}"
+    )
+
+
+def _require_elicitation_capability(adapter: object) -> None:
+    capabilities = getattr(adapter, "capabilities", None)
+    interaction = getattr(capabilities, "interaction", None)
+    if interaction is None or not all(
+        getattr(interaction, name, False)
+        for name in (
+            "supports_elicitation",
+            "preserves_request_keys",
+            "preserves_multi_request_rounds",
+            "supports_interaction_cancellation",
+        )
+    ):
+        raise UnsupportedFeature("harness does not support action-bound elicitation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,9 +287,15 @@ class AsyncAgentSession:
         runtime_manager: Any = None,
         runtime_invocation_dir: str | Path | None = None,
         runtime_project_root: str | Path | None = None,
+        managed_input_runtime: ManagedInputRuntime | None = None,
     ) -> None:
         self.spec = spec
         self.adapter = adapter
+        self._managed_input_runtime = managed_input_runtime
+        if managed_input_runtime is not None:
+            _require_elicitation_capability(adapter)
+        if spec.elicitation is not None:
+            _require_elicitation_capability(adapter)
         self._harness_cache_dir = harness_cache_dir
         self._runtime_manager = runtime_manager
         self._runtime_invocation_dir = runtime_invocation_dir
@@ -233,7 +312,6 @@ class AsyncAgentSession:
         self._server_manager_factory = server_manager_factory
         self._interactions = interaction_controller or Interactions(
             permission_policy=spec.permission_policy,
-            elicitation_policy=spec.elicitation_policy,
             sampling_policy=spec.sampling_policy,
             filesystem_policy=spec.filesystem_policy,
             terminal_policy=spec.terminal_policy,
@@ -275,6 +353,7 @@ class AsyncAgentSession:
         self._queue: asyncio.Queue[_QueueItem | None] = asyncio.Queue()
         self._queue_task: asyncio.Task[None] | None = None
         self._adapter_started = False
+        self._adapter_session: HarnessSession | None = None
         self._adapter_closed = False
         self._server_manager_closed = False
         self._startup_task: asyncio.Task[Any] | None = None
@@ -702,12 +781,39 @@ class AsyncAgentSession:
                     enter = getattr(self.adapter, "__aenter__", None)
                     result = enter() if enter is not None else None
         if inspect.isawaitable(result):
-            await result
+            result = await result
+        self._adapter_session = self._coerce_adapter_session(result)
+        if self._managed_input_runtime is not None:
+            target = result if result is not None else self.adapter
+            setter = getattr(target, "_set_managed_input_runtime", None)
+            if not callable(setter):
+                setter = getattr(self.adapter, "_set_managed_input_runtime", None)
+            if not callable(setter):
+                raise UnsupportedFeature(
+                    "harness adapter does not implement managed interaction contract"
+                )
+            setter(self._managed_input_runtime)
         self._emit_captured_wire_events(None)
         async with self._state_lock:
             if self._closing or self._closed:
                 raise asyncio.CancelledError()
         self._adapter_started = True
+
+    @property
+    def _managed_harness_session(self) -> HarnessSession | None:
+        """Return the active adapter-owned session for internal runtimes."""
+
+        return self._adapter_session
+
+    @staticmethod
+    def _coerce_adapter_session(candidate: object) -> HarnessSession | None:
+        if candidate is None:
+            return None
+        session_id = getattr(candidate, "session_id", None)
+        capabilities = getattr(candidate, "capabilities", None)
+        if not isinstance(session_id, str) or not session_id or capabilities is None:
+            return None
+        return cast("HarnessSession", candidate)
 
     async def _prepare_managed_runtime(self) -> None:
         harness = getattr(self.spec, "harness", None)
@@ -985,7 +1091,10 @@ class AsyncAgentSession:
                     "_mcp_raw_evidence_ref": getattr(event, "raw_evidence_ref", None),
                 }
                 arguments = getattr(event, "arguments", None)
+                params = getattr(event, "params", None)
                 result = getattr(event, "result", None)
+                if params is not None:
+                    payload["params"] = params
                 if arguments is not None:
                     payload["arguments"] = arguments
                 if result is not None:
@@ -1118,9 +1227,18 @@ class AsyncAgentSession:
         *,
         timeout: float | None = None,
         metadata: Mapping[str, object] | None = None,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
     ) -> TurnResult:
         self._ensure_live()
         self._validate_timeout(timeout)
+        _validate_elicitation_arguments(elicitation, elicitation_round_limit)
+        _validate_managed_input_round_limit(
+            self.adapter,
+            self._managed_input_runtime,
+            elicitation,
+            self.spec.elicitation_round_limit,
+        )
         value = self._message(message, metadata)
         await self._validate_content(value)
         async with self._state_lock:
@@ -1133,7 +1251,11 @@ class AsyncAgentSession:
         try:
             async with self._operation_lock:
                 return await self._run_turn(
-                    value, timeout=timeout, metadata=value.metadata
+                    value,
+                    timeout=timeout,
+                    metadata=value.metadata,
+                    elicitation=elicitation,
+                    elicitation_round_limit=elicitation_round_limit,
                 )
         finally:
             async with self._state_lock:
@@ -1150,6 +1272,12 @@ class AsyncAgentSession:
     ) -> QueuedTurn:
         self._ensure_live()
         self._validate_timeout(timeout)
+        _validate_managed_input_round_limit(
+            self.adapter,
+            self._managed_input_runtime,
+            None,
+            self.spec.elicitation_round_limit,
+        )
         value = self._message(message, metadata)
         await self._validate_content(value)
         turn_id = TurnId(str(uuid4()))
@@ -1207,8 +1335,11 @@ class AsyncAgentSession:
         timeout: float | None,
         metadata: Mapping[str, object] | None,
         turn_id: TurnId | None = None,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
     ) -> TurnResult:
         self._validate_timeout(timeout)
+        _validate_elicitation_arguments(elicitation, elicitation_round_limit)
         turn_id = turn_id or TurnId(str(uuid4()))
         async with self._state_lock:
             if self._snapshot.lifecycle is ExecutionStatus.IDLE:
@@ -1231,6 +1362,16 @@ class AsyncAgentSession:
             phase=LifecyclePhase.TURN,
         )
         try:
+            if elicitation is not None:
+                _require_elicitation_capability(self.adapter)
+            if self._managed_input_runtime is not None:
+                _require_elicitation_capability(self.adapter)
+                active_session = self._managed_harness_session
+                if active_session is None:
+                    raise UnsupportedFeature(
+                        "managed interaction requires an active harness session"
+                    )
+                _require_elicitation_capability(active_session)
             sender = getattr(self.adapter, "send", None) or getattr(
                 self.adapter, "send_turn", None
             )
@@ -1238,6 +1379,19 @@ class AsyncAgentSession:
                 raise UnsupportedFeature(
                     "harness adapter does not implement turn sending"
                 )
+            if self._managed_input_runtime is not None:
+                bind = getattr(self._managed_input_runtime, "bind_turn", None)
+                if callable(bind):
+                    active_session = self._managed_harness_session
+                    if active_session is None:
+                        raise UnsupportedFeature(
+                            "managed interaction requires an active harness session"
+                        )
+                    bind(
+                        active_session.session_id,
+                        turn_id.root,
+                        m3_session_id=self._session_id.root,
+                    )
             operation_name = (
                 "opencode.session_message"
                 if getattr(self.adapter, "name", "") == "opencode"
@@ -1254,7 +1408,30 @@ class AsyncAgentSession:
                 turn_id=turn_id,
                 phase=LifecyclePhase.TURN,
             )
-            operation = sender(message, timeout=timeout, metadata=metadata)
+            if elicitation is not None:
+                elicitation_sender = cast(_ElicitationSender, sender)
+                operation = elicitation_sender(
+                    message,
+                    timeout=timeout,
+                    metadata=metadata,
+                    elicitation=elicitation,
+                    elicitation_round_limit=elicitation_round_limit,
+                )
+            elif (
+                self._managed_input_runtime is not None
+                and getattr(self.adapter, "managed_input_round_limit_max", None)
+                is not None
+            ):
+                elicitation_sender = cast(_ElicitationSender, sender)
+                operation = elicitation_sender(
+                    message,
+                    timeout=timeout,
+                    metadata=metadata,
+                    elicitation=None,
+                    elicitation_round_limit=self.spec.elicitation_round_limit,
+                )
+            else:
+                operation = sender(message, timeout=timeout, metadata=metadata)
             raw = (
                 await asyncio.wait_for(operation, timeout=timeout)
                 if timeout is not None
@@ -1793,6 +1970,8 @@ class AsyncAgentSession:
             return "turn cancelled"
         if isinstance(exc, TransportError):
             return "transport failed during turn"
+        if isinstance(exc, UnsupportedFeature):
+            return "turn feature unsupported"
         return "turn failed"
 
     @staticmethod
@@ -1803,6 +1982,8 @@ class AsyncAgentSession:
             return ErrorCode.CANCELLED
         if isinstance(exc, TransportError):
             return ErrorCode.TRANSPORT_ERROR
+        if isinstance(exc, UnsupportedFeature):
+            return ErrorCode.UNSUPPORTED
         return ErrorCode.PROTOCOL_ERROR
 
     @staticmethod

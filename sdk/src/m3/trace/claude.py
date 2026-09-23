@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from typing import Any, cast
 
 SCHEMA_VERSION = "claude.v2"
-TRANSPORTS = {"stdio", "http", "sse"}
+TRANSPORTS = {"stdio", "http"}
 
 
 def transport_for_server(server: dict[str, Any] | None) -> str:
@@ -102,8 +102,6 @@ def _usage(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _protocol_kind(record: dict[str, Any]) -> str:
     payload = record.get("payload")
-    if record.get("kind") == "sse_data":
-        return "mcp.sse"
     if isinstance(payload, dict):
         if payload.get("method") == "tools/call":
             return "mcp.tool_call"
@@ -120,8 +118,6 @@ def _protocol_name(record: dict[str, Any]) -> str:
     payload = record.get("payload")
     if isinstance(payload, dict) and payload.get("method"):
         return str(payload["method"])
-    if record.get("kind") == "sse_data":
-        return "SSE event"
     return _protocol_kind(record)
 
 

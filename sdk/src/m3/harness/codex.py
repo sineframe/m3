@@ -13,8 +13,6 @@ from typing import Any
 
 from ..interaction_handlers import PermissionRequest
 from ..types import (
-    Capability,
-    CapabilityStatus,
     Codex,
     NativeToolPolicy,
     Readiness,
@@ -22,6 +20,7 @@ from ..types import (
 )
 from ._rpc_native import JsonRpcProcess, NativeRPCAdapter
 from .contracts import (
+    HarnessInteractionCapabilities,
     HarnessLaunch,
     HarnessStartupError,
     HarnessTurnRequest,
@@ -41,9 +40,7 @@ from .observations import (
 def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
     """Return the isolated App Server MCP configuration shape.
 
-    Codex accepts stdio and Streamable HTTP servers.  SSE is intentionally
-    rejected because presenting it as supported would make policy/capture
-    evidence misleading.
+    Codex accepts stdio and Streamable HTTP servers.
     """
     servers: dict[str, dict[str, Any]] = {}
     for config in launch.configurations:
@@ -51,10 +48,6 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
             if config.required:
                 raise HarnessStartupError("required MCP server is unavailable")
             continue
-        if config.transport.value == "sse":
-            raise HarnessStartupError(
-                "Codex App Server does not support SSE MCP servers"
-            )
         if config.transport.value == "stdio":
             if not config.command:
                 raise HarnessStartupError("MCP server command is unavailable")
@@ -145,6 +138,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
 
     harness_kind = "codex"
     executable_name = "codex"
+    # Codex's current app-server approval notification is not the MCP
+    # elicitation/MRTR interaction contract and cannot be used as one.
+    interaction_capabilities = HarnessInteractionCapabilities()
 
     def __init__(
         self, *, executable: str = "codex", environment: Mapping[str, str] | None = None
@@ -254,18 +250,6 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         if help_text is None or "app-server" not in help_text.lower():
             return Readiness(
                 ready=False, reason="Codex App Server capability is unavailable"
-            )
-        if any(config.transport.value == "sse" for config in launch.configurations):
-            return Readiness(
-                ready=False,
-                capabilities=(
-                    Capability(
-                        name="harness:codex",
-                        status=CapabilityStatus.UNAVAILABLE,
-                        reason="SSE MCP unsupported",
-                    ),
-                ),
-                reason="Codex App Server does not support SSE MCP servers",
             )
         if (
             isinstance(launch.tool_policy, NativeToolPolicy)

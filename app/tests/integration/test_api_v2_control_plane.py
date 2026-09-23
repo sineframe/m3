@@ -10,7 +10,8 @@ from pathlib import Path
 
 from _local_client import TestClient
 
-from m3 import AgentSpec, ClaudeCode, MCPTestKit, TextContent, UserMessage
+from m3 import ClaudeCode, MCPTestKit, TextContent, UserMessage
+from m3._types.specs import AgentSpec
 from m3.storage import SQLiteExecutionStore
 from m3.types import (
     RevisionSelection,

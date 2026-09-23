@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
 from m3.harness import DeterministicHarnessAdapter, HarnessTurnRequest
 from m3.interaction_handlers import (
     AllowedCommands,
-    ElicitationRequest,
     FilesystemRequest,
     InteractionHandlers,
     Interactions,
@@ -23,8 +23,6 @@ from m3.interaction_handlers import (
 )
 from m3.types import (
     ACPAgent,
-    AgentSpec,
-    ElicitationPolicy,
     FilesystemPolicy,
     PermissionPolicy,
     SamplingPolicy,
@@ -39,7 +37,6 @@ def _spec() -> AgentSpec:
         harness=ACPAgent(model="interaction-test"),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
         permission_policy=PermissionPolicy(mode="prompt"),
-        elicitation_policy=ElicitationPolicy(mode="allow"),
         sampling_policy=SamplingPolicy(mode="allow"),
         filesystem_policy=FilesystemPolicy(mode="read_write"),
         terminal_policy=TerminalPolicy(mode="allow"),
@@ -53,9 +50,6 @@ async def test_default_deny_is_typed_and_receipted() -> None:
         permission = await session.interactions.permission(
             PermissionRequest("write", "secret")
         )
-        elicitation = await session.interactions.elicitate(
-            ElicitationRequest("secret?")
-        )
         sampling = await session.interactions.sample(SamplingRequest("prompt"))
         filesystem = await session.interactions.filesystem(
             FilesystemRequest("read", "/tmp/no")
@@ -65,7 +59,6 @@ async def test_default_deny_is_typed_and_receipted() -> None:
         )
 
     assert permission.allowed is False
-    assert elicitation.accepted is False
     assert sampling.accepted is False
     assert filesystem.allowed is False
     assert terminal.allowed is False
@@ -78,15 +71,10 @@ async def test_explicit_handlers_enforce_policy_and_record_safe_receipts() -> No
     async def permission(_request: PermissionRequest) -> bool:
         return True
 
-    async def elicitation(_request: ElicitationRequest) -> str:
-        return "active-process-answer"
-
     async def sampling(_request: SamplingRequest) -> str:
         return "active-process-sample"
 
-    handlers = InteractionHandlers(
-        permission=permission, elicitation=elicitation, sampling=sampling
-    )
+    handlers = InteractionHandlers(permission=permission, sampling=sampling)
     async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
         session = kit.agent_session(
             _spec(),
@@ -96,14 +84,10 @@ async def test_explicit_handlers_enforce_policy_and_record_safe_receipts() -> No
         permission_result = await session.interactions.permission(
             PermissionRequest("write", "private", destructive=True)
         )
-        elicitation_result = await session.interactions.elicitate(
-            ElicitationRequest("question")
-        )
         sampling_result = await session.interactions.sample(SamplingRequest("prompt"))
 
     assert permission_result.allowed is True
     assert permission_result.confirmation_required is True
-    assert elicitation_result.value == "active-process-answer"
     assert sampling_result.content == "active-process-sample"
     assert "active-process" not in repr(session.interactions.receipts())
 
@@ -249,9 +233,6 @@ async def test_interaction_configuration_and_requests_are_immutable() -> None:
     )
     with pytest.raises(AttributeError):
         controller.permission_policy = PermissionPolicy(mode="allow")  # type: ignore[misc]
-    request = ElicitationRequest("prompt", {"secret": "value"})
-    with pytest.raises(TypeError):
-        request.schema["new"] = "blocked"  # type: ignore[index]
 
 
 @pytest.mark.asyncio

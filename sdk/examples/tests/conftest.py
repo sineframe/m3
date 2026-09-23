@@ -9,6 +9,8 @@ import pytest
 
 from m3 import StdioServer
 
+pytest_plugins = ("m3.pytest_plugin",)
+
 EXAMPLES_ROOT = Path(__file__).parents[1]
 SERVER_SCRIPT = EXAMPLES_ROOT / "servers" / "example_mcp_server.py"
 

@@ -13,7 +13,6 @@ def probe_agent(path: Path, behavior: str = "ok") -> str:
         + textwrap.dedent(f"""\
         import json, re, subprocess, sys
         from urllib.request import Request, build_opener, ProxyHandler
-        from urllib.parse import urlsplit, urlunsplit
         opener = build_opener(ProxyHandler({{}})); server = None; seq = 0
         behavior = {behavior!r}
         def send(x): print(json.dumps(x, separators=(",", ":")), flush=True)
@@ -25,27 +24,13 @@ def probe_agent(path: Path, behavior: str = "ok") -> str:
         def rpc_http(method, params):
             global seq
             seq += 1; body = json.dumps({{"jsonrpc":"2.0", "id":seq, "method":method, "params":params}}).encode()
-            if server["type"] == "http":
-                return json.loads(opener.open(Request(server["url"], data=body, headers={{"Content-Type":"application/json"}}, method="POST"), timeout=10).read())
-            stream = opener.open(server["url"], timeout=10); endpoint = None
-            while True:
-                line = stream.readline().decode()
-                if not line: break
-                if line.startswith("data:"): endpoint = line.split(":", 1)[1].strip(); break
-            if endpoint.startswith("/"):
-                base = urlsplit(server["url"]); endpoint = urlunsplit((base.scheme, base.netloc, endpoint, "", ""))
-            opener.open(Request(endpoint, data=body, headers={{"Content-Type":"application/json"}}, method="POST"), timeout=10).read()
-            while True:
-                line = stream.readline().decode()
-                if not line: break
-                if line.startswith("data:"): return json.loads(line.split(":", 1)[1].strip())
-            raise RuntimeError("missing SSE data")
+            return json.loads(opener.open(Request(server["url"], data=body, headers={{"Content-Type":"application/json"}}, method="POST"), timeout=10).read())
         def rpc(method, params):
             return rpc_stdio(method, params) if server.get("type", "stdio") == "stdio" else rpc_http(method, params)
         for line in sys.stdin:
             request = json.loads(line); method = request.get("method"); ident = request.get("id"); params = request.get("params") or {{}}
             if method == "initialize":
-                caps = {{"mcpCapabilities": {{"http": True, "sse": True}}}}
+                caps = {{"mcpCapabilities": {{"http": True}}}}
                 identity = {{}} if behavior == "no_identity" else {{"agentInfo":{{"name":"probe-echo", "version":"1"}}}}
                 send({{"jsonrpc":"2.0", "id":ident, "result":{{"protocolVersion":1, "agentCapabilities":caps, **identity}}}})
             elif method == "session/new":

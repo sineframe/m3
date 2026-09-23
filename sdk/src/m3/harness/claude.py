@@ -41,6 +41,7 @@ from ..types import (
 from .contracts import (
     HarnessAdapterCapabilities,
     HarnessAdapterError,
+    HarnessInteractionCapabilities,
     HarnessLaunch,
     HarnessSession,
     HarnessStartupError,
@@ -309,6 +310,7 @@ class ClaudeCodeHarnessAdapter:
     """One continuous Claude Code stream-JSON conversation."""
 
     managed_runtime_supported = True
+    interaction_capabilities = HarnessInteractionCapabilities()
 
     def __init__(
         self,
@@ -329,6 +331,7 @@ class ClaudeCodeHarnessAdapter:
             # treating the provider's process as proof of enforcement.
             supports_tool_policy=False,
             supports_streaming=True,
+            interaction=self.interaction_capabilities,
         )
         self.last_policy_evidence: ToolPolicyEvidence | None = None
         self._root: Path | None = None

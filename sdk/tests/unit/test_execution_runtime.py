@@ -14,8 +14,10 @@ import pytest
 from mcp.shared.message import SessionMessage
 from mcp_types import JSONRPCRequest, JSONRPCResponse
 
+from m3._types.specs import AgentSpec
 from m3.agent_session import AdapterTurn
 from m3.async_api import AsyncExecutionHandle, AsyncMCPTestKit
+from m3.elicitation import expect_form
 from m3.errors import OperationTimeout
 from m3.execution_runtime import AsyncExecutionController, _activity_health
 from m3.harness import HarnessAdapterRegistry
@@ -23,7 +25,6 @@ from m3.storage import SQLiteExecutionStore
 from m3.sync_api import ExecutionHandle, MCPTestKit
 from m3.testing import FaultInjector
 from m3.types import (
-    AgentSpec,
     ClaudeCode,
     DirectSpec,
     ErrorCode,
@@ -115,6 +116,15 @@ class _ToolEvidenceHarness:
 
     async def close(self) -> None:
         return None
+
+
+class _ActionBoundaryHarness(_ToolEvidenceHarness):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = 0
+
+    async def start(self, _spec: AgentSpec) -> None:
+        self.started += 1
 
 
 class _SlowHarness:
@@ -479,6 +489,56 @@ async def test_submitted_agent_execution_sends_exactly_one_message() -> None:
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
     assert len(adapter.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_plan_bound_agent_run_rejects_before_harness_startup() -> None:
+    adapter = _ActionBoundaryHarness()
+    registry = HarnessAdapterRegistry({"claude_code": lambda _harness: adapter})
+    spec = AgentSpec(
+        servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
+        harness=ClaudeCode(model="test-model"),
+        message=UserMessage(content=(TextContent(text="continue"),)),
+        elicitation=expect_form("confirm").accept({"confirmed": True}),
+    )
+
+    async with AsyncMCPTestKit(
+        env={}, cwd="/tmp/m3-no-project", adapter_registry=registry
+    ) as kit:
+        result = await kit.run(spec)
+
+    assert result.snapshot.outcome is ExecutionOutcome.FAILED
+    assert result.error is not None
+    assert result.error.code is ErrorCode.UNSUPPORTED
+    assert adapter.started == 0
+    assert adapter.messages == []
+
+
+@pytest.mark.asyncio
+async def test_persistent_agent_command_reconstructs_action_plan(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteExecutionStore(tmp_path / "action-plan.sqlite")
+    spec = AgentSpec(
+        servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
+        harness=ClaudeCode(model="test-model"),
+        message=UserMessage(content=(TextContent(text="continue"),)),
+        elicitation=expect_form("confirm").accept({"confirmed": True}),
+        elicitation_round_limit=6,
+    )
+    kit = AsyncMCPTestKit(store=store, embedded_worker=False)
+
+    try:
+        handle = kit.submit(spec)
+        persisted = store.get_execution_spec(handle.execution_id)
+        command = store.get_command(f"command-{handle.execution_id.root}")
+        assert persisted == spec
+        assert command is not None
+        restored = AgentSpec.model_validate(command.payload["spec"])
+        assert restored == spec
+    finally:
+        await kit.aclose()
+        store.close()
 
 
 @pytest.mark.asyncio

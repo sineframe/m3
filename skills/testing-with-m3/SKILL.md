@@ -64,8 +64,8 @@ Read only the reference needed for the task:
 | An answer meets a quality rule | Explicit `kit.evaluate(...)` or `judge_response(...)` | An evaluator result that fails the test when the rule is required |
 | A change helps across cases or harnesses | Stable cases, selections, and trials plus a saved baseline | Matched test/evaluation changes, observed interface change, coverage, and limitations |
 
-Use `StdioServer` for a local subprocess, `HTTPServer` for a Streamable HTTP MCP
-endpoint, and `SSEServer` only for legacy HTTP+SSE. An HTTP URL is one MCP
+Use `StdioServer` for a local subprocess and `HTTPServer` for a Streamable HTTP MCP
+endpoint. An HTTP URL is one MCP
 protocol endpoint, not a REST route. A server definition does not start a
 deployed service. For async tests, use `AsyncMCPTestKit` with `async with` and
 `await`.
@@ -126,6 +126,15 @@ report the best attempt. Pass rate is passed evaluations divided by expected
 evaluations, so error, inconclusive, not-run, and terminal missing required
 evidence lower it. Report status and missing/pending counts with the rate.
 Small trial counts show observations, not reliable improvement estimates.
+
+## Elicitation
+
+Read the repository's [Elicitation guide](../../sdk/docs/elicitation.md) before
+writing an elicitation test. It is the single reference for the public models,
+helper signatures, response binding, action-bound direct and agent calls,
+manual input, managed pending/respond calls, URL behavior, round limits, and
+trace assertions. The [test-patterns reference](references/test-patterns.md)
+links back to it and contains only the testing workflow around those examples.
 
 ## Credentials and troubleshooting
 

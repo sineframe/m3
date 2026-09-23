@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from math import isfinite
 from typing import Any, Literal, TypeVar, cast
@@ -20,6 +20,7 @@ from ..observability import (
     CorrelationState,
     DiagnosticEntry,
     DirectTrace,
+    ElicitationEntry,
     EvaluationEntry,
     EvidenceCapture,
     EvidenceConflict,
@@ -35,6 +36,7 @@ from ..observability import (
     OpenCodeTrace,
     PiTrace,
     ProcessEntry,
+    ProtocolCallAttempt,
     ProtocolEntry,
     ProtocolErrorInfo,
     ProtocolKind,
@@ -44,6 +46,7 @@ from ..observability import (
     ReasoningEntry,
     ReportedToolCall,
     RuntimeTraceInfo,
+    ToolCallAttempt,
     ToolCallEntry,
     ToolCallStatus,
     ToolResult,
@@ -389,7 +392,36 @@ def _tool_result_projection(result: ToolResult) -> JsonValue:
 
 
 def _json_equal(left: Any, right: Any) -> bool:
-    return cast(bool, _thaw_json(left) == _thaw_json(right))
+    """Compare JSON values without Python's bool-as-number coercion."""
+
+    return _json_values_equal(_thaw_json(left), _thaw_json(right))
+
+
+def _json_values_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, (int, float)) or isinstance(right, (int, float)):
+        if not (isinstance(left, (int, float)) and isinstance(right, (int, float))):
+            return False
+        if isinstance(left, float) and not isfinite(left):
+            return False
+        if isinstance(right, float) and not isfinite(right):
+            return False
+        return left == right
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        if not (isinstance(left, Mapping) and isinstance(right, Mapping)):
+            return False
+        if set(left) != set(right):
+            return False
+        return all(_json_values_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list) or isinstance(right, list):
+        if not (isinstance(left, list) and isinstance(right, list)):
+            return False
+        return len(left) == len(right) and all(
+            _json_values_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return type(left) is type(right) and left == right
 
 
 def _normalize_result_json(value: Any) -> Any:
@@ -763,6 +795,18 @@ def _protocol_entry(events: Sequence[Event]) -> ProtocolEntry:
     first, last = events[0], events[-1]
     payload = first.payload
     method = _field(first, "method")
+    raw_params = payload.get("params")
+    params = raw_params if isinstance(raw_params, Mapping) else {}
+    mrtr_method = method in {"prompts/get", "resources/read"}
+    operation_kind: Literal["prompt", "resource"] | None = None
+    operation_name: str | None = None
+    attempts: tuple[ProtocolCallAttempt, ...] = ()
+    if mrtr_method:
+        operation_kind = "prompt" if method == "prompts/get" else "resource"
+        operation_field = "name" if operation_kind == "prompt" else "uri"
+        raw_operation_name = params.get(operation_field)
+        if isinstance(raw_operation_name, str) and raw_operation_name:
+            operation_name = raw_operation_name
     error_value = last.payload.get("error")
     error_observation: Observation[Any]
     if isinstance(error_value, Mapping):
@@ -792,17 +836,82 @@ def _protocol_entry(events: Sequence[Event]) -> ProtocolEntry:
         error_observation = _unavailable(ObservationReason.MALFORMED_SOURCE)
     else:
         error_observation = _not_emitted()
-    return ProtocolEntry(
-        **_base_kwargs(
-            events,
-            status=(
-                TraceStatus.PROTOCOL_ERROR
-                if last.kind is EventKind.MCP_ERROR or isinstance(error_value, Mapping)
-                else TraceStatus.INCOMPLETE
-                if len(events) == 1 and _expects_response(first)
-                else TraceStatus.COMPLETED
+    status = (
+        TraceStatus.PROTOCOL_ERROR
+        if last.kind is EventKind.MCP_ERROR or isinstance(error_value, Mapping)
+        else TraceStatus.INCOMPLETE
+        if len(events) == 1 and _expects_response(first)
+        else TraceStatus.COMPLETED
+    )
+    if mrtr_method:
+        raw_result = last.payload.get("result")
+        input_required = (
+            isinstance(raw_result, Mapping)
+            and raw_result.get("resultType", raw_result.get("result_type"))
+            == "input_required"
+        )
+        request_state = params.get("requestState", params.get("request_state"))
+        continuation_state = (
+            raw_result.get("requestState", raw_result.get("request_state"))
+            if isinstance(raw_result, Mapping)
+            else None
+        )
+        input_responses = params.get("inputResponses", params.get("input_responses"))
+        operation_params = {
+            key: value
+            for key, value in params.items()
+            if key
+            not in {
+                "requestState",
+                "request_state",
+                "inputResponses",
+                "input_responses",
+            }
+        }
+        if input_required:
+            status = TraceStatus.INCOMPLETE
+        attempts = (
+            ProtocolCallAttempt(
+                attempt_index=0,
+                jsonrpc_id=_id_observation(first),
+                request_state=_string_observation(
+                    request_state,
+                    present=("requestState" in params or "request_state" in params),
+                    allow_empty=True,
+                ),
+                continuation_state=_string_observation(
+                    continuation_state,
+                    present=(
+                        isinstance(raw_result, Mapping)
+                        and (
+                            "requestState" in raw_result
+                            or "request_state" in raw_result
+                        )
+                    ),
+                    allow_empty=True,
+                ),
+                input_responses=_json_observation(
+                    input_responses,
+                    present=("inputResponses" in params or "input_responses" in params),
+                ),
+                operation_params=_json_observation(operation_params, present=True),
+                input_required=input_required,
+                result=_json_observation(
+                    raw_result,
+                    present="result" in last.payload,
+                ),
+                raw_result=_json_observation(
+                    raw_result,
+                    present="result" in last.payload,
+                ),
+                status=status,
+                sequence_start=first.sequence,
+                sequence_end=last.sequence,
+                timing=_timing(events),
             ),
-        ),
+        )
+    return ProtocolEntry(
+        **_base_kwargs(events, status=status),
         protocol=ProtocolKind.MCP,
         method=_string_observation(method, present="method" in payload),
         direction=first.correlation.direction
@@ -818,6 +927,11 @@ def _protocol_entry(events: Sequence[Event]) -> ProtocolEntry:
             present=("result" in last.payload or "response" in last.payload),
         ),
         error=error_observation,
+        operation_kind=operation_kind,
+        operation_name=_string_observation(
+            operation_name, present=operation_name is not None
+        ),
+        attempts=attempts,
     )
 
 
@@ -875,6 +989,30 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
             message="tool request name is malformed",
         )
     arguments = params.get("arguments", first.payload.get("arguments"))
+    raw_last_result = last.payload.get("result")
+    is_input_required = (
+        isinstance(raw_last_result, Mapping)
+        and raw_last_result.get("resultType", raw_last_result.get("result_type"))
+        == "input_required"
+    )
+    request_state = params.get("requestState", params.get("request_state"))
+    continuation_state = (
+        raw_last_result.get("requestState", raw_last_result.get("request_state"))
+        if isinstance(raw_last_result, Mapping)
+        else None
+    )
+    input_responses = params.get("inputResponses", params.get("input_responses"))
+    operation_params = {
+        key: value
+        for key, value in params.items()
+        if key
+        not in {
+            "requestState",
+            "request_state",
+            "inputResponses",
+            "input_responses",
+        }
+    }
     result = (
         _tool_result(last)
         if last.kind
@@ -923,7 +1061,9 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
         EventKind.MCP_RESPONSE,
         EventKind.TOOL_RESULT_RECEIVED,
     } and ("result" not in last.payload or not isinstance(raw_result, Mapping))
-    if last.kind in {
+    if is_input_required:
+        status = ToolCallStatus.INCOMPLETE
+    elif last.kind in {
         EventKind.MCP_CANCELLATION_REQUESTED,
         EventKind.MCP_CANCELLATION_COMPLETED,
     }:
@@ -1015,6 +1155,41 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
         ToolCallStatus.TIMED_OUT: TraceStatus.TIMED_OUT,
         ToolCallStatus.INCOMPLETE: TraceStatus.INCOMPLETE,
     }[status]
+    attempt = ToolCallAttempt(
+        attempt_index=0,
+        jsonrpc_id=_id_observation(first),
+        request_state=_string_observation(
+            request_state,
+            present=("requestState" in params or "request_state" in params),
+            allow_empty=True,
+        ),
+        continuation_state=_string_observation(
+            continuation_state,
+            present=(
+                isinstance(raw_last_result, Mapping)
+                and (
+                    "requestState" in raw_last_result
+                    or "request_state" in raw_last_result
+                )
+            ),
+            allow_empty=True,
+        ),
+        input_responses=_json_observation(
+            input_responses,
+            present=("inputResponses" in params or "input_responses" in params),
+        ),
+        operation_params=_json_observation(operation_params, present=True),
+        input_required=is_input_required,
+        result=result_observation,
+        raw_result=_json_observation(
+            raw_last_result,
+            present="result" in last.payload,
+        ),
+        status=status,
+        sequence_start=first.sequence,
+        sequence_end=last.sequence,
+        timing=_timing(events),
+    )
     reported_call = ReportedToolCall(
         provider_call_id=_string_observation(
             first.payload.get("call_id"), present="call_id" in first.payload
@@ -1070,7 +1245,526 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
         ),
         reported=(_observed(reported_call) if reported_evidence else _not_emitted()),
         wire=(_not_emitted() if reported_evidence else _observed(wire)),
+        attempts=(attempt,),
     )
+
+
+def _same_mrtr_operation(left: ToolCallEntry, right: ToolCallEntry) -> bool:
+    """Compare immutable operation identity before following an MRTR chain."""
+
+    if left.connection_id != right.connection_id:
+        return False
+    if left.turn_id != right.turn_id or left.server_binding != right.server_binding:
+        return False
+    if (
+        left.tool.state is not ObservationState.OBSERVED
+        or right.tool.state is not ObservationState.OBSERVED
+    ):
+        return False
+    if left.tool.value != right.tool.value:
+        return False
+    if not left.attempts or not right.attempts:
+        return False
+    left_params = left.attempts[0].operation_params
+    right_params = right.attempts[0].operation_params
+    return (
+        left_params.state is ObservationState.OBSERVED
+        and right_params.state is ObservationState.OBSERVED
+        and _json_equal(left_params.value, right_params.value)
+    )
+
+
+def _merge_mrtr_tool_calls(
+    first: ToolCallEntry, second: ToolCallEntry
+) -> ToolCallEntry:
+    attempts = tuple(
+        attempt.model_copy(update={"attempt_index": index})
+        for index, attempt in enumerate((*first.attempts, *second.attempts))
+    )
+    timing = first.timing.model_copy(
+        update={
+            "finished_at": second.timing.finished_at,
+            "end_offset_ms": second.timing.end_offset_ms,
+            "duration_ms": max(
+                0.0, second.timing.end_offset_ms - first.timing.start_offset_ms
+            ),
+        }
+    )
+    return first.model_copy(
+        update={
+            "sequence_end": second.sequence_end,
+            "timing": timing,
+            "status": second.status,
+            "tool_status": second.tool_status,
+            "result": second.result,
+            "server_latency_ms": _observed(
+                max(
+                    0.0,
+                    second.timing.end_offset_ms - first.timing.start_offset_ms,
+                )
+            ),
+            "wire": second.wire,
+            "attempts": attempts,
+        }
+    )
+
+
+def _mrtr_attempts_match_retry(
+    source: ToolCallAttempt | ProtocolCallAttempt,
+    candidate: ToolCallAttempt | ProtocolCallAttempt,
+) -> bool:
+    continuation = source.continuation_state
+    if continuation.state is ObservationState.OBSERVED:
+        return (
+            candidate.request_state.state is ObservationState.OBSERVED
+            and candidate.request_state.value == continuation.value
+        )
+    if continuation.state is not ObservationState.NOT_EMITTED:
+        return False
+    if candidate.request_state.state is not ObservationState.NOT_EMITTED:
+        return False
+
+    raw_result = source.raw_result.value
+    responses = candidate.input_responses
+    if (
+        not isinstance(raw_result, Mapping)
+        or responses.state is not ObservationState.OBSERVED
+        or not isinstance(responses.value, Mapping)
+    ):
+        return False
+    requests = raw_result.get("inputRequests", raw_result.get("input_requests"))
+    if not isinstance(requests, Mapping):
+        return False
+    request_keys = set(requests)
+    response_keys = set(responses.value)
+    return (
+        bool(request_keys)
+        and all(isinstance(key, str) for key in request_keys)
+        and request_keys == response_keys
+    )
+
+
+def _next_mrtr_continuation_boundary(
+    entries: tuple[TraceEntry, ...],
+    source_index: int,
+    source: ToolCallEntry | ProtocolEntry,
+    same_operation: Callable[[Any, Any], bool],
+) -> int | None:
+    if not source.attempts:
+        return None
+    continuation = source.attempts[-1].continuation_state
+    for index in range(source_index + 1, len(entries)):
+        candidate = entries[index]
+        if (
+            not isinstance(candidate, type(source))
+            or not candidate.attempts
+            or not same_operation(source, candidate)
+            or candidate.attempts[-1].input_required is not True
+        ):
+            continue
+        candidate_state = candidate.attempts[-1].continuation_state
+        if continuation.state is ObservationState.NOT_EMITTED or (
+            continuation.state is ObservationState.OBSERVED
+            and candidate_state.state is ObservationState.OBSERVED
+            and candidate_state.value == continuation.value
+        ):
+            return candidate.attempts[-1].sequence_end
+    return None
+
+
+def _has_unresolved_prior_mrtr_source(
+    entries: tuple[TraceEntry, ...],
+    source_index: int,
+    source: ToolCallEntry | ProtocolEntry,
+    candidate: ToolCallEntry | ProtocolEntry,
+    same_operation: Callable[[Any, Any], bool],
+) -> bool:
+    assert source.attempts and candidate.attempts
+    source_end = source.attempts[-1].sequence_end
+    candidate_attempt = candidate.attempts[0]
+    for prior_index in range(source_index):
+        prior = entries[prior_index]
+        if (
+            not isinstance(prior, type(source))
+            or not prior.attempts
+            or not same_operation(prior, source)
+            or prior.attempts[-1].input_required is not True
+            or prior.attempts[-1].sequence_end >= source_end
+            or not _mrtr_attempts_match_retry(prior.attempts[-1], candidate_attempt)
+        ):
+            continue
+
+        prior_end = prior.attempts[-1].sequence_end
+        resolved_before_source = (
+            source.attempts[0].sequence_start > prior_end
+            and _mrtr_attempts_match_retry(prior.attempts[-1], source.attempts[0])
+        ) or any(
+            isinstance(possible, type(source))
+            and possible.attempts
+            and same_operation(prior, possible)
+            and possible.attempts[0].sequence_start > prior_end
+            and possible.attempts[-1].sequence_end <= source_end
+            and _mrtr_attempts_match_retry(prior.attempts[-1], possible.attempts[0])
+            for possible in entries[prior_index + 1 : source_index]
+        )
+        if not resolved_before_source:
+            return True
+    return False
+
+
+def _coalesce_mrtr_tool_calls(
+    entries: tuple[TraceEntry, ...],
+) -> tuple[TraceEntry, ...]:
+    """Follow evidenced MRTR retries without guessing concurrent calls."""
+
+    result: list[TraceEntry] = []
+    consumed: set[int] = set()
+    tool_indexes = {
+        index for index, entry in enumerate(entries) if isinstance(entry, ToolCallEntry)
+    }
+    edges: dict[int, list[tuple[int, ToolCallEntry]]] = {
+        index: [] for index in tool_indexes
+    }
+    incoming: dict[int, list[int]] = {index: [] for index in tool_indexes}
+    for index in sorted(tool_indexes):
+        source = entries[index]
+        assert isinstance(source, ToolCallEntry)
+        if not source.attempts or not source.attempts[-1].input_required:
+            continue
+        previous = source.attempts[-1]
+        if previous.continuation_state.state is not ObservationState.OBSERVED:
+            if previous.continuation_state.state is not ObservationState.NOT_EMITTED:
+                continue
+        boundary = _next_mrtr_continuation_boundary(
+            entries, index, source, _same_mrtr_operation
+        )
+        for candidate_index in sorted(tool_indexes):
+            if candidate_index <= index:
+                continue
+            candidate = entries[candidate_index]
+            assert isinstance(candidate, ToolCallEntry)
+            if (
+                candidate.attempts
+                and candidate.attempts[0].sequence_start > previous.sequence_end
+                and (
+                    boundary is None or candidate.attempts[-1].sequence_end <= boundary
+                )
+                and _mrtr_attempts_match_retry(previous, candidate.attempts[0])
+                and _same_mrtr_operation(source, candidate)
+                and not _has_unresolved_prior_mrtr_source(
+                    entries,
+                    index,
+                    source,
+                    candidate,
+                    _same_mrtr_operation,
+                )
+            ):
+                edges[index].append((candidate_index, candidate))
+                incoming[candidate_index].append(index)
+    for index, entry in enumerate(entries):
+        if index in consumed or not isinstance(entry, ToolCallEntry):
+            if index not in consumed:
+                result.append(entry)
+            continue
+        current = entry
+        consumed.add(index)
+        current_index = index
+        while current.attempts and current.attempts[-1].input_required:
+            previous = current.attempts[-1]
+            if previous.continuation_state.state not in {
+                ObservationState.OBSERVED,
+                ObservationState.NOT_EMITTED,
+            }:
+                break
+            candidates = edges.get(current_index, [])
+            if (
+                len(candidates) != 1
+                or len(incoming.get(candidates[0][0], [])) != 1
+                or candidates[0][0] in consumed
+            ):
+                break
+            current_index, next_entry = candidates[0]
+            consumed.add(current_index)
+            current = _merge_mrtr_tool_calls(current, next_entry)
+        result.append(current)
+    return tuple(result)
+
+
+def _same_mrtr_protocol_operation(left: ProtocolEntry, right: ProtocolEntry) -> bool:
+    """Compare immutable prompt/resource identity before following a retry."""
+
+    if (
+        left.connection_id != right.connection_id
+        or left.turn_id != right.turn_id
+        or left.server_binding != right.server_binding
+        or left.operation_kind != right.operation_kind
+    ):
+        return False
+    if (
+        left.method.state is not ObservationState.OBSERVED
+        or right.method.state is not ObservationState.OBSERVED
+        or left.method.value != right.method.value
+        or not left.attempts
+        or not right.attempts
+    ):
+        return False
+    left_params = left.attempts[0].operation_params
+    right_params = right.attempts[0].operation_params
+    return (
+        left_params.state is ObservationState.OBSERVED
+        and right_params.state is ObservationState.OBSERVED
+        and _json_equal(left_params.value, right_params.value)
+    )
+
+
+def _merge_mrtr_protocol_calls(
+    first: ProtocolEntry, second: ProtocolEntry
+) -> ProtocolEntry:
+    attempts = tuple(
+        attempt.model_copy(update={"attempt_index": index})
+        for index, attempt in enumerate((*first.attempts, *second.attempts))
+    )
+    timing = first.timing.model_copy(
+        update={
+            "finished_at": second.timing.finished_at,
+            "end_offset_ms": second.timing.end_offset_ms,
+            "duration_ms": max(
+                0.0, second.timing.end_offset_ms - first.timing.start_offset_ms
+            ),
+        }
+    )
+    return first.model_copy(
+        update={
+            "sequence_end": second.sequence_end,
+            "timing": timing,
+            "status": second.status,
+            "response": second.response,
+            "error": second.error,
+            "attempts": attempts,
+        }
+    )
+
+
+def _coalesce_mrtr_protocol_calls(
+    entries: tuple[TraceEntry, ...],
+) -> tuple[TraceEntry, ...]:
+    """Follow evidenced prompt/resource retries conservatively."""
+
+    candidates = {
+        index: entry
+        for index, entry in enumerate(entries)
+        if isinstance(entry, ProtocolEntry) and entry.attempts
+    }
+    edges: dict[int, list[tuple[int, ProtocolEntry]]] = {
+        index: [] for index in candidates
+    }
+    incoming: dict[int, list[int]] = {index: [] for index in candidates}
+    for index in sorted(candidates):
+        source = candidates[index]
+        previous = source.attempts[-1]
+        if previous.input_required is not True:
+            continue
+        if previous.continuation_state.state not in {
+            ObservationState.OBSERVED,
+            ObservationState.NOT_EMITTED,
+        }:
+            continue
+        boundary = _next_mrtr_continuation_boundary(
+            entries, index, source, _same_mrtr_protocol_operation
+        )
+        for candidate_index in sorted(candidates):
+            if candidate_index <= index:
+                continue
+            candidate = candidates[candidate_index]
+            if (
+                candidate.attempts[0].sequence_start > previous.sequence_end
+                and (
+                    boundary is None or candidate.attempts[-1].sequence_end <= boundary
+                )
+                and _mrtr_attempts_match_retry(previous, candidate.attempts[0])
+                and _same_mrtr_protocol_operation(source, candidate)
+                and not _has_unresolved_prior_mrtr_source(
+                    entries,
+                    index,
+                    source,
+                    candidate,
+                    _same_mrtr_protocol_operation,
+                )
+            ):
+                edges[index].append((candidate_index, candidate))
+                incoming[candidate_index].append(index)
+
+    result: list[TraceEntry] = []
+    consumed: set[int] = set()
+    for index, entry in enumerate(entries):
+        if index in consumed or not isinstance(entry, ProtocolEntry):
+            if index not in consumed:
+                result.append(entry)
+            continue
+        if index not in candidates:
+            result.append(entry)
+            continue
+        current = entry
+        consumed.add(index)
+        current_index = index
+        while current.attempts and current.attempts[-1].input_required:
+            previous = current.attempts[-1]
+            if previous.continuation_state.state not in {
+                ObservationState.OBSERVED,
+                ObservationState.NOT_EMITTED,
+            }:
+                break
+            possible = edges.get(current_index, [])
+            if (
+                len(possible) != 1
+                or len(incoming.get(possible[0][0], [])) != 1
+                or possible[0][0] in consumed
+            ):
+                break
+            current_index, next_entry = possible[0]
+            consumed.add(current_index)
+            current = _merge_mrtr_protocol_calls(current, next_entry)
+        result.append(current)
+    return tuple(result)
+
+
+def _elicitation_entries(
+    entries: tuple[TraceEntry, ...],
+) -> tuple[TraceEntry, ...]:
+    """Project keyed elicitation requests from MRTR attempts only."""
+
+    additions: list[ElicitationEntry] = []
+    for entry in entries:
+        if not isinstance(entry, (ToolCallEntry, ProtocolEntry)) or not entry.attempts:
+            continue
+        if isinstance(entry, ToolCallEntry):
+            operation_kind: Literal["tool", "prompt", "resource"] = "tool"
+            operation_name = (
+                entry.tool.value
+                if entry.tool.state is ObservationState.OBSERVED
+                else None
+            )
+        else:
+            if entry.operation_kind is None:
+                continue
+            operation_kind = entry.operation_kind
+            operation_name = (
+                entry.operation_name.value
+                if entry.operation_name.state is ObservationState.OBSERVED
+                else None
+            )
+        if operation_name is None:
+            continue
+        logical_operation_id = (
+            entry.call_id if isinstance(entry, ToolCallEntry) else entry.entry_id
+        )
+        attempts = cast(
+            tuple[ToolCallAttempt | ProtocolCallAttempt, ...], entry.attempts
+        )
+        for round_index, attempt in enumerate(attempts, start=1):
+            if not attempt.input_required:
+                continue
+            raw = attempt.raw_result.value
+            retry = attempts[round_index] if round_index < len(attempts) else None
+            response_observation = (
+                retry.input_responses if retry is not None else _not_emitted()
+            )
+            response_value = response_observation.value
+            responses = response_value if isinstance(response_value, Mapping) else {}
+            if not isinstance(raw, Mapping):
+                continue
+            requests = raw.get("inputRequests", raw.get("input_requests"))
+            if not isinstance(requests, Mapping):
+                continue
+            for request_key, request in requests.items():
+                if not isinstance(request_key, str) or not isinstance(request, Mapping):
+                    continue
+                if request.get("method") != "elicitation/create":
+                    continue
+                params = request.get("params")
+                if not isinstance(params, Mapping):
+                    continue
+                mode = params.get("mode", "form")
+                if mode not in {"form", "url"}:
+                    continue
+                mode_value = cast(Literal["form", "url"], mode)
+                response = responses.get(request_key)
+                action = (
+                    response.get("action") if isinstance(response, Mapping) else None
+                )
+                if action not in {"accept", "decline", "cancel"}:
+                    action = None
+                action_value = cast(
+                    Literal["accept", "decline", "cancel"] | None, action
+                )
+                additions.append(
+                    ElicitationEntry(
+                        entry_id=(
+                            f"elicitation:{logical_operation_id}:{round_index}:{request_key}"
+                        ),
+                        execution_id=entry.execution_id,
+                        session_id=entry.session_id,
+                        turn_id=entry.turn_id,
+                        server_binding=entry.server_binding,
+                        connection_id=entry.connection_id,
+                        sequence_start=attempt.sequence_end,
+                        sequence_end=(
+                            retry.sequence_start
+                            if retry is not None
+                            else attempt.sequence_end
+                        ),
+                        timing=attempt.timing,
+                        status=(
+                            TraceStatus.COMPLETED
+                            if action is not None
+                            else TraceStatus.INCOMPLETE
+                        ),
+                        provenance=entry.provenance,
+                        server=entry.server_binding,
+                        operation_kind=operation_kind,
+                        operation_name=operation_name,
+                        logical_operation_id=logical_operation_id,
+                        round_index=round_index,
+                        request_key=request_key,
+                        mode=mode_value,
+                        message=_string_observation(
+                            params.get("message"),
+                            present="message" in params,
+                        ),
+                        requested_schema=_json_observation(
+                            params.get(
+                                "requestedSchema", params.get("requested_schema")
+                            ),
+                            present=(
+                                "requestedSchema" in params
+                                or "requested_schema" in params
+                            ),
+                        ),
+                        url=_string_observation(
+                            params.get("url"), present="url" in params
+                        ),
+                        elicitation_id=_string_observation(
+                            params.get("elicitationId", params.get("elicitation_id")),
+                            present=(
+                                "elicitationId" in params or "elicitation_id" in params
+                            ),
+                        ),
+                        request_state=attempt.continuation_state,
+                        input_responses=response_observation,
+                        action=action_value,
+                        content=_json_observation(
+                            response.get("content")
+                            if isinstance(response, Mapping)
+                            else None,
+                            present=(
+                                isinstance(response, Mapping) and "content" in response
+                            ),
+                        ),
+                    )
+                )
+    if not additions:
+        return entries
+    return tuple((*entries, *additions))
 
 
 def _initialization_value(
@@ -1746,8 +2440,21 @@ class TraceProjector:
         output.sort(
             key=lambda entry: (entry.sequence_start, entry.sequence_end, entry.entry_id)
         )
-        return TraceProjector._coalesce_harness_chunks(
-            TraceProjector._correlate_reported_wire(tuple(output))
+        projected = tuple(output)
+        projected = TraceProjector._coalesce_harness_chunks(projected)
+        projected = _coalesce_mrtr_tool_calls(projected)
+        projected = _coalesce_mrtr_protocol_calls(projected)
+        projected = TraceProjector._correlate_reported_wire(projected)
+        projected = _elicitation_entries(projected)
+        return tuple(
+            sorted(
+                projected,
+                key=lambda entry: (
+                    entry.sequence_start,
+                    entry.sequence_end,
+                    entry.entry_id,
+                ),
+            )
         )
 
     @staticmethod

@@ -107,14 +107,12 @@ from ._types.results import (
 )
 from ._types.specs import (
     ACPAgent,
-    AgentSpec,
     CallTool,
     ClaudeCode,
     Codex,
     ContentBlock,
     DirectOperation,
     DirectSpec,
-    ElicitationPolicy,
     EvaluationRegistration,
     ExecutionSpec,
     FilesystemPolicy,
@@ -143,7 +141,6 @@ from ._types.specs import (
     ServerValue,
     SessionForkRequest,
     SessionSource,
-    SSEServer,
     StdioServer,
     TerminalPolicy,
     ToolPolicy,
@@ -162,7 +159,6 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "ACPAgent",
     "ActivityHealth",
     "AgentIdentity",
-    "AgentSpec",
     "ArtifactId",
     "ArtifactPolicy",
     "ArtifactRef",
@@ -181,7 +177,6 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "ResourceInfo",
     "TemplateInfo",
     "PromptInfo",
-    "ElicitationPolicy",
     "ErrorCode",
     "ErrorInfo",
     "EventDirection",
@@ -236,7 +231,6 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "RevisionId",
     "RevisionSelection",
     "RestrictiveToolPolicy",
-    "SSEServer",
     "SamplingPolicy",
     "SecretReference",
     "ServerBinding",
@@ -291,8 +285,7 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
 ]
 
 
-# Keep legacy classes importable while reducing wildcard exports to the focused
-# value surface.  Explicit imports continue to resolve through module globals.
+# Keep the focused public value surface explicit.
 _COMPAT_EXPORTS = tuple(__all__)
 # This order is a compatibility contract for the focused wildcard surface.
 __all__ = [  # noqa: RUF022
@@ -303,7 +296,6 @@ __all__ = [  # noqa: RUF022
     "TurnOutcome",
     "TurnResult",
     "HTTPServer",
-    "SSEServer",
     "StdioServer",
     "InProcessServer",
     "SecretReference",
@@ -338,7 +330,6 @@ __all__ = [  # noqa: RUF022
     "ProtocolConstraint",
     "WorkspacePolicy",
     "PermissionPolicy",
-    "ElicitationPolicy",
     "SamplingPolicy",
     "FilesystemPolicy",
     "TerminalPolicy",

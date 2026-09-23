@@ -87,6 +87,12 @@ class ExecutionState(FrozenModel):
             },
             ExecutionStatus.RUNNING_TURN: {
                 ExecutionStatus.IDLE,
+                ExecutionStatus.WAITING_FOR_INPUT,
+                ExecutionStatus.CLOSING,
+                ExecutionStatus.FINISHED,
+            },
+            ExecutionStatus.WAITING_FOR_INPUT: {
+                ExecutionStatus.RUNNING_TURN,
                 ExecutionStatus.CLOSING,
                 ExecutionStatus.FINISHED,
             },

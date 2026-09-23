@@ -4,9 +4,11 @@ import asyncio
 
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.harness.contracts import (
     DeterministicHarnessAdapter,
     HarnessAdapterCapabilities,
+    HarnessInteractionCapabilities,
     HarnessLaunch,
     HarnessStartupError,
     HarnessTurnRequest,
@@ -15,7 +17,6 @@ from m3.harness.contracts import (
 from m3.server_group import ServerGroupManager
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     RestrictiveToolPolicy,
     ServerBinding,
     StdioServer,
@@ -34,6 +35,31 @@ def _launch(manager: ServerGroupManager) -> HarnessLaunch:
     return HarnessLaunch(
         spec, manager.snapshot(), manager.configurations(), spec.tool_policy
     )
+
+
+def test_interaction_capabilities_default_to_unsupported_and_are_immutable() -> None:
+    capabilities = HarnessInteractionCapabilities()
+
+    assert capabilities.supports_elicitation is False
+    assert capabilities.preserves_request_keys is False
+    assert capabilities.preserves_multi_request_rounds is False
+    assert capabilities.supports_interaction_cancellation is False
+    assert capabilities.supports_interaction_resume is False
+    assert capabilities.supports_idempotent_response_delivery is False
+    assert capabilities.retry_owner == "harness"
+    with pytest.raises((AttributeError, TypeError)):
+        capabilities.supports_elicitation = True  # type: ignore[misc]
+
+
+def test_deterministic_adapter_exposes_unsupported_interaction_capabilities() -> None:
+    capabilities = DeterministicHarnessAdapter().capabilities.interaction
+
+    assert capabilities == HarnessInteractionCapabilities()
+
+
+def test_interaction_capabilities_reject_partial_elicitation_declaration() -> None:
+    with pytest.raises(ValueError, match="request keys, rounds, and cancellation"):
+        HarnessInteractionCapabilities(supports_elicitation=True)
 
 
 @pytest.mark.asyncio

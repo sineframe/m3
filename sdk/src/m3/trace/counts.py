@@ -27,6 +27,12 @@ def tool_call_count_after(
     appended_requests = tuple(_tool_requests(appended))
     if not appended_requests:
         return previous
+    # A new tools/call request may be a retry linked to an earlier
+    # input-required result. Reproject only MRTR histories so snapshot counts
+    # use the same logical-operation grouping as TraceView without regressing
+    # the incremental counter for ordinary calls.
+    if any(_is_mrtr_event(event) for event in events):
+        return tool_call_count(events)
     requests = tuple(_tool_requests(events))
     origins = {
         event.provenance.origin is EventOrigin.HARNESS_REPORTED for event in requests
@@ -46,6 +52,23 @@ def _tool_requests(events: Sequence[Event]) -> list[Event]:
             and event.payload.get("method") == "tools/call"
         )
     ]
+
+
+def _is_mrtr_event(event: Event) -> bool:
+    if event.kind is not EventKind.TOOL_CALL_REQUESTED and not (
+        event.kind is EventKind.MCP_REQUEST
+        and event.payload.get("method") == "tools/call"
+    ):
+        return False
+    params = event.payload.get("params")
+    if isinstance(params, Mapping) and (
+        "requestState" in params
+        or "request_state" in params
+        or "inputResponses" in params
+        or "input_responses" in params
+    ):
+        return True
+    return False
 
 
 @dataclass(frozen=True)

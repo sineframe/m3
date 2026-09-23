@@ -154,7 +154,6 @@ def test_runtime_sdk_acp_protocol_full_persists_and_reopens(tmp_path: Path) -> N
     assert protocol.agent_identity.name == "probe-echo"
     assert protocol.agent_capabilities["mcpCapabilities"] == {
         "http": True,
-        "sse": True,
     }
     assert tuple(mode.id for mode in protocol.agent_modes) == ("mode-a",)
     assert protocol.config_options[0]["id"] == "quality"

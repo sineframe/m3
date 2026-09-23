@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 
@@ -34,6 +34,7 @@ class SQLiteStoreWorker:
         *,
         worker_id: str | None = None,
         lease_seconds: float = 30.0,
+        cancel_runner: Callable[[Any], Any] | None = None,
     ) -> None:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
@@ -41,6 +42,7 @@ class SQLiteStoreWorker:
         self.runner = runner
         self.worker_id = worker_id or f"worker-{uuid.uuid4().hex}"
         self.lease_seconds = lease_seconds
+        self.cancel_runner = cancel_runner
         self._stopped = False
 
     def run_once(self) -> bool:
@@ -64,11 +66,13 @@ class SQLiteStoreWorker:
                         lease, lease_seconds=self.lease_seconds
                     ):
                         lease_lost.set()
+                        self._interrupt_after_lease_loss(command, lease)
                         return
                 except Exception:
                     # Do not let the runner finish successfully after its
                     # durable ownership signal has failed.
                     lease_lost.set()
+                    self._interrupt_after_lease_loss(command, lease)
                     return
 
         heartbeat_thread = threading.Thread(
@@ -87,11 +91,23 @@ class SQLiteStoreWorker:
                 )
                 self.store.release_lease(lease)
                 return True
+            if (
+                isinstance(command.payload, Mapping)
+                and command.payload.get("human_input") == "managed"
+                and self.cancel_runner is None
+            ):
+                # An arbitrary runner cannot be interrupted safely from a
+                # heartbeat thread. Refuse this boundary before invoking it;
+                # the embedded execution path supplies a cancellation hook.
+                self._mark_lease_lost(
+                    command,
+                    lease,
+                    reason="managed worker requires an interruptible runner",
+                )
+                return True
             self.runner(command, self.store, lease)
             if lease_lost.is_set():
-                self.store.mark_interrupted_if_lease_lost(
-                    lease, reason="worker heartbeat failed"
-                )
+                self._mark_lease_lost(command, lease, reason="worker heartbeat failed")
                 return True
             status = (
                 "cancelled"
@@ -110,7 +126,8 @@ class SQLiteStoreWorker:
         except LeaseLost:
             # A replacement owner is authoritative. Do not retry or resume
             # the provider conversation after a lease-loss boundary.
-            self.store.mark_interrupted_if_lease_lost(lease, reason="worker lease lost")
+            self._mark_lease_lost(command, lease, reason="worker lease lost")
+            self._cancel_runner(command)
             return True
         except BaseException:
             # Preserve the runner's failure even if ownership disappeared
@@ -126,8 +143,8 @@ class SQLiteStoreWorker:
                 self.store.release_lease(lease)
             except Exception:
                 try:
-                    self.store.mark_interrupted_if_lease_lost(
-                        lease, reason="worker lease lost during failure"
+                    self._mark_lease_lost(
+                        command, lease, reason="worker lease lost during failure"
                     )
                 except Exception:
                     pass
@@ -138,6 +155,32 @@ class SQLiteStoreWorker:
             # closing a worker never leaks a heartbeat thread.
             heartbeat_thread.join()
         return True
+
+    def _mark_lease_lost(self, command: Any, lease: Any, *, reason: str) -> None:
+        payload = command.payload
+        if isinstance(payload, Mapping) and payload.get("human_input") == "managed":
+            recover = getattr(
+                self.store, "mark_managed_recovery_unavailable_if_lease_lost", None
+            )
+            if callable(recover):
+                recover(lease, reason=reason)
+                return
+        self.store.mark_interrupted_if_lease_lost(lease, reason=reason)
+
+    def _interrupt_after_lease_loss(self, command: Any, lease: Any) -> None:
+        if not (
+            isinstance(command.payload, Mapping)
+            and command.payload.get("human_input") == "managed"
+        ):
+            return
+        try:
+            self._mark_lease_lost(command, lease, reason="worker heartbeat failed")
+        finally:
+            self._cancel_runner(command)
+
+    def _cancel_runner(self, command: Any) -> None:
+        if self.cancel_runner is not None:
+            self.cancel_runner(command)
 
     def stop(self) -> None:
         self._stopped = True

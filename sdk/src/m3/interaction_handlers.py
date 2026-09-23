@@ -23,7 +23,6 @@ from typing import Any, Literal, Protocol, TypeAlias
 from uuid import uuid4
 
 from .types import (
-    ElicitationPolicy,
     FilesystemPolicy,
     PermissionPolicy,
     SamplingPolicy,
@@ -61,26 +60,6 @@ class PermissionResult:
     allowed: bool
     receipt: InteractionReceipt
     confirmation_required: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class ElicitationRequest:
-    prompt: str
-    schema: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "schema", MappingProxyType(dict(self.schema)))
-
-
-@dataclass(frozen=True, slots=True)
-class ElicitationResult:
-    accepted: bool
-    value: Any = None
-    receipt: InteractionReceipt = field(
-        default_factory=lambda: InteractionReceipt(
-            "none", "elicitation", "deny", "default_deny"
-        )
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,12 +125,6 @@ class PermissionHandler(Protocol):
     async def __call__(self, request: PermissionRequest) -> PermissionResult | bool: ...
 
 
-class ElicitationHandler(Protocol):
-    async def __call__(
-        self, request: ElicitationRequest
-    ) -> ElicitationResult | Any: ...
-
-
 class SamplingHandler(Protocol):
     async def __call__(self, request: SamplingRequest) -> SamplingResult | str: ...
 
@@ -166,9 +139,6 @@ class TerminalHandler(Protocol):
 
 PermissionCallback: TypeAlias = Callable[
     [PermissionRequest], PermissionResult | bool | Awaitable[PermissionResult | bool]
-]
-ElicitationCallback: TypeAlias = Callable[
-    [ElicitationRequest], ElicitationResult | Any | Awaitable[ElicitationResult | Any]
 ]
 SamplingCallback: TypeAlias = Callable[
     [SamplingRequest], SamplingResult | str | Awaitable[SamplingResult | str]
@@ -196,7 +166,6 @@ class InteractionHandlers:
     """Optional callbacks; absent callbacks are always default-deny."""
 
     permission: PermissionCallback | None = None
-    elicitation: ElicitationCallback | None = None
     sampling: SamplingCallback | None = None
     filesystem: FilesystemHandler | None = None
     terminal: TerminalHandler | None = None
@@ -209,14 +178,12 @@ class Interactions:
         self,
         *,
         permission_policy: PermissionPolicy | None = None,
-        elicitation_policy: ElicitationPolicy | None = None,
         sampling_policy: SamplingPolicy | None = None,
         filesystem_policy: FilesystemPolicy | None = None,
         terminal_policy: TerminalPolicy | None = None,
         handlers: InteractionHandlers | None = None,
     ) -> None:
         self.permission_policy = permission_policy or PermissionPolicy()
-        self.elicitation_policy = elicitation_policy or ElicitationPolicy()
         self.sampling_policy = sampling_policy or SamplingPolicy()
         self.filesystem_policy = filesystem_policy or FilesystemPolicy()
         self.terminal_policy = terminal_policy or TerminalPolicy()
@@ -232,7 +199,6 @@ class Interactions:
             name
             in {
                 "permission_policy",
-                "elicitation_policy",
                 "sampling_policy",
                 "filesystem_policy",
                 "terminal_policy",
@@ -296,44 +262,6 @@ class Interactions:
             return PermissionResult(
                 False, await self._record(_deny("permission", "handler_error"))
             )
-
-    async def elicitate(self, request: ElicitationRequest) -> ElicitationResult:
-        if self.elicitation_policy.mode == "deny" or self.handlers.elicitation is None:
-            return ElicitationResult(
-                False, receipt=await self._record(_deny("elicitation"))
-            )
-        try:
-            value = await _resolve(self.handlers.elicitation(request))
-            if isinstance(value, ElicitationResult):
-                return ElicitationResult(
-                    value.accepted,
-                    value.value,
-                    await self._record(
-                        _receipt(
-                            "elicitation",
-                            "allow" if value.accepted else "deny",
-                            "handler_decision",
-                        )
-                    ),
-                )
-            return ElicitationResult(
-                True,
-                value,
-                await self._record(
-                    _receipt("elicitation", "allow", "handler_decision")
-                ),
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            return ElicitationResult(
-                False, receipt=await self._record(_deny("elicitation", "handler_error"))
-            )
-
-    async def elicit(self, request: ElicitationRequest) -> ElicitationResult:
-        """Alias using the protocol's conventional verb."""
-
-        return await self.elicitate(request)
 
     async def sample(self, request: SamplingRequest) -> SamplingResult:
         if self.sampling_policy.mode == "deny" or self.handlers.sampling is None:
@@ -891,10 +819,6 @@ class AllowedCommands:
 
 __all__ = [
     "AllowedCommands",
-    "ElicitationCallback",
-    "ElicitationHandler",
-    "ElicitationRequest",
-    "ElicitationResult",
     "FilesystemHandler",
     "FilesystemOperation",
     "FilesystemRequest",

@@ -375,6 +375,54 @@ class EvidenceConflict(_FrozenModel):
     wire: Observation[_JsonValue]
 
 
+class ToolCallAttempt(_FrozenModel):
+    """One wire-level attempt belonging to a logical tool call."""
+
+    attempt_index: int = _Field(ge=0)
+    jsonrpc_id: Observation[_JsonRpcId] = _Field(default_factory=_not_emitted)
+    request_state: Observation[str] = _Field(default_factory=_not_emitted)
+    continuation_state: Observation[str] = _Field(default_factory=_not_emitted)
+    input_responses: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
+    operation_params: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
+    input_required: bool = False
+    result: Observation[ToolResult] = _Field(default_factory=_not_emitted)
+    raw_result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
+    status: ToolCallStatus = ToolCallStatus.INCOMPLETE
+    sequence_start: int = _Field(ge=0)
+    sequence_end: int = _Field(ge=0)
+    timing: TraceTiming = _Field(default_factory=TraceTiming)
+
+    @_model_validator(mode="after")
+    def _sequence_range(self) -> ToolCallAttempt:
+        if self.sequence_end < self.sequence_start:
+            raise ValueError("attempt sequence_end cannot precede sequence_start")
+        return self
+
+
+class ProtocolCallAttempt(_FrozenModel):
+    """One wire-level attempt belonging to a prompt or resource call."""
+
+    attempt_index: int = _Field(ge=0)
+    jsonrpc_id: Observation[_JsonRpcId] = _Field(default_factory=_not_emitted)
+    request_state: Observation[str] = _Field(default_factory=_not_emitted)
+    continuation_state: Observation[str] = _Field(default_factory=_not_emitted)
+    input_responses: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
+    operation_params: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
+    input_required: bool = False
+    result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
+    raw_result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
+    status: TraceStatus = TraceStatus.INCOMPLETE
+    sequence_start: int = _Field(ge=0)
+    sequence_end: int = _Field(ge=0)
+    timing: TraceTiming = _Field(default_factory=TraceTiming)
+
+    @_model_validator(mode="after")
+    def _sequence_range(self) -> ProtocolCallAttempt:
+        if self.sequence_end < self.sequence_start:
+            raise ValueError("attempt sequence_end cannot precede sequence_start")
+        return self
+
+
 class ToolCallEntry(TraceEntryBase):
     kind: _Literal["tool_call"] = "tool_call"
     call_id: str = _Field(min_length=1, max_length=256)
@@ -391,6 +439,7 @@ class ToolCallEntry(TraceEntryBase):
     reported: Observation[ReportedToolCall] = _Field(default_factory=_not_emitted)
     wire: Observation[WireToolCall] = _Field(default_factory=_not_emitted)
     conflicts: tuple[EvidenceConflict, ...] = ()
+    attempts: tuple[ToolCallAttempt, ...] = ()
 
 
 class ProtocolKind(str, _Enum):
@@ -429,6 +478,9 @@ class ProtocolEntry(TraceEntryBase):
     response: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     error: Observation[ProtocolErrorInfo] = _Field(default_factory=_not_emitted)
     http: Observation[HttpExchange] = _Field(default_factory=_not_emitted)
+    operation_kind: _Literal["prompt", "resource"] | None = None
+    operation_name: Observation[str] = _Field(default_factory=_not_emitted)
+    attempts: tuple[ProtocolCallAttempt, ...] = ()
 
 
 class TransportEntry(TraceEntryBase):
@@ -602,6 +654,27 @@ class InteractionEntry(TraceEntryBase):
     response: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
 
 
+class ElicitationEntry(TraceEntryBase):
+    """One keyed elicitation embedded in an MRTR input-required round."""
+
+    kind: _Literal["elicitation"] = "elicitation"
+    server: str | None = _Field(default=None, min_length=1, max_length=256)
+    operation_kind: _Literal["tool", "prompt", "resource"]
+    operation_name: str = _Field(min_length=1, max_length=256)
+    logical_operation_id: str = _Field(min_length=1, max_length=256)
+    round_index: int = _Field(ge=1)
+    request_key: str = _Field(min_length=1, max_length=256)
+    mode: _Literal["form", "url"]
+    message: Observation[str] = _Field(default_factory=_not_emitted)
+    requested_schema: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
+    url: Observation[str] = _Field(default_factory=_not_emitted)
+    elicitation_id: Observation[str] = _Field(default_factory=_not_emitted)
+    request_state: Observation[str] = _Field(default_factory=_not_emitted)
+    input_responses: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
+    action: _Literal["accept", "decline", "cancel"] | None = None
+    content: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
+
+
 class WorkspaceEntry(TraceEntryBase):
     kind: _Literal["workspace"] = "workspace"
     change: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
@@ -718,6 +791,7 @@ TraceEntry: _TypeAlias = _Annotated[
     | InitializationEntry
     | UsageEntry
     | InteractionEntry
+    | ElicitationEntry
     | ProcessEntry
     | WorkspaceEntry
     | ArtifactEntry
@@ -805,6 +879,14 @@ class TraceView(_FrozenModel):
         )
 
     @property
+    def elicitations(self) -> tuple[ElicitationEntry, ...]:
+        """Return keyed elicitation interactions correlated to MRTR rounds."""
+
+        return tuple(
+            item for item in self.timeline if isinstance(item, ElicitationEntry)
+        )
+
+    @property
     def processes(self) -> tuple[ProcessEntry, ...]:
         return tuple(item for item in self.timeline if isinstance(item, ProcessEntry))
 
@@ -886,6 +968,8 @@ for _model in (
     ToolResult,
     ReportedToolCall,
     WireToolCall,
+    ProtocolCallAttempt,
+    ToolCallAttempt,
     EvidenceConflict,
     ToolCallEntry,
     ProtocolErrorInfo,
@@ -900,6 +984,7 @@ for _model in (
     InitializationValue,
     LifecycleEntry,
     InteractionEntry,
+    ElicitationEntry,
     WorkspaceEntry,
     ArtifactEntry,
     EvaluationEntry,
@@ -927,6 +1012,7 @@ __all__ = [
     "CorrelationState",
     "DiagnosticEntry",
     "DirectTrace",
+    "ElicitationEntry",
     "EvaluationEntry",
     "EvidenceCapture",
     "EvidenceConflict",
@@ -943,6 +1029,7 @@ __all__ = [
     "OpenCodeTrace",
     "PiTrace",
     "ProcessEntry",
+    "ProtocolCallAttempt",
     "ProtocolEntry",
     "ProtocolErrorInfo",
     "ProtocolKind",
@@ -954,6 +1041,7 @@ __all__ = [
     "ReportedToolCall",
     "RuntimeTraceInfo",
     "SafeHttpHeader",
+    "ToolCallAttempt",
     "ToolCallEntry",
     "ToolCallStatus",
     "ToolResult",

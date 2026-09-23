@@ -77,11 +77,11 @@ def validate_mcp_config(
                 )
             ):
                 errors.append(f"server {name}: env must be a string object")
-        elif typ in ("http", "sse"):
+        elif typ == "http":
             if not isinstance(server.get("url"), str) or not server["url"].startswith(
                 ("http://", "https://")
             ):
-                errors.append(f"server {name}: HTTP/SSE url is required")
+                errors.append(f"server {name}: HTTP url is required")
             if "headers" in server and (
                 not isinstance(server["headers"], dict)
                 or not all(

@@ -49,13 +49,7 @@ from .types import (
     InProcessServer as _InProcessServer,
 )
 from .types import (
-    SSEServer as _SSEServer,
-)
-from .types import (
     StdioServer as _StdioServer,
-)
-from .types import (
-    TrustLevel as _TrustLevel,
 )
 
 _JsonValue: _TypeAlias = (
@@ -1072,34 +1066,6 @@ class FaultInjector:
             environment=environment,
             cwd=source_root,
         )
-
-    def sse_server(self, *, name: str = "sse-fault") -> _SSEServer:
-        """Start a loopback SSE fixture with literal event-data faults.
-
-        Call :meth:`close_fixture` after the client closes. The returned
-        ``SSEServer`` is explicitly marked as an SDK loopback endpoint.
-        """
-
-        from .testing_wire import start_sse_fixture
-
-        self.close_fixture()
-        config = {
-            "malformed_methods": sorted(self.malformed_methods),
-            "partial_methods": sorted(self.partial_methods),
-            "invalid_result_methods": sorted(self.invalid_result_methods),
-            "disconnect_methods": sorted(self.disconnect_methods),
-            "duplicate_id_methods": sorted(self.duplicate_id_methods),
-            "reordered_methods": sorted(self.reordered_methods),
-            "process_crash_methods": sorted(self.process_crash_methods),
-            "oversized_methods": self.oversized_methods,
-            "protocol_errors": {
-                method: {"code": code, "message": message}
-                for method, (code, message) in self.protocol_errors.items()
-            },
-        }
-        url, close = start_sse_fixture(config)
-        self._http_close = close
-        return _SSEServer(name=name, url=url, trust=_TrustLevel.SDK_LOOPBACK)
 
     def close_fixture(self) -> None:
         close, self._http_close = self._http_close, None

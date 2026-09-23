@@ -11,6 +11,7 @@ from pydantic import field_validator as _field_validator
 from pydantic import model_serializer as _model_serializer
 from pydantic import model_validator as _model_validator
 
+from ..elicitation import ElicitationPlan as _ElicitationPlan
 from .base import (
     ArtifactPolicy,
     AudioContent,
@@ -94,12 +95,6 @@ class HTTPServer(ServerDefinition):
     headers: _Mapping[str, SecretReference | str] = _Field(default_factory=dict)
 
 
-class SSEServer(ServerDefinition):
-    kind: _Literal["sse"] = "sse"
-    url: str = _Field(min_length=1)
-    headers: _Mapping[str, SecretReference | str] = _Field(default_factory=dict)
-
-
 class InProcessServer(ServerDefinition):
     """Runtime-only server descriptor; the factory is excluded from serialization."""
 
@@ -123,7 +118,7 @@ class InProcessServer(ServerDefinition):
 
 
 ServerValue = _Annotated[
-    StdioServer | HTTPServer | SSEServer | InProcessServer,
+    StdioServer | HTTPServer | InProcessServer,
     _Field(discriminator="kind"),
 ]
 
@@ -374,10 +369,6 @@ class PermissionPolicy(FrozenModel):
     mode: _Literal["deny", "prompt", "allow"] = "deny"
 
 
-class ElicitationPolicy(FrozenModel):
-    mode: _Literal["deny", "allow"] = "deny"
-
-
 class SamplingPolicy(FrozenModel):
     mode: _Literal["deny", "allow"] = "deny"
 
@@ -479,7 +470,6 @@ class _ExecutionSpecBase(FrozenModel):
     workspace: WorkspacePolicy = _Field(default_factory=WorkspacePolicy)
     tool_policy: ToolPolicy = _Field(default_factory=RestrictiveToolPolicy)
     permission_policy: PermissionPolicy = _Field(default_factory=PermissionPolicy)
-    elicitation_policy: ElicitationPolicy = _Field(default_factory=ElicitationPolicy)
     sampling_policy: SamplingPolicy = _Field(default_factory=SamplingPolicy)
     filesystem_policy: FilesystemPolicy = _Field(default_factory=FilesystemPolicy)
     terminal_policy: TerminalPolicy = _Field(default_factory=TerminalPolicy)
@@ -553,6 +543,21 @@ class AgentSpec(_ExecutionSpecBase):
     harness: HarnessSpec | None = None
     harness_profile: HarnessProfileRef | None = None
     message: UserMessage | None = None
+    elicitation: _ElicitationPlan | None = None
+    elicitation_round_limit: int = 10
+
+    @_field_validator("elicitation_round_limit", mode="before")
+    @classmethod
+    def _validate_elicitation_round_limit(cls, value: object) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError("elicitation_round_limit must be a positive integer")
+        return value
+
+    @_model_validator(mode="after")
+    def _validate_elicitation_plan(self) -> AgentSpec:
+        if self.elicitation is not None and not self.elicitation.is_complete:
+            raise ValueError("elicitation plan must be complete")
+        return self
 
     @_model_validator(mode="after")
     def _one_harness_source(self) -> AgentSpec:
@@ -601,7 +606,6 @@ __all__ = [
     "ContentBlock",
     "DirectOperation",
     "DirectSpec",
-    "ElicitationPolicy",
     "EvaluationRegistration",
     "ExecutionSpec",
     "FilesystemPolicy",
@@ -623,7 +627,6 @@ __all__ = [
     "Ping",
     "ReadResource",
     "RestrictiveToolPolicy",
-    "SSEServer",
     "SamplingPolicy",
     "ServerBinding",
     "ServerDefinition",

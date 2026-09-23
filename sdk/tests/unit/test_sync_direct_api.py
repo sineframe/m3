@@ -12,13 +12,13 @@ from mcp.server.lowlevel import Server
 from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import ListToolsResult
 
+from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
 from m3.errors import OperationCancelled, UnsupportedFeature
 from m3.harness import HarnessAdapterRegistry, HarnessStartupError
 from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from m3.sync_api import DirectClient, MCPTestKit, _adapt_callback
 from m3.types import (
-    AgentSpec,
     ClaudeCode,
     InProcessServer,
     RevisionSelection,
@@ -121,6 +121,24 @@ def test_sync_direct_does_not_expose_async_client_and_matches_supported_surface(
     assert not isinstance(client, AsyncDirectClient)
     assert not hasattr(client, "_session")
     kit.close()
+
+
+def test_sync_direct_mrtr_signatures_match_async_operation_options() -> None:
+    from m3.async_api import AsyncDirectClient
+
+    for name in ("read_resource", "get_prompt", "call_tool"):
+        sync_parameters = inspect.signature(getattr(DirectClient, name)).parameters
+        async_parameters = inspect.signature(
+            getattr(AsyncDirectClient, name)
+        ).parameters
+        assert list(sync_parameters) == list(async_parameters)
+        assert {
+            parameter: sync_parameters[parameter].default
+            for parameter in sync_parameters
+        } == {
+            parameter: async_parameters[parameter].default
+            for parameter in async_parameters
+        }
 
 
 def test_nested_and_repeated_sync_kit_lifecycles_leave_no_portal_threads() -> None:

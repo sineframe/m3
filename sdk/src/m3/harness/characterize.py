@@ -15,11 +15,37 @@ import sys
 import tempfile
 from collections.abc import Sequence
 
+from .contracts import HarnessInteractionCapabilities
+
 # Capability help is untrusted subprocess output.  Keep a bounded amount so a
 # broken binary cannot make characterization retain unbounded data, while
 # leaving enough room for real-world help text where a capability may appear
 # well after the first few hundred characters.
 MAX_PROBE_OUTPUT = 64 * 1024
+
+
+def interaction_capabilities_for(harness: str) -> HarnessInteractionCapabilities:
+    """Return the evidence-backed native interaction declaration.
+
+    Version and help output can establish that a process starts, but cannot
+    prove request-key preservation, round batching, response delivery, or
+    retry ownership.  Until a native interaction probe proves those facts,
+    every vendor harness remains unsupported for automatic modern MRTR.
+    """
+
+    if harness not in {"pi", "codex", "claude", "opencode", "acp"}:
+        raise ValueError("unknown harness")
+    if harness == "pi":
+        return HarnessInteractionCapabilities(
+            supports_elicitation=True,
+            preserves_request_keys=True,
+            preserves_multi_request_rounds=True,
+            supports_interaction_cancellation=True,
+            supports_interaction_resume=False,
+            supports_idempotent_response_delivery=False,
+            retry_owner="m3",
+        )
+    return HarnessInteractionCapabilities(retry_owner="harness")
 
 
 def _probe(executable: str, args: Sequence[str]) -> str:
@@ -123,4 +149,9 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["MAX_PROBE_OUTPUT", "characterize", "main"]
+__all__ = [
+    "MAX_PROBE_OUTPUT",
+    "characterize",
+    "interaction_capabilities_for",
+    "main",
+]

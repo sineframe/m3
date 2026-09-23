@@ -5,8 +5,48 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 import time
+
+control_socket: socket.socket | None = None
+control_host = os.environ.get("M3_PI_CONTROL_HOST")
+control_port = os.environ.get("M3_PI_CONTROL_PORT")
+control_session = os.environ.get("M3_PI_CONTROL_SESSION")
+control_token = os.environ.get("M3_PI_CONTROL_TOKEN")
+if (
+    control_host
+    and control_port
+    and control_session
+    and control_token
+    and os.environ.get("M3_PI_FIXTURE_NO_CONTROL") != "1"
+):
+    control_socket = socket.create_connection(
+        (control_host, int(control_port)), timeout=5
+    )
+    control_socket.sendall(
+        (
+            json.dumps(
+                {
+                    "type": "hello",
+                    "version": 1,
+                    "session_id": control_session,
+                    "token": control_token,
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode()
+    )
+    hello = b""
+    while not hello.endswith(b"\n"):
+        hello += control_socket.recv(4096)
+    if json.loads(hello).get("accepted") is not True:
+        raise RuntimeError("Pi control handshake failed")
+
+if "--version" in sys.argv:
+    print("0.85.1")
+    raise SystemExit(0)
 
 if "--help" in sys.argv:
     print("pi --mode rpc --help")

@@ -214,8 +214,8 @@ cleanup and finalizes the trace, but does not start or stop a deployed HTTP
 service; keep operations inside the client context and inspect finalized trace
 data after closure.
 
-Use `SSEServer` only for an existing legacy HTTP+SSE endpoint. Use `StdioServer`
-when the project owns a local command and should test its subprocess boundary.
+Use `HTTPServer` for Streamable HTTP endpoints. Use `StdioServer` when the
+project owns a local command and should test its subprocess boundary.
 
 ## Stdio: local command
 
@@ -508,3 +508,24 @@ execution or turn and aggregate saved decisions by `metadata.harness_config`.
 In a script, use `kit.agents([...], trials=N)` and pass the same explicit
 `case_id` for every selection of a logical case. See the
 [SDK evaluation guide](../../../sdk/docs/evaluations.md) for a worked example.
+
+## Elicitation
+
+Use the repository's [Elicitation guide](../../../sdk/docs/elicitation.md) for
+the public API inventory, exact helper signatures, response binding, direct
+tool/prompt/resource examples, agent action binding, manual input, managed
+pending/respond methods, URL assertions, round limits, trace assertions, and
+the current support boundary.
+
+The maintained runnable examples keep the server fixture separate from M3 test
+code. Start with
+[modern_mrtr_server.py](../../../sdk/examples/servers/modern_mrtr_server.py)
+and the links in the guide; do not invent an in-test protocol server or copy
+an incomplete pseudo-test.
+
+For testing workflow, remember that a planned call owns its retries and a
+capture proxy only observes. Assert one logical operation and its ordered
+attempts in the finalized trace. Managed Pi delivery is verified for the
+same-worker form, multi-round, and URL paths against installed Pi 0.85.1 with
+SQLiteExecutionStore. Worker/process restart redelivery and recovery remain
+unsupported guarantees and must terminalize when delivery is ambiguous.

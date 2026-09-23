@@ -8,7 +8,6 @@ from m3 import (
     HTTPServer,
     RevisionSelection,
     ServerProfileRef,
-    SSEServer,
     StdioServer,
 )
 from m3.services.profiles import (
@@ -70,11 +69,6 @@ def test_saved_server_profile_uses_app_transport_and_trust_semantics(
                         "url": "https://example.test/mcp",
                         "headers": {"Authorization": "${TOKEN}"},
                     },
-                    "sse": {
-                        "type": "sse",
-                        "url": "https://example.test/events",
-                        "headers": {"X-Mode": "literal"},
-                    },
                 }
             },
             profile_id="server-transports",
@@ -95,22 +89,12 @@ def test_saved_server_profile_uses_app_transport_and_trust_semantics(
             ),
             store,
         ).value
-        sse = resolve_server_reference(
-            ServerProfileRef(
-                profile_id="server-transports",
-                server_name="sse",
-                revision=RevisionSelection(mode="latest"),
-            ),
-            store,
-        ).value
         assert isinstance(stdio, StdioServer)
         assert stdio.args == ("--safe",)
         assert stdio.cwd == "/tmp/project"
         assert stdio.trust.value == "public"
         assert isinstance(http, HTTPServer)
         assert http.headers["Authorization"].name == "TOKEN"
-        assert isinstance(sse, SSEServer)
-        assert sse.headers["X-Mode"] == "literal"
     finally:
         store.close()
 

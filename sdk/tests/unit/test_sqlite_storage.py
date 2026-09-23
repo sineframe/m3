@@ -8,10 +8,17 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
+from m3.elicitation import (
+    ElicitationResponse,
+    FormElicitationRequest,
+    PendingElicitationRound,
+)
 from m3.events import EventFactory
 from m3.storage import (
     ArtifactNotFound,
@@ -112,6 +119,36 @@ else:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_sqlite_managed_input_uses_expanded_database_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    cwd = tmp_path / "cwd"
+    home.mkdir()
+    cwd.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(cwd)
+
+    store = SQLiteExecutionStore("~/m3.sqlite")
+    expected = home / "m3.sqlite"
+    assert store.database == expected
+    assert store.managed_input_store.database == expected
+    assert store.artifacts.database == expected
+
+    execution_id = ExecutionId("managed-expanded-path")
+    store.create(ExecutionState(execution_id=execution_id))
+    command = store.enqueue_command(
+        execution_id,
+        payload={"human_input": "managed"},
+    )
+    claimed = store.claim_next("worker-a", lease_seconds=0.01)
+    assert claimed is not None and claimed[0].id == command.id
+    _, lease = claimed
+    time.sleep(0.03)
+    assert store.mark_managed_recovery_unavailable_if_lease_lost(lease)
+    assert store.get_snapshot(execution_id).outcome is ExecutionOutcome.FAILED
 
 
 def test_events_are_commit_gated_and_snapshots_reload(tmp_path: Path) -> None:
@@ -250,6 +287,158 @@ def test_active_delete_rejected_and_terminal_delete_cascades(tmp_path: Path) -> 
     assert store.get_snapshot(execution_id).lifecycle is ExecutionStatus.FINISHED  # type: ignore[union-attr]
     store.delete_execution(execution_id)
     assert store.get_snapshot(execution_id) is None
+
+
+def test_terminal_delete_removes_managed_input_rows_atomically(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    execution_id, factory = _created(store, "managed-delete")
+    other_id, other_factory = _created(store, "managed-retained")
+    managed = store.managed_input_store
+
+    def create_round(execution: ExecutionId, round_id: str) -> None:
+        managed.create_round(
+            PendingElicitationRound(
+                round_id=round_id,
+                execution_id=execution.root,
+                logical_operation_id=f"operation-{round_id}",
+                server="shipping",
+                operation_kind="tool",
+                operation_name="book",
+                requests={
+                    "address": FormElicitationRequest(
+                        request_key="address",
+                        message="Address",
+                        requested_schema={"type": "object"},
+                    )
+                },
+                created_at=datetime.now(timezone.utc),
+            ),
+            round_index=0,
+            round_limit=10,
+            owner_id=f"worker-{round_id}",
+            lease_seconds=30,
+        )
+
+    create_round(execution_id, "round-managed-delete")
+    create_round(other_id, "round-managed-retained")
+    record = managed.get_round(execution_id.root, "round-managed-delete")
+    assert record is not None
+    managed.submit_responses(
+        execution_id.root,
+        record.round_id,
+        {
+            "address": ElicitationResponse(
+                action="accept", content={"value": "exact-value"}
+            )
+        },
+        owner_id=record.owner_id,
+        lease_token=record.lease_token,
+        response_idempotency_key="managed-delete-response",
+    )
+    other_record = managed.get_round(other_id.root, "round-managed-retained")
+    assert other_record is not None
+
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM m3_managed_input_diagnostics WHERE execution_id=?",
+                (execution_id.root,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            "exact-value"
+            in connection.execute(
+                "SELECT responses_json FROM m3_managed_input_rounds WHERE execution_id=?",
+                (execution_id.root,),
+            ).fetchone()[0]
+        )
+
+    store.append_events(
+        [
+            factory.create(
+                EventKind.EXECUTION_FINISHED,
+                payload={"outcome": ExecutionOutcome.COMPLETED.value},
+            )
+        ]
+    )
+    store.append_events(
+        [
+            other_factory.create(
+                EventKind.EXECUTION_FINISHED,
+                payload={"outcome": ExecutionOutcome.COMPLETED.value},
+            ),
+        ]
+    )
+
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER abort_managed_delete
+            BEFORE DELETE ON v2_executions
+            WHEN OLD.id = 'managed-delete'
+            BEGIN
+                SELECT RAISE(ABORT, 'rollback delete');
+            END
+            """
+        )
+    with pytest.raises(Exception, match="rollback delete"):
+        store.delete_execution(execution_id)
+
+    assert store.get_snapshot(execution_id) is not None
+    assert managed.get_round(execution_id.root, record.round_id) is not None
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM m3_managed_input_diagnostics WHERE execution_id=?",
+                (execution_id.root,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            "exact-value"
+            in connection.execute(
+                "SELECT responses_json FROM m3_managed_input_rounds WHERE execution_id=?",
+                (execution_id.root,),
+            ).fetchone()[0]
+        )
+        connection.execute("DROP TRIGGER abort_managed_delete")
+
+    store.delete_execution(execution_id)
+
+    assert store.get_snapshot(execution_id) is None
+    assert managed.get_round(execution_id.root, record.round_id) is None
+    assert managed.get_round(other_id.root, other_record.round_id) is not None
+    with sqlite3.connect(tmp_path / "m3.sqlite") as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM m3_managed_input_diagnostics WHERE execution_id=?",
+                (execution_id.root,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM m3_managed_input_rounds WHERE execution_id=?",
+                (execution_id.root,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM m3_managed_input_rounds WHERE execution_id=?",
+                (other_id.root,),
+            ).fetchone()[0]
+            == 1
+        )
+        persisted = " ".join(
+            repr(tuple(row))
+            for table in ("m3_managed_input_diagnostics", "m3_managed_input_rounds")
+            for row in connection.execute(f"SELECT * FROM {table}")
+        )
+        assert "exact-value" not in persisted
 
 
 def test_atomic_claim_and_durable_cancel(tmp_path: Path) -> None:

@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 import m3
+from m3._types.specs import AgentSpec
 from m3.errors import UnsupportedFeature
 from m3.matrix import (
     HarnessCase,
@@ -22,7 +23,6 @@ from m3.matrix import (
 )
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     CallTool,
     ClaudeCode,
     DirectSpec,

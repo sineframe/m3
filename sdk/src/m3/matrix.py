@@ -32,12 +32,10 @@ from typing import (
 from pydantic import Field as _Field
 from pydantic import model_validator as _model_validator
 
+from ._types.specs import AgentSpec as _AgentSpec
 from .errors import UnsupportedFeature as _UnsupportedFeature
 from .types import (
     ACPAgent as _ACPAgent,
-)
-from .types import (
-    AgentSpec as _AgentSpec,
 )
 from .types import (
     CallTool as _CallTool,

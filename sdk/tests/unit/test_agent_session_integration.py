@@ -6,6 +6,7 @@ import pytest
 from mcp import types as mcp_types
 from mcp.server.lowlevel import Server
 
+from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
 from m3.harness import (
     DeterministicHarnessAdapter,
@@ -15,7 +16,6 @@ from m3.harness import (
 from m3.sync_api import MCPTestKit
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     ClaudeCode,
     EventKind,
     EventOrigin,

@@ -464,7 +464,6 @@ _SAFE_VALIDATION_LOCATIONS = frozenset(
         "workspace",
         "tool_policy",
         "permission_policy",
-        "elicitation_policy",
         "sampling_policy",
         "filesystem_policy",
         "terminal_policy",

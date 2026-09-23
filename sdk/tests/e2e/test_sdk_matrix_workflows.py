@@ -10,10 +10,10 @@ from typing import Any
 import pytest
 
 from m3 import MCPTestKit, expect
+from m3._types.specs import AgentSpec
 from m3.sync_api import ToolCallResult
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     FullToolPolicy,
     RestrictiveToolPolicy,
     ServerBinding,

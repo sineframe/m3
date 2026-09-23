@@ -739,7 +739,11 @@ def test_selected_agent_submit_cancel_uses_real_execution_handle() -> None:
                 "cancel-me", server=StdioServer(name="unused", command="echo"), tools=[]
             )
             await asyncio.wait_for(adapter.started.wait(), timeout=5)
-            assert (await handle.snapshot()).lifecycle.value in {"starting", "running"}
+            assert (await handle.snapshot()).lifecycle.value in {
+                "starting",
+                "running",
+                "running_turn",
+            }
             await handle.cancel()
             result = await handle.result(timeout=5)
             assert result.snapshot.outcome.value == "cancelled"

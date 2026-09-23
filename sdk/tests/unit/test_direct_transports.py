@@ -16,14 +16,12 @@ import m3.transport.direct as direct_module
 from m3.transport.direct import (
     EndpointTrustError,
     EnvironmentSecretResolver,
-    SSEConnection,
     StreamableHTTPConnection,
     TransportConnectionError,
-    remote_connection,
     resolve_headers,
     validate_endpoint_trust,
 )
-from m3.types import HTTPServer, SecretReference, SSEServer, TrustLevel
+from m3.types import HTTPServer, SecretReference, TrustLevel
 
 
 def test_secret_references_resolve_only_into_headers_and_never_evidence(
@@ -130,11 +128,6 @@ def test_untrusted_endpoints_reject_metadata_private_and_ipv6_addresses(
     server = HTTPServer(name="local", url="https://example.test/mcp")
     with pytest.raises(EndpointTrustError):
         validate_endpoint_trust(server, resolve_host=lambda host, port: (address,))
-
-
-def test_remote_connection_selects_the_legacy_sse_adapter() -> None:
-    server = SSEServer(name="legacy", url="https://example.test/sse")
-    assert isinstance(remote_connection(server), SSEConnection)
 
 
 def test_endpoint_evidence_removes_credentials_and_query_tokens() -> None:
@@ -244,7 +237,6 @@ def test_remote_transport_forwards_official_client_session_options(
         dispatcher = None
         options: dict[str, Any] = {
             "sampling_callback": callback,
-            "elicitation_callback": callback,
             "list_roots_callback": callback,
             "logging_callback": callback,
             "message_handler": callback,

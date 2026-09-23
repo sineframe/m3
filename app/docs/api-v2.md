@@ -17,11 +17,17 @@ Other mutation requests receive `405` with `{"detail":"viewer API is read-only"}
 ## What API v2 can do
 
 API v2 reads and manages M3 executions in the SQLite store selected for
-the app. It can accept direct or agent execution specs, submit them to the
+the app. It can accept `DirectSpec` or `AgentSpec` execution specs, submit them to the
 configured SDK worker (embedded by default), list and inspect saved executions,
 cancel active executions, delete terminal executions, read bounded evidence,
 and summarize evaluations that are already saved. It does not treat a pytest
 result or a normal Python assertion as an execution or evaluation result.
+
+The JSON API v2 `ExecutionSpec` discriminator still has the `DirectSpec` and
+`AgentSpec` schema variants. Those names are part of the API-v2 wire contract;
+there is no replacement discriminator or variant. `AgentSpec` is not a Python
+SDK construction surface for ordinary test authors, but API-v2 clients must
+continue to send and receive the existing `DirectSpec`/`AgentSpec` JSON shapes.
 
 `GET /api/v2/runs` returns an unpaginated, newest first list of safe pytest
 run summaries. Each item contains `run_id`, `created_at`, `finished_at`,
@@ -51,7 +57,7 @@ are test outcomes; they are not automatically saved as evaluation decisions.
 
 ### API-created execution flow
 
-1. Send a direct or agent spec to `POST /api/v2/executions`.
+1. Send a `DirectSpec` or `AgentSpec` to `POST /api/v2/executions`.
 2. Poll the returned ID until its snapshot is terminal.
 3. Read the saved report with `GET /api/v2/executions/{execution_id}/report`.
 
@@ -191,21 +197,28 @@ fields are rejected. `spec.kind` is the discriminator:
 
 Both variants also support `run_id`, `case_id`, `protocol`, positive
 `timeout_seconds`, `goal`, `evaluations` declarations (saved in the spec only), artifact/workspace/
-tool/permission/elicitation/sampling/filesystem/terminal policies, and JSON
+tool/permission/sampling/filesystem/terminal policies, and JSON
 `metadata` map whose values are JSON scalars. Direct specs add `validate_schemas`; agent specs add the optional
 `message`. Server bindings take exactly one of a `stdio`, `streamable_http`, or
-`sse` server, or a server profile reference. `in_process` is runtime-only and
+an HTTP server, or a server profile reference. `in_process` is runtime-only and
 is rejected by this JSON API. Harness values use the `claude_code`, `opencode`,
 or `acp` discriminator, or a harness profile reference.
 
 Policy kinds and modes are `workspace.kind` = `temporary`, `copy`,
 `git_worktree`, `read_only`, or `in_place`; `tool_policy.kind` = `restrictive`,
 `full`, or `native`; `permission_policy.mode` = `deny`, `prompt`, or `allow`;
-`elicitation_policy.mode` and `sampling_policy.mode` = `deny` or `allow`;
+`sampling_policy.mode` = `deny` or `allow`;
 `filesystem_policy.mode` = `deny`, `read_only`, or `read_write`; and
 `terminal_policy.mode` = `deny` or `allow`. Risk-acknowledgement fields are
 required for in-place workspaces and full tool access. `case_id` identifies a
 logical case across trials; `execution_id` identifies one trial.
+
+Action-bound MCP elicitation plans are a Python SDK operation feature: attach
+`elicitation=` to a direct call, `agent.run`, or `session.send`. They are not a
+JSON API-v2 policy field, and API-v2 currently does not expose the verified
+automatic Pi action-bound adapter. Use the SDK
+[Elicitation guide](../../sdk/docs/elicitation.md) and maintained examples for
+that protocol surface.
 
 Direct operation request and result discriminators are:
 

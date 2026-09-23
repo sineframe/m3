@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.harness import (
     DeterministicACPAdapter,
     FakeClaudeCodeAdapter,
@@ -26,7 +27,6 @@ from m3.interaction_handlers import (
 from m3.server_group import ServerGroupManager
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     AudioContent,
     PermissionPolicy,
     RestrictiveToolPolicy,

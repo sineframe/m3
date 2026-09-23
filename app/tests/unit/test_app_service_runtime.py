@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from m3 import AgentSpec, EventKind, ExecutionId, ExecutionOutcome
+from m3 import EventKind, ExecutionId, ExecutionOutcome
+from m3._types.specs import AgentSpec
 from m3.execution_trace import ExecutionTraceRecorder
 from m3.harness import HarnessAdapterRegistry
 from m3.services.acp_probes import ACPProbeKind, ACPProbeRequest

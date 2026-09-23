@@ -1329,11 +1329,6 @@ def test_malformed_present_transport_and_valid_empty_strings_are_distinguished()
     ("kind", "payload", "phase"),
     [
         (EventKind.TRANSPORT_CONNECTED, {"transport": "stdio"}, "connected"),
-        (
-            EventKind.TRANSPORT_CONNECTED,
-            {"configured_transport": "stdio", "instrumented_transport": "sse"},
-            "connected",
-        ),
         (EventKind.TRANSPORT_DISCONNECTED, {"transport": "stdio"}, "disconnected"),
     ],
 )

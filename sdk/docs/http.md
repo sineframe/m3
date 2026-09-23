@@ -227,7 +227,6 @@ does not start or stop a deployed HTTP service. The endpoint must already be
 available and keeps running after the test. Keep operations inside the client
 or session context and project the finalized trace only after closure.
 
-Streamable HTTP is the current HTTP transport. Use `SSEServer` only when
-connecting to an existing legacy HTTP+SSE endpoint. Do not hardcode protocol or
+Streamable HTTP is the supported HTTP transport. Do not hardcode protocol or
 server versions in a test unless the target project explicitly owns that
 contract.

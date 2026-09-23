@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from m3 import AgentSpec, Config, MCPTestKit, ServerValue
+from m3 import Config, MCPTestKit, ServerValue
+from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
 from m3.sync_api import ProbeKind, ProbeRequest
 

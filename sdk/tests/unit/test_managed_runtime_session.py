@@ -8,10 +8,10 @@ from typing import Any, ClassVar
 
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.agent_session import AsyncAgentSession
 from m3.errors import TransportError
 from m3.types import (
-    AgentSpec,
     ClaudeCode,
     EventKind,
     Readiness,

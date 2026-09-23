@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from m3 import AgentSpec, MCPTestKit
+from m3 import MCPTestKit
+from m3._types.specs import AgentSpec
 from m3.harness import HarnessAdapterContract
 
 

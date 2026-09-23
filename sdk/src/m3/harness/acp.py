@@ -20,12 +20,10 @@ from urllib.parse import parse_qsl, urlsplit
 from acp.client.connection import ClientSideConnection
 from acp.connection import StreamDirection
 from acp.schema import (
-    AcceptElicitationResponse,
     AllowedOutcome,
     ClientCapabilities,
     CreateElicitationResponse,
     CreateTerminalResponse,
-    DeclineElicitationResponse,
     DeniedOutcome,
     EnvVariable,
     HttpHeader,
@@ -36,7 +34,6 @@ from acp.schema import (
     ReadTextFileResponse,
     ReleaseTerminalResponse,
     RequestPermissionResponse,
-    SseMcpServer,
     TerminalOutputResponse,
     TextContentBlock,
     WaitForTerminalExitResponse,
@@ -44,8 +41,8 @@ from acp.schema import (
 )
 from pydantic import JsonValue
 
+from .._types.specs import AgentSpec
 from ..interaction_handlers import (
-    ElicitationRequest,
     FilesystemRequest,
     Interactions,
     PermissionRequest,
@@ -57,17 +54,16 @@ from ..trace.redaction import is_sensitive_key, known_secret_values
 from ..transport.capture_proxy import McpCaptureManager
 from ..types import (
     ACPAgent,
-    AgentSpec,
     FullToolPolicy,
     HTTPServer,
     NativeToolPolicy,
     RestrictiveToolPolicy,
     SecretReference,
     ServerBinding,
-    SSEServer,
     StdioServer,
     TransportKind,
 )
+from .contracts import HarnessInteractionCapabilities
 from .native import workspace_for_launch
 from .observations import (
     HarnessObservation,
@@ -344,20 +340,8 @@ class _Client:
     async def create_elicitation(
         self, message: str, mode: Any, **kwargs: Any
     ) -> CreateElicitationResponse:
-        del mode, kwargs
-        if self.interactions is None:
-            raise self._interaction("elicitation")
-        result = await self.interactions.elicit(ElicitationRequest(str(message)))
-        if not result.accepted:
-            response: AcceptElicitationResponse | DeclineElicitationResponse = (
-                DeclineElicitationResponse(action="decline")
-            )
-            self._record_interaction("elicitation", {"message": message}, response)
-            return response
-        value = result.value if isinstance(result.value, dict) else None
-        response = AcceptElicitationResponse(action="accept", content=value)
-        self._record_interaction("elicitation", {"message": message}, response)
-        return response
+        del message, mode, kwargs
+        raise self._interaction("elicitation")
 
     async def read_text_file(
         self,
@@ -700,6 +684,7 @@ class _AcpContractSession:
             supports_tool_policy=False,
             supports_streaming=True,
             supported_content_kinds=frozenset({"text"}),
+            interaction=HarnessInteractionCapabilities(),
         )
         self._session_id = "acp-pending"
         self._process: Any = None
@@ -824,7 +809,7 @@ class _AcpContractSession:
                         env=env,
                     )
                 )
-            elif config.transport.value in {"streamable_http", "sse"}:
+            elif config.transport.value == "streamable_http":
                 if not config.endpoint:
                     raise ValueError("http_mcp_endpoint_missing")
                 headers: list[HttpHeader] = []
@@ -832,18 +817,11 @@ class _AcpContractSession:
                     resolved, classified = self._server_value(str(key), value)
                     if not classified:
                         headers.append(HttpHeader(name=str(key), value=resolved))
-                if config.transport.value == "streamable_http":
-                    servers.append(
-                        HttpMcpServer(
-                            name=name, url=config.endpoint, headers=headers, type="http"
-                        )
+                servers.append(
+                    HttpMcpServer(
+                        name=name, url=config.endpoint, headers=headers, type="http"
                     )
-                else:
-                    servers.append(
-                        SseMcpServer(
-                            name=name, url=config.endpoint, headers=headers, type="sse"
-                        )
-                    )
+                )
             elif config.endpoint:
                 # SDK-hosted in-process servers are exposed as loopback HTTP
                 # endpoints by ServerGroupManager before the adapter opens.
@@ -1966,6 +1944,8 @@ def _isolated_acp_env(
 class AcpHarnessAdapter:
     """Real ACP-v1 adapter with one process and session per opened launch."""
 
+    interaction_capabilities = HarnessInteractionCapabilities()
+
     def __init__(
         self,
         manifest: Mapping[str, Any] | None = None,
@@ -1997,6 +1977,7 @@ class AcpHarnessAdapter:
                 supports_tool_policy=False,
                 supports_streaming=True,
                 supported_content_kinds=frozenset({"text"}),
+                interaction=self.interaction_capabilities,
             )
         return self._capabilities
 
@@ -2259,11 +2240,11 @@ def _probe_launch(
     transport_name = str(server.get("type", "stdio"))
     if transport_name == "http":
         transport = TransportKind.STREAMABLE_HTTP
-    elif transport_name == "sse":
-        transport = TransportKind.SSE
-    else:
+    elif transport_name == "stdio":
         transport = TransportKind.STDIO
         transport_name = "stdio"
+    else:
+        raise ValueError("unsupported_transport")
 
     command = server.get("command")
     args = tuple(str(item) for item in server.get("args") or ())
@@ -2287,8 +2268,6 @@ def _probe_launch(
             args=args,
             environment=config.environment,
         )
-    elif transport is TransportKind.SSE:
-        binding_server = SSEServer(name=name, url=str(endpoint or ""))
     else:
         binding_server = HTTPServer(name=name, url=str(endpoint or ""))
     record = ServerRecord(
@@ -2662,7 +2641,7 @@ async def full_probe(
             "calls": [],
             "nonce": nonce,
         }
-    if transport not in {"stdio", "http", "sse"}:
+    if transport not in {"stdio", "http"}:
         return {
             "status": "failed",
             "error": "unsupported_transport",

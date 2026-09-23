@@ -8,6 +8,7 @@ import pytest
 from mcp.server.lowlevel import Server
 from mcp.types import ListToolsResult
 
+from m3._types.specs import AgentSpec
 from m3.agent_session import AsyncAgentSession
 from m3.async_api import AsyncMCPTestKit
 from m3.execution_runtime import AsyncExecutionController
@@ -17,7 +18,6 @@ from m3.storage import SQLiteExecutionStore
 from m3.transport.local import current_workspace_root
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     ArtifactPolicy,
     InProcessServer,
     ServerBinding,

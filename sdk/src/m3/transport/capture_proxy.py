@@ -153,6 +153,7 @@ class McpWireEvent:
     jsonrpc_id: int | str | None = None
     method: str | None = None
     tool: str | None = None
+    params: Mapping[str, Any] | None = None
     arguments: Mapping[str, Any] | None = None
     result: Any = None
     error: Any = None
@@ -230,6 +231,7 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
             payload.get("method") if isinstance(payload.get("method"), str) else None
         )
         params = _safe_payload(payload.get("params")) or {}
+        request_params: Mapping[str, Any] | None = params or None
         tool = params.get("name") if isinstance(params.get("name"), str) else None
         raw_ref = f"{target.path.name}#{index}"
         provenance = (
@@ -262,9 +264,11 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
                 latency = max(0.0, offset_ms - started)
                 request_method = request.get("method")
                 method = request_method if isinstance(request_method, str) else method
-                request_params = _safe_payload(request.get("params")) or {}
-                request_tool = request_params.get("name")
+                request_params_value = _safe_payload(request.get("params")) or {}
+                request_tool = request_params_value.get("name")
+                request_params = request_params_value or None
                 tool = request_tool if isinstance(request_tool, str) else tool
+                params = request_params or {}
         result = payload.get("result")
         error = payload.get("error")
         arguments = params.get("arguments")
@@ -281,6 +285,7 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
                 jsonrpc_id=ident,
                 method=method,
                 tool=tool,
+                params=request_params,
                 arguments=arguments if isinstance(arguments, Mapping) else None,
                 result=result,
                 error=error,
@@ -438,10 +443,7 @@ class McpCaptureManager:
                     args=args,
                     environment={},
                 )
-            elif transport in {
-                TransportKind.STREAMABLE_HTTP.value,
-                TransportKind.SSE.value,
-            }:
+            elif transport == TransportKind.STREAMABLE_HTTP.value:
                 endpoint = getattr(configuration, "endpoint", None)
                 if not isinstance(endpoint, str) or not endpoint:
                     output.append(configuration)

@@ -9,21 +9,28 @@ from pathlib import Path
 
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.agent_session import AdapterTurn, AsyncAgentSession, HarnessTurnError
 from m3.async_api import AsyncMCPTestKit
+from m3.elicitation import expect_form
 from m3.errors import (
     CleanupError,
+    ModelValidationError,
     SessionBusy,
     SessionStillOpen,
     UnsupportedFeature,
 )
+from m3.harness.contracts import (
+    HarnessAdapterCapabilities,
+    HarnessInteractionCapabilities,
+)
 from m3.sync_api import MCPTestKit
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     ArtifactPolicy,
     ErrorCode,
     ExecutionOutcome,
+    Pi,
     ServerBinding,
     SessionForkRequest,
     StdioServer,
@@ -80,6 +87,220 @@ class FakeHarness:
 
     async def close(self) -> None:
         self.closed += 1
+
+
+class ElicitingHarness(FakeHarness):
+    capabilities = HarnessAdapterCapabilities(
+        name="fixture",
+        interaction=HarnessInteractionCapabilities(
+            supports_elicitation=True,
+            preserves_request_keys=True,
+            preserves_multi_request_rounds=True,
+            supports_interaction_cancellation=True,
+            retry_owner="harness",
+        ),
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.elicitation_arguments = None
+        self.send_arguments: dict[str, object] = {}
+
+    async def send(
+        self,
+        message,
+        *,
+        timeout=None,
+        metadata: Mapping[str, object] | None = None,
+        elicitation=None,
+        elicitation_round_limit=10,
+    ):
+        self.send_arguments = {
+            "timeout": timeout,
+            "metadata": metadata,
+            "elicitation": elicitation,
+            "elicitation_round_limit": elicitation_round_limit,
+        }
+        self.elicitation_arguments = (elicitation, elicitation_round_limit)
+        return await super().send(message, timeout=timeout, metadata=metadata)
+
+
+class ManagedPiSession:
+    session_id = "managed-pi-session"
+
+    def __init__(self, capabilities: HarnessAdapterCapabilities) -> None:
+        self.capabilities = capabilities
+        self.managed_input_runtime = None
+
+    def _set_managed_input_runtime(self, runtime: object) -> None:
+        self.managed_input_runtime = runtime
+
+    async def close(self) -> None:
+        pass
+
+
+class FakeManagedInputRuntime:
+    execution_id = "managed-execution"
+
+    def bind_turn(
+        self, session_id: str, turn_id: str, *, m3_session_id: str | None = None
+    ) -> None:
+        assert session_id == "managed-pi-session"
+        assert turn_id
+        assert m3_session_id
+
+
+class PiElicitingHarness(ElicitingHarness):
+    harness_kind = "pi"
+    managed_input_round_limit_max = 1024
+    active_session: ManagedPiSession
+
+    async def start(self, spec: AgentSpec) -> ManagedPiSession:
+        del spec
+        self.started += 1
+        self.active_session = ManagedPiSession(self.capabilities)
+        return self.active_session
+
+
+@pytest.mark.asyncio
+async def test_session_send_forwards_action_bound_plan_to_capable_adapter() -> None:
+    adapter = ElicitingHarness()
+    session = AsyncAgentSession(_spec(), adapter)
+    plan = expect_form("confirm").accept({"confirmed": True})
+
+    await session.__aenter__()
+    result = await session.send(
+        "continue",
+        elicitation=plan,
+        elicitation_round_limit=4,
+    )
+    await session.aclose()
+
+    assert result.snapshot.outcome is TurnOutcome.COMPLETED
+    assert adapter.elicitation_arguments == (plan, 4)
+
+
+@pytest.mark.asyncio
+async def test_session_send_rejects_unsupported_plan_before_adapter_dispatch() -> None:
+    adapter = FakeHarness()
+    session = AsyncAgentSession(_spec(), adapter)
+    plan = expect_form("confirm").accept({"confirmed": True})
+
+    await session.__aenter__()
+    result = await session.send("continue", elicitation=plan)
+    normal = await session.send("ordinary")
+    await session.aclose()
+
+    assert result.snapshot.outcome is TurnOutcome.FAILED
+    assert result.error is not None
+    assert result.error.code is ErrorCode.UNSUPPORTED
+    assert adapter.messages == ["ordinary"]
+    assert normal.snapshot.outcome is TurnOutcome.COMPLETED
+
+
+def test_sync_session_send_forwards_action_bound_plan() -> None:
+    adapter = ElicitingHarness()
+    plan = expect_form("confirm").accept({"confirmed": True})
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
+    session = kit.agent_session(_spec(), adapter=adapter)
+
+    with session:
+        result = session.send(
+            "continue",
+            elicitation=plan,
+            elicitation_round_limit=5,
+        )
+
+    assert result.snapshot.outcome is TurnOutcome.COMPLETED
+    assert adapter.elicitation_arguments == (plan, 5)
+    kit.close()
+
+
+@pytest.mark.asyncio
+async def test_session_send_rejects_invalid_action_round_limit() -> None:
+    session = AsyncAgentSession(_spec(), FakeHarness())
+    await session.__aenter__()
+
+    with pytest.raises(ModelValidationError, match="positive integer"):
+        await session.send("continue", elicitation_round_limit=False)
+
+    await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pi_managed_session_forwards_configured_round_limit_to_control() -> None:
+    adapter = PiElicitingHarness()
+    session = AsyncAgentSession(
+        AgentSpec(
+            harness=Pi(model="pi-test"),
+            servers=_spec().servers,
+            elicitation_round_limit=11,
+        ),
+        adapter,
+        managed_input_runtime=FakeManagedInputRuntime(),
+    )
+    await session.__aenter__()
+
+    result = await session.send("continue")
+
+    assert result.snapshot.outcome is TurnOutcome.COMPLETED
+    assert adapter.send_arguments["elicitation"] is None
+    assert adapter.send_arguments["elicitation_round_limit"] == 11
+    await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pi_managed_session_rejects_round_limit_above_control_cap() -> None:
+    adapter = PiElicitingHarness()
+    session = AsyncAgentSession(
+        AgentSpec(
+            harness=Pi(model="pi-test"),
+            servers=_spec().servers,
+            elicitation_round_limit=1025,
+        ),
+        adapter,
+        managed_input_runtime=FakeManagedInputRuntime(),
+    )
+    await session.__aenter__()
+
+    with pytest.raises(
+        ModelValidationError, match=r"managed Pi elicitation_round_limit.*1024"
+    ):
+        await session.send("continue")
+
+    assert adapter.send_arguments == {}
+    await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pi_planned_elicitation_can_exceed_managed_control_round_cap() -> None:
+    adapter = PiElicitingHarness()
+    session = AsyncAgentSession(
+        AgentSpec(harness=Pi(model="pi-test"), servers=_spec().servers), adapter
+    )
+    plan = expect_form("confirm").accept({"confirmed": True})
+    await session.__aenter__()
+
+    result = await session.send(
+        "continue", elicitation=plan, elicitation_round_limit=1025
+    )
+
+    assert result.snapshot.outcome is TurnOutcome.COMPLETED
+    assert adapter.elicitation_arguments == (plan, 1025)
+    await session.aclose()
+
+
+def test_plan_bound_agent_session_rejects_before_startup() -> None:
+    adapter = FakeHarness()
+    plan = expect_form("confirm").accept({"confirmed": True})
+    spec = _spec().model_copy(update={"elicitation": plan})
+    kit = MCPTestKit(env={}, cwd="/tmp/m3-no-project")
+
+    with pytest.raises(UnsupportedFeature):
+        kit.agent_session(spec, adapter=adapter)
+
+    assert adapter.started == 0
+    kit.close()
 
 
 class EvidenceHarness(FakeHarness):

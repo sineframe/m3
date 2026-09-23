@@ -14,10 +14,10 @@ from typing import Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
+from .._types.specs import AgentSpec
 from ..errors import MCPError
 from ..storage.ephemeral import ProfileResolver
 from ..types import (
-    AgentSpec,
     DirectSpec,
     HarnessProfileRef,
     HarnessSpec,
@@ -27,7 +27,6 @@ from ..types import (
     ServerBinding,
     ServerProfileRef,
     ServerValue,
-    SSEServer,
     StdioServer,
     TrustLevel,
 )
@@ -129,10 +128,6 @@ def server_value_from_mapping(name: str, raw: Mapping[str, Any]) -> ServerValue:
     }
     if typ == "http":
         return HTTPServer(
-            name=name, trust=trust, url=str(raw.get("url", "")), headers=headers
-        )
-    if typ == "sse":
-        return SSEServer(
             name=name, trust=trust, url=str(raw.get("url", "")), headers=headers
         )
     raise ValueError(f"unsupported MCP transport: {typ}")

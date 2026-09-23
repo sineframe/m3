@@ -544,29 +544,6 @@ def test_stdio_fixture_is_usable_through_sync_client() -> None:
         kit.close()
 
 
-@pytest.mark.asyncio
-async def test_sse_fixture_emits_literal_event_faults() -> None:
-    faults = FaultInjector().partial_frame("tools/call")
-    try:
-        async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
-            async with kit.direct(faults.sse_server(), timeout=2) as client:
-                with pytest.raises((OperationTimeout, TransportError)) as failure:
-                    await client.call_tool("echo", {"text": "sse-wire-secret"})
-                assert "sse-wire-secret" not in str(failure.value)
-    finally:
-        faults.close_fixture()
-
-    faults = FaultInjector().oversized("tools/call", 128)
-    try:
-        async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
-            async with kit.direct(faults.sse_server(), timeout=2) as client:
-                result = await client.call_tool("echo", {})
-                assert isinstance(result, CallToolResult)
-                assert len(result.content[-1]["text"]) == 128
-    finally:
-        faults.close_fixture()
-
-
 def test_recording_rejects_unsafe_deserialization() -> None:
     with pytest.raises(ValueError):
         Recording.from_json("__import__('os').system('false')")

@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field, field_validator
 
 from m3 import (
     ACPAgent,
-    AgentSpec,
     ClaudeCode,
     HTTPServer,
     InProcessServer,
@@ -18,11 +17,11 @@ from m3 import (
     RevisionSelection,
     SecretReference,
     ServerBinding,
-    SSEServer,
     StdioServer,
     TextContent,
     UserMessage,
 )
+from m3._types.specs import AgentSpec
 from m3.services.profiles import server_value_from_mapping
 from m3.storage import StorageConflict
 from m3.types import NativeToolPolicy
@@ -86,7 +85,7 @@ _OPENCODE_READ_ONLY_TOOLS = ("read", "glob", "grep", "lsp", "webfetch", "websear
 
 def _server(
     name: str, raw: Mapping[str, Any]
-) -> StdioServer | HTTPServer | SSEServer | InProcessServer:
+) -> StdioServer | HTTPServer | InProcessServer:
     try:
         return server_value_from_mapping(name, raw)
     except ValueError as exc:

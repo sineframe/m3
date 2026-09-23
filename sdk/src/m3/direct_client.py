@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, NoReturn, Protocol, TypeVar, cast
 
@@ -18,12 +18,30 @@ from jsonschema import (  # type: ignore[import-untyped]
     SchemaError,
     ValidationError,
 )
+from mcp import types as _mcp_types
+from mcp.client.session import ClientRequestContext as _ClientRequestContext
 from mcp.shared.exceptions import MCPError as _OfficialMCPError
 from pydantic import Field, model_validator
 from referencing import Registry
 
+from ._mrtr import input_required as _normalized_input_required
+from ._mrtr import (
+    normalize_requests as _normalize_elicitation_requests,
+)
+from ._mrtr import (
+    resolve_other as _resolve_other_input_requests,
+)
+from ._mrtr import (
+    validate_response as _validate_elicitation_response,
+)
 from .direct_trace import DirectTraceBridge
+from .elicitation import (
+    ElicitationPlan,
+    PlanMatcher,
+)
 from .errors import (
+    ElicitationExpectationError,
+    ElicitationRoundLimitError,
     ModelValidationError,
     OperationCancelled,
     OperationTimeout,
@@ -49,6 +67,19 @@ from .types import (
     ToolInfo as _PublicToolInfo,
 )
 
+
+class _RemovedElicitationCallback:
+    """Sentinel type retained only to produce a useful migration error."""
+
+    __slots__ = ()
+
+
+_REMOVED_ELICITATION_CALLBACK = _RemovedElicitationCallback()
+_ELICITATION_CALLBACK_REMOVED_MESSAGE = (
+    "elicitation_callback was removed; pass elicitation= to call_tool(), "
+    "get_prompt(), or read_resource() instead"
+)
+
 # Backwards-compatible direct-client names share identity with the stable
 # public models.  This lets converted values be used directly in durable
 # operation results while retaining their process-local ``raw`` evidence.
@@ -64,6 +95,14 @@ class _Session(Protocol):
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Any: ...
 
     async def initialize(self) -> Any: ...
+
+    async def discover(self) -> Any: ...
+
+    async def dispatch_input_request(
+        self,
+        context: _ClientRequestContext,
+        request: _mcp_types.InputRequest,
+    ) -> _mcp_types.InputResponse | _mcp_types.ErrorData: ...
 
     async def list_tools(self, *, params: Any = None) -> Any: ...
 
@@ -142,7 +181,6 @@ class ClientSessionOptions:
     """
 
     sampling_callback: Any = None
-    elicitation_callback: Any = None
     list_roots_callback: Any = None
     logging_callback: Any = None
     message_handler: Any = None
@@ -172,7 +210,6 @@ def create_client_session(
         write_stream,
         read_timeout_seconds=read_timeout_seconds,
         sampling_callback=selected.sampling_callback,
-        elicitation_callback=selected.elicitation_callback,
         list_roots_callback=selected.list_roots_callback,
         logging_callback=selected.logging_callback,
         message_handler=selected.message_handler,
@@ -324,23 +361,32 @@ def _raw_content(value: Any) -> tuple[Mapping[str, Any], ...]:
 
 
 def _input_required(value: Any) -> InputRequiredResult | None:
-    if (
-        _attribute(value, "result_type") != "input_required"
-        and _attribute(value, "resultType") != "input_required"
-    ):
+    normalized = _normalized_input_required(value)
+    if normalized is None:
         return None
-    requests = _attribute(value, "input_requests")
-    if requests is None:
-        requests = _attribute(value, "inputRequests")
-    plain_requests = _plain_json(requests) if isinstance(requests, Mapping) else None
     return InputRequiredResult(
         raw=value,
-        input_requests=cast(Mapping[str, Any] | None, plain_requests),
-        request_state=cast(
-            str | None,
-            _attribute(value, "request_state", _attribute(value, "requestState")),
-        ),
+        input_requests=normalized.input_requests,
+        request_state=normalized.request_state,
     )
+
+
+def _prepare_mrtr(
+    plan: ElicitationPlan | None,
+    round_limit: int,
+    operation: str,
+) -> PlanMatcher | None:
+    if isinstance(round_limit, bool) or not isinstance(round_limit, int):
+        raise ModelValidationError(
+            "elicitation_round_limit must be a positive integer",
+            details={"operation": operation},
+        )
+    if round_limit <= 0:
+        raise ModelValidationError(
+            "elicitation_round_limit must be positive",
+            details={"operation": operation},
+        )
+    return plan.matcher() if plan is not None else None
 
 
 def _tool(value: Any) -> Tool:
@@ -500,6 +546,7 @@ class AsyncDirectClient:
         self._entered = False
         self._closed = False
         self._initialized: InitializationResult | None = None
+        self._modern_protocol = False
 
     @property
     def initialization(self) -> InitializationResult | None:
@@ -545,7 +592,17 @@ class AsyncDirectClient:
             # details or leak their message.
             await self._execute("session/enter", self._session.__aenter__())
             self._entered = True
-            await self.initialize()
+            if getattr(self, "_prefer_modern_protocol", False):
+                discover = getattr(self._session, "discover", None)
+                if not callable(discover):
+                    raise UnsupportedFeature(
+                        "the MCP client does not support modern protocol discovery",
+                        details={"operation": "server/discover"},
+                    )
+                await self._execute("server/discover", discover())
+                self._modern_protocol = True
+            else:
+                await self.initialize()
             return self
         except BaseException:
             if self._entered:
@@ -789,6 +846,105 @@ class AsyncDirectClient:
         self._initialized = result
         return result
 
+    async def _ensure_modern_protocol(self) -> None:
+        if self._modern_protocol:
+            return
+        discover = getattr(self._session, "discover", None)
+        if not callable(discover):
+            raise UnsupportedFeature(
+                "the MCP client does not support modern protocol discovery",
+                details={"operation": "server/discover"},
+            )
+        await self._execute("server/discover", discover())
+        self._modern_protocol = True
+
+    async def _run_mrtr(
+        self,
+        *,
+        operation: str,
+        operation_kind: Literal["tool", "prompt", "resource"],
+        operation_name: str,
+        matcher: PlanMatcher | None,
+        round_limit: int,
+        request_timeout: float | None,
+        initial: Callable[[], Awaitable[Any]],
+        retry: Callable[
+            [Mapping[str, _mcp_types.InputResponse], str | None], Awaitable[Any]
+        ],
+        allow_input_required: bool,
+    ) -> Any:
+        if not self._modern_protocol:
+            if matcher is not None and not getattr(
+                self, "_prefer_modern_protocol", False
+            ):
+                raise UnsupportedFeature(
+                    "modern elicitation requires the current MCP protocol",
+                    details={"operation": operation},
+                )
+            if getattr(self, "_prefer_modern_protocol", False):
+                await self._ensure_modern_protocol()
+        current = await self._execute(operation, initial(), timeout=request_timeout)
+        required = _input_required(current)
+        if required is not None and allow_input_required:
+            return current
+        if required is None:
+            if matcher is not None:
+                matcher.complete()
+            return current
+        rounds = 0
+        while required is not None:
+            rounds += 1
+            if rounds > round_limit:
+                raise ElicitationRoundLimitError(
+                    f"elicitation exceeded {round_limit} rounds",
+                    details={"operation": operation, "rounds": rounds},
+                )
+            elicitation, other = _normalize_elicitation_requests(
+                required,
+                session=self._session,
+                operation_kind=operation_kind,
+                operation_name=operation_name,
+                server_name=(
+                    self._trace_bridge.server_binding
+                    if self._trace_bridge is not None
+                    else None
+                ),
+            )
+            if elicitation and matcher is None:
+                raise ElicitationExpectationError(
+                    "server returned elicitation without an elicitation plan",
+                    details={"operation": operation},
+                )
+            if elicitation and matcher is not None:
+                planned = matcher.match_round(elicitation)
+                for key, response in planned.items():
+                    _validate_elicitation_response(elicitation[key], response)
+            elif not other and required.request_state is None:
+                raise ElicitationExpectationError(
+                    "input-required result contains no resolvable requests",
+                    details={"operation": operation},
+                )
+            resolved = await _resolve_other_input_requests(self._session, other)
+            for key, response in planned.items() if elicitation else ():
+                resolved[key] = _mcp_types.ElicitResult(
+                    action=response.action,
+                    content=(
+                        cast(dict[str, Any], _plain_json(response.content))
+                        if response.content is not None
+                        else None
+                    ),
+                    _meta=(dict(response.meta) if response.meta is not None else None),
+                )
+            current = await self._execute(
+                operation,
+                retry(resolved, required.request_state),
+                timeout=request_timeout,
+            )
+            required = _input_required(current)
+        if matcher is not None:
+            matcher.complete()
+        return current
+
     async def list_tools(self, *, cursor: str | None = None) -> ToolsPage:
         self._require_open()
         try:
@@ -909,17 +1065,44 @@ class AsyncDirectClient:
         request_state: str | None = None,
         meta: Any = None,
         allow_input_required: bool = False,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
     ) -> ResourceReadResult | InputRequiredResult:
         self._require_open()
         try:
-            raw = await self._execute(
-                "resources/read",
-                self._session.read_resource(
+            if elicitation is not None and (
+                input_responses is not None
+                or request_state is not None
+                or allow_input_required
+            ):
+                raise ModelValidationError(
+                    "elicitation cannot be combined with input_responses, "
+                    "request_state, or allow_input_required"
+                )
+            matcher = _prepare_mrtr(
+                elicitation, elicitation_round_limit, "resources/read"
+            )
+            raw = await self._run_mrtr(
+                operation="resources/read",
+                operation_kind="resource",
+                operation_name=uri,
+                matcher=matcher,
+                round_limit=elicitation_round_limit,
+                request_timeout=None,
+                allow_input_required=allow_input_required,
+                initial=lambda: self._session.read_resource(
                     uri,
                     input_responses=input_responses,
                     request_state=request_state,
                     meta=meta,
-                    allow_input_required=allow_input_required,
+                    allow_input_required=True,
+                ),
+                retry=lambda responses, state: self._session.read_resource(
+                    uri,
+                    input_responses=cast(Any, dict(responses)),
+                    request_state=state,
+                    meta=meta,
+                    allow_input_required=True,
                 ),
             )
             required = _input_required(raw)
@@ -928,6 +1111,13 @@ class AsyncDirectClient:
             contents = tuple(_dump(item) for item in _attribute(raw, "contents", ()))
             return ResourceReadResult(raw=raw, contents=contents)
         except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
+            raise
+        except (
+            ElicitationExpectationError,
+            ElicitationRoundLimitError,
+            ModelValidationError,
+            UnsupportedFeature,
+        ):
             raise
         except Exception as exc:
             raise self._protocol_failure("resources/read", exc) from exc
@@ -941,18 +1131,45 @@ class AsyncDirectClient:
         request_state: str | None = None,
         meta: Any = None,
         allow_input_required: bool = False,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
     ) -> PromptResult | InputRequiredResult:
         self._require_open()
         try:
-            raw = await self._execute(
-                "prompts/get",
-                self._session.get_prompt(
+            if elicitation is not None and (
+                input_responses is not None
+                or request_state is not None
+                or allow_input_required
+            ):
+                raise ModelValidationError(
+                    "elicitation cannot be combined with input_responses, "
+                    "request_state, or allow_input_required"
+                )
+            values = dict(arguments) if arguments is not None else None
+            matcher = _prepare_mrtr(elicitation, elicitation_round_limit, "prompts/get")
+            raw = await self._run_mrtr(
+                operation="prompts/get",
+                operation_kind="prompt",
+                operation_name=name,
+                matcher=matcher,
+                round_limit=elicitation_round_limit,
+                request_timeout=None,
+                allow_input_required=allow_input_required,
+                initial=lambda: self._session.get_prompt(
                     name,
-                    dict(arguments) if arguments is not None else None,
+                    values,
                     input_responses=input_responses,
                     request_state=request_state,
                     meta=meta,
-                    allow_input_required=allow_input_required,
+                    allow_input_required=True,
+                ),
+                retry=lambda responses, state: self._session.get_prompt(
+                    name,
+                    values,
+                    input_responses=cast(Any, dict(responses)),
+                    request_state=state,
+                    meta=meta,
+                    allow_input_required=True,
                 ),
             )
             required = _input_required(raw)
@@ -964,6 +1181,13 @@ class AsyncDirectClient:
                 messages=tuple(_dump(item) for item in _attribute(raw, "messages", ())),
             )
         except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
+            raise
+        except (
+            ElicitationExpectationError,
+            ElicitationRoundLimitError,
+            ModelValidationError,
+            UnsupportedFeature,
+        ):
             raise
         except Exception as exc:
             raise self._protocol_failure("prompts/get", exc) from exc
@@ -980,25 +1204,46 @@ class AsyncDirectClient:
         meta: Any = None,
         allow_input_required: bool = False,
         allow_claimed: bool = False,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
     ) -> ToolCallResult | InputRequiredResult:
         self._require_open()
-        values = cast(dict[str, Any], _plain_json(arguments or {}))
+        if elicitation is not None and (
+            input_responses is not None
+            or request_state is not None
+            or allow_input_required
+        ):
+            raise ModelValidationError(
+                "elicitation cannot be combined with input_responses, "
+                "request_state, or allow_input_required"
+            )
+        matcher = _prepare_mrtr(elicitation, elicitation_round_limit, "tools/call")
+        values = cast(
+            dict[str, Any] | None,
+            _plain_json(arguments) if arguments is not None else None,
+        )
         effective_timeout = self._timeout if timeout is None else timeout
         if self._validate_schemas:
             tools = await self.list_all_tools()
             tool = next((item for item in tools if item.name == name), None)
             if tool is not None:
                 _validate_json_schema(
-                    value=values,
+                    value=values if values is not None else {},
                     schema=tool.input_schema,
                     operation="tools/call",
                     tool=name,
                     kind="invalid_arguments",
                 )
         try:
-            raw = await self._execute(
-                "tools/call",
-                self._session.call_tool(
+            raw = await self._run_mrtr(
+                operation="tools/call",
+                operation_kind="tool",
+                operation_name=name,
+                matcher=matcher,
+                round_limit=elicitation_round_limit,
+                request_timeout=effective_timeout,
+                allow_input_required=allow_input_required,
+                initial=lambda: self._session.call_tool(
                     name,
                     values,
                     read_timeout_seconds=effective_timeout,
@@ -1006,10 +1251,20 @@ class AsyncDirectClient:
                     input_responses=input_responses,
                     request_state=request_state,
                     meta=meta,
-                    allow_input_required=allow_input_required,
+                    allow_input_required=True,
                     allow_claimed=allow_claimed,
                 ),
-                effective_timeout,
+                retry=lambda responses, state: self._session.call_tool(
+                    name,
+                    values,
+                    read_timeout_seconds=effective_timeout,
+                    progress_callback=progress_callback,
+                    input_responses=cast(Any, dict(responses)),
+                    request_state=state,
+                    meta=meta,
+                    allow_input_required=True,
+                    allow_claimed=allow_claimed,
+                ),
             )
             required = _input_required(raw)
             if required is not None:
@@ -1061,6 +1316,12 @@ class AsyncDirectClient:
                 ) from None
             raise
         except (TransportError, OperationTimeout, OperationCancelled):
+            raise
+        except (
+            ElicitationExpectationError,
+            ElicitationRoundLimitError,
+            UnsupportedFeature,
+        ):
             raise
         except Exception as exc:
             raise self._protocol_failure("tools/call", exc) from exc

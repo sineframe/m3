@@ -281,6 +281,12 @@ class DirectTraceBridge:
             return self._final.model_copy() if self._final is not None else None
 
     @property
+    def server_binding(self) -> str | None:
+        """The normalized server binding used by this direct operation."""
+
+        return self._server_binding
+
+    @property
     def trace(self) -> TraceResult:
         """Return a safe live projection, marked partial until finalized."""
 

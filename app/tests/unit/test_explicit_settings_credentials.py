@@ -6,7 +6,6 @@ from typing import cast
 
 from m3 import (
     ACPAgent,
-    AgentSpec,
     ClaudeCode,
     EventKind,
     ExecutionId,
@@ -18,6 +17,7 @@ from m3 import (
     TextContent,
     UserMessage,
 )
+from m3._types.specs import AgentSpec
 from m3.execution_trace import ExecutionTraceRecorder
 from m3.harness.acp import (
     AcpHarnessAdapter,

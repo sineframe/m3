@@ -58,10 +58,6 @@ def _callback_server(
                 max_tokens=5,
             )
         if include_all_callbacks:
-            await session.elicit_form(
-                "confirm callback",
-                {"type": "object", "properties": {"ok": {"type": "boolean"}}},
-            )
             await session.list_roots()
             await session.send_log_message("info", "callback log")
             await session.report_progress(0.5, 1.0, "callback progress")
@@ -83,7 +79,6 @@ def test_plain_sync_callbacks_run_on_portal_thread_and_return_typed_values() -> 
     callback_threads: list[int] = []
     seen: dict[str, list[object]] = {
         "sampling": [],
-        "elicitation": [],
         "roots": [],
         "logging": [],
         "messages": [],
@@ -98,11 +93,6 @@ def test_plain_sync_callbacks_run_on_portal_thread_and_return_typed_values() -> 
             model="sync-fixture",
             stop_reason="endTurn",
         )
-
-    def elicitation(context: object, params: object) -> types.ElicitResult:
-        callback_threads.append(threading.get_ident())
-        seen["elicitation"].append(params)
-        return types.ElicitResult(action="accept", content={"ok": True})
 
     def roots(context: object) -> types.ListRootsResult:
         callback_threads.append(threading.get_ident())
@@ -127,7 +117,6 @@ def test_plain_sync_callbacks_run_on_portal_thread_and_return_typed_values() -> 
         with kit.direct(
             InProcessServer(name="sync-callback", factory=_callback_server),
             sampling_callback=sampling,
-            elicitation_callback=elicitation,
             list_roots_callback=roots,
             logging_callback=logging,
             message_handler=message_handler,
@@ -137,7 +126,6 @@ def test_plain_sync_callbacks_run_on_portal_thread_and_return_typed_values() -> 
             assert result.content[0]["text"] == "callback complete"
 
     assert len(seen["sampling"]) == 1
-    assert len(seen["elicitation"]) == 1
     assert len(seen["roots"]) == 1
     assert seen["logging"]
     assert seen["messages"]

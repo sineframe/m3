@@ -13,10 +13,19 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10
     import tomli as tomllib  # type: ignore[import-not-found, no-redef]
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from m3.agent_session import AsyncAgentSession
+from m3._types.specs import AgentSpec
+from m3.agent_session import (
+    AdapterTurn,
+    AsyncAgentSession,
+    _require_elicitation_capability,
+)
+from m3.elicitation import expect_form
+from m3.errors import UnsupportedFeature
+from m3.harness._rpc_native import NativeRPCAdapter
 from m3.harness.codex import (
     CodexHarnessAdapter,
     codex_configuration,
@@ -28,13 +37,17 @@ from m3.harness.contracts import (
     HarnessTurnRequest,
 )
 from m3.harness.pi import PiHarnessAdapter
-from m3.harness.pi_extension.bridge import MCPBridge, qualified_tool_name
+from m3.harness.pi_extension.bridge import (
+    ActionContextChannel,
+    BridgeActionStatus,
+    MCPBridge,
+    qualified_tool_name,
+)
 from m3.interaction_handlers import Interactions
 from m3.matrix import HarnessCase, HarnessMatrix, ServerCase, ToolCase
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
 from m3.transport.capture_proxy import McpCaptureManager
 from m3.types import (
-    AgentSpec,
     Codex,
     PermissionPolicy,
     Pi,
@@ -42,12 +55,61 @@ from m3.types import (
     SecretReference,
     ServerBinding,
     StdioServer,
+    TextContent,
     TransportKind,
+    TurnResponse,
+    UserMessage,
 )
 
 ROOT = Path(__file__).parents[1]
 CODEX_FIXTURE = ROOT / "fixtures" / "codex_app_server_fixture.py"
 PI_FIXTURE = ROOT / "fixtures" / "pi_rpc_fixture.py"
+
+
+@pytest.mark.asyncio
+async def test_pi_managed_round_limit_reaches_action_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = PiHarnessAdapter()
+    adapter._session = SimpleNamespace(turn_count=0)
+    adapter._action_channel = ActionContextChannel(
+        tmp_path / "pi-action-context.json", tmp_path / "pi-action-status.json"
+    )
+    adapter._managed_input_runtime = SimpleNamespace(
+        execution_id="execution-1",
+        bound_identity=("pi-session", "m3-session", "turn-1"),
+    )
+    seen_limits: list[int] = []
+
+    async def fake_native_send(
+        self: NativeRPCAdapter,
+        _message: UserMessage,
+        *,
+        timeout: float | None = None,
+        metadata: object = None,
+    ) -> AdapterTurn:
+        del timeout, metadata
+        channel = adapter._action_channel
+        assert channel is not None
+        context = channel.read_context()
+        assert context is not None
+        seen_limits.append(context.round_limit)
+        channel.write_status(
+            BridgeActionStatus(context.generation, context.turn_sequence, "completed")
+        )
+        return AdapterTurn(
+            response=TurnResponse(content=(TextContent(text="continued"),))
+        )
+
+    monkeypatch.setattr(NativeRPCAdapter, "send", fake_native_send)
+
+    result = await adapter.send(
+        UserMessage(content="continue"), elicitation_round_limit=11
+    )
+
+    assert result.response is not None
+    assert result.response.content == (TextContent(text="continued"),)
+    assert seen_limits == [11]
 
 
 def _launch(
@@ -99,6 +161,83 @@ def test_pi_accepts_bridge_only_dynamic_tool_map(
     adapter._tool_map_path = str(path)
     adapter._tool_servers = {server}
     assert adapter._tool_identity(qualified_tool_name(server, tool)) == (server, tool)
+
+
+def test_pi_declares_verified_agent_mrtr_capabilities() -> None:
+    interaction = PiHarnessAdapter().capabilities.interaction
+    assert interaction.supports_elicitation
+    assert interaction.preserves_request_keys
+    assert interaction.preserves_multi_request_rounds
+    assert interaction.supports_interaction_cancellation
+    assert interaction.retry_owner == "m3"
+    assert not interaction.supports_interaction_resume
+    assert not interaction.supports_idempotent_response_delivery
+
+
+@pytest.mark.asyncio
+async def test_pi_preflight_downgrades_mrtr_for_unverified_version(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "pi-old.py"
+    executable.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "if '--help' in sys.argv:\n"
+        "    print('pi --mode rpc --help')\n"
+        "elif '--version' in sys.argv:\n"
+        "    print('0.85.0')\n"
+    )
+    executable.chmod(0o755)
+    adapter = PiHarnessAdapter(executable=str(executable))
+    readiness = await adapter.preflight(
+        _launch(Pi(model="fixture", executable=str(executable)))
+    )
+    assert readiness.ready
+    assert not adapter.capabilities.interaction.supports_elicitation
+    with pytest.raises(UnsupportedFeature):
+        _require_elicitation_capability(adapter)
+
+
+@pytest.mark.asyncio
+async def test_pi_action_channel_is_turn_scoped_and_cleaned() -> None:
+    launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    session = await adapter.open(launch)
+    result = await adapter.send("ordinary turn")
+    assert result.outcome.value == "completed"
+    assert adapter._action_channel is not None
+    assert not adapter._action_channel.context_path.exists()
+    assert not adapter._action_channel.status_path.exists()
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_pi_open_closes_native_session_when_control_extension_does_not_connect() -> (
+    None
+):
+    launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
+    adapter = PiHarnessAdapter(
+        executable=str(PI_FIXTURE), environment={"M3_PI_FIXTURE_NO_CONTROL": "1"}
+    )
+    with pytest.raises(HarnessStartupError, match="managed-control extension"):
+        await adapter.open(launch)
+    assert adapter.control_channel is None
+    assert adapter._session is None
+    assert adapter._process is None
+
+
+@pytest.mark.asyncio
+async def test_pi_completed_provider_turn_fails_when_required_plan_is_unused() -> None:
+    launch = _launch(Pi(model="fixture", executable=str(PI_FIXTURE)))
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    session = await adapter.open(launch)
+    result = await adapter.send(
+        "ordinary provider response",
+        elicitation=expect_form("address").accept({"city": "Pune"}),
+    )
+    assert result.outcome.value == "failed"
+    assert result.error is not None
+    await session.close()
 
 
 @pytest.mark.asyncio
@@ -243,20 +382,10 @@ async def test_pi_error_stop_reason_is_a_failed_turn() -> None:
     await session.close()
 
 
-def test_codex_config_is_bounded_and_rejects_sse() -> None:
+def test_codex_config_is_bounded() -> None:
     launch = _launch(Codex(model="fixture"))
     assert "[mcp_servers]" in render_codex_config(launch)
     assert "mcp_servers" in codex_configuration(launch)
-    sse = HarnessServerConfig(
-        "sse",
-        TransportKind.SSE,
-        True,
-        True,
-        "sse-1",
-        endpoint="https://example.test/events",
-    )
-    with pytest.raises(Exception, match="SSE"):
-        codex_configuration(_launch(Codex(model="fixture"), configurations=(sse,)))
 
 
 def test_codex_update_setting_is_written_at_toml_root(tmp_path: Path) -> None:
@@ -634,6 +763,19 @@ def test_pi_extension_has_no_request_local_timeout() -> None:
     assert "setTimeout" not in source
 
 
+def test_pi_extension_finalizes_only_at_settled_action_boundary() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src"
+        / "m3"
+        / "harness"
+        / "pi_extension"
+        / "extension.ts"
+    ).read_text()
+    assert 'pi.on?.("agent_settled", finalizeAction)' in source
+    assert 'pi.on?.("agent_end", finalizeAction)' not in source
+
+
 @pytest.mark.skipif(shutil.which("pi") is None, reason="Pi is not installed")
 def test_bundled_pi_extension_loads_without_starting_a_model_turn() -> None:
     bridge = (
@@ -829,6 +971,122 @@ async def test_pi_tool_observation_recovers_special_character_identity() -> None
     )
     assert call.server == server
     assert call.tool == tool
+
+
+@pytest.mark.asyncio
+async def test_pi_next_frame_preserves_native_frame_when_control_is_ready_together() -> (
+    None
+):
+    class Process:
+        async def next(self, _timeout: float | None) -> dict[str, str]:
+            await asyncio.sleep(0)
+            return {"type": "agent_settled", "value": "native"}
+
+    class Control:
+        def __init__(self) -> None:
+            self.frames = [{"type": "pending", "round_id": "round-1"}]
+
+        async def receive(self, _timeout: float | None) -> dict[str, str]:
+            await asyncio.sleep(0)
+            return self.frames.pop(0)
+
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    adapter._managed_input_runtime = object()
+    adapter._control_channel = Control()  # type: ignore[assignment]
+    observed: list[object] = []
+
+    async def consume(_frame: object) -> None:
+        observed.append(_frame)
+
+    adapter._deliver_control_pending = consume  # type: ignore[method-assign]
+    frame = await adapter.next_frame(Process(), 1.0)
+    assert frame == {"type": "agent_settled", "value": "native"}
+    assert adapter._buffered_native_frame is None
+    assert observed == [{"type": "pending", "round_id": "round-1"}]
+
+
+@pytest.mark.asyncio
+async def test_pi_next_frame_handles_more_than_recursion_limit_control_frames() -> None:
+    frame_count = 1_100
+    delivered = asyncio.Event()
+    process_tasks: list[asyncio.Task[object]] = []
+    control_tasks: list[asyncio.Task[object]] = []
+
+    class Process:
+        async def next(self, _timeout: float | None) -> dict[str, str]:
+            task = asyncio.current_task()
+            assert task is not None
+            process_tasks.append(task)
+            await delivered.wait()
+            return {"type": "agent_settled", "value": "native"}
+
+    class Control:
+        def __init__(self) -> None:
+            self.frames = [
+                {"type": "pending", "round_id": f"round-{index}"}
+                for index in range(frame_count)
+            ]
+
+        async def receive(self, _timeout: float | None) -> dict[str, str]:
+            task = asyncio.current_task()
+            assert task is not None
+            control_tasks.append(task)
+            if self.frames:
+                await asyncio.sleep(0)
+                return self.frames.pop(0)
+            await asyncio.Future()
+            raise AssertionError("unreachable")
+
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    adapter._managed_input_runtime = object()
+    adapter._control_channel = Control()  # type: ignore[assignment]
+    observed: list[object] = []
+
+    async def consume(frame: object) -> None:
+        observed.append(frame)
+        if len(observed) == frame_count:
+            delivered.set()
+
+    adapter._deliver_control_pending = consume  # type: ignore[method-assign]
+    frame = await adapter.next_frame(Process(), 1.0)
+
+    assert frame == {"type": "agent_settled", "value": "native"}
+    assert len(observed) == frame_count
+    assert adapter._buffered_native_frame is None
+    assert not adapter._buffered_native_ready
+    assert adapter._buffered_control_frame is None
+    assert len(process_tasks) == frame_count + 1
+    assert len(control_tasks) == frame_count + 1
+    assert all(task.done() for task in (*process_tasks, *control_tasks))
+
+
+@pytest.mark.asyncio
+async def test_pi_next_frame_discards_native_buffer_when_control_delivery_fails() -> (
+    None
+):
+    class Process:
+        async def next(self, _timeout: float | None) -> dict[str, str]:
+            await asyncio.sleep(0)
+            return {"type": "agent_settled", "value": "stale"}
+
+    class Control:
+        async def receive(self, _timeout: float | None) -> dict[str, str]:
+            await asyncio.sleep(0)
+            return {"type": "pending", "round_id": "round-1"}
+
+    adapter = PiHarnessAdapter(executable=str(PI_FIXTURE))
+    adapter._managed_input_runtime = object()
+    adapter._control_channel = Control()  # type: ignore[assignment]
+
+    async def fail(_frame: object) -> None:
+        raise RuntimeError("delivery failed")
+
+    adapter._deliver_control_pending = fail  # type: ignore[assignment]
+    with pytest.raises(RuntimeError, match="delivery failed"):
+        await adapter.next_frame(Process(), 1.0)
+    assert adapter._buffered_native_frame is None
+    assert not adapter._buffered_native_ready
+    assert adapter._buffered_control_frame is None
 
 
 @pytest.mark.asyncio

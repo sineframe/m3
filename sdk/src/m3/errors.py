@@ -23,6 +23,49 @@ class ModelValidationError(MCPError):
     code = "invalid_argument"
 
 
+class ElicitationExpectationError(MCPError):
+    """An elicitation round did not match the declared response plan."""
+
+    code = "elicitation_expectation_failed"
+
+
+class ElicitationRoundLimitError(MCPError):
+    """An elicitation operation exceeded its configured round limit."""
+
+    code = "elicitation_round_limit"
+    terminal = True
+
+
+class ManagedInputError(MCPError):
+    """Base class for durable human-input lifecycle failures."""
+
+    code = "managed_input_error"
+
+
+class ManagedInputConflict(ManagedInputError):
+    """A managed-input write lost an ownership or idempotency race."""
+
+    code = "managed_input_conflict"
+
+
+class ManagedInputValidationError(ManagedInputError):
+    """A managed-input round or response map is invalid."""
+
+    code = "managed_input_invalid"
+
+
+class ManagedInputStateError(ManagedInputError):
+    """A managed-input lifecycle transition is not allowed."""
+
+    code = "managed_input_state"
+
+
+class ManagedInputRecoveryError(ManagedInputError):
+    """The persisted interaction cannot be resumed safely after worker loss."""
+
+    code = "managed_input_recovery_unavailable"
+
+
 class InvalidTransitionError(MCPError):
     code = "invalid_transition"
 
@@ -97,10 +140,17 @@ class RawEvidenceIntegrityError(MCPError):
 
 __all__ = [
     "CleanupError",
+    "ElicitationExpectationError",
+    "ElicitationRoundLimitError",
     "ExecutionNotFound",
     "InvalidTransitionError",
     "KitClosed",
     "MCPError",
+    "ManagedInputConflict",
+    "ManagedInputError",
+    "ManagedInputRecoveryError",
+    "ManagedInputStateError",
+    "ManagedInputValidationError",
     "ModelValidationError",
     "OperationCancelled",
     "OperationTimeout",

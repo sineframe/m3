@@ -29,8 +29,53 @@ from .aggregations import (
 from .aggregations import (
     ToolCallStats as ToolCallStats,
 )
+from .elicitation import (
+    ElicitationPlan as ElicitationPlan,
+)
+from .elicitation import (
+    ElicitationResponse as ElicitationResponse,
+)
+from .elicitation import (
+    FormElicitationRequest as FormElicitationRequest,
+)
+from .elicitation import (
+    PendingElicitationRound as PendingElicitationRound,
+)
+from .elicitation import (
+    UrlElicitationRequest as UrlElicitationRequest,
+)
+from .elicitation import (
+    expect_form as expect_form,
+)
+from .elicitation import (
+    expect_url as expect_url,
+)
+from .elicitation import (
+    maybe_form as maybe_form,
+)
+from .elicitation import (
+    maybe_url as maybe_url,
+)
+from .elicitation import (
+    one_of as one_of,
+)
+from .elicitation import (
+    optional as optional,
+)
+from .elicitation import (
+    round_of as round_of,
+)
+from .elicitation import (
+    sequence as sequence,
+)
 from .errors import (
     CleanupError as CleanupError,
+)
+from .errors import (
+    ElicitationExpectationError as ElicitationExpectationError,
+)
+from .errors import (
+    ElicitationRoundLimitError as ElicitationRoundLimitError,
 )
 from .errors import (
     ExecutionNotFound as ExecutionNotFound,
@@ -127,15 +172,6 @@ from .feedback import (
 )
 from .interaction_handlers import (
     AllowedCommands as AllowedCommands,
-)
-from .interaction_handlers import (
-    ElicitationHandler as ElicitationHandler,
-)
-from .interaction_handlers import (
-    ElicitationRequest as ElicitationRequest,
-)
-from .interaction_handlers import (
-    ElicitationResult as ElicitationResult,
 )
 from .interaction_handlers import (
     FilesystemHandler as FilesystemHandler,
@@ -310,7 +346,6 @@ from .types import *  # noqa: F403 - module declares its public exports
 # migration. They are intentionally absent from ``__all__``.
 from .types import (
     ACPAgent,  # noqa: F401
-    AgentSpec,  # noqa: F401
     ClaudeCode,  # noqa: F401
     Codex,  # noqa: F401
     EvaluationId,  # noqa: F401

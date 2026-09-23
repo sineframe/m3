@@ -147,7 +147,6 @@ class _InputSpec(_Spec):
                 "denied_tools": [],
             },
             "permission_policy": {"mode": "deny"},
-            "elicitation_policy": {"mode": "deny"},
             "sampling_policy": {"mode": "deny"},
             "filesystem_policy": {"mode": "deny"},
             "terminal_policy": {"mode": "deny"},

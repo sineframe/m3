@@ -150,7 +150,6 @@ def run(*, target: str | None = None, target_args: list[str] | None = None) -> i
                                 "mcpCapabilities": {
                                     "stdio": True,
                                     "http": False,
-                                    "sse": False,
                                 }
                             },
                         },
@@ -160,10 +159,7 @@ def run(*, target: str | None = None, target_args: list[str] | None = None) -> i
                 servers = params.get("mcpServers") or []
                 if servers:
                     candidate = servers[0]
-                    if isinstance(candidate, dict) and candidate.get("type") in {
-                        "http",
-                        "sse",
-                    }:
+                    if isinstance(candidate, dict) and candidate.get("type") == "http":
                         raise RuntimeError(
                             "ACP fixture agent supports stdio MCP servers only"
                         )

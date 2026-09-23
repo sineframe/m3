@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from m3._types.specs import AgentSpec
 from m3.types import (
-    AgentSpec,
     HarnessProfileRef,
     NativeToolPolicy,
     RevisionSelection,

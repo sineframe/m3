@@ -10,7 +10,9 @@ from typing import Any, cast
 
 import pytest
 from mcp import types
+from pydantic import ValidationError
 
+from m3 import expect_form, sequence
 from m3.direct_client import (
     AsyncDirectClient,
     ClientSessionOptions,
@@ -52,16 +54,13 @@ def _client(
     )
 
 
-def test_official_session_factory_preserves_constructor_callback_options(
+def test_official_session_factory_does_not_accept_legacy_elicitation_callback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import mcp
 
     sampling = object()
-    elicitation = object()
-    options = ClientSessionOptions(
-        sampling_callback=sampling, elicitation_callback=elicitation
-    )
+    options = ClientSessionOptions(sampling_callback=sampling)
     captured: dict[str, Any] = {}
 
     def factory(*args: Any, **kwargs: Any) -> object:
@@ -71,7 +70,7 @@ def test_official_session_factory_preserves_constructor_callback_options(
     monkeypatch.setattr(mcp, "ClientSession", factory)
     create_client_session(None, None, options=options)
     assert captured["sampling_callback"] is sampling
-    assert captured["elicitation_callback"] is elicitation
+    assert "elicitation_callback" not in captured
 
 
 class FakeSession:
@@ -729,6 +728,242 @@ async def test_official_input_required_results_are_not_coerced_to_empty_wrappers
     assert isinstance(read, InputRequiredResult) and read.request_state == "state-1"
     assert isinstance(prompt, InputRequiredResult) and prompt.request_state == "state-2"
     assert isinstance(call, InputRequiredResult) and call.request_state == "state-3"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("request_state", ["unfamiliar-state", ""])
+async def test_direct_retry_preserves_opaque_request_state_exactly(
+    request_state: str,
+) -> None:
+    class RetryingSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.request_states: list[object] = []
+
+        async def call_tool(
+            self,
+            name: str,
+            arguments: dict[str, object] | None = None,
+            **kwargs: object,
+        ) -> Any:
+            self.request_states.append(kwargs.get("request_state"))
+            if len(self.request_states) == 1:
+                return types.InputRequiredResult(
+                    input_requests={
+                        "confirm": types.ElicitRequest(
+                            params=types.ElicitRequestFormParams(
+                                message="Confirm",
+                                requested_schema={"type": "object"},
+                            )
+                        )
+                    },
+                    request_state=request_state,
+                )
+            return types.CallToolResult(content=[])
+
+    session = RetryingSession()
+    client = _client(session)
+    # This unit test starts after protocol negotiation; transport-level
+    # discovery is covered by the integration suite.
+    client._modern_protocol = True
+    async with client:
+        result = await client.call_tool(
+            "confirm",
+            elicitation=expect_form("confirm").accept({}),
+        )
+
+    assert isinstance(result, ToolCallResult)
+    assert session.request_states == [None, request_state]
+
+
+@pytest.mark.asyncio
+async def test_direct_plan_falls_back_to_advertised_server_name() -> None:
+    class AdvertisedNameSession(FakeSession):
+        server_info = types.Implementation(name="backend", version="1.0")
+
+        async def call_tool(
+            self,
+            name: str,
+            arguments: dict[str, object] | None = None,
+            **kwargs: object,
+        ) -> Any:
+            if kwargs.get("request_state") is None:
+                return types.InputRequiredResult(
+                    input_requests={
+                        "confirm": types.ElicitRequest(
+                            params=types.ElicitRequestFormParams(
+                                message="Confirm",
+                                requested_schema={"type": "object"},
+                            )
+                        )
+                    },
+                    request_state="confirm-state",
+                )
+            return types.CallToolResult(content=[])
+
+    client = _client(AdvertisedNameSession())
+    client._modern_protocol = True
+    async with client:
+        result = await client.call_tool(
+            "confirm",
+            elicitation=expect_form("confirm", server="backend").accept({}),
+        )
+
+    assert isinstance(result, ToolCallResult)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("request_state", ["opaque-state", ""])
+@pytest.mark.parametrize("operation", ["tool", "prompt", "resource"])
+async def test_direct_state_only_input_required_retries_immediately(
+    operation: str, request_state: str
+) -> None:
+    class StateOnlySession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[dict[str, Any]] = []
+
+        def _next(self, **kwargs: Any) -> Any:
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return types.InputRequiredResult(requestState=request_state)
+            if operation == "tool":
+                return types.CallToolResult(content=[])
+            if operation == "prompt":
+                return types.GetPromptResult(messages=[])
+            return types.ReadResourceResult(contents=[])
+
+        async def call_tool(
+            self,
+            name: str,
+            arguments: dict[str, object] | None = None,
+            **kwargs: object,
+        ) -> Any:
+            return self._next(**kwargs)
+
+        async def get_prompt(
+            self,
+            name: str,
+            arguments: dict[str, str] | None = None,
+            **kwargs: object,
+        ) -> Any:
+            return self._next(**kwargs)
+
+        async def read_resource(self, uri: str, **kwargs: object) -> Any:
+            return self._next(**kwargs)
+
+    session = StateOnlySession()
+    async with _client(session) as client:
+        client._modern_protocol = True
+        if operation == "tool":
+            await client.call_tool("state-only")
+        elif operation == "prompt":
+            await client.get_prompt("state-only")
+        else:
+            await client.read_resource("memory://state-only")
+
+    assert len(session.calls) == 2
+    assert session.calls[1]["request_state"] == request_state
+    assert session.calls[1]["input_responses"] == {}
+
+
+@pytest.mark.asyncio
+async def test_direct_state_only_round_does_not_consume_elicitation_plan() -> None:
+    class StateThenFormSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[dict[str, Any]] = []
+
+        async def call_tool(
+            self,
+            name: str,
+            arguments: dict[str, object] | None = None,
+            **kwargs: object,
+        ) -> Any:
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return types.InputRequiredResult(requestState="state-only-1")
+            if len(self.calls) == 2:
+                return types.InputRequiredResult(
+                    inputRequests={
+                        "address": types.ElicitRequest(
+                            params=types.ElicitRequestFormParams(
+                                message="Address",
+                                requestedSchema={"type": "object"},
+                            )
+                        )
+                    },
+                    requestState="address-state",
+                )
+            if len(self.calls) == 3:
+                return types.InputRequiredResult(requestState="state-only-2")
+            if len(self.calls) == 4:
+                return types.InputRequiredResult(
+                    inputRequests={
+                        "contact": types.ElicitRequest(
+                            params=types.ElicitRequestFormParams(
+                                message="Contact",
+                                requestedSchema={"type": "object"},
+                            )
+                        )
+                    },
+                    requestState="contact-state",
+                )
+            return types.CallToolResult(content=[])
+
+    session = StateThenFormSession()
+    async with _client(session) as client:
+        client._modern_protocol = True
+        result = await client.call_tool(
+            "state-then-form",
+            elicitation=sequence(
+                expect_form("address").accept({}),
+                expect_form("contact").accept({}),
+            ),
+            elicitation_round_limit=4,
+        )
+
+    assert isinstance(result, ToolCallResult)
+    assert [call.get("request_state") for call in session.calls] == [
+        None,
+        "state-only-1",
+        "address-state",
+        "state-only-2",
+        "contact-state",
+    ]
+    assert session.calls[1]["input_responses"] == {}
+    assert set(session.calls[2]["input_responses"]) == {"address"}
+    assert session.calls[3]["input_responses"] == {}
+    assert set(session.calls[4]["input_responses"]) == {"contact"}
+
+
+def test_official_input_required_model_rejects_non_string_request_state() -> None:
+    with pytest.raises(ValidationError):
+        types.InputRequiredResult(
+            input_requests={},
+            request_state={"not": "a string"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_raw_non_string_request_state_is_protocol_error_not_opaque_state() -> (
+    None
+):
+    class MalformedSession(FakeSession):
+        async def call_tool(
+            self,
+            name: str,
+            arguments: dict[str, object] | None = None,
+            **kwargs: object,
+        ) -> Any:
+            return types.InputRequiredResult.model_construct(
+                input_requests={},
+                request_state={"not": "a string"},
+            )
+
+    async with _client(MalformedSession()) as client:
+        with pytest.raises(ProtocolError, match="malformed requestState"):
+            await client.call_tool("malformed", allow_input_required=True)
 
 
 @pytest.mark.asyncio

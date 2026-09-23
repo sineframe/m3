@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
 from m3.execution_trace import ExecutionTraceRecorder
 from m3.harness.acp import AcpHarnessAdapter
@@ -29,7 +30,6 @@ from m3.sync_api import MCPTestKit
 from m3.testing import FaultInjector
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     CallTool,
     ClaudeCode,
     DirectSpec,

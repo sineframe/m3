@@ -13,10 +13,6 @@ def test_transport_detection_and_partial_stream_events():
         transport_for_server({"type": "http", "url": "https://example.test/mcp"})
         == "http"
     )
-    assert (
-        transport_for_server({"type": "sse", "url": "https://example.test/sse"})
-        == "sse"
-    )
     raw = {
         "type": "stream_event",
         "event": {
@@ -170,7 +166,7 @@ def test_partial_and_complete_message_are_one_turn_with_one_usage_total():
             {"type": x["type"], "offset_ms": i, "raw_event": x}
             for i, x in enumerate(raws)
         ],
-        transport="sse",
+        transport="http",
     )
     assert trace["summary"]["turns"] == 1
     assert trace["summary"]["input_tokens"] == 5
@@ -379,7 +375,7 @@ def test_builtin_named_like_mcp_tool_cannot_steal_wire_correlation():
     assert wire["parent_id"] == "turn-1-tool_call-1"
 
 
-def test_sse_crlf_and_split_utf8_are_preserved(tmp_path):
+def test_streamable_event_stream_crlf_and_split_utf8_are_preserved(tmp_path):
     class Response:
         async def aiter_bytes(self):
             payload = 'data: {"message":"café"}\r\n\r\n'.encode()
@@ -392,7 +388,7 @@ def test_sse_crlf_and_split_utf8_are_preserved(tmp_path):
     proxy = McpHttpProxy(
         upstream_url="https://example.test/mcp",
         configured_headers=None,
-        transport="sse",
+        transport="streamable_http",
         capture_path=str(tmp_path / "capture.jsonl"),
         baseline_ns=time.perf_counter_ns(),
         allow_private=True,

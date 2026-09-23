@@ -57,6 +57,7 @@ from ..trace.redaction import (
 from ..types import (
     ArtifactId,
     ArtifactRef,
+    ErrorCode,
     EvaluationRecord,
     EvaluationResult,
     Event,
@@ -115,6 +116,7 @@ from .evidence import (
 from .evidence import (
     verify_reference as _verify_evidence_reference,
 )
+from .managed_input import SQLiteManagedInputStore
 from .serialization import serialize_durable
 
 
@@ -1312,8 +1314,11 @@ class SQLiteExecutionStore(_SqliteBase):
         self._capture_config = (
             capture_config if capture_config is not None else CaptureOptions()
         )
+        self._managed_input_database = self.database
+        self._managed_input_store: SQLiteManagedInputStore | None = None
+        self._managed_input_lock = threading.Lock()
         self.artifacts = SQLiteArtifactStore(
-            database,
+            self.database,
             blob_root,
             config=self._redaction_config,
             busy_timeout_ms=self.busy_timeout_ms,
@@ -1322,6 +1327,48 @@ class SQLiteExecutionStore(_SqliteBase):
         self.payload_blob_threshold = payload_blob_threshold
         self._callbacks: dict[str, list[EventCallback]] = {}
         self._callback_lock = threading.RLock()
+
+    @property
+    def managed_input_store(self) -> SQLiteManagedInputStore:
+        """Lazily open the managed-input tables for opted-in executions."""
+
+        if self._managed_input_store is None:
+            with self._managed_input_lock:
+                if self._managed_input_store is None:
+                    self._managed_input_store = SQLiteManagedInputStore(
+                        self._managed_input_database,
+                        busy_timeout_ms=self.busy_timeout_ms,
+                    )
+        assert self._managed_input_store is not None
+        return self._managed_input_store
+
+    def resolve_managed_input_store(self) -> SQLiteManagedInputStore:
+        """Resolve managed-input storage lazily for opted-in executions."""
+
+        return self.managed_input_store
+
+    def _ensure_managed_input_schema(self) -> None:
+        """Create the optional managed-input tables before a worker transaction."""
+        _ = self.managed_input_store
+
+    def _has_managed_command(self, *, stale_before: datetime | None = None) -> bool:
+        """Check for managed work without opening the managed store."""
+        with self._connect() as connection:
+            if stale_before is None:
+                row = connection.execute(
+                    "SELECT 1 FROM v2_commands WHERE status IN ('queued','claimed') "
+                    "AND json_extract(payload_json,'$.human_input')='managed' LIMIT 1"
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT 1 FROM v2_leases l JOIN v2_commands c "
+                    "ON c.execution_id=l.execution_id "
+                    "WHERE l.expires_at<=? AND c.status IN ('queued','claimed') "
+                    "AND json_extract(c.payload_json,'$.human_input')='managed' "
+                    "LIMIT 1",
+                    (_iso(stale_before),),
+                ).fetchone()
+        return row is not None
 
     def ensure_project(self, project_id: str, project_name: str) -> tuple[str, str]:
         """Register a stable project identity and refresh its display name."""
@@ -2156,6 +2203,7 @@ class SQLiteExecutionStore(_SqliteBase):
         reason: str | None = None,
         reason_path: str = "$.execution.terminal.reason",
         limitations: Sequence[str] = ("capture_incomplete",),
+        error: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Build the stable payload for a store-owned terminal event.
 
@@ -2180,6 +2228,8 @@ class SQLiteExecutionStore(_SqliteBase):
         safe_reason = self._safe_reason(reason, path=reason_path)
         if safe_reason:
             payload["reason"] = safe_reason
+        if error is not None:
+            payload["error"] = dict(error)
         return payload
 
     @staticmethod
@@ -3962,6 +4012,8 @@ class SQLiteExecutionStore(_SqliteBase):
     def claim_next(
         self, owner_id: str, *, lease_seconds: float = 30.0
     ) -> tuple[Command, Lease] | None:
+        if self._has_managed_command():
+            self._ensure_managed_input_schema()
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
@@ -3987,6 +4039,21 @@ class SQLiteExecutionStore(_SqliteBase):
             if row["status"] == "claimed" and (
                 current is None or _parse_dt(current["expires_at"]) <= now
             ):
+                payload = _loads(row["payload_json"], {})
+                if (
+                    isinstance(payload, Mapping)
+                    and payload.get("human_input") == "managed"
+                ):
+                    self._terminalize_managed_recovery_in_transaction(
+                        connection,
+                        execution_id,
+                        reason="worker lease expired",
+                    )
+                    connection.execute(
+                        "DELETE FROM v2_leases WHERE execution_id=?", (execution_id,)
+                    )
+                    self._commit(connection)
+                    return None
                 # A stale owner is never resumed.  Persist the interruption
                 # while the compare-and-set transaction still owns the
                 # database lock, then discard its lease and claimed command.
@@ -4177,6 +4244,163 @@ class SQLiteExecutionStore(_SqliteBase):
             raise
         finally:
             connection.close()
+
+    def _terminalize_managed_recovery_in_transaction(
+        self,
+        connection: _CompatConnection,
+        execution_id: str,
+        *,
+        reason: str,
+    ) -> Event | None:
+        """Commit managed recovery failure while a store write is open."""
+        execution = connection.execute(
+            "SELECT snapshot_json FROM v2_executions WHERE id=? AND deleted_at IS NULL",
+            (execution_id,),
+        ).fetchone()
+        if execution is None:
+            return None
+        snapshot = ExecutionState.model_validate(_loads(execution["snapshot_json"]))
+        if snapshot.lifecycle is ExecutionStatus.FINISHED:
+            return None
+        message = self._safe_reason(reason, path="$.managed_input.recovery")
+        message = message or "managed input recovery is unavailable"
+        self._ensure_created_event(connection, execution_id)
+        sequence, monotonic_offset_ms = self._next_event_position(
+            connection, execution_id
+        )
+        error_payload = {
+            "code": ErrorCode.MANAGED_INPUT_RECOVERY_UNAVAILABLE.value,
+            "message": "managed input recovery is unavailable",
+            "retryable": False,
+        }
+        event = Event(
+            event_id=EventId(_new_id("event")),
+            execution_id=ExecutionId(execution_id),
+            sequence=sequence,
+            kind=EventKind.EXECUTION_FINISHED,
+            monotonic_offset_ms=monotonic_offset_ms,
+            payload=self._terminal_payload(
+                ExecutionOutcome.FAILED,
+                reason=message,
+                reason_path="$.managed_input.recovery",
+                error=error_payload,
+            ),
+        )
+        failed = snapshot.model_copy(
+            update={
+                "lifecycle": ExecutionStatus.FINISHED,
+                "outcome": ExecutionOutcome.FAILED,
+                "sequence": sequence,
+                "finished_at": event.timestamp,
+            }
+        )
+        connection.execute(
+            "INSERT INTO v2_events(id,execution_id,sequence,event_json,timestamp) VALUES(?,?,?,?,?)",
+            (
+                str(event.event_id.root),
+                execution_id,
+                sequence,
+                _json(event.model_dump(mode="json", by_alias=True)),
+                _iso(event.timestamp),
+            ),
+        )
+        connection.execute(
+            "UPDATE v2_executions SET snapshot_json=? WHERE id=?",
+            (_json(failed.model_dump(mode="json")), execution_id),
+        )
+        connection.execute(
+            "UPDATE v2_commands SET status='interrupted' WHERE execution_id=? "
+            "AND status IN ('queued','claimed')",
+            (execution_id,),
+        )
+        now = _iso(_utcnow())
+        connection.execute(
+            "UPDATE m3_managed_input_rounds SET status='failed',failed_at=?,"
+            "failure_code='recovery_unavailable',failure_message=?,updated_at=? "
+            "WHERE execution_id=? AND status IN "
+            "('pending','response_validated','delivery_started','delivered')",
+            (now, message, now, execution_id),
+        )
+        return event
+
+    def mark_managed_recovery_unavailable_if_lease_lost(
+        self,
+        lease: Lease,
+        *,
+        reason: str = "managed interaction cannot be resumed safely after worker loss",
+    ) -> bool:
+        """Terminalize managed input when its owning worker is lost.
+
+        Managed external harness conversations have no verified reconnect,
+        delivery-status, and idempotent-resume contract.  Once the command
+        lease is lost, neither a replacement worker nor the old owner may
+        redeliver a persisted response.  This transaction closes the
+        execution, command, lease, and every unresolved managed round
+        together; the round row remains as diagnostic evidence.
+        """
+        # The managed-input schema is opt-in and initialized lazily by the
+        # managed execution path.  Ensure it exists before the transaction so
+        # a recovery decision itself remains atomic.
+        execution_id = str(lease.execution_id.root)
+        self.managed_input_store.list_rounds(execution_id)
+        event: Event | None = None
+        connection = self._connect()
+        try:
+            self._begin(connection, immediate=True)
+            command_row = connection.execute(
+                "SELECT c.id,c.payload_json FROM v2_commands c "
+                "JOIN v2_leases l ON l.execution_id=c.execution_id "
+                "WHERE c.execution_id=? AND c.status='claimed' "
+                "AND c.owner_id=? AND l.owner_id=? AND l.lease_token=?",
+                (
+                    execution_id,
+                    lease.owner_id,
+                    lease.owner_id,
+                    lease.lease_token,
+                ),
+            ).fetchone()
+            if command_row is None:
+                self._rollback(connection)
+                return False
+            payload = _loads(command_row["payload_json"], {})
+            if (
+                not isinstance(payload, Mapping)
+                or payload.get("human_input") != "managed"
+            ):
+                self._rollback(connection)
+                return False
+            event = self._terminalize_managed_recovery_in_transaction(
+                connection, execution_id, reason=reason
+            )
+            if event is None:
+                connection.execute(
+                    "UPDATE v2_commands SET status='interrupted' WHERE execution_id=? "
+                    "AND status IN ('queued','claimed')",
+                    (execution_id,),
+                )
+                connection.execute(
+                    "DELETE FROM v2_leases WHERE execution_id=?", (execution_id,)
+                )
+                self._commit(connection)
+                return False
+            connection.execute(
+                "DELETE FROM v2_leases WHERE execution_id=?", (execution_id,)
+            )
+            self._commit(connection)
+        except BaseException:
+            self._rollback(connection)
+            raise
+        finally:
+            connection.close()
+        if event is not None:
+            with self._callback_lock:
+                callbacks = tuple(self._callbacks.get(execution_id, ()))
+            for callback in callbacks:
+                try:
+                    callback(event.model_copy())
+                except Exception:
+                    pass
+        return True
 
     def release_lease(self, lease: Lease | str, *, owner_id: str | None = None) -> bool:
         token = lease.lease_token if isinstance(lease, Lease) else lease
@@ -4383,6 +4607,8 @@ class SQLiteExecutionStore(_SqliteBase):
     ) -> tuple[ExecutionId, ...]:
         moment = now or _utcnow()
         changed: list[ExecutionId] = []
+        if self._has_managed_command(stale_before=moment):
+            self._ensure_managed_input_schema()
         connection = self._connect()
         try:
             # Select and transition stale owners under one write transaction.
@@ -4408,8 +4634,33 @@ class SQLiteExecutionStore(_SqliteBase):
                 )
                 if snapshot.lifecycle is ExecutionStatus.FINISHED:
                     connection.execute(
+                        "UPDATE v2_commands SET status='interrupted' WHERE execution_id=? "
+                        "AND status IN ('queued','claimed')",
+                        (key,),
+                    )
+                    connection.execute(
                         "DELETE FROM v2_leases WHERE execution_id=?", (key,)
                     )
+                    continue
+                command = connection.execute(
+                    "SELECT payload_json FROM v2_commands WHERE execution_id=? "
+                    "AND status IN ('queued','claimed') ORDER BY created_at,id LIMIT 1",
+                    (key,),
+                ).fetchone()
+                payload = _loads(command["payload_json"], {}) if command else {}
+                if (
+                    isinstance(payload, Mapping)
+                    and payload.get("human_input") == "managed"
+                ):
+                    self._terminalize_managed_recovery_in_transaction(
+                        connection,
+                        key,
+                        reason="worker lease expired",
+                    )
+                    connection.execute(
+                        "DELETE FROM v2_leases WHERE execution_id=?", (key,)
+                    )
+                    changed.append(ExecutionId(key))
                     continue
                 self._ensure_created_event(connection, key)
                 sequence, monotonic_offset_ms = self._next_event_position(
@@ -4486,6 +4737,26 @@ class SQLiteExecutionStore(_SqliteBase):
                     (key,),
                 ).fetchall()
             )
+            managed_tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)",
+                    (
+                        "m3_managed_input_diagnostics",
+                        "m3_managed_input_rounds",
+                    ),
+                ).fetchall()
+            }
+            if "m3_managed_input_diagnostics" in managed_tables:
+                connection.execute(
+                    "DELETE FROM m3_managed_input_diagnostics WHERE execution_id=?",
+                    (key,),
+                )
+            if "m3_managed_input_rounds" in managed_tables:
+                connection.execute(
+                    "DELETE FROM m3_managed_input_rounds WHERE execution_id=?",
+                    (key,),
+                )
             connection.execute("DELETE FROM v2_executions WHERE id=?", (key,))
             for digest in digests:
                 # Cascading artifact deletion removes metadata rows but does

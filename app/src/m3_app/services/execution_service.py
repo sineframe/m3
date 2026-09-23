@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from m3 import (
-    AgentSpec,
     DirectSpec,
     EvaluationQuery,
     EvaluationReport,
@@ -34,6 +33,7 @@ from m3 import (
     TraceView,
     build_feedback,
 )
+from m3._types.specs import AgentSpec
 from m3.feedback import project_test_attempts
 from m3.services.profiles import ProfileResolutionError
 from m3.storage import ExecutionStore, StorageConflict, StorageError

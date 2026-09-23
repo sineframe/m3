@@ -10,6 +10,7 @@ import pytest
 from mcp import types
 from mcp.server.lowlevel import Server
 
+from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
 from m3.harness import HarnessAdapterRegistry
 from m3.harness.contracts import (
@@ -22,7 +23,6 @@ from m3.server_group import HarnessServerConfig, ServerGroupManager
 from m3.trace.capture import CaptureWriter
 from m3.transport.capture_proxy import McpCaptureManager
 from m3.types import (
-    AgentSpec,
     ClaudeCode,
     HTTPServer,
     InProcessServer,
@@ -96,6 +96,37 @@ def test_capture_correlates_typed_ids_and_tool_latency(tmp_path: Path) -> None:
     assert snapshot.events[1].tool == "draw"
     assert snapshot.events[1].latency_ms is not None
     assert snapshot.events[3].error == {"code": -1, "message": "failed"}
+
+
+def test_capture_preserves_mrtr_params_for_requests_and_responses(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    writer = manager.writer_for("connection-mrtr")
+    params = {
+        "name": "book_shipment",
+        "arguments": {"weight_kg": 2},
+        "requestState": "opaque-state",
+        "inputResponses": {
+            "shipping_address": {
+                "action": "accept",
+                "content": {"city": "Pune"},
+            }
+        },
+    }
+    writer.write(
+        transport="stdio",
+        direction="client_to_server",
+        payload={"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": params},
+    )
+    writer.write(
+        transport="stdio",
+        direction="server_to_client",
+        payload={"jsonrpc": "2.0", "id": 7, "result": {"content": []}},
+    )
+
+    request, response = manager.snapshot("connection-mrtr").events
+    assert request.params == response.params == params
 
 
 @pytest.mark.asyncio

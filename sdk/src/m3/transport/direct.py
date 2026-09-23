@@ -24,7 +24,6 @@ from urllib.parse import parse_qsl, urlsplit, urlunsplit
 import anyio
 import httpx2
 from mcp import ClientSession
-from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import (
     MCP_DEFAULT_SSE_READ_TIMEOUT,
@@ -34,10 +33,10 @@ from mcp.shared._httpx_utils import (
 
 from ..direct_trace import DirectTraceBridge
 from ..trace.redaction import is_sensitive_key
-from ..types import HTTPServer, SecretReference, SSEServer, TrustLevel
+from ..types import HTTPServer, SecretReference, TrustLevel
 from ._http_pinning import ValidatingHTTPX2Transport, canonical_hostname
 
-TransportName: TypeAlias = Literal["streamable_http", "sse"]
+TransportName: TypeAlias = Literal["streamable_http"]
 HostResolver: TypeAlias = Callable[[str, int], tuple[str, ...]]
 
 
@@ -247,7 +246,7 @@ def _is_credential_query_name(name: str) -> bool:
 
 
 def _endpoint_trust_details(
-    server: HTTPServer | SSEServer,
+    server: HTTPServer,
     *,
     for_agent: bool,
     resolve_host: HostResolver,
@@ -284,7 +283,7 @@ def _endpoint_trust_details(
 
 
 def validate_endpoint_trust(
-    server: HTTPServer | SSEServer,
+    server: HTTPServer,
     *,
     for_agent: bool = False,
     resolve_host: HostResolver = _default_host_resolver,
@@ -305,7 +304,7 @@ def validate_endpoint_trust(
 
 
 def _validated_transport_policy(
-    server: HTTPServer | SSEServer,
+    server: HTTPServer,
     *,
     for_agent: bool,
     resolve_host: HostResolver,
@@ -465,7 +464,7 @@ class _RemoteConnection:
 
     def __init__(
         self,
-        server: HTTPServer | SSEServer,
+        server: HTTPServer,
         *,
         resolver: SecretResolver | None = None,
         bearer_token: SecretReference | None = None,
@@ -663,42 +662,16 @@ class _RemoteConnection:
             headers = self._resolved_headers()
             if connect_deadline <= time.monotonic():
                 raise TimeoutError
-            streams: Any
-            if self._transport == "streamable_http":
-                client = self._http_client(
-                    headers,
-                    validated_origin,
-                    connection_resolver,
-                    connect_deadline,
-                )
-                await self._stack.enter_async_context(client)
-                streams = await self._stack.enter_async_context(
-                    streamable_http_client(self.server.url, http_client=client)
-                )
-            else:
-                factory = self._http_client_factory
-                if factory is None:
-                    factory = lambda headers=None, timeout=None, auth=None: (
-                        _safe_mcp_http_client(
-                            headers=headers,
-                            timeout=timeout,
-                            auth=auth,
-                            validated_origin=validated_origin,
-                            resolve_addresses=connection_resolver,
-                            allow_public_auth_origins=auth is not None,
-                            first_connect_deadline=connect_deadline,
-                        )
-                    )
-                streams = await self._stack.enter_async_context(
-                    sse_client(
-                        self.server.url,
-                        headers=headers,
-                        timeout=self._timeout,
-                        sse_read_timeout=self._read_timeout,
-                        auth=self._auth,
-                        httpx_client_factory=factory,
-                    )
-                )
+            client = self._http_client(
+                headers,
+                validated_origin,
+                connection_resolver,
+                connect_deadline,
+            )
+            await self._stack.enter_async_context(client)
+            streams: Any = await self._stack.enter_async_context(
+                streamable_http_client(self.server.url, http_client=client)
+            )
             read_stream, write_stream = streams
             if self._trace_bridge is not None:
                 read_stream, write_stream = self._trace_bridge.wrap_streams(
@@ -795,26 +768,15 @@ class StreamableHTTPConnection(_RemoteConnection):
         super().__init__(server, **kwargs)
 
 
-class SSEConnection(_RemoteConnection):
-    """Lifecycle adapter for the official legacy SSE transport."""
-
-    _transport: TransportName = "sse"
-
-    def __init__(self, server: SSEServer, **kwargs: Any) -> None:
-        super().__init__(server, **kwargs)
-
-
 def remote_connection(
-    server: HTTPServer | SSEServer,
+    server: HTTPServer,
     **kwargs: Any,
-) -> StreamableHTTPConnection | SSEConnection:
-    """Select the official transport adapter from a typed server value."""
+) -> StreamableHTTPConnection:
+    """Create the official Streamable HTTP transport adapter."""
 
     if isinstance(server, HTTPServer):
         return StreamableHTTPConnection(server, **kwargs)
-    if isinstance(server, SSEServer):
-        return SSEConnection(server, **kwargs)
-    raise TypeError("remote_connection requires a HTTPServer or SSEServer")
+    raise TypeError("remote_connection requires a HTTPServer")
 
 
 __all__ = [
@@ -822,7 +784,6 @@ __all__ = [
     "EnvironmentSecretResolver",
     "HostResolver",
     "RemoteConnection",
-    "SSEConnection",
     "SecretResolver",
     "StreamableHTTPConnection",
     "TransportConnectionError",

@@ -75,7 +75,19 @@ _EXECUTION_TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
         }
     ),
     ExecutionStatus.RUNNING_TURN: frozenset(
-        {ExecutionStatus.IDLE, ExecutionStatus.CLOSING, ExecutionStatus.FINISHED}
+        {
+            ExecutionStatus.IDLE,
+            ExecutionStatus.WAITING_FOR_INPUT,
+            ExecutionStatus.CLOSING,
+            ExecutionStatus.FINISHED,
+        }
+    ),
+    ExecutionStatus.WAITING_FOR_INPUT: frozenset(
+        {
+            ExecutionStatus.RUNNING_TURN,
+            ExecutionStatus.CLOSING,
+            ExecutionStatus.FINISHED,
+        }
     ),
     ExecutionStatus.CLOSING: frozenset({ExecutionStatus.FINISHED}),
     ExecutionStatus.FINISHED: frozenset(),

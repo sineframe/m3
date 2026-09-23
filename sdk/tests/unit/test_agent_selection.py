@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from m3 import MCPTestKit, ServerBinding, StdioServer
+from m3.elicitation import expect_form
 from m3.types import (
     FullToolPolicy,
     NativeToolPolicy,
@@ -467,6 +468,58 @@ def test_selection_session_forwards_runtime_controls() -> None:
         "runtime_servers": runtime,
         "interaction_handlers": handlers,
     }
+
+
+def test_selection_run_and_submit_bind_action_plan_to_internal_spec() -> None:
+    class FakeKit:
+        def __init__(self) -> None:
+            self.run = Mock(return_value="run-result")
+            self.submit = Mock(return_value="submit-result")
+
+    kit = FakeKit()
+    from m3._agent_selection import expand
+
+    agent = expand(kit, [{"harness": "opencode", "models": ["vendor/model"]}])[0]
+    plan = expect_form("confirm").accept({"confirmed": True})
+
+    assert (
+        agent.run(
+            "book it",
+            server=_server(),
+            elicitation=plan,
+            elicitation_round_limit=3,
+        )
+        == "run-result"
+    )
+    assert (
+        agent.submit(
+            "book it",
+            server=_server(),
+            elicitation=plan,
+            elicitation_round_limit=3,
+        )
+        == "submit-result"
+    )
+
+    run_spec = kit.run.call_args.args[0]
+    submit_spec = kit.submit.call_args.args[0]
+    assert run_spec.elicitation == plan
+    assert run_spec.elicitation_round_limit == 3
+    assert submit_spec.elicitation == plan
+    assert submit_spec.elicitation_round_limit == 3
+
+
+def test_selection_session_rejects_action_plan_at_construction() -> None:
+    class FakeKit:
+        agent_session = Mock(return_value="session")
+
+    from m3._agent_selection import expand
+
+    agent = expand(FakeKit(), [{"harness": "opencode", "models": ["vendor/model"]}])[0]
+    plan = expect_form("confirm").accept({"confirmed": True})
+
+    with pytest.raises(TypeError, match=r"session\.send"):
+        agent.session(server=_server(), elicitation=plan)
 
 
 def test_public_submit_exposes_cancellable_handle_lifecycle() -> None:

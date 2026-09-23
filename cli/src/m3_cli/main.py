@@ -37,7 +37,7 @@ def _parser() -> argparse.ArgumentParser:
         metavar="KIND:TARGET",
         help=(
             "require config, binary:<exe>, harness:<exe>, protocol:<exe>, "
-            "transport:<stdio|streamable_http|sse>, or storage:<memory|sqlite>"
+            "transport:<stdio|streamable_http>, or storage:<memory|sqlite>"
         ),
     )
     doctor_parser.add_argument(

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import pytest
 from pydantic import ValidationError
 
+from m3._types.specs import AgentSpec
 from m3.agent_session import AsyncAgentSession
 from m3.errors import UnsupportedFeature
 from m3.harness.contracts import (
@@ -18,7 +19,6 @@ from m3.policy import ToolDescriptor, ToolPolicyEvaluator
 from m3.server_group import ServerGroupManager, ServerGroupSnapshot, ServerRecord
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     FullToolPolicy,
     NativeToolPolicy,
     RestrictiveToolPolicy,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from concurrent.futures import Future as ConcurrentFuture
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
@@ -21,8 +22,11 @@ from ._check_recording import (
 from ._check_recording import (
     bind_subject as _bind_subject,
 )
+from ._types.specs import AgentSpec
 from .direct_trace import DirectTraceBridge
+from .elicitation import ElicitationResponse, PendingElicitationRound
 from .errors import (
+    ManagedInputRecoveryError,
     MCPError,
     ModelValidationError,
     OperationCancelled,
@@ -34,6 +38,23 @@ from .errors import (
 from .events import EventFactory, EventSequence
 from .execution_trace import ExecutionTraceRecorder
 from .harness.contracts import HarnessStartupError
+from .managed_input_api import (
+    HumanInput,
+    apply_human_input,
+)
+from .managed_input_api import (
+    command_human_input as _command_human_input,
+)
+from .managed_input_api import (
+    managed_input_provider as _managed_input_provider,
+)
+from .managed_input_api import (
+    pending_elicitation as _pending_elicitation,
+)
+from .managed_input_api import (
+    respond_elicitation as _respond_elicitation,
+)
+from .managed_runtime import ManagedRuntimeStateError, _ManagedInputCoordinator
 from .services.profiles import ProfileResolutionError, resolve_execution_spec
 from .storage import (
     ArtifactStore,
@@ -45,7 +66,6 @@ from .trace.redaction import RedactionConfig
 from .transport.local import LocalTransportError
 from .types import (
     ActivityHealth,
-    AgentSpec,
     CallTool,
     CallToolResult,
     DirectResult,
@@ -82,7 +102,6 @@ from .types import (
     ReadResourceResult,
     RequestLink,
     ServerBinding,
-    SSEServer,
     TraceResult,
 )
 
@@ -98,6 +117,13 @@ from .workspace import WorkspaceError, WorkspaceManager
 _DIRECT_RESULT_ADAPTER: TypeAdapter[DirectResult] = TypeAdapter(DirectResult)
 _ERROR_INFO_ADAPTER: TypeAdapter[ErrorInfo] = TypeAdapter(ErrorInfo)
 _CLEANUP_TIMEOUT_SECONDS = 10.0
+
+
+def _consume_worker_cancellation(future: ConcurrentFuture[Any]) -> None:
+    try:
+        future.result()
+    except BaseException:
+        pass
 
 
 def _direct_result_payload(result: DirectResult | None) -> Mapping[str, Any] | None:
@@ -181,6 +207,12 @@ def _protocol_error_details(error: ProtocolError) -> dict[str, Any]:
 
 
 def _error_info(error: BaseException) -> ErrorInfo:
+    if isinstance(error, ManagedInputRecoveryError):
+        return ErrorInfo(
+            code=ErrorCode.MANAGED_INPUT_RECOVERY_UNAVAILABLE,
+            message="managed input recovery is unavailable",
+            retryable=False,
+        )
     if isinstance(error, OperationTimeout):
         return ErrorInfo(
             code=ErrorCode.TIMEOUT, message="execution timed out", retryable=True
@@ -315,10 +347,12 @@ class AsyncExecutionHandle:
         persistent: bool = False,
         execution_id: ExecutionId | str | None = None,
         run_id: str | None = None,
+        human_input: HumanInput = "fail",
         resolution_provenance: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         self._controller = controller
         self._spec = spec
+        self._human_input = human_input
         self._execution_id = (
             execution_id
             if isinstance(execution_id, ExecutionId)
@@ -423,6 +457,7 @@ class AsyncExecutionHandle:
         # remains the sole cleanup authority.
         self._task_cancel_issued = False
         self._bridge: DirectTraceBridge | None = None
+        self._managed_runtime: _ManagedInputCoordinator | None = None
         self._workspace: WorkspaceManager | None = None
         self._workspace_artifacts: tuple[Any, ...] = ()
         self._workspace_limitations: tuple[str, ...] = ()
@@ -463,6 +498,41 @@ class AsyncExecutionHandle:
         if snapshot is None:
             raise RuntimeError("execution snapshot is unavailable")
         return snapshot
+
+    async def pending_elicitation(self) -> PendingElicitationRound | None:
+        """Return the current public managed-input round, if one is pending."""
+
+        if self._human_input != "managed":
+            return None
+        return await asyncio.to_thread(
+            _pending_elicitation, self._store, self._execution_id
+        )
+
+    async def respond_elicitation(
+        self,
+        round_id: str,
+        responses: Mapping[str, ElicitationResponse],
+        *,
+        idempotency_key: str,
+    ) -> None:
+        """Atomically validate and commit keyed human responses."""
+
+        if self._human_input != "managed":
+            raise ModelValidationError(
+                "elicitation responses require managed human input",
+                details={"operation": "execution.respond_elicitation"},
+            )
+        await asyncio.to_thread(
+            _respond_elicitation,
+            self._store,
+            self._execution_id,
+            round_id,
+            responses,
+            idempotency_key=idempotency_key,
+        )
+        runtime = self._managed_runtime
+        if runtime is not None:
+            runtime.notify_response(round_id)
 
     async def _wait_terminal(self, timeout: float | None) -> None:
         if timeout is not None and timeout <= 0:
@@ -525,6 +595,19 @@ class AsyncExecutionHandle:
             if issue_task_cancel:
                 task.cancel()
         await self._terminal.wait()
+
+    async def _cancel_after_managed_recovery_loss(self) -> None:
+        """Wake an owned managed adapter after its worker lease is lost."""
+        error = ManagedInputRecoveryError(
+            "managed interaction cannot be resumed safely after worker loss"
+        )
+        runtime = self._managed_runtime
+        if runtime is not None:
+            await runtime.cancel(error)
+            return
+        task = self._task
+        if task is not None and not task.done():
+            task.cancel()
 
     async def _hydrate_terminal(self) -> None:
         """Project a terminal state committed by a persistent worker/store."""
@@ -1040,7 +1123,7 @@ class AsyncExecutionHandle:
 
     async def _run_direct(self, spec: DirectSpec) -> DirectResult:
         binding, effective_selector = self._select_direct_binding(spec)
-        if isinstance(binding.server, (HTTPServer, SSEServer)):
+        if isinstance(binding.server, HTTPServer):
             self._workspace_limitations = ("remote_transport_workspace_not_applicable",)
         events = self._recorder.events()
         next_sequence = events[-1].sequence + 1 if events else 1
@@ -1160,12 +1243,26 @@ class AsyncExecutionHandle:
         # adapter, starts the required/optional server group, and closes both
         # together after the conversation.  The execution recorder remains
         # the event/trace authority for the submitted handle.
+        managed_runtime: _ManagedInputCoordinator | None = None
+        if self._human_input == "managed":
+            managed_store = _managed_input_provider(
+                self._store
+            ).resolve_managed_input_store()
+            managed_runtime = _ManagedInputCoordinator(
+                managed_store,
+                self._execution_id.root,
+                self._recorder,
+                round_limit=spec.elicitation_round_limit,
+            )
+            self._managed_runtime = managed_runtime
         session_options: dict[str, Any] = {
             "_event_sink": self._record_agent_event,
             "_trace_recorder": self._recorder,
             "_trace_owner": False,
             "_execution_id": self._execution_id,
         }
+        if managed_runtime is not None:
+            session_options["_managed_input_runtime"] = managed_runtime
         # Keep injected test-kit factories that implement the earlier private
         # hook compatible for ephemeral executions. Persistent submissions
         # always carry the durable artifact store through this boundary.
@@ -1185,6 +1282,13 @@ class AsyncExecutionHandle:
         failure: BaseException | None = None
         try:
             async with session:
+                if managed_runtime is not None:
+                    harness_session = session._managed_harness_session
+                    if harness_session is None:
+                        raise UnsupportedFeature(
+                            "managed interaction requires an active harness session"
+                        )
+                    managed_runtime.bind_session(harness_session.session_id)
                 self._recorder.emit(
                     EventKind.DIAGNOSTIC,
                     payload={
@@ -1198,7 +1302,18 @@ class AsyncExecutionHandle:
                 if self._cancel_requested:
                     raise OperationCancelled("execution cancelled")
                 if spec.message is not None:
-                    await session.send(spec.message, timeout=spec.timeout_seconds)
+                    await asyncio.to_thread(
+                        self._recorder.emit,
+                        EventKind.EXECUTION_STATE_CHANGED,
+                        payload={"lifecycle": ExecutionStatus.RUNNING_TURN.value},
+                        lifecycle_phase=LifecyclePhase.TURN,
+                    )
+                    await session.send(
+                        spec.message,
+                        timeout=spec.timeout_seconds,
+                        elicitation=spec.elicitation,
+                        elicitation_round_limit=spec.elicitation_round_limit,
+                    )
         except BaseException as exc:
             # Preserve the exception exposed by the session factory/lifecycle
             # (notably typed unsupported startup) if the provisional session
@@ -1207,6 +1322,19 @@ class AsyncExecutionHandle:
             self._agent_error = _error_info(exc)
             raise
         finally:
+            if managed_runtime is not None:
+                try:
+                    await managed_runtime.cancel(
+                        failure or OperationCancelled("managed input session closed")
+                    )
+                except Exception:
+                    self._agent_error = _error_info(
+                        ManagedRuntimeStateError("managed-input cleanup failed")
+                    )
+                    if failure is None:
+                        raise ManagedRuntimeStateError(
+                            "managed-input cleanup failed"
+                        ) from None
             # Session cleanup may raise after it has already committed its
             # terminal result (for example, an owned workspace cleanup
             # failure). Preserve any artifacts collected on that path.
@@ -1397,6 +1525,7 @@ class AsyncExecutionController:
                     run_id=str(command.payload.get("run_id"))
                     if command.payload.get("run_id")
                     else None,
+                    human_input=_command_human_input(command.payload),
                 )
                 self._handles_by_id[identifier] = handle
             loop = self._worker_loop
@@ -1405,11 +1534,25 @@ class AsyncExecutionController:
             future = asyncio.run_coroutine_threadsafe(handle._start_from_worker(), loop)
             future.result()
 
+        def cancel_managed_command(command: Any) -> None:
+            handle = self._handles_by_id.get(str(command.execution_id))
+            loop = self._worker_loop
+            if handle is None or loop is None or loop.is_closed():
+                return
+            future = asyncio.run_coroutine_threadsafe(
+                handle._cancel_after_managed_recovery_loss(), loop
+            )
+            future.add_done_callback(_consume_worker_cancellation)
+
         # Keep storage optional at import time; this concrete worker is loaded
         # only when a persistent toolkit explicitly starts its worker.
         from .services.persistent import SQLiteStoreWorker
 
-        self._persistent_worker = SQLiteStoreWorker(self._persistent_store, run_command)
+        self._persistent_worker = SQLiteStoreWorker(
+            self._persistent_store,
+            run_command,
+            cancel_runner=cancel_managed_command,
+        )
 
         def worker_main() -> None:
             assert self._persistent_worker is not None
@@ -1432,8 +1575,20 @@ class AsyncExecutionController:
         self._worker_thread.start()
 
     def submit(
-        self, spec: ExecutionSpec, *, run_id: str | None = None
+        self,
+        spec: ExecutionSpec,
+        *,
+        run_id: str | None = None,
+        human_input: HumanInput = "fail",
     ) -> AsyncExecutionHandle:
+        apply_human_input(spec, human_input)
+        if human_input == "managed":
+            if self._persistent_store is None:
+                raise ModelValidationError(
+                    "managed human input requires a persistent managed-input-capable store",
+                    details={"operation": "execution.submit"},
+                )
+            _managed_input_provider(self._persistent_store)
         if not isinstance(spec, (DirectSpec, AgentSpec)):
             raise ModelValidationError(
                 "execution spec is invalid", details={"operation": "execution.submit"}
@@ -1454,6 +1609,7 @@ class AsyncExecutionController:
                 self,
                 spec,
                 run_id=effective_run_id,
+                human_input=human_input,
                 resolution_provenance=resolution_provenance,
             )
         else:
@@ -1468,6 +1624,7 @@ class AsyncExecutionController:
                 store=self._persistent_store,
                 persistent=True,
                 run_id=effective_run_id,
+                human_input=human_input,
                 resolution_provenance=resolution_provenance,
             )
             handle._recorder.emit(
@@ -1479,7 +1636,11 @@ class AsyncExecutionController:
                 enqueue_command = self._persistent_store.enqueue_command
                 enqueue_command(
                     handle.execution_id,
-                    payload={"spec": payload, "run_id": effective_run_id},
+                    payload={
+                        "spec": payload,
+                        "run_id": effective_run_id,
+                        "human_input": human_input,
+                    },
                     command_id=f"command-{handle.execution_id.root}",
                 )
             except Exception:
@@ -1500,7 +1661,10 @@ class AsyncExecutionController:
         return handle
 
     async def run(
-        self, spec: ExecutionSpec, *, run_id: str | None = None
+        self,
+        spec: ExecutionSpec,
+        *,
+        run_id: str | None = None,
     ) -> ExecutionResult:
         return await self.submit(spec, run_id=run_id).result()
 

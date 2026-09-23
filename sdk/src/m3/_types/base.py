@@ -277,7 +277,6 @@ class TransportKind(str, _Enum):
     IN_PROCESS = "in_process"
     STDIO = "stdio"
     STREAMABLE_HTTP = "streamable_http"
-    SSE = "sse"
 
 
 class TrustLevel(str, _Enum):
@@ -293,6 +292,7 @@ class ExecutionStatus(str, _Enum):
     STARTING = "starting"
     IDLE = "idle"
     RUNNING_TURN = "running_turn"
+    WAITING_FOR_INPUT = "waiting_for_input"
     CLOSING = "closing"
     FINISHED = "finished"
 
@@ -366,6 +366,7 @@ class ErrorCode(str, _Enum):
     SESSION_BUSY = "session_busy"
     UNSUPPORTED = "unsupported"
     CLEANUP_FAILED = "cleanup_failed"
+    MANAGED_INPUT_RECOVERY_UNAVAILABLE = "managed_input_recovery_unavailable"
 
 
 class SecretReference(FrozenModel):

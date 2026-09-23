@@ -317,15 +317,8 @@ def test_neutral_protocol_unlocks_transport_specific_full_probe(tmp_path: Path) 
         probe_type=ACPProbeKind.FULL,
         transport="http",
     )
-    full_sse = ACPProbeRequest(
-        profile_id=profile_id,
-        revision_id=revision_id,
-        probe_type=ACPProbeKind.FULL,
-        transport="sse",
-    )
     assert asyncio.run(service.run(full_http)).transport == "http"
-    assert asyncio.run(service.run(full_sse)).transport == "sse"
-    assert {item.transport for item in calls} == {"stdio", "http", "sse"}
+    assert {item.transport for item in calls} == {"stdio", "http"}
     store.close()
 
 

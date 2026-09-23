@@ -17,12 +17,13 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 
+from .._types.specs import AgentSpec
 from ..agent_session import ControllerHarnessAdapter, HarnessAdapter
+from ..elicitation import PendingElicitationRound
 from ..errors import MCPError
 from ..interaction_handlers import Interactions
 from ..policy import ToolDescriptor, ToolPolicyEvaluator, ToolPolicyEvidence
 from ..types import (
-    AgentSpec,
     Capability,
     CapabilityStatus,
     ErrorCode,
@@ -36,6 +37,7 @@ from ..types import (
 )
 
 if TYPE_CHECKING:
+    from ..managed_runtime import ManagedInputRuntime
     from ..server_group import HarnessServerConfig, ServerGroupSnapshot
     from .observations import HarnessSessionEvidence, TurnEvidence
 
@@ -57,6 +59,48 @@ class UnsupportedHarnessFeature(HarnessAdapterError):
 
 
 @dataclass(frozen=True, slots=True)
+class HarnessInteractionCapabilities:
+    """Evidence-backed capabilities for modern MCP interactions.
+
+    This contract is deliberately separate from the general harness feature
+    snapshot.  A harness can support ordinary permission or sampling
+    callbacks without exposing the request identity and retry boundary needed
+    for modern MRTR elicitation.  The conservative defaults keep M3 from
+    taking ownership of an interaction it cannot safely complete.
+    """
+
+    supports_elicitation: bool = False
+    preserves_request_keys: bool = False
+    preserves_multi_request_rounds: bool = False
+    supports_interaction_cancellation: bool = False
+    supports_interaction_resume: bool = False
+    supports_idempotent_response_delivery: bool = False
+    retry_owner: Literal["m3", "harness"] = "harness"
+
+    def __post_init__(self) -> None:
+        for name in (
+            "supports_elicitation",
+            "preserves_request_keys",
+            "preserves_multi_request_rounds",
+            "supports_interaction_cancellation",
+            "supports_interaction_resume",
+            "supports_idempotent_response_delivery",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be a boolean")
+        if self.retry_owner not in {"m3", "harness"}:
+            raise ValueError("harness interaction retry owner is invalid")
+        if self.supports_elicitation and not (
+            self.preserves_request_keys
+            and self.preserves_multi_request_rounds
+            and self.supports_interaction_cancellation
+        ):
+            raise ValueError(
+                "elicitation support requires request keys, rounds, and cancellation"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class HarnessAdapterCapabilities:
     """Features an adapter can truthfully enforce and observe."""
 
@@ -67,6 +111,9 @@ class HarnessAdapterCapabilities:
     supports_tool_policy: bool = True
     supports_streaming: bool = False
     supported_content_kinds: frozenset[str] = frozenset({"text"})
+    interaction: HarnessInteractionCapabilities = field(
+        default_factory=HarnessInteractionCapabilities
+    )
 
     def readiness(self, *, ready: bool = True, reason: str | None = None) -> Readiness:
         status = CapabilityStatus.READY if ready else CapabilityStatus.UNAVAILABLE
@@ -127,6 +174,9 @@ class HarnessTurnResult:
     # Typed evidence is the preferred shared boundary.  ``evidence`` remains
     # as a compatibility receipt for adapters that do not provide typed evidence.
     turn_evidence: TurnEvidence | None = None
+    # Private same-worker envelope consumed by the managed-input runtime.
+    elicitation: PendingElicitationRound | None = None
+    operation_parameters: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -522,7 +572,13 @@ class _DeterministicHarnessSession:
             # exercise the same policy-gated interaction callbacks that a
             # concrete harness adapter receives from HarnessLaunch.
             "interactions": launch.interactions,
+            "_managed_input_runtime": None,
         }
+
+    def _set_managed_input_runtime(self, runtime: ManagedInputRuntime) -> None:
+        """Private controller hook; no public session surface is added."""
+
+        self._state["_managed_input_runtime"] = runtime
 
     @property
     def session_id(self) -> str:
@@ -554,10 +610,50 @@ class _DeterministicHarnessSession:
         self._cancel_requested = False
 
         async def invoke() -> HarnessTurnResult:
-            value = self._adapter._handler(request, self._state)
-            if inspect.isawaitable(value):
-                value = await value
-            if isinstance(value, HarnessTurnResult):
+            delivered_round_id: str | None = None
+            while True:
+                value = self._adapter._handler(request, self._state)
+                if inspect.isawaitable(value):
+                    value = await value
+                if not isinstance(value, HarnessTurnResult):
+                    runtime = self._state.get("_managed_input_runtime")
+                    if delivered_round_id is not None and runtime is not None:
+                        await runtime.resolve_round(
+                            delivered_round_id, operation_complete=True
+                        )
+                        delivered_round_id = None
+                    response = (
+                        value
+                        if isinstance(value, TurnResponse)
+                        else TurnResponse(content=(TextContent(text=str(value)),))
+                    )
+                    return HarnessTurnResult(
+                        sequence=sequence,
+                        status="completed",
+                        response=response,
+                        evidence={
+                            "process_capture": "in_process",
+                            "transport_capture": "in_process",
+                            "mcp_capture": "normalized",
+                            "tool_capture": "adapter_reported",
+                            "content_capture": "structured",
+                            "usage_provenance": "unavailable",
+                        },
+                    )
+                pending = value.elicitation
+                if pending is not None:
+                    runtime = self._state.get("_managed_input_runtime")
+                    if runtime is None:
+                        return value
+                    if delivered_round_id is not None:
+                        await runtime.resolve_round(delivered_round_id)
+                        delivered_round_id = None
+                    responses = await runtime.await_round(
+                        pending, value.operation_parameters
+                    )
+                    self._state["_managed_input_responses"] = responses
+                    delivered_round_id = pending.round_id
+                    continue
                 evidence = {
                     "process_capture": "in_process",
                     "transport_capture": "in_process",
@@ -567,6 +663,12 @@ class _DeterministicHarnessSession:
                     "usage_provenance": "unavailable",
                     **dict(value.evidence),
                 }
+                runtime = self._state.get("_managed_input_runtime")
+                if delivered_round_id is not None and runtime is not None:
+                    await runtime.resolve_round(
+                        delivered_round_id, operation_complete=True
+                    )
+                    delivered_round_id = None
                 if value.sequence != sequence:
                     return HarnessTurnResult(
                         sequence=sequence,
@@ -586,24 +688,6 @@ class _DeterministicHarnessSession:
                     evidence=evidence,
                     turn_evidence=value.turn_evidence,
                 )
-            response = (
-                value
-                if isinstance(value, TurnResponse)
-                else TurnResponse(content=(TextContent(text=str(value)),))
-            )
-            return HarnessTurnResult(
-                sequence=sequence,
-                status="completed",
-                response=response,
-                evidence={
-                    "process_capture": "in_process",
-                    "transport_capture": "in_process",
-                    "mcp_capture": "normalized",
-                    "tool_capture": "adapter_reported",
-                    "content_capture": "structured",
-                    "usage_provenance": "unavailable",
-                },
-            )
 
         task = asyncio.create_task(invoke())
         self._active = task
@@ -629,7 +713,10 @@ class _DeterministicHarnessSession:
                     evidence={"usage_provenance": "unavailable"},
                 )
             raise
-        except Exception:
+        except Exception as exc:
+            runtime = self._state.get("_managed_input_runtime")
+            if runtime is not None:
+                await runtime.fail_round(exc)
             return HarnessTurnResult(
                 sequence=sequence,
                 status="failed",

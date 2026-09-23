@@ -3,16 +3,15 @@ from pathlib import Path
 import pytest
 
 from m3 import MCPTestKit
+from m3._types.specs import AgentSpec
 from m3.storage import SQLiteExecutionStore
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     ClaudeCode,
     HTTPServer,
     NativeToolPolicy,
     OpenCode,
     SecretReference,
-    SSEServer,
     StdioServer,
     TextContent,
 )
@@ -48,7 +47,6 @@ def _mcp(service: ProfileService) -> str:
                         "url": "https://example.test/mcp",
                         "headers": {"Authorization": "${MCP_AUTH}"},
                     },
-                    "sse": {"type": "sse", "url": "https://example.test/events"},
                 }
             },
         )
@@ -145,7 +143,7 @@ def test_profile_service_reads_and_mutates_same_id_families_independently(
 
 @pytest.mark.parametrize(
     ("server", "expected"),
-    [("stdio", StdioServer), ("http", HTTPServer), ("sse", SSEServer)],
+    [("stdio", StdioServer), ("http", HTTPServer)],
 )
 def test_spec_builder_converts_all_transports_and_secret_references(
     tmp_path: Path, server: str, expected: type

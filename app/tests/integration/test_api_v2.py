@@ -10,7 +10,6 @@ from pydantic import TypeAdapter
 
 from m3 import (
     ACPAgent,
-    AgentSpec,
     ClaudeCode,
     EvaluationId,
     EvaluationResult,
@@ -31,6 +30,7 @@ from m3 import (
     TraceView,
     UserMessage,
 )
+from m3._types.specs import AgentSpec
 from m3.storage import SQLiteExecutionStore, StorageError
 from m3.types import CallTool, DirectSpec, ListTools, ServerBinding, StdioServer
 from m3_app.api.app import create_app
@@ -814,7 +814,6 @@ import pytest
 
 from m3 import (
     ACPAgent,
-    AgentSpec,
     EvaluationDecision,
     EvaluationStatus,
     FullToolPolicy,
@@ -824,6 +823,7 @@ from m3 import (
     TextContent,
     UserMessage,
 )
+from m3._types.specs import AgentSpec
 
 pytestmark = pytest.mark.m3(suite_name="blind-evidence")
 _PROMPT = "Inspect the order summary and return a concise response."
@@ -1301,8 +1301,8 @@ def test_v2_capability_doc_lists_every_route(tmp_path):
     prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     backticked = set(re.findall(r"`([^`]+)`", prose))
     assert {
-        "DirectSpec",
-        "AgentSpec",
+        "direct",
+        "agent",
         "ExecutionState",
         "events",
         "next_after_sequence",

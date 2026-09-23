@@ -28,7 +28,6 @@ from .types import (
     InProcessServer,
     ServerBinding,
     ServerValue,
-    SSEServer,
     StdioServer,
     ToolPolicy,
     TransportKind,
@@ -152,7 +151,7 @@ def _transport(server: ServerValue) -> TransportKind:
         return TransportKind.STDIO
     if isinstance(server, HTTPServer):
         return TransportKind.STREAMABLE_HTTP
-    return TransportKind.SSE
+    raise TypeError("unsupported MCP server transport")
 
 
 def _private_host(host: str) -> bool:
@@ -176,7 +175,7 @@ def _validate_binding(binding: ServerBinding, key: str) -> None:
         raise ServerStartupError(
             "server profile resolution is unavailable in this runtime"
         )
-    if isinstance(server, (HTTPServer, SSEServer)):
+    if isinstance(server, HTTPServer):
         parsed = urlsplit(server.url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ServerStartupError("MCP server endpoint is invalid")
@@ -494,8 +493,7 @@ class ServerGroupManager:
                 if record.server is not None
                 and getattr(record.server, "trust", TrustLevel.UNTRUSTED)
                 in {TrustLevel.TRUSTED_PRIVATE, TrustLevel.SDK_LOOPBACK}
-                and record.transport
-                in {TransportKind.STREAMABLE_HTTP, TransportKind.SSE}
+                and record.transport in {TransportKind.STREAMABLE_HTTP}
             }
             self._capture = McpCaptureManager(
                 trusted_private_keys=trusted_private,
@@ -577,7 +575,7 @@ class ServerGroupManager:
                         tools=record.tools,
                     )
                 )
-            elif isinstance(server, (HTTPServer, SSEServer)):
+            elif isinstance(server, HTTPServer):
                 configurations.append(
                     HarnessServerConfig(
                         key=record.key,

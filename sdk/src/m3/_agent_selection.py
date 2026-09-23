@@ -13,15 +13,15 @@ import re as _re
 from collections.abc import Mapping as _Mapping
 from dataclasses import dataclass as _dataclass
 from typing import Any as _Any
+from typing import Literal as _Literal
 
+from ._types.specs import AgentSpec as _AgentSpec
+from .elicitation import ElicitationPlan as _ElicitationPlan
 from .errors import UnsupportedFeature as _UnsupportedFeature
 from .harness.manifest import ManifestValidationError as _ManifestValidationError
 from .harness.manifest import validate_manifest as _validate_manifest
 from .types import (
     ACPAgent as _ACPAgent,
-)
-from .types import (
-    AgentSpec as _AgentSpec,
 )
 from .types import (
     ClaudeCode as _ClaudeCode,
@@ -331,11 +331,12 @@ class _Selection:
             "declared_artifacts",
             "workspace",
             "permission_policy",
-            "elicitation_policy",
             "sampling_policy",
             "filesystem_policy",
             "terminal_policy",
             "metadata",
+            "elicitation",
+            "elicitation_round_limit",
         }
         unknown = set(options) - allowed
         if unknown:
@@ -373,8 +374,13 @@ class _Selection:
         server: _Any = None,
         servers: _Any = None,
         tools: _Any = None,
+        elicitation: _ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
         **options: _Any,
     ) -> _Any:
+        options = dict(options)
+        options["elicitation"] = elicitation
+        options["elicitation_round_limit"] = elicitation_round_limit
         return self.kit.run(
             self._spec(
                 _message(message),
@@ -392,17 +398,24 @@ class _Selection:
         server: _Any = None,
         servers: _Any = None,
         tools: _Any = None,
+        elicitation: _ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
+        human_input: _Literal["fail", "managed"] = "fail",
         **options: _Any,
     ) -> _Any:
-        return self.kit.submit(
-            self._spec(
-                _message(message),
-                server=server,
-                servers=servers,
-                tools=tools,
-                **options,
-            )
+        options = dict(options)
+        options["elicitation"] = elicitation
+        options["elicitation_round_limit"] = elicitation_round_limit
+        spec = self._spec(
+            _message(message),
+            server=server,
+            servers=servers,
+            tools=tools,
+            **options,
         )
+        if human_input == "fail":
+            return self.kit.submit(spec)
+        return self.kit.submit(spec, human_input=human_input)
 
     def session(
         self,
@@ -412,6 +425,8 @@ class _Selection:
         tools: _Any = None,
         **options: _Any,
     ) -> _Any:
+        if "elicitation" in options or "elicitation_round_limit" in options:
+            raise TypeError("elicitation belongs to session.send(), not session()")
         session_options = {
             key: options.pop(key)
             for key in ("adapter", "runtime_servers", "interaction_handlers")
@@ -431,8 +446,13 @@ class _AsyncSelection(_Selection):
         server: _Any = None,
         servers: _Any = None,
         tools: _Any = None,
+        elicitation: _ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
         **options: _Any,
     ) -> _Any:
+        options = dict(options)
+        options["elicitation"] = elicitation
+        options["elicitation_round_limit"] = elicitation_round_limit
         return await self.kit.run(
             self._spec(
                 _message(message),

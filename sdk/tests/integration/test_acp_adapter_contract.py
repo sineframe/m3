@@ -11,41 +11,24 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from acp.schema import PermissionOption
 
+from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
-from m3.harness.acp import AcpHarnessAdapter, _Client
+from m3.harness.acp import AcpHarnessAdapter
 from m3.harness.contracts import (
     HarnessLaunch,
     HarnessStartupError,
     HarnessTurnRequest,
 )
-from m3.interaction_handlers import (
-    ElicitationResult,
-    FilesystemRequest,
-    FilesystemResult,
-    InteractionHandlers,
-    InteractionReceipt,
-    Interactions,
-    SamplingResult,
-    TerminalRequest,
-    TerminalResult,
-)
 from m3.observability import ACPTrace, ObservationReason, ObservationState
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot, ServerRecord
 from m3.types import (
     ACPAgent,
-    AgentSpec,
-    ElicitationPolicy,
-    FilesystemPolicy,
     HTTPServer,
     NativeToolPolicy,
-    PermissionPolicy,
-    SamplingPolicy,
     SecretReference,
     ServerBinding,
     StdioServer,
-    TerminalPolicy,
     TransportKind,
 )
 
@@ -698,67 +681,3 @@ async def test_acp_send_preserves_cancellation_exception(tmp_path: Path) -> None
     with pytest.raises(asyncio.CancelledError):
         await session.send(HarnessTurnRequest.from_message("prompt"))
     await adapter.close()
-
-
-@pytest.mark.asyncio
-async def test_acp_callbacks_use_interaction_controller_and_keep_receipts_safe() -> (
-    None
-):
-    canary = "CALLBACK-CANARY"
-    receipt = InteractionReceipt("test", "test", "allow", "fixture")
-
-    async def filesystem(_request: FilesystemRequest) -> FilesystemResult:
-        return FilesystemResult(True, canary.encode(), receipt)
-
-    async def terminal_handler(_request: TerminalRequest) -> TerminalResult:
-        return TerminalResult(True, 0, canary.encode(), b"", False, False, receipt)
-
-    controller = Interactions(
-        permission_policy=PermissionPolicy(mode="prompt"),
-        elicitation_policy=ElicitationPolicy(mode="allow"),
-        sampling_policy=SamplingPolicy(mode="allow"),
-        filesystem_policy=FilesystemPolicy(mode="read_write"),
-        terminal_policy=TerminalPolicy(mode="allow"),
-        handlers=InteractionHandlers(
-            permission=lambda _request: True,
-            elicitation=lambda _request: ElicitationResult(
-                True, {"value": canary}, receipt
-            ),
-            sampling=lambda _request: SamplingResult(True, canary, receipt),
-            filesystem=cast(Any, filesystem),
-            terminal=cast(Any, terminal_handler),
-        ),
-    )
-    client = _Client([], [], interactions=controller)
-
-    permission = await client.request_permission(
-        "session",
-        SimpleNamespace(title=canary),
-        [PermissionOption(option_id="once", name="Allow once", kind="allow_once")],
-    )
-    elicitation = await client.create_elicitation(canary, "form")
-    sampling = await client.ext_method("sampling/createMessage", {"prompt": canary})
-    read = await client.read_text_file("session", "safe.txt", limit=100)
-    written = await client.write_text_file("session", "safe.txt", canary)
-    terminal_response = await client.create_terminal("session", "echo", [canary])
-    output = await client.terminal_output("session", terminal_response.terminal_id)
-    await client.wait_for_terminal_exit("session", terminal_response.terminal_id)
-    await client.release_terminal("session", terminal_response.terminal_id)
-
-    assert permission.outcome.outcome == "selected"
-    assert elicitation.action == "accept"
-    assert sampling["content"][0]["text"] == canary
-    assert read.content == canary
-    assert written is not None
-    assert output.output == canary
-    assert all(canary not in repr(item) for item in controller.receipts())
-    assert {kind for kind, _request, _response in client.interaction_events} >= {
-        "filesystem.read",
-        "filesystem.write",
-        "terminal.create",
-        "terminal.output",
-        "terminal.wait",
-        "terminal.release",
-    }
-    with pytest.raises(RuntimeError, match="acp_auth_required"):
-        await client.authenticate("unused")

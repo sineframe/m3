@@ -28,13 +28,11 @@ from m3.transport.local import TransportProcessError, TransportStartupError
 from m3.types import (
     HTTPServer,
     InProcessServer,
-    ProtocolConstraint,
     RevisionSelection,
     ServerBinding,
     ServerProfileId,
     ServerProfileRef,
     StdioServer,
-    TransportKind,
     TrustLevel,
 )
 
@@ -68,10 +66,6 @@ def _callback_server() -> Server:
             ],
             max_tokens=5,
         )
-        await session.elicit_form(
-            "confirm callback",
-            {"type": "object", "properties": {"ok": {"type": "boolean"}}},
-        )
         await session.list_roots()
         await session.send_log_message("info", "server callback log")
         await session.report_progress(0.5, 1.0, "halfway")
@@ -88,6 +82,19 @@ def test_input_required_result_is_public_async_surface() -> None:
     result = InputRequiredResult(request_state="state-1")
     assert result.result_type == "input_required"
     assert result.request_state == "state-1"
+
+
+async def test_async_direct_removed_callback_reports_migration_path() -> None:
+    async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
+        with pytest.raises(TypeError) as error:
+            kit.direct(  # type: ignore[call-arg]
+                InProcessServer(name="fixture", factory=_server),
+                elicitation_callback=lambda _request: None,
+            )
+    assert str(error.value) == (
+        "elicitation_callback was removed; pass elicitation= to call_tool(), "
+        "get_prompt(), or read_resource() instead"
+    )
 
 
 def _failing_server() -> Server:
@@ -240,7 +247,6 @@ async def test_kit_direct_exercises_official_server_callbacks_and_initialization
 ):
     callback_events: dict[str, list[object]] = {
         "sampling": [],
-        "elicitation": [],
         "roots": [],
         "logging": [],
         "messages": [],
@@ -255,10 +261,6 @@ async def test_kit_direct_exercises_official_server_callbacks_and_initialization
             model="fixture-model",
             stop_reason="endTurn",
         )
-
-    async def elicitation(*args: object, **kwargs: object) -> types.ElicitResult:
-        callback_events["elicitation"].append(args)
-        return types.ElicitResult(action="accept", content={"ok": True})
 
     async def roots(*args: object, **kwargs: object) -> types.ListRootsResult:
         callback_events["roots"].append(args)
@@ -284,7 +286,6 @@ async def test_kit_direct_exercises_official_server_callbacks_and_initialization
         async with kit.direct(
             InProcessServer(name="callback-fixture", factory=_callback_server),
             sampling_callback=sampling,
-            elicitation_callback=elicitation,
             list_roots_callback=roots,
             logging_callback=logging,
             message_handler=message_handler,
@@ -308,7 +309,6 @@ async def test_kit_direct_exercises_official_server_callbacks_and_initialization
             assert result.content[0]["text"] == "callback complete"
 
         assert len(callback_events["sampling"]) == 1
-        assert len(callback_events["elicitation"]) == 1
         assert len(callback_events["roots"]) == 1
         assert callback_events["logging"]
         assert callback_events["progress"] == [(0.5, 1.0, "halfway")]
@@ -429,16 +429,12 @@ async def test_public_direct_forwards_timeout_server_mode_and_session_options() 
     async def sampling(*args: object, **kwargs: object) -> object:
         return None
 
-    async def elicitation(*args: object, **kwargs: object) -> object:
-        return None
-
     kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
     client = kit.direct(
         InProcessServer(name="fixture", factory=_server),
         timeout=0.25,
         raise_server_exceptions=False,
         sampling_callback=sampling,
-        elicitation_callback=elicitation,
         extensions={"fixture.extension": {}},
     )
     async with client:
@@ -446,7 +442,6 @@ async def test_public_direct_forwards_timeout_server_mode_and_session_options() 
         session = client._session._session
         assert session._session_read_timeout_seconds == 0.25
         assert callable(session._sampling_callback)
-        assert callable(session._elicitation_callback)
         assert session._extensions == {"fixture.extension": {}}
         assert client._connection._raise_server_exceptions is False
     await kit.aclose()
@@ -708,12 +703,3 @@ def test_explicit_unsupported_protocol_fails_before_server_startup() -> None:
             InProcessServer(name="fixture", factory=factory), protocol="2024-11-05"
         )
     assert started is False
-
-
-def test_protocol_transport_constraint_is_checked_before_startup() -> None:
-    kit = AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project")
-    with pytest.raises(UnsupportedFeature, match="transport"):
-        kit.direct(
-            InProcessServer(name="fixture", factory=_server),
-            protocol=ProtocolConstraint(transport=TransportKind.SSE),
-        )

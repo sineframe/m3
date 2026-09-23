@@ -20,10 +20,11 @@ from m3._exports import (
     ROOT_EXPORTS,
     ROOT_LIMIT,
 )
+from m3._types.specs import AgentSpec
+from m3.elicitation import expect_form
 from m3.errors import InvalidTransitionError, ModelValidationError
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     ArtifactId,
     ArtifactRef,
     AudioContent,
@@ -33,7 +34,6 @@ from m3.types import (
     ConnectionId,
     ContentBlock,
     DirectSpec,
-    ElicitationPolicy,
     ErrorCode,
     ErrorInfo,
     EvaluationContext,
@@ -64,6 +64,7 @@ from m3.types import (
     OpaqueContent,
     OpenCode,
     PermissionPolicy,
+    Pi,
     Ping,
     ProtocolConstraint,
     Readiness,
@@ -79,7 +80,6 @@ from m3.types import (
     ServerProfileRef,
     ServerValue,
     SessionId,
-    SSEServer,
     StdioServer,
     TerminalPolicy,
     TextContent,
@@ -169,7 +169,6 @@ def test_root_export_categories_preserve_the_compatibility_surface() -> None:
         "MCPTestKit",
         "StdioServer",
         "HTTPServer",
-        "SSEServer",
         "InProcessServer",
         "ExecutionResult",
         "ExecutionOutcome",
@@ -338,6 +337,63 @@ def test_spec_and_content_json_round_trip() -> None:
     assert restored_event == event
 
 
+def test_agent_spec_round_trips_a_complete_elicitation_plan() -> None:
+    plan = expect_form("confirm").accept({"confirmed": True})
+    spec = AgentSpec(
+        harness=ClaudeCode(name="claude", model="claude-test"),
+        servers=(ServerBinding(server=StdioServer(name="echo", command="echo")),),
+        message=UserMessage(content=(TextContent(text="hello"),)),
+        elicitation=plan,
+        elicitation_round_limit=7,
+    )
+
+    payload = spec.model_dump(mode="json")
+    restored = AgentSpec.model_validate(payload)
+
+    assert restored == spec
+    assert restored.elicitation == plan
+    assert restored.elicitation_round_limit == 7
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, False, 1.5, "3"])
+def test_agent_spec_rejects_invalid_elicitation_round_limit(limit: object) -> None:
+    with pytest.raises(ValidationError, match="elicitation_round_limit"):
+        AgentSpec(
+            harness=ClaudeCode(name="claude", model="claude-test"),
+            servers=(ServerBinding(server=StdioServer(name="echo", command="echo")),),
+            elicitation_round_limit=limit,
+        )
+
+
+def test_pi_agent_spec_round_limit_is_validated_when_execution_mode_is_known() -> None:
+    spec = AgentSpec(
+        harness=Pi(model="pi-test"),
+        servers=(ServerBinding(server=StdioServer(name="echo", command="echo")),),
+        elicitation_round_limit=1025,
+    )
+
+    assert spec.elicitation_round_limit == 1025
+
+
+def test_non_pi_agent_spec_keeps_positive_integer_round_limit_contract() -> None:
+    spec = AgentSpec(
+        harness=ACPAgent(model="acp-test"),
+        servers=(ServerBinding(server=StdioServer(name="echo", command="echo")),),
+        elicitation_round_limit=1025,
+    )
+
+    assert spec.elicitation_round_limit == 1025
+
+
+def test_agent_spec_rejects_incomplete_elicitation_plan() -> None:
+    with pytest.raises(ValidationError, match="elicitation plan must be complete"):
+        AgentSpec(
+            harness=ClaudeCode(name="claude", model="claude-test"),
+            servers=(ServerBinding(server=StdioServer(name="echo", command="echo")),),
+            elicitation=expect_form("confirm"),
+        )
+
+
 def test_all_serializable_model_representatives_round_trip() -> None:
     execution = ExecutionId("execution-1")
     session = SessionId("session-1")
@@ -378,7 +434,6 @@ def test_all_serializable_model_representatives_round_trip() -> None:
         UserMessage(content=(TextContent(text="hello"),)),
         server,
         HTTPServer(name="http", url="https://example.test/mcp"),
-        SSEServer(name="sse", url="https://example.test/sse"),
         ServerBinding(server=server),
         ServerProfileRef(
             profile_id=ServerProfileId("server-profile-2"),
@@ -403,7 +458,6 @@ def test_all_serializable_model_representatives_round_trip() -> None:
             nonportable_reason="provider-specific",
         ),
         PermissionPolicy(),
-        ElicitationPolicy(),
         SamplingPolicy(),
         FilesystemPolicy(),
         TerminalPolicy(),

@@ -12,18 +12,27 @@ import json
 import os
 import sys
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from ..agent_session import AdapterTurn
+from ..elicitation import ElicitationPlan, PendingElicitationRound
+from ..errors import OperationCancelled, OperationTimeout
 from ..types import (
+    ErrorCode,
+    ErrorInfo,
     NativeToolPolicy,
     Pi,
     Readiness,
     SecretReference,
+    TurnOutcome,
 )
 from ._rpc_native import JsonRpcProcess, NativeRPCAdapter
 from .contracts import (
+    HarnessInteractionCapabilities,
     HarnessLaunch,
     HarnessSession,
     HarnessStartupError,
@@ -39,14 +48,33 @@ from .observations import (
     ToolResultObservedObservation,
     UsageObservedObservation,
 )
-from .pi_extension.bridge import qualified_tool_name
+from .pi_control import (
+    MAX_CONTROL_ROUND_LIMIT,
+    PiControlChannel,
+    PiControlClosed,
+)
+from .pi_extension.bridge import (
+    ActionContextChannel,
+    BridgeActionStatus,
+    qualified_tool_name,
+)
 
 
 class PiHarnessAdapter(NativeRPCAdapter):
     """One persistent ``pi --mode rpc`` conversation."""
 
     harness_kind = "pi"
+    managed_input_round_limit_max = MAX_CONTROL_ROUND_LIMIT
     executable_name = "pi"
+    interaction_capabilities = HarnessInteractionCapabilities(
+        supports_elicitation=True,
+        preserves_request_keys=True,
+        preserves_multi_request_rounds=True,
+        supports_interaction_cancellation=True,
+        supports_interaction_resume=False,
+        supports_idempotent_response_delivery=False,
+        retry_owner="m3",
+    )
 
     def __init__(
         self, *, executable: str = "pi", environment: Mapping[str, str] | None = None
@@ -61,6 +89,30 @@ class PiHarnessAdapter(NativeRPCAdapter):
         self._stop_reason: str | None = None
         self._tool_map_path: str | None = None
         self._tool_servers: set[str] = set()
+        self._action_channel: ActionContextChannel | None = None
+        self._action_generation: str | None = None
+        self._control_channel: PiControlChannel | None = None
+        self._managed_input_runtime: Any = None
+        self._buffered_native_frame: Mapping[str, Any] | None = None
+        self._buffered_native_ready = False
+        self._buffered_control_frame: Mapping[str, Any] | None = None
+        self._managed_cancel_event = asyncio.Event()
+
+    @property
+    def control_channel(self) -> PiControlChannel | None:
+        """The session-scoped managed-control transport, if opened."""
+
+        return self._control_channel
+
+    def _set_managed_input_runtime(self, runtime: Any) -> None:
+        self._managed_input_runtime = runtime
+
+    def _discard_turn_buffers(self) -> None:
+        """Drop frames that can only belong to the current managed turn."""
+
+        self._buffered_native_frame = None
+        self._buffered_native_ready = False
+        self._buffered_control_frame = None
 
     def process_argv(self, launch: HarnessLaunch) -> tuple[str, ...]:
         harness = launch.spec.harness
@@ -91,6 +143,18 @@ class PiHarnessAdapter(NativeRPCAdapter):
         help_text = await asyncio.to_thread(probe_help, self.executable, ("--help",))
         if help_text is None or "rpc" not in help_text.lower():
             return Readiness(ready=False, reason="Pi RPC capability is unavailable")
+        version = await asyncio.to_thread(probe_help, self.executable, ("--version",))
+        interaction = (
+            self.interaction_capabilities
+            if version is not None and version.strip() == "0.85.1"
+            else HarnessInteractionCapabilities(retry_owner="m3")
+        )
+        self._capabilities = replace(
+            self._capabilities,
+            interaction=interaction,
+        )
+        # Ordinary Pi RPC remains usable. Only action-bound elicitation is
+        # withheld until the installed version has evidence for this gate.
         self._tool_identities = {}
         self._tool_servers = set()
         for configuration in launch.configurations:
@@ -222,7 +286,27 @@ class PiHarnessAdapter(NativeRPCAdapter):
         add_secrets = getattr(launch.capture, "add_secrets", None)
         if callable(add_secrets) and runtime_secrets:
             add_secrets(runtime_secrets)
-        return await super().open(launch)
+        control = PiControlChannel()
+        await control.start()
+        self._control_channel = control
+        self._launch_environment.update(control.environment)
+        self._runtime_secrets.add(control.token)
+        if callable(add_secrets):
+            add_secrets({control.token})
+        try:
+            session = await super().open(launch)
+            try:
+                await control.wait_connected()
+            except PiControlClosed as error:
+                raise HarnessStartupError(
+                    "Pi managed-control extension did not authenticate"
+                ) from error
+            return session
+        except BaseException:
+            await super().close()
+            await control.close("adapter_open_failed")
+            self._control_channel = None
+            raise
 
     def environment_for_launch(
         self, launch: HarnessLaunch, root: Path
@@ -238,12 +322,98 @@ class PiHarnessAdapter(NativeRPCAdapter):
         finally:
             os.close(fd)
         self._tool_map_path = str(path)
+        self._action_channel = ActionContextChannel(
+            root / "pi-action-context.json", root / "pi-action-status.json"
+        )
         environment = dict(self._launch_environment or self.environment)
         environment["PI_SKIP_VERSION_CHECK"] = "1"
         environment["PI_TELEMETRY"] = "0"
         environment["M3_PI_TOOL_MAP"] = str(path)
+        environment["M3_PI_ACTION_CONTEXT"] = str(self._action_channel.context_path)
+        environment["M3_PI_ACTION_STATUS"] = str(self._action_channel.status_path)
         self._launch_environment = environment
         return environment
+
+    async def send(
+        self,
+        message: Any,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
+    ) -> AdapterTurn:
+        if self._session is None or self._action_channel is None:
+            raise HarnessStartupError("Pi action channel is unavailable")
+        if self._control_channel is not None:
+            self._control_channel.set_scope(None)
+        self._discard_turn_buffers()
+        generation = uuid4().hex
+        sequence = self._session.turn_count + 1
+        self._action_generation = generation
+        self._managed_cancel_event.clear()
+        identity = self._managed_identity()
+        self._action_channel.write_context(
+            generation=generation,
+            turn_sequence=sequence,
+            plan=elicitation,
+            round_limit=elicitation_round_limit,
+            execution_id=(
+                str(self._managed_input_runtime.execution_id)
+                if self._managed_input_runtime is not None
+                else None
+            ),
+            session_id=identity[0] if identity is not None else None,
+            turn_id=identity[2] if identity is not None else None,
+        )
+        self._action_channel.write_status(
+            BridgeActionStatus(generation, sequence, "idle")
+        )
+        try:
+            result = await super().send(message, timeout=timeout, metadata=metadata)
+            status = self._action_channel.read_status()
+            if result.outcome is not TurnOutcome.COMPLETED:
+                return result
+            if (
+                status is None
+                or status.generation != generation
+                or status.turn_sequence != sequence
+            ):
+                return AdapterTurn(
+                    response=None,
+                    error=ErrorInfo(
+                        code=ErrorCode.PROTOCOL_ERROR,
+                        message="Pi bridge status was unavailable",
+                    ),
+                    terminal=True,
+                    outcome=TurnOutcome.FAILED,
+                    evidence=result.evidence,
+                    turn_evidence=result.turn_evidence,
+                )
+            if status.state == "failed" or (
+                elicitation is not None and status.state != "completed"
+            ):
+                return AdapterTurn(
+                    response=None,
+                    error=ErrorInfo(
+                        code=ErrorCode.PROTOCOL_ERROR,
+                        message="Pi bridge could not complete elicitation",
+                        details={"bridge_error": status.error_code}
+                        if status.error_code
+                        else {},
+                    ),
+                    terminal=True,
+                    outcome=TurnOutcome.FAILED,
+                    tool_calls=result.tool_calls,
+                    evidence=result.evidence,
+                    trace_limitations=result.trace_limitations,
+                    turn_evidence=result.turn_evidence,
+                )
+            return result
+        finally:
+            self._discard_turn_buffers()
+            self._action_channel.clear()
+            self._action_generation = None
 
     async def initialize(self, process: JsonRpcProcess, launch: HarnessLaunch) -> str:
         # Pi emits session_start/state events without requiring a JSON-RPC
@@ -296,6 +466,293 @@ class PiHarnessAdapter(NativeRPCAdapter):
             if isinstance(value, str) and value:
                 self._session_metadata[target] = value
         return session
+
+    def _managed_identity(self) -> tuple[str, str, str] | None:
+        value = getattr(self._managed_input_runtime, "bound_identity", None)
+        return value if isinstance(value, tuple) and len(value) == 3 else None
+
+    async def _deliver_control_pending(self, frame: Mapping[str, Any]) -> None:
+        runtime = self._managed_input_runtime
+        control = self._control_channel
+        if runtime is None or control is None:
+            raise HarnessStartupError("Pi managed elicitation runtime is unavailable")
+        liveness_tasks: list[tuple[str, asyncio.Task[Any]]] = []
+        round_failure_recorded = False
+
+        async def fail_pending_round(error: BaseException) -> None:
+            nonlocal round_failure_recorded
+            if round_failure_recorded:
+                return
+            round_failure_recorded = True
+            await runtime.fail_round(error)
+
+        def peer_failure(source: str) -> HarnessStartupError:
+            if source == "process":
+                message = "Pi process exited during managed elicitation"
+            else:
+                message = "Pi managed-control connection disconnected"
+            return HarnessStartupError(message)
+
+        async def stop_liveness() -> None:
+            for _, task in liveness_tasks:
+                if not task.done():
+                    task.cancel()
+            if liveness_tasks:
+                await asyncio.gather(
+                    *(task for _, task in liveness_tasks), return_exceptions=True
+                )
+                liveness_tasks.clear()
+
+        async def await_while_live(awaitable: Any) -> Any:
+            operation_task = asyncio.create_task(awaitable)
+            try:
+                done, _ = await asyncio.wait(
+                    (operation_task, *(task for _, task in liveness_tasks)),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                # Peer death wins a simultaneous completion: a response that
+                # raced process exit cannot be delivered to the bridge.
+                for source, task in liveness_tasks:
+                    if task in done:
+                        cause_error: BaseException | None
+                        try:
+                            task.result()
+                        except BaseException as cause:
+                            cause_error = cause
+                        else:
+                            cause_error = None
+                        failure = peer_failure(source)
+                        # Failing the durable record first wakes the real
+                        # coordinator. Cancelling afterward also handles
+                        # lightweight runtime implementations without a waiter.
+                        await fail_pending_round(failure)
+                        if not operation_task.done():
+                            operation_task.cancel()
+                        await asyncio.gather(operation_task, return_exceptions=True)
+                        if cause_error is not None:
+                            raise failure from cause_error
+                        raise failure
+                return operation_task.result()
+            finally:
+                if not operation_task.done():
+                    operation_task.cancel()
+                await asyncio.gather(operation_task, return_exceptions=True)
+
+        try:
+            if frame.get("generation") != self._action_generation:
+                raise HarnessStartupError(
+                    "Pi managed elicitation generation mismatched"
+                )
+            if (
+                self._session is None
+                or frame.get("turn_sequence") != self._session.turn_count
+            ):
+                raise HarnessStartupError("Pi managed elicitation turn mismatched")
+            pending = PendingElicitationRound.model_validate(
+                {
+                    key: frame[key]
+                    for key in (
+                        "round_id",
+                        "execution_id",
+                        "logical_operation_id",
+                        "server",
+                        "operation_kind",
+                        "operation_name",
+                        "request_state",
+                        "requests",
+                        "created_at",
+                        "deadline",
+                    )
+                }
+            )
+            expected_execution = str(getattr(runtime, "execution_id", ""))
+            if pending.execution_id != expected_execution:
+                raise HarnessStartupError(
+                    "Pi managed elicitation execution identity mismatched"
+                )
+            process_owner = getattr(self._process, "owner", None)
+            process = getattr(process_owner, "process", None)
+            process_wait = getattr(process, "wait", None)
+            if callable(process_wait):
+                liveness_tasks.append(("process", asyncio.create_task(process_wait())))
+            wait_disconnected = getattr(control, "wait_disconnected", None)
+            if callable(wait_disconnected):
+                liveness_tasks.append(
+                    ("control", asyncio.create_task(wait_disconnected()))
+                )
+            responses = await await_while_live(
+                runtime.await_round(
+                    pending,
+                    frame.get("operation_parameters")
+                    if isinstance(frame.get("operation_parameters"), Mapping)
+                    else None,
+                )
+            )
+            wire_responses = {
+                key: response.model_dump(mode="json")
+                for key, response in responses.items()
+            }
+            await await_while_live(
+                control.send_response(
+                    generation=str(frame["generation"]),
+                    turn_sequence=int(frame["turn_sequence"]),
+                    execution_id=pending.execution_id,
+                    logical_operation_id=pending.logical_operation_id,
+                    round_id=pending.round_id,
+                    responses=wire_responses,
+                    response_idempotency_key=f"m3-{pending.round_id}",
+                )
+            )
+            receive_task = control.receive()
+            cancel_task = asyncio.create_task(self._managed_cancel_event.wait())
+            try:
+                terminal_task = asyncio.create_task(receive_task)
+                done, _ = await asyncio.wait(
+                    (
+                        terminal_task,
+                        cancel_task,
+                        *(task for _, task in liveness_tasks),
+                    ),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if cancel_task in done:
+                    raise OperationCancelled("managed elicitation cancelled")
+                # Peer liveness is checked before accepting a simultaneous
+                # control frame, just as it is while awaiting human input.
+                for source, task in liveness_tasks:
+                    if task in done:
+                        cause_error: BaseException | None
+                        try:
+                            task.result()
+                        except BaseException as cause:
+                            cause_error = cause
+                        else:
+                            cause_error = None
+                        failure = peer_failure(source)
+                        await fail_pending_round(failure)
+                        if cause_error is not None:
+                            raise failure from cause_error
+                        raise failure
+                terminal = terminal_task.result()
+            finally:
+                for task in (terminal_task, cancel_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(terminal_task, cancel_task, return_exceptions=True)
+            while True:
+                if terminal.get("type") == "pending":
+                    # A next round is the bridge's acceptance evidence for
+                    # this response. Preserve it for the native turn loop.
+                    await stop_liveness()
+                    await runtime.resolve_round(
+                        pending.round_id, operation_complete=False
+                    )
+                    self._buffered_control_frame = terminal
+                    return
+                if terminal.get("type") != "terminal":
+                    raise HarnessStartupError(
+                        "Pi bridge did not acknowledge managed response"
+                    )
+                if terminal.get("state") != "delivered":
+                    failure = HarnessStartupError("Pi bridge rejected managed response")
+                    await fail_pending_round(failure)
+                    raise failure
+                await stop_liveness()
+                await runtime.resolve_round(pending.round_id, operation_complete=True)
+                return
+        except asyncio.CancelledError:
+            self._discard_turn_buffers()
+            raise
+        except (OperationCancelled, OperationTimeout):
+            self._discard_turn_buffers()
+            try:
+                await control.send_cancel(
+                    generation=str(frame["generation"]),
+                    turn_sequence=int(frame["turn_sequence"]),
+                    execution_id=str(frame["execution_id"]),
+                    logical_operation_id=str(frame["logical_operation_id"]),
+                    round_id=str(frame["round_id"]),
+                    reason="managed_input_cancelled",
+                )
+            except Exception:
+                pass
+            raise
+        except Exception as error:
+            self._discard_turn_buffers()
+            await fail_pending_round(error)
+            try:
+                await control.send_cancel(
+                    generation=str(frame["generation"]),
+                    turn_sequence=int(frame["turn_sequence"]),
+                    execution_id=str(frame["execution_id"]),
+                    logical_operation_id=str(frame["logical_operation_id"]),
+                    round_id=str(frame["round_id"]),
+                    reason="managed_input_failed",
+                )
+            except Exception:
+                pass
+            raise
+        finally:
+            await stop_liveness()
+
+    async def next_frame(
+        self, process: JsonRpcProcess, timeout: float | None
+    ) -> Mapping[str, Any] | None:
+        control = self._control_channel
+        if control is None or self._managed_input_runtime is None:
+            return await super().next_frame(process, timeout)
+        while True:
+            if self._buffered_native_ready:
+                frame, self._buffered_native_frame = self._buffered_native_frame, None
+                self._buffered_native_ready = False
+                return frame
+            process_task = asyncio.create_task(process.next(timeout))
+            control_task = asyncio.create_task(
+                control.receive(timeout)
+                if self._buffered_control_frame is None
+                else asyncio.sleep(0, result=self._buffered_control_frame)
+            )
+            try:
+                done, _ = await asyncio.wait(
+                    (process_task, control_task),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if process_task in done and control_task in done:
+                    self._buffered_native_frame = process_task.result()
+                    self._buffered_native_ready = True
+                    try:
+                        frame = control_task.result()
+                    except PiControlClosed:
+                        frame = None
+                    if frame is None:
+                        frame, self._buffered_native_frame = (
+                            self._buffered_native_frame,
+                            None,
+                        )
+                        self._buffered_native_ready = False
+                        return frame
+                elif process_task in done:
+                    control_task.cancel()
+                    await asyncio.gather(control_task, return_exceptions=True)
+                    return process_task.result()
+                else:
+                    frame = control_task.result()
+                self._buffered_control_frame = None
+                if frame.get("type") == "pending":
+                    try:
+                        await self._deliver_control_pending(frame)
+                    except BaseException:
+                        self._discard_turn_buffers()
+                        raise
+                    continue
+                if frame.get("type") == "cancel":
+                    raise OperationCancelled("managed elicitation cancelled")
+                continue
+            finally:
+                for task in (process_task, control_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(process_task, control_task, return_exceptions=True)
 
     def initial_observations(
         self, sequence: int, wall: datetime, started: float
@@ -541,6 +998,28 @@ class PiHarnessAdapter(NativeRPCAdapter):
     async def _cancel(self, process: JsonRpcProcess) -> None:
         self._cancel_requested = True
         self._terminal_status = "cancelled"
+        self._managed_cancel_event.set()
+        if self._managed_input_runtime is not None:
+            try:
+                await self._managed_input_runtime.cancel(
+                    OperationCancelled("managed elicitation cancelled")
+                )
+            except Exception:
+                pass
+        control = self._control_channel
+        scope = control.scope if control is not None else None
+        if control is not None and scope is not None:
+            try:
+                await control.send_cancel(
+                    generation=scope.generation,
+                    turn_sequence=scope.turn_sequence,
+                    execution_id=scope.execution_id,
+                    logical_operation_id=scope.logical_operation_id,
+                    round_id=scope.round_id,
+                    reason="turn_cancelled",
+                )
+            except Exception:
+                pass
         try:
             await process.write({"type": "abort"})
             # A successful protocol abort preserves the persistent Pi
@@ -560,6 +1039,14 @@ class PiHarnessAdapter(NativeRPCAdapter):
         try:
             await super().close()
         finally:
+            self._managed_input_runtime = None
+            if self._control_channel is not None:
+                await self._control_channel.close()
+                self._control_channel = None
+            if self._action_channel is not None:
+                self._action_channel.clear()
+                self._action_channel = None
+            self._action_generation = None
             self._launch_environment = None
             self._session_metadata.clear()
             if self._tool_map_path:

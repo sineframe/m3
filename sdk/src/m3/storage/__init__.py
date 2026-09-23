@@ -20,6 +20,13 @@ from .ephemeral import (
     StorageError,
     TemporaryArtifactStore,
 )
+from .managed_input import (
+    ManagedInputLease,
+    ManagedInputRecord,
+    ManagedInputStatus,
+    ManagedInputStore,
+    SQLiteManagedInputStore,
+)
 from .serialization import DurableSerializationError, serialize_durable
 
 if _TYPE_CHECKING:
@@ -42,12 +49,17 @@ __all__ = [
     "InMemoryArtifactStore",
     "InMemoryExecutionStore",
     "Lease",
+    "ManagedInputLease",
+    "ManagedInputRecord",
+    "ManagedInputStatus",
+    "ManagedInputStore",
     "PersistentExecutionStore",
     "ProfileRecord",
     "ProfileResolver",
     "ProfileRevisionRecord",
     "SQLiteArtifactStore",
     "SQLiteExecutionStore",
+    "SQLiteManagedInputStore",
     "SQLiteStore",
     "SQLiteStoreWorker",
     "StorageConflict",

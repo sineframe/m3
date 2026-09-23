@@ -41,6 +41,7 @@ from ..types import (
 from .contracts import (
     HarnessAdapterCapabilities,
     HarnessAdapterError,
+    HarnessInteractionCapabilities,
     HarnessLaunch,
     HarnessSession,
     HarnessStartupError,
@@ -186,6 +187,22 @@ class NativeRPCSession(NativeSessionBase):
         self._adapter = adapter
         self._process = process
 
+    @property
+    def turn_count(self) -> int:
+        """Number of turns already delivered through this session."""
+
+        return self._turns
+
+    def _set_managed_input_runtime(self, runtime: Any) -> None:
+        """Bind the controller-owned runtime to this native session."""
+
+        setter = getattr(self._adapter, "_set_managed_input_runtime", None)
+        if not callable(setter):
+            raise HarnessAdapterError(
+                "native harness does not implement managed interaction delivery"
+            )
+        setter(runtime)
+
     async def send(self, request: HarnessTurnRequest) -> HarnessTurnResult:
         if self._closed:
             raise HarnessAdapterError("harness session is closed")
@@ -209,6 +226,7 @@ class NativeRPCAdapter:
 
     harness_kind = "native"
     executable_name = "native"
+    interaction_capabilities = HarnessInteractionCapabilities()
 
     def __init__(
         self, *, executable: str, environment: Mapping[str, str] | None = None
@@ -216,7 +234,10 @@ class NativeRPCAdapter:
         self.executable = _executable(executable, self.executable_name)
         self.environment = dict(environment or {})
         self._capabilities = HarnessAdapterCapabilities(
-            name=self.harness_kind, supports_streaming=True, supports_tool_policy=False
+            name=self.harness_kind,
+            supports_streaming=True,
+            supports_tool_policy=False,
+            interaction=self.interaction_capabilities,
         )
         self._launch: HarnessLaunch | None = None
         self._session: NativeRPCSession | None = None

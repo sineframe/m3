@@ -18,7 +18,6 @@ from .errors import CLIError
 _TRANSPORT_MODULES = {
     "stdio": "mcp.client.stdio",
     "streamable_http": "mcp.client.streamable_http",
-    "sse": "mcp.client.sse",
 }
 _STORAGE_MODULES = {"sqlite": "sqlalchemy"}
 _ENV_PREFIX = "M3_"

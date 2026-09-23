@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 import httpx
 import pytest
 
+from m3._types.specs import AgentSpec
 from m3.agent_session import AsyncAgentSession
 from m3.async_api import AsyncMCPTestKit
 from m3.errors import UnsupportedFeature
@@ -45,7 +46,6 @@ from m3.server_group import (
 from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from m3.types import (
     ACPAgent,
-    AgentSpec,
     ClaudeCode,
     ErrorCode,
     EventDirection,
@@ -175,24 +175,6 @@ def test_opencode_nonempty_config_is_dialect_exact() -> None:
 
     assert_no_legacy_key(legacy)
     assert_no_legacy_key(v2)
-    sse = HarnessServerConfig(
-        key="sse",
-        transport=TransportKind.SSE,
-        required=True,
-        available=True,
-        connection_id="sse",
-        endpoint="https://example.test/events",
-        headers={"X-Test": "yes"},
-    )
-    sse_launch = HarnessLaunch(base.spec, base.servers, (sse,), base.tool_policy)
-    assert opencode_configuration(sse_launch, dialect="legacy")["mcp"]["sse"] == {
-        "type": "remote",
-        "url": "https://example.test/events",
-        "headers": {"X-Test": "yes"},
-        "enabled": True,
-    }
-    with pytest.raises(HarnessStartupError, match="does not support SSE"):
-        opencode_configuration(sse_launch, dialect="v2")
 
 
 def test_opencode_config_keeps_secret_references_as_env_substitutions() -> None:

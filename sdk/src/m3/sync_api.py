@@ -41,6 +41,7 @@ from anyio.from_thread import (
 from anyio.from_thread import (
     start_blocking_portal as _start_blocking_portal,
 )
+from mcp.types import LATEST_PROTOCOL_VERSION as _MCP_LATEST_PROTOCOL_VERSION
 
 from ._check_recording import (
     bind_subject as _bind_subject,
@@ -57,6 +58,7 @@ from ._default_store import (
 from ._default_store import (
     make_default_store as _make_default_store,
 )
+from ._types.specs import AgentSpec as _AgentSpec
 from .agent_session import AgentAdapter as _AgentAdapter
 from .agent_session import AsyncAgentSession as _AsyncAgentSession
 from .agent_session import HarnessAdapter
@@ -68,9 +70,8 @@ from .configuration import (
     load_config,
 )
 from .direct_client import (
-    AsyncDirectClient as _AsyncDirectClient,
-)
-from .direct_client import (
+    _ELICITATION_CALLBACK_REMOVED_MESSAGE,
+    _REMOVED_ELICITATION_CALLBACK,
     CallToolResult,
     CompletionResult,
     EmptyResult,
@@ -91,6 +92,25 @@ from .direct_client import (
     Tool,
     ToolCallResult,
     ToolInfo,
+    _RemovedElicitationCallback,
+)
+from .direct_client import (
+    AsyncDirectClient as _AsyncDirectClient,
+)
+from .elicitation import (
+    ElicitationPlan,
+    ElicitationResponse,
+    FormElicitationRequest,
+    PendingElicitationRound,
+    UrlElicitationRequest,
+    expect_form,
+    expect_url,
+    maybe_form,
+    maybe_url,
+    one_of,
+    optional,
+    round_of,
+    sequence,
 )
 from .errors import (
     ExecutionNotFound as _ExecutionNotFound,
@@ -117,9 +137,6 @@ from .execution_runtime import AsyncExecutionHandle as _AsyncExecutionHandle
 from .harness.contracts import HarnessAdapterRegistry as _HarnessAdapterRegistry
 from .interaction_handlers import (
     AllowedCommands,
-    ElicitationHandler,
-    ElicitationRequest,
-    ElicitationResult,
     FilesystemHandler,
     FilesystemRequest,
     FilesystemResult,
@@ -138,6 +155,9 @@ from .interaction_handlers import (
     WorkspaceFiles,
 )
 from .judges import LLMJudge as _LLMJudge
+from .managed_input_api import HumanInput as _HumanInput
+from .managed_input_api import apply_human_input as _apply_human_input
+from .managed_input_api import validate_human_input as _validate_human_input
 from .observability import *  # noqa: F403 - re-exported by the public API
 from .observability import RawEvidence, TraceView
 from .observability import __all__ as _OBSERVABILITY_EXPORTS
@@ -150,9 +170,6 @@ from .services.probes import (
     Probes,
 )
 from .storage import ExecutionStore as _ExecutionStore
-from .types import (
-    AgentSpec as _AgentSpec,
-)
 from .types import (
     Capability as _Capability,
 )
@@ -212,9 +229,6 @@ from .types import (
     SessionSource as _SessionSource,
 )
 from .types import (
-    SSEServer as _SSEServer,
-)
-from .types import (
     StdioServer as _StdioServer,
 )
 from .types import (
@@ -230,8 +244,8 @@ from .types import (
     UserMessage as _UserMessage,
 )
 
-_CURRENT_MCP_PROTOCOL = "2025-11-25"
-_DIRECT_SERVER_TYPES = (_InProcessServer, _StdioServer, _HTTPServer, _SSEServer)
+_CURRENT_MCP_PROTOCOL = _MCP_LATEST_PROTOCOL_VERSION
+_DIRECT_SERVER_TYPES = (_InProcessServer, _StdioServer, _HTTPServer)
 
 
 def _adapt_callback(callback: _Any) -> _Any:
@@ -525,8 +539,10 @@ class _PortalRuntime:
         self.closing.clear()
         return dict(self._closed_results)
 
-    def create_execution(self, spec: _ExecutionSpec) -> int:
-        handle = self.kit.submit(spec)
+    def create_execution(
+        self, spec: _ExecutionSpec, human_input: _HumanInput = "fail"
+    ) -> int:
+        handle = self.kit.submit(spec, human_input=human_input)
         identifier = self._next_execution
         self._next_execution += 1
         self.executions[identifier] = handle
@@ -548,6 +564,22 @@ class _PortalRuntime:
 
     async def execution_cancel(self, identifier: int) -> None:
         await self.execution(identifier).cancel()
+
+    async def execution_pending_elicitation(
+        self, identifier: int
+    ) -> PendingElicitationRound | None:
+        return await self.execution(identifier).pending_elicitation()
+
+    async def execution_respond_elicitation(
+        self,
+        identifier: int,
+        round_id: str,
+        responses: _Mapping[str, ElicitationResponse],
+        idempotency_key: str,
+    ) -> None:
+        await self.execution(identifier).respond_elicitation(
+            round_id, responses, idempotency_key=idempotency_key
+        )
 
     def execution_info(self, identifier: int) -> tuple[_Any, _ExecutionSpec]:
         handle = self.execution(identifier)
@@ -829,27 +861,88 @@ class DirectClient:
         return _cast(tuple[PromptInfo, ...], self._invoke("list_all_prompts"))
 
     def read_resource(
-        self, uri: str, **kwargs: _Any
+        self,
+        uri: str,
+        *,
+        input_responses: _Any = None,
+        request_state: str | None = None,
+        meta: _Any = None,
+        allow_input_required: bool = False,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
     ) -> ResourceReadResult | InputRequiredResult:
         return _cast(
             ResourceReadResult | InputRequiredResult,
-            self._invoke("read_resource", uri, **kwargs),
+            self._invoke(
+                "read_resource",
+                uri,
+                input_responses=input_responses,
+                request_state=request_state,
+                meta=meta,
+                allow_input_required=allow_input_required,
+                elicitation=elicitation,
+                elicitation_round_limit=elicitation_round_limit,
+            ),
         )
 
     def get_prompt(
-        self, name: str, arguments: _Mapping[str, str] | None = None, **kwargs: _Any
+        self,
+        name: str,
+        arguments: _Mapping[str, str] | None = None,
+        *,
+        input_responses: _Any = None,
+        request_state: str | None = None,
+        meta: _Any = None,
+        allow_input_required: bool = False,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
     ) -> PromptResult | InputRequiredResult:
         return _cast(
             PromptResult | InputRequiredResult,
-            self._invoke("get_prompt", name, arguments, **kwargs),
+            self._invoke(
+                "get_prompt",
+                name,
+                arguments,
+                input_responses=input_responses,
+                request_state=request_state,
+                meta=meta,
+                allow_input_required=allow_input_required,
+                elicitation=elicitation,
+                elicitation_round_limit=elicitation_round_limit,
+            ),
         )
 
     def call_tool(
-        self, name: str, arguments: _Mapping[str, _Any] | None = None, **kwargs: _Any
+        self,
+        name: str,
+        arguments: _Mapping[str, _Any] | None = None,
+        *,
+        timeout: float | None = None,
+        progress_callback: _Any = None,
+        input_responses: _Any = None,
+        request_state: str | None = None,
+        meta: _Any = None,
+        allow_input_required: bool = False,
+        allow_claimed: bool = False,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
     ) -> ToolCallResult | InputRequiredResult:
         return _cast(
             ToolCallResult | InputRequiredResult,
-            self._invoke("call_tool", name, arguments, **kwargs),
+            self._invoke(
+                "call_tool",
+                name,
+                arguments,
+                timeout=timeout,
+                progress_callback=progress_callback,
+                input_responses=input_responses,
+                request_state=request_state,
+                meta=meta,
+                allow_input_required=allow_input_required,
+                allow_claimed=allow_claimed,
+                elicitation=elicitation,
+                elicitation_round_limit=elicitation_round_limit,
+            ),
         )
 
     def complete(
@@ -937,6 +1030,29 @@ class ExecutionHandle:
             self._portal.call(
                 self._portal._runtime.execution_snapshot, self._identifier
             ),
+        )
+
+    def pending_elicitation(self) -> PendingElicitationRound | None:
+        return _cast(
+            PendingElicitationRound | None,
+            self._portal.call(
+                self._portal._runtime.execution_pending_elicitation, self._identifier
+            ),
+        )
+
+    def respond_elicitation(
+        self,
+        round_id: str,
+        responses: _Mapping[str, ElicitationResponse],
+        *,
+        idempotency_key: str,
+    ) -> None:
+        self._portal.call(
+            self._portal._runtime.execution_respond_elicitation,
+            self._identifier,
+            round_id,
+            responses,
+            idempotency_key,
         )
 
     def result(self, timeout: float | None = None) -> _ExecutionResult:
@@ -1054,10 +1170,19 @@ class AgentSession:
         *,
         timeout: float | None = None,
         metadata: dict[str, object] | None = None,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
     ) -> _TurnResult:
         return _cast(
             _TurnResult,
-            self._invoke("send", message, timeout=timeout, metadata=metadata),
+            self._invoke(
+                "send",
+                message,
+                timeout=timeout,
+                metadata=metadata,
+                elicitation=elicitation,
+                elicitation_round_limit=elicitation_round_limit,
+            ),
         )
 
     def enqueue_turn(
@@ -1592,8 +1717,12 @@ class MCPTestKit:
             self._unsupported("run")
         return self.submit(spec).result()
 
-    def submit(self, spec: _ExecutionSpec) -> ExecutionHandle:
+    def submit(
+        self, spec: _ExecutionSpec, *, human_input: _HumanInput = "fail"
+    ) -> ExecutionHandle:
         spec = _cast(_AgentSpec, self._with_run_id(spec))
+        _validate_human_input(human_input)
+        _apply_human_input(spec, human_input)
         if not isinstance(spec, (_DirectSpec, _AgentSpec)):
             self._unsupported("submit")
         self._ensure_open()
@@ -1636,7 +1765,8 @@ class MCPTestKit:
                 self._portal = portal
             try:
                 identifier = _cast(
-                    int, portal.call(portal._runtime.create_execution, spec)
+                    int,
+                    portal.call(portal._runtime.create_execution, spec, human_input),
                 )
             except BaseException:
                 if new_portal and self._portal is portal:
@@ -1659,7 +1789,7 @@ class MCPTestKit:
         resolve_host: _Any = None,
         raise_server_exceptions: bool = True,
         sampling_callback: _Any = None,
-        elicitation_callback: _Any = None,
+        elicitation_callback: _RemovedElicitationCallback = _REMOVED_ELICITATION_CALLBACK,
         list_roots_callback: _Any = None,
         logging_callback: _Any = None,
         message_handler: _Any = None,
@@ -1674,6 +1804,8 @@ class MCPTestKit:
         trace_owner: bool = True,
         workspace_root: str | None = None,
     ) -> DirectClient:
+        if elicitation_callback is not _REMOVED_ELICITATION_CALLBACK:
+            raise TypeError(_ELICITATION_CALLBACK_REMOVED_MESSAGE)
         from ._test_runs import active_test
 
         active_marker = active_test()
@@ -1718,7 +1850,6 @@ class MCPTestKit:
                 "resolve_host": resolve_host,
                 "raise_server_exceptions": raise_server_exceptions,
                 "sampling_callback": _adapt_callback(sampling_callback),
-                "elicitation_callback": _adapt_callback(elicitation_callback),
                 "list_roots_callback": _adapt_callback(list_roots_callback),
                 "logging_callback": _adapt_callback(logging_callback),
                 "message_handler": _adapt_callback(message_handler),
@@ -1801,7 +1932,6 @@ class MCPTestKit:
             _InProcessServer: _TransportKind.IN_PROCESS,
             _StdioServer: _TransportKind.STDIO,
             _HTTPServer: _TransportKind.STREAMABLE_HTTP,
-            _SSEServer: _TransportKind.SSE,
         }[type(selected)]
         if (
             requested_transport is not None
@@ -1901,9 +2031,6 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "ResourceTemplate",
     "load_config",
     "AllowedCommands",
-    "ElicitationRequest",
-    "ElicitationResult",
-    "ElicitationHandler",
     "FilesystemHandler",
     "FilesystemRequest",
     "FilesystemResult",
@@ -1920,6 +2047,19 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "TerminalRequest",
     "TerminalResult",
     "WorkspaceFiles",
+    "ElicitationPlan",
+    "ElicitationResponse",
+    "FormElicitationRequest",
+    "PendingElicitationRound",
+    "UrlElicitationRequest",
+    "expect_form",
+    "expect_url",
+    "maybe_form",
+    "maybe_url",
+    "one_of",
+    "optional",
+    "round_of",
+    "sequence",
 ]
 
 __all__ = [*__all__, *_OBSERVABILITY_EXPORTS]
