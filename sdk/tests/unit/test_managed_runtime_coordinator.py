@@ -653,7 +653,9 @@ async def test_lease_renews_until_round_is_resolved(
     coordinator = _ManagedInputCoordinator(
         store.managed_input_store, execution_id.root, recorder
     )
-    coordinator._LEASE_SECONDS = 0.06
+    # Give SQLite and the event loop enough time under CI load; the test
+    # waits for an observed renewal instead of racing a 60 ms lease.
+    coordinator._LEASE_SECONDS = 6.0
     coordinator.bind_session("session-1")
     coordinator.bind_turn("session-1", "turn-1")
     pending = _pending(execution_id.root)
@@ -679,6 +681,7 @@ async def test_lease_renews_until_round_is_resolved(
     waiter = asyncio.create_task(coordinator.await_round(pending))
     await asyncio.wait_for(requested.wait(), 2)
     unsubscribe()
+    await asyncio.wait_for(renewed.wait(), 5)
     respond_elicitation(
         store,
         execution_id,
@@ -688,7 +691,6 @@ async def test_lease_renews_until_round_is_resolved(
     )
     coordinator.notify_response(pending.round_id)
     await waiter
-    await asyncio.wait_for(renewed.wait(), 2)
     await coordinator.resolve_round(pending.round_id, operation_complete=True)
     assert coordinator._renew_task is None
 
