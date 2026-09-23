@@ -6,6 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.process_lifecycle
+
 
 def test_cli_execution_timeout_persists_partial_trace_and_feedback(
     tmp_path: Path,
@@ -38,6 +42,7 @@ def test_cli_execution_timeout_persists_partial_trace_and_feedback(
         encoding="utf-8",
     )
     database = tmp_path / "results.sqlite"
+    execution_timeout = 3.0
     workspace = Path(__file__).parents[2]
     environment = os.environ.copy()
     environment["PYTHONPATH"] = os.pathsep.join(
@@ -53,7 +58,7 @@ def test_cli_execution_timeout_persists_partial_trace_and_feedback(
         "--results-db",
         str(database),
         "--execution-timeout",
-        "0.2",
+        str(execution_timeout),
         "--",
         str(test_file),
     ]
@@ -66,6 +71,7 @@ def test_cli_execution_timeout_persists_partial_trace_and_feedback(
         check=False,
         timeout=30,
     )
+    assert barrier.exists(), f"CLI output:\n{result.stdout}\n{result.stderr}"
     assert barrier.read_text(encoding="utf-8") == "entered"
     assert result.returncode != 0
     assert "M3 execution timeout:" in result.stdout
@@ -116,4 +122,4 @@ def test_cli_execution_timeout_persists_partial_trace_and_feedback(
             encoding="utf-8"
         )
     )
-    assert spec["timeout_seconds"] == 0.2
+    assert spec["timeout_seconds"] == execution_timeout
