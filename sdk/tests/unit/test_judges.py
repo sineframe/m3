@@ -1,13 +1,18 @@
+import ipaddress
 import json
 import os
 import shutil
 import ssl
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from threading import Thread
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from m3.judges import LLMJudge
 from m3.storage.sqlite import SQLiteExecutionStore
@@ -466,14 +471,45 @@ async def test_authenticated_loopback_bypasses_environment_proxy(
 async def test_https_loopback_uses_environment_ca_without_proxy(
     monkeypatch, tmp_path, async_mode, ca_source, auth
 ):
-    fixture = Path(__file__).parents[1] / "fixtures" / "judge_tls"
-    cert, key = fixture / "cert.pem", fixture / "key.pem"
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.now(timezone.utc)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [
+                    x509.DNSName("localhost"),
+                    x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+                ]
+            ),
+            critical=False,
+        )
+        .sign(private_key, hashes.SHA256())
+    )
+    cert, key = tmp_path / "cert.pem", tmp_path / "key.pem"
+    cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key.write_bytes(
+        private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
     if ca_source == "file":
         monkeypatch.setenv("SSL_CERT_FILE", str(cert))
         monkeypatch.delenv("SSL_CERT_DIR", raising=False)
     else:
         ca_dir = tmp_path / "ca"
         ca_dir.mkdir()
+        # OpenSSL's subject hash depends only on CN=localhost, so it is stable
+        # across the newly generated certificates.
         shutil.copyfile(cert, ca_dir / "ce275665.0")
         monkeypatch.setenv("SSL_CERT_DIR", str(ca_dir))
         monkeypatch.delenv("SSL_CERT_FILE", raising=False)
