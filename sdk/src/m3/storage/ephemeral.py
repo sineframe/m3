@@ -404,6 +404,23 @@ class _ExecutionBatch(AbstractContextManager["_ExecutionBatch"]):
         return None
 
 
+def run_sort_key(value: object) -> str:
+    """Return a fixed-width UTC timestamp that sorts run start times as text.
+
+    Missing or invalid timestamps return "" so they sort after every dated run
+    in newest-first order. Microseconds are kept.
+    """
+    if not isinstance(value, str) or not value:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds")
+    except (OverflowError, ValueError):
+        return ""
+
+
 class InMemoryExecutionStore:
     """Thread-safe execution metadata store with commit-gated visibility."""
 
@@ -685,7 +702,7 @@ class InMemoryExecutionStore:
         ]
         values.sort(
             key=lambda item: (
-                str(item.get("created_at", "")),
+                run_sort_key(item.get("created_at")),
                 str(item.get("run_id", "")),
             ),
             reverse=True,
