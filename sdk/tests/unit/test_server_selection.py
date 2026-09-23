@@ -82,7 +82,12 @@ def _collect_matrix(
 
 
 def _collect(
-    tmp_path: Path, source: str, server_json: str | None = None
+    tmp_path: Path,
+    source: str,
+    server_json: str | None = None,
+    *,
+    collect_only: bool = True,
+    suite: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     test_file = tmp_path / "test_matrix.py"
     test_file.write_text(source, encoding="utf-8")
@@ -93,11 +98,14 @@ def _collect(
         sys.executable,
         "-m",
         "pytest",
-        "--collect-only",
         "-q",
         "-p",
         "m3.pytest_plugin",
     ]
+    if collect_only:
+        command.append("--collect-only")
+    if suite is not None:
+        command += ["--suite", suite]
     if server_json is not None:
         command += ["--m3-server-selections", server_json]
     command.append(str(test_file))
@@ -149,3 +157,36 @@ def test_cli_http_selection_does_not_inherit_marker_trust(tmp_path: Path) -> Non
     assert result.returncode != 0
     assert "agent HTTP server has trust=untrusted" in result.stdout
     assert "set trust='public' (or --trust public)" in result.stdout
+
+
+@pytest.mark.parametrize("fixture_location", ["module", "conftest"])
+def test_marked_agent_keeps_project_server_fixture_without_selection(
+    tmp_path: Path, fixture_location: str
+) -> None:
+    fixture_source = (
+        "import pytest\n@pytest.fixture\ndef server(): return 'project-server'\n"
+    )
+    if fixture_location == "conftest":
+        (tmp_path / "conftest.py").write_text(fixture_source, encoding="utf-8")
+    source = (
+        (fixture_source if fixture_location == "module" else "import pytest\n")
+        + "@pytest.mark.m3(agents=[{'harness':'opencode','models':['opencode/a']}])\n"
+        + "def test_existing_fixture(agent, server): assert server == 'project-server'\n"
+    )
+    result = _collect(tmp_path, source, collect_only=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+def test_suite_skips_server_validation_for_other_suites(tmp_path: Path) -> None:
+    source = (
+        "import pytest\n"
+        "@pytest.mark.m3(suite_name='A')\n"
+        "def test_other_suite(agent, server): pass\n"
+        "@pytest.mark.m3(suite_name='B', "
+        "servers=[{'type':'stdio','command':'selected'}])\n"
+        "def test_selected_suite(server): assert server.command == 'selected'\n"
+    )
+    result = _collect(tmp_path, source, collect_only=False, suite="B")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed, 1 deselected" in result.stdout

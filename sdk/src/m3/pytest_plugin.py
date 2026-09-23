@@ -557,34 +557,49 @@ def pytest_generate_tests(metafunc: _Any) -> None:
         # Unmarked projects may define their own agent/server fixtures.
         return
     marker_kwargs = _merged_m3_marker(metafunc.definition)
+    selected_suite = metafunc.config.getoption("--suite")
+    if (
+        selected_suite is not None
+        and marker_kwargs.get("suite_name") != str(selected_suite).strip()
+    ):
+        # Skip validation for a suite that collection will deselect. Agent
+        # parametrization still needs an empty selection to avoid expansion.
+        _parameterize_agent(metafunc)
+        return
+
+    fixture_defs = getattr(metafunc, "_arg2fixturedefs", {}).get("server", ())
+    project_server_fixture = bool(
+        fixture_defs
+        and fixture_defs[-1].func is not getattr(server, "__wrapped__", None)
+    )
     selected_servers = _server_choices(metafunc.config, marker_kwargs)
     if "server" in metafunc.fixturenames:
         if selected_servers is None:
-            raise _pytest.UsageError(
-                "server fixture requires --server selections or m3(servers=[...])"
-            )
-        # A test-local fixture would shadow M3's typed selection fixture.
-        defs = getattr(metafunc, "_arg2fixturedefs", {}).get("server", ())
-        if defs and getattr(defs[-1], "baseid", ""):
+            if not project_server_fixture:
+                raise _pytest.UsageError(
+                    "server fixture requires --server selections or m3(servers=[...])"
+                )
+        elif project_server_fixture:
             raise _pytest.UsageError(
                 "M3 server selections conflict with a user fixture named 'server'"
             )
-        ids = tuple(
-            f"server-{('http' if item.kind == 'streamable_http' else 'stdio')}-{i + 1}"
-            for i, item in enumerate(selected_servers)
-        )
-        if "agent" in metafunc.fixturenames:
-            from ._types.base import TrustLevel
-            from ._types.specs import HTTPServer
+        else:
+            ids = tuple(
+                f"server-{('http' if item.kind == 'streamable_http' else 'stdio')}-{i + 1}"
+                for i, item in enumerate(selected_servers)
+            )
+            if "agent" in metafunc.fixturenames:
+                from ._types.base import TrustLevel
+                from ._types.specs import HTTPServer
 
-            if any(
-                isinstance(item, HTTPServer) and item.trust is TrustLevel.UNTRUSTED
-                for item in selected_servers
-            ):
-                raise _pytest.UsageError(
-                    "agent HTTP server has trust=untrusted; set trust='public' (or --trust public) for a public endpoint, or trust='trusted_private' for a private endpoint you own"
-                )
-        metafunc.parametrize("server", selected_servers, indirect=True, ids=ids)
+                if any(
+                    isinstance(item, HTTPServer) and item.trust is TrustLevel.UNTRUSTED
+                    for item in selected_servers
+                ):
+                    raise _pytest.UsageError(
+                        "agent HTTP server has trust=untrusted; set trust='public' (or --trust public) for a public endpoint, or trust='trusted_private' for a private endpoint you own"
+                    )
+            metafunc.parametrize("server", selected_servers, indirect=True, ids=ids)
     _parameterize_agent(metafunc)
 
 
