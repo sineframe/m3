@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -21,6 +22,41 @@ def run(args: list[str], *, cwd: Path, env: dict[str, str]) -> None:
         raise SmokeFailure(
             f"command failed ({result.returncode}): {' '.join(args)}\n{result.stdout[-3000:]}\n{result.stderr[-3000:]}"
         )
+
+
+def run_pypi_install(
+    args: list[str], *, version: str, cwd: Path, env: dict[str, str]
+) -> None:
+    """Allow a newly uploaded release time to reach the runner's PyPI index."""
+    deadline = time.monotonic() + 600
+    cache_paths = {
+        key: env[key] for key in ("UV_CACHE_DIR", "PIP_CACHE_DIR") if key in env
+    }
+    attempt = 0
+    while True:
+        try:
+            run(args, cwd=cwd, env=env)
+            return
+        except SmokeFailure as exc:
+            error = str(exc).lower()
+            missing_version = f"=={version}" in error and (
+                "no version of sf-m3" in error
+                or "no matching distribution found for sf-m3" in error
+                or "could not find a version that satisfies the requirement sf-m3"
+                in error
+            )
+            remaining = deadline - time.monotonic()
+            if not missing_version or remaining <= 0:
+                raise
+            attempt += 1
+            print(
+                f"PyPI has not exposed sf-m3 release {version} to this runner yet; "
+                f"retrying install in {min(10, remaining):.0f}s (attempt {attempt + 1}).",
+                flush=True,
+            )
+            time.sleep(min(10, remaining))
+            for key, path in cache_paths.items():
+                env[key] = f"{path}-retry-{attempt}"
 
 
 def python_path(environment: Path) -> Path:
@@ -85,7 +121,7 @@ def main() -> int:
             "UV_TOOL_BIN_DIR": str(tool / "bin"),
             "UV_CACHE_DIR": str(tool_cache),
         }
-        run(
+        run_pypi_install(
             [
                 uv,
                 "tool",
@@ -97,6 +133,7 @@ def main() -> int:
                 "--force",
                 f"sf-m3-cli=={version}",
             ],
+            version=version,
             cwd=root,
             env=tool_env,
         )
@@ -132,8 +169,9 @@ def main() -> int:
             cwd=add_project,
             env=add_env,
         )
-        run(
+        run_pypi_install(
             [uv, "add", "--prerelease", "allow", f"sf-m3[pytest,judge]=={version}"],
+            version=version,
             cwd=add_project,
             env=add_env,
         )
@@ -148,7 +186,7 @@ def main() -> int:
             cwd=root,
             env=pip_env,
         )
-        run(
+        run_pypi_install(
             [
                 uv,
                 "pip",
@@ -159,6 +197,7 @@ def main() -> int:
                 "allow",
                 f"sf-m3-cli=={version}",
             ],
+            version=version,
             cwd=root,
             env=pip_env,
         )
@@ -171,7 +210,7 @@ def main() -> int:
             "UV_TOOL_DIR": str(root / "uvx-tools"),
             "UV_TOOL_BIN_DIR": str(root / "uvx-bin"),
         }
-        run(
+        run_pypi_install(
             [
                 uvx,
                 "--prerelease",
@@ -181,6 +220,7 @@ def main() -> int:
                 "m3",
                 "--help",
             ],
+            version=version,
             cwd=root,
             env=uvx_env,
         )
@@ -194,7 +234,7 @@ def main() -> int:
             cwd=root,
             env=pip_envvars,
         )
-        run(
+        run_pypi_install(
             [
                 str(python_path(cli_venv)),
                 "-m",
@@ -203,6 +243,7 @@ def main() -> int:
                 "--disable-pip-version-check",
                 f"sf-m3-cli=={version}",
             ],
+            version=version,
             cwd=root,
             env=pip_envvars,
         )
@@ -221,7 +262,7 @@ def main() -> int:
             env=pip_envvars,
         )
         sdk_pip_env = {**pip_envvars, "PIP_CACHE_DIR": str(root / "cache-pip-sdk")}
-        run(
+        run_pypi_install(
             [
                 str(python_path(sdk_venv)),
                 "-m",
@@ -230,6 +271,7 @@ def main() -> int:
                 "--disable-pip-version-check",
                 f"sf-m3[pytest,judge]=={version}",
             ],
+            version=version,
             cwd=root,
             env=sdk_pip_env,
         )
