@@ -222,7 +222,7 @@ jobs:
 
   main-python-compatibility:
     name: Main compatibility (3.13)
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
