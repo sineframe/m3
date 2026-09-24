@@ -2322,8 +2322,8 @@ requires-dist = [
     { name = "pytest-timeout", marker = "extra == 'pytest'", specifier = ">=2.4,<3" },
     { name = "pytest-xdist", marker = "extra == 'pytest'", specifier = ">=3.6,<4" },
     { name = "python-dotenv", specifier = ">=1,<2" },
-    { name = "sqlalchemy", marker = "extra == 'all'", specifier = ">=2.0,<3" },
-    { name = "sqlalchemy", marker = "extra == 'storage'", specifier = ">=2.0,<3" },
+    { name = "sqlalchemy", marker = "extra == 'all'", specifier = ">=2.0,<2.1" },
+    { name = "sqlalchemy", marker = "extra == 'storage'", specifier = ">=2.0,<2.1" },
     { name = "starlette", specifier = ">=0.40,<2" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
@@ -2335,7 +2335,7 @@ typecheck = [
     { name = "hypothesis", specifier = ">=6.100,<7" },
     { name = "mypy", specifier = ">=1.11,<2" },
     { name = "pytest", specifier = ">=8,<10" },
-    { name = "sqlalchemy", specifier = ">=2.0,<3" },
+    { name = "sqlalchemy", specifier = ">=2.0,<2.1" },
     { name = "tomli", specifier = ">=2,<3" },
 ]
 
