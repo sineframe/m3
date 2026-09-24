@@ -526,6 +526,11 @@ class CodexMRTRAction:
             return
         if direction != "server_to_client":
             return
+        # JSON-RPC request IDs are scoped to the sender. A server-initiated
+        # request may reuse an in-flight client tools/call ID; it is not that
+        # call's response and must leave the pending association intact.
+        if "method" in envelope:
+            return
         response_call = self._calls.get(identity)
         if response_call is None:
             return

@@ -829,6 +829,47 @@ async def test_concurrent_eliciting_operation_fails_before_late_native_answers()
 
 
 @pytest.mark.asyncio
+async def test_server_request_with_same_id_does_not_consume_pending_tool_call() -> None:
+    capture = _Capture()
+    writes: list[tuple[int | str, dict[str, Any]]] = []
+    action = CodexMRTRAction(
+        launch=_launch(capture),
+        plan=expect_form("address", message="Enter the delivery city.").accept(
+            {"city": "Pune"}
+        ),
+        round_limit=3,
+        thread_id=lambda: "thread-1",
+        turn_id=lambda: "turn-1",
+        write_native_response=lambda request_id, result: _record_write(
+            writes, request_id, result
+        ),
+    )
+    await action.start()
+    try:
+        capture.publish("client_to_server", _call(1))
+        capture.publish(
+            "server_to_client",
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sampling/createMessage",
+                "params": {},
+            },
+        )
+        capture.publish(
+            "server_to_client",
+            _input_required(1, {"address": _elicitation("address")}, "state-1"),
+        )
+        await _flush()
+        action.submit_native_prompt(_native_prompt(8, "address"))
+        await _flush()
+        assert action.failure is None
+        assert writes == [(8, {"action": "accept", "content": {"city": "Pune"}})]
+    finally:
+        await action.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("second_evidence", ("native_started", "wire_request"))
 async def test_identical_native_prompt_is_not_answered_while_another_operation_is_active(
     second_evidence: str,
