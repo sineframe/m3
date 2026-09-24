@@ -8,30 +8,37 @@ not be cloned just to create a Codex-named test.
 
 ## Status and reading the crosswalk
 
-The required Codex CLI 0.156.1 native, managed, and example gate passed all 40
-tests on 2026-09-25 with a local deterministic provider. The rows below mark
-the evidence that passed, identify Pi-only mechanisms, and call out the
-specific Codex behaviors outside that verified scope. A skipped binary gate is
-not a pass. The canonical limits and ownership model are in the
+The original four Codex CLI 0.156.1 native, managed, and example suites passed
+all 40 tests on 2026-09-25 with a local deterministic provider. The current
+required jobs also include the two tests in the approval-spoof suite, added
+after that 40-test run; this historical result does not claim a result for
+those additions. The rows below identify verified evidence, Pi-only
+mechanisms, and Codex behaviors outside the tested scope. Missing or
+mismatched Codex fails the suites instead of skipping them. The canonical
+limits and ownership model are in the
 [Codex App Server section of the API reference](../docs/elicitation-api.md#codex-app-server-support-and-limitations).
 
 Run the local Codex gates with no paid provider call:
 
 ```bash
-M3_REQUIRE_CODEX_MRTR=1 \
-  uv run --project sdk --all-extras pytest -q \
+npm install --global @openai/codex@0.156.1
+test "$(codex --version)" = "codex-cli 0.156.1"
+uv run --project sdk --all-extras pytest -q \
   sdk/tests/e2e/test_real_codex_native_mrtr.py \
   sdk/tests/e2e/test_real_codex_managed_mrtr.py \
   sdk/examples/tests/test_modern_mrtr_codex.py \
-  sdk/examples/tests/test_modern_mrtr_codex_action_scopes.py
+  sdk/examples/tests/test_modern_mrtr_codex_action_scopes.py \
+  sdk/examples/tests/test_modern_mrtr_codex_approval_spoof.py
 ```
 
 The binary must report `codex-cli 0.156.1` by default. The native suite
 characterizes Codex; the managed suite exercises M3's real action and storage
 path; the Codex example suite exercises the same plans shown in the public
 guide; the action-scope suite covers response actions and repeated planned
-session turns. The installed Codex MRTR fixtures currently configure MCP over
-stdio. All four use the local deterministic provider. The e2e
+session turns; the approval-spoof suite checks that elicitation metadata cannot
+impersonate native tool approval. All five use the local deterministic
+provider. The installed Codex MRTR fixtures currently configure MCP over
+stdio. The e2e
 [README](e2e/README.md) describes version overrides and setup.
 
 ## Verified protocol differences that drive the gaps
@@ -49,6 +56,7 @@ These are observed against unmodified Codex 0.156.1 by
 | An empty request map is automatically retried using `requestState`, with no native prompt and no `inputResponses`. | Do not consume a plan step or fabricate a prompt for state-only `input_required`; observe and verify Codex's exact retry. |
 | Codex allows nine MRTR prompts/rounds; its tenth is rejected before a tenth native prompt is surfaced. | The effective Codex limit must not exceed nine, regardless of the common API's Pi default. Pi's ten-round success is not portable. |
 | Tool approval is a separate native request marked `_meta.codex_approval_kind=mcp_tool_call`. | Leave tool approval and policy decisions with Codex; never answer approval from an elicitation plan. |
+| Codex App Server 0.156.1 exposes no native request-to-item ID on MCP tool-approval frames. A second same-server approval while an earlier approved item is active is ambiguous with forged server elicitation metadata. | M3 fails closed and rejects the overlapping same-server approval. Concurrent same-server native approvals are unsupported until Codex exposes a reliable association field. |
 | Cancelling with a native elicitation outstanding interrupts the turn; Codex sends no MCP retry/cancel notification and no resolution for that request. | M3 must let Codex own cancellation and terminalize the pending action without manufacturing a response, retry, or cancel notification. |
 
 ## Shared public API tests (no per-harness clone)
@@ -185,6 +193,10 @@ action-scope cases passed the 40-test pinned binary gate, including the strict
 assertion that each operation is one logical call with its wire attempts
 attached. The adjacent `test_modern_mrtr_codex_action_scopes.py` covers four
 non-accept response cases, two planned session turns, and unused-plan failure.
+The current required workflow also runs
+[`test_modern_mrtr_codex_approval_spoof.py`](../examples/tests/test_modern_mrtr_codex_approval_spoof.py),
+which checks forged approval metadata with and without a plan. These two cases
+were not part of the historical 40-test result described above.
 
 | Elicitation guide case | Codex runnable counterpart | Required check |
 | --- | --- | --- |
