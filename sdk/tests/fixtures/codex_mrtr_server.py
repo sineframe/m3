@@ -25,6 +25,20 @@ ADDRESS_SCHEMA: dict[str, Any] = {
     "required": ["street", "city", "postal_code"],
 }
 EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
+HOME_ADDRESS = {
+    "street": "1 Main Street",
+    "city": "Pune",
+    "postal_code": "411001",
+}
+BUSINESS_ADDRESS = {
+    "street": "99 Market Street",
+    "city": "Mumbai",
+    "postal_code": "400001",
+}
+VERIFIED_ADDRESSES = {
+    "home_address": HOME_ADDRESS,
+    "business_address": BUSINESS_ADDRESS,
+}
 
 
 def _write(value: dict[str, Any]) -> None:
@@ -42,9 +56,40 @@ def _record(value: dict[str, Any]) -> None:
 def _tools() -> list[dict[str, Any]]:
     return [
         {
+            "name": "shipping_quote",
+            "description": "Return a deterministic shipping quote.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
             "name": "form_round",
             "description": "Collect a shipping address form.",
             "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "book_shipment",
+            "description": "Book a shipment after collecting its address.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "weight_kg": {"type": "number"},
+                    "zone": {"type": "string"},
+                },
+                "required": ["weight_kg", "zone"],
+            },
+        },
+        {
+            "name": "book_verified_shipment",
+            "description": "Verify one or two shipment addresses before booking.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "address_kind": {
+                        "type": "string",
+                        "enum": ["home", "business", "both", "none"],
+                    }
+                },
+                "required": ["address_kind"],
+            },
         },
         {
             "name": "url_round",
@@ -59,6 +104,11 @@ def _tools() -> list[dict[str, Any]]:
         {
             "name": "identical_round",
             "description": "Collect two identical forms together.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "ambiguous_round",
+            "description": "Collect two identical forms without distinguishing metadata.",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
@@ -86,6 +136,15 @@ def _tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "ten_rounds",
+            "description": "Collect ten consecutive form rounds.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"rounds": {"type": "integer"}},
+                "required": ["rounds"],
+            },
+        },
+        {
             "name": "approval_probe",
             "description": "A destructive action used to inspect approval routing.",
             "inputSchema": {"type": "object", "properties": {}},
@@ -109,14 +168,19 @@ def _form(
     return {"method": "elicitation/create", "params": params}
 
 
-def _url(message: str) -> dict[str, Any]:
+def _url(
+    message: str,
+    *,
+    url: str = "https://example.test/checkout/123",
+    elicitation_id: str = "checkout-123",
+) -> dict[str, Any]:
     return {
         "method": "elicitation/create",
         "params": {
             "mode": "url",
             "message": message,
-            "url": "https://example.test/checkout/123",
-            "elicitationId": "checkout-123",
+            "url": url,
+            "elicitationId": elicitation_id,
         },
     }
 
@@ -156,6 +220,18 @@ def _complete(request_id: object, structured: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _tool_error(request_id: object, message: str) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": {
+            "resultType": "complete",
+            "content": [{"type": "text", "text": message}],
+            "isError": True,
+        },
+    }
+
+
 def _server_error(request_id: object, message: str) -> dict[str, Any]:
     return {
         "jsonrpc": "2.0",
@@ -186,12 +262,28 @@ def _call_tool(request: dict[str, Any]) -> dict[str, Any]:
         return _complete(request_id, {"executed": True})
     if name == "state_only" and state is None:
         return _input_required(request_id, {}, "state-only-state")
-    if name == "form_round" and state is None:
+    if name == "shipping_quote":
+        return _complete(
+            request_id,
+            {"quote": {"amount": 12.5, "currency": "USD", "days": 3}},
+        )
+    if name in {"form_round", "book_shipment"} and state is None:
+        form_state = "shipping-address" if name == "book_shipment" else "form-state"
         return _input_required(
             request_id,
             {"shipping_address": _form("Enter the delivery address.", ADDRESS_SCHEMA)},
-            "form-state",
+            form_state,
         )
+    if name == "book_shipment" and state == "shipping-address":
+        response = responses.get("shipping_address")
+        if (
+            set(responses) != {"shipping_address"}
+            or not isinstance(response, dict)
+            or response.get("action") != "accept"
+            or response.get("content") != HOME_ADDRESS
+        ):
+            return _tool_error(request_id, "shipping address did not match HOME")
+        return _complete(request_id, {"status": "booked", "address": HOME_ADDRESS})
     if name == "url_round" and state is None:
         return _input_required(
             request_id, {"checkout": _url("Continue checkout.")}, "url-state"
@@ -226,6 +318,17 @@ def _call_tool(request: dict[str, Any]) -> dict[str, Any]:
             },
             "identical-round-state",
         )
+    if name == "ambiguous_round" and state is None:
+        return _input_required(
+            request_id,
+            {
+                "first_address": _form("Enter an address.", ADDRESS_SCHEMA),
+                "second_address": _form("Enter an address.", ADDRESS_SCHEMA),
+            },
+            "ambiguous-state",
+        )
+    if name == "ambiguous_round" and state == "ambiguous-state":
+        return _tool_error(request_id, "ambiguous requests must not be answered")
     if name == "empty_form" and state is None:
         return _input_required(
             request_id,
@@ -253,8 +356,97 @@ def _call_tool(request: dict[str, Any]) -> dict[str, Any]:
             if set(responses) != {"contact"}:
                 return _server_error(request_id, "previous-round response leaked")
             return _complete(request_id, {"status": "complete"})
-    if name == "many_rounds":
-        count = arguments.get("count", 10)
+    if name == "book_verified_shipment":
+        kind = arguments.get("address_kind")
+        if kind not in {"home", "business", "both", "none"}:
+            return _tool_error(
+                request_id, "address_kind must be home, business, both, or none"
+            )
+        expected_forms = {
+            "home": {
+                "home_address": (
+                    "Enter the home delivery address.",
+                    HOME_ADDRESS,
+                )
+            },
+            "business": {
+                "business_address": (
+                    "Enter the business delivery address.",
+                    BUSINESS_ADDRESS,
+                )
+            },
+            "both": {
+                "home_address": (
+                    "Enter the home delivery address.",
+                    HOME_ADDRESS,
+                ),
+                "business_address": (
+                    "Enter the business delivery address.",
+                    BUSINESS_ADDRESS,
+                ),
+            },
+            "none": {},
+        }
+        if state is None:
+            if kind == "none":
+                return _input_required(
+                    request_id,
+                    {
+                        "verification": _url(
+                            "Complete shipment verification.",
+                            url="https://example.test/verify/123",
+                            elicitation_id="verify-123",
+                        )
+                    },
+                    "verified-url:none",
+                )
+            return _input_required(
+                request_id,
+                {
+                    key: _form(message, ADDRESS_SCHEMA)
+                    for key, (message, _expected) in expected_forms[kind].items()
+                },
+                f"verified-address:{kind}",
+            )
+        if state == f"verified-address:{kind}":
+            expected = expected_forms[kind]
+            if set(responses) != set(expected):
+                return _tool_error(request_id, "address response keys did not match")
+            for key, (_message, address) in expected.items():
+                response = responses[key]
+                if (
+                    not isinstance(response, dict)
+                    or response.get("action") != "accept"
+                    or response.get("content") != address
+                ):
+                    return _tool_error(
+                        request_id,
+                        f"{key} response did not match its expected address",
+                    )
+            return _input_required(
+                request_id,
+                {
+                    "verification": _url(
+                        "Complete shipment verification.",
+                        url="https://example.test/verify/123",
+                        elicitation_id="verify-123",
+                    )
+                },
+                f"verified-url:{kind}",
+            )
+        if state == f"verified-url:{kind}":
+            response = responses.get("verification")
+            if (
+                set(responses) != {"verification"}
+                or not isinstance(response, dict)
+                or response.get("action") != "accept"
+                or response.get("content") not in (None, {})
+            ):
+                return _tool_error(request_id, "shipment verification was not accepted")
+            return _complete(request_id, {"status": "verified", "address_kind": kind})
+    if name in {"many_rounds", "ten_rounds"}:
+        count_field = "rounds" if name == "ten_rounds" else "count"
+        count = arguments.get(count_field, 10)
         if isinstance(count, bool) or not isinstance(count, int) or count < 1:
             return _server_error(request_id, "count must be a positive integer")
         round_index = 1 if state is None else int(str(state)) + 1
@@ -272,9 +464,11 @@ def _call_tool(request: dict[str, Any]) -> dict[str, Any]:
 
     if state is not None and name in {
         "form_round",
+        "book_shipment",
         "url_round",
         "same_round",
         "identical_round",
+        "ambiguous_round",
         "empty_form",
     }:
         return _complete(request_id, {"responses": responses})

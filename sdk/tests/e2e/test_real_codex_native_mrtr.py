@@ -468,6 +468,10 @@ async def test_real_codex_handles_nine_rounds_and_rejects_a_tenth(
     assert failed_tool["error"]["message"].endswith(
         "input_required did not complete within 10 MRTR rounds"
     )
+    completed = next(
+        frame for frame in native if frame.get("method") == "turn/completed"
+    )
+    assert completed["params"]["turn"]["status"] == "completed"
     wait_for_requests(provider, 2)
 
 

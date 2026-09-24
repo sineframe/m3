@@ -8,6 +8,7 @@ from m3.observability import (
     ObservationState,
     ProtocolEntry,
     ToolCallEntry,
+    ToolCallStatus,
     TraceStatus,
 )
 from m3.trace.projector import _json_equal
@@ -21,7 +22,12 @@ from m3.types import (
 )
 
 
-def _mrtr_trace(*, ambiguous: bool = False, unanswered: bool = False):
+def _mrtr_trace(
+    *,
+    ambiguous: bool = False,
+    unanswered: bool = False,
+    codex_progress_tokens: bool = False,
+):
     base = _trace()
     first_request = base.events[7]
     first_response = base.events[8]
@@ -39,6 +45,16 @@ def _mrtr_trace(*, ambiguous: bool = False, unanswered: bool = False):
         )
 
     request_params = {"name": "book_shipment", "arguments": {"weight_kg": 2}}
+    if codex_progress_tokens:
+        request_params["_meta"] = {
+            "callId": "m3-call-m3-response-1",
+            "threadId": "codex-thread-1",
+            "io.modelcontextprotocol/clientInfo": {
+                "name": "codex-mcp-client",
+                "version": "0.156.1",
+            },
+            "progressToken": 1,
+        }
     first = event(
         first_request,
         event_id="mrtr-request-1",
@@ -79,6 +95,23 @@ def _mrtr_trace(*, ambiguous: bool = False, unanswered: bool = False):
             },
         },
     ).model_copy(update={"server_binding": "fixture"})
+    retry_params = dict(request_params)
+    if codex_progress_tokens:
+        retry_params["_meta"] = {
+            **request_params["_meta"],
+            "progressToken": 2,
+        }
+    retry_params.update(
+        {
+            "requestState": "opaque-state",
+            "inputResponses": {
+                "shipping_address": {
+                    "action": "accept",
+                    "content": {"city": "Pune"},
+                }
+            },
+        }
+    )
     second = event(
         first_request,
         event_id="mrtr-request-2",
@@ -91,16 +124,7 @@ def _mrtr_trace(*, ambiguous: bool = False, unanswered: bool = False):
         ),
         payload={
             "method": "tools/call",
-            "params": {
-                **request_params,
-                "requestState": "opaque-state",
-                "inputResponses": {
-                    "shipping_address": {
-                        "action": "accept",
-                        "content": {"city": "Pune"},
-                    }
-                },
-            },
+            "params": retry_params,
         },
     ).model_copy(update={"server_binding": "fixture"})
     second_response = event(
@@ -138,9 +162,34 @@ def _mrtr_trace(*, ambiguous: bool = False, unanswered: bool = False):
                 }
             )
         )
-    values.append(terminal.model_copy(update={"sequence": len(values)}))
+    if codex_progress_tokens:
+        progress_event_sequence = max(event.sequence for event in values) + 1
+        values.append(
+            terminal.model_copy(
+                update={
+                    "event_id": EventId("codex-reported-runtime"),
+                    "sequence": progress_event_sequence,
+                    "kind": EventKind.PROVIDER_EVENT,
+                    "provenance": EventSource(
+                        origin=EventOrigin.HARNESS_REPORTED,
+                        source="codex",
+                    ),
+                    "payload": {
+                        "harness_kind": "codex",
+                        "provider": "codex",
+                        "category": "finish_reason",
+                        "data": "completed",
+                    },
+                }
+            )
+        )
+    terminal_sequence = max(event.sequence for event in values) + 1
+    values.append(terminal.model_copy(update={"sequence": terminal_sequence}))
     return base.model_copy(
-        update={"events": tuple(values), "highest_sequence": len(values) - 1}
+        update={
+            "events": tuple(values),
+            "highest_sequence": max(event.sequence for event in values),
+        }
     )
 
 
@@ -168,6 +217,65 @@ def test_mrtr_attempts_are_one_logical_tool_call() -> None:
         }
     }
     assert type(view).model_validate(view.model_dump(mode="json")) == view
+
+
+def test_codex_progress_tokens_do_not_split_one_mrtr_tool_call() -> None:
+    view = _mrtr_trace(codex_progress_tokens=True).view()
+
+    assert len(view.tool_calls) == 1
+    assert view.summary.tool_call_count == 1
+    call = view.tool_calls[0]
+    assert isinstance(call, ToolCallEntry)
+    assert len(call.attempts) == 2
+    assert call.attempts[0].operation_params.value["_meta"]["progressToken"] == 1
+    assert call.attempts[1].operation_params.value["_meta"]["progressToken"] == 2
+
+
+def test_codex_progress_token_is_the_only_ignored_metadata_for_mrtr_matching() -> None:
+    trace = _mrtr_trace(codex_progress_tokens=True)
+    retry = trace.events[9]
+    params = dict(retry.payload["params"])
+    metadata = dict(params["_meta"])
+    metadata["callId"] = "different-call"
+    params["_meta"] = metadata
+    retry = retry.model_copy(update={"payload": {**retry.payload, "params": params}})
+    trace = trace.model_copy(
+        update={"events": (*trace.events[:9], retry, *trace.events[10:])}
+    )
+
+    view = trace.view()
+    assert len(view.tool_calls) == 2
+    assert all(len(call.attempts) == 1 for call in view.tool_calls)
+
+
+def test_non_codex_progress_token_remains_part_of_mrtr_identity() -> None:
+    trace = _mrtr_trace()
+    first, retry = trace.events[7], trace.events[9]
+    first_params = dict(first.payload["params"])
+    retry_params = dict(retry.payload["params"])
+    first_params["_meta"] = {"progressToken": 1}
+    retry_params["_meta"] = {"progressToken": 2}
+    first = first.model_copy(
+        update={"payload": {**first.payload, "params": first_params}}
+    )
+    retry = retry.model_copy(
+        update={"payload": {**retry.payload, "params": retry_params}}
+    )
+    trace = trace.model_copy(
+        update={
+            "events": (
+                *trace.events[:7],
+                first,
+                *trace.events[8:9],
+                retry,
+                *trace.events[10:],
+            )
+        }
+    )
+
+    view = trace.view()
+    assert len(view.tool_calls) == 2
+    assert all(len(call.attempts) == 1 for call in view.tool_calls)
 
 
 def test_reported_pi_result_keeps_wire_mrtr_attempts_as_one_logical_call() -> None:
@@ -227,6 +335,167 @@ def test_reported_pi_result_keeps_wire_mrtr_attempts_as_one_logical_call() -> No
     assert calls[0].result.value is not None
     assert calls[0].result.value.structured_content.value == {"status": "booked"}
     assert len(view.elicitations) == 1
+
+
+def test_codex_reported_tool_item_joins_coalesced_wire_attempts() -> None:
+    trace = _mrtr_trace(codex_progress_tokens=True)
+    wire_retry = trace.events[9]
+    wire_result = trace.events[10]
+    reported_source = EventSource(
+        origin=EventOrigin.HARNESS_REPORTED,
+        source="codex",
+    )
+    reported_request = wire_retry.model_copy(
+        update={
+            "event_id": EventId("codex-reported-request"),
+            "sequence": 13,
+            "correlation": None,
+            "provenance": reported_source,
+            "payload": {
+                "method": "tools/call",
+                "call_id": "m3-call-m3-response-1",
+                "server": "fixture",
+                "tool": "book_shipment",
+                "params": {
+                    "name": "book_shipment",
+                    "arguments": {"weight_kg": 2},
+                },
+            },
+        }
+    )
+    reported_result = wire_result.model_copy(
+        update={
+            "event_id": EventId("codex-reported-result"),
+            "sequence": 14,
+            "correlation": None,
+            "provenance": reported_source,
+            "payload": {
+                "method": "tools/call",
+                "call_id": "m3-call-m3-response-1",
+                "result": {
+                    "content": [{"type": "text", "text": "booked"}],
+                    "structuredContent": {"status": "booked"},
+                },
+                "tool_status": "success",
+            },
+        }
+    )
+    terminal = trace.events[-1].model_copy(update={"sequence": 15})
+    view = trace.model_copy(
+        update={
+            "events": (
+                *trace.events[:-1],
+                reported_request,
+                reported_result,
+                terminal,
+            ),
+            "highest_sequence": 15,
+        }
+    ).view()
+
+    assert len(view.tool_calls) == 1
+    assert view.summary.tool_call_count == 1
+    call = view.tool_calls[0]
+    assert isinstance(call, ToolCallEntry)
+    assert len(call.attempts) == 2
+    assert call.reported.state is ObservationState.OBSERVED
+    assert call.wire.state is ObservationState.OBSERVED
+    assert len(view.elicitations) == 1
+
+
+def test_codex_native_round_limit_failure_completes_wire_attempt_chain() -> None:
+    trace = _mrtr_trace(codex_progress_tokens=True)
+    wire_retry = trace.events[9]
+    wire_response = trace.events[10]
+    terminal = trace.events[-1]
+    failure_message = "input_required did not complete within 10 MRTR rounds"
+    input_required_response = wire_response.model_copy(
+        update={
+            "payload": {
+                "method": "tools/call",
+                "result": {
+                    "resultType": "input_required",
+                    "inputRequests": {
+                        "round-10": {
+                            "method": "elicitation/create",
+                            "params": {
+                                "mode": "form",
+                                "message": "round-10",
+                                "requestedSchema": {"type": "object"},
+                            },
+                        }
+                    },
+                    "requestState": "10",
+                },
+            }
+        }
+    )
+    reported_source = EventSource(
+        origin=EventOrigin.HARNESS_REPORTED,
+        source="codex",
+    )
+    next_sequence = max(event.sequence for event in trace.events[:-1]) + 1
+    reported_request = wire_retry.model_copy(
+        update={
+            "event_id": EventId("codex-round-limit-request"),
+            "sequence": next_sequence,
+            "correlation": None,
+            "provenance": reported_source,
+            "payload": {
+                "method": "tools/call",
+                "call_id": "codex-native-call-1",
+                "server": "fixture",
+                "tool": "book_shipment",
+                "params": {
+                    "name": "book_shipment",
+                    "arguments": {"weight_kg": 2},
+                },
+            },
+        }
+    )
+    reported_result = wire_response.model_copy(
+        update={
+            "event_id": EventId("codex-round-limit-result"),
+            "sequence": next_sequence + 1,
+            "correlation": None,
+            "provenance": reported_source,
+            "payload": {
+                "method": "tools/call",
+                "call_id": "codex-native-call-1",
+                "tool_status": "tool_error",
+                "result": None,
+                "error": {"message": failure_message},
+            },
+        }
+    )
+    terminal = terminal.model_copy(update={"sequence": next_sequence + 2})
+    trace = trace.model_copy(
+        update={
+            "events": (
+                *trace.events[:10],
+                input_required_response,
+                *trace.events[11:-1],
+                reported_request,
+                reported_result,
+                terminal,
+            ),
+            "highest_sequence": next_sequence + 2,
+        }
+    )
+
+    view = trace.view()
+    assert len(view.tool_calls) == 1
+    assert view.summary.tool_call_count == 1
+    call = view.tool_calls[0]
+    assert isinstance(call, ToolCallEntry)
+    assert call.status is TraceStatus.TOOL_ERROR
+    assert call.tool_status is ToolCallStatus.TOOL_ERROR
+    assert len(call.attempts) == 2
+    assert call.attempts[-1].input_required is True
+    assert call.result.value is not None
+    assert call.result.value.error.value is not None
+    assert call.result.value.error.value.message == failure_message
+    assert call.conflicts == ()
 
 
 def test_mrtr_elicitation_is_keyed_by_current_round_input_response() -> None:

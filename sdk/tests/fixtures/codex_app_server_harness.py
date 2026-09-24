@@ -210,8 +210,8 @@ class CodexAppServer:
         on_elicitation: Any,
         timeout: float = 20.0,
     ) -> tuple[Mapping[str, Any], ...]:
-        collected: list[Mapping[str, Any]] = []
-        async with asyncio.timeout(timeout):
+        async def read() -> tuple[Mapping[str, Any], ...]:
+            collected: list[Mapping[str, Any]] = []
             while True:
                 frame = await self.next_frame()
                 if frame is None:
@@ -222,6 +222,8 @@ class CodexAppServer:
                     await on_elicitation(frame)
                 if method == "turn/completed":
                     return tuple(collected)
+
+        return await asyncio.wait_for(read(), timeout=timeout)
 
     async def cancel_turn(self, turn_id: str) -> Mapping[str, Any]:
         if self.thread_id is None:

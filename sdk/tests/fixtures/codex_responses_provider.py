@@ -29,6 +29,14 @@ class ResponsesRequest:
 
 
 @dataclass(frozen=True)
+class ResponsesResponse:
+    """HTTP status and exact body sent for one local provider response."""
+
+    status: int
+    body: str
+
+
+@dataclass(frozen=True)
 class ModelOutput:
     """One deterministic completed model response."""
 
@@ -51,6 +59,7 @@ class ResponsesRun:
     def __init__(self) -> None:
         self._outputs: queue.Queue[ModelOutput] = queue.Queue()
         self._requests: list[ResponsesRequest] = []
+        self._responses: list[ResponsesResponse] = []
         self._lock = threading.Lock()
 
     def enqueue(self, output: ModelOutput) -> None:
@@ -61,9 +70,18 @@ class ResponsesRun:
         with self._lock:
             return tuple(self._requests)
 
+    @property
+    def responses(self) -> tuple[ResponsesResponse, ...]:
+        with self._lock:
+            return tuple(self._responses)
+
     def _record(self, request: ResponsesRequest) -> None:
         with self._lock:
             self._requests.append(request)
+
+    def _record_response(self, response: ResponsesResponse) -> None:
+        with self._lock:
+            self._responses.append(response)
 
     def _next_output(self) -> ModelOutput:
         return self._outputs.get_nowait()
@@ -119,18 +137,28 @@ def open_codex_responses_provider(
             try:
                 output = run._next_output()
             except queue.Empty:
+                run._record_response(
+                    ResponsesResponse(500, "no deterministic output was queued")
+                )
                 self.send_error(500, "no deterministic output was queued")
                 return
             response_id = f"m3-response-{len(run.requests)}"
+            try:
+                events = _events(response_id, output, request)
+            except AssertionError as exc:
+                run._record_response(ResponsesResponse(500, str(exc)))
+                self.send_error(500, str(exc))
+                return
+            payload = "".join(
+                f"event: {event['type']}\ndata: "
+                f"{json.dumps(event, separators=(',', ':'))}\n\n"
+                for event in events
+            )
+            run._record_response(ResponsesResponse(200, payload))
             self.send_response(200)
             self.send_header("content-type", "text/event-stream")
             self.send_header("cache-control", "no-cache")
             self.end_headers()
-            try:
-                events = _events(response_id, output, request)
-            except AssertionError as exc:
-                self.send_error(500, str(exc))
-                return
             for event in events:
                 data = json.dumps(event, separators=(",", ":"))
                 self.wfile.write(f"event: {event['type']}\ndata: {data}\n\n".encode())
@@ -199,6 +227,7 @@ def _resolve_function(
         (namespace, name)
         for namespace, name in functions
         if name == requested
+        or (namespace is not None and f"{namespace}::{name}" == requested)
         or name.endswith(f"__{requested}")
         or (namespace is not None and namespace.endswith(f"__{requested}"))
     )
@@ -230,6 +259,7 @@ def _events(
     events: list[JsonObject] = [
         {"type": "response.created", "response": {"id": response_id}}
     ]
+    item: JsonObject
     if output.function_name is not None:
         namespace, function_name = _resolve_function(request, output.function_name)
         item = {
@@ -269,6 +299,7 @@ def _events(
 __all__ = [
     "ModelOutput",
     "ResponsesRequest",
+    "ResponsesResponse",
     "ResponsesRun",
     "function_tools",
     "open_codex_responses_provider",
