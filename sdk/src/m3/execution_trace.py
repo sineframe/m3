@@ -11,7 +11,7 @@ import threading
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from time import perf_counter_ns
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 from uuid import uuid4
 
 from ._types.agent_identity import project_agent_identity
@@ -52,10 +52,11 @@ class TraceFinalizationConflict(TraceRecorderError):
     """A terminal execution was finalized again with another outcome."""
 
 
-# Recorder-authored lifecycle events that hold no provider-observed values.
-_PRE_CAPTURE_EVENT_KINDS: frozenset[EventKind] = frozenset(
-    {EventKind.EXECUTION_CREATED, EventKind.EXECUTION_STATE_CHANGED}
+# Provenance of the lifecycle events the recorder and runtimes emit.
+_BARE_LIFECYCLE_PROVENANCE: Final = EventSource(
+    origin=EventOrigin.NORMALIZED, source="m3"
 )
+
 
 _EXECUTION_TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
     ExecutionStatus.CREATED: frozenset(
@@ -333,21 +334,50 @@ class ExecutionTraceRecorder:
     ) -> None:
         """Freeze a redaction policy before provider values are observed.
 
-        Execution lifecycle events carry only recorder-validated state, so a
-        managed execution may bind once it is queued or running. Any other
-        committed event may already hold unredacted provider data.
+        A managed execution is created and queued before its transport
+        resolves a secret, so those lifecycle events may precede the bind.
+        Any other committed event may already hold unredacted values.
         """
 
         with self._record_lock:
-            if not allow_after_events and any(
-                event.kind not in _PRE_CAPTURE_EVENT_KINDS
-                or event.connection_id is not None
+            if not allow_after_events and not all(
+                self._is_bare_lifecycle_event(event)
                 for event in self._store.iter_events(self._execution_id)
             ):
                 raise TraceRecorderError(
                     "redaction policy must be bound before trace capture"
                 )
             self._redaction_config = config
+
+    def _is_bare_lifecycle_event(self, event: Event) -> bool:
+        """Match only the exact lifecycle shape this SDK generates.
+
+        Event validation accepts extra payload keys and ancillary fields, so
+        the event kind alone does not prove the event holds no values.
+        """
+        if (
+            event.provenance != _BARE_LIFECYCLE_PROVENANCE
+            or event.session_id is not None
+            or event.turn_id is not None
+            or event.server_binding is not None
+            or event.connection_id is not None
+            or event.correlation is not None
+            or event.payload_ref is not None
+            or event.raw_evidence_ref is not None
+            or event.reasoning is not None
+        ):
+            return False
+        payload = dict(event.payload)
+        if event.kind is EventKind.EXECUTION_CREATED:
+            return payload == {
+                "lifecycle": ExecutionStatus.CREATED.value,
+                "trace_id": self._trace_id.root,
+            }
+        if event.kind is EventKind.EXECUTION_STATE_CHANGED:
+            return payload.keys() == {"lifecycle"} and payload["lifecycle"] in {
+                status.value for status in ExecutionStatus
+            }
+        return False
 
     def record(self, event: Event) -> Event:
         """Redact, validate, and commit one stable event."""

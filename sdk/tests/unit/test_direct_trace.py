@@ -183,6 +183,33 @@ async def test_secret_binds_after_lifecycle_events_but_not_after_capture() -> No
         bridge.bind_secret_values("late-secret")
 
 
+@pytest.mark.parametrize(
+    ("payload", "fields"),
+    [
+        ({"lifecycle": "queued", "detail": "late-canary"}, {}),
+        ({"lifecycle": "queued"}, {"server_binding": "late-canary"}),
+    ],
+)
+def test_secret_bind_rejects_lifecycle_events_carrying_extra_values(
+    payload: dict[str, str], fields: dict[str, str]
+) -> None:
+    # Event validation accepts extra payload keys and ancillary fields, so a
+    # lifecycle-kind event may already hold the value about to be bound.
+    execution = ExecutionId("execution-late-bind")
+    store = InMemoryExecutionStore()
+    recorder = ExecutionTraceRecorder(store, execution)
+    recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload=payload, **fields)
+    bridge = DirectTraceBridge(
+        store=store,
+        execution_id=execution,
+        connection_id="connection-late-bind",
+        event_factory=EventFactory(execution, allocator=EventSequence(start=2)),
+        recorder=recorder,
+    )
+    with pytest.raises(TraceRecorderError):
+        bridge.bind_secret_values("late-canary")
+
+
 @pytest.mark.asyncio
 async def test_same_typed_id_correlates_by_request_role_and_direction() -> None:
     bridge = DirectTraceBridge(
