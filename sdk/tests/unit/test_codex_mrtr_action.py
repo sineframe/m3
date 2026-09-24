@@ -8,7 +8,13 @@ from typing import Any
 
 import pytest
 
-from m3.elicitation import ElicitationResponse, expect_form, maybe_form, round_of
+from m3.elicitation import (
+    ElicitationResponse,
+    expect_form,
+    expect_url,
+    maybe_form,
+    round_of,
+)
 from m3.errors import ElicitationExpectationError
 from m3.harness._codex_mrtr import CodexMRTRAction, _ObservedCall
 from m3.harness.codex import (
@@ -233,6 +239,142 @@ async def test_action_batches_all_native_prompts_before_sending_any_answer() -> 
         await action.close()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "action_name"),
+    [("form", "decline"), ("form", "cancel"), ("url", "decline"), ("url", "cancel")],
+)
+async def test_planned_decline_and_cancel_retry_without_content_and_preserve_meta(
+    mode: str,
+    action_name: str,
+) -> None:
+    capture = _Capture()
+    writes: list[tuple[int | str, dict[str, Any]]] = []
+    response_meta = {"fixture/response": action_name}
+    if mode == "form":
+        message = "Enter the delivery city."
+        elicitation_params = {
+            "mode": "form",
+            "message": message,
+            "requestedSchema": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+            },
+            "_meta": {"m3/request_key": "answer"},
+        }
+        native_params = {
+            "mode": "form",
+            "message": message,
+            "requestedSchema": elicitation_params["requestedSchema"],
+            "_meta": elicitation_params["_meta"],
+        }
+        expectation = expect_form(
+            "answer",
+            message=message,
+            schema=elicitation_params["requestedSchema"],
+        )
+    else:
+        message = "Continue checkout."
+        url = "https://example.test/checkout/123"
+        elicitation_params = {
+            "mode": "url",
+            "message": message,
+            "url": url,
+            "elicitationId": "checkout-123",
+        }
+        native_params = dict(elicitation_params)
+        native_params["_meta"] = None
+        expectation = expect_url(
+            "answer",
+            message=message,
+            url=url,
+            elicitation_id="checkout-123",
+        )
+    plan = expectation.cancel() if action_name == "cancel" else expectation.decline()
+    plan = plan.model_copy(
+        update={
+            "response": ElicitationResponse(
+                action=action_name,
+                meta=response_meta,
+            )
+        }
+    )
+
+    async def write_native_response(
+        request_id: int | str, result: dict[str, Any]
+    ) -> None:
+        writes.append((request_id, result))
+
+    action = CodexMRTRAction(
+        launch=_launch(capture),
+        plan=plan,
+        round_limit=3,
+        thread_id=lambda: "thread-1",
+        turn_id=lambda: "turn-1",
+        write_native_response=write_native_response,
+    )
+    await action.start()
+    try:
+        capture.publish("client_to_server", _call(1))
+        capture.publish(
+            "server_to_client",
+            _input_required(
+                1,
+                {
+                    "answer": {
+                        "method": "elicitation/create",
+                        "params": elicitation_params,
+                    }
+                },
+                "state-1",
+            ),
+        )
+        await _flush()
+        action.submit_native_prompt(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "serverName": "fixture",
+                    **native_params,
+                },
+            }
+        )
+        await _flush()
+
+        assert writes == [
+            (8, {"action": action_name, "content": None, "_meta": response_meta})
+        ]
+        input_responses = {"answer": {"action": action_name, "_meta": response_meta}}
+        assert "content" not in input_responses["answer"]
+        capture.publish(
+            "client_to_server",
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "collect",
+                    "arguments": {"batch": 2},
+                    "requestState": "state-1",
+                    "inputResponses": input_responses,
+                },
+            },
+        )
+        capture.publish(
+            "server_to_client",
+            {"jsonrpc": "2.0", "id": 2, "result": {"resultType": "complete"}},
+        )
+        await _flush()
+        await action.finish()
+        assert action.failure is None
+    finally:
+        await action.close()
+
+
 async def _record_write(
     writes: list[tuple[int | str, dict[str, Any]]],
     request_id: int | str,
@@ -284,7 +426,9 @@ async def test_ordinary_codex_turn_does_not_start_mrtr_observation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_native_elicitation_without_plan_fails_without_taking_over_codex() -> None:
+async def test_native_elicitation_without_plan_fails_without_taking_over_codex() -> (
+    None
+):
     class Capture:
         def subscribe(self, *_args: Any, **_kwargs: Any) -> Any:
             raise AssertionError("unplanned elicitation must not start an observer")
