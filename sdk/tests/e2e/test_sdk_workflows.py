@@ -447,6 +447,34 @@ def _wait_for_file(path: Path, timeout: float = _MCP_MARKER_TIMEOUT) -> None:
     raise AssertionError(f"timed out waiting for {path.name}")
 
 
+def _wait_for_pid(path: Path, timeout: float = _MCP_MARKER_TIMEOUT) -> int:
+    """Wait for the PID contents, not just the file created before they are written."""
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            contents = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            contents = ""
+        if contents.isdecimal():
+            pid = int(contents)
+            if pid > 0:
+                return pid
+        time.sleep(0.02)
+    raise AssertionError(f"timed out waiting for PID in {path.name}")
+
+
+def test_wait_for_pid_ignores_file_until_contents_are_written(tmp_path: Path) -> None:
+    marker = tmp_path / "server.pid"
+    marker.touch()
+    writer = threading.Timer(0.05, marker.write_text, args=("123",))
+    writer.start()
+    try:
+        assert _wait_for_pid(marker, timeout=1) == 123
+    finally:
+        writer.join()
+
+
 def _process_exists(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -1240,8 +1268,7 @@ async def test_separate_worker_cancel_interrupts_owned_stdio_process(
                     timeout_seconds=30,
                 )
             )
-            await asyncio.to_thread(_wait_for_file, pid_file)
-            pid = int(pid_file.read_text(encoding="utf-8"))
+            pid = await asyncio.to_thread(_wait_for_pid, pid_file)
             cancel_started = time.monotonic()
             await handle.cancel()
             result = await asyncio.wait_for(handle.result(timeout=5), timeout=5)
@@ -1302,16 +1329,8 @@ async def test_separate_worker_cancel_interrupts_owned_acp_and_mcp_processes(
         )
         try:
             handle = producer.submit(spec)
-            await asyncio.wait_for(
-                asyncio.to_thread(_wait_for_file, acp_pid_file),
-                timeout=_MCP_MARKER_TIMEOUT + 5,
-            )
-            await asyncio.wait_for(
-                asyncio.to_thread(_wait_for_file, mcp_pid_file),
-                timeout=_MCP_MARKER_TIMEOUT + 5,
-            )
-            acp_pid = int(acp_pid_file.read_text(encoding="utf-8"))
-            mcp_pid = int(mcp_pid_file.read_text(encoding="utf-8"))
+            acp_pid = await asyncio.to_thread(_wait_for_pid, acp_pid_file)
+            mcp_pid = await asyncio.to_thread(_wait_for_pid, mcp_pid_file)
             cancel_started = time.monotonic()
             await handle.cancel()
             result = await asyncio.wait_for(handle.result(timeout=8), timeout=8)

@@ -217,15 +217,21 @@ async def test_stdio_initialization_cancellation_reaps_owned_process(
     entering = asyncio.create_task(client.__aenter__())
     try:
         deadline = time.monotonic() + _PROCESS_MARKER_TIMEOUT
-        while not marker.exists() and time.monotonic() < deadline:
+        pid: int | None = None
+        while time.monotonic() < deadline:
+            try:
+                pid = int(marker.read_text(encoding="utf-8"))
+            except (FileNotFoundError, ValueError):
+                pass
+            if pid is not None and pid > 0:
+                break
             await asyncio.sleep(0.01)
-        assert marker.exists(), "stdio fixture did not start"
+        assert pid is not None and pid > 0, "stdio fixture did not publish its PID"
         entering.cancel()
         with pytest.raises(OperationCancelled):
             await asyncio.wait_for(entering, timeout=_PROCESS_MARKER_TIMEOUT)
         assert client.final_trace is not None
         assert client.final_trace.events[-1].payload["outcome"] == "cancelled"
-        pid = int(marker.read_text(encoding="utf-8"))
         deadline = time.monotonic() + _PROCESS_MARKER_TIMEOUT
         while time.monotonic() < deadline:
             try:

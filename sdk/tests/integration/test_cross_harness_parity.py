@@ -608,8 +608,16 @@ async def test_direct_cancelled_trace_persists_and_reopens(tmp_path: Path) -> No
     try:
         handle = kit.submit(spec)
         deadline = time.monotonic() + _PROCESS_MARKER_TIMEOUT
-        while not marker.exists() and time.monotonic() < deadline:
+        pid: int | None = None
+        while time.monotonic() < deadline:
+            try:
+                pid = int(marker.read_text(encoding="utf-8"))
+            except (FileNotFoundError, ValueError):
+                pass
+            if pid is not None and pid > 0:
+                break
             await asyncio.sleep(0.02)
+        assert pid is not None and pid > 0, "stdio fixture did not publish its PID"
         await handle.cancel()
         result = await handle.result(timeout=5)
     finally:

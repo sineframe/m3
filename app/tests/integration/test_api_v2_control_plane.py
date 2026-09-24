@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from _local_client import TestClient
+from _pid_marker import wait_for_pid
 
 from m3 import ClaudeCode, MCPTestKit, TextContent, UserMessage
 from m3._types.specs import AgentSpec
@@ -31,13 +32,15 @@ _MCP_FIXTURE = (
 def _agent(path: Path, *, slow: bool = False, pidfile: Path | None = None) -> str:
     delay = "import time; time.sleep(30)" if slow else ""
     marker = (
-        f"open({str(pidfile)!r}, 'w').write(str(__import__('os').getpid()))"
+        f"tmp = {str(pidfile)!r} + '.' + str(os.getpid()) + '.tmp'; "
+        f"pathlib.Path(tmp).write_text(str(os.getpid())); "
+        f"os.replace(tmp, {str(pidfile)!r})"
         if pidfile
         else ""
     )
     path.write_text(
         "#!/usr/bin/env python3\n"
-        "import json,sys\n"
+        "import json,os,pathlib,sys\n"
         "for line in sys.stdin:\n"
         " r=json.loads(line); m=r.get('method')\n"
         " if m=='initialize': print(json.dumps({'jsonrpc':'2.0','id':r['id'],"
@@ -719,11 +722,7 @@ def test_v2_probe_cancel_running_subprocess_during_shutdown(tmp_path: Path) -> N
         ).json()["id"]
         started = client.post(f"/api/v2/harness-profiles/{profile_id}/probes", json={})
         probe_id = started.json()["probe"]["id"]
-        for _ in range(100):
-            if pidfile.exists():
-                break
-            time.sleep(0.02)
-        assert pidfile.exists(), "probe subprocess did not start"
+        pid = wait_for_pid(pidfile)
         wrong_owner = client.post(
             f"/api/v2/harness-profiles/{other}/probes/{probe_id}/cancel"
         )
@@ -741,8 +740,8 @@ def test_v2_probe_cancel_running_subprocess_during_shutdown(tmp_path: Path) -> N
     # Runtime teardown must not leave the ACP child alive after cancellation.
     for _ in range(100):
         try:
-            os.kill(int(pidfile.read_text()), 0)
-        except (ProcessLookupError, ValueError):
+            os.kill(pid, 0)
+        except ProcessLookupError:
             break
         time.sleep(0.02)
     else:
