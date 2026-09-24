@@ -47,9 +47,7 @@ _MCP_SERVER = _ROOT / "tests" / "fixtures" / "codex_mrtr_server.py"
 def _require_codex() -> str:
     executable = os.environ.get("M3_CODEX_EXECUTABLE") or shutil.which("codex")
     if executable is None:
-        if os.environ.get("M3_REQUIRE_CODEX_MRTR") == "1":
-            pytest.fail("Codex 0.156.1 is required for the MRTR CI gate")
-        pytest.skip("Codex 0.156.1 is unavailable on PATH; set M3_CODEX_EXECUTABLE")
+        pytest.fail("Codex 0.156.1 is required; set M3_CODEX_EXECUTABLE")
     try:
         version = subprocess.run(
             [executable, "--version"],
@@ -59,14 +57,10 @@ def _require_codex() -> str:
             timeout=5,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        if os.environ.get("M3_REQUIRE_CODEX_MRTR") == "1":
-            pytest.fail("Codex 0.156.1 could not be executed for the MRTR CI gate")
-        pytest.skip("Codex could not be executed")
-    expected = os.environ.get("M3_CODEX_MRTR_VERSION", "codex-cli 0.156.1")
+        pytest.fail("Codex 0.156.1 could not be executed")
+    expected = "codex-cli 0.156.1"
     if version != expected:
-        if os.environ.get("M3_REQUIRE_CODEX_MRTR") == "1":
-            pytest.fail(f"expected {expected!r}, found {version!r}")
-        pytest.skip(f"Codex version {expected!r} is required; found {version!r}")
+        pytest.fail(f"expected {expected!r}, found {version!r}")
     return executable
 
 

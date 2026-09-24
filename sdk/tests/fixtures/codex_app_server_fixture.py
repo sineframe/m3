@@ -48,6 +48,25 @@ for line in sys.stdin:
             flush=True,
         )
         if approval:
+            arguments = {"weight_kg": 2, "zone": "local"}
+            print(
+                json.dumps(
+                    {
+                        "method": "item/started",
+                        "params": {
+                            "item": {
+                                "type": "mcpToolCall",
+                                "id": "fixture-call",
+                                "server": "fixture",
+                                "tool": "shipping_quote",
+                                "arguments": arguments,
+                                "status": "inProgress",
+                            }
+                        },
+                    }
+                ),
+                flush=True,
+            )
             print(
                 json.dumps(
                     {
@@ -58,7 +77,10 @@ for line in sys.stdin:
                             "threadId": thread,
                             "turnId": f"fixture-turn-{turn}",
                             "serverName": "fixture",
-                            "_meta": {"codex_approval_kind": "mcp_tool_call"},
+                            "_meta": {
+                                "codex_approval_kind": "mcp_tool_call",
+                                "tool_params": arguments,
+                            },
                             "message": "Allow the fixture MCP server to run tool?",
                             "mode": "form",
                             "requestedSchema": {"type": "object", "properties": {}},

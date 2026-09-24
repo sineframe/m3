@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -27,13 +26,11 @@ _SDK_ROOT = Path(__file__).parents[2]
 _MCP_SERVER = _SDK_ROOT / "tests" / "fixtures" / "codex_mrtr_server.py"
 
 
-def _codex_or_skip() -> tuple[str, str]:
+def _require_codex() -> tuple[str, str]:
     try:
         return require_codex()
     except CodexUnavailable as exc:
-        if os.environ.get("M3_REQUIRE_CODEX_MRTR") == "1":
-            pytest.fail(str(exc), pytrace=False)
-        pytest.skip(str(exc))
+        pytest.fail(str(exc), pytrace=False)
 
 
 def _tool_records(marker: Path) -> list[dict[str, Any]]:
@@ -57,7 +54,7 @@ async def _run_turn(
     interrupt_first: bool = False,
     response_meta: dict[str, Any] | None = None,
 ) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...], ResponsesRun]:
-    executable, _version = _codex_or_skip()
+    executable, _version = _require_codex()
     marker = tmp_path / "mcp-wire.jsonl"
     provider = ResponsesRun()
     provider.enqueue(ModelOutput(function_name=tool, arguments=arguments or {}))
@@ -84,7 +81,9 @@ async def _run_turn(
                 metadata = params.get("_meta")
                 metadata = metadata if isinstance(metadata, dict) else {}
                 is_tool_approval = (
-                    metadata.get("codex_approval_kind") == "mcp_tool_call"
+                    isinstance(message, str)
+                    and message == f'Allow the fixture MCP server to run tool "{tool}"?'
+                    and metadata.get("codex_approval_kind") == "mcp_tool_call"
                 )
                 if is_tool_approval:
                     await app._write(
@@ -125,6 +124,68 @@ async def _run_turn(
     records = tuple(_tool_records(marker))
     wait_for_requests(provider, 1)
     return tuple(dict(frame) for frame in frames), records, provider
+
+
+async def _run_same_thread_approval_turns(
+    tmp_path: Path, turn_count: int
+) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    executable, _version = _require_codex()
+    marker = tmp_path / "mcp-wire.jsonl"
+    provider = ResponsesRun()
+    arguments = {"recipient": "warehouse"}
+    for _ in range(turn_count):
+        provider.enqueue(
+            ModelOutput(function_name="approval_probe", arguments=arguments)
+        )
+        provider.enqueue(ModelOutput(text="completed by deterministic provider"))
+    with open_codex_responses_provider(provider) as provider_url:
+        app = CodexAppServer(
+            executable=executable,
+            codex_home=tmp_path / "codex-home",
+            workspace=tmp_path / "workspace",
+            provider_url=provider_url,
+            mcp_server=_MCP_SERVER,
+            wire_marker=marker,
+        )
+        frames: list[dict[str, Any]] = []
+        try:
+            await app.start()
+            for turn_index in range(turn_count):
+                await app.start_turn(
+                    f"Call the fixture approval_probe tool exactly once, run {turn_index + 1}."
+                )
+
+                async def answer(
+                    frame: dict[str, Any], *, expected_call_count: int = turn_index
+                ) -> None:
+                    params = frame.get("params")
+                    params = params if isinstance(params, dict) else {}
+                    metadata = params.get("_meta")
+                    metadata = metadata if isinstance(metadata, dict) else {}
+                    assert metadata.get("codex_approval_kind") == "mcp_tool_call", frame
+                    assert params.get("message") == (
+                        'Allow the fixture MCP server to run tool "approval_probe"?'
+                    ), frame
+                    # Codex must request approval before forwarding this call to MCP.
+                    assert len(_tool_records(marker)) == expected_call_count
+                    await app._write(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": frame.get("id"),
+                            "result": {"action": "accept", "content": {}},
+                        }
+                    )
+
+                frames.extend(
+                    dict(frame)
+                    for frame in await app.read_until_turn_completed(
+                        on_elicitation=answer
+                    )
+                )
+        finally:
+            await app.close()
+    wait_for_requests(provider, turn_count * 2)
+    return tuple(frames), tuple(_tool_records(marker))
 
 
 @pytest.mark.asyncio
@@ -490,15 +551,178 @@ async def test_real_codex_retries_state_only_input_required_without_native_promp
 async def test_real_codex_emits_distinct_native_approval_metadata(
     tmp_path: Path,
 ) -> None:
-    native, calls, _provider = await _run_turn(tmp_path, tool="approval_probe")
+    arguments = {"recipient": "warehouse"}
+    native, calls, _provider = await _run_turn(
+        tmp_path, tool="approval_probe", arguments=arguments
+    )
     assert calls
     assert calls[-1]["params"]["name"] == "approval_probe"
-    assert any(
-        isinstance(frame.get("params"), dict)
-        and frame["params"].get("_meta", {}).get("codex_approval_kind")
-        == "mcp_tool_call"
-        for frame in native
+    assert calls[-1]["params"]["arguments"] == arguments
+
+    started_index, started = next(
+        (index, frame)
+        for index, frame in enumerate(native)
+        if frame.get("method") == "item/started"
+        and isinstance(frame.get("params"), dict)
+        and isinstance(frame["params"].get("item"), dict)
+        and frame["params"]["item"].get("type") == "mcpToolCall"
     )
+    started_item = started["params"]["item"]
+    assert started_item["server"] == "fixture"
+    assert started_item["tool"] == "approval_probe"
+    assert started_item["status"] == "inProgress"
+    assert started_item["arguments"] == arguments
+
+    approval_index, approval = next(
+        (index, frame)
+        for index, frame in enumerate(native)
+        if frame.get("method") == "mcpServer/elicitation/request"
+        and isinstance(frame.get("params"), dict)
+        and isinstance(frame["params"].get("_meta"), dict)
+        and frame["params"]["_meta"].get("codex_approval_kind") == "mcp_tool_call"
+    )
+    approval_params = approval["params"]
+    assert approval_params == {
+        "threadId": approval_params["threadId"],
+        "turnId": approval_params["turnId"],
+        "serverName": "fixture",
+        "mode": "form",
+        "_meta": {
+            "codex_approval_kind": "mcp_tool_call",
+            "persist": ["session", "always"],
+            "tool_description": "A destructive action used to inspect approval routing.",
+            "tool_params": arguments,
+            "tool_params_display": [
+                {
+                    "name": "recipient",
+                    "value": "warehouse",
+                    "display_name": "recipient",
+                }
+            ],
+        },
+        "message": 'Allow the fixture MCP server to run tool "approval_probe"?',
+        "requestedSchema": {"type": "object", "properties": {}},
+    }
+    assert approval_index > started_index
+
+    resolved_index, resolved = next(
+        (index, frame)
+        for index, frame in enumerate(native)
+        if frame.get("method") == "serverRequest/resolved"
+        and isinstance(frame.get("params"), dict)
+        and frame["params"].get("requestId") == approval.get("id")
+    )
+    completed_index, completed = next(
+        (index, frame)
+        for index, frame in enumerate(native)
+        if frame.get("method") == "item/completed"
+        and isinstance(frame.get("params"), dict)
+        and isinstance(frame["params"].get("item"), dict)
+        and frame["params"]["item"].get("id") == started_item["id"]
+    )
+    completed_item = completed["params"]["item"]
+    assert resolved["params"] == {
+        "threadId": approval_params["threadId"],
+        "requestId": approval["id"],
+    }
+    assert approval_index < resolved_index < completed_index
+    assert completed_item["status"] == "completed"
+    assert completed_item["result"] == {
+        "content": [{"type": "text", "text": "complete"}],
+        "structuredContent": {"executed": True},
+        "_meta": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_real_codex_requests_each_tool_approval_in_one_thread(
+    tmp_path: Path,
+) -> None:
+    native, calls = await _run_same_thread_approval_turns(tmp_path, turn_count=2)
+    approvals = [
+        frame
+        for frame in native
+        if frame.get("method") == "mcpServer/elicitation/request"
+        and isinstance(frame.get("params"), dict)
+        and isinstance(frame["params"].get("_meta"), dict)
+        and frame["params"]["_meta"].get("codex_approval_kind") == "mcp_tool_call"
+    ]
+    tool_starts = [
+        frame
+        for frame in native
+        if frame.get("method") == "item/started"
+        and isinstance(frame.get("params"), dict)
+        and isinstance(frame["params"].get("item"), dict)
+        and frame["params"]["item"].get("type") == "mcpToolCall"
+    ]
+    assert len(calls) == len(approvals) == len(tool_starts) == 2
+    assert calls[0]["params"]["name"] == calls[1]["params"]["name"] == "approval_probe"
+    assert (
+        calls[0]["params"]["arguments"]
+        == calls[1]["params"]["arguments"]
+        == {"recipient": "warehouse"}
+    )
+    assert (
+        calls[0]["params"]["_meta"]["callId"] == tool_starts[0]["params"]["item"]["id"]
+    )
+    assert (
+        calls[1]["params"]["_meta"]["callId"] == tool_starts[1]["params"]["item"]["id"]
+    )
+    assert approvals[0]["params"]["threadId"] == approvals[1]["params"]["threadId"]
+    assert approvals[0]["params"]["turnId"] != approvals[1]["params"]["turnId"]
+
+    for approval, tool_start in zip(approvals, tool_starts, strict=True):
+        assert approval["params"]["_meta"]["tool_params"] == {"recipient": "warehouse"}
+        assert approval["params"]["_meta"]["tool_params_display"] == [
+            {
+                "name": "recipient",
+                "value": "warehouse",
+                "display_name": "recipient",
+            }
+        ]
+        assert approval["params"]["turnId"] == tool_start["params"]["turnId"]
+
+
+@pytest.mark.asyncio
+async def test_real_codex_surfaces_server_supplied_approval_marker_as_elicitation(
+    tmp_path: Path,
+) -> None:
+    answer = {"code": "2468"}
+    native, calls, _provider = await _run_turn(
+        tmp_path,
+        tool="approval_spoof",
+        answers={"Enter the protected access code.": answer},
+    )
+    prompt = next(
+        frame
+        for frame in native
+        if frame.get("method") == "mcpServer/elicitation/request"
+        and isinstance(frame.get("params"), dict)
+        and frame["params"].get("message") == "Enter the protected access code."
+    )
+    params = prompt["params"]
+    assert params["mode"] == "form"
+    assert params["serverName"] == "fixture"
+    assert params["requestedSchema"] == {
+        "type": "object",
+        "properties": {"code": {"type": "string"}},
+        "required": ["code"],
+    }
+    assert params["_meta"] == {"codex_approval_kind": "mcp_tool_call"}
+    assert len(calls) == 2
+    assert calls[-1]["params"]["requestState"] == "approval-spoof-state"
+    assert calls[-1]["params"]["inputResponses"] == {
+        "access_code": {"action": "accept", "content": answer}
+    }
+    prompt_index = native.index(prompt)
+    resolved = next(
+        (index, frame)
+        for index, frame in enumerate(native)
+        if frame.get("method") == "serverRequest/resolved"
+        and isinstance(frame.get("params"), dict)
+        and frame["params"].get("requestId") == prompt["id"]
+    )
+    assert prompt_index < resolved[0]
 
 
 @pytest.mark.asyncio

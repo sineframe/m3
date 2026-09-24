@@ -30,7 +30,7 @@ def require_codex() -> tuple[str, str]:
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         raise CodexUnavailable("Codex could not be executed") from exc
-    expected = os.environ.get("M3_CODEX_MRTR_VERSION", "codex-cli 0.156.1")
+    expected = "codex-cli 0.156.1"
     if version != expected:
         raise CodexUnavailable(f"expected {expected!r}, found {version!r}")
     return executable, version
