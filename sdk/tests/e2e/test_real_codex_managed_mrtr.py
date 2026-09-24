@@ -588,6 +588,16 @@ async def test_async_session_send_scopes_plan_to_each_turn_and_skips_maybe_url(
                 elicitation=first_plan,
                 timeout=60,
             )
+            # Preserve the first turn's evidence if a failed turn closes the
+            # session before the next send can run.
+            assert first.snapshot.outcome is TurnOutcome.COMPLETED, {
+                "error": first.error,
+                "wire": _wire_records(marker),
+                "native_frames": adapters[0].native_frames if adapters else [],
+                "native_writes": adapters[0].native_writes if adapters else [],
+                "turn_results": adapters[0].turn_results if adapters else [],
+                "provider_responses": provider.responses,
+            }
             second = await session.send(
                 "Get the shipping quote.",
                 elicitation=second_plan,
@@ -595,7 +605,6 @@ async def test_async_session_send_scopes_plan_to_each_turn_and_skips_maybe_url(
             )
         result = session.result
 
-    assert first.snapshot.outcome is TurnOutcome.COMPLETED, first.error
     assert second.snapshot.outcome is TurnOutcome.COMPLETED, second.error
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
     assert result.trace_view is not None
