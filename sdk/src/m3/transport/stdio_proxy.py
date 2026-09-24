@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
+import socket
 import stat
 import subprocess
 import sys
@@ -14,6 +16,9 @@ from typing import Any
 
 from m3.trace.capture import CaptureWriter, parse_json_payload
 from m3.transport.tool_policy import ProxyToolPolicy
+
+_MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
+_MAX_OBSERVATION_QUEUE_BYTES = 16 * 1024 * 1024
 
 
 def _read_handoff(path: Path) -> Any:
@@ -57,12 +62,112 @@ def _read_policy(path: Path) -> Any:
             os.close(descriptor)
 
 
+class _ObservationChannel:
+    """Authenticated, bounded sender for the manager's loopback TCP socket."""
+
+    def __init__(self, *, host: str, port: str, connection_id: str, token: str) -> None:
+        if host != "127.0.0.1" or not connection_id or not token:
+            raise ValueError
+        port_number = int(port)
+        if not 1 <= port_number <= 65535:
+            raise ValueError
+        self._socket = socket.create_connection((host, port_number), timeout=2.0)
+        self._socket.sendall(
+            (
+                json.dumps(
+                    {"connection_id": connection_id, "token": token},
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        self._socket.settimeout(2.0)
+        self._lock = threading.Lock()
+        self._failed = False
+        self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=128)
+        self._queued_bytes = 0
+        self._sender = threading.Thread(target=self._send_pending, daemon=True)
+        self._sender.start()
+
+    def observe(self, direction: str, payload: Any) -> None:
+        if self._failed:
+            return
+        try:
+            frame = (
+                json.dumps(
+                    {"type": "event", "direction": direction, "payload": payload},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+                + b"\n"
+            )
+            if len(frame) > _MAX_OBSERVATION_FRAME_BYTES:
+                raise ValueError("observation frame exceeds limit")
+            with self._lock:
+                if self._failed:
+                    return
+                if self._queued_bytes + len(frame) > _MAX_OBSERVATION_QUEUE_BYTES:
+                    raise queue.Full
+                self._queue.put_nowait(frame)
+                self._queued_bytes += len(frame)
+        except (OSError, TypeError, ValueError, UnicodeEncodeError):
+            self._abort()
+        except queue.Full:
+            self._abort()
+
+    def _send_pending(self) -> None:
+        while True:
+            frame = self._queue.get()
+            if frame is None:
+                return
+            try:
+                self._socket.sendall(frame)
+            except OSError:
+                self._abort()
+                return
+            finally:
+                with self._lock:
+                    self._queued_bytes = max(0, self._queued_bytes - len(frame))
+
+    def _abort(self) -> None:
+        with self._lock:
+            if self._failed:
+                return
+            self._failed = True
+            self._queued_bytes = 0
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
+            try:
+                self._socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            self._socket.close()
+
+    def close(self) -> None:
+        with self._lock:
+            if self._failed:
+                return
+            self._failed = True
+        self._queue.put(None)
+        self._sender.join(timeout=2)
+        try:
+            self._socket.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        self._socket.close()
+
+
 def _relay(
     source: Any,
     destination: Any,
     writer: CaptureWriter,
     direction: str,
     policy: ProxyToolPolicy | None = None,
+    observer: _ObservationChannel | None = None,
 ) -> None:
     try:
         while True:
@@ -75,6 +180,8 @@ def _relay(
             writer.write(transport="stdio", direction=direction, payload=payload)
             destination.write(line)
             destination.flush()
+            if observer is not None:
+                observer.observe(direction, payload)
     except (BrokenPipeError, OSError):
         pass
     finally:
@@ -90,6 +197,7 @@ def _relay_policy(
     writer: CaptureWriter,
     direction: str,
     policy: ProxyToolPolicy | None,
+    observer: _ObservationChannel | None = None,
 ) -> None:
     """Relay stdin while denying tools/call before writing to the child."""
 
@@ -183,6 +291,8 @@ def _relay_policy(
                 writer.write(transport="stdio", direction=direction, payload=payload)
                 destination.write(line)
                 destination.flush()
+                if observer is not None:
+                    observer.observe(direction, payload)
                 continue
             params = payload.get("params")
             safe = {
@@ -244,13 +354,17 @@ def main() -> int:
     # inherit ambient provider credentials into a legacy MCP process.
     environment: dict[str, str] = {}
     canaries: set[str] = set()
+    observation: dict[str, str] | None = None
     if args.env_file:
         try:
             handoff = Path(args.env_file)
             payload = _read_handoff(handoff)
             if not isinstance(payload, dict):
                 raise ValueError
-            if set(payload) != {"environment", "canaries"}:
+            if set(payload) not in (
+                {"environment", "canaries"},
+                {"environment", "canaries", "observer"},
+            ):
                 raise ValueError
             values = payload.get("environment")
             raw_canaries = payload.get("canaries")
@@ -259,6 +373,17 @@ def main() -> int:
             if any(not isinstance(value, str) for value in raw_canaries):
                 raise ValueError
             canaries.update(raw_canaries)
+            if "observer" in payload:
+                raw_observer = payload.get("observer")
+                if (
+                    not isinstance(raw_observer, dict)
+                    or set(raw_observer) != {"host", "port", "connection_id", "token"}
+                    or any(
+                        not isinstance(value, str) for value in raw_observer.values()
+                    )
+                ):
+                    raise ValueError
+                observation = raw_observer
             if any(
                 not isinstance(key, str) or not isinstance(value, str)
                 for key, value in values.items()
@@ -294,6 +419,17 @@ def main() -> int:
                 Path(args.policy_file).unlink(missing_ok=True)
             except OSError:
                 return 78
+    observer: _ObservationChannel | None = None
+    if observation is not None:
+        try:
+            observer = _ObservationChannel(
+                host=observation["host"],
+                port=observation["port"],
+                connection_id=observation["connection_id"],
+                token=observation["token"],
+            )
+        except (OSError, ValueError):
+            return 78
     process = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -307,18 +443,34 @@ def main() -> int:
     assert process.stdin is not None and process.stdout is not None
     inbound = threading.Thread(
         target=_relay_policy,
-        args=(sys.stdin.buffer, process.stdin, writer, "client_to_server", policy),
+        args=(
+            sys.stdin.buffer,
+            process.stdin,
+            writer,
+            "client_to_server",
+            policy,
+            observer,
+        ),
         daemon=True,
     )
     outbound = threading.Thread(
         target=_relay,
-        args=(process.stdout, sys.stdout.buffer, writer, "server_to_client", policy),
+        args=(
+            process.stdout,
+            sys.stdout.buffer,
+            writer,
+            "server_to_client",
+            policy,
+            observer,
+        ),
         daemon=True,
     )
     inbound.start()
     outbound.start()
     return_code = process.wait()
     outbound.join(timeout=1)
+    if observer is not None:
+        observer.close()
     return return_code
 
 

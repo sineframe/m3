@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import ipaddress
+import re
 import secrets
 import socket
 import uuid
@@ -293,6 +294,7 @@ class _LoopbackEndpoint:
                         return
                     capture = self._capture_writer
                     request_parts: list[bytes] = []
+                    response_parts: list[bytes] = []
 
                     async def observed_receive() -> Any:
                         message = await receive()
@@ -325,16 +327,37 @@ class _LoopbackEndpoint:
                         ):
                             body = message.get("body", b"")
                             if body:
+                                response_parts.append(body)
+                            if not message.get("more_body", False) and response_parts:
                                 from .trace.capture import parse_json_payload
 
-                                capture.write(
-                                    transport="in_process",
-                                    direction="server_to_client",
-                                    payload=parse_json_payload(body),
-                                    metadata={
-                                        "status_code": message.get("status", 200)
-                                    },
+                                response_body = b"".join(response_parts)
+                                response_parts.clear()
+                                response_text = response_body.decode(
+                                    "utf-8", errors="replace"
                                 )
+                                frames = []
+                                for frame in re.split(
+                                    r"\r\n\r\n|\n\n|\r\r", response_text
+                                ):
+                                    data = "\n".join(
+                                        line[5:].lstrip()
+                                        for line in frame.splitlines()
+                                        if line.startswith("data:")
+                                    )
+                                    if data:
+                                        frames.append(parse_json_payload(data))
+                                if not frames:
+                                    frames = [parse_json_payload(response_body)]
+                                for payload in frames:
+                                    capture.write(
+                                        transport="in_process",
+                                        direction="server_to_client",
+                                        payload=payload,
+                                        metadata={
+                                            "status_code": message.get("status", 200)
+                                        },
+                                    )
                         await send(message)
 
                     await transport.handle_request(

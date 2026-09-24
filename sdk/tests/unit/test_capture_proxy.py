@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import asyncio
+import io
 import json
+import socket
 import sys
+import threading
 from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from mcp import types
 from mcp.server.lowlevel import Server
 
 from m3._types.specs import AgentSpec
 from m3.async_api import AsyncMCPTestKit
+from m3.fixtures.echo_http import EchoMcpHttpServer
 from m3.harness import HarnessAdapterRegistry
 from m3.harness.contracts import (
     DeterministicHarnessAdapter,
@@ -21,7 +27,12 @@ from m3.harness.contracts import (
 )
 from m3.server_group import HarnessServerConfig, ServerGroupManager
 from m3.trace.capture import CaptureWriter
-from m3.transport.capture_proxy import McpCaptureManager
+from m3.transport.capture_proxy import (
+    _MAX_OBSERVATION_FRAME_BYTES,
+    McpCaptureManager,
+    McpObservationIncomplete,
+)
+from m3.transport.stdio_proxy import _ObservationChannel, _relay
 from m3.types import (
     ClaudeCode,
     HTTPServer,
@@ -175,6 +186,47 @@ async def test_http_instrumentation_keeps_credentials_only_in_proxy(
 
 
 @pytest.mark.asyncio
+async def test_http_proxy_publishes_original_request_and_response(
+    tmp_path: Path,
+) -> None:
+    upstream = EchoMcpHttpServer("http")
+    endpoint = await upstream.start()
+    manager = McpCaptureManager(tmp_path, trusted_private_keys={"http-live"})
+    config = HarnessServerConfig(
+        key="remote",
+        transport=TransportKind.STREAMABLE_HTTP,
+        required=True,
+        available=True,
+        connection_id="http-live",
+        endpoint=endpoint,
+    )
+    instrumented = (await manager.instrument((config,)))[0]
+    subscription = manager.subscribe()
+    request = {
+        "jsonrpc": "2.0",
+        "id": 41,
+        "method": "tools/call",
+        "params": {"name": "echo", "arguments": {"text": "round payload"}},
+    }
+    try:
+        assert instrumented.endpoint is not None
+        async with httpx.AsyncClient() as client:
+            response = await client.post(instrumented.endpoint, json=request)
+        assert response.status_code == 200
+        original_request = await asyncio.wait_for(anext(subscription), timeout=1)
+        original_response = await asyncio.wait_for(anext(subscription), timeout=1)
+        assert original_request.payload == request
+        assert original_request.direction == "client_to_server"
+        assert original_response.payload == response.json()
+        assert original_response.direction == "server_to_client"
+        assert original_request.jsonrpc_identity == (int, 41)
+    finally:
+        await subscription.aclose()
+        await manager.close()
+        await upstream.stop()
+
+
+@pytest.mark.asyncio
 async def test_stdio_capture_resolves_secret_reference_in_one_shot_0600_handoff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -237,6 +289,8 @@ async def test_in_process_loopback_is_observed_without_rewriting_endpoint() -> N
     await manager.start()
     endpoint = manager.configurations()[0].endpoint
     assert endpoint is not None
+    assert manager.capture is not None
+    subscription = manager.capture.subscribe()
     try:
         async with AsyncMCPTestKit() as kit:
             async with kit.direct(
@@ -249,8 +303,264 @@ async def test_in_process_loopback_is_observed_without_rewriting_endpoint() -> N
         assert snapshot.transport == "in_process"
         assert any(event.method == "tools/list" for event in snapshot.events)
         assert any(event.method == "tools/call" for event in snapshot.events)
+        live = [
+            await asyncio.wait_for(anext(subscription), timeout=1)
+            for _ in snapshot.events
+        ]
+        assert any(
+            event.direction == "client_to_server"
+            and event.payload.get("method") == "tools/call"
+            for event in live
+            if isinstance(event.payload, dict)
+        )
+        assert any(
+            event.direction == "server_to_client" and "result" in event.payload
+            for event in live
+            if isinstance(event.payload, dict)
+        ), live
     finally:
+        await subscription.aclose()
         await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_live_observation_keeps_original_envelopes_and_typed_ids(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    subscription = manager.subscribe()
+    writer = manager.writer_for("live-http", "streamable_http")
+    writer.add_secrets({"raw-address-canary"})
+    request = {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "tools/call",
+        "params": {"name": "book", "arguments": {"address": "raw-address-canary"}},
+    }
+    response = {
+        "jsonrpc": "2.0",
+        "id": "7",
+        "result": {
+            "structuredContent": {
+                "requestState": "opaque-round-state",
+                "inputRequests": {
+                    "address": {
+                        "type": "elicitation",
+                        "mode": "form",
+                        "message": "Where should we deliver?",
+                    }
+                },
+            }
+        },
+    }
+    writer.write(
+        transport="streamable_http",
+        direction="client_to_server",
+        payload=request,
+    )
+    writer.write(
+        transport="streamable_http",
+        direction="server_to_client",
+        payload=response,
+    )
+
+    observed_request = await asyncio.wait_for(anext(subscription), timeout=1)
+    observed_response = await asyncio.wait_for(anext(subscription), timeout=1)
+    assert observed_request.payload == request
+    assert observed_response.payload == response
+    assert observed_request.jsonrpc_identity == (int, 7)
+    assert observed_response.jsonrpc_identity == (str, "7")
+    assert (observed_request.sequence, observed_response.sequence) == (1, 2)
+    assert observed_request.transport == "streamable_http"
+    assert observed_response.direction == "server_to_client"
+
+    persisted = (tmp_path / "live-http.jsonl").read_text(encoding="utf-8")
+    assert "raw-address-canary" not in persisted
+    assert "opaque-round-state" in persisted
+    await subscription.aclose()
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_policy_denials_are_not_published_to_live_observers(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    subscription = manager.subscribe()
+    writer = manager.writer_for("policy")
+    writer.write(
+        transport="streamable_http",
+        direction="client_to_server",
+        payload={"jsonrpc": "2.0", "id": 1, "method": "tools/call"},
+        kind="policy_denied",
+    )
+    writer.write(
+        transport="streamable_http",
+        direction="server_to_client",
+        payload={"jsonrpc": "2.0", "id": 1, "error": {"code": -32001}},
+        kind="policy_denied",
+    )
+    writer.write(
+        transport="streamable_http",
+        direction="server_to_client",
+        payload={"jsonrpc": "2.0", "id": 2, "result": {"ok": True}},
+    )
+    event = await asyncio.wait_for(anext(subscription), timeout=1)
+    assert event.payload["id"] == 2
+    await subscription.aclose()
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_observation_queue_overflow_fails_closed_and_redacts_persistence(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    subscription = manager.subscribe(maxsize=1)
+    writer = manager.writer_for("bounded")
+    writer.add_secrets({"private-value"})
+    for ident in (1, 2):
+        writer.write(
+            transport="in_process",
+            direction="server_to_client",
+            payload={"jsonrpc": "2.0", "id": ident, "result": "private-value"},
+        )
+    await asyncio.sleep(0)
+    with pytest.raises(McpObservationIncomplete) as raised:
+        await asyncio.wait_for(anext(subscription), timeout=1)
+    assert raised.value.connection_id == "bounded"
+    assert raised.value.reason == "buffer_overflow"
+    persisted = (tmp_path / "bounded.jsonl").read_text(encoding="utf-8")
+    assert "private-value" not in persisted
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_observation_frame_size_is_bounded_before_queueing(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    subscription = manager.subscribe()
+    manager._publish(
+        "oversized",
+        "streamable_http",
+        "server_to_client",
+        {"result": "x" * (_MAX_OBSERVATION_FRAME_BYTES + 1)},
+    )
+    with pytest.raises(McpObservationIncomplete) as raised:
+        await asyncio.wait_for(anext(subscription), timeout=1)
+    assert raised.value.reason == "message_too_large"
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_stdio_live_observation_authenticates_and_reports_eof(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    config = HarnessServerConfig(
+        key="echo",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="stdio-observed",
+        command="echo-server",
+    )
+    instrumented = (await manager.instrument((config,)))[0]
+    env_file = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
+    handoff = json.loads(env_file.read_text(encoding="utf-8"))
+    observer_info = handoff["observer"]
+    assert observer_info["host"] == "127.0.0.1"
+    assert 1 <= int(observer_info["port"]) <= 65535
+    subscription = manager.subscribe()
+
+    # A local process without the per-target secret cannot publish events or
+    # terminate the authenticated proxy connection.
+    unauthenticated = socket.create_connection(
+        (observer_info["host"], int(observer_info["port"]))
+    )
+    unauthenticated.sendall(
+        json.dumps(
+            {
+                "connection_id": "stdio-observed",
+                "token": "wrong-token",
+            }
+        ).encode()
+        + b"\n"
+    )
+    unauthenticated.close()
+
+    channel = _ObservationChannel(**observer_info)
+    request_line = (
+        b'{"jsonrpc":"2.0", "id": 7, "method":"tools/call",'
+        b'"params":{"name":"book","arguments":{"x":1}}}\n'
+    )
+
+    class ForwardSink:
+        def __init__(self) -> None:
+            self.data = bytearray()
+
+        def write(self, value: bytes) -> None:
+            self.data.extend(value)
+
+        def flush(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    forwarded = ForwardSink()
+    relay = threading.Thread(
+        target=_relay,
+        args=(
+            io.BytesIO(request_line),
+            forwarded,
+            CaptureWriter(str(tmp_path / "stdio-child.jsonl"), 0),
+            "client_to_server",
+            None,
+            channel,
+        ),
+    )
+    relay.start()
+    relay.join(timeout=2)
+    assert not relay.is_alive()
+    assert bytes(forwarded.data) == request_line
+    observed = await asyncio.wait_for(anext(subscription), timeout=1)
+    assert observed.payload["id"] == 7
+    assert observed.jsonrpc_identity == (int, 7)
+    assert observed.direction == "client_to_server"
+
+    local_writer = manager.writer_for("stdio-observed")
+    await asyncio.gather(
+        asyncio.to_thread(
+            local_writer.write,
+            transport="stdio",
+            direction="server_to_client",
+            payload={"jsonrpc": "2.0", "id": 90, "result": "local"},
+        ),
+        asyncio.to_thread(
+            channel.observe,
+            "server_to_client",
+            {"jsonrpc": "2.0", "id": "91", "result": "remote"},
+        ),
+    )
+    interleaved = [
+        await asyncio.wait_for(anext(subscription), timeout=1),
+        await asyncio.wait_for(anext(subscription), timeout=1),
+    ]
+    assert [event.sequence for event in interleaved] == sorted(
+        event.sequence for event in interleaved
+    )
+    assert {event.jsonrpc_identity for event in interleaved} == {
+        (int, 90),
+        (str, "91"),
+    }
+
+    channel.close()
+    with pytest.raises(McpObservationIncomplete) as raised:
+        await asyncio.wait_for(anext(subscription), timeout=1)
+    assert raised.value.reason == "observer_eof"
+    await manager.close()
 
 
 @pytest.mark.asyncio

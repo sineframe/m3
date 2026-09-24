@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,10 +14,18 @@ from .redaction import known_secret_values, redact
 
 
 class CaptureWriter:
-    def __init__(self, path: str, baseline_ns: int, *, secrets: set[str] | None = None):
+    def __init__(
+        self,
+        path: str,
+        baseline_ns: int,
+        *,
+        secrets: set[str] | None = None,
+        on_event: Callable[[str, str, Any], None] | None = None,
+    ):
         self.path = Path(path)
         self.baseline_ns = baseline_ns
         self.lock = threading.Lock()
+        self._on_event = on_event
         self._secrets: set[str] | None = None
         if secrets is not None:
             self._secrets = set(known_secret_values())
@@ -72,6 +81,16 @@ class CaptureWriter:
                 output.write(
                     json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
                 )
+        # Live control consumers need the original decoded exchange while the
+        # durable trace above must remain redacted. Policy denials describe
+        # messages that were not forwarded across the MCP boundary.
+        if self._on_event is not None and kind != "policy_denied":
+            try:
+                self._on_event(transport, direction, payload)
+            except Exception:
+                # Observation is deliberately passive. Its owner records
+                # delivery failures without changing transport behavior.
+                pass
 
 
 def parse_json_payload(data: bytes | str) -> Any:

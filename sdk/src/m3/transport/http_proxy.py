@@ -143,6 +143,7 @@ class McpHttpProxy:
         known_servers: tuple[str, ...] = (),
         known_tools: tuple[str, ...] = (),
         known_tools_by_server: dict[str, tuple[str, ...]] | None = None,
+        writer: CaptureWriter | None = None,
     ):
         self.transport = transport
         writer_secrets = set(secrets or ())
@@ -159,7 +160,11 @@ class McpHttpProxy:
         writer_config = (
             writer_secrets if secrets is not None or writer_secrets else None
         )
-        self.writer = CaptureWriter(capture_path, baseline_ns, secrets=writer_config)
+        self.writer = writer or CaptureWriter(
+            capture_path, baseline_ns, secrets=writer_config
+        )
+        if writer is not None and writer_secrets:
+            writer.add_secrets(writer_secrets)
         if secrets is not None:
             secrets.update(writer_secrets)
         self.allow_private = allow_private
