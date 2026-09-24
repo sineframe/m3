@@ -307,6 +307,8 @@ async def test_codex_stdio_defaults_reach_child_and_known_http_alias_is_ignored(
         for config, expected in zip(
             instrumented[:2], ("2026-07-28", "2025-06-18"), strict=True
         ):
+            if config.key == "legacy-profile":
+                assert config.environment["CODEX_MCP_PROTOCOL_VERSION"] == expected
             returncode, stdout, stderr = await _run_stdio_proxy(
                 config,
                 environment={"CODEX_MCP_PROTOCOL_VERSION": "ambient-wrong-value"},

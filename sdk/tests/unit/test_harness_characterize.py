@@ -51,7 +51,10 @@ def test_native_harness_interaction_evidence_is_not_inferred_from_help() -> None
 
 def test_real_adapter_declarations_remain_explicit(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    codex_executable = tmp_path / "codex"
+    codex_executable.write_text("fixture", encoding="utf-8")
     monkeypatch.setattr(
         codex_module,
         "probe_help",
@@ -63,7 +66,7 @@ def test_real_adapter_declarations_remain_explicit(
     )
     adapters = (
         (PiHarnessAdapter(executable="pi"), "m3"),
-        (CodexHarnessAdapter(executable="codex"), "harness"),
+        (CodexHarnessAdapter(executable=str(codex_executable)), "harness"),
         (ClaudeCodeHarnessAdapter(executable="claude"), "harness"),
         (AcpHarnessAdapter(), "harness"),
         (OpenCodeHarnessAdapter(executable="opencode"), "harness"),

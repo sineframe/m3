@@ -512,8 +512,7 @@ async def test_codex_mcp_tool_approval_uses_session_permission_policy(
         await session.close()
 
 
-@pytest.mark.asyncio
-async def test_codex_ordinary_session_preserves_explicit_legacy_mcp_version() -> None:
+def test_codex_ordinary_session_rejects_explicit_legacy_mcp_version() -> None:
     configuration = HarnessServerConfig(
         key="fixture",
         transport=TransportKind.STDIO,
@@ -527,16 +526,35 @@ async def test_codex_ordinary_session_preserves_explicit_legacy_mcp_version() ->
         Codex(model="fixture", executable=str(CODEX_FIXTURE)),
         configurations=(configuration,),
     )
-    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    with pytest.raises(HarnessStartupError, match="protocol version is unsupported"):
+        render_codex_config(launch)
 
-    session = await adapter.open(launch)
-    try:
-        result = await session.send(HarnessTurnRequest.from_message("ordinary turn"))
-        assert result.status == "completed"
-        assert result.response is not None
-        assert result.response.text == "fixture response"
-    finally:
-        await session.close()
+
+def test_codex_rejects_secret_backed_legacy_mcp_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("M3_TEST_MCP_VERSION", "2025-06-18")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-source-home"))
+    configuration = HarnessServerConfig(
+        key="fixture",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="fixture-connection",
+        command="fixture",
+        environment={
+            "CODEX_MCP_PROTOCOL_VERSION": SecretReference(
+                source="environment", name="M3_TEST_MCP_VERSION"
+            )
+        },
+    )
+    launch = _launch(
+        Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+        configurations=(configuration,),
+    )
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+    with pytest.raises(HarnessStartupError, match="protocol version is unsupported"):
+        adapter.environment_for_launch(launch, tmp_path)
 
 
 @pytest.mark.asyncio

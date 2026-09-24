@@ -285,6 +285,7 @@ class CodexMRTRAction:
         self._operation: _ObservedCall | None = None
         self._rounds = 0
         self._native_tool_items: Counter[str] = Counter()
+        self._active_native_tool_items: dict[str, str] = {}
         self._terminal_operations: Counter[str] = Counter()
         self._current_round: _ObservedRound | None = None
         self._awaiting_retry: _ObservedRound | None = None
@@ -392,6 +393,9 @@ class CodexMRTRAction:
         except ElicitationExpectationError as error:
             self.fail(error)
             return
+        item_id = item.get("id")
+        if isinstance(item_id, str):
+            self._active_native_tool_items.pop(item_id, None)
         self._native_tool_items[item_key] += 1
         status = item.get("status")
         if (
@@ -409,6 +413,24 @@ class CodexMRTRAction:
                 )
             self.fail(failure, interrupt_turn=False)
         self._observation_changed.set()
+
+    def observe_native_tool_start(self, item: Mapping[str, Any]) -> None:
+        """Track same-server calls that can originate an indistinguishable prompt."""
+
+        if self._plan is None and self._managed_round_handler is None:
+            return
+        item_id = item.get("id")
+        server = item.get("server")
+        if not isinstance(item_id, str) or not isinstance(server, str):
+            self.fail(
+                ElicitationExpectationError(
+                    "Codex native tool item has insufficient identity",
+                    details={"reason": "native_tool_item_unbound"},
+                )
+            )
+            return
+        self._active_native_tool_items[item_id] = server
+        self._changed.set()
 
     async def _observe(self) -> None:
         try:
@@ -745,6 +767,21 @@ class CodexMRTRAction:
             response = associator.response_for(params, server_name=server_name)
             answers.append((request_id, self._native_result(response)))
         associator.complete()
+        if (
+            any(
+                call.server_name == current.call.server_name
+                for call in self._calls.values()
+            )
+            or sum(
+                server == current.call.server_name
+                for server in self._active_native_tool_items.values()
+            )
+            > 1
+        ):
+            raise ElicitationExpectationError(
+                "more than one same-server MCP operation can own the native prompt",
+                details={"reason": "concurrent_elicitation"},
+            )
         self._retry_confirmed.clear()
         current.sent = True
         self._awaiting_retry = current

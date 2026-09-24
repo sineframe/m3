@@ -987,7 +987,16 @@ class McpCaptureManager:
                     configuration,
                     command=sys.executable,
                     args=args,
-                    environment={},
+                    # Codex must still see an explicit protocol choice when it
+                    # validates the server. Other child env stays in handoff.
+                    environment={
+                        "CODEX_MCP_PROTOCOL_VERSION": environment[
+                            "CODEX_MCP_PROTOCOL_VERSION"
+                        ]
+                    }
+                    if "CODEX_MCP_PROTOCOL_VERSION"
+                    in getattr(configuration, "environment", {})
+                    else {},
                 )
             elif transport == TransportKind.STREAMABLE_HTTP.value:
                 endpoint = getattr(configuration, "endpoint", None)

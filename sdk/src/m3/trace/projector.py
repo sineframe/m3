@@ -786,11 +786,11 @@ def _tool_result(event: Event) -> ToolResult:
         error_observation = _unavailable(ObservationReason.MALFORMED_SOURCE)
     else:
         error_observation = _not_emitted()
-    raw_is_error = result.get("isError", result.get("is_error", False))
+    raw_is_error = result.get("isError", result.get("is_error"))
     is_error = (
-        raw_is_error
-        if isinstance(raw_is_error, bool)
-        else event.kind is EventKind.MCP_ERROR
+        event.kind is EventKind.MCP_ERROR
+        or isinstance(error, Mapping)
+        or (raw_is_error if isinstance(raw_is_error, bool) else False)
     )
     return ToolResult(
         content=content,

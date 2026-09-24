@@ -1087,7 +1087,33 @@ def test_tool_errors_protocol_errors_and_typed_fallback_call_ids() -> None:
         and protocol.result.value.error.value is not None
     )
     assert protocol.result.value.error.value.code.value == "protocol_error"
+    assert protocol.result.value.is_error is True
     assert protocol.call_id == "call-3"
+
+
+def test_top_level_terminal_tool_error_sets_result_error_flag() -> None:
+    trace = _trace()
+    terminal = trace.events[8].model_copy(
+        update={
+            "kind": EventKind.MCP_RESPONSE,
+            "payload": {
+                "status": "tool_error",
+                "result": {"content": []},
+                "error": {"code": "protocol_error", "message": "round limit exceeded"},
+            },
+        }
+    )
+    call = (
+        trace.model_copy(
+            update={"events": (*trace.events[:8], terminal, *trace.events[9:])}
+        )
+        .view()
+        .tool_calls[0]
+    )
+    assert call.tool_status.value == "tool_error"
+    assert call.result.value is not None
+    assert call.result.value.is_error is True
+    assert call.result.value.error.value is not None
 
 
 @pytest.mark.parametrize(

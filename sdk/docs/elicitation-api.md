@@ -871,6 +871,11 @@ This claim is specific to Codex CLI 0.156.1; other versions remain unsupported
 until characterized and tested. The gate command is in the
 [E2E test README](../tests/e2e/README.md).
 
+Codex stdio servers require MCP protocol `2026-07-28`. M3 rejects an explicit
+`CODEX_MCP_PROTOCOL_VERSION=2025-06-18` for Codex sessions, including ordinary
+sessions without an elicitation plan. Capture instrumentation preserves an
+explicit marker for validation and passes the same value to the actual child.
+
 Real, unmodified Codex CLI 0.156.1 native characterization is covered by
 [`test_real_codex_native_mrtr.py`](../tests/e2e/test_real_codex_native_mrtr.py).
 M3 action-association, managed-delivery, and runnable example counterparts are
@@ -932,6 +937,7 @@ does not require a paid provider. It proves these native behaviors only:
 | Round limit | Codex completes nine consecutive MRTR prompts. The tenth request is rejected by Codex with `input_required did not complete within 10 MRTR rounds`; it does not surface a tenth native prompt. | For Codex, the effective supported plan limit is at most nine. Do not retry an unseen tenth prompt. This differs from Pi's tested ten-round capacity. |
 | Approval | Tool approval is a separate App Server request marked `_meta.codex_approval_kind=mcp_tool_call`. | Leave approval with Codex and its permission policy. Never answer it from an MRTR plan. |
 | Concurrent same-server approval | Codex App Server 0.156.1 exposes no native request-to-item ID on MCP tool-approval frames. If a second approval arrives while an earlier approved item from the same server is active, M3 cannot distinguish a legitimate concurrent approval from forged server elicitation metadata. | M3 fails closed and rejects that overlapping same-server approval. Concurrent same-server native approvals are unsupported until Codex exposes a reliable association field. |
+| Concurrent same-server elicitation | Native elicitation prompts lack the MCP operation ID, and native prompts and passive wire responses can arrive in different orders. | M3 refuses a planned answer while another same-server tool item or observed MCP call could own the prompt, even when the prompt content matches. Overlapping same-server elicitation is unsupported. |
 | Interruption | Cancelling before an answer interrupts the turn; Codex emits no MCP retry/cancel notification and does not resolve the outstanding native request. | Let Codex own cancellation. M3 must fail or terminalize the pending planned action and must not fabricate a retry or resolution. |
 
 ### API and example coverage boundary

@@ -69,15 +69,21 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
         if config.transport.value == "stdio":
             if not config.command:
                 raise HarnessStartupError("MCP server command is unavailable")
+            protocol_marker = config.environment.get("CODEX_MCP_PROTOCOL_VERSION")
+            if (
+                protocol_marker is not None
+                and not isinstance(protocol_marker, SecretReference)
+                and _config_value(protocol_marker) != "2026-07-28"
+            ):
+                raise HarnessStartupError("Codex MCP protocol version is unsupported")
             literal_env = {
                 k: _config_value(v)
                 for k, v in config.environment.items()
                 if not isinstance(v, SecretReference)
             }
-            # Preserve an explicit server choice for ordinary Codex sessions.
-            # M3 enables the modern feature globally, but a server may still
-            # intentionally negotiate the legacy protocol. Planned MRTR is
-            # checked against the observed target server when a prompt arrives.
+            # All Codex stdio servers must use the modern protocol. An explicit
+            # marker remains visible after capture instrumentation for this
+            # check, while the real child gets the same value via handoff.
             if "CODEX_MCP_PROTOCOL_VERSION" not in config.environment:
                 literal_env["CODEX_MCP_PROTOCOL_VERSION"] = "2026-07-28"
             # Codex's env_vars names are the child-process target variables;
@@ -472,6 +478,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     environment[key] = resolved
                     runtime_secrets.add(resolved)
                     if key == "CODEX_MCP_PROTOCOL_VERSION":
+                        if resolved != "2026-07-28":
+                            raise HarnessStartupError(
+                                "Codex MCP protocol version is unsupported"
+                            )
                         protocol_markers[configuration.key] = resolved
                 elif key == "CODEX_MCP_PROTOCOL_VERSION":
                     protocol_markers[configuration.key] = _config_value(value)
@@ -1136,12 +1146,16 @@ class CodexHarnessAdapter(NativeRPCAdapter):
     def _observe_native_tool_item(
         action: CodexMRTRAction, frame: Mapping[str, Any]
     ) -> None:
-        if frame.get("method") != "item/completed":
+        method = frame.get("method")
+        if method not in {"item/started", "item/completed"}:
             return
         params = frame.get("params")
         item = params.get("item") if isinstance(params, Mapping) else None
         if isinstance(item, Mapping) and item.get("type") == "mcpToolCall":
-            action.observe_native_tool_item(item)
+            if method == "item/started":
+                action.observe_native_tool_start(item)
+            else:
+                action.observe_native_tool_item(item)
 
     async def _answer_mcp_elicitation(
         self, process: JsonRpcProcess, frame: Mapping[str, Any]

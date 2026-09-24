@@ -22,7 +22,11 @@ from m3.harness.codex import (
     codex_configuration,
     render_codex_config,
 )
-from m3.harness.contracts import HarnessInteractionCapabilities, HarnessTurnResult
+from m3.harness.contracts import (
+    HarnessInteractionCapabilities,
+    HarnessStartupError,
+    HarnessTurnResult,
+)
 from m3.server_group import HarnessServerConfig
 from m3.types import TransportKind, TurnOutcome
 
@@ -825,6 +829,73 @@ async def test_concurrent_eliciting_operation_fails_before_late_native_answers()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("second_evidence", ("native_started", "wire_request"))
+async def test_identical_native_prompt_is_not_answered_while_another_operation_is_active(
+    second_evidence: str,
+) -> None:
+    capture = _Capture()
+    writes: list[tuple[int | str, dict[str, Any]]] = []
+    action = CodexMRTRAction(
+        launch=_launch(capture),
+        plan=expect_form("address", message="Enter the delivery city.").accept(
+            {"city": "Pune"}
+        ),
+        round_limit=3,
+        thread_id=lambda: "thread-1",
+        turn_id=lambda: "turn-1",
+        write_native_response=lambda request_id, result: _record_write(
+            writes, request_id, result
+        ),
+    )
+    await action.start()
+    try:
+        adapter = CodexHarnessAdapter(executable="fixture")
+        for item_id in (
+            ("item-a", "item-b") if second_evidence == "native_started" else ("item-a",)
+        ):
+            adapter._observe_native_tool_item(
+                action,
+                {
+                    "method": "item/started",
+                    "params": {
+                        "item": {
+                            "type": "mcpToolCall",
+                            "id": item_id,
+                            "server": "fixture",
+                            "tool": "collect",
+                            "arguments": {"batch": 2},
+                        }
+                    },
+                },
+            )
+        capture.publish("client_to_server", _call(1))
+        capture.publish(
+            "server_to_client",
+            _input_required(1, {"address": _elicitation("address")}, "state-1"),
+        )
+        if second_evidence == "wire_request":
+            capture.publish(
+                "client_to_server",
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "ship", "arguments": {"batch": 3}},
+                },
+            )
+        await _flush()
+        # B's native prompt overtakes B's passive response observation. It is
+        # content-identical to A's prompt and must never receive A's answer.
+        action.submit_native_prompt(_native_prompt(9, "address"))
+        await asyncio.wait_for(action.failure_event.wait(), timeout=1.0)
+        assert action.failure is not None
+        assert action.failure.details["reason"] == "concurrent_elicitation"
+        assert writes == []
+    finally:
+        await action.close()
+
+
+@pytest.mark.asyncio
 async def test_second_native_response_write_failure_stops_batch_without_replay() -> (
     None
 ):
@@ -1523,14 +1594,8 @@ def test_codex_modern_mcp_configuration_preserves_explicit_server_protocol() -> 
     assert '"CODEX_MCP_PROTOCOL_VERSION" = "2026-07-28"' in rendered
 
     legacy = replace(server, environment={"CODEX_MCP_PROTOCOL_VERSION": "2025-06-18"})
-    legacy_config = codex_configuration(SimpleNamespace(configurations=(legacy,)))
-    assert legacy_config["features"] == {"mcp_2026_07_28": True}
-    assert (
-        legacy_config["mcp_servers"]["fixture"]["env"]["CODEX_MCP_PROTOCOL_VERSION"]
-        == "2025-06-18"
-    )
-    legacy_rendered = render_codex_config(SimpleNamespace(configurations=(legacy,)))
-    assert '"CODEX_MCP_PROTOCOL_VERSION" = "2025-06-18"' in legacy_rendered
+    with pytest.raises(HarnessStartupError, match="protocol version is unsupported"):
+        codex_configuration(SimpleNamespace(configurations=(legacy,)))
 
 
 def test_codex_planned_mrtr_rejects_only_the_legacy_target_server() -> None:
