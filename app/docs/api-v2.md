@@ -46,6 +46,57 @@ keeps every run with at least one test in that suite. The envelope reports
 `offset`. `GET /api/v2/suites` lists the registered `{suite_id, suite_name}`
 pairs for building suite filters.
 
+To group runs, pass `group=suite_name`, `suite_id`, `date`, `month`, `project_id`,
+or `status`. Grouped requests select the newest matching **runs** first, with
+`limit=50` by default (maximum 100), and then group that page. `offset` also
+counts runs, not groups. Grouped responses replace `runs` with `group` and
+`groups`; `total` still counts distinct matching runs *before* pagination.
+Each group contains a `key`, its page-local `run_count`, and full run summaries
+in `runs`. Groups appear in first-appearance order within the newest-first run
+page. A group can continue on another page; its count is not a database-wide
+total. A `suite_id` filter selects matching runs, but those runs still appear
+in all their suite groups, as they do in the plain run-list summaries.
+
+```json
+{
+  "version": "v2",
+  "group": "suite_name",
+  "groups": [
+    {
+      "key": {"project_id": "11111111-1111-4111-8111-111111111111", "suite_name": "catalog"},
+      "run_count": 1,
+      "runs": [
+        {
+          "run_id": "run-42", "created_at": "2026-09-19T10:00:00Z",
+          "finished_at": null, "status": "finished",
+          "project_id": "11111111-1111-4111-8111-111111111111",
+          "project_name": "shop", "test_count": 1,
+          "test_outcome_counts": {"passed": 1},
+          "effective_verdict_counts": {"passed": 1},
+          "suites": [{"suite_id": 7, "suite_name": "catalog"}]
+        }
+      ]
+    }
+  ],
+  "total": 1, "limit": 50, "offset": 0
+}
+```
+
+`suite_name` groups use both project identity and suite name, so names shared
+across projects stay separate. `suite_id` groups key by the registered integer
+ID and include the suite name and run project ID for display. Runs with tests
+in several suites appear in each corresponding suite group; consequently the
+sum of group counts can exceed `total`. A run without a suite-bearing saved
+test appears in an unassigned group (`suite_name` or `suite_id` is `null`).
+Do not infer a suite from CLI selection flags when no suite-bearing test was
+saved. A run of only selected tests belongs to its suite group, but the API
+does not claim it covers the whole suite: the manifest records only tests
+collected *after* selection. Run-level counts still cover the whole run, not
+just one suite. `date` and `month` use the UTC date of `created_at`; missing
+or invalid timestamps use a `null` key. Missing project IDs or statuses also
+use `null` keys. Unsupported `group` values are rejected with 422. Omit
+`group` to retain the original plain run-list response and unpaginated default.
+
 `test_outcome_counts` is an independent count of raw persisted pytest
 outcomes. `effective_verdict_counts` is the count after applying required
 evaluation completeness and execution policy. Both maps contain only
@@ -156,6 +207,7 @@ JSON `session_config` query parameter to retrieve the same history.
 
 | Method and path | Purpose |
 |---|---|
+| `GET /api/v2/runs` | List saved pytest runs; optionally filter, page, and group the selected run page. |
 | `POST /api/v2/executions` | Start a direct or agent execution. |
 | `GET /api/v2/executions` | List saved executions with paging and filters. |
 | `GET /api/v2/suites/{suite_id}/executions` | List executions belonging to one suite with paging and run/lifecycle/outcome filters. |

@@ -5,6 +5,7 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
 from _local_client import TestClient
 from pydantic import TypeAdapter
 
@@ -31,7 +32,7 @@ from m3 import (
     UserMessage,
 )
 from m3._types.specs import AgentSpec
-from m3.storage import SQLiteExecutionStore, StorageError
+from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore, StorageError
 from m3.types import CallTool, DirectSpec, ListTools, ServerBinding, StdioServer
 from m3_app.api.app import create_app
 from m3_app.api.wire import internalize_request
@@ -545,6 +546,213 @@ def test_v2_runs_page_lists_every_suite_and_filters_by_suite(tmp_path):
         assert [run["run_id"] for run in beta.json()["runs"]] == ["run-b"]
         assert client.get("/api/v2/runs", params={"limit": 0}).status_code == 422
     store.close()
+
+
+@pytest.mark.parametrize("in_memory", [False, True])
+def test_v2_runs_groups_selected_page_without_inventing_suite_coverage(
+    tmp_path, in_memory
+):
+    database = tmp_path / "grouped-runs.sqlite"
+    store = InMemoryExecutionStore() if in_memory else SQLiteExecutionStore(database)
+    project_a = "11111111-1111-4111-8111-111111111111"
+    project_b = "22222222-2222-4222-8222-222222222222"
+    store.ensure_project(project_a, "Shop")
+    store.ensure_project(project_b, "Warehouse")
+    for run_id, created_at, project_id, suites in (
+        ("first", "2026-09-20T00:30:00+02:00", project_a, ("catalog",)),
+        ("second", "2026-09-19T19:00:00Z", project_a, ("catalog", "shipping")),
+        ("third", "2026-09-19T18:00:00Z", project_b, ("catalog",)),
+        ("unassigned", "bad-date", project_a, ()),
+    ):
+        store.save_test_run(
+            run_id,
+            {
+                "run_id": run_id,
+                "created_at": created_at,
+                "project_id": project_id,
+                "status": "finished",
+                "collected_node_ids": [f"{run_id}-test"],
+            },
+        )
+        for suite_name in suites:
+            store.save_test_result(
+                run_id,
+                f"{run_id}-{suite_name}",
+                {
+                    "node_id": f"{run_id}-test",
+                    "suite_name": suite_name,
+                    "project_id": project_id,
+                },
+            )
+    catalog_id = store.get_suite_by_name("catalog", project_a).id.root
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        schema = client.get("/openapi.json").json()["paths"]["/api/v2/runs"]["get"]
+        assert "group" in {parameter["name"] for parameter in schema["parameters"]}
+        plain = client.get("/api/v2/runs").json()
+        assert plain["limit"] is None and len(plain["runs"]) == 4
+        grouped = client.get("/api/v2/runs", params={"group": "suite_name"}).json()
+        assert (
+            grouped["group"],
+            grouped["total"],
+            grouped["limit"],
+            grouped["offset"],
+        ) == (
+            "suite_name",
+            4,
+            50,
+            0,
+        )
+        assert [
+            (item["key"], [run["run_id"] for run in item["runs"]], item["run_count"])
+            for item in grouped["groups"]
+        ] == [
+            (
+                {"project_id": project_a, "suite_name": "catalog"},
+                ["first", "second"],
+                2,
+            ),
+            ({"project_id": project_a, "suite_name": "shipping"}, ["second"], 1),
+            ({"project_id": project_b, "suite_name": "catalog"}, ["third"], 1),
+            ({"project_id": project_a, "suite_name": None}, ["unassigned"], 1),
+        ]
+        assert grouped["groups"][0]["runs"][0]["test_count"] == 1
+        by_id = client.get("/api/v2/runs", params={"group": "suite_id"}).json()
+        assert by_id["groups"][0]["key"] == {
+            "suite_id": catalog_id,
+            "suite_name": "catalog",
+            "project_id": project_a,
+        }
+        assert by_id["groups"][-1]["key"] == {
+            "suite_id": None,
+            "suite_name": None,
+            "project_id": project_a,
+        }
+        filtered = client.get(
+            "/api/v2/runs",
+            params={
+                "group": "suite_name",
+                "suite_id": catalog_id,
+                "project_id": project_a,
+            },
+        ).json()
+        assert filtered["total"] == 2
+        assert [item["key"]["suite_name"] for item in filtered["groups"]] == [
+            "catalog",
+            "shipping",
+        ]
+        for group, expected in (
+            ("date", ["2026-09-19", None]),
+            ("month", ["2026-09", None]),
+            ("project_id", [project_a, project_b]),
+            ("status", ["finished"]),
+        ):
+            response = client.get("/api/v2/runs", params={"group": group}).json()
+            assert [item["key"][group] for item in response["groups"]] == expected
+        assert client.get("/api/v2/runs", params={"group": "run_id"}).status_code == 422
+    store.close()
+
+
+@pytest.mark.parametrize("in_memory", [False, True])
+def test_v2_grouped_runs_limit_and_offset_count_distinct_runs(tmp_path, in_memory):
+    database = tmp_path / "grouped-page.sqlite"
+    store = InMemoryExecutionStore() if in_memory else SQLiteExecutionStore(database)
+    for index in range(51):
+        run_id = f"run-{index:02d}"
+        store.save_test_run(
+            run_id,
+            {"run_id": run_id, "created_at": f"2026-09-19T12:{index:02d}:00Z"},
+        )
+        store.save_test_result(
+            run_id,
+            run_id,
+            {"node_id": run_id, "suite_name": "catalog"},
+        )
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        first = client.get("/api/v2/runs", params={"group": "suite_name"}).json()
+        assert (first["total"], first["limit"], first["offset"]) == (51, 50, 0)
+        assert first["groups"][0]["run_count"] == 50
+        assert first["groups"][0]["runs"][0]["run_id"] == "run-50"
+        second = client.get(
+            "/api/v2/runs", params={"group": "suite_name", "offset": 50}
+        ).json()
+        assert (second["total"], second["groups"][0]["run_count"]) == (51, 1)
+        assert second["groups"][0]["runs"][0]["run_id"] == "run-00"
+        assert (
+            client.get(
+                "/api/v2/runs", params={"group": "suite_name", "limit": 0}
+            ).status_code
+            == 422
+        )
+        assert (
+            client.get(
+                "/api/v2/runs", params={"group": "suite_name", "limit": 101}
+            ).status_code
+            == 422
+        )
+        assert (
+            client.get("/api/v2/runs", params={"group": "date", "offset": 51}).json()[
+                "groups"
+            ]
+            == []
+        )
+    store.close()
+
+
+def test_v2_grouping_preserves_cli_partial_suite_selection(tmp_path):
+    test_file = tmp_path / "test_catalog.py"
+    test_file.write_text(
+        "import pytest\n"
+        "pytestmark = pytest.mark.m3(suite_name='catalog')\n"
+        "def test_keep(): pass\n"
+        "def test_skip_selection(): pass\n",
+        encoding="utf-8",
+    )
+    database = tmp_path / "partial.sqlite"
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        (
+            str(Path(__file__).parents[3] / "sdk" / "src"),
+            str(Path(__file__).parents[3] / "cli" / "src"),
+        )
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "m3_cli",
+            "test",
+            "--suite",
+            "catalog",
+            "--results-db",
+            str(database),
+            "--",
+            "-q",
+            "-k",
+            "keep",
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    application = create_app(Settings(database_path=str(database)))
+    with TestClient(application) as client:
+        response = client.get("/api/v2/runs", params={"group": "suite_name"}).json()
+    assert (response["total"], response["limit"]) == (1, 50)
+    assert response["groups"][0]["key"] == {
+        "project_id": None,
+        "suite_name": "catalog",
+    }
+    run = response["groups"][0]["runs"][0]
+    assert run["test_count"] == 1
+    assert len(run["suites"]) == 1
+    assert run["suites"][0]["suite_name"] == "catalog"
 
 
 def test_v2_manifest_not_run_feedback_and_run_list_counts(tmp_path):
