@@ -403,7 +403,10 @@ the server launch details.
 
 The body is optional. `{"arguments": {...}}` replaces the recorded arguments.
 Without it, the server uses the recorded arguments, but only when their
-observation `state` is `observed`.
+observation `state` is `observed` and no value (or key) contains a redaction
+marker (`[REDACTED]`, or `%5BREDACTED%5D` inside a URL). Redacted arguments
+are lossy, so replaying them would send the marker to the server; send an
+`arguments` override instead.
 
 The server builds a `DirectSpec` with:
 
@@ -435,7 +438,7 @@ Errors:
 | `404` | `execution_not_found` | The source execution does not exist. |
 | `404` | `tool_call_not_found` | The trace has no entry with `entry_id`. |
 | `409` | `execution_not_terminal` | The source execution is not finished. |
-| `409` | `tool_call_not_replayable` | The entry is not a `tool_call`, the tool name was not observed, or the arguments were not observed and no `arguments` override was sent. |
+| `409` | `tool_call_not_replayable` | The entry is not a `tool_call`, the tool name was not observed, or the arguments were not observed or contain redacted values and no `arguments` override was sent. |
 | `422` | `replay_source_unavailable` | The source spec cannot be loaded (for example a legacy agent spec that still has `elicitation_policy`), or the matching server binding is missing. |
 | `422` | `invalid_request` | The body is not `{"arguments": {...}}`. |
 

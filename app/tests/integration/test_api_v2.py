@@ -2071,6 +2071,40 @@ def test_v2_tool_call_replay_errors(tmp_path, monkeypatch):
     store.close()
 
 
+def test_v2_tool_call_replay_requires_override_for_redacted_arguments(
+    tmp_path, monkeypatch
+):
+    # A credential-named variable holding the argument text makes the
+    # recorder store the call as {"text": "[REDACTED]"}.
+    monkeypatch.setenv("REPLAY_TOKEN", "hello replay")
+    database = Path(tmp_path).resolve() / "replay-redacted.sqlite"
+    store = SQLiteExecutionStore(database)
+    source_id, entry_id, _other = _record_pytest_agent_tool_call(store, {})
+    recorded = next(
+        item
+        for item in store.get_trace_view(source_id).tool_calls
+        if item.entry_id == entry_id
+    )
+    assert recorded.arguments.value == {"text": "[REDACTED]"}
+    app = create_app(Settings(database_path=str(database)), v2_store=store)
+    url = f"/api/v2/executions/{source_id}/tool-calls/{entry_id}/replay"
+    with TestClient(app) as client:
+        rejected = client.post(url)
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json()["error"]["code"] == "tool_call_not_replayable"
+        # Nothing was submitted, so the placeholder never reached a server.
+        listed = client.get("/api/v2/executions").json()["page"]["items"]
+        assert [item["execution_id"] for item in listed] == [source_id]
+
+        overridden = client.post(url, json={"arguments": {"text": "explicit"}})
+        assert overridden.status_code == 202, overridden.text
+        assert overridden.json()["spec"]["operation"]["arguments"] == {
+            "text": "explicit"
+        }
+        _wait_finished(client, overridden.json()["execution_id"])
+    store.close()
+
+
 def test_v2_tool_call_replay_is_rejected_by_read_only_viewer(tmp_path):
     from m3_app.api.app import create_viewer_app
 

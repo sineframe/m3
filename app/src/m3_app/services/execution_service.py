@@ -13,6 +13,7 @@ import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
+from urllib.parse import quote
 
 from m3 import (
     DirectSpec,
@@ -39,6 +40,7 @@ from m3.observability import ObservationState, ToolCallEntry
 from m3.services.profiles import ProfileResolutionError
 from m3.storage import ExecutionStore, StorageConflict, StorageError
 from m3.suites import Suite
+from m3.trace.redaction import REDACTED
 
 _CANCEL_SETTLE_TIMEOUT_SECONDS = 2.0
 _CANCEL_SETTLE_POLL_SECONDS = 0.01
@@ -46,6 +48,24 @@ _CANCEL_SETTLE_POLL_SECONDS = 0.01
 # Spec metadata is flat scalars, so replay provenance uses dotted keys.
 REPLAYED_FROM_EXECUTION = "replayed_from.execution_id"
 REPLAYED_FROM_ENTRY = "replayed_from.entry_id"
+
+# Redaction replaces values in place ("[REDACTED]"); URL query redaction
+# percent-encodes the marker. Either form means the recorded value is lossy.
+_REDACTION_MARKERS = (REDACTED, quote(REDACTED))
+
+
+def _contains_redaction(value: object) -> bool:
+    """Return whether a recorded JSON value holds a redaction marker."""
+    if isinstance(value, str):
+        return any(marker in value for marker in _REDACTION_MARKERS)
+    if isinstance(value, Mapping):
+        return any(
+            _contains_redaction(key) or _contains_redaction(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_contains_redaction(item) for item in value)
+    return False
 
 
 def _binding_selector(binding: ServerBinding) -> str | None:
@@ -351,6 +371,11 @@ class AppExecutionService:
                 raise AppExecutionError(
                     "tool_call_not_replayable",
                     "tool arguments were not observed; supply arguments",
+                )
+            if _contains_redaction(entry.arguments.value):
+                raise AppExecutionError(
+                    "tool_call_not_replayable",
+                    "recorded tool arguments are redacted; supply arguments",
                 )
             arguments = entry.arguments.value
         try:
