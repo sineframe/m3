@@ -34,9 +34,16 @@ from m3 import (
 )
 from m3._types.specs import AgentSpec, FullToolPolicy
 from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore, StorageError
-from m3.types import CallTool, DirectSpec, ListTools, ServerBinding, StdioServer
+from m3.types import (
+    CallTool,
+    DirectSpec,
+    HTTPServer,
+    ListTools,
+    ServerBinding,
+    StdioServer,
+)
 from m3_app.api.app import create_app
-from m3_app.api.v2 import V2RunSummary, V2SuiteRef, _group_run_page
+from m3_app.api.v2 import V2RunSummary, V2SuiteRef, _group_run_page, _visible_spec
 from m3_app.api.wire import internalize_request
 from m3_app.settings import Settings
 
@@ -2044,7 +2051,17 @@ def test_v2_tool_call_replay_errors(tmp_path, monkeypatch):
         }
         stored = store.get_execution_spec(accepted.json()["execution_id"])
         assert stored.servers[0].server.environment == {"REPLAY_TOKEN": reference}
-        _wait_finished(client, accepted.json()["execution_id"])
+        reference_id = accepted.json()["execution_id"]
+        finished = _wait_finished(client, reference_id)
+        assert finished["snapshot"]["outcome"] == "completed", finished
+        assert finished["snapshot"]["tool_call_count"] == 1
+        # The resolved value is bound for redaction, never persisted.
+        report = client.get(f"/api/v2/executions/{reference_id}/report")
+        assert "replay-token-value" not in report.text
+        assert all(
+            "replay-token-value" not in event.model_dump_json()
+            for event in store.iter_events(reference_id)
+        )
 
         not_tool = replay(source_id, other_entry)
         assert not_tool.status_code == 409
@@ -2103,6 +2120,61 @@ def test_v2_tool_call_replay_requires_override_for_redacted_arguments(
         }
         _wait_finished(client, overridden.json()["execution_id"])
     store.close()
+
+
+def test_v2_tool_call_replay_rejects_redacted_tool_name_even_with_override(
+    tmp_path, monkeypatch
+):
+    # A configured secret equal to the tool name records it as "[REDACTED]".
+    monkeypatch.setenv("REPLAY_TOKEN", "echo")
+    database = Path(tmp_path).resolve() / "replay-redacted-tool.sqlite"
+    store = SQLiteExecutionStore(database)
+    source_id, entry_id, _other = _record_pytest_agent_tool_call(store, {})
+    recorded = next(
+        item
+        for item in store.get_trace_view(source_id).tool_calls
+        if item.entry_id == entry_id
+    )
+    assert recorded.tool.value == "[REDACTED]"
+    app = create_app(Settings(database_path=str(database)), v2_store=store)
+    url = f"/api/v2/executions/{source_id}/tool-calls/{entry_id}/replay"
+    with TestClient(app) as client:
+        rejected = client.post(url, json={"arguments": {"text": "explicit"}})
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json()["error"]["code"] == "tool_call_not_replayable"
+        listed = client.get("/api/v2/executions").json()["page"]["items"]
+        assert [item["execution_id"] for item in listed] == [source_id]
+    store.close()
+
+
+def test_v2_replay_spec_hides_http_url_and_literal_headers():
+    reference = SecretReference(source="environment", name="REPLAY_TOKEN")
+    server = HTTPServer(
+        name="private-http",
+        url="https://internal.example.test/private/mcp",
+        headers={"X-Api-Key": "header-literal", "Authorization": reference},
+    )
+
+    def spec(metadata):
+        return DirectSpec(
+            servers=(ServerBinding(server=server, alias="private-http"),),
+            operation=CallTool(server="private-http", name="echo", arguments={}),
+            metadata=metadata,
+        )
+
+    visible = _visible_spec(
+        spec(
+            {
+                "replayed_from.execution_id": "execution-src",
+                "replayed_from.entry_id": "e",
+            }
+        )
+    )
+    shown = visible.servers[0].server
+    assert shown.url == "redacted"
+    assert shown.headers == {"X-Api-Key": "redacted", "Authorization": reference}
+    # Only replay executions are redacted; other specs are returned as stored.
+    assert _visible_spec(spec({})).servers[0].server == server
 
 
 def test_v2_tool_call_replay_is_rejected_by_read_only_viewer(tmp_path):

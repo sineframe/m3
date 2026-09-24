@@ -364,6 +364,11 @@ class AppExecutionService:
             raise AppExecutionError(
                 "tool_call_not_replayable", "tool name was not observed"
             )
+        if _contains_redaction(entry.tool.value):
+            # The body cannot replace the tool name, so this is final.
+            raise AppExecutionError(
+                "tool_call_not_replayable", "recorded tool name is redacted"
+            )
         if arguments is None:
             if entry.arguments.state is not observed or not isinstance(
                 entry.arguments.value, Mapping

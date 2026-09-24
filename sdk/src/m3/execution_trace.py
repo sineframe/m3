@@ -52,6 +52,11 @@ class TraceFinalizationConflict(TraceRecorderError):
     """A terminal execution was finalized again with another outcome."""
 
 
+# Recorder-authored lifecycle events that hold no provider-observed values.
+_PRE_CAPTURE_EVENT_KINDS: frozenset[EventKind] = frozenset(
+    {EventKind.EXECUTION_CREATED, EventKind.EXECUTION_STATE_CHANGED}
+)
+
 _EXECUTION_TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
     ExecutionStatus.CREATED: frozenset(
         {ExecutionStatus.QUEUED, ExecutionStatus.STARTING, ExecutionStatus.FINISHED}
@@ -326,12 +331,18 @@ class ExecutionTraceRecorder:
         *,
         allow_after_events: bool = False,
     ) -> None:
-        """Freeze a redaction policy before provider values are observed."""
+        """Freeze a redaction policy before provider values are observed.
+
+        Execution lifecycle events carry only recorder-validated state, so a
+        managed execution may bind once it is queued or running. Any other
+        committed event may already hold unredacted provider data.
+        """
 
         with self._record_lock:
-            if (
-                not allow_after_events
-                and len(tuple(self._store.iter_events(self._execution_id))) > 1
+            if not allow_after_events and any(
+                event.kind not in _PRE_CAPTURE_EVENT_KINDS
+                or event.connection_id is not None
+                for event in self._store.iter_events(self._execution_id)
             ):
                 raise TraceRecorderError(
                     "redaction policy must be bound before trace capture"

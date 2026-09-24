@@ -79,10 +79,11 @@ _REDACTED = "redacted"
 
 
 def _visible_spec(spec: ExecutionSpec | None) -> ExecutionSpec | None:
-    """Hide the inline server launch details of a replay execution.
+    """Hide the copied server launch details of a replay execution.
 
-    A replay copies a test-run server binding that clients never received.
-    Environment references stay visible; literal values do not.
+    Only replay executions are redacted; reads of other executions, including
+    the replay's source, still return their stored spec. Environment
+    references stay visible; literal values do not.
     """
     if spec is None or REPLAYED_FROM_EXECUTION not in spec.metadata:
         return spec
@@ -106,7 +107,9 @@ def _visible_spec(spec: ExecutionSpec | None) -> ExecutionSpec | None:
                 }
             )
         elif isinstance(server, HTTPServer):
-            server = server.model_copy(update={"headers": hidden(server.headers)})
+            server = server.model_copy(
+                update={"url": _REDACTED, "headers": hidden(server.headers)}
+            )
         servers.append(binding.model_copy(update={"server": server}))
     return spec.model_copy(update={"servers": tuple(servers)})
 
@@ -1697,7 +1700,7 @@ def install_v2(
             "/api/v2/executions": "Submit an asynchronous direct or agent execution, or page through saved executions.",
             "/api/v2/executions/{execution_id}": "Read an execution snapshot or delete it after it reaches a terminal state.",
             "/api/v2/executions/{execution_id}/cancel": "Request cancellation of an active execution.",
-            "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay": "Replay one recorded tool call as a new direct execution and return 202. Only the matching server binding is reused; environment references resolve from the server process. The replay has no run, case, or suite identity; spec metadata replayed_from.execution_id and replayed_from.entry_id record its source. An optional {arguments} body replaces the recorded arguments; it is required when the recorded arguments were not observed or contain redacted values. Inline server launch details are redacted in responses.",
+            "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay": "Replay one recorded tool call as a new direct execution and return 202. Only the matching server binding is reused; environment references resolve from the server process. The replay has no run, case, or suite identity; spec metadata replayed_from.execution_id and replayed_from.entry_id record its source. An optional {arguments} body replaces the recorded arguments; it is required when the recorded arguments were not observed or contain redacted values. Replay responses redact the copied server's stdio command, args, cwd, HTTP url, and literal environment and header values.",
             "/api/v2/executions/{execution_id}/report": "Read a terminal execution report, trace, test summaries, and bounded event or artifact pages.",
             "/api/v2/runs": "List safe, newest-first pytest run summaries with their suites, including runs with no executions or evaluations. Optional limit, offset, suite_id, project_id, and page-scoped group.",
             "/api/v2/suites": "List registered suites for run filters.",
