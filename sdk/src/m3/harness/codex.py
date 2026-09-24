@@ -7,17 +7,26 @@ import json
 import os
 import shutil
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..agent_session import AdapterTurn
+from ..elicitation import ElicitationPlan
+from ..errors import ElicitationExpectationError, UnsupportedFeature
 from ..interaction_handlers import PermissionRequest
 from ..types import (
     Codex,
+    ErrorCode,
+    ErrorInfo,
     NativeToolPolicy,
     Readiness,
     SecretReference,
+    TurnOutcome,
 )
+from ._codex_managed_mrtr import CodexManagedMRTRCoordinator
+from ._codex_mrtr import CodexMRTRAction
 from ._rpc_native import JsonRpcProcess, NativeRPCAdapter
 from .contracts import (
     HarnessInteractionCapabilities,
@@ -56,6 +65,14 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
                 for k, v in config.environment.items()
                 if not isinstance(v, SecretReference)
             }
+            marker = config.environment.get("CODEX_MCP_PROTOCOL_VERSION")
+            if isinstance(marker, SecretReference) or (
+                marker is not None and _config_value(marker) != "2026-07-28"
+            ):
+                raise HarnessStartupError(
+                    "Codex MCP protocol marker conflicts with modern elicitation"
+                )
+            literal_env["CODEX_MCP_PROTOCOL_VERSION"] = "2026-07-28"
             # Codex's env_vars names are the child-process target variables;
             # values are resolved into those names by environment_for_launch.
             env_vars = [
@@ -87,12 +104,12 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
                 **({"http_headers": literal_headers} if literal_headers else {}),
                 **({"env_http_headers": env_headers} if env_headers else {}),
             }
-    return {"mcp_servers": servers}
+    return {"features": {"mcp_2026_07_28": True}, "mcp_servers": servers}
 
 
 def render_codex_config(launch: HarnessLaunch) -> str:
     """Render a minimal TOML config without embedding credential values."""
-    lines = ["[mcp_servers]"]
+    lines = ["[features]", "mcp_2026_07_28 = true", "", "[mcp_servers]"]
     for name, server in codex_configuration(launch)["mcp_servers"].items():
         # TOML quoted keys preserve arbitrary valid server aliases verbatim.
         # json.dumps emits the required escapes for quotes, backslashes, and
@@ -133,14 +150,37 @@ def _toml_inline(values: Mapping[str, Any]) -> str:
     )
 
 
+def _failed_action_turn(
+    error: BaseException, *, prior: AdapterTurn | None = None
+) -> AdapterTurn:
+    details = getattr(error, "details", {})
+    details = dict(details) if isinstance(details, Mapping) else {}
+    reason = details.get("reason")
+    if not isinstance(reason, str):
+        reason = "elicitation_protocol_error"
+    details.setdefault("reason", reason)
+    return AdapterTurn(
+        response=None,
+        error=ErrorInfo(
+            code=ErrorCode.PROTOCOL_ERROR,
+            message="Codex could not complete action-bound elicitation",
+            details=details,
+        ),
+        terminal=True,
+        outcome=TurnOutcome.FAILED,
+        tool_calls=prior.tool_calls if prior is not None else (),
+        evidence=prior.evidence if prior is not None else {},
+        trace_limitations=prior.trace_limitations if prior is not None else (),
+        turn_evidence=prior.turn_evidence if prior is not None else None,
+    )
+
+
 class CodexHarnessAdapter(NativeRPCAdapter):
     """One persistent ``codex app-server`` process and thread."""
 
     harness_kind = "codex"
     executable_name = "codex"
-    # Codex's current app-server approval notification is not the MCP
-    # elicitation/MRTR interaction contract and cannot be used as one.
-    interaction_capabilities = HarnessInteractionCapabilities()
+    interaction_capabilities = HarnessInteractionCapabilities(retry_owner="harness")
 
     def __init__(
         self, *, executable: str = "codex", environment: Mapping[str, str] | None = None
@@ -154,6 +194,139 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._deferred_frames: list[Mapping[str, Any]] = []
         self._observed_tool_call_ids: set[str] = set()
         self._streamed_item_ids: set[str] = set()
+        self._write_lock = asyncio.Lock()
+        self._active_mrtr_action: CodexMRTRAction | None = None
+        self._managed_input_runtime: Any = None
+        self._mrtr_capability_checked = False
+        self._action_interrupt_sent = False
+        self._unscoped_elicitation_failure = False
+
+    @property
+    def capabilities(self):
+        # AgentSession checks capabilities before preflight, so establish the
+        # version gate lazily at the same point the declaration is inspected.
+        self._ensure_mrtr_capability()
+        return self._capabilities
+
+    def _ensure_mrtr_capability(self) -> None:
+        if self._mrtr_capability_checked:
+            return
+        self._mrtr_capability_checked = True
+        version = probe_help(self.executable, ("--version",))
+        version_line = version.splitlines()[0].strip() if version else ""
+        supported = version_line == "codex-cli 0.156.1"
+        interaction = (
+            HarnessInteractionCapabilities(
+                supports_elicitation=True,
+                preserves_request_keys=True,
+                preserves_multi_request_rounds=True,
+                supports_interaction_cancellation=True,
+                supports_interaction_resume=False,
+                supports_idempotent_response_delivery=False,
+                retry_owner="harness",
+            )
+            if supported
+            else HarnessInteractionCapabilities(retry_owner="harness")
+        )
+        self._capabilities = replace(self._capabilities, interaction=interaction)
+
+    def _set_managed_input_runtime(self, runtime: Any) -> None:
+        """Bind the controller-owned managed-input runtime to this adapter."""
+
+        self._managed_input_runtime = runtime
+
+    async def send(
+        self,
+        message: Any,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+        elicitation: ElicitationPlan | None = None,
+        elicitation_round_limit: int = 10,
+    ) -> AdapterTurn:
+        """Bind planned answers to one turn while Codex owns retries."""
+
+        if self._session is None or self._launch is None:
+            raise HarnessStartupError("Codex App Server session is unavailable")
+        if (
+            elicitation is not None or self._managed_input_runtime is not None
+        ) and not self.capabilities.interaction.supports_elicitation:
+            raise UnsupportedFeature(
+                "Codex MCP elicitation requires the characterized Codex 0.156.1 App Server"
+            )
+        managed_coordinator = (
+            CodexManagedMRTRCoordinator(self._managed_input_runtime)
+            if self._managed_input_runtime is not None
+            else None
+        )
+        action: CodexMRTRAction | None = None
+        if elicitation is not None or managed_coordinator is not None:
+            action = CodexMRTRAction(
+                launch=self._launch,
+                plan=elicitation,
+                round_limit=elicitation_round_limit,
+                thread_id=lambda: self._thread_id,
+                turn_id=lambda: self._turn_id,
+                write_native_response=lambda request_id, result: self._write_frame(
+                    self._process,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": result,
+                    },
+                ),
+                managed_round_handler=(
+                    managed_coordinator.handle_round
+                    if managed_coordinator is not None
+                    else None
+                ),
+                managed_round_completed=(
+                    managed_coordinator.round_completed
+                    if managed_coordinator is not None
+                    else None
+                ),
+                managed_round_abort=(
+                    managed_coordinator.abort
+                    if managed_coordinator is not None
+                    else None
+                ),
+            )
+            try:
+                await action.start()
+            except BaseException as error:
+                await action.close()
+                return _failed_action_turn(error)
+        self._active_mrtr_action = action
+        self._action_interrupt_sent = False
+        self._unscoped_elicitation_failure = False
+        try:
+            result = await super().send(message, timeout=timeout, metadata=metadata)
+            if result.outcome is TurnOutcome.COMPLETED and action is not None:
+                await action.finish()
+            if action is not None and action.failure is not None:
+                return _failed_action_turn(action.failure, prior=result)
+            if self._unscoped_elicitation_failure:
+                return _failed_action_turn(
+                    ElicitationExpectationError(
+                        "Codex requested elicitation without an action-bound plan",
+                        details={"reason": "unexpected_elicitation"},
+                    ),
+                    prior=result,
+                )
+            return result
+        finally:
+            if action is not None:
+                await action.close()
+            if self._active_mrtr_action is action:
+                self._active_mrtr_action = None
+
+    async def _write_frame(
+        self, process: JsonRpcProcess | None, payload: Mapping[str, Any]
+    ) -> None:
+        if process is None:
+            raise HarnessStartupError("Codex App Server process is unavailable")
+        async with self._write_lock:
+            await process.write(payload)
 
     def process_argv(self, launch: HarnessLaunch) -> tuple[str, ...]:
         return ("app-server",)
@@ -241,6 +414,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         return environment
 
     async def preflight(self, launch: HarnessLaunch) -> Readiness:
+        self._ensure_mrtr_capability()
         ready = await super().preflight(launch)
         if not ready.ready:
             return ready
@@ -276,7 +450,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
 
     async def initialize(self, process: JsonRpcProcess, launch: HarnessLaunch) -> str:
         self._request_id = 1
-        await process.write(
+        await self._write_frame(
+            process,
             {
                 "jsonrpc": "2.0",
                 "id": self._request_id,
@@ -285,7 +460,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     "clientInfo": {"name": "m3", "version": "0.2"},
                     "capabilities": {},
                 },
-            }
+            },
         )
         while True:
             frame = await process.next(5.0)
@@ -294,7 +469,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             if frame.get("id") == self._request_id:
                 break
             self._deferred_frames.append(frame)
-        await process.write({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        await self._write_frame(
+            process, {"jsonrpc": "2.0", "method": "initialized", "params": {}}
+        )
         self._request_id += 1
         workspace = launch.workspace_root or str(process.root or Path.cwd())
         sandbox = (
@@ -312,13 +489,14 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             "sandbox": sandbox,
             "ephemeral": True,
         }
-        await process.write(
+        await self._write_frame(
+            process,
             {
                 "jsonrpc": "2.0",
                 "id": self._request_id,
                 "method": "thread/start",
                 "params": params,
-            }
+            },
         )
         while True:
             frame = await process.next(5.0)
@@ -372,12 +550,15 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._request_id += 1
         self._pending_turn_request = self._request_id
         self._turn_id = None
+        self._action_interrupt_sent = False
+        self._unscoped_elicitation_failure = False
         self._observed_tool_call_ids.clear()
         self._streamed_item_ids.clear()
         text = "".join(
             block.text for block in request.message.content if hasattr(block, "text")
         )
-        await process.write(
+        await self._write_frame(
+            process,
             {
                 "jsonrpc": "2.0",
                 "id": self._request_id,
@@ -389,7 +570,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     if self._launch
                     else None,
                 },
-            }
+            },
         )
 
     def consume_frame(
@@ -417,6 +598,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 turn = result.get("turn", result)
                 if isinstance(turn, Mapping) and isinstance(turn.get("id"), str):
                     self._turn_id = turn["id"]
+                    action = self._active_mrtr_action
+                    if action is not None:
+                        action.set_turn_identity()
             else:
                 raise HarnessStartupError("Codex turn/start response was invalid")
             self._pending_turn_request = None
@@ -658,6 +842,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                             if state in {"interrupted", "aborted"}
                             else "failed"
                         )
+                    if self._unscoped_elicitation_failure:
+                        self._terminal_status = "failed"
                     usage = turn.get("usage")
                     if isinstance(usage, Mapping):
                         usage_kwargs = _usage_kwargs(usage)
@@ -680,15 +866,89 @@ class CodexHarnessAdapter(NativeRPCAdapter):
     async def next_frame(
         self, process: JsonRpcProcess, timeout: float | None
     ) -> Mapping[str, Any] | None:
-        frame = (
-            self._deferred_frames.pop(0)
-            if self._deferred_frames
-            else await process.next(timeout)
-        )
-        # Codex pauses the turn until its client answers this tool approval.
-        if frame is not None and frame.get("method") == "mcpServer/elicitation/request":
-            await self._answer_mcp_elicitation(process, frame)
+        frame = await self._next_action_frame(process, timeout)
+        if frame is None:
+            return None
+        if frame.get("method") == "mcpServer/elicitation/request":
+            params = frame.get("params")
+            params = params if isinstance(params, Mapping) else {}
+            metadata = params.get("_meta")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            if metadata.get("codex_approval_kind") == "mcp_tool_call":
+                # Codex App Server tool approvals are separate from MCP MRTR.
+                # Keep their established policy callback path unchanged.
+                await self._answer_mcp_elicitation(process, frame)
+            elif self._active_mrtr_action is not None:
+                # The action coordinator batches all native prompts for one
+                # observed keyed round before writing any response. Returning
+                # immediately keeps the App Server reader live while it waits.
+                self._active_mrtr_action.submit_native_prompt(frame)
+            else:
+                self._unscoped_elicitation_failure = True
+        if self._unscoped_elicitation_failure:
+            await self._interrupt_turn(process)
+        action = self._active_mrtr_action
+        if (
+            action is not None
+            and action.failure is not None
+            and action.requires_turn_interrupt
+        ):
+            await self._interrupt_turn(process)
         return frame
+
+    async def _next_action_frame(
+        self, process: JsonRpcProcess, timeout: float | None
+    ) -> Mapping[str, Any] | None:
+        action = self._active_mrtr_action
+        if self._deferred_frames:
+            frame = self._deferred_frames.pop(0)
+            if action is not None:
+                self._observe_native_tool_item(action, frame)
+            return frame
+        if action is None:
+            return await process.next(timeout)
+        if action.failure is not None and not action.requires_turn_interrupt:
+            return await process.next(timeout)
+        frame_task = asyncio.create_task(process.next(timeout))
+        failure_task = asyncio.create_task(action.failure_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                (frame_task, failure_task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if failure_task in done and action.failure is not None:
+                if action.requires_turn_interrupt:
+                    await self._interrupt_turn(process)
+                    done_after_interrupt, _ = await asyncio.wait(
+                        (frame_task,), timeout=5.0
+                    )
+                    if not done_after_interrupt:
+                        await process.close()
+                        return None
+                    native_frame = frame_task.result()
+                else:
+                    native_frame = await frame_task
+            else:
+                native_frame = await frame_task
+            if native_frame is not None:
+                self._observe_native_tool_item(action, native_frame)
+            return native_frame
+        finally:
+            for task in (frame_task, failure_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(frame_task, failure_task, return_exceptions=True)
+
+    @staticmethod
+    def _observe_native_tool_item(
+        action: CodexMRTRAction, frame: Mapping[str, Any]
+    ) -> None:
+        if frame.get("method") != "item/completed":
+            return
+        params = frame.get("params")
+        item = params.get("item") if isinstance(params, Mapping) else None
+        if isinstance(item, Mapping) and item.get("type") == "mcpToolCall":
+            action.observe_native_tool_item(item)
 
     async def _answer_mcp_elicitation(
         self, process: JsonRpcProcess, frame: Mapping[str, Any]
@@ -720,7 +980,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                 PermissionRequest("mcp_tool", server_name)
             )
             allowed = permission.allowed
-        await process.write(
+        await self._write_frame(
+            process,
             {
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -728,31 +989,20 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     "action": "accept" if allowed else "decline",
                     **({"content": {}} if allowed else {}),
                 },
-            }
+            },
         )
 
     async def _cancel(self, process: JsonRpcProcess) -> None:
         self._cancel_requested = True
         self._terminal_status = "cancelled"
-        if self._thread_id and self._turn_id:
-            try:
-                self._request_id += 1
-                await process.write(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": self._request_id,
-                        "method": "turn/interrupt",
-                        "params": {
-                            "threadId": self._thread_id,
-                            "turnId": self._turn_id,
-                        },
-                    }
-                )
+        try:
+            await self._interrupt_turn(process)
+            if self._action_interrupt_sent:
                 # The interrupt is scoped to this turn; retain the app-server
                 # process so later turns continue the same thread.
                 return
-            except Exception:
-                pass
+        except Exception:
+            pass
         if process.owner is not None and process.owner.process is not None:
             try:
                 await asyncio.wait_for(process.owner.process.wait(), timeout=0.25)
@@ -760,6 +1010,21 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             except asyncio.TimeoutError:
                 pass
         await process.close()
+
+    async def _interrupt_turn(self, process: JsonRpcProcess) -> None:
+        if not self._thread_id or not self._turn_id or self._action_interrupt_sent:
+            return
+        self._request_id += 1
+        await self._write_frame(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": self._request_id,
+                "method": "turn/interrupt",
+                "params": {"threadId": self._thread_id, "turnId": self._turn_id},
+            },
+        )
+        self._action_interrupt_sent = True
 
 
 def _int(value: Any) -> int | None:
