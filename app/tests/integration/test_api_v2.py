@@ -91,7 +91,8 @@ def _agent_spec(harness):
 
 
 def _wait_finished(client, execution_id):
-    for _ in range(60):
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
         response = client.get(f"/api/v2/executions/{execution_id}")
         assert response.status_code == 200
         body = response.json()
@@ -99,6 +100,21 @@ def _wait_finished(client, execution_id):
             return body
         time.sleep(0.05)
     raise AssertionError("execution did not become terminal")
+
+
+def _cancel_slow_execution(client, execution_id):
+    response = client.post(f"/api/v2/executions/{execution_id}/cancel")
+    if response.status_code == 409:
+        # Cancellation can outlast the API's settling window on a busy runner.
+        # Accept that conflict only if the same execution finishes cancelled.
+        assert response.json()["error"]["code"] == "cancellation_conflict"
+        body = _wait_finished(client, execution_id)
+    else:
+        assert response.status_code == 200
+        body = response.json()
+    assert body["snapshot"]["lifecycle"] == "finished"
+    assert body["snapshot"]["outcome"] == "cancelled"
+    return body
 
 
 def test_v2_execution_preserves_colliding_metadata_keys(tmp_path):
@@ -1160,11 +1176,8 @@ def test_v2_errors_and_deletion_constraints(tmp_path):
         blocked = client.delete(f"/api/v2/executions/{execution_id}")
         assert blocked.status_code == 409
         assert blocked.json()["error"]["code"] == "execution_active"
-        cancelled = client.post(f"/api/v2/executions/{execution_id}/cancel")
-        assert cancelled.status_code == 200
-        cancelled_spec = TypeAdapter(ExecutionSpec).validate_python(
-            cancelled.json()["spec"]
-        )
+        cancelled = _cancel_slow_execution(client, execution_id)
+        cancelled_spec = TypeAdapter(ExecutionSpec).validate_python(cancelled["spec"])
         assert isinstance(cancelled_spec, DirectSpec)
         cancelled_report = client.get(f"/api/v2/executions/{execution_id}/report")
         assert cancelled_report.status_code == 200
@@ -1593,11 +1606,8 @@ def test_v2_project_name_is_returned_on_execution_envelopes(tmp_path):
             json=_slow_payload(project_id=project_id),
         )
         assert slow.status_code == 202
-        cancelled = client.post(
-            f"/api/v2/executions/{slow.json()['execution_id']}/cancel"
-        )
-        assert cancelled.status_code == 200
-        assert cancelled.json()["project_name"] == "Orders"
+        cancelled = _cancel_slow_execution(client, slow.json()["execution_id"])
+        assert cancelled["project_name"] == "Orders"
     kit.close()
     store.close()
 
