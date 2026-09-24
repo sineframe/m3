@@ -219,6 +219,7 @@ JSON `session_config` query parameter to retrieve the same history.
 | `POST /api/v2/executions/{execution_id}/cancel` | Cancel an active execution. |
 | `DELETE /api/v2/executions/{execution_id}` | Delete a terminal execution. |
 | `GET /api/v2/executions/{execution_id}/report` | Read report, trace, turns, evidence, evaluations, and linked pytest test results. |
+| `POST /api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay` | Replay one recorded tool call as a new direct execution. |
 | `POST /api/v2/evidence/read` | Read one bounded evidence value. |
 | `POST /api/v2/evaluations/aggregate` | Calculate pass-rate trends and health. |
 | `GET /api/v2/feedback/{run_id}` | Read saved test feedback, optionally compared with `baseline_run_id`. |
@@ -391,6 +392,66 @@ Route details:
   execution_not_terminal`, `500 trace_unavailable`, or `500
   execution_data_unavailable`. It reads events, traces, turns, artifacts,
   evidence references, and saved evaluations.
+
+### Replay one recorded tool call
+
+`POST /api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay` runs one
+`tool_call` timeline entry of a terminal execution again, as a new direct
+execution. Use it for executions whose servers are bound inline, for example
+pytest test-run executions. The client does not send the server launch
+details, and replay responses redact them. Reads of the source execution are
+unchanged and still return its stored spec.
+
+The body is optional. `{"arguments": {...}}` replaces the recorded arguments.
+Without it, the server uses the recorded arguments, but only when their
+observation `state` is `observed` and no value (or key) contains a redaction
+marker (`[REDACTED]`, or `%5BREDACTED%5D` inside a URL). Redacted arguments
+are lossy, so replaying them would send the marker to the server; send an
+`arguments` override instead. A tool name that contains a redaction marker
+cannot be overridden, so that entry is not replayable.
+
+The server builds a `DirectSpec` with:
+
+- one `call_tool` operation for the recorded tool name;
+- only the source server binding whose selector (alias, server name, or
+  profile server name) matches the entry's `server_binding`;
+- environment references kept as `{name, source: "environment"}` references,
+  resolved from the server process at run time;
+- the source `project_id`, `project_name`, and `protocol`;
+- no `run_id`, `case_id`, or `suite_name`, so the replay is not part of the
+  source test run;
+- `metadata` with `replayed_from.execution_id` and `replayed_from.entry_id`.
+  Spec metadata values are scalars, so provenance uses these two flat keys.
+
+The replay runs through the normal execution path. It is in History and has a
+trace like any direct execution. The route returns `202` with the execution
+envelope of the new execution.
+
+For a replay execution, every execution envelope and report redacts the
+copied server launch details: stdio `command` becomes `"redacted"`, `args` is
+empty, `cwd` is `null`, HTTP `url` becomes `"redacted"`, and literal
+environment or header values become `"redacted"`. Environment references stay
+visible. The stored spec keeps the real binding, so the replay can run. Only
+replay executions are redacted this way.
+
+Errors:
+
+| Status | Code | Cause |
+|---|---|---|
+| `404` | `execution_not_found` | The source execution does not exist. |
+| `404` | `tool_call_not_found` | The trace has no entry with `entry_id`. |
+| `409` | `execution_not_terminal` | The source execution is not finished. |
+| `409` | `tool_call_not_replayable` | The entry is not a `tool_call`; the tool name was not observed or is redacted; or the arguments were not observed or contain redacted values and no `arguments` override was sent. |
+| `422` | `replay_source_unavailable` | The source spec cannot be loaded (for example a legacy persisted agent spec that no longer validates), or the matching server binding is missing. |
+| `422` | `invalid_request` | The body is not `{"arguments": {...}}`. |
+
+The route uses the same local bearer-token and browser-origin security as
+`POST /api/v2/executions`. The read-only viewer returns `405`.
+`GET /api/v2/capabilities` returns `tool_call_replay: true` when this route is
+served, and `false` on the read-only viewer. A client must hide its replay
+control when the field is absent or `false`.
+
+Replaying a whole agent turn is not supported.
 
 ### Report fields and paging
 
