@@ -181,6 +181,9 @@ class V2FeedbackEnvelope(BaseModel):
 class V2SuiteRef(BaseModel):
     suite_id: int = Field(description="Registered suite identity.")
     suite_name: str = Field(description="Registered suite display name.")
+    project_id: str | None = Field(
+        default=None, description="Project owning this suite, if registered."
+    )
 
 
 class V2RunSummary(BaseModel):
@@ -252,12 +255,12 @@ def _group_run_page(
         if group in {"suite_name", "suite_id"}:
             group_keys = [
                 (
-                    {"project_id": run.project_id, "suite_name": suite.suite_name}
+                    {"project_id": suite.project_id, "suite_name": suite.suite_name}
                     if group == "suite_name"
                     else {
                         "suite_id": suite.suite_id,
                         "suite_name": suite.suite_name,
-                        "project_id": run.project_id,
+                        "project_id": suite.project_id,
                     }
                 )
                 for suite in run.suites
@@ -287,8 +290,12 @@ def _group_run_page(
             ]
         else:
             group_keys = [{group: getattr(run, group)}]
+        seen: set[tuple[tuple[str, str | int | None], ...]] = set()
         for key in group_keys:
             identity = tuple(key.items())
+            if identity in seen:
+                continue
+            seen.add(identity)
             keys[identity] = key
             grouped.setdefault(identity, []).append(run)
     return tuple(
@@ -1490,7 +1497,11 @@ def install_v2(
     ) -> V2SuiteListEnvelope:
         return V2SuiteListEnvelope(
             suites=tuple(
-                V2SuiteRef(suite_id=suite.id.root, suite_name=suite.name)
+                V2SuiteRef(
+                    suite_id=suite.id.root,
+                    suite_name=suite.name,
+                    project_id=suite.project_id.root if suite.project_id else None,
+                )
                 for suite in service.list_suites()
             )
         )

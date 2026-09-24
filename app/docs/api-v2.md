@@ -33,18 +33,19 @@ continue to send and receive the existing `DirectSpec`/`AgentSpec` JSON shapes.
 Each item contains `run_id`, `created_at`, `finished_at`, `status`, optional
 project identifiers and name, `test_count`, independent `test_outcome_counts`,
 derived `effective_verdict_counts`, and `suites`. `suites` lists every
-`{suite_id, suite_name}` of the run's saved tests, because one run can span
-several suites; it is empty when no saved test names a suite. Manifest paths,
-selection arguments, capture settings, and other raw manifest fields are not
-exposed. Runs are listed even when they have no executions or saved
-evaluations.
+`{suite_id, suite_name, project_id}` of the run's saved tests, because one run
+can span several suites or even suite projects; it is empty when no saved test
+names a suite. A suite's `project_id` is `null` for legacy projectless suites.
+Manifest paths, selection arguments, capture settings, and other raw manifest
+fields are not exposed. Runs are listed even when they have no executions or
+saved evaluations.
 
 The list is unpaginated by default. Optional `limit` (1-100) and `offset` page
 it, and optional `suite_id` and `project_id` filter it; a `suite_id` filter
 keeps every run with at least one test in that suite. The envelope reports
 `total` (runs matching the filters), `limit` (`null` when unpaginated), and
-`offset`. `GET /api/v2/suites` lists the registered `{suite_id, suite_name}`
-pairs for building suite filters.
+`offset`. `GET /api/v2/suites` lists the registered
+`{suite_id, suite_name, project_id}` records for building suite filters.
 
 To group runs, pass `group=suite_name`, `suite_id`, `date`, `month`, `project_id`,
 or `status`. Grouped requests select the newest matching **runs** first, with
@@ -73,7 +74,7 @@ in all their suite groups, as they do in the plain run-list summaries.
           "project_name": "shop", "test_count": 1,
           "test_outcome_counts": {"passed": 1},
           "effective_verdict_counts": {"passed": 1},
-          "suites": [{"suite_id": 7, "suite_name": "catalog"}]
+          "suites": [{"suite_id": 7, "suite_name": "catalog", "project_id": "11111111-1111-4111-8111-111111111111"}]
         }
       ]
     }
@@ -82,12 +83,14 @@ in all their suite groups, as they do in the plain run-list summaries.
 }
 ```
 
-`suite_name` groups use both project identity and suite name, so names shared
-across projects stay separate. `suite_id` groups key by the registered integer
-ID and include the suite name and run project ID for display. Runs with tests
-in several suites appear in each corresponding suite group; consequently the
-sum of group counts can exceed `total`. A run without a suite-bearing saved
-test appears in an unassigned group (`suite_name` or `suite_id` is `null`).
+`suite_name` groups use the **suite's** project identity and name, so names
+shared across projects stay separate even when both occur in one run.
+`suite_id` groups key by the registered integer ID and include the suite name
+and suite project ID for display. A run appears at most once per group, but
+runs with tests in several suites appear in each corresponding suite group;
+consequently the sum of group counts can exceed `total`. A run without a
+suite-bearing saved test appears in an unassigned group (`suite_name` or
+`suite_id` is `null`), using its run project ID if available.
 Do not infer a suite from CLI selection flags when no suite-bearing test was
 saved. A run of only selected tests belongs to its suite group, but the API
 does not claim it covers the whole suite: the manifest records only tests
@@ -95,7 +98,8 @@ collected *after* selection. Run-level counts still cover the whole run, not
 just one suite. `date` and `month` use the UTC date of `created_at`; missing
 or invalid timestamps use a `null` key. Missing project IDs or statuses also
 use `null` keys. Unsupported `group` values are rejected with 422. Omit
-`group` to retain the original plain run-list response and unpaginated default.
+`group` to retain the plain run-list envelope and unpaginated default;
+suite references now additionally include their own `project_id`.
 
 `test_outcome_counts` is an independent count of raw persisted pytest
 outcomes. `effective_verdict_counts` is the count after applying required

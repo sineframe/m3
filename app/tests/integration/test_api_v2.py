@@ -35,6 +35,7 @@ from m3._types.specs import AgentSpec
 from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore, StorageError
 from m3.types import CallTool, DirectSpec, ListTools, ServerBinding, StdioServer
 from m3_app.api.app import create_app
+from m3_app.api.v2 import V2RunSummary, V2SuiteRef, _group_run_page
 from m3_app.api.wire import internalize_request
 from m3_app.settings import Settings
 
@@ -584,13 +585,39 @@ def test_v2_runs_groups_selected_page_without_inventing_suite_coverage(
                     "project_id": project_id,
                 },
             )
+        if run_id == "first":
+            # A run may contain same-named suites from different projects.
+            store.save_test_result(
+                run_id,
+                "first-catalog-other-project",
+                {
+                    "node_id": "first-other-test",
+                    "suite_name": "catalog",
+                    "project_id": project_b,
+                },
+            )
     catalog_id = store.get_suite_by_name("catalog", project_a).id.root
+    other_catalog_id = store.get_suite_by_name("catalog", project_b).id.root
     application = create_app(Settings(database_path=str(database)), v2_store=store)
     with TestClient(application) as client:
         schema = client.get("/openapi.json").json()["paths"]["/api/v2/runs"]["get"]
         assert "group" in {parameter["name"] for parameter in schema["parameters"]}
         plain = client.get("/api/v2/runs").json()
         assert plain["limit"] is None and len(plain["runs"]) == 4
+        assert plain["runs"][0]["suites"] == [
+            {"suite_id": catalog_id, "suite_name": "catalog", "project_id": project_a},
+            {
+                "suite_id": other_catalog_id,
+                "suite_name": "catalog",
+                "project_id": project_b,
+            },
+        ]
+        suite_list = client.get("/api/v2/suites").json()["suites"]
+        assert {
+            (suite["suite_id"], suite["project_id"])
+            for suite in suite_list
+            if suite["suite_name"] == "catalog"
+        } == {(catalog_id, project_a), (other_catalog_id, project_b)}
         grouped = client.get("/api/v2/runs", params={"group": "suite_name"}).json()
         assert (
             grouped["group"],
@@ -612,16 +639,25 @@ def test_v2_runs_groups_selected_page_without_inventing_suite_coverage(
                 ["first", "second"],
                 2,
             ),
+            ({"project_id": project_b, "suite_name": "catalog"}, ["first", "third"], 2),
             ({"project_id": project_a, "suite_name": "shipping"}, ["second"], 1),
-            ({"project_id": project_b, "suite_name": "catalog"}, ["third"], 1),
             ({"project_id": project_a, "suite_name": None}, ["unassigned"], 1),
         ]
         assert grouped["groups"][0]["runs"][0]["test_count"] == 1
+        assert all(
+            item["run_count"] == len({run["run_id"] for run in item["runs"]})
+            for item in grouped["groups"]
+        )
         by_id = client.get("/api/v2/runs", params={"group": "suite_id"}).json()
         assert by_id["groups"][0]["key"] == {
             "suite_id": catalog_id,
             "suite_name": "catalog",
             "project_id": project_a,
+        }
+        assert by_id["groups"][1]["key"] == {
+            "suite_id": other_catalog_id,
+            "suite_name": "catalog",
+            "project_id": project_b,
         }
         assert by_id["groups"][-1]["key"] == {
             "suite_id": None,
@@ -637,9 +673,10 @@ def test_v2_runs_groups_selected_page_without_inventing_suite_coverage(
             },
         ).json()
         assert filtered["total"] == 2
-        assert [item["key"]["suite_name"] for item in filtered["groups"]] == [
-            "catalog",
-            "shipping",
+        assert [item["key"] for item in filtered["groups"]] == [
+            {"project_id": project_a, "suite_name": "catalog"},
+            {"project_id": project_b, "suite_name": "catalog"},
+            {"project_id": project_a, "suite_name": "shipping"},
         ]
         for group, expected in (
             ("date", ["2026-09-19", None]),
@@ -651,6 +688,16 @@ def test_v2_runs_groups_selected_page_without_inventing_suite_coverage(
             assert [item["key"][group] for item in response["groups"]] == expected
         assert client.get("/api/v2/runs", params={"group": "run_id"}).status_code == 422
     store.close()
+
+
+def test_v2_suite_group_deduplicates_equal_memberships_within_a_run():
+    suite = V2SuiteRef(suite_id=7, suite_name="catalog")
+    run = V2RunSummary(run_id="r", suites=(suite, suite))
+    for group in ("suite_name", "suite_id"):
+        groups = _group_run_page((run,), group)
+        assert len(groups) == 1
+        assert groups[0].run_count == 1
+        assert [item.run_id for item in groups[0].runs] == ["r"]
 
 
 @pytest.mark.parametrize("in_memory", [False, True])
