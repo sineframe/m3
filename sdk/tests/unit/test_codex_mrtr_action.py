@@ -23,7 +23,7 @@ from m3.harness.codex import (
     codex_configuration,
     render_codex_config,
 )
-from m3.harness.contracts import HarnessTurnResult
+from m3.harness.contracts import HarnessInteractionCapabilities, HarnessTurnResult
 from m3.server_group import HarnessServerConfig
 from m3.types import TransportKind, TurnOutcome
 
@@ -63,6 +63,7 @@ class _Subscription:
 class _Capture:
     def __init__(self) -> None:
         self.subscription = _Subscription()
+        self.events: list[tuple[str, dict[str, Any]]] = []
 
     def subscribe(
         self, connection_ids: Any = None, *, maxsize: int = 256
@@ -71,6 +72,7 @@ class _Capture:
         return self.subscription
 
     def publish(self, direction: str, payload: dict[str, Any]) -> None:
+        self.events.append((direction, payload))
         self.subscription.queue.put_nowait(
             SimpleNamespace(
                 connection_id="connection-1",
@@ -94,7 +96,7 @@ def _launch(capture: _Capture) -> SimpleNamespace:
     )
 
 
-def _call(request_id: int, *, state: str | None = None) -> dict[str, Any]:
+def _call(request_id: int | str, *, state: str | None = None) -> dict[str, Any]:
     params: dict[str, Any] = {"name": "collect", "arguments": {"batch": 2}}
     if state is not None:
         params["requestState"] = state
@@ -107,7 +109,7 @@ def _call(request_id: int, *, state: str | None = None) -> dict[str, Any]:
 
 
 def _input_required(
-    request_id: int, requests: dict[str, Any], state: str
+    request_id: int | str, requests: dict[str, Any], state: str
 ) -> dict[str, Any]:
     return {
         "jsonrpc": "2.0",
@@ -136,7 +138,7 @@ def _elicitation(key: str) -> dict[str, Any]:
     }
 
 
-def _native_prompt(request_id: int, key: str) -> dict[str, Any]:
+def _native_prompt(request_id: int | str, key: str) -> dict[str, Any]:
     return {
         "jsonrpc": "2.0",
         "id": request_id,
@@ -649,6 +651,251 @@ async def test_malformed_second_prompt_fails_without_partial_answer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_concurrent_eliciting_operation_fails_before_late_native_answers() -> (
+    None
+):
+    capture = _Capture()
+    writes: list[tuple[int | str, dict[str, Any]]] = []
+    action = CodexMRTRAction(
+        launch=_launch(capture),
+        plan=expect_form("address", message="Enter the delivery city.").accept(
+            {"city": "Pune"}
+        ),
+        round_limit=3,
+        thread_id=lambda: "thread-1",
+        turn_id=lambda: "turn-1",
+        write_native_response=lambda request_id, result: _record_write(
+            writes, request_id, result
+        ),
+    )
+    await action.start()
+    try:
+        capture.publish("client_to_server", _call(1))
+        capture.publish(
+            "server_to_client",
+            _input_required(1, {"address": _elicitation("address")}, "state-1"),
+        )
+        await _flush()
+        assert action.failure is None
+
+        capture.publish(
+            "client_to_server",
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "ship", "arguments": {"batch": 3}},
+            },
+        )
+        capture.publish(
+            "server_to_client",
+            _input_required(2, {"other": _elicitation("other")}, "state-2"),
+        )
+        await asyncio.wait_for(action.failure_event.wait(), timeout=1.0)
+
+        assert isinstance(action.failure, ElicitationExpectationError)
+        assert action.failure.details["reason"] == "concurrent_elicitation"
+        assert action.requires_turn_interrupt is True
+        assert writes == []
+        assert action._awaiting_retry is None
+        assert [
+            event[1]["params"]["name"]
+            for event in capture.events
+            if event[0] == "client_to_server"
+        ] == ["collect", "ship"]
+
+        # A prompt already queued by Codex can arrive after the second wire
+        # result made the action terminal. The failed action must not answer it.
+        action.submit_native_prompt(_native_prompt(8, "address"))
+        action.submit_native_prompt(_native_prompt(9, "other"))
+        await _flush()
+        assert writes == []
+    finally:
+        await action.close()
+
+
+@pytest.mark.asyncio
+async def test_second_native_response_write_failure_stops_batch_without_replay() -> (
+    None
+):
+    capture = _Capture()
+    attempts: list[tuple[int | str, dict[str, Any]]] = []
+    successful: list[tuple[int | str, dict[str, Any]]] = []
+    aborted: list[BaseException] = []
+    responses_ready = asyncio.Event()
+
+    async def write_response(request_id: int | str, result: dict[str, Any]) -> None:
+        attempts.append((request_id, result))
+        if request_id == 9:
+            raise OSError("Codex input pipe closed during the second response")
+        successful.append((request_id, result))
+
+    async def handle_round(
+        _call: Any,
+        requests: Any,
+        _request_state: str | None,
+        _request_state_present: bool,
+    ) -> dict[str, ElicitationResponse]:
+        assert set(requests) == {"home", "business"}
+        responses_ready.set()
+        return {
+            "home": ElicitationResponse(action="accept", content={"city": "Pune"}),
+            "business": ElicitationResponse(
+                action="accept", content={"city": "Mumbai"}
+            ),
+        }
+
+    async def abort_round(error: BaseException) -> None:
+        aborted.append(error)
+
+    action = CodexMRTRAction(
+        launch=_launch(capture),
+        plan=None,
+        round_limit=3,
+        thread_id=lambda: "thread-1",
+        turn_id=lambda: "turn-1",
+        write_native_response=write_response,
+        managed_round_handler=handle_round,
+        managed_round_abort=abort_round,
+    )
+    await action.start()
+    try:
+        capture.publish("client_to_server", _call(1))
+        capture.publish(
+            "server_to_client",
+            _input_required(
+                1,
+                {"home": _elicitation("home"), "business": _elicitation("business")},
+                "state-1",
+            ),
+        )
+        await _flush()
+        await asyncio.wait_for(responses_ready.wait(), timeout=1.0)
+        action.submit_native_prompt(_native_prompt(8, "business"))
+        action.submit_native_prompt(_native_prompt(9, "home"))
+        await asyncio.wait_for(action.failure_event.wait(), timeout=1.0)
+
+        assert isinstance(action.failure, OSError)
+        assert action.requires_turn_interrupt is True
+        assert attempts == [
+            (8, {"action": "accept", "content": {"city": "Mumbai"}}),
+            (9, {"action": "accept", "content": {"city": "Pune"}}),
+        ]
+        assert successful == [attempts[0]]
+
+        # Any further observer or native events after the writer failure must
+        # not make the action replay the successful first response.
+        capture.publish(
+            "client_to_server",
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "collect",
+                    "arguments": {"batch": 2},
+                    "requestState": "state-1",
+                    "inputResponses": {
+                        "business": {"action": "accept", "content": {"city": "Mumbai"}},
+                        "home": {"action": "accept", "content": {"city": "Pune"}},
+                    },
+                },
+            },
+        )
+        action.submit_native_prompt(_native_prompt(10, "business"))
+        await _flush()
+        assert len(attempts) == 2
+        assert successful == [attempts[0]]
+        assert [
+            event[1]["params"]["name"]
+            for event in capture.events
+            if event[0] == "client_to_server"
+        ] == ["collect", "collect"]
+    finally:
+        await action.close()
+    assert aborted == [action.failure]
+
+
+@pytest.mark.asyncio
+async def test_action_correlates_integer_and_string_mcp_request_ids_separately() -> (
+    None
+):
+    capture = _Capture()
+    writes: list[tuple[int | str, dict[str, Any]]] = []
+    action = CodexMRTRAction(
+        launch=_launch(capture),
+        plan=expect_form("address", message="Enter the delivery city.").accept(
+            {"city": "Pune"}
+        ),
+        round_limit=3,
+        thread_id=lambda: "thread-1",
+        turn_id=lambda: "turn-1",
+        write_native_response=lambda request_id, result: _record_write(
+            writes, request_id, result
+        ),
+    )
+    await action.start()
+    try:
+        capture.publish("client_to_server", _call(1))
+        capture.publish(
+            "client_to_server",
+            {
+                "jsonrpc": "2.0",
+                "id": "1",
+                "method": "tools/call",
+                "params": {"name": "collect", "arguments": {"batch": 3}},
+            },
+        )
+        await _flush()
+        assert set(action._calls) == {
+            ("connection-1", int, 1),
+            ("connection-1", str, "1"),
+        }
+
+        capture.publish(
+            "server_to_client",
+            {"jsonrpc": "2.0", "id": "1", "result": {"resultType": "complete"}},
+        )
+        await _flush()
+        assert set(action._calls) == {("connection-1", int, 1)}
+
+        capture.publish(
+            "server_to_client",
+            _input_required(1, {"address": _elicitation("address")}, "state-1"),
+        )
+        await _flush()
+        action.submit_native_prompt(_native_prompt("1", "address"))
+        await _flush()
+        assert writes == [("1", {"action": "accept", "content": {"city": "Pune"}})]
+
+        capture.publish(
+            "client_to_server",
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "collect",
+                    "arguments": {"batch": 2},
+                    "requestState": "state-1",
+                    "inputResponses": {
+                        "address": {"action": "accept", "content": {"city": "Pune"}}
+                    },
+                },
+            },
+        )
+        capture.publish(
+            "server_to_client",
+            {"jsonrpc": "2.0", "id": 2, "result": {"resultType": "complete"}},
+        )
+        await _flush()
+        await action.finish()
+        assert action.failure is None
+    finally:
+        await action.close()
+
+
+@pytest.mark.asyncio
 async def test_state_only_input_required_uses_codex_auto_retry_without_prompt() -> None:
     capture = _Capture()
     writes: list[tuple[int | str, dict[str, Any]]] = []
@@ -1015,6 +1262,132 @@ async def test_managed_response_stays_live_until_exact_retry_result() -> None:
         assert action.failure is None
     finally:
         await action.close()
+
+
+@pytest.mark.asyncio
+async def test_turn_timeout_aborts_pending_managed_mrtr_round() -> None:
+    capture = _Capture()
+    runtime_started = asyncio.Event()
+    release_runtime = asyncio.Event()
+    aborted: list[BaseException] = []
+
+    class Runtime:
+        bound_identity = ("harness-session", "m3-session", "m3-turn")
+        execution_id = "execution-1"
+
+        async def await_round(self, _pending: Any, _parameters: Any) -> Any:
+            runtime_started.set()
+            await release_runtime.wait()
+            return {
+                "address": ElicitationResponse(
+                    action="accept", content={"city": "Pune"}
+                )
+            }
+
+        async def resolve_round(
+            self, _round_id: str, *, operation_complete: bool
+        ) -> None:
+            raise AssertionError("timed-out round must not be resolved")
+
+        async def fail_round(self, error: BaseException) -> None:
+            aborted.append(error)
+            release_runtime.set()
+
+    runtime = Runtime()
+
+    class Process:
+        owner = None
+
+        def __init__(self) -> None:
+            self.frames: list[dict[str, Any]] = []
+            self.writes: list[dict[str, Any]] = []
+            self.closed = False
+            self.never = asyncio.Event()
+
+        async def write(self, frame: Any) -> None:
+            payload = dict(frame)
+            self.writes.append(payload)
+            if payload.get("method") == "turn/start":
+                self.frames.extend(
+                    [
+                        {
+                            "jsonrpc": "2.0",
+                            "id": payload["id"],
+                            "result": {"turn": {"id": "turn-1"}},
+                        },
+                        _native_prompt(8, "address"),
+                    ]
+                )
+                capture.publish("client_to_server", _call(1))
+                capture.publish(
+                    "server_to_client",
+                    _input_required(1, {"address": _elicitation("address")}, "state-1"),
+                )
+
+        async def next(self, _timeout: float | None = None) -> Any:
+            if self.frames:
+                return self.frames.pop(0)
+            # Model the turn deadline expiring only after the action has
+            # entered its durable wait for a managed answer.
+            await runtime_started.wait()
+            await asyncio.wait_for(self.never.wait(), timeout=0.01)
+            raise AssertionError("the pending turn should time out")
+
+        async def close(self) -> None:
+            self.closed = True
+
+    process = Process()
+    adapter = CodexHarnessAdapter(executable="fixture")
+    adapter._mrtr_capability_checked = True
+    adapter._capabilities = replace(
+        adapter._capabilities,
+        interaction=HarnessInteractionCapabilities(
+            supports_elicitation=True,
+            preserves_request_keys=True,
+            preserves_multi_request_rounds=True,
+            supports_interaction_cancellation=True,
+        ),
+    )
+    adapter._launch = _launch(capture)  # type: ignore[assignment]
+    adapter._process = process  # type: ignore[assignment]
+    adapter._thread_id = "thread-1"
+    adapter._set_managed_input_runtime(runtime)
+
+    class Session:
+        session_id = "session-1"
+
+        async def send(self, request: Any) -> Any:
+            return await adapter._send(request, 1, process)  # type: ignore[arg-type]
+
+    adapter._session = Session()  # type: ignore[assignment]
+
+    async def start_turn(current_process: Any, request: Any, sequence: int) -> None:
+        del request, sequence
+        adapter._request_id += 1
+        adapter._pending_turn_request = adapter._request_id
+        adapter._turn_id = None
+        await adapter._write_frame(
+            current_process,
+            {
+                "jsonrpc": "2.0",
+                "id": adapter._request_id,
+                "method": "turn/start",
+            },
+        )
+
+    adapter.send_turn = start_turn  # type: ignore[assignment]
+    result = await adapter.send("wait for managed input", timeout=1.0)
+
+    assert runtime_started.is_set()
+    assert result.outcome is TurnOutcome.TIMED_OUT
+    assert process.closed is True
+    assert len(aborted) == 1
+    assert isinstance(aborted[0], ElicitationExpectationError)
+    assert getattr(aborted[0], "details", {}).get("reason") == (
+        "managed_delivery_unconfirmed"
+    )
+    assert any(frame.get("method") == "turn/interrupt" for frame in process.writes)
+    assert not any(frame.get("id") == 8 for frame in process.writes)
 
 
 def test_codex_modern_mcp_configuration_and_marker_conflict() -> None:

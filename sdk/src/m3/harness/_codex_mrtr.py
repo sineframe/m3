@@ -341,7 +341,7 @@ class CodexMRTRAction:
         self._changed.set()
 
     def submit_native_prompt(self, frame: Mapping[str, Any]) -> None:
-        if self._closed:
+        if self._closed or self._failure is not None:
             return
         if self._plan is None and self._managed_round_handler is None:
             self.fail(
@@ -659,7 +659,7 @@ class CodexMRTRAction:
 
     async def _coordinate(self) -> None:
         try:
-            while not self._closed:
+            while not self._closed and self._failure is None:
                 await self._changed.wait()
                 self._changed.clear()
                 async with self._coordinate_lock:
@@ -671,7 +671,7 @@ class CodexMRTRAction:
 
     async def _try_answer_round(self) -> None:
         current = self._current_round
-        if current is None or current.sent:
+        if self._failure is not None or current is None or current.sent:
             return
         if current.responses is None:
             if self._managed_round_handler is None:
@@ -686,7 +686,7 @@ class CodexMRTRAction:
                 current.request_state,
                 current.request_state_present,
             )
-            if self._closed:
+            if self._closed or self._failure is not None:
                 return
             if set(responses) != set(current.requests):
                 raise ElicitationExpectationError(
@@ -743,6 +743,8 @@ class CodexMRTRAction:
         current.sent = True
         self._awaiting_retry = current
         for request_id, result in answers:
+            if self._failure is not None or self._closed:
+                return
             await self._write_native_response(request_id, result)
         self._native_prompts.clear()
         current.native_prompts = []
