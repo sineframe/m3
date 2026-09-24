@@ -11,19 +11,13 @@ import threading
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from time import perf_counter_ns
-from typing import Any, Final, Literal, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from ._types.agent_identity import project_agent_identity
 from .storage import ExecutionStore, StorageConflict
 from .trace.counts import tool_call_count
-from .trace.redaction import (
-    RedactionConfig,
-    RedactionError,
-    redact_for_persistence,
-    redact_model_json,
-    redact_result,
-)
+from .trace.redaction import RedactionConfig, redact_for_persistence, redact_model_json
 from .types import (
     ConnectionId,
     Event,
@@ -56,12 +50,6 @@ class TraceRecorderError(Exception):
 
 class TraceFinalizationConflict(TraceRecorderError):
     """A terminal execution was finalized again with another outcome."""
-
-
-# Provenance of the lifecycle events the recorder and runtimes emit.
-_BARE_LIFECYCLE_PROVENANCE: Final = EventSource(
-    origin=EventOrigin.NORMALIZED, source="m3"
-)
 
 
 _EXECUTION_TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
@@ -338,66 +326,17 @@ class ExecutionTraceRecorder:
         *,
         allow_after_events: bool = False,
     ) -> None:
-        """Freeze a redaction policy before provider values are observed.
-
-        A managed execution is created and queued before its transport
-        resolves a secret, so those lifecycle events may precede the bind.
-        Every committed event must have the SDK's lifecycle shape and be left
-        unchanged by whole-event redaction under ``config``; otherwise it may
-        already hold a value the new policy would have removed.
-        """
+        """Freeze a redaction policy before provider values are observed."""
 
         with self._record_lock:
-            if not allow_after_events and not all(
-                self._is_bare_lifecycle_event(event)
-                and self._is_unchanged_by(event, config)
-                for event in self._store.iter_events(self._execution_id)
+            if (
+                not allow_after_events
+                and len(tuple(self._store.iter_events(self._execution_id))) > 1
             ):
                 raise TraceRecorderError(
                     "redaction policy must be bound before trace capture"
                 )
             self._redaction_config = config
-
-    @staticmethod
-    def _is_unchanged_by(event: Event, config: RedactionConfig) -> bool:
-        """Whether redacting the whole stored event under ``config`` is a no-op."""
-        try:
-            result = redact_result(
-                event.model_dump(mode="python"), config=config, path="$.event"
-            )
-        except RedactionError:
-            return False
-        return not result.paths
-
-    def _is_bare_lifecycle_event(self, event: Event) -> bool:
-        """Match only the exact lifecycle shape this SDK generates.
-
-        Event validation accepts extra payload keys and ancillary fields, so
-        the event kind alone does not prove the event holds no values.
-        """
-        if (
-            event.provenance != _BARE_LIFECYCLE_PROVENANCE
-            or event.session_id is not None
-            or event.turn_id is not None
-            or event.server_binding is not None
-            or event.connection_id is not None
-            or event.correlation is not None
-            or event.payload_ref is not None
-            or event.raw_evidence_ref is not None
-            or event.reasoning is not None
-        ):
-            return False
-        payload = dict(event.payload)
-        if event.kind is EventKind.EXECUTION_CREATED:
-            return payload == {
-                "lifecycle": ExecutionStatus.CREATED.value,
-                "trace_id": self._trace_id.root,
-            }
-        if event.kind is EventKind.EXECUTION_STATE_CHANGED:
-            return payload.keys() == {"lifecycle"} and payload["lifecycle"] in {
-                status.value for status in ExecutionStatus
-            }
-        return False
 
     def record(self, event: Event) -> Event:
         """Redact, validate, and commit one stable event."""

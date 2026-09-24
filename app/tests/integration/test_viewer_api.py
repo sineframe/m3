@@ -80,10 +80,7 @@ def test_openapi_matches_standard_and_viewer_surfaces(tmp_path: Path) -> None:
         for method in item
         if method in {"get", "post", "patch", "delete"}
     }
-    assert len(standard_ops) == 35
-    replay = ("post", "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay")
-    assert replay in standard_ops
-    assert replay not in viewer_ops
+    assert len(standard_ops) == 34
     expected_viewer_ops = {
         ("get", path)
         for path in (

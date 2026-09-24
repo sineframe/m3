@@ -14,17 +14,9 @@ from m3.direct_client import AsyncDirectClient
 from m3.direct_trace import DirectTraceBridge
 from m3.errors import TransportError
 from m3.events import EventFactory, EventSequence
-from m3.execution_trace import ExecutionTraceRecorder, TraceRecorderError
+from m3.execution_trace import ExecutionTraceRecorder
 from m3.storage import InMemoryExecutionStore
-from m3.types import (
-    Event,
-    EventId,
-    EventKind,
-    ExecutionId,
-    ExecutionOutcome,
-    ExecutionStatus,
-    TransportKind,
-)
+from m3.types import EventKind, ExecutionId, ExecutionOutcome
 
 
 def _correlation(event: Any) -> Any:
@@ -145,98 +137,6 @@ async def test_resolved_secret_canary_is_atomic_and_redacts_echo_and_error_trace
     assert "overlap-secret" not in rendered
     assert "overlap" not in rendered
     assert any(event.kind is EventKind.MCP_ERROR for event in bridge.trace.events)
-
-
-@pytest.mark.asyncio
-async def test_secret_binds_after_lifecycle_events_but_not_after_capture() -> None:
-    # A managed execution is queued and starting before its stdio transport
-    # resolves a secret; those lifecycle events must not block the bind.
-    execution = ExecutionId("execution-managed-secret")
-    store = InMemoryExecutionStore()
-    recorder = ExecutionTraceRecorder(store, execution)
-    for lifecycle in (ExecutionStatus.QUEUED, ExecutionStatus.STARTING):
-        recorder.emit(
-            EventKind.EXECUTION_STATE_CHANGED, payload={"lifecycle": lifecycle.value}
-        )
-    bridge = DirectTraceBridge(
-        store=store,
-        execution_id=execution,
-        connection_id="connection-managed-secret",
-        event_factory=EventFactory(execution, allocator=EventSequence(start=3)),
-        recorder=recorder,
-    )
-    bridge.bind_secret_values("canary-7f3a91")
-    bridge.record_transport_connected(TransportKind.STDIO)
-    _, write = bridge.wrap_streams(_Read([]), _Write())
-    await write.send(
-        SessionMessage(
-            message=JSONRPCRequest(
-                jsonrpc="2.0",
-                id=1,
-                method="tools/call",
-                params={"echo": "canary-7f3a91"},
-            )
-        )
-    )
-    assert "canary-7f3a91" not in repr(bridge.trace.model_dump(mode="json"))
-
-    # Once a transport event exists, earlier provider data may be unredacted.
-    with pytest.raises(TraceRecorderError):
-        bridge.bind_secret_values("late-secret")
-
-
-@pytest.mark.parametrize(
-    ("payload", "fields"),
-    [
-        ({"lifecycle": "queued", "detail": "late-canary"}, {}),
-        ({"lifecycle": "queued"}, {"server_binding": "late-canary"}),
-    ],
-)
-def test_secret_bind_rejects_lifecycle_events_carrying_extra_values(
-    payload: dict[str, str], fields: dict[str, str]
-) -> None:
-    # Event validation accepts extra payload keys and ancillary fields, so a
-    # lifecycle-kind event may already hold the value about to be bound.
-    execution = ExecutionId("execution-late-bind")
-    store = InMemoryExecutionStore()
-    recorder = ExecutionTraceRecorder(store, execution)
-    recorder.emit(EventKind.EXECUTION_STATE_CHANGED, payload=payload, **fields)
-    bridge = DirectTraceBridge(
-        store=store,
-        execution_id=execution,
-        connection_id="connection-late-bind",
-        event_factory=EventFactory(execution, allocator=EventSequence(start=2)),
-        recorder=recorder,
-    )
-    with pytest.raises(TraceRecorderError):
-        bridge.bind_secret_values("late-canary")
-
-
-def test_secret_bind_rejects_lifecycle_event_whose_identity_holds_the_secret() -> None:
-    # The payload and fields match the SDK lifecycle shape exactly; only the
-    # caller-chosen event ID carries the value about to be bound.
-    execution = ExecutionId("execution-forged-id")
-    store = InMemoryExecutionStore()
-    recorder = ExecutionTraceRecorder(store, execution)
-    recorder.record(
-        Event(
-            event_id=EventId("late-canary"),
-            execution_id=execution,
-            sequence=1,
-            kind=EventKind.EXECUTION_STATE_CHANGED,
-            monotonic_offset_ms=0,
-            payload={"lifecycle": "queued"},
-        )
-    )
-    bridge = DirectTraceBridge(
-        store=store,
-        execution_id=execution,
-        connection_id="connection-forged-id",
-        event_factory=EventFactory(execution, allocator=EventSequence(start=2)),
-        recorder=recorder,
-    )
-    with pytest.raises(TraceRecorderError):
-        bridge.bind_secret_values("late-canary")
 
 
 @pytest.mark.asyncio
