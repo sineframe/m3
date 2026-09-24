@@ -29,6 +29,7 @@ from ._codex_managed_mrtr import CodexManagedMRTRCoordinator
 from ._codex_mrtr import CodexMRTRAction
 from ._rpc_native import JsonRpcProcess, NativeRPCAdapter
 from .contracts import (
+    HarnessAdapterCapabilities,
     HarnessInteractionCapabilities,
     HarnessLaunch,
     HarnessStartupError,
@@ -202,7 +203,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._unscoped_elicitation_failure = False
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> HarnessAdapterCapabilities:
         # AgentSession checks capabilities before preflight, so establish the
         # version gate lazily at the same point the declaration is inspected.
         self._ensure_mrtr_capability()
