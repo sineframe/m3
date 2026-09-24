@@ -102,6 +102,24 @@ def test_modern_mrtr_examples_are_complete_public_action_bound_examples() -> Non
             "agent.run(",
             "to_have_tool_call",
         },
+        "test_modern_mrtr_codex.py": {
+            "pytest_plugins",
+            "CodexExample",
+            "book_verified_shipment",
+            "one_of(",
+            "optional(",
+            "round_of(",
+            ".session(",
+            ".submit(",
+            'permission_policy="allow"',
+        },
+        "test_modern_mrtr_codex_action_scopes.py": {
+            "CodexExample",
+            "test_codex_planned_non_accept_response_omits_wire_content_and_keeps_meta",
+            "test_same_codex_session_uses_fresh_scope_for_two_planned_turns",
+            "test_installed_codex_fails_when_required_plan_is_unused",
+            'permission_policy="allow"',
+        },
     }
     server = _EXAMPLES / "servers" / "modern_mrtr_server.py"
     assert server.exists()
@@ -160,6 +178,8 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
         "test_modern_mrtr_pi_unqualified.py",
         "test_modern_mrtr_pi_session.py",
         "test_modern_mrtr_pi_composed.py",
+        "test_modern_mrtr_codex.py",
+        "test_modern_mrtr_codex_action_scopes.py",
     ):
         assert filename in examples
     assert "modern_mrtr_server.py" in examples
@@ -223,7 +243,7 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
             "terminal recovery error",
             "Worker/process restart",
             "Codex App Server support and limitations",
-            "Implementation status: pending full M3 conformance gates",
+            "Implementation status: verified for unmodified Codex CLI 0.156.1",
             "serverRequest/resolved",
             "input_required",
             "effective supported plan limit is at most nine",
@@ -234,6 +254,8 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     assert "test_real_pi_mrtr_gate.py" in parity
     assert "test_pi_control_real.py" in parity
     assert "test_modern_mrtr_pi_composed.py" in parity
+    assert "test_modern_mrtr_codex.py" in parity
+    assert "test_modern_mrtr_codex_action_scopes.py" in parity
     assert "unequal responses are ambiguous" in parity
     assert "elicitation_policy" not in api
     assert "ElicitationPolicy" not in api

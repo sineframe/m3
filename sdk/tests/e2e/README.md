@@ -20,21 +20,33 @@ Strict `xfail` cases document confirmed regressions. They intentionally become
 suite failures (`XPASS`) when the underlying behavior is fixed, at which point
 the marker should be removed.
 
-## Codex MRTR native and managed gate
+## Codex MRTR native, managed, and example gate
 
 The Codex MRTR suites test an unmodified Codex CLI 0.156.1 App Server. They use
 a local MCP fixture and a local deterministic Responses API fixture, so they
 make no paid model-provider calls. The native characterization suite proves
 what Codex itself sends and surfaces; the managed suite proves M3 action and
-SQLite round delivery. A skipped test is not a passing gate. Require the pinned
-binary in validation with `M3_REQUIRE_CODEX_MRTR=1`:
+SQLite round delivery; the example suite exercises the public Codex action
+patterns in `sdk/docs/elicitation.md`; the action-scope suite covers non-accept
+responses, two planned turns in one session, and required-plan completion. A
+skipped test is not a passing gate.
+Require the pinned binary in validation with `M3_REQUIRE_CODEX_MRTR=1`:
 
 ```bash
 M3_REQUIRE_CODEX_MRTR=1 \
   uv run --project sdk --all-extras pytest -q \
   sdk/tests/e2e/test_real_codex_native_mrtr.py \
-  sdk/tests/e2e/test_real_codex_managed_mrtr.py
+  sdk/tests/e2e/test_real_codex_managed_mrtr.py \
+  sdk/examples/tests/test_modern_mrtr_codex.py \
+  sdk/examples/tests/test_modern_mrtr_codex_action_scopes.py
 ```
+
+CI installs `@openai/codex@0.156.1` and runs all four suites against the local
+deterministic provider; all 37 tests pass in the current pinned gate. Coverage
+includes accept/decline/cancel mappings for form and URL prompts, two planned
+actions in one session, and unused required-plan failure. The example tests explicitly set
+`permission_policy="allow"` for Codex MCP tool approval; this is independent
+of the action-bound MRTR plan. These tests do not call a paid provider.
 
 Set `M3_CODEX_EXECUTABLE` if the binary is not on `PATH`; set
 `M3_CODEX_MRTR_VERSION` only when deliberately changing the pinned version.

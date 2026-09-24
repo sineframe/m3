@@ -101,6 +101,12 @@ The maintained [composed test](../examples/tests/test_modern_mrtr_pi_composed.py
 uv run --project sdk --extra pytest pytest -q sdk/examples/tests/test_modern_mrtr_pi_composed.py
 ```
 
+The corresponding installed Codex 0.156.1 cases live in
+[`test_modern_mrtr_codex.py`](../examples/tests/test_modern_mrtr_codex.py).
+They use a local deterministic provider and the raw discovery-capable MCP
+fixture. The required CI gate passed with one logical trace call and the
+individual wire attempts attached.
+
 `one_of` selects the request that actually arrives in the first round. `sequence` means the URL must arrive in the **next** round. `count=1` checks one logical tool call; the protocol makes three wire attempts as that call resumes. The tool assertion is written after `agent.run` because the call completes there. The maintained test's attempt and elicitation assertions check the order within that call. There is no tool-call node inside the elicitation plan.
 
 ## Change the composition, keep the action and assertion
@@ -142,5 +148,6 @@ In each variant, pass `elicitation=plan` to the same action and assert `expect(r
 - **Direct operation:** Attach `elicitation=plan` to `client.call_tool`, `client.get_prompt`, or `client.read_resource`. Start with the runnable [direct booking test](../examples/tests/test_modern_mrtr_direct.py); [prompt and resource tests](../tests/integration/test_direct_client_mrtr.py) cover those operation kinds in sync and async clients.
 - **One agent prompt:** Attach it to `agent.run` as above. The [qualified](../examples/tests/test_modern_mrtr_pi_qualified.py) and [unqualified](../examples/tests/test_modern_mrtr_pi_unqualified.py) tests show known-operation and model-choice cases.
 - **A later conversation turn:** Attach it only to the `session.send` that can elicit. The [session test](../examples/tests/test_modern_mrtr_pi_session.py) sends a normal quote request first, then books on the next turn.
+- **Codex 0.156.1:** The [Codex action examples](../examples/tests/test_modern_mrtr_codex.py) cover qualified and unqualified runs, `one_of`, `optional`, same-round `round_of`, later session turns, and planned submission with a local provider. The separate [action-scope tests](../examples/tests/test_modern_mrtr_codex_action_scopes.py) cover form and URL accept/decline/cancel behavior, two planned turns in one session, and rejection of an unused required plan. The tests grant Codex MCP tool approval explicitly; that approval is separate from the elicitation plan. All 37 native, managed, example, and action-scope tests pass against the pinned binary using a local deterministic provider.
 
 Build each leaf with an expected request key and bind its response with `.accept(...)`, `.decline()`, or `.cancel()` before composing it. Match a known server and operation when possible. For the full signatures, manual input, managed submission, URL details, and trace fields, use the [MRTR API reference](elicitation-api.md).

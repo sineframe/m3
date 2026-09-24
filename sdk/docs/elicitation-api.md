@@ -853,21 +853,36 @@ Codex-specific protocol boundary and current support status, see
 ## Codex App Server support and limitations
 
 This is the canonical location for Codex-specific MRTR limitations. The
-[harness parity inventory](../tests/mrtr-harness-parity.md) maps every Pi
-MRTR scenario to Codex evidence or an explicit pending gap. The integration
-uses the unmodified Codex App Server: M3 does not patch Codex, replace its MCP
-client, or decide when a tool runs or retries.
+[harness parity inventory](../tests/mrtr-harness-parity.md) maps each Pi MRTR
+scenario to Codex evidence, a Codex-specific implementation distinction, or an
+explicit scope limit. The integration uses the unmodified Codex App Server:
+M3 does not patch Codex, replace its MCP client, or decide when a tool runs or
+retries.
 
-**Implementation status: pending full M3 conformance gates.** Real, unmodified
-Codex CLI 0.156.1 native characterization is covered by
+**Implementation status: verified for unmodified Codex CLI 0.156.1.** The
+required pinned native, managed, and runnable-example gate passed all 37 tests
+on 2026-09-25 using a local deterministic provider. It verifies action-bound
+tool elicitation through `agent.run`, `agent.submit`, and `session.send`,
+including keyed form rounds, URL rounds, composed plans, planned form/URL
+decline and cancel responses, two planned turns in one session, unused-plan
+failure, managed response delivery, round limits, and one logical tool-call
+trace with its attempts.
+This claim is specific to Codex CLI 0.156.1; other versions remain unsupported
+until characterized and tested. The gate command is in the
+[E2E test README](../tests/e2e/README.md).
+
+Real, unmodified Codex CLI 0.156.1 native characterization is covered by
 [`test_real_codex_native_mrtr.py`](../tests/e2e/test_real_codex_native_mrtr.py).
-M3 action-association and managed-delivery tests are being added in
+M3 action-association, managed-delivery, and runnable example counterparts are
+in
 [`test_codex_mrtr_action.py`](../tests/unit/test_codex_mrtr_action.py),
 [`test_codex_mrtr_association.py`](../tests/unit/test_codex_mrtr_association.py),
-and [`test_real_codex_managed_mrtr.py`](../tests/e2e/test_real_codex_managed_mrtr.py).
-Do not treat source presence or a skipped installed-binary test as a passing
-gate. The required native and managed commands are in the
-[E2E test README](../tests/e2e/README.md).
+[`test_real_codex_managed_mrtr.py`](../tests/e2e/test_real_codex_managed_mrtr.py),
+[`test_modern_mrtr_codex.py`](../examples/tests/test_modern_mrtr_codex.py),
+and [`test_modern_mrtr_codex_action_scopes.py`](../examples/tests/test_modern_mrtr_codex_action_scopes.py).
+The required installed-binary gate includes the native, managed, and example
+files above. A skipped binary test is not a pass; CI requires the pinned
+Codex version and fails if it is unavailable.
 
 ### Ownership boundary
 
@@ -906,13 +921,13 @@ does not require a paid provider. It proves these native behaviors only:
 | Observation | Proven behavior | M3 handling or remaining gap |
 | --- | --- | --- |
 | Capability negotiation | Codex uses `server/discover` with 2026 metadata and advertises form and URL elicitation. | M3 must preserve the discovered MCP connection and its original traffic. |
-| Request identity | App Server omits the MCP `inputRequests` key, `requestState`, and logical round ID from `mcpServer/elicitation/request`. | M3 matches standard exposed fields plus server identity; it never invents the missing key. Exact association integration remains a required M3 gate. |
+| Request identity | App Server omits the MCP `inputRequests` key, `requestState`, and logical round ID from `mcpServer/elicitation/request`. | M3 matches standard exposed fields plus server identity and original MCP capture; action and managed tests verify the keyed retry without inventing the missing key. |
 | Prompt order | A multi-request round emits all native prompts before any answer is resolved; real Codex emitted the business prompt before the home prompt even though the MCP map was home then business. | Treat prompts as an unordered multiset. Never zip arrival order to map order. |
 | Identical prompts | Two requests with identical exposed fields can be distinguished if exposed optional metadata differs. If they are still indistinguishable and their planned answers differ, no safe answer can be chosen. | Send no answer for the ambiguous group; fail the action before partial answering. Equal responses may be used as an indistinguishable multiset only after the complete group is validated. |
 | Form schema | Codex exposes `requestedSchema` as JSON. Object key ordering is canonicalized for comparison; JSON value types and array order remain significant. | Compare exact JSON values, not semantic JSON Schema equivalence. A normalization mismatch or schema-value difference fails closed. |
 | Metadata | Native params can contain `_meta: null` where MCP omitted `_meta`; server-supplied distinct request metadata survives when Codex exposes it. | Treat null as absent only for this known absence representation. Compare and forward metadata when exposed; do not assume hidden metadata exists. |
 | URL response | Codex resolves an accepted URL request as an MCP retry response with `content: {}`. | Normalize the URL accept to the MCP API's accepted empty content representation; never navigate to the URL. |
-| Decline and cancel | For form and URL, native decline/cancel reaches the MCP retry with `action` and response `_meta` when present, but no `content`. | Preserve the action and metadata exactly and omit content. M3 adapter conformance tests must verify this mapping. |
+| Decline and cancel | The native fixture confirms that form and URL decline/cancel retries contain `action` and response `_meta` when present, but omit `content`. | The pinned M3 gate verifies planned form and URL decline/cancel mappings preserve this shape, including response metadata and omitted `content`. |
 | Empty input request map | A state-only `input_required` result with an empty request map is auto-retried by Codex with `requestState` and no `inputResponses`; it creates no native prompt. | Do not consume a plan step or manufacture an answer. Confirm the exact retry through passive wire observation. |
 | Round limit | Codex completes nine consecutive MRTR prompts. The tenth request is rejected by Codex with `input_required did not complete within 10 MRTR rounds`; it does not surface a tenth native prompt. | For Codex, the effective supported plan limit is at most nine. Do not retry an unseen tenth prompt. This differs from Pi's tested ten-round capacity. |
 | Approval | Tool approval is a separate App Server request marked `_meta.codex_approval_kind=mcp_tool_call`. | Leave approval with Codex and its permission policy. Never answer it from an MRTR plan. |
@@ -928,11 +943,14 @@ callbacks, round limits, and trace projection in
 and related shared tests. These are common API tests; they are not duplicated
 for each harness.
 
-The Codex harness boundary is action-bound `agent.run`, `agent.submit`, and
-`session.send`; `agent.session(elicitation=...)` remains invalid because a
-plan belongs to one specific action. Native Codex MRTR currently surfaces tool
-elicitation. Prompt/resource direct-client examples and direct sampling/roots
-tests do not prove that Codex can provide those callbacks. Treat non-tool
-harness operations and sampling/roots inside a Codex native round as unsupported
-unless an explicit native capability and M3 test are added. See the parity
-matrix for each mapped example and test.
+The verified Codex harness boundary is action-bound `agent.run`,
+`agent.submit`, and `session.send`; `agent.session(elicitation=...)` remains
+invalid because a plan belongs to one specific action. The tested native path
+is MCP tool elicitation. Direct prompt/resource operations and the direct
+sampling/roots API remain available independently, but Codex App Server has no
+verified callback route for prompt/resource elicitation or sampling/roots
+inside a native tool round. Those harness combinations are unsupported.
+The pinned M3 gate also verifies planned decline/cancel responses, two planned
+actions on successive turns of one session, and rejection when a required plan
+is unused. The parity inventory maps every Pi case to these Codex tests, a
+Codex-specific implementation distinction, or a documented scope limit.
