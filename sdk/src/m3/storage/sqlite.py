@@ -1769,14 +1769,18 @@ class SQLiteExecutionStore(_SqliteBase):
             if run_ids:
                 # One JSON parameter keeps this under SQLite's variable limit.
                 for row in connection.execute(
-                    "SELECT DISTINCT t.run_id,s.id,s.suite_name FROM v2_test_results t"
+                    "SELECT DISTINCT t.run_id,s.id,s.suite_name,s.project_id FROM v2_test_results t"
                     " JOIN v2_suites s ON s.id=t.suite_id"
                     " WHERE t.run_id IN (SELECT value FROM json_each(?))"
                     " ORDER BY s.suite_name,s.id",
                     (json.dumps(run_ids),),
                 ):
                     suites.setdefault(str(row[0]), []).append(
-                        {"suite_id": int(row[1]), "suite_name": str(row[2])}
+                        {
+                            "suite_id": int(row[1]),
+                            "suite_name": str(row[2]),
+                            "project_id": str(row[3]) if row[3] else None,
+                        }
                     )
         values: list[Mapping[str, object]] = []
         for row in rows:

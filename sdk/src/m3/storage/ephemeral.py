@@ -680,13 +680,19 @@ class InMemoryExecutionStore:
             suites_by_run: dict[str, list[dict[str, object]]] = {}
             for run_id, results in self._test_results.items():
                 seen = {
-                    (int(item["suite_id"]), str(item["suite_name"]))
+                    (
+                        int(item["suite_id"]),
+                        str(item["suite_name"]),
+                        str(item["project_id"]) if item.get("project_id") else None,
+                    )
                     for item in results.values()
                     if item.get("suite_id") is not None
                 }
                 suites_by_run[run_id] = [
-                    {"suite_id": sid, "suite_name": name}
-                    for sid, name in sorted(seen, key=lambda pair: (pair[1], pair[0]))
+                    {"suite_id": sid, "suite_name": name, "project_id": project}
+                    for sid, name, project in sorted(
+                        seen, key=lambda pair: (pair[1], pair[0])
+                    )
                 ]
         values = [
             {**value, "suites": suites_by_run.get(run_id, [])}

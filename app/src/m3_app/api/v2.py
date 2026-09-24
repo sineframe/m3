@@ -10,6 +10,7 @@ import json
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Body, Depends, Query, Request, status
@@ -180,6 +181,9 @@ class V2FeedbackEnvelope(BaseModel):
 class V2SuiteRef(BaseModel):
     suite_id: int = Field(description="Registered suite identity.")
     suite_name: str = Field(description="Registered suite display name.")
+    project_id: str | None = Field(
+        default=None, description="Project owning this suite, if registered."
+    )
 
 
 class V2RunSummary(BaseModel):
@@ -216,6 +220,88 @@ class V2RunListEnvelope(BaseModel):
     total: int = Field(default=0, description="Runs matching the filters.")
     limit: int | None = Field(default=None, description="Page size; null means all.")
     offset: int = Field(default=0, description="Runs skipped before this page.")
+
+
+RunGroup = Literal["suite_name", "suite_id", "date", "month", "project_id", "status"]
+
+
+class V2RunGroup(BaseModel):
+    key: dict[str, str | int | None]
+    run_count: int = Field(description="Run memberships in this group on this page.")
+    runs: tuple[V2RunSummary, ...]
+
+
+class V2GroupedRunListEnvelope(BaseModel):
+    version: Literal["v2"] = "v2"
+    group: RunGroup
+    groups: tuple[V2RunGroup, ...]
+    total: int = Field(
+        description="Distinct runs matching the filters before pagination."
+    )
+    limit: int = Field(description="Maximum distinct runs on this page.")
+    offset: int = Field(description="Distinct runs skipped before this page.")
+
+
+def _group_run_page(
+    runs: tuple[V2RunSummary, ...], group: RunGroup
+) -> tuple[V2RunGroup, ...]:
+    """Group an already-selected run page; a multi-suite run has multiple memberships."""
+    grouped: dict[tuple[tuple[str, str | int | None], ...], list[V2RunSummary]] = {}
+    keys: dict[
+        tuple[tuple[str, str | int | None], ...], dict[str, str | int | None]
+    ] = {}
+    for run in runs:
+        group_keys: list[dict[str, str | int | None]]
+        if group in {"suite_name", "suite_id"}:
+            group_keys = [
+                (
+                    {"project_id": suite.project_id, "suite_name": suite.suite_name}
+                    if group == "suite_name"
+                    else {
+                        "suite_id": suite.suite_id,
+                        "suite_name": suite.suite_name,
+                        "project_id": suite.project_id,
+                    }
+                )
+                for suite in run.suites
+            ] or [
+                (
+                    {"project_id": run.project_id, "suite_name": None}
+                    if group == "suite_name"
+                    else {
+                        "suite_id": None,
+                        "suite_name": None,
+                        "project_id": run.project_id,
+                    }
+                )
+            ]
+        elif group in {"date", "month"}:
+            utc_date: str | None = None
+            if run.created_at:
+                try:
+                    date = datetime.fromisoformat(run.created_at.replace("Z", "+00:00"))
+                    if date.tzinfo is None:
+                        date = date.replace(tzinfo=timezone.utc)
+                    utc_date = date.astimezone(timezone.utc).date().isoformat()
+                except (OverflowError, ValueError):
+                    pass
+            group_keys = [
+                {group: utc_date[:7] if utc_date and group == "month" else utc_date}
+            ]
+        else:
+            group_keys = [{group: getattr(run, group)}]
+        seen: set[tuple[tuple[str, str | int | None], ...]] = set()
+        for key in group_keys:
+            identity = tuple(key.items())
+            if identity in seen:
+                continue
+            seen.add(identity)
+            keys[identity] = key
+            grouped.setdefault(identity, []).append(run)
+    return tuple(
+        V2RunGroup(key=keys[identity], run_count=len(members), runs=tuple(members))
+        for identity, members in grouped.items()
+    )
 
 
 class V2SuiteListEnvelope(BaseModel):
@@ -1154,7 +1240,7 @@ def install_v2(
 
     runs_router = APIRouter(prefix="/api/v2/runs", tags=["runs-v2"])
 
-    @runs_router.get("", response_model=V2RunListEnvelope)
+    @runs_router.get("", response_model=V2RunListEnvelope | V2GroupedRunListEnvelope)
     def list_runs(
         limit: int | None = Query(None, ge=1, le=100),
         offset: int = Query(0, ge=0),
@@ -1162,8 +1248,11 @@ def install_v2(
         project_id: uuid.UUID | None = Query(
             None, description="filter by project identity"
         ),
+        group: RunGroup | None = Query(
+            None, description="group the selected run page by an allowed dimension"
+        ),
         service: AppExecutionService = Depends(get_service),
-    ) -> V2RunListEnvelope:
+    ) -> V2RunListEnvelope | V2GroupedRunListEnvelope:
         def optional_string(value: object) -> str | None:
             return value if isinstance(value, str) else None
 
@@ -1177,8 +1266,9 @@ def install_v2(
                 if isinstance(count, int) and not isinstance(count, bool) and count >= 0
             }
 
+        page_limit = limit if limit is not None else (50 if group else None)
         manifests, total = service.list_run_page(
-            limit=limit,
+            limit=page_limit,
             offset=offset,
             suite_id=suite_id,
             project_id=str(project_id) if project_id else None,
@@ -1221,8 +1311,16 @@ def install_v2(
                 )
             )
 
+        if group is not None:
+            return V2GroupedRunListEnvelope(
+                group=group,
+                groups=_group_run_page(tuple(summaries), group),
+                total=total,
+                limit=cast(int, page_limit),
+                offset=offset,
+            )
         return V2RunListEnvelope(
-            runs=tuple(summaries), total=total, limit=limit, offset=offset
+            runs=tuple(summaries), total=total, limit=page_limit, offset=offset
         )
 
     application.include_router(runs_router)
@@ -1399,7 +1497,11 @@ def install_v2(
     ) -> V2SuiteListEnvelope:
         return V2SuiteListEnvelope(
             suites=tuple(
-                V2SuiteRef(suite_id=suite.id.root, suite_name=suite.name)
+                V2SuiteRef(
+                    suite_id=suite.id.root,
+                    suite_name=suite.name,
+                    project_id=suite.project_id.root if suite.project_id else None,
+                )
                 for suite in service.list_suites()
             )
         )
@@ -1515,7 +1617,7 @@ def install_v2(
             "/api/v2/executions/{execution_id}": "Read an execution snapshot or delete it after it reaches a terminal state.",
             "/api/v2/executions/{execution_id}/cancel": "Request cancellation of an active execution.",
             "/api/v2/executions/{execution_id}/report": "Read a terminal execution report, trace, test summaries, and bounded event or artifact pages.",
-            "/api/v2/runs": "List safe, newest-first pytest run summaries with their suites, including runs with no executions or evaluations. Optional limit, offset, suite_id, and project_id.",
+            "/api/v2/runs": "List safe, newest-first pytest run summaries with their suites, including runs with no executions or evaluations. Optional limit, offset, suite_id, project_id, and page-scoped group.",
             "/api/v2/suites": "List registered suites for run filters.",
             "/api/v2/suites/{suite_id}/executions": "Page through saved executions belonging to an integer suite ID.",
             "/api/v2/evaluations/aggregate": "Calculate a read-only aggregate from evaluation results already saved by the SDK or CLI.",
