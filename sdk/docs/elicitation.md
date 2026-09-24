@@ -1,6 +1,6 @@
 # Elicitation
 
-An MCP operation can pause for input, resume with your response, and pause again. In M3, an **elicitation plan** says which requests may appear and what to answer. Attach the completed plan to the action that can elicit; assert the action's final result afterward. The [API reference](elicitation-api.md) covers every helper, parameter, result model, and manual path.
+An MCP operation can pause for input, resume with your response, and pause again. In M3, an **elicitation plan** says which requests may appear and what to answer. Attach the completed plan to the action that can elicit; assert the action's final result afterward. The [API reference](elicitation-api.md) covers every helper, parameter, result model, and manual path. For the unmodified Codex App Server adapter's ownership boundary, evidence, and limitations, see [Codex App Server support](elicitation-api.md#codex-app-server-support-and-limitations) and the [Pi-to-Codex parity inventory](../tests/mrtr-harness-parity.md).
 
 ## One prompt, two elicitation rounds, one tool call
 

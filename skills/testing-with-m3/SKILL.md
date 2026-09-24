@@ -159,10 +159,27 @@ action because one logical call owns all retries.
 The maintained [server](../../sdk/examples/servers/modern_mrtr_server.py),
 [direct test](../../sdk/examples/tests/test_modern_mrtr_direct.py), and
 [session test](../../sdk/examples/tests/test_modern_mrtr_pi_session.py) show
-those action boundaries. Pi 0.85.1 is the verified agent baseline, and the
-example suite supplies a local provider. For exact helper signatures,
-prompt/resource actions, manual and managed input, URL details, and trace
-fields, use the [MRTR API reference](../../sdk/docs/elicitation-api.md).
+those action boundaries. Pi 0.85.1 is the verified Pi baseline. Codex support
+uses the unmodified App Server and local deterministic provider fixtures; its
+full M3 conformance gate is pending. Do not treat native Codex characterization
+or a skipped binary test as proof that M3 action integration passed. The
+[Codex limitations section](../../sdk/docs/elicitation-api.md#codex-app-server-support-and-limitations)
+is canonical, and the [Pi-to-Codex parity inventory](../../sdk/tests/mrtr-harness-parity.md)
+lists each existing Pi scenario, its Codex counterpart, and remaining gaps.
+For exact helper signatures, prompt/resource actions, manual and managed
+input, URL details, and trace fields, use the
+[MRTR API reference](../../sdk/docs/elicitation-api.md).
+
+Run the pinned Codex MRTR gate only with Codex CLI 0.156.1 installed; both
+suites use local deterministic MCP and Responses API fixtures and make no
+paid model-provider calls:
+
+```bash
+M3_REQUIRE_CODEX_MRTR=1 \
+  uv run --project sdk --all-extras pytest -q \
+  sdk/tests/e2e/test_real_codex_native_mrtr.py \
+  sdk/tests/e2e/test_real_codex_managed_mrtr.py
+```
 
 ## Credentials and troubleshooting
 

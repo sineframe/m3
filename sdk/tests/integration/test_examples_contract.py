@@ -142,6 +142,9 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     elicitation = (_SDK / "docs" / "elicitation.md").read_text(encoding="utf-8")
     elicitation_api = (_SDK / "docs" / "elicitation-api.md").read_text(encoding="utf-8")
     index = (_SDK / "docs" / "README.md").read_text(encoding="utf-8")
+    parity = (_SDK / "tests" / "mrtr-harness-parity.md").read_text(
+        encoding="utf-8"
+    )
     api = (_REPO / "app" / "docs" / "api-v2.md").read_text(encoding="utf-8")
     skill = (_REPO / "skills" / "testing-with-m3" / "SKILL.md").read_text(
         encoding="utf-8"
@@ -163,6 +166,7 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     assert "## Modern MRTR elicitation" not in concepts
     assert "elicitation" not in concepts.lower()
     assert "[Elicitation](elicitation.md)" in index
+    assert "Pi-to-Codex MRTR parity inventory" in index
     assert elicitation.startswith("# Elicitation\n")
     assert elicitation_api.startswith("# Elicitation API reference\n")
     assert "[API reference](elicitation-api.md)" in elicitation
@@ -171,6 +175,8 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     assert 'round_of(address(example_server, "home"' in elicitation
     assert "expect(result).to_have_tool_call(" in elicitation
     assert "There is no tool-call node inside the elicitation plan" in elicitation
+    assert "Codex App Server support" in elicitation
+    assert "mrtr-harness-parity.md" in elicitation
     assert (
         "https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation"
         in elicitation_api
@@ -215,9 +221,20 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
             "same-worker",
             "form, multi-round, and URL",
             "terminal recovery error",
-            "Restart/recovery",
+            "Worker/process restart",
+            "Codex App Server support and limitations",
+            "Implementation status: pending full M3 conformance gates",
+            "serverRequest/resolved",
+            "input_required",
+            "effective supported plan limit is at most nine",
         )
     )
+    assert "test_pi_mrtr_bridge.py" in parity
+    assert "test_pi_control.py" in parity
+    assert "test_real_pi_mrtr_gate.py" in parity
+    assert "test_pi_control_real.py" in parity
+    assert "test_modern_mrtr_pi_composed.py" in parity
+    assert "unequal responses are ambiguous" in parity
     assert "elicitation_policy" not in api
     assert "ElicitationPolicy" not in api
     assert "ExecutionSpec" in api

@@ -20,6 +20,29 @@ Strict `xfail` cases document confirmed regressions. They intentionally become
 suite failures (`XPASS`) when the underlying behavior is fixed, at which point
 the marker should be removed.
 
+## Codex MRTR native and managed gate
+
+The Codex MRTR suites test an unmodified Codex CLI 0.156.1 App Server. They use
+a local MCP fixture and a local deterministic Responses API fixture, so they
+make no paid model-provider calls. The native characterization suite proves
+what Codex itself sends and surfaces; the managed suite proves M3 action and
+SQLite round delivery. A skipped test is not a passing gate. Require the pinned
+binary in validation with `M3_REQUIRE_CODEX_MRTR=1`:
+
+```bash
+M3_REQUIRE_CODEX_MRTR=1 \
+  uv run --project sdk --all-extras pytest -q \
+  sdk/tests/e2e/test_real_codex_native_mrtr.py \
+  sdk/tests/e2e/test_real_codex_managed_mrtr.py
+```
+
+Set `M3_CODEX_EXECUTABLE` if the binary is not on `PATH`; set
+`M3_CODEX_MRTR_VERSION` only when deliberately changing the pinned version.
+The default expected version is `codex-cli 0.156.1`. Read the
+[Codex limitations](../../docs/elicitation-api.md#codex-app-server-support-and-limitations)
+and the [Pi-to-Codex scenario inventory](../mrtr-harness-parity.md) before
+interpreting partial suite results.
+
 The live OpenCode test is isolated from the deterministic suite because it may
 use credentials, make network requests, and incur provider cost. Its default is
 the free `opencode/big-pickle` model. It includes model-selected search,

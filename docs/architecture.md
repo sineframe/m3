@@ -48,6 +48,27 @@ The same public SDK contracts are used by direct Python tests, the pytest
 plugin, and the app's v2 execution service. This keeps assertions and captured
 observability consistent regardless of how a test is launched.
 
+### Harness-owned elicitation retries
+
+The Codex App Server integration is an observer and native-request responder,
+not a replacement MCP client. Codex owns tool selection, dispatch, approval,
+MCP retries, and cancellation. M3 passively observes the original MCP exchange,
+associates a complete request round with Codex's exposed elicitation prompts,
+and responds through Codex's existing server-request resolution method only
+when the association is unambiguous. Original traffic continues through the
+configured MCP transport. Capture failure, missing identity, or ambiguous
+prompts fails the planned action; it never triggers a synthetic call or retry.
+
+The observer's terminal barrier covers events already accepted by its manager,
+including scheduled thread-safe callbacks, while a separate bounded wait
+checks for the expected retry that Codex sends. The barrier cannot flush an
+event still queued in the child-side relay. Codex also omits the MCP request
+key, reverses multi-prompt order in observed cases, normalizes accepted URL
+responses to empty content, and supports at most nine MRTR prompts in tested
+version 0.156.1. The canonical details and evolving verification state live in
+the [Codex limitations section](../sdk/docs/elicitation-api.md#codex-app-server-support-and-limitations)
+and [Pi-to-Codex parity inventory](../sdk/tests/mrtr-harness-parity.md).
+
 ## Persistence and feedback
 
 SDK storage is in memory unless the caller selects a store explicitly. The
