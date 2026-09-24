@@ -7,11 +7,13 @@ import os
 import signal
 import stat
 import sys
+import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from _pid_marker import read_pid, wait_for_pid
 from acp_fixture import probe_agent
 
 from m3.harness.acp import full_probe, protocol_probe
@@ -59,17 +61,21 @@ for line in sys.stdin:
 
 def _prompt_behavior_agent(path: Path, marker: Path, behavior: str) -> str:
     path.write_text(
-        """import json, os, signal, sys, time
+        """import json, os, pathlib, signal, sys, time
 marker = sys.argv[1]
 behavior = sys.argv[2]
 def send(value):
     print(json.dumps(value, separators=(',', ':')), flush=True)
+def write_pid_marker():
+    temporary = marker + '.' + str(os.getpid()) + '.tmp'
+    pathlib.Path(temporary).write_text(str(os.getpid()))
+    os.replace(temporary, marker)
 for line in sys.stdin:
     request = json.loads(line); method = request.get('method'); ident = request.get('id')
     if method == 'initialize':
         if behavior == 'initialize_hang':
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
-            open(marker, 'w').write(str(os.getpid()))
+            write_pid_marker()
             while True:
                 time.sleep(1)
         send({'jsonrpc':'2.0','id':ident,'result':{'protocolVersion':1}})
@@ -78,7 +84,7 @@ for line in sys.stdin:
     elif method == 'session/prompt':
         if behavior == 'hang':
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        open(marker, 'w').write(str(os.getpid()))
+        write_pid_marker()
         if behavior == 'hang':
             while True:
                 time.sleep(1)
@@ -99,6 +105,35 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [("", None), ("not-a-pid", None), ("0", None), ("-42", None), ("123", 123)],
+)
+def test_pid_marker_is_ready_only_with_positive_pid(
+    tmp_path: Path, content: str, expected: int | None
+) -> None:
+    marker = tmp_path / "agent.pid"
+    assert read_pid(marker) is None
+    marker.write_text(content, encoding="utf-8")
+    assert read_pid(marker) == expected
+
+
+def test_wait_for_pid_ignores_empty_marker_until_written(tmp_path: Path) -> None:
+    marker = tmp_path / "agent.pid"
+    marker.write_text("", encoding="utf-8")
+
+    def publish_pid() -> None:
+        time.sleep(0.05)
+        marker.write_text("123", encoding="utf-8")
+
+    writer = threading.Thread(target=publish_pid)
+    writer.start()
+    try:
+        assert wait_for_pid(marker, timeout=1.0) == 123
+    finally:
+        writer.join()
 
 
 def test_acp_probes_do_not_inherit_unrelated_ambient_environment(
@@ -249,7 +284,7 @@ def test_protocol_probe_has_intrinsic_initialize_deadline(tmp_path: Path) -> Non
         )
     )
     assert result["status"] == "timed_out"
-    pid = int(marker.read_text(encoding="utf-8"))
+    pid = wait_for_pid(marker)
     deadline = time.monotonic() + 2.0
     while _pid_alive(pid) and time.monotonic() < deadline:
         time.sleep(0.01)
@@ -293,7 +328,7 @@ def test_runtime_protocol_probe_keeps_intrinsic_deadline_with_long_request_timeo
         elapsed = time.monotonic() - started
         assert result.status is ACPProbeStatus.TIMED_OUT
         assert elapsed < 7.0
-        pid = int(marker.read_text(encoding="utf-8"))
+        pid = wait_for_pid(marker)
         deadline = time.monotonic() + 2.0
         while _pid_alive(pid) and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -316,14 +351,20 @@ def test_cancelling_full_probe_reaps_uncooperative_acp_process(tmp_path: Path) -
         )
         try:
             deadline = time.monotonic() + 2.0
-            while not marker.exists() and time.monotonic() < deadline:
+            while (
+                ready_pid := read_pid(marker)
+            ) is None and time.monotonic() < deadline:
                 await asyncio.sleep(0.01)
-            assert marker.exists(), "ACP fixture never received session/prompt"
-            pid = int(marker.read_text(encoding="utf-8"))
+            assert ready_pid is not None, "ACP fixture never wrote a positive PID"
+            pid = ready_pid
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
         finally:
+            if not task.done():
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
             if pid is not None and _pid_alive(pid):
                 os.kill(pid, signal.SIGKILL)
 

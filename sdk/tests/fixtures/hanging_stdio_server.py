@@ -13,7 +13,10 @@ def main() -> int:
     marker = os.environ.get("M3_E2E_PID_FILE")
     if not marker:
         return 2
-    Path(marker).write_text(str(os.getpid()), encoding="utf-8")
+    marker_path = Path(marker)
+    temporary = marker_path.with_name(f"{marker_path.name}.{os.getpid()}.tmp")
+    temporary.write_text(str(os.getpid()), encoding="utf-8")
+    temporary.replace(marker_path)
     sys.stdin.readline()
     time.sleep(60)
     return 0

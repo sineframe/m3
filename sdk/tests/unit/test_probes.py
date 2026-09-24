@@ -17,12 +17,35 @@ from m3.services.probes import (
 )
 from m3.types import CapabilityStatus
 
+_PID_WRITING_CHILD = (
+    "import os, pathlib, sys, time; "
+    "path = pathlib.Path(sys.argv[1]); "
+    "temporary = path.with_name(f'{path.name}.{os.getpid()}.tmp'); "
+    "temporary.write_text(str(os.getpid())); temporary.replace(path); "
+    "time.sleep(30)"
+)
+
 
 def _fake_executable(tmp_path: Path, body: str, name: str = "fake-agent") -> Path:
     path = tmp_path / name
     path.write_text(f"#!{sys.executable}\n{body}\n", encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return path
+
+
+def _wait_for_pid(path: Path, timeout: float = 2.0) -> int:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            contents = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            contents = ""
+        if contents.isdecimal():
+            pid = int(contents)
+            if pid > 0:
+                return pid
+        time.sleep(0.01)
+    raise AssertionError(f"timed out waiting for PID in {path.name}")
 
 
 def test_binary_probe_records_version_and_redacts_output_and_environment(
@@ -168,7 +191,9 @@ def test_parent_exit_does_not_leave_grandchild_in_owned_process_group(
     child_pid = tmp_path / "child.pid"
     executable = _fake_executable(
         tmp_path,
-        "import subprocess, sys, time; child = subprocess.Popen([sys.executable, '-c', 'import pathlib, sys, time; pathlib.Path(sys.argv[1]).write_text(str(__import__(\"os\").getpid())); time.sleep(30)', sys.argv[1]]); time.sleep(30)",
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {_PID_WRITING_CHILD!r}, sys.argv[1]]); "
+        "time.sleep(30)",
     )
 
     result = Probes(timeout_seconds=2.0).probe_binary(
@@ -176,11 +201,7 @@ def test_parent_exit_does_not_leave_grandchild_in_owned_process_group(
     )
 
     assert result.status is CapabilityStatus.UNAVAILABLE
-    deadline = time.monotonic() + 2
-    while not child_pid.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert child_pid.exists()
-    pid = int(child_pid.read_text(encoding="utf-8"))
+    pid = _wait_for_pid(child_pid)
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         try:
@@ -199,8 +220,8 @@ def test_normal_parent_exit_still_cleans_owned_grandchild(tmp_path: Path) -> Non
     child_pid = tmp_path / "normal-child.pid"
     executable = _fake_executable(
         tmp_path,
-        """import pathlib, subprocess, sys, time
-child = subprocess.Popen([sys.executable, '-c', 'import pathlib, sys, time; pathlib.Path(sys.argv[1]).write_text(str(__import__(\"os\").getpid())); time.sleep(30)', sys.argv[1]])
+        f"""import pathlib, subprocess, sys, time
+subprocess.Popen([sys.executable, '-c', {_PID_WRITING_CHILD!r}, sys.argv[1]])
 deadline = time.monotonic() + 1
 path = pathlib.Path(sys.argv[1])
 while not path.exists() and time.monotonic() < deadline:
@@ -214,11 +235,7 @@ raise SystemExit(0)""",
     )
 
     assert result.status is CapabilityStatus.READY
-    deadline = time.monotonic() + 2
-    while not child_pid.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert child_pid.exists()
-    pid = int(child_pid.read_text(encoding="utf-8"))
+    pid = _wait_for_pid(child_pid)
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         try:

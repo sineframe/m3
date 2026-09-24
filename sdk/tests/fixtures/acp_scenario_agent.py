@@ -76,7 +76,10 @@ def run(mode: str) -> int:
     try:
         pid_marker = os.environ.get("M3_ACP_PID_FILE")
         if pid_marker:
-            Path(pid_marker).write_text(str(os.getpid()), encoding="utf-8")
+            marker_path = Path(pid_marker)
+            temporary = marker_path.with_name(f"{marker_path.name}.{os.getpid()}.tmp")
+            temporary.write_text(str(os.getpid()), encoding="utf-8")
+            temporary.replace(marker_path)
         for line in sys.stdin:
             request = json.loads(line)
             method = request.get("method")
