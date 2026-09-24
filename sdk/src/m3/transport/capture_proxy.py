@@ -515,6 +515,12 @@ class McpCaptureManager:
         if loop is None or loop.is_closed():
             return
         try:
+            if asyncio.get_running_loop() is loop:
+                self._publish(connection_id, transport, direction, payload)
+                return
+        except RuntimeError:
+            pass
+        try:
             loop.call_soon_threadsafe(
                 self._publish, connection_id, transport, direction, payload
             )
@@ -594,6 +600,24 @@ class McpCaptureManager:
         for subscription in tuple(self._subscriptions):
             if subscription._accepts(connection_id):
                 subscription._fail(McpObservationIncomplete(connection_id, reason))
+
+    def fail_observation(self, connection_id: str, reason: str) -> None:
+        """Mark the live observation incomplete without changing transport flow."""
+
+        loop = self._observation_loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            if asyncio.get_running_loop() is loop:
+                self._fail_subscribers(connection_id, reason)
+                return
+        except RuntimeError:
+            pass
+        try:
+            loop.call_soon_threadsafe(self._fail_subscribers, connection_id, reason)
+        except RuntimeError:
+            # The manager may be shutting down while a transport relay exits.
+            return
 
     async def _start_observation_server(self) -> None:
         if self._observer_server is not None:
@@ -811,6 +835,12 @@ class McpCaptureManager:
                 )
                 if resolved_secrets:
                     target.writer.add_secrets(resolved_secrets)
+
+                def proxy_observation_failed(
+                    reason: str, connection_id: str = key
+                ) -> None:
+                    self.fail_observation(connection_id, reason)
+
                 proxy = McpHttpProxy(
                     upstream_url=resolved_endpoint,
                     configured_headers=safe_headers,
@@ -829,6 +859,7 @@ class McpCaptureManager:
                     known_tools=tuple(getattr(configuration, "tools", ())),
                     known_tools_by_server=self._tools_by_server,
                     writer=target.writer,
+                    on_incomplete=proxy_observation_failed,
                 )
                 target.proxy = proxy
                 if self._tool_policy is not None:
@@ -870,7 +901,12 @@ class McpCaptureManager:
         target = self._target(connection_id, transport)
         attach = getattr(endpoint, "attach_capture", None)
         if callable(attach):
-            attach(target.writer)
+            attach(
+                target.writer,
+                on_incomplete=lambda reason: self.fail_observation(
+                    connection_id, reason
+                ),
+            )
 
     def snapshot(self, connection_id: str) -> McpCaptureSnapshot:
         cached = self._closed_snapshots.get(connection_id)

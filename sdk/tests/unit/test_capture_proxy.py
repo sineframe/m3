@@ -6,7 +6,7 @@ import json
 import socket
 import sys
 import threading
-from collections.abc import MutableMapping
+from collections.abc import AsyncIterator, MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -25,13 +25,19 @@ from m3.harness.contracts import (
     HarnessSession,
     HarnessTurnRequest,
 )
-from m3.server_group import HarnessServerConfig, ServerGroupManager
+from m3.server_group import (
+    HarnessServerConfig,
+    ServerGroupManager,
+    _LoopbackEndpoint,
+    _SSECaptureParser,
+)
 from m3.trace.capture import CaptureWriter
 from m3.transport.capture_proxy import (
     _MAX_OBSERVATION_FRAME_BYTES,
     McpCaptureManager,
     McpObservationIncomplete,
 )
+from m3.transport.http_proxy import McpHttpProxy
 from m3.transport.stdio_proxy import _ObservationChannel, _relay
 from m3.types import (
     ClaudeCode,
@@ -321,6 +327,196 @@ async def test_in_process_loopback_is_observed_without_rewriting_endpoint() -> N
     finally:
         await subscription.aclose()
         await manager.close()
+
+
+def test_loopback_sse_observation_is_incremental_and_frame_bounded() -> None:
+    observed: list[Any] = []
+    incomplete: list[str] = []
+    parser = _SSECaptureParser(observed.append, incomplete.append)
+
+    # This is the first ASGI response.body chunk with more_body=True. The
+    # event becomes observable before the stream's final body chunk arrives.
+    parser.feed(b'data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n')
+    assert observed == [{"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}]
+    assert incomplete == []
+
+    parser.feed(b'data: {"jsonrpc":"2.0","id":2,"result":{}}')
+    parser.finish()
+    assert observed[-1] == {"jsonrpc": "2.0", "id": 2, "result": {}}
+
+    oversized_observed: list[Any] = []
+    oversized_incomplete: list[str] = []
+    bounded = _SSECaptureParser(
+        oversized_observed.append, oversized_incomplete.append
+    )
+    bounded.feed(b"data: " + b"x" * (8 * 1024 * 1024 + 1))
+    assert oversized_incomplete == ["message_too_large"]
+    assert oversized_observed == []
+
+
+@pytest.mark.asyncio
+async def test_loopback_stream_publishes_event_before_response_finishes(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    endpoint = _LoopbackEndpoint(InProcessServer(name="fixture", factory=_server))
+    manager.attach_loopback("streaming-loopback", endpoint)
+    subscription = manager.subscribe()
+    first_chunk_sent = asyncio.Event()
+    allow_finish = asyncio.Event()
+    final_chunk_sent = asyncio.Event()
+    forwarded: list[dict[str, Any]] = []
+    first_message = {
+        "type": "http.response.body",
+        "body": b'data: {"jsonrpc":"2.0","id":7,"result":{"ok":true}}\n\n',
+        "more_body": True,
+    }
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        forwarded.append(message)
+        if message is first_message:
+            first_chunk_sent.set()
+        if message.get("type") == "http.response.body" and not message.get(
+            "more_body", False
+        ):
+            final_chunk_sent.set()
+
+    async def handle_request(_scope: Any, _receive: Any, send_message: Any) -> None:
+        await send_message(
+            {
+                "type": "http.response.start",
+                "status": 202,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        await send_message(first_message)
+        await asyncio.wait_for(allow_finish.wait(), timeout=1)
+        await send_message(
+            {
+                "type": "http.response.body",
+                "body": b'data: {"jsonrpc":"2.0","id":8,"result":{}}\n\n',
+                "more_body": False,
+            }
+        )
+
+    task = asyncio.create_task(
+        endpoint._observe_exchange(
+            {"method": "POST", "path": "/mcp"},
+            receive,
+            send,
+            handle_request,
+        )
+    )
+    try:
+        await asyncio.wait_for(first_chunk_sent.wait(), timeout=1)
+        event = await asyncio.wait_for(anext(subscription), timeout=1)
+        assert event.payload == {"jsonrpc": "2.0", "id": 7, "result": {"ok": True}}
+        assert event.direction == "server_to_client"
+        assert not final_chunk_sent.is_set()
+        assert forwarded[1] is first_message
+        allow_finish.set()
+        await asyncio.wait_for(task, timeout=1)
+        final_event = await asyncio.wait_for(anext(subscription), timeout=1)
+        assert final_event.payload == {"jsonrpc": "2.0", "id": 8, "result": {}}
+    finally:
+        allow_finish.set()
+        if not task.done():
+            await task
+        await subscription.aclose()
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_loopback_open_stream_exit_marks_observation_incomplete(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    endpoint = _LoopbackEndpoint(InProcessServer(name="fixture", factory=_server))
+    manager.attach_loopback("incomplete-loopback", endpoint)
+    subscription = manager.subscribe()
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(_message: dict[str, Any]) -> None:
+        return None
+
+    async def handle_request(_scope: Any, _receive: Any, send_message: Any) -> None:
+        await send_message(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        await send_message(
+            {
+                "type": "http.response.body",
+                "body": b'data: {"jsonrpc":"2.0","id":1,"result":{}}\n\n',
+                "more_body": True,
+            }
+        )
+
+    try:
+        await endpoint._observe_exchange(
+            {"method": "POST", "path": "/mcp"},
+            receive,
+            send,
+            handle_request,
+        )
+        with pytest.raises(McpObservationIncomplete) as raised:
+            await asyncio.wait_for(anext(subscription), timeout=1)
+        assert raised.value.reason == "stream_ended_without_final_body"
+    finally:
+        await subscription.aclose()
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_http_sse_oversized_frame_fails_observation_and_forwards_bytes(
+    tmp_path: Path,
+) -> None:
+    class ChunkStream(httpx.AsyncByteStream):
+        def __init__(self, chunks: list[bytes]) -> None:
+            self.chunks = chunks
+
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            for chunk in self.chunks:
+                yield chunk
+
+        async def aclose(self) -> None:
+            return None
+
+    original_chunks = [
+        b"data: " + b"x" * (8 * 1024 * 1024 + 1),
+        b"\n\n",
+        b"data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}}\n\n",
+    ]
+    incomplete: list[str] = []
+    proxy = McpHttpProxy(
+        upstream_url="https://example.com/mcp",
+        configured_headers=None,
+        transport="streamable_http",
+        capture_path=str(tmp_path / "http-sse.jsonl"),
+        baseline_ns=0,
+        on_incomplete=incomplete.append,
+    )
+    response = httpx.Response(
+        200,
+        headers={"content-type": "text/event-stream"},
+        stream=ChunkStream(original_chunks),
+    )
+
+    forwarded = b"".join(
+        [chunk async for chunk in proxy._stream_sse(response)]
+    )
+
+    assert forwarded == b"".join(original_chunks)
+    assert incomplete == ["message_too_large"]
+    assert response.is_closed
 
 
 @pytest.mark.asyncio

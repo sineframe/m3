@@ -11,11 +11,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 import ipaddress
+import json
 import re
 import secrets
 import socket
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,6 +51,76 @@ class ServerCleanupError(ServerGroupError):
 
 class AmbiguousToolError(ServerGroupError):
     """A tool name maps to more than one available server."""
+
+
+_MAX_CAPTURE_BODY_BYTES = 8 * 1024 * 1024
+_MAX_CAPTURE_PENDING_BYTES = 16 * 1024 * 1024
+_MAX_CAPTURE_PENDING_EVENTS = 256
+_SSE_FRAME_SEPARATOR = re.compile(rb"\r\n\r\n|\n\n|\r\r")
+
+
+class _SSECaptureParser:
+    """Incrementally capture bounded SSE data frames without buffering a stream."""
+
+    def __init__(
+        self,
+        on_payload: Callable[[Any], None],
+        on_incomplete: Callable[[str], None],
+    ) -> None:
+        self._on_payload = on_payload
+        self._on_incomplete = on_incomplete
+        self._buffer = bytearray()
+        self._disabled = False
+
+    def feed(self, chunk: bytes) -> None:
+        if self._disabled:
+            return
+        offset = 0
+        while offset < len(chunk):
+            room = _MAX_CAPTURE_BODY_BYTES + 1 - len(self._buffer)
+            if room <= 0:
+                self._fail()
+                return
+            size = min(64 * 1024, room)
+            self._buffer.extend(chunk[offset : offset + size])
+            offset += size
+            while True:
+                separator = _SSE_FRAME_SEPARATOR.search(self._buffer)
+                if separator is None:
+                    break
+                frame = bytes(self._buffer[: separator.start()])
+                del self._buffer[: separator.end()]
+                self._capture_frame(frame)
+                if self._disabled:
+                    return
+            if len(self._buffer) > _MAX_CAPTURE_BODY_BYTES:
+                self._fail()
+                return
+
+    def finish(self) -> None:
+        if self._disabled or not self._buffer:
+            return
+        frame = bytes(self._buffer)
+        self._buffer.clear()
+        self._capture_frame(frame)
+
+    def _capture_frame(self, frame: bytes) -> None:
+        if len(frame) > _MAX_CAPTURE_BODY_BYTES:
+            self._fail()
+            return
+        text = frame.decode("utf-8", errors="replace")
+        data = "\n".join(
+            line[5:].lstrip() for line in text.splitlines() if line.startswith("data:")
+        )
+        if data:
+            from .trace.capture import parse_json_payload
+
+            self._on_payload(parse_json_payload(data))
+
+    def _fail(self) -> None:
+        self._disabled = True
+        self._buffer.clear()
+        self._on_incomplete("message_too_large")
 
 
 class ServerUnavailableError(ServerGroupError):
@@ -210,11 +281,214 @@ class _LoopbackEndpoint:
         self._url: str | None = None
         self._closed = False
         self._capture_writer: Any = None
+        self._capture_incomplete: Callable[[str], None] | None = None
 
-    def attach_capture(self, writer: Any) -> None:
+    def attach_capture(
+        self,
+        writer: Any,
+        *,
+        on_incomplete: Callable[[str], None] | None = None,
+    ) -> None:
         """Observe decoded ASGI request/response bodies without changing them."""
 
         self._capture_writer = writer
+        self._capture_incomplete = on_incomplete
+
+    async def _observe_exchange(
+        self,
+        scope: Any,
+        receive: Any,
+        send: Any,
+        handle_request: Callable[[Any, Any, Any], Awaitable[None]],
+    ) -> None:
+        """Wrap an ASGI exchange while forwarding each message before capture."""
+
+        capture = self._capture_writer
+        request_parts = bytearray()
+        request_capture_enabled = True
+        response_parts = bytearray()
+        response_capture_enabled = True
+        response_is_sse = False
+        response_sse_parser: _SSECaptureParser | None = None
+        response_started = False
+        response_completed = False
+        response_status = 200
+        capture_enabled = capture is not None
+        capture_pending_events = 0
+        capture_pending_bytes = 0
+        capture_tail: asyncio.Task[None] | None = None
+
+        def report_incomplete(reason: str) -> None:
+            callback = self._capture_incomplete
+            if callback is not None:
+                try:
+                    callback(reason)
+                except Exception:
+                    # Observation bookkeeping must not affect serving.
+                    pass
+
+        def safe_capture(
+            direction: str,
+            payload: Any,
+            *,
+            metadata: dict[str, Any] | None = None,
+        ) -> None:
+            nonlocal capture_enabled, capture_pending_bytes
+            nonlocal capture_pending_events, capture_tail
+            if capture is None or not capture_enabled:
+                return
+            try:
+                payload_size = len(
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ).encode("utf-8")
+                )
+            except (TypeError, ValueError, UnicodeEncodeError):
+                capture_enabled = False
+                report_incomplete("invalid_observation_payload")
+                return
+            if payload_size > _MAX_CAPTURE_BODY_BYTES:
+                capture_enabled = False
+                report_incomplete("message_too_large")
+                return
+            if (
+                capture_pending_events >= _MAX_CAPTURE_PENDING_EVENTS
+                or capture_pending_bytes + payload_size > _MAX_CAPTURE_PENDING_BYTES
+            ):
+                capture_enabled = False
+                report_incomplete("buffer_overflow")
+                return
+            previous = capture_tail
+            capture_pending_events += 1
+            capture_pending_bytes += payload_size
+
+            async def persist() -> None:
+                nonlocal capture_pending_bytes, capture_pending_events
+                try:
+                    if previous is not None:
+                        await previous
+                    await asyncio.to_thread(
+                        capture.write,
+                        transport="in_process",
+                        direction=direction,
+                        payload=payload,
+                        metadata=metadata,
+                    )
+                except Exception:
+                    report_incomplete("capture_write_failed")
+                finally:
+                    capture_pending_events -= 1
+                    capture_pending_bytes -= payload_size
+
+            capture_tail = asyncio.create_task(persist())
+
+        def capture_sse_payload(payload: Any) -> None:
+            safe_capture(
+                "server_to_client",
+                payload,
+                metadata={"status_code": response_status},
+            )
+
+        def on_incomplete(reason: str) -> None:
+            report_incomplete(reason)
+
+        async def observed_receive() -> Any:
+            nonlocal request_capture_enabled
+            message = await receive()
+            if (
+                capture is not None
+                and message.get("type") == "http.request"
+                and request_capture_enabled
+            ):
+                body = message.get("body", b"")
+                if body:
+                    if len(request_parts) + len(body) > _MAX_CAPTURE_BODY_BYTES:
+                        request_capture_enabled = False
+                        request_parts.clear()
+                        report_incomplete("message_too_large")
+                    else:
+                        request_parts.extend(body)
+                if not message.get("more_body", False) and request_parts:
+                    from .trace.capture import parse_json_payload
+
+                    safe_capture(
+                        "client_to_server",
+                        parse_json_payload(bytes(request_parts)),
+                        metadata={
+                            "method": scope.get("method", ""),
+                            "path": scope.get("path", ""),
+                        },
+                    )
+                    request_parts.clear()
+            return message
+
+        async def observed_send(message: Any) -> None:
+            nonlocal response_capture_enabled
+            nonlocal response_completed, response_is_sse
+            nonlocal response_sse_parser, response_started
+            nonlocal response_status
+            # Keep the observer out of the forwarding path. In particular, the
+            # downstream client receives each SSE body chunk before parsing or
+            # persisting its events.
+            await send(message)
+            message_type = message.get("type")
+            if capture is not None and message_type == "http.response.start":
+                response_started = True
+                status = message.get("status", 200)
+                response_status = status if isinstance(status, int) else 200
+                headers = message.get("headers", ())
+                content_type = next(
+                    (
+                        value.decode("latin-1", errors="replace")
+                        if isinstance(value, bytes)
+                        else str(value)
+                        for name, value in headers
+                        if isinstance(name, bytes) and name.lower() == b"content-type"
+                    ),
+                    "",
+                )
+                response_is_sse = "text/event-stream" in content_type.lower()
+                if response_is_sse:
+                    response_sse_parser = _SSECaptureParser(
+                        capture_sse_payload, on_incomplete
+                    )
+            elif capture is not None and message_type == "http.response.body":
+                body = message.get("body", b"")
+                if response_is_sse:
+                    if response_sse_parser is not None and body:
+                        response_sse_parser.feed(body)
+                elif response_capture_enabled and body:
+                    if len(response_parts) + len(body) > _MAX_CAPTURE_BODY_BYTES:
+                        response_capture_enabled = False
+                        response_parts.clear()
+                        report_incomplete("message_too_large")
+                    else:
+                        response_parts.extend(body)
+                if not message.get("more_body", False):
+                    response_completed = True
+                    if response_is_sse:
+                        if response_sse_parser is not None:
+                            response_sse_parser.finish()
+                    elif response_capture_enabled and response_parts:
+                        from .trace.capture import parse_json_payload
+
+                        safe_capture(
+                            "server_to_client",
+                            parse_json_payload(bytes(response_parts)),
+                            metadata={"status_code": response_status},
+                        )
+                        response_parts.clear()
+
+        try:
+            await handle_request(scope, observed_receive, observed_send)
+        finally:
+            if response_started and not response_completed:
+                report_incomplete("stream_ended_without_final_body")
+            if capture_tail is not None:
+                await asyncio.shield(capture_tail)
 
     @property
     def url(self) -> str:
@@ -292,76 +566,8 @@ class _LoopbackEndpoint:
                         )
                         await send({"type": "http.response.body", "body": b"not found"})
                         return
-                    capture = self._capture_writer
-                    request_parts: list[bytes] = []
-                    response_parts: list[bytes] = []
-
-                    async def observed_receive() -> Any:
-                        message = await receive()
-                        if (
-                            capture is not None
-                            and message.get("type") == "http.request"
-                        ):
-                            body = message.get("body", b"")
-                            if body:
-                                request_parts.append(body)
-                            if not message.get("more_body", False) and request_parts:
-                                from .trace.capture import parse_json_payload
-
-                                capture.write(
-                                    transport="in_process",
-                                    direction="client_to_server",
-                                    payload=parse_json_payload(b"".join(request_parts)),
-                                    metadata={
-                                        "method": scope.get("method", ""),
-                                        "path": scope.get("path", ""),
-                                    },
-                                )
-                                request_parts.clear()
-                        return message
-
-                    async def observed_send(message: Any) -> None:
-                        if (
-                            capture is not None
-                            and message.get("type") == "http.response.body"
-                        ):
-                            body = message.get("body", b"")
-                            if body:
-                                response_parts.append(body)
-                            if not message.get("more_body", False) and response_parts:
-                                from .trace.capture import parse_json_payload
-
-                                response_body = b"".join(response_parts)
-                                response_parts.clear()
-                                response_text = response_body.decode(
-                                    "utf-8", errors="replace"
-                                )
-                                frames = []
-                                for frame in re.split(
-                                    r"\r\n\r\n|\n\n|\r\r", response_text
-                                ):
-                                    data = "\n".join(
-                                        line[5:].lstrip()
-                                        for line in frame.splitlines()
-                                        if line.startswith("data:")
-                                    )
-                                    if data:
-                                        frames.append(parse_json_payload(data))
-                                if not frames:
-                                    frames = [parse_json_payload(response_body)]
-                                for payload in frames:
-                                    capture.write(
-                                        transport="in_process",
-                                        direction="server_to_client",
-                                        payload=payload,
-                                        metadata={
-                                            "status_code": message.get("status", 200)
-                                        },
-                                    )
-                        await send(message)
-
-                    await transport.handle_request(
-                        scope, observed_receive, observed_send
+                    await self._observe_exchange(
+                        scope, receive, send, transport.handle_request
                     )
 
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
