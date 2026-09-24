@@ -879,8 +879,11 @@ async def test_latest_manifest_resolution_is_shared_between_workers(
     _Server.manifest_log = str(log)
     manifest = archive_server.replace("/asset.zip", "/manifest.json")
     invocation = tmp_path / "shared-invocation"
+    # Fork copies this multi-threaded, event-loop-owning process; Python 3.13
+    # warns that can deadlock on Linux, where fork is the default start method.
+    context = multiprocessing.get_context("spawn")
     processes = [
-        multiprocessing.Process(
+        context.Process(
             target=_latest_worker,
             args=(str(cache), str(project), manifest, str(invocation)),
         )
