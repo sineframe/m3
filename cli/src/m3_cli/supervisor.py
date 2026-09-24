@@ -615,12 +615,6 @@ def build_run_url(run_id: str, port: int, auth_token: str | None = None) -> str:
     return f"{url}#m3_token={auth_token}" if auth_token is not None else url
 
 
-def build_home_url(port: int, auth_token: str) -> str:
-    """Build the CLI's authenticated UI entry link."""
-
-    return f"http://127.0.0.1:{port}/#m3_token={auth_token}"
-
-
 def _validate_port(port: int) -> str | None:
     if not 1 <= port <= 65535:
         return "port must be between 1 and 65535"
@@ -1079,7 +1073,6 @@ def _print_ui_output(
 ) -> None:
     for warning in dict.fromkeys(warnings):
         print(f"Warning: {warning}", file=sys.stderr)
-    print(f"UI: {build_home_url(port, auth_token)}", flush=True)
     if not new_runs:
         print("No new stored runs.", flush=True)
         return

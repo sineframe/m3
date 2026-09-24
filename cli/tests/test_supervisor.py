@@ -232,9 +232,11 @@ def test_ui_server_prints_links_and_returns_original_failure(
     lines = output.splitlines()
     art_lines = M3_ASCII_ART.splitlines()
     assert lines[: len(art_lines)] == art_lines
-    assert lines[len(art_lines)].startswith("UI: http://127.0.0.1:8123/#m3_token=")
+    assert lines[len(art_lines)].startswith(
+        "Run: http://127.0.0.1:8123/reports/runs/run%20id%2F1#m3_token="
+    )
     token = lines[len(art_lines)].split("m3_token=", 1)[1]
-    assert lines[len(art_lines) + 1 :] == [
+    assert lines[len(art_lines) :] == [
         f"Run: http://127.0.0.1:8123/reports/runs/run%20id%2F1#m3_token={token}",
         f"Run: http://127.0.0.1:8123/reports/runs/run-two#m3_token={token}",
     ]
@@ -260,10 +262,7 @@ def test_ui_server_zero_runs_prints_message(
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 0, (), ()) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[: len(M3_ASCII_ART.splitlines())] == M3_ASCII_ART.splitlines()
-    assert lines[len(M3_ASCII_ART.splitlines())].startswith(
-        "UI: http://127.0.0.1:8123/#m3_token="
-    )
-    assert lines[-1] == "No new stored runs."
+    assert lines[len(M3_ASCII_ART.splitlines()) :] == ["No new stored runs."]
 
 
 @pytest.mark.parametrize("exit_code", [2, 130, 143])
