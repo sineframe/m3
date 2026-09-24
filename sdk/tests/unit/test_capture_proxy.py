@@ -35,6 +35,7 @@ from m3.trace.capture import CaptureWriter
 from m3.transport.capture_proxy import (
     _MAX_OBSERVATION_FRAME_BYTES,
     McpCaptureManager,
+    McpObservation,
     McpObservationIncomplete,
 )
 from m3.transport.http_proxy import McpHttpProxy
@@ -575,6 +576,159 @@ async def test_live_observation_keeps_original_envelopes_and_typed_ids(
     assert "opaque-round-state" in persisted
     await subscription.aclose()
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_observation_barrier_drains_scheduled_publication_and_processing(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    subscription = manager.subscribe()
+    writer = manager.writer_for("barrier")
+    processing_started = asyncio.Event()
+    allow_acknowledgement = asyncio.Event()
+    consumed: list[McpObservation] = []
+
+    async def consume_one() -> None:
+        event = await anext(subscription)
+        processing_started.set()
+        await allow_acknowledgement.wait()
+        consumed.append(event)
+        await subscription.acknowledge(event)
+
+    consumer = asyncio.create_task(consume_one())
+    relay = threading.Thread(
+        target=lambda: writer.write(
+            transport="stdio",
+            direction="server_to_client",
+            payload={"jsonrpc": "2.0", "id": 9, "result": {"ok": True}},
+        )
+    )
+    relay.start()
+    relay.join(timeout=2)
+    assert not relay.is_alive()
+    # The writer's callback has been accepted from another thread, but the
+    # event loop has not yet run it because this test has not yielded.
+    assert len(manager._pending_publication_tickets) == 1
+
+    barrier = asyncio.create_task(subscription.barrier())
+    try:
+        await asyncio.wait_for(processing_started.wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert not barrier.done()
+        allow_acknowledgement.set()
+        assert await asyncio.wait_for(barrier, timeout=1) == 1
+        await asyncio.wait_for(consumer, timeout=1)
+        assert [event.payload["id"] for event in consumed] == [9]
+    finally:
+        allow_acknowledgement.set()
+        if not consumer.done():
+            await consumer
+        if not barrier.done():
+            barrier.cancel()
+            await asyncio.gather(barrier, return_exceptions=True)
+        await subscription.aclose()
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_observation_barrier_preserves_same_loop_publication_order(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    subscription = manager.subscribe()
+    writer = manager.writer_for("same-loop-barrier")
+    for request_id in (4, 5):
+        writer.write(
+            transport="streamable_http",
+            direction="server_to_client",
+            payload={"jsonrpc": "2.0", "id": request_id, "result": {}},
+        )
+
+    barrier = asyncio.create_task(subscription.barrier())
+    try:
+        await asyncio.sleep(0)
+        assert not barrier.done()
+        observed_ids: list[int] = []
+        for _ in range(2):
+            event = await asyncio.wait_for(anext(subscription), timeout=1)
+            observed_ids.append(event.payload["id"])
+            await subscription.acknowledge(event)
+        assert await asyncio.wait_for(barrier, timeout=1) == 2
+        assert observed_ids == [4, 5]
+    finally:
+        if not barrier.done():
+            barrier.cancel()
+            await asyncio.gather(barrier, return_exceptions=True)
+        await subscription.aclose()
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_observation_barrier_reports_thread_callback_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    subscription = manager.subscribe()
+
+    def fail_publish(
+        _connection_id: str, _transport: str, _direction: str, _payload: Any
+    ) -> None:
+        raise RuntimeError("observer publish failed")
+
+    monkeypatch.setattr(manager, "_publish", fail_publish)
+    relay = threading.Thread(
+        target=lambda: manager.writer_for("failed-publication").write(
+            transport="stdio",
+            direction="server_to_client",
+            payload={"jsonrpc": "2.0", "id": 1, "result": {}},
+        )
+    )
+    relay.start()
+    relay.join(timeout=2)
+    assert not relay.is_alive()
+    try:
+        with pytest.raises(McpObservationIncomplete) as exc_info:
+            await asyncio.wait_for(subscription.barrier(), timeout=1)
+        assert exc_info.value.reason == "publication_failed"
+    finally:
+        await subscription.aclose()
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interrupt", ["close", "fail"])
+async def test_observation_barrier_wakes_with_incomplete_on_interrupt(
+    tmp_path: Path, interrupt: str
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    subscription = manager.subscribe()
+    manager.writer_for("interrupted-barrier").write(
+        transport="streamable_http",
+        direction="server_to_client",
+        payload={"jsonrpc": "2.0", "id": 1, "result": {}},
+    )
+    await asyncio.wait_for(anext(subscription), timeout=1)
+    barrier = asyncio.create_task(subscription.barrier())
+    try:
+        await asyncio.sleep(0)
+        assert not barrier.done()
+        if interrupt == "close":
+            await subscription.aclose()
+            expected_reason = "subscription_closed"
+        else:
+            manager.fail_observation("interrupted-barrier", "test_failure")
+            expected_reason = "test_failure"
+        with pytest.raises(McpObservationIncomplete) as exc_info:
+            await asyncio.wait_for(barrier, timeout=1)
+        assert exc_info.value.reason == expected_reason
+    finally:
+        if not barrier.done():
+            barrier.cancel()
+            await asyncio.gather(barrier, return_exceptions=True)
+        if not subscription._closed:
+            await subscription.aclose()
+        await manager.close()
 
 
 @pytest.mark.asyncio

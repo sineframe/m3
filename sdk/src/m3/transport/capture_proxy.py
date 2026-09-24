@@ -17,11 +17,12 @@ import secrets
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from mcp.client.stdio import get_default_environment
@@ -82,6 +83,11 @@ class McpObservationSubscription:
         self._end_after_drain = False
         self._queued_bytes = 0
         self._max_queued_bytes = 16 * 1024 * 1024
+        self._accepted_count = 0
+        self._processed_count = 0
+        self._inflight: dict[int, tuple[McpObservation, int]] = {}
+        self._processed_changed = asyncio.Event()
+        self._incomplete: McpObservationIncomplete | None = None
         self.start_sequences = dict(start_sequences)
 
     def __aiter__(self) -> McpObservationSubscription:
@@ -95,10 +101,18 @@ class McpObservationSubscription:
             raise StopAsyncIteration
         if isinstance(item, McpObservationIncomplete):
             raise item
-        if not isinstance(item, McpObservation):
+        if (
+            not isinstance(item, tuple)
+            or len(item) != 2
+            or isinstance(item[0], bool)
+            or not isinstance(item[0], int)
+            or not isinstance(item[1], McpObservation)
+        ):
             raise RuntimeError("MCP observation queue contained an invalid item")
-        self._queued_bytes = max(0, self._queued_bytes - item.payload_size_bytes)
-        return item
+        ordinal, event = cast(tuple[int, McpObservation], item)
+        self._queued_bytes = max(0, self._queued_bytes - event.payload_size_bytes)
+        self._inflight[id(event)] = (event, ordinal)
+        return event
 
     def _accepts(self, connection_id: str) -> bool:
         return self._connection_ids is None or connection_id in self._connection_ids
@@ -115,10 +129,59 @@ class McpObservationSubscription:
             self._fail(McpObservationIncomplete(event.connection_id, "buffer_overflow"))
             return
         try:
-            self._queue.put_nowait(event)
+            ordinal = self._accepted_count + 1
+            self._queue.put_nowait((ordinal, event))
+            self._accepted_count = ordinal
             self._queued_bytes += event.payload_size_bytes
         except asyncio.QueueFull:
             self._fail(McpObservationIncomplete(event.connection_id, "buffer_overflow"))
+
+    async def acknowledge(self, event: McpObservation) -> None:
+        """Acknowledge an event after its action-local consumer processes it."""
+
+        outstanding = self._inflight.pop(id(event), None)
+        if outstanding is None or outstanding[0] is not event:
+            raise RuntimeError("MCP observation is not outstanding on this subscription")
+        ordinal = outstanding[1]
+        if ordinal != self._processed_count + 1:
+            error = McpObservationIncomplete(
+                event.connection_id, "out_of_order_observation_ack"
+            )
+            self._fail(error)
+            raise error
+        self._processed_count = ordinal
+        self._processed_changed.set()
+
+    async def barrier(self) -> int:
+        """Wait through already-scheduled publications and acknowledged events.
+
+        The barrier's cutoff is the manager publication ticket observed when
+        this method starts. It covers publications already accepted by M3,
+        including thread-safe callbacks that have not run on the event loop.
+        It cannot flush data still queued in a remote transport sender.
+        """
+
+        if self._incomplete is not None:
+            raise self._incomplete
+        if self._closed:
+            raise McpObservationIncomplete("subscription", "subscription_closed")
+        watermark = self._manager._publication_watermark()
+        await self._manager._wait_publications_through(watermark)
+        if self._incomplete is not None:
+            raise self._incomplete
+        if self._closed:
+            raise McpObservationIncomplete("subscription", "subscription_closed")
+        target = self._accepted_count
+        while self._processed_count < target:
+            if self._incomplete is not None:
+                raise self._incomplete
+            if self._closed:
+                raise McpObservationIncomplete("subscription", "subscription_closed")
+            self._processed_changed.clear()
+            if self._processed_count >= target:
+                break
+            await self._processed_changed.wait()
+        return target
 
     def _fail(self, error: McpObservationIncomplete) -> None:
         if self._closed:
@@ -130,6 +193,8 @@ class McpObservationSubscription:
             except asyncio.QueueEmpty:
                 break
         self._queued_bytes = 0
+        self._incomplete = error
+        self._processed_changed.set()
         self._queue.put_nowait(error)
         self._manager._discard_subscription(self)
 
@@ -141,6 +206,7 @@ class McpObservationSubscription:
             self._queue.put_nowait(_OBSERVATION_END)
         else:
             self._end_after_drain = True
+        self._processed_changed.set()
 
     async def aclose(self) -> None:
         if self._closed:
@@ -478,6 +544,10 @@ class McpCaptureManager:
         self._subscriptions: set[McpObservationSubscription] = set()
         self._observation_sequences: dict[str, int] = {}
         self._observation_loop: asyncio.AbstractEventLoop | None = None
+        self._publication_lock = threading.Lock()
+        self._publication_ticket = 0
+        self._pending_publication_tickets: set[int] = set()
+        self._publication_changed: asyncio.Event | None = None
         self._observer_server: asyncio.AbstractServer | None = None
         self._observer_host: str | None = None
         self._observer_port: int | None = None
@@ -520,13 +590,74 @@ class McpCaptureManager:
                 return
         except RuntimeError:
             pass
+        with self._publication_lock:
+            self._publication_ticket += 1
+            ticket = self._publication_ticket
+            self._pending_publication_tickets.add(ticket)
         try:
             loop.call_soon_threadsafe(
-                self._publish, connection_id, transport, direction, payload
+                self._publish_scheduled,
+                ticket,
+                connection_id,
+                transport,
+                direction,
+                payload,
             )
         except RuntimeError:
             # The manager may be shutting down while a transport relay exits.
+            with self._publication_lock:
+                self._pending_publication_tickets.discard(ticket)
             return
+
+    def _publish_scheduled(
+        self,
+        ticket: int,
+        connection_id: str,
+        transport: str,
+        direction: str,
+        payload: Any,
+    ) -> None:
+        try:
+            try:
+                self._publish(connection_id, transport, direction, payload)
+            except Exception:
+                # Observation is best-effort and must not break the relay's
+                # event loop, but consumers must never mistake a failed
+                # publication for a complete exchange.
+                self._fail_subscribers(connection_id, "publication_failed")
+        finally:
+            with self._publication_lock:
+                self._pending_publication_tickets.discard(ticket)
+            changed = self._publication_changed
+            if changed is not None:
+                changed.set()
+
+    def _publication_watermark(self) -> int:
+        """Return a cutoff covering thread-safe publications accepted so far."""
+
+        with self._publication_lock:
+            return self._publication_ticket
+
+    async def _wait_publications_through(self, watermark: int) -> None:
+        changed = self._publication_changed
+        while True:
+            with self._publication_lock:
+                pending = any(
+                    ticket <= watermark
+                    for ticket in self._pending_publication_tickets
+                )
+            if not pending:
+                return
+            if changed is None:
+                raise RuntimeError("MCP observation publication loop is unavailable")
+            changed.clear()
+            with self._publication_lock:
+                pending = any(
+                    ticket <= watermark
+                    for ticket in self._pending_publication_tickets
+                )
+            if pending:
+                await changed.wait()
 
     def _publish(
         self, connection_id: str, transport: str, direction: str, payload: Any
@@ -579,6 +710,8 @@ class McpCaptureManager:
         if self._observation_loop is not None and self._observation_loop is not loop:
             raise RuntimeError("MCP observations must use the manager's event loop")
         self._observation_loop = loop
+        if self._publication_changed is None:
+            self._publication_changed = asyncio.Event()
         selected = (
             None
             if connection_ids is None
