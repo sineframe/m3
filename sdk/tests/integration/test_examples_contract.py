@@ -160,9 +160,7 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     elicitation = (_SDK / "docs" / "elicitation.md").read_text(encoding="utf-8")
     elicitation_api = (_SDK / "docs" / "elicitation-api.md").read_text(encoding="utf-8")
     index = (_SDK / "docs" / "README.md").read_text(encoding="utf-8")
-    parity = (_SDK / "tests" / "mrtr-harness-parity.md").read_text(
-        encoding="utf-8"
-    )
+    parity = (_SDK / "tests" / "mrtr-harness-parity.md").read_text(encoding="utf-8")
     api = (_REPO / "app" / "docs" / "api-v2.md").read_text(encoding="utf-8")
     skill = (_REPO / "skills" / "testing-with-m3" / "SKILL.md").read_text(
         encoding="utf-8"

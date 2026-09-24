@@ -153,18 +153,14 @@ class CodexExample:
     marker: Path
     adapters: list[FixtureCodexHarnessAdapter]
 
-    def enqueue_tool_and_final(
-        self, tool: str, arguments: dict[str, object]
-    ) -> None:
+    def enqueue_tool_and_final(self, tool: str, arguments: dict[str, object]) -> None:
         self.provider.enqueue(
             ModelOutput(
                 function_name=f"mcp__fixture::{tool}",
                 arguments=arguments,
             )
         )
-        self.provider.enqueue(
-            ModelOutput(text="completed by deterministic provider")
-        )
+        self.provider.enqueue(ModelOutput(text="completed by deterministic provider"))
 
     def agent(self) -> Any:
         return self.kit.agents(
@@ -204,9 +200,7 @@ class CodexExample:
                 for frame in adapter.app_server_frames
             ],
             "m3_client_frames": [
-                frame
-                for adapter in self.adapters
-                for frame in adapter.client_frames
+                frame for adapter in self.adapters for frame in adapter.client_frames
             ],
             "adapter_turns": [
                 {
@@ -255,7 +249,9 @@ class CodexExample:
 
 
 @pytest.fixture
-def codex_example(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[CodexExample]:
+def codex_example(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[CodexExample]:
     executable = _require_codex()
     isolated_source_home = tmp_path / "empty-codex-source-home"
     isolated_source_home.mkdir()

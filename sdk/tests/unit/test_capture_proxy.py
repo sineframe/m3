@@ -347,9 +347,7 @@ def test_loopback_sse_observation_is_incremental_and_frame_bounded() -> None:
 
     oversized_observed: list[Any] = []
     oversized_incomplete: list[str] = []
-    bounded = _SSECaptureParser(
-        oversized_observed.append, oversized_incomplete.append
-    )
+    bounded = _SSECaptureParser(oversized_observed.append, oversized_incomplete.append)
     bounded.feed(b"data: " + b"x" * (8 * 1024 * 1024 + 1))
     assert oversized_incomplete == ["message_too_large"]
     assert oversized_observed == []
@@ -494,7 +492,7 @@ async def test_http_sse_oversized_frame_fails_observation_and_forwards_bytes(
     original_chunks = [
         b"data: " + b"x" * (8 * 1024 * 1024 + 1),
         b"\n\n",
-        b"data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}}\n\n",
+        b'data: {"jsonrpc":"2.0","id":2,"result":{}}\n\n',
     ]
     incomplete: list[str] = []
     proxy = McpHttpProxy(
@@ -511,9 +509,7 @@ async def test_http_sse_oversized_frame_fails_observation_and_forwards_bytes(
         stream=ChunkStream(original_chunks),
     )
 
-    forwarded = b"".join(
-        [chunk async for chunk in proxy._stream_sse(response)]
-    )
+    forwarded = b"".join([chunk async for chunk in proxy._stream_sse(response)])
 
     assert forwarded == b"".join(original_chunks)
     assert incomplete == ["message_too_large"]

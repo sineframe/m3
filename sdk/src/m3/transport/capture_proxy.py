@@ -141,7 +141,9 @@ class McpObservationSubscription:
 
         outstanding = self._inflight.pop(id(event), None)
         if outstanding is None or outstanding[0] is not event:
-            raise RuntimeError("MCP observation is not outstanding on this subscription")
+            raise RuntimeError(
+                "MCP observation is not outstanding on this subscription"
+            )
         ordinal = outstanding[1]
         if ordinal != self._processed_count + 1:
             error = McpObservationIncomplete(
@@ -643,8 +645,7 @@ class McpCaptureManager:
         while True:
             with self._publication_lock:
                 pending = any(
-                    ticket <= watermark
-                    for ticket in self._pending_publication_tickets
+                    ticket <= watermark for ticket in self._pending_publication_tickets
                 )
             if not pending:
                 return
@@ -653,8 +654,7 @@ class McpCaptureManager:
             changed.clear()
             with self._publication_lock:
                 pending = any(
-                    ticket <= watermark
-                    for ticket in self._pending_publication_tickets
+                    ticket <= watermark for ticket in self._pending_publication_tickets
                 )
             if pending:
                 await changed.wait()

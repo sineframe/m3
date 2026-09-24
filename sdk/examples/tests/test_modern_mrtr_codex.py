@@ -176,8 +176,9 @@ def test_unqualified_codex_agent_leaves_tool_choice_to_provider(
     _assert_completed_call(result, "book_shipment", codex_example)
     calls = codex_example.wire_calls()
     assert [call["name"] for call in calls] == ["book_shipment", "book_shipment"]
-    assert calls[1]["inputResponses"]["shipping_address"]["content"] == (
-        VERIFIED_ADDRESSES["home_address"]
+    assert (
+        calls[1]["inputResponses"]["shipping_address"]["content"]
+        == (VERIFIED_ADDRESSES["home_address"])
     )
 
 
@@ -240,9 +241,7 @@ def test_codex_optional_address_choice_then_url(
         {"address_kind": address_kind},
     )
     plan = sequence(
-        optional(
-            one_of(_address(server, "home"), _address(server, "business"))
-        ),
+        optional(one_of(_address(server, "home"), _address(server, "business"))),
         _verification(server),
     )
     instruction = (
@@ -276,8 +275,9 @@ def test_codex_optional_address_choice_then_url(
         else [None, f"verified-address:{address_kind}", f"verified-url:{address_kind}"]
     )
     if address_kind != "none":
-        assert calls[1]["inputResponses"][f"{address_kind}_address"]["content"] == (
-            VERIFIED_ADDRESSES[f"{address_kind}_address"]
+        assert (
+            calls[1]["inputResponses"][f"{address_kind}_address"]["content"]
+            == (VERIFIED_ADDRESSES[f"{address_kind}_address"])
         )
     assert set(calls[-1]["inputResponses"]) == {"verification"}
 
@@ -316,11 +316,13 @@ def test_codex_two_addresses_in_one_round_then_url(
     calls = codex_example.wire_calls()
     assert len(calls) == 3
     assert set(calls[1]["inputResponses"]) == {"home_address", "business_address"}
-    assert calls[1]["inputResponses"]["home_address"]["content"] == (
-        VERIFIED_ADDRESSES["home_address"]
+    assert (
+        calls[1]["inputResponses"]["home_address"]["content"]
+        == (VERIFIED_ADDRESSES["home_address"])
     )
-    assert calls[1]["inputResponses"]["business_address"]["content"] == (
-        VERIFIED_ADDRESSES["business_address"]
+    assert (
+        calls[1]["inputResponses"]["business_address"]["content"]
+        == (VERIFIED_ADDRESSES["business_address"])
     )
     assert set(calls[2]["inputResponses"]) == {"verification"}
 
@@ -423,6 +425,7 @@ def test_codex_submit_binds_plan_to_submitted_action(
     _assert_completed_call(result, "book_shipment", codex_example)
     calls = codex_example.wire_calls()
     assert len(calls) == 2
-    assert calls[1]["inputResponses"]["shipping_address"]["content"] == (
-        VERIFIED_ADDRESSES["home_address"]
+    assert (
+        calls[1]["inputResponses"]["shipping_address"]["content"]
+        == (VERIFIED_ADDRESSES["home_address"])
     )

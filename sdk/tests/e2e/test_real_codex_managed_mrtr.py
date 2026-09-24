@@ -274,8 +274,7 @@ async def test_installed_codex_fails_safely_for_identical_unkeyed_prompts(
         and not (
             isinstance(frame.get("params"), dict)
             and isinstance(frame["params"].get("_meta"), dict)
-            and frame["params"]["_meta"].get("codex_approval_kind")
-            == "mcp_tool_call"
+            and frame["params"]["_meta"].get("codex_approval_kind") == "mcp_tool_call"
         )
     ]
     assert len(elicitation_frames) == 2
