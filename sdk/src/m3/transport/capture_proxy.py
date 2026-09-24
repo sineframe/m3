@@ -555,6 +555,7 @@ class McpCaptureManager:
         self._observer_port: int | None = None
         self._observer_writers: set[asyncio.StreamWriter] = set()
         self._closing_observer = False
+        self._observation_start_failures: dict[str, str] = {}
 
     def _target(self, connection_id: str, transport: str) -> _CaptureTarget:
         target = self._targets.get(connection_id)
@@ -724,6 +725,10 @@ class McpCaptureManager:
             self._observation_sequences,
         )
         self._subscriptions.add(subscription)
+        for connection_id, reason in tuple(self._observation_start_failures.items()):
+            if subscription._accepts(connection_id):
+                subscription._fail(McpObservationIncomplete(connection_id, reason))
+                break
         return subscription
 
     def _discard_subscription(self, subscription: McpObservationSubscription) -> None:
@@ -847,15 +852,35 @@ class McpCaptureManager:
             ):
                 self._fail_subscribers(authenticated_connection, "observer_eof")
 
-    async def instrument(self, configurations: Iterable[Any]) -> tuple[Any, ...]:
+    async def instrument(
+        self,
+        configurations: Iterable[Any],
+        *,
+        stdio_environment_defaults: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> tuple[Any, ...]:
         """Return configs rewritten to use owned capture proxies.
 
         This method never starts an MCP protocol engine.  Stdio wrappers are
         launched later by the harness; HTTP proxies only forward requests.
+        Harness-supplied stdio defaults are merged into the one-shot child
+        handoff, with explicit server environment entries taking precedence.
         """
 
+        configured = tuple(configurations)
+        defaults = dict(stdio_environment_defaults or {})
+        if any(not isinstance(alias, str) or not alias for alias in defaults):
+            raise ValueError("stdio environment defaults require server aliases")
+        configured_aliases = {
+            str(getattr(config, "key", getattr(config, "connection_id", "")))
+            for config in configured
+        }
+        if set(defaults).difference(configured_aliases):
+            raise ValueError("stdio environment defaults reference an unknown server")
+        if any(not isinstance(value, Mapping) for value in defaults.values()):
+            raise ValueError("stdio environment defaults must be mappings")
+
         output: list[Any] = []
-        for configuration in configurations:
+        for configuration in configured:
             if not getattr(configuration, "available", False):
                 output.append(configuration)
                 continue
@@ -871,11 +896,39 @@ class McpCaptureManager:
                 if not isinstance(command, str) or not command:
                     output.append(configuration)
                     continue
-                await self._start_observation_server()
-                observation_token = secrets.token_urlsafe(32)
-                target.observation_token = observation_token
+                observer_handoff: dict[str, str] | None = None
+                try:
+                    await self._start_observation_server()
+                except OSError:
+                    reason = "observer_start_failed"
+                    self._observation_start_failures[key] = reason
+                    self._limitations[key] = tuple(
+                        dict.fromkeys((*self._limitations.get(key, ()), reason))
+                    )
+                    self._fail_subscribers(key, reason)
+                    target.observation_token = None
+                else:
+                    self._observation_start_failures.pop(key, None)
+                    observation_token = secrets.token_urlsafe(32)
+                    target.observation_token = observation_token
+                    observer_handoff = {
+                        "host": str(self._observer_host),
+                        "port": str(self._observer_port),
+                        "connection_id": key,
+                        "token": observation_token,
+                    }
                 env_path = self.root / f"{key}.env.json"
-                environment = getattr(configuration, "environment", {})
+                environment = dict(getattr(configuration, "environment", {}))
+                alias = str(getattr(configuration, "key", key))
+                for name, value in defaults.get(alias, {}).items():
+                    if (
+                        not isinstance(name, str)
+                        or not name
+                        or "=" in name
+                        or "\x00" in name
+                    ):
+                        raise ValueError("stdio environment default name is invalid")
+                    environment.setdefault(name, value)
                 configured_keys = frozenset(
                     getattr(configuration, "sensitive_keys", ())
                 )
@@ -884,12 +937,7 @@ class McpCaptureManager:
                         env_path,
                         environment,
                         configured_keys=configured_keys,
-                        observer={
-                            "host": str(self._observer_host),
-                            "port": str(self._observer_port),
-                            "connection_id": key,
-                            "token": observation_token,
-                        },
+                        observer=observer_handoff,
                     )
                 )
                 if resolved_secrets:

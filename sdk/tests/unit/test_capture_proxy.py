@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 import socket
 import sys
 import threading
@@ -52,6 +53,50 @@ from m3.types import (
     TrustLevel,
     UserMessage,
 )
+
+
+def _stdio_config(
+    *,
+    key: str,
+    connection_id: str,
+    command: str = "fixture-child",
+    args: tuple[str, ...] = (),
+    environment: dict[str, Any] | None = None,
+) -> HarnessServerConfig:
+    return HarnessServerConfig(
+        key=key,
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id=connection_id,
+        command=command,
+        args=args,
+        environment=environment or {},
+    )
+
+
+async def _run_stdio_proxy(
+    config: HarnessServerConfig,
+    *,
+    environment: dict[str, str],
+    input_bytes: bytes = b"",
+) -> tuple[int, bytes, bytes]:
+    runtime_environment = {
+        **os.environ,
+        "PYTHONPATH": str(Path(__file__).parents[2] / "src"),
+        **environment,
+    }
+    process = await asyncio.create_subprocess_exec(
+        config.command or "",
+        *config.args,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=runtime_environment,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(input_bytes), timeout=5)
+    assert process.returncode is not None
+    return process.returncode, stdout, stderr
 
 
 def _server() -> Server:
@@ -168,6 +213,108 @@ async def test_stdio_configuration_is_rewritten_to_transparent_capture_proxy(
     marker = instrumented.args.index("--")
     assert instrumented.args[marker + 1 :] == ("echo-server", "--fixture")
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_observer_connect_failure_does_not_block_real_stdio_child(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    child_code = (
+        "import json,sys; request=json.loads(sys.stdin.readline()); "
+        "print(json.dumps({'jsonrpc':'2.0','id':request['id'],"
+        "'result':{'ok':True}},separators=(',',':')),flush=True)"
+    )
+    instrumented = (
+        await manager.instrument(
+            (
+                _stdio_config(
+                    key="stdio",
+                    connection_id="stdio-connect-failure",
+                    command=sys.executable,
+                    args=("-c", child_code),
+                ),
+            )
+        )
+    )[0]
+    server = manager._observer_server
+    assert server is not None
+    server.close()
+    await server.wait_closed()
+
+    request = b'{"jsonrpc":"2.0","id":4,"method":"ping"}\n'
+    try:
+        returncode, stdout, stderr = await _run_stdio_proxy(
+            instrumented,
+            environment={},
+            input_bytes=request,
+        )
+        assert returncode == 0, stderr.decode(errors="replace")
+        assert json.loads(stdout) == {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "result": {"ok": True},
+        }
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_stdio_defaults_reach_child_and_known_http_alias_is_ignored(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path, trusted_private_keys={"http-profile"})
+    marker_child = (
+        "import os,sys; sys.stdout.write("
+        "os.environ.get('CODEX_MCP_PROTOCOL_VERSION','missing')+'\\n'); "
+        "sys.stdout.flush()"
+    )
+    configs = (
+        _stdio_config(
+            key="modern-profile",
+            connection_id="stdio-modern-marker",
+            command=sys.executable,
+            args=("-c", marker_child),
+        ),
+        _stdio_config(
+            key="legacy-profile",
+            connection_id="stdio-legacy-marker",
+            command=sys.executable,
+            args=("-c", marker_child),
+            environment={"CODEX_MCP_PROTOCOL_VERSION": "2025-06-18"},
+        ),
+        HarnessServerConfig(
+            key="http-profile",
+            transport=TransportKind.STREAMABLE_HTTP,
+            required=True,
+            available=True,
+            connection_id="http-profile",
+            endpoint="http://127.0.0.1:1/mcp",
+        ),
+    )
+    defaults = {
+        "modern-profile": {"CODEX_MCP_PROTOCOL_VERSION": "2026-07-28"},
+        "legacy-profile": {"CODEX_MCP_PROTOCOL_VERSION": "2026-07-28"},
+        # Codex may include an unresolved profile binding which resolves to
+        # HTTP. Its stdio-only environment overlay is valid and ignored here.
+        "http-profile": {"CODEX_MCP_PROTOCOL_VERSION": "2026-07-28"},
+    }
+    try:
+        instrumented = await manager.instrument(
+            configs,
+            stdio_environment_defaults=defaults,
+        )
+        for config, expected in zip(
+            instrumented[:2], ("2026-07-28", "2025-06-18"), strict=True
+        ):
+            returncode, stdout, stderr = await _run_stdio_proxy(
+                config,
+                environment={"CODEX_MCP_PROTOCOL_VERSION": "ambient-wrong-value"},
+            )
+            assert returncode == 0, stderr.decode(errors="replace")
+            assert stdout.decode().strip() == expected
+    finally:
+        await manager.close()
 
 
 @pytest.mark.asyncio
@@ -609,6 +756,106 @@ async def test_http_sse_oversized_frame_fails_observation_and_forwards_bytes(
 
 
 @pytest.mark.asyncio
+async def test_http_sse_joins_data_lines_once_and_preserves_event_bytes(
+    tmp_path: Path,
+) -> None:
+    class ChunkStream(httpx.AsyncByteStream):
+        def __init__(self, chunks: list[bytes]) -> None:
+            self.chunks = chunks
+
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            for chunk in self.chunks:
+                yield chunk
+
+        async def aclose(self) -> None:
+            return None
+
+    body = (
+        b'event: message\r\ndata: {"jsonrpc":"2.0",\r\n'
+        b'data: "id":7,"method":"tools/call","params":{"name":"draw"}}\r\n\r\n'
+        b"event: done\ndata:  [DONE]\n\n"
+        b"data\n\n"
+    )
+    chunks = [body[:23], body[23:71], body[71:]]
+    capture_path = tmp_path / "http-sse-multiline.jsonl"
+    proxy = McpHttpProxy(
+        upstream_url="https://example.com/mcp",
+        configured_headers=None,
+        transport="streamable_http",
+        capture_path=str(capture_path),
+        baseline_ns=0,
+    )
+    response = httpx.Response(
+        200,
+        headers={"content-type": "text/event-stream"},
+        stream=ChunkStream(chunks),
+    )
+
+    forwarded = b"".join([chunk async for chunk in proxy._stream_sse(response)])
+
+    assert forwarded == body
+    assert response.is_closed
+    records = [
+        json.loads(line)
+        for line in capture_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["payload"] for record in records] == [
+        {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {"name": "draw"},
+        },
+        " [DONE]",
+        "",
+    ]
+    assert [record["kind"] for record in records] == ["sse_data"] * 3
+
+
+@pytest.mark.asyncio
+async def test_http_sse_capture_keeps_url_rewrite_behavior(
+    tmp_path: Path,
+) -> None:
+    class ChunkStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield b"event: endpoint\r\ndata: https://example.com/next\r\n\r\n"
+
+        async def aclose(self) -> None:
+            return None
+
+    capture_path = tmp_path / "http-sse-url-rewrite.jsonl"
+    proxy = McpHttpProxy(
+        upstream_url="https://example.com/mcp",
+        configured_headers=None,
+        transport="streamable_http",
+        capture_path=str(capture_path),
+        baseline_ns=0,
+    )
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    proxy.socket = listener
+    response = httpx.Response(
+        200,
+        headers={"content-type": "text/event-stream"},
+        stream=ChunkStream(),
+    )
+
+    try:
+        forwarded = b"".join([chunk async for chunk in proxy._stream_sse(response)])
+    finally:
+        listener.close()
+
+    local_url = f"http://127.0.0.1:{port}"
+    assert forwarded == (f"event: endpoint\r\ndata: {local_url}/next\r\n\r\n".encode())
+    records = [
+        json.loads(line)
+        for line in capture_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["payload"] for record in records] == ["https://example.com/next"]
+
+
+@pytest.mark.asyncio
 async def test_live_observation_keeps_original_envelopes_and_typed_ids(
     tmp_path: Path,
 ) -> None:
@@ -892,6 +1139,91 @@ async def test_observation_frame_size_is_bounded_before_queueing(
 
 
 @pytest.mark.asyncio
+async def test_observer_listener_bind_failure_keeps_stdio_child_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    subscription = manager.subscribe({"stdio-bind-failure"})
+
+    async def fail_listener() -> None:
+        raise OSError("loopback bind unavailable")
+
+    monkeypatch.setattr(manager, "_start_observation_server", fail_listener)
+    config = _stdio_config(
+        key="stdio",
+        connection_id="stdio-bind-failure",
+        command=sys.executable,
+        args=("-c", "print('child-started')"),
+    )
+    try:
+        instrumented = (await manager.instrument((config,)))[0]
+        env_file = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
+        assert "observer" not in json.loads(env_file.read_text())
+        returncode, stdout, stderr = await _run_stdio_proxy(
+            instrumented, environment={}
+        )
+        assert returncode == 0, stderr.decode(errors="replace")
+        assert stdout == b"child-started\n"
+        with pytest.raises(McpObservationIncomplete) as raised:
+            await asyncio.wait_for(anext(subscription), timeout=0.1)
+        assert raised.value.reason == "observer_start_failed"
+    finally:
+        await manager.close()
+
+
+def test_stdio_request_is_observed_before_fast_child_response(
+    tmp_path: Path,
+) -> None:
+    request = b'{"jsonrpc":"2.0","id":8,"method":"ping"}\n'
+    timeline: list[str] = []
+
+    class ImmediateObserver:
+        healthy = True
+
+        def observe(self, direction: str, _payload: Any) -> None:
+            timeline.append(f"observed:{direction}")
+
+        def fail(self) -> None:
+            self.healthy = False
+
+    observer = ImmediateObserver()
+
+    class ImmediateChild:
+        def __init__(self) -> None:
+            self.data = bytearray()
+
+        def write(self, value: bytes) -> None:
+            assert timeline == ["observed:client_to_server"]
+            timeline.append("child-received-request")
+            self.data.extend(value)
+            observer.observe(
+                "server_to_client",
+                {"jsonrpc": "2.0", "id": 8, "result": {}},
+            )
+
+        def flush(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    child = ImmediateChild()
+    _relay(
+        io.BytesIO(request),
+        child,
+        CaptureWriter(str(tmp_path / "ordered.jsonl"), 0),
+        "client_to_server",
+        observer=observer,  # type: ignore[arg-type]
+    )
+    assert bytes(child.data) == request
+    assert timeline == [
+        "observed:client_to_server",
+        "child-received-request",
+        "observed:server_to_client",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_stdio_live_observation_authenticates_and_reports_eof(
     tmp_path: Path,
 ) -> None:
@@ -963,7 +1295,14 @@ async def test_stdio_live_observation_authenticates_and_reports_eof(
     relay.join(timeout=2)
     assert not relay.is_alive()
     assert bytes(forwarded.data) == request_line
+
+    async def wait_for_authenticated_channel() -> None:
+        while not manager._observer_writers:
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_authenticated_channel(), timeout=1)
     observed = await asyncio.wait_for(anext(subscription), timeout=1)
+    assert channel.healthy
     assert observed.payload["id"] == 7
     assert observed.jsonrpc_identity == (int, 7)
     assert observed.direction == "client_to_server"
@@ -999,6 +1338,64 @@ async def test_stdio_live_observation_authenticates_and_reports_eof(
         await asyncio.wait_for(anext(subscription), timeout=1)
     assert raised.value.reason == "observer_eof"
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_stdio_capture_write_failure_preserves_forwarding_and_fails_observer(
+    tmp_path: Path,
+) -> None:
+    manager = McpCaptureManager(tmp_path)
+    config = _stdio_config(
+        key="broken-capture",
+        connection_id="broken-capture",
+        command="unused-child",
+    )
+    instrumented = (await manager.instrument((config,)))[0]
+    env_file = Path(instrumented.args[instrumented.args.index("--env-file") + 1])
+    observer_info = json.loads(env_file.read_text())["observer"]
+    subscription = manager.subscribe({"broken-capture"})
+    channel = _ObservationChannel(**observer_info)
+
+    async def wait_for_authenticated_channel() -> None:
+        while not manager._observer_writers:
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_authenticated_channel(), timeout=1)
+    request = b'{"jsonrpc":"2.0","id":11,"method":"ping"}\n'
+
+    class BrokenCapture:
+        def write(self, **_kwargs: Any) -> None:
+            raise OSError("capture target unavailable")
+
+    class ForwardSink:
+        def __init__(self) -> None:
+            self.data = bytearray()
+
+        def write(self, value: bytes) -> None:
+            self.data.extend(value)
+
+        def flush(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    forwarded = ForwardSink()
+    try:
+        _relay(
+            io.BytesIO(request),
+            forwarded,
+            BrokenCapture(),  # type: ignore[arg-type]
+            "client_to_server",
+            observer=channel,
+        )
+        assert bytes(forwarded.data) == request
+        with pytest.raises(McpObservationIncomplete) as raised:
+            await asyncio.wait_for(anext(subscription), timeout=1)
+        assert raised.value.reason == "observer_eof"
+    finally:
+        channel.close()
+        await manager.close()
 
 
 @pytest.mark.asyncio

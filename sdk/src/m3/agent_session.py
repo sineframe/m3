@@ -292,9 +292,19 @@ class AsyncAgentSession:
         self.spec = spec
         self.adapter = adapter
         self._managed_input_runtime = managed_input_runtime
-        if managed_input_runtime is not None:
-            _require_elicitation_capability(adapter)
-        if spec.elicitation is not None:
+        needs_elicitation = (
+            managed_input_runtime is not None or spec.elicitation is not None
+        )
+        managed_runtime = (
+            getattr(getattr(spec, "harness", None), "runtime", "system") == "managed"
+        )
+        # A managed harness executable is selected during startup. Defer its
+        # version-sensitive capability check until that exact binary has been
+        # acquired; system-runtime sessions retain constructor-time validation.
+        self._deferred_elicitation_capability_check = (
+            needs_elicitation and managed_runtime
+        )
+        if needs_elicitation and not self._deferred_elicitation_capability_check:
             _require_elicitation_capability(adapter)
         self._harness_cache_dir = harness_cache_dir
         self._runtime_manager = runtime_manager
@@ -631,10 +641,27 @@ class AsyncAgentSession:
         # it must complete (or be cancelled) before server startup, probes, or
         # provider open can produce side effects.
         await self._prepare_managed_runtime()
+        if self._deferred_elicitation_capability_check:
+            _require_elicitation_capability(self.adapter)
+            self._deferred_elicitation_capability_check = False
         if self._server_manager is not None:
             # Import lazily: the contract module aliases this core adapter
             # protocol, so importing it at module load would create a cycle.
-            started_snapshot = await self._server_manager.start()
+            start = self._server_manager.start
+            defaults_provider = getattr(
+                self.adapter, "stdio_environment_defaults", None
+            )
+            stdio_environment_defaults = (
+                defaults_provider(self.spec) if callable(defaults_provider) else {}
+            )
+            if stdio_environment_defaults and self._supports_stdio_environment_defaults(
+                self._server_manager, start
+            ):
+                started_snapshot = await start(
+                    stdio_environment_defaults=stdio_environment_defaults
+                )
+            else:
+                started_snapshot = await start()
             # Transport evidence is emitted only after the server group has
             # successfully started and before the harness is opened. The
             # snapshot is the configured source; manager configurations are
@@ -798,6 +825,20 @@ class AsyncAgentSession:
             if self._closing or self._closed:
                 raise asyncio.CancelledError()
         self._adapter_started = True
+
+    @staticmethod
+    def _supports_stdio_environment_defaults(manager: object, start: Any) -> bool:
+        """Whether a manager explicitly supports pre-instrumentation env defaults."""
+
+        from .server_group import ServerGroupManager
+
+        if isinstance(manager, ServerGroupManager):
+            return True
+        try:
+            parameters = inspect.signature(start).parameters
+        except (TypeError, ValueError):
+            return False
+        return "stdio_environment_defaults" in parameters
 
     @property
     def _managed_harness_session(self) -> HarnessSession | None:

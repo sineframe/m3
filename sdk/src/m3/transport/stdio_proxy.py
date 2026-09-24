@@ -11,6 +11,7 @@ import stat
 import subprocess
 import sys
 import threading
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,9 @@ from m3.transport.tool_policy import ProxyToolPolicy
 
 _MAX_OBSERVATION_FRAME_BYTES = 8 * 1024 * 1024
 _MAX_OBSERVATION_QUEUE_BYTES = 16 * 1024 * 1024
+_OBSERVATION_CONNECT_TIMEOUT_SECONDS = 0.25
+_OBSERVATION_SEND_TIMEOUT_SECONDS = 0.5
+_OBSERVATION_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
 def _read_handoff(path: Path) -> Any:
@@ -62,8 +66,54 @@ def _read_policy(path: Path) -> Any:
             os.close(descriptor)
 
 
+def _fail_observation(observer: _ObservationChannel | None) -> None:
+    if observer is None:
+        return
+    try:
+        observer.fail()
+    except Exception:
+        # Observation errors must not change policy or transport behavior.
+        pass
+
+
+def _capture_passively(
+    writer: CaptureWriter,
+    direction: str,
+    payload: Any,
+    observer: _ObservationChannel | None,
+    *,
+    kind: str = "jsonrpc",
+    metadata: dict[str, Any] | None = None,
+) -> bool:
+    try:
+        writer.write(
+            transport="stdio",
+            direction=direction,
+            payload=payload,
+            kind=kind,
+            metadata=metadata,
+        )
+    except Exception:
+        _fail_observation(observer)
+        return False
+    return True
+
+
+def _observe_passively(
+    observer: _ObservationChannel | None, direction: str, payload: Any
+) -> bool:
+    if observer is None:
+        return True
+    try:
+        observer.observe(direction, payload)
+    except Exception:
+        _fail_observation(observer)
+        return False
+    return observer.healthy
+
+
 class _ObservationChannel:
-    """Authenticated, bounded sender for the manager's loopback TCP socket."""
+    """Nonblocking, authenticated sender for the manager's loopback TCP socket."""
 
     def __init__(self, *, host: str, port: str, connection_id: str, token: str) -> None:
         if host != "127.0.0.1" or not connection_id or not token:
@@ -71,23 +121,23 @@ class _ObservationChannel:
         port_number = int(port)
         if not 1 <= port_number <= 65535:
             raise ValueError
-        self._socket = socket.create_connection((host, port_number), timeout=2.0)
-        self._socket.sendall(
-            (
-                json.dumps(
-                    {"connection_id": connection_id, "token": token},
-                    separators=(",", ":"),
-                )
-                + "\n"
-            ).encode("utf-8")
-        )
-        self._socket.settimeout(2.0)
+        self._address = (host, port_number)
+        self._connection_id = connection_id
+        self._token = token
         self._lock = threading.Lock()
         self._failed = False
-        self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=128)
+        self._closing = False
+        self._socket: socket.socket | None = None
+        self._queue: queue.Queue[bytes] = queue.Queue(maxsize=128)
         self._queued_bytes = 0
         self._sender = threading.Thread(target=self._send_pending, daemon=True)
-        self._sender.start()
+        self._sender_started = False
+        try:
+            self._sender.start()
+            self._sender_started = True
+        except (OSError, RuntimeError):
+            # Observation must never prevent the MCP child from starting.
+            self._failed = True
 
     def observe(self, direction: str, payload: Any) -> None:
         if self._failed:
@@ -104,61 +154,114 @@ class _ObservationChannel:
             )
             if len(frame) > _MAX_OBSERVATION_FRAME_BYTES:
                 raise ValueError("observation frame exceeds limit")
+            overflow = False
             with self._lock:
-                if self._failed:
+                if self._failed or self._closing:
                     return
                 if self._queued_bytes + len(frame) > _MAX_OBSERVATION_QUEUE_BYTES:
-                    raise queue.Full
-                self._queue.put_nowait(frame)
-                self._queued_bytes += len(frame)
+                    overflow = True
+                else:
+                    try:
+                        self._queue.put_nowait(frame)
+                    except queue.Full:
+                        overflow = True
+                    else:
+                        self._queued_bytes += len(frame)
+            if overflow:
+                self._abort()
         except (OSError, TypeError, ValueError, UnicodeEncodeError):
             self._abort()
-        except queue.Full:
-            self._abort()
+
+    @property
+    def healthy(self) -> bool:
+        with self._lock:
+            return not self._failed
 
     def _send_pending(self) -> None:
-        while True:
-            frame = self._queue.get()
-            if frame is None:
-                return
-            try:
-                self._socket.sendall(frame)
-            except OSError:
-                self._abort()
-                return
-            finally:
+        connection: socket.socket | None = None
+        try:
+            connection = socket.create_connection(
+                self._address,
+                timeout=_OBSERVATION_CONNECT_TIMEOUT_SECONDS,
+            )
+            connection.settimeout(_OBSERVATION_SEND_TIMEOUT_SECONDS)
+            handshake = (
+                json.dumps(
+                    {
+                        "connection_id": self._connection_id,
+                        "token": self._token,
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+            connection.sendall(handshake)
+            with self._lock:
+                if self._failed:
+                    # If local persistence failed before the asynchronous
+                    # connect completed, authenticate and close so the
+                    # manager can mark this subscription incomplete.
+                    return
+                self._socket = connection
+            while True:
+                try:
+                    frame = self._queue.get(timeout=0.05)
+                except queue.Empty:
+                    with self._lock:
+                        if self._closing:
+                            return
+                    continue
+                try:
+                    connection.sendall(frame)
+                finally:
+                    with self._lock:
+                        self._queued_bytes = max(0, self._queued_bytes - len(frame))
+        except OSError:
+            self._abort()
+        finally:
+            if connection is not None:
                 with self._lock:
-                    self._queued_bytes = max(0, self._queued_bytes - len(frame))
+                    if self._socket is connection:
+                        self._socket = None
+                with suppress(OSError):
+                    connection.shutdown(socket.SHUT_RDWR)
+                with suppress(OSError):
+                    connection.close()
 
     def _abort(self) -> None:
         with self._lock:
             if self._failed:
                 return
             self._failed = True
+            self._closing = True
             self._queued_bytes = 0
             while True:
                 try:
                     self._queue.get_nowait()
                 except queue.Empty:
                     break
-            try:
-                self._socket.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            self._socket.close()
+            connection = self._socket
+            self._socket = None
+        if connection is not None:
+            with suppress(OSError):
+                connection.shutdown(socket.SHUT_RDWR)
+            with suppress(OSError):
+                connection.close()
+
+    def fail(self) -> None:
+        """Stop observation after a local capture or channel failure."""
+
+        self._abort()
 
     def close(self) -> None:
         with self._lock:
-            if self._failed:
-                return
-            self._failed = True
-        self._queue.put(None)
-        self._sender.join(timeout=2)
-        try:
-            self._socket.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        self._socket.close()
+            self._closing = True
+        if self._sender_started:
+            self._sender.join(timeout=_OBSERVATION_CLOSE_TIMEOUT_SECONDS)
+        if self._sender_started and self._sender.is_alive():
+            # A wedged or disconnected observer must be incomplete, never an
+            # unbounded wait after the MCP child has exited.
+            self._abort()
 
 
 def _relay(
@@ -169,6 +272,8 @@ def _relay(
     policy: ProxyToolPolicy | None = None,
     observer: _ObservationChannel | None = None,
 ) -> None:
+    capture_enabled = True
+    observation_enabled = observer is not None
     try:
         while True:
             line = source.readline()
@@ -177,11 +282,16 @@ def _relay(
             payload = parse_json_payload(line)
             if policy is not None and direction == "server_to_client":
                 policy.observe(payload)
-            writer.write(transport="stdio", direction=direction, payload=payload)
+            if capture_enabled:
+                capture_enabled = _capture_passively(
+                    writer, direction, payload, observer
+                )
+                if not capture_enabled:
+                    observation_enabled = False
+            if observation_enabled:
+                observation_enabled = _observe_passively(observer, direction, payload)
             destination.write(line)
             destination.flush()
-            if observer is not None:
-                observer.observe(direction, payload)
     except (BrokenPipeError, OSError):
         pass
     finally:
@@ -201,6 +311,8 @@ def _relay_policy(
 ) -> None:
     """Relay stdin while denying tools/call before writing to the child."""
 
+    capture_enabled = True
+    observation_enabled = observer is not None
     try:
         while True:
             line = source.readline()
@@ -254,13 +366,17 @@ def _relay_policy(
                         else {"policy_batch_item": "redacted"}
                         for item in payload
                     ]
-                    writer.write(
-                        transport="stdio",
-                        direction=direction,
-                        payload=safe_batch,
-                        kind="policy_denied",
-                        metadata={"policy_denied": True},
-                    )
+                    if capture_enabled:
+                        capture_enabled = _capture_passively(
+                            writer,
+                            direction,
+                            safe_batch,
+                            observer,
+                            kind="policy_denied",
+                            metadata={"policy_denied": True},
+                        )
+                        if not capture_enabled:
+                            observation_enabled = False
                     response_batch = [
                         {
                             "jsonrpc": "2.0",
@@ -274,12 +390,16 @@ def _relay_policy(
                         if isinstance(item, dict) and "id" in item
                     ]
                     if response_batch:
-                        writer.write(
-                            transport="stdio",
-                            direction="server_to_client",
-                            payload=response_batch,
-                            kind="policy_denied",
-                        )
+                        if capture_enabled:
+                            capture_enabled = _capture_passively(
+                                writer,
+                                "server_to_client",
+                                response_batch,
+                                observer,
+                                kind="policy_denied",
+                            )
+                            if not capture_enabled:
+                                observation_enabled = False
                         destination_out = sys.stdout.buffer
                         destination_out.write(
                             (
@@ -288,11 +408,18 @@ def _relay_policy(
                         )
                         destination_out.flush()
                     continue
-                writer.write(transport="stdio", direction=direction, payload=payload)
+                if capture_enabled:
+                    capture_enabled = _capture_passively(
+                        writer, direction, payload, observer
+                    )
+                    if not capture_enabled:
+                        observation_enabled = False
+                if observation_enabled:
+                    observation_enabled = _observe_passively(
+                        observer, direction, payload
+                    )
                 destination.write(line)
                 destination.flush()
-                if observer is not None:
-                    observer.observe(direction, payload)
                 continue
             params = payload.get("params")
             safe = {
@@ -303,13 +430,17 @@ def _relay_policy(
                     "name": params.get("name") if isinstance(params, dict) else None
                 },
             }
-            writer.write(
-                transport="stdio",
-                direction=direction,
-                payload=safe,
-                kind="policy_denied",
-                metadata={"policy_denied": True, "policy_reason": denied[1]},
-            )
+            if capture_enabled:
+                capture_enabled = _capture_passively(
+                    writer,
+                    direction,
+                    safe,
+                    observer,
+                    kind="policy_denied",
+                    metadata={"policy_denied": True, "policy_reason": denied[1]},
+                )
+                if not capture_enabled:
+                    observation_enabled = False
             response = {
                 "jsonrpc": safe["jsonrpc"],
                 "id": safe["id"],
@@ -317,12 +448,16 @@ def _relay_policy(
             }
             if "id" not in payload:
                 continue
-            writer.write(
-                transport="stdio",
-                direction="server_to_client",
-                payload=response,
-                kind="policy_denied",
-            )
+            if capture_enabled:
+                capture_enabled = _capture_passively(
+                    writer,
+                    "server_to_client",
+                    response,
+                    observer,
+                    kind="policy_denied",
+                )
+                if not capture_enabled:
+                    observation_enabled = False
             destination_out = sys.stdout.buffer
             destination_out.write(
                 (json.dumps(response, separators=(",", ":")) + "\n").encode("utf-8")
@@ -376,14 +511,11 @@ def main() -> int:
             if "observer" in payload:
                 raw_observer = payload.get("observer")
                 if (
-                    not isinstance(raw_observer, dict)
-                    or set(raw_observer) != {"host", "port", "connection_id", "token"}
-                    or any(
-                        not isinstance(value, str) for value in raw_observer.values()
-                    )
+                    isinstance(raw_observer, dict)
+                    and set(raw_observer) == {"host", "port", "connection_id", "token"}
+                    and all(isinstance(value, str) for value in raw_observer.values())
                 ):
-                    raise ValueError
-                observation = raw_observer
+                    observation = raw_observer
             if any(
                 not isinstance(key, str) or not isinstance(value, str)
                 for key, value in values.items()
@@ -428,8 +560,10 @@ def main() -> int:
                 connection_id=observation["connection_id"],
                 token=observation["token"],
             )
-        except (OSError, ValueError):
-            return 78
+        except (OSError, ValueError, TypeError):
+            # A malformed or unavailable observer must not prevent an
+            # otherwise valid MCP child from starting.
+            observer = None
     process = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,

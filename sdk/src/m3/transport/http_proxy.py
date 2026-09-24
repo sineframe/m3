@@ -570,6 +570,7 @@ class McpHttpProxy:
                         break
                     frame = buffer[: separator.start()]
                     consumed = buffer[: separator.end()]
+                    event_separator = buffer[separator.start() : separator.end()]
                     remainder = buffer[separator.end() :]
                     frame_size = len(frame.encode("utf-8"))
                     if frame_size > _MAX_SSE_FRAME_BYTES:
@@ -580,7 +581,7 @@ class McpHttpProxy:
                         passthrough = True
                         return
                     rewritten = self._capture_sse_frame(frame)
-                    yield (rewritten + "\n\n").encode("utf-8")
+                    yield (rewritten + event_separator).encode("utf-8")
                     buffer = remainder
                     buffer_bytes -= len(consumed.encode("utf-8"))
                 if buffer_bytes > _MAX_SSE_FRAME_BYTES:
@@ -604,24 +605,45 @@ class McpHttpProxy:
 
     def _capture_sse_frame(self, frame: str) -> str:
         output: list[str] = []
-        for line in frame.splitlines():
-            if not line.startswith("data:"):
-                output.append(line)
-                continue
-            data = line[5:].lstrip()
+        data_values: list[str] = []
+        # Keep original line endings for forwarding, while interpreting only
+        # the fields defined by the SSE line grammar.
+        lines = re.split(r"(\r\n|\r|\n)", frame)
+        for index in range(0, len(lines), 2):
+            line = lines[index]
+            forwarded_line = line
+            if line == "data":
+                data_values.append("")
+            elif line.startswith("data:"):
+                raw_data = line[5:]
+                leading_space = " " if raw_data.startswith(" ") else ""
+                # WHATWG removes at most one ASCII space after the colon.
+                data = raw_data[1:] if leading_space else raw_data
+                data_values.append(data)
+                if self.socket and (
+                    data.startswith(self.origin) or data.startswith("/")
+                ):
+                    port = self.socket.getsockname()[1]
+                    suffix = (
+                        data[len(self.origin) :]
+                        if data.startswith(self.origin)
+                        else data
+                    )
+                    rewritten_data = "http://127.0.0.1:" + str(port) + suffix
+                    forwarded_line = "data:" + leading_space + rewritten_data
+            output.append(forwarded_line)
+            if index + 1 < len(lines):
+                output.append(lines[index + 1])
+        if data_values:
+            # An SSE event dispatches one data string formed from all data
+            # fields, each joined by a newline.
+            event_payload = parse_json_payload("\n".join(data_values))
             if self._tool_policy is not None:
-                self._tool_policy.observe(parse_json_payload(data))
+                self._tool_policy.observe(event_payload)
             self.writer.write(
                 transport=self.transport,
                 direction="server_to_client",
-                payload=parse_json_payload(data),
+                payload=event_payload,
                 kind="sse_data",
             )
-            if self.socket and (data.startswith(self.origin) or data.startswith("/")):
-                port = self.socket.getsockname()[1]
-                suffix = (
-                    data[len(self.origin) :] if data.startswith(self.origin) else data
-                )
-                data = "http://127.0.0.1:" + str(port) + suffix
-            output.append("data: " + data)
-        return "\n".join(output)
+        return "".join(output)

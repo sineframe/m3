@@ -724,7 +724,11 @@ class ServerGroupManager:
             )
         return ServerGroupSnapshot(tuple(records), self._evidence)
 
-    async def start(self) -> ServerGroupSnapshot:
+    async def start(
+        self,
+        *,
+        stdio_environment_defaults: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> ServerGroupSnapshot:
         if self._closed:
             raise ServerStartupError("server group is closed")
         if self._started:
@@ -779,7 +783,10 @@ class ServerGroupManager:
                 tools_by_server={record.key: record.tools for record in records},
             )
             raw_configurations = self._raw_configurations()
-            instrumented = await self._capture.instrument(raw_configurations)
+            instrumented = await self._capture.instrument(
+                raw_configurations,
+                stdio_environment_defaults=stdio_environment_defaults,
+            )
             for config in instrumented:
                 configured_record = self._records.get(config.key)
                 if configured_record is None:

@@ -1448,7 +1448,7 @@ async def test_turn_timeout_aborts_pending_managed_mrtr_round() -> None:
 
     process = Process()
     adapter = CodexHarnessAdapter(executable="fixture")
-    adapter._mrtr_capability_checked = True
+    adapter._mrtr_capability_identity = adapter._executable_identity()
     adapter._capabilities = replace(
         adapter._capabilities,
         interaction=HarnessInteractionCapabilities(

@@ -217,7 +217,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._write_lock = asyncio.Lock()
         self._active_mrtr_action: CodexMRTRAction | None = None
         self._managed_input_runtime: Any = None
-        self._mrtr_capability_checked = False
+        self._mrtr_capability_identity: (
+            tuple[str, int | None, int | None, int | None, int | None] | None
+        ) = None
         self._action_interrupt_sent = False
         self._unscoped_elicitation_failure = False
         self._unapproved_mcp_tool_items: dict[str, _NativeMcpToolItem] = {}
@@ -231,10 +233,31 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._ensure_mrtr_capability()
         return self._capabilities
 
+    def _executable_identity(
+        self,
+    ) -> tuple[str, int | None, int | None, int | None, int | None]:
+        executable = self.executable
+        resolved = (
+            executable
+            if os.path.isabs(executable)
+            else shutil.which(executable) or executable
+        )
+        try:
+            stat = os.stat(resolved)
+        except OSError:
+            return (resolved, None, None, None, None)
+        return (
+            resolved,
+            stat.st_dev,
+            stat.st_ino,
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
+
     def _ensure_mrtr_capability(self) -> None:
-        if self._mrtr_capability_checked:
+        executable_identity = self._executable_identity()
+        if self._mrtr_capability_identity == executable_identity:
             return
-        self._mrtr_capability_checked = True
         version = probe_help(self.executable, ("--version",))
         version_line = version.splitlines()[0].strip() if version else ""
         supported = version_line == "codex-cli 0.156.1"
@@ -252,6 +275,29 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             else HarnessInteractionCapabilities(retry_owner="harness")
         )
         self._capabilities = replace(self._capabilities, interaction=interaction)
+        self._mrtr_capability_identity = executable_identity
+
+    def stdio_environment_defaults(self, spec: Any) -> dict[str, dict[str, str]]:
+        """Supply Codex's modern MCP marker to captured stdio children.
+
+        ServerGroupManager applies these only when the matching server config
+        does not already define the variable. Explicit literal and secret
+        references therefore retain their normal precedence.
+        """
+
+        defaults: dict[str, dict[str, str]] = {}
+        for binding in getattr(spec, "servers", ()):
+            server = getattr(binding, "server", None)
+            if server is not None and getattr(server, "kind", None) != "stdio":
+                continue
+            key = (
+                getattr(binding, "alias", None)
+                or getattr(server, "name", None)
+                or "profile"
+            )
+            if isinstance(key, str) and key:
+                defaults[key] = {"CODEX_MCP_PROTOCOL_VERSION": "2026-07-28"}
+        return defaults
 
     def _set_managed_input_runtime(self, runtime: Any) -> None:
         """Bind the controller-owned managed-input runtime to this adapter."""

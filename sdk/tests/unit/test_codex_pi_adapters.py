@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import m3.harness.codex as codex_module
 from m3._types.specs import AgentSpec
 from m3.agent_session import (
     AdapterTurn,
@@ -35,6 +36,7 @@ from m3.harness.contracts import (
     HarnessLaunch,
     HarnessStartupError,
     HarnessTurnRequest,
+    Readiness,
 )
 from m3.harness.pi import PiHarnessAdapter
 from m3.harness.pi_extension.bridge import (
@@ -172,6 +174,167 @@ def test_pi_declares_verified_agent_mrtr_capabilities() -> None:
     assert interaction.retry_owner == "m3"
     assert not interaction.supports_interaction_resume
     assert not interaction.supports_idempotent_response_delivery
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("feature", ("managed_input", "spec_plan"))
+@pytest.mark.parametrize("system_binary", ("absent", "unsupported"))
+async def test_codex_managed_mrtr_selects_runtime_before_capability_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    feature: str,
+    system_binary: str,
+) -> None:
+    order: list[str] = []
+    system_executable = tmp_path / "system-codex"
+    if system_binary == "unsupported":
+        system_executable.write_text("not executed by this test\n")
+
+    managed_executable = str(CODEX_FIXTURE.resolve())
+
+    class Lease:
+        executable = managed_executable
+
+        def __init__(self) -> None:
+            self.environment: dict[str, str] = {}
+            self.provenance = {"version": "0.156.1"}
+
+        async def release(self) -> None:
+            return None
+
+    class RuntimeManager:
+        async def acquire(self, kind: str, selector: str) -> Lease:
+            order.append(f"acquire:{kind}:{selector}")
+            return Lease()
+
+    class ServerManager:
+        capture = None
+
+        def __init__(self) -> None:
+            self.defaults: object = None
+
+        async def start(
+            self, *, stdio_environment_defaults: object = None
+        ) -> ServerGroupSnapshot:
+            order.append("server-start")
+            self.defaults = stdio_environment_defaults
+            return ServerGroupSnapshot()
+
+        def snapshot(self) -> ServerGroupSnapshot:
+            return ServerGroupSnapshot()
+
+        def configurations(self) -> tuple[object, ...]:
+            return ()
+
+        async def close(self) -> None:
+            return None
+
+    probes: list[str] = []
+
+    def fake_probe(executable: str, args: tuple[str, ...]) -> str | None:
+        order.append(f"probe:{executable}")
+        probes.append(executable)
+        if args == ("--version",) and executable == managed_executable:
+            return "codex-cli 0.156.1"
+        if args == ("--version",):
+            return "codex-cli 0.1.0" if system_binary == "unsupported" else None
+        return None
+
+    monkeypatch.setattr(codex_module, "probe_help", fake_probe)
+    adapter = CodexHarnessAdapter(executable=str(system_executable))
+
+    async def fake_preflight(_launch: HarnessLaunch) -> Readiness:
+        order.append("preflight")
+        return Readiness(ready=True)
+
+    async def fake_open(_launch: HarnessLaunch) -> None:
+        order.append("open")
+        return None
+
+    monkeypatch.setattr(adapter, "preflight", fake_preflight)
+    monkeypatch.setattr(adapter, "open", fake_open)
+    server_manager = ServerManager()
+    spec = AgentSpec(
+        harness=Codex(
+            model="fixture",
+            executable=str(system_executable),
+            runtime="managed",
+            version="0.156.1",
+        ),
+        servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
+        elicitation=(
+            expect_form("address").accept({"city": "Pune"})
+            if feature == "spec_plan"
+            else None
+        ),
+    )
+    session = AsyncAgentSession(
+        spec,
+        adapter,
+        server_manager=server_manager,
+        runtime_manager=RuntimeManager(),
+        managed_input_runtime=object() if feature == "managed_input" else None,
+    )
+
+    await session.__aenter__()
+    try:
+        assert order[0] == "acquire:codex:0.156.1"
+        assert probes == [managed_executable]
+        assert order.index(f"probe:{managed_executable}") < order.index("server-start")
+        assert (
+            order.index("server-start") < order.index("preflight") < order.index("open")
+        )
+        assert server_manager.defaults == {
+            "fixture": {"CODEX_MCP_PROTOCOL_VERSION": "2026-07-28"}
+        }
+        assert adapter.capabilities.interaction.supports_elicitation
+    finally:
+        await session.aclose()
+
+
+def test_codex_capability_cache_tracks_executable_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    system_executable = tmp_path / "system-codex"
+    system_executable.write_text("system codex placeholder\n")
+    managed_executable = tmp_path / "managed-codex"
+    managed_executable.write_text("managed codex placeholder\n")
+    probes: list[str] = []
+
+    def fake_probe(executable: str, _args: tuple[str, ...]) -> str:
+        probes.append(executable)
+        return (
+            "codex-cli 0.156.1"
+            if executable == str(managed_executable)
+            else "codex-cli 0.1.0"
+        )
+
+    monkeypatch.setattr(codex_module, "probe_help", fake_probe)
+    adapter = CodexHarnessAdapter(executable=str(system_executable))
+    assert not adapter.capabilities.interaction.supports_elicitation
+
+    adapter.executable = str(managed_executable)
+    assert adapter.capabilities.interaction.supports_elicitation
+    assert probes == [str(system_executable), str(managed_executable)]
+
+
+def test_codex_capability_cache_rechecks_binary_created_at_same_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "managed-codex"
+    probes: list[str] = []
+
+    def fake_probe(path: str, _args: tuple[str, ...]) -> str | None:
+        probes.append(path)
+        return "codex-cli 0.156.1" if executable.exists() else None
+
+    monkeypatch.setattr(codex_module, "probe_help", fake_probe)
+    adapter = CodexHarnessAdapter(executable=str(executable))
+    assert not adapter.capabilities.interaction.supports_elicitation
+
+    executable.write_text("managed codex placeholder\n")
+    assert adapter.capabilities.interaction.supports_elicitation
+    assert probes == [str(executable), str(executable)]
 
 
 @pytest.mark.asyncio
