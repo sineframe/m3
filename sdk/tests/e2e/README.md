@@ -42,7 +42,7 @@ M3_REQUIRE_CODEX_MRTR=1 \
 ```
 
 CI installs `@openai/codex@0.156.1` and runs all four suites against the local
-deterministic provider; all 37 tests pass in the current pinned gate. Coverage
+deterministic provider; all 40 tests pass in the current pinned gate. Coverage
 includes accept/decline/cancel mappings for form and URL prompts, two planned
 actions in one session, and unused required-plan failure. The example tests explicitly set
 `permission_policy="allow"` for Codex MCP tool approval; this is independent

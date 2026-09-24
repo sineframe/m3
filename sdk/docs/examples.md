@@ -252,7 +252,7 @@ runnable test modules are:
 - [`test_modern_mrtr_codex_action_scopes.py`](../examples/tests/test_modern_mrtr_codex_action_scopes.py)
   — M3 Codex form/URL decline and cancel responses, two planned turns in one
   session, and failure for an unused required plan. Both Codex test modules
-  pass in the required 37-test native, managed, and example gate against the
+  pass in the required 40-test native, managed, and example gate against the
   pinned 0.156.1 binary with a local deterministic provider.
 
 Run the deterministic direct/server example with plain pytest:

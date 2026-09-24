@@ -860,7 +860,7 @@ M3 does not patch Codex, replace its MCP client, or decide when a tool runs or
 retries.
 
 **Implementation status: verified for unmodified Codex CLI 0.156.1.** The
-required pinned native, managed, and runnable-example gate passed all 37 tests
+required pinned native, managed, and runnable-example gate passed all 40 tests
 on 2026-09-25 using a local deterministic provider. It verifies action-bound
 tool elicitation through `agent.run`, `agent.submit`, and `session.send`,
 including keyed form rounds, URL rounds, composed plans, planned form/URL

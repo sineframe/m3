@@ -8,7 +8,7 @@ not be cloned just to create a Codex-named test.
 
 ## Status and reading the crosswalk
 
-The required Codex CLI 0.156.1 native, managed, and example gate passed all 37
+The required Codex CLI 0.156.1 native, managed, and example gate passed all 40
 tests on 2026-09-25 with a local deterministic provider. The rows below mark
 the evidence that passed, identify Pi-only mechanisms, and call out the
 specific Codex behaviors outside that verified scope. A skipped binary gate is
@@ -30,7 +30,8 @@ The binary must report `codex-cli 0.156.1` by default. The native suite
 characterizes Codex; the managed suite exercises M3's real action and storage
 path; the Codex example suite exercises the same plans shown in the public
 guide; the action-scope suite covers response actions and repeated planned
-session turns. All four use the local deterministic provider. The e2e
+session turns. The installed Codex MRTR fixtures currently configure MCP over
+stdio. All four use the local deterministic provider. The e2e
 [README](e2e/README.md) describes version overrides and setup.
 
 ## Verified protocol differences that drive the gaps
@@ -44,7 +45,7 @@ These are observed against unmodified Codex 0.156.1 by
 | Simultaneous prompts are all emitted before a response, and observed native order is reversed from the MCP map order. | Treat one round as an unordered prompt multiset and wait for the whole prompt group before sending any answers. |
 | Identical exposed prompts may map to multiple keyed requests. | If all candidate keys have equal responses, a multiset answer is safe; unequal responses are ambiguous and must fail before any response. An exposed metadata field can distinguish requests only when Codex actually preserves it. |
 | Form schemas are JSON values; native `_meta:null` represents absent server metadata. | Canonicalize object member ordering but keep types and array order significant. Match actual schema JSON, not semantic JSON Schema equivalence. Treat only this observed null/absent metadata representation as equivalent. |
-| Accepted URL response is retried with `content:{}`. Decline/cancel retry with action and optional `_meta`, with content omitted. | **Verified by the 37-test gate:** M3 planned accept/decline/cancel responses for form and URL preserve the native wire shape, including omitted `content` and retained response metadata for non-accept actions. The URL is never visited. |
+| Accepted URL response is retried with `content:{}`. Decline/cancel retry with action and optional `_meta`, with content omitted. | **Verified by the 40-test gate:** M3 planned accept/decline/cancel responses for form and URL preserve the native wire shape, including omitted `content` and retained response metadata for non-accept actions. The URL is never visited. |
 | An empty request map is automatically retried using `requestState`, with no native prompt and no `inputResponses`. | Do not consume a plan step or fabricate a prompt for state-only `input_required`; observe and verify Codex's exact retry. |
 | Codex allows nine MRTR prompts/rounds; its tenth is rejected before a tenth native prompt is surfaced. | The effective Codex limit must not exceed nine, regardless of the common API's Pi default. Pi's ten-round success is not portable. |
 | Tool approval is a separate native request marked `_meta.codex_approval_kind=mcp_tool_call`. | Leave tool approval and policy decisions with Codex; never answer approval from an elicitation plan. |
@@ -90,11 +91,11 @@ the reason a Pi mechanism does not apply to Codex.
 | `test_bridge_supports_multi_request_round`; `test_bridge_round_of_accepts_form_and_url_together`; `test_bridge_mixed_round_merges_form_and_sampling_responses`; `test_bridge_sampling_only_and_roots_only_rounds_are_retried` | Native all-prompts-first is in `test_real_codex_sends_each_native_request_for_a_multi_request_round`; batching is in `test_action_batches_all_native_prompts_before_sending_any_answer`; the installed `round_of` plus later URL path is in `test_codex_two_addresses_in_one_round_then_url` and the managed multi-round test. | **Form and URL batching are covered by the passed gate.** Codex App Server has no verified sampling/roots callback route; mixed or callback-only sampling/roots rounds are outside supported Codex harness scope. The action validates the full form prompt group before answering. |
 | `test_managed_bridge_pauses_and_continues_with_parent_keyed_response`; `test_managed_round_indices_track_elicitation_rounds_per_operation`; `test_managed_round_limit_includes_rounds_before_continuation`; `test_managed_bridge_delivers_two_rounds_with_current_keyed_responses` | `test_installed_codex_real_managed_async_preserves_multi_round_trace` and `test_installed_codex_adapter_enforces_round_limit_and_native_cap`. | **Covered by the passed gate:** managed continuation persists keyed rounds, preserves one logical operation and its attempt history, and enforces the native nine-round ceiling. |
 | `test_managed_bridge_preserves_url_request_identity`; `test_bridge_url_is_asserted_and_not_visited` | Native URL shape is in `test_real_codex_surfaces_url_and_empty_form_requests`; managed URL identity and retry are in `test_installed_codex_real_managed_async_preserves_url_round`; the composed examples also assert no navigation. | **Covered by the passed gate.** URL identity is retained, accepted URL content is normalized, and the URL is never visited. |
-| `test_bridge_decline_is_forwarded_without_form_content` | Native form/URL decline and cancel are characterized by `test_real_codex_forwards_non_accept_form_and_url_responses`; M3 responses are in `test_codex_planned_non_accept_response_omits_wire_content_and_keeps_meta` and `test_modern_mrtr_codex_action_scopes.py`. | **Verified by the 37-test pinned gate:** planned form and URL decline/cancel omit `content` and preserve response metadata. |
+| `test_bridge_decline_is_forwarded_without_form_content` | Native form/URL decline and cancel are characterized by `test_real_codex_forwards_non_accept_form_and_url_responses`; M3 responses are in `test_codex_planned_non_accept_response_omits_wire_content_and_keeps_meta` and `test_modern_mrtr_codex_action_scopes.py`. | **Verified by the 40-test pinned gate:** planned form and URL decline/cancel omit `content` and preserve response metadata. |
 | `test_bridge_url_mismatch_and_schema_mismatch_fail_before_retry`; `test_bridge_form_schema_mismatch_fails_before_retry` | `test_codex_mrtr_association.py` covers schema value differences, exposed metadata, URL identity, server identity, and identical prompts; `test_installed_codex_fails_safely_for_identical_unkeyed_prompts` exercises fail-before-answer on the installed binary. | **Covered by unit and installed tests.** Schema values are exact JSON apart from object-key ordering; unequal answers for indistinguishable prompts fail before any response. |
 | `test_bridge_rejects_unexpected_input_without_plan`; `test_malformed_empty_input_required_fails_without_retry`; `test_non_mapping_arguments_are_rejected` | `test_native_elicitation_without_plan_fails_without_taking_over_codex`, `test_state_only_input_required_uses_codex_auto_retry_without_prompt`, malformed-prompt action cases, and native state-only characterization. | **Covered by action and native tests.** Unplanned prompts fail without answering; malformed observations fail closed; Codex's empty-map state-only retry remains harness-owned. |
 | `test_state_only_round_does_not_consume_pi_elicitation_plan` | `test_state_only_input_required_uses_codex_auto_retry_without_prompt` starts with an unconsumed expected form and verifies that the state-only retry leaves the action healthy and sends no fabricated answer. | **Covered for state-only auto-retry and plan preservation.** The more specific sequence of a state-only retry followed by a later native prompt in the same operation is not a separate installed-binary case. |
-| `test_managed_bridge_releases_claim_for_sequential_operation`; `test_managed_continue_failure_cleans_claim_and_is_terminal`; `test_bridge_cancellation_marks_generation_failed_and_cannot_be_reused`; `test_bridge_rejects_second_same_target_eliciting_invocation`; `test_concurrent_eliciting_calls_cancel_first_and_fail_generation` | Codex has no Pi generation claim. `test_ordinary_codex_turn_does_not_start_mrtr_observation`, `test_confirmed_turn_interrupt_keeps_codex_process_reusable`, action terminal tests, and `test_installed_codex_process_loss_fails_pending_round_without_replay` cover Codex lifecycle. | **Codex-specific lifecycle is covered** for action scoping, terminal failures, interruption, and process loss without retry/replay. Pi's extension generation and control-channel concurrency mechanisms do not apply to the Codex App Server. |
+| `test_managed_bridge_releases_claim_for_sequential_operation`; `test_managed_continue_failure_cleans_claim_and_is_terminal`; `test_bridge_cancellation_marks_generation_failed_and_cannot_be_reused`; `test_bridge_rejects_second_same_target_eliciting_invocation`; `test_concurrent_eliciting_calls_cancel_first_and_fail_generation` | Codex does not use Pi's extension generation claim. Existing evidence covers an ordinary turn followed by a planned turn, successive planned turns, interruption, terminalization, and process loss: `test_ordinary_codex_turn_does_not_start_mrtr_observation`, `test_codex_session_attaches_plan_only_to_second_turn`, `test_same_codex_session_uses_fresh_scope_for_two_planned_turns`, `test_confirmed_turn_interrupt_keeps_codex_process_reusable`, and `test_installed_codex_process_loss_fails_pending_round_without_replay`. `test_optional_plan_waits_for_each_native_tool_terminal_observation` exercises terminal-evidence accounting with a fake capture source. | **Partial coverage only.** These tests do not exercise two overlapping eliciting operations, same-target concurrent calls, or concurrent managed handles. Do not infer Codex concurrency behavior from the sequential scope and lifecycle cases. Direct Codex concurrency tests remain a gap. |
 | `test_bridge_requires_plan_completion_at_action_finalize` | `test_terminal_barrier_drains_published_keyed_retry_before_plan_completion` and installed managed multi-round/trace tests. | **Covered by the passed gate.** The manager barrier drains accepted observations; the adapter then waits within a bound for the exact retry/plan terminal evidence before finalizing. |
 | `test_tool_catalog_uses_pi_json_schema_aliases` | Codex presents server tools under its native `mcp__server::tool` form; see managed fixture assertion in `test_real_codex_managed_mrtr.py`. | **Implementation distinction.** Do not expose Pi bridge catalog aliases in Codex; verify Codex native tool catalog and observed MCP server/tool identity instead. |
 | `test_jsonl_dispatch_can_overlap_non_eliciting_calls`; `test_jsonl_many_completed_requests_are_reaped` | No Codex extension JSONL dispatcher. Codex owns its App Server and MCP dispatch. | **Implementation distinction.** Test observer concurrency and bounded cleanup only where M3 owns the transport; do not duplicate Pi's generated tool dispatcher. |
@@ -160,12 +161,12 @@ tests use installed Pi 0.85.1 and a deterministic local provider.
 | Pi real-binary test | Codex test/counterpart | Status or gap |
 | --- | --- | --- |
 | `test_installed_pi_real_form_round_uses_one_logical_call` | `test_real_codex_negotiates_modern_mcp_and_surfaces_a_form`; `test_installed_codex_real_managed_sync_persists_keyed_round_and_trace` | **Passed:** native prompt and M3 managed keyed response project as one logical call. |
-| `test_installed_pi_real_same_session_can_elicit_on_two_turns` | `test_codex_session_attaches_plan_only_to_second_turn` proves an ordinary first turn stays unplanned and the second turn owns its plan; `test_same_codex_session_uses_fresh_scope_for_two_planned_turns` covers two planned turns. | **Verified by the 37-test pinned gate:** ordinary-to-planned scoping and two successive planned actions each use a fresh action scope. |
+| `test_installed_pi_real_same_session_can_elicit_on_two_turns` | `test_codex_session_attaches_plan_only_to_second_turn` proves an ordinary first turn stays unplanned and the second turn owns its plan; `test_same_codex_session_uses_fresh_scope_for_two_planned_turns` covers two planned turns. | **Verified by the 40-test pinned gate:** ordinary-to-planned scoping and two successive planned actions each use a fresh action scope. |
 | `test_installed_pi_real_url_round_asserts_without_visiting` | `test_real_codex_surfaces_url_and_empty_form_requests`; `test_installed_codex_real_managed_async_preserves_url_round` | **Passed:** URL identity, normalized empty accepted content, and no navigation are verified. |
 | `test_installed_pi_real_sequential_rounds_preserve_current_responses` | `test_real_codex_keeps_separate_input_required_rounds_separate`; `test_installed_codex_real_managed_async_preserves_multi_round_trace` | **Passed:** the managed multi-round trace preserves round separation, current response keys, and one logical operation. |
 | `test_installed_pi_real_same_round_preserves_all_keyed_responses` | `test_real_codex_sends_each_native_request_for_a_multi_request_round`; action batch test in `test_codex_mrtr_action.py`; managed `round_of` example. | **Passed:** both native prompts are matched and answered by key despite Codex reversing their order. |
 | `test_installed_pi_real_cancellation_cleans_action_channel` | `test_real_codex_interrupt_before_answer_prevents_mcp_retry`, `test_confirmed_turn_interrupt_keeps_codex_process_reusable`, and `test_installed_codex_process_loss_fails_pending_round_without_replay`. | **Passed for Codex lifecycle:** interruption and process loss terminalize the action without a fabricated MCP retry or replay. |
-| `test_installed_pi_real_agent_settled_rejects_unused_required_plan` | Terminal barrier and plan-completion action tests in `test_codex_mrtr_action.py`; `test_installed_codex_fails_when_required_plan_is_unused` covers the installed binary. | **Verified by the 37-test pinned gate:** Codex can finish an action without prompting, and M3 rejects a required plan that was not consumed. |
+| `test_installed_pi_real_agent_settled_rejects_unused_required_plan` | Terminal barrier and plan-completion action tests in `test_codex_mrtr_action.py`; `test_installed_codex_fails_when_required_plan_is_unused` covers the installed binary. | **Verified by the 40-test pinned gate:** Codex can finish an action without prompting, and M3 rejects a required plan that was not consumed. |
 | `test_installed_pi_real_managed_submit_async_uses_keyed_round_response` | `test_installed_codex_real_managed_async_preserves_multi_round_trace`. | **Passed:** managed async submission persists and resumes the keyed response. |
 | `test_installed_pi_real_managed_submit_async_preserves_multi_rounds` | `test_installed_codex_real_managed_async_preserves_multi_round_trace`. | **Passed:** ordinal rounds, one logical operation, and current keyed responses are preserved. |
 | `test_installed_pi_real_managed_submit_async_preserves_url_round` | `test_installed_codex_real_managed_async_preserves_url_round`. | **Passed:** managed async URL round retains identity and uses Codex's normalized accepted response. |
@@ -180,7 +181,7 @@ the local deterministic provider. Each test gives the separate Codex tool
 approval path an explicit `permission_policy="allow"`, then verifies that the
 MRTR plan handles only native elicitation prompts. Execution reaches the
 expected MCP retries and Codex turn completion. All seven guide cases and the
-action-scope cases passed the 37-test pinned binary gate, including the strict
+action-scope cases passed the 40-test pinned binary gate, including the strict
 assertion that each operation is one logical call with its wire attempts
 attached. The adjacent `test_modern_mrtr_codex_action_scopes.py` covers four
 non-accept response cases, two planned session turns, and unused-plan failure.
@@ -197,6 +198,16 @@ non-accept response cases, two planned session turns, and unused-plan failure.
 
 These counterparts passed the installed binary gate with the
 single-logical-call trace assertion enabled.
+
+The managed suite also covers async entry points in
+[`test_real_codex_managed_mrtr.py`](e2e/test_real_codex_managed_mrtr.py):
+`test_async_agent_run_uses_action_bound_form_plan_with_one_logical_call`
+checks a keyed form retry on `agent.run`;
+`test_async_agent_submit_uses_maybe_url_plan_and_keyed_retry` checks accepted
+`maybe_url` input on `agent.submit` and the normalized `content:{}` retry; and
+`test_async_session_send_scopes_plan_to_each_turn_and_skips_maybe_url` checks
+plan scoping across async session turns and the no-prompt path for a `maybe_url`
+plan. These cases use the local provider and stdio MCP fixture.
 
 ## Real Pi control-channel gate cases
 
@@ -263,8 +274,8 @@ The pinned Codex 0.156.1 gate checks the following implementation guarantees:
 
 - [x] Codex action tests start capture before dispatch, associate native
   prompts with exact observed MCP calls without keys/order/timing guesses, and
-  send no partial response on malformed, missing, repeated, or ambiguous
-  prompts.
+  validate the complete prompt group before response dispatch. The malformed
+  second-prompt case fails before any native response write.
 - [x] Every subscription event is consumed and acknowledged; the manager
   barrier drains already-accepted events, while a bounded wait proves the
   expected exact keyed retry or terminal failure before plan finalization.
@@ -288,8 +299,22 @@ The pinned Codex 0.156.1 gate checks the following implementation guarantees:
   cancellation/cleanup, and version capability tests pass without any paid
   model provider.
 
-The 37-test gate verifies form and URL accept, decline, and cancel responses;
+The 40-test gate verifies form and URL accept, decline, and cancel responses;
 two planned elicitation actions on successive turns; unused required-plan
 failure; and the guide's Codex counterparts. Native prompt/resource
 elicitation and sampling/roots callbacks inside Codex tool rounds remain
 outside the supported harness scope.
+
+### Remaining direct Codex acceptance-test gaps
+
+The passing installed gate and action unit tests do not cover every edge case
+from the Pi suite. Keep these as explicit test gaps; generic observer tests and
+sequential Codex tests are not direct equivalents:
+
+| Acceptance case | Existing nearby evidence | Missing Codex-specific evidence |
+| --- | --- | --- |
+| Overlapping eliciting calls and same-target concurrency | Sequential planned turns are covered by `test_same_codex_session_uses_fresh_scope_for_two_planned_turns`; `test_optional_plan_waits_for_each_native_tool_terminal_observation` checks terminal-record multiplicity with a fake capture source. | No direct installed or managed test overlaps two eliciting Codex operations/handles or proves same-target concurrency rejection/cancellation and cleanup. |
+| Installed Codex MRTR over Streamable HTTP or in-process MCP | `test_http_proxy_publishes_original_request_and_response`, `test_in_process_loopback_is_observed_without_rewriting_endpoint`, and related `test_capture_proxy.py` cases exercise generic observer transports. | Native and managed Codex MRTR fixtures currently use stdio. There is no real-binary Codex action test proving end-to-end HTTP or in-process prompt association and response delivery. |
+| Native result write fails partway through a multi-prompt batch | `test_malformed_second_prompt_fails_without_partial_answer` proves malformed groups are rejected before the first response is written. | No action test injects a native write failure after an earlier response in the same batch was already written or verifies terminal handling of that partial-write state. |
+| Timeout while an MRTR prompt or managed round is pending | `test_native_timeout_closes_process_after_async_cancel` covers the adapter's general blocked-turn timeout. | No direct Codex test times out with a native elicitation or managed MRTR round pending and proves cleanup, terminal status, and no stale retry or resolution. |
+| Action correlation when JSON-RPC IDs collide by type | `test_capture_correlates_typed_ids_and_tool_latency` covers typed IDs in the generic capture layer; Codex action tests preserve native request IDs. | No action-level test places numeric ID `1` and string ID `"1"` in the same planned action and proves they remain separate during prompt/retry correlation. |
