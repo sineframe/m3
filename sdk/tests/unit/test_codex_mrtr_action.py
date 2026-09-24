@@ -19,7 +19,6 @@ from m3.errors import ElicitationExpectationError
 from m3.harness._codex_mrtr import CodexMRTRAction, _ObservedCall
 from m3.harness.codex import (
     CodexHarnessAdapter,
-    HarnessStartupError,
     codex_configuration,
     render_codex_config,
 )
