@@ -475,6 +475,100 @@ async def test_loopback_open_stream_exit_marks_observation_incomplete(
 
 
 @pytest.mark.asyncio
+async def test_loopback_capture_writer_timeout_does_not_stall_final_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("m3.server_group._CAPTURE_DRAIN_TIMEOUT_SECONDS", 0.25)
+
+    class StuckWriter:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.finished = threading.Event()
+
+        def write(self, **_payload: Any) -> None:
+            self.started.set()
+            try:
+                self.release.wait()
+                raise OSError("late observer write failure")
+            finally:
+                self.finished.set()
+
+    writer = StuckWriter()
+    endpoint = _LoopbackEndpoint(InProcessServer(name="fixture", factory=_server))
+    incomplete: list[str] = []
+    endpoint.attach_capture(writer, on_incomplete=incomplete.append)
+    forwarded: list[dict[str, Any]] = []
+    response_finished = asyncio.Event()
+    loop_errors: list[dict[str, Any]] = []
+    loop = asyncio.get_running_loop()
+    previous_exception_handler = loop.get_exception_handler()
+    loop.set_exception_handler(
+        lambda _loop, context: loop_errors.append(context)
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        forwarded.append(message)
+        if message.get("type") == "http.response.body" and not message.get(
+            "more_body", False
+        ):
+            response_finished.set()
+
+    response_start = {
+        "type": "http.response.start",
+        "status": 200,
+        "headers": [(b"content-type", b"application/json")],
+    }
+    response_body = {
+        "type": "http.response.body",
+        "body": b'{"jsonrpc":"2.0","id":1,"result":{}}',
+        "more_body": False,
+    }
+
+    async def handle_request(_scope: Any, _receive: Any, send_message: Any) -> None:
+        await send_message(response_start)
+        await send_message(response_body)
+
+    exchange = asyncio.create_task(
+        endpoint._observe_exchange(
+            {"method": "POST", "path": "/mcp"},
+            receive,
+            send,
+            handle_request,
+        )
+    )
+    try:
+        await asyncio.wait_for(response_finished.wait(), timeout=1)
+        deadline = loop.time() + 1
+        while not writer.started.is_set() and loop.time() < deadline:
+            await asyncio.sleep(0.001)
+        assert writer.started.is_set()
+
+        await asyncio.wait_for(exchange, timeout=0.5)
+
+        assert forwarded == [response_start, response_body]
+        assert incomplete == ["capture_write_timeout"]
+        assert not [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() == "m3-loopback-capture-write" and not task.done()
+        ]
+    finally:
+        writer.release.set()
+        if not exchange.done():
+            await asyncio.wait_for(exchange, timeout=1)
+        deadline = loop.time() + 1
+        while not writer.finished.is_set() and loop.time() < deadline:
+            await asyncio.sleep(0.001)
+        loop.set_exception_handler(previous_exception_handler)
+    assert writer.finished.is_set()
+    assert loop_errors == []
+
+
+@pytest.mark.asyncio
 async def test_http_sse_oversized_frame_fails_observation_and_forwards_bytes(
     tmp_path: Path,
 ) -> None:

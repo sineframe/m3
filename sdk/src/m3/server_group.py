@@ -56,6 +56,7 @@ class AmbiguousToolError(ServerGroupError):
 _MAX_CAPTURE_BODY_BYTES = 8 * 1024 * 1024
 _MAX_CAPTURE_PENDING_BYTES = 16 * 1024 * 1024
 _MAX_CAPTURE_PENDING_EVENTS = 256
+_CAPTURE_DRAIN_TIMEOUT_SECONDS = 0.1
 _SSE_FRAME_SEPARATOR = re.compile(rb"\r\n\r\n|\n\n|\r\r")
 
 
@@ -317,6 +318,7 @@ class _LoopbackEndpoint:
         capture_pending_events = 0
         capture_pending_bytes = 0
         capture_tail: asyncio.Task[None] | None = None
+        capture_tasks: set[asyncio.Task[None]] = set()
 
         def report_incomplete(reason: str) -> None:
             callback = self._capture_incomplete
@@ -326,6 +328,15 @@ class _LoopbackEndpoint:
                 except Exception:
                     # Observation bookkeeping must not affect serving.
                     pass
+
+        def retire_capture_task(task: asyncio.Task[None]) -> None:
+            capture_tasks.discard(task)
+            if not task.cancelled():
+                # A writer can fail after the response has already completed.
+                # Retrieving the result here keeps that observer-only failure
+                # from becoming an unhandled task exception.
+                with suppress(asyncio.CancelledError, Exception):
+                    task.exception()
 
         def safe_capture(
             direction: str,
@@ -383,7 +394,10 @@ class _LoopbackEndpoint:
                     capture_pending_events -= 1
                     capture_pending_bytes -= payload_size
 
-            capture_tail = asyncio.create_task(persist())
+            task = asyncio.create_task(persist(), name="m3-loopback-capture-write")
+            capture_tail = task
+            capture_tasks.add(task)
+            task.add_done_callback(retire_capture_task)
 
         def capture_sse_payload(payload: Any) -> None:
             safe_capture(
@@ -488,7 +502,34 @@ class _LoopbackEndpoint:
             if response_started and not response_completed:
                 report_incomplete("stream_ended_without_final_body")
             if capture_tail is not None:
-                await asyncio.shield(capture_tail)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(capture_tail),
+                        timeout=_CAPTURE_DRAIN_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    # Capture is best-effort. A blocked observer writer must
+                    # not hold the completed ASGI response open. Cancel and
+                    # join this exchange's task chain; an in-flight to_thread
+                    # call cannot be stopped, but its asyncio task is retired
+                    # and any task exception is retrieved by its done callback.
+                    capture_enabled = False
+                    report_incomplete("capture_write_timeout")
+                    pending = tuple(capture_tasks)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
+                except asyncio.CancelledError:
+                    # Also prevent capture tasks escaping when the client
+                    # cancels the ASGI request during observer draining.
+                    capture_enabled = False
+                    pending = tuple(capture_tasks)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
+                    raise
 
     @property
     def url(self) -> str:
