@@ -244,7 +244,8 @@ jobs:
       - name: Run SDK unit tests without live providers or process lifecycle
         run: >-
           uv run --locked --no-sync --project sdk --extra judge
-          pytest -q -n 2 --dist worksteal -m "not live and not process_lifecycle"
+          pytest -vv -x -n 2 --dist worksteal --timeout=90 --timeout-method=signal
+          -m "not live and not process_lifecycle"
           sdk/tests/unit
       - name: Run application unit tests without live providers
         run: >-

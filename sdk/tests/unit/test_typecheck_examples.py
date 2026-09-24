@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 EXAMPLE = Path(__file__).parents[1] / "typecheck" / "usage_examples.py"
 INVALID_ADAPTER_EXAMPLE = (
     Path(__file__).parents[1] / "typecheck" / "invalid_session_adapter.py"
 )
 REPOSITORY_ROOT = Path(__file__).parents[3]
+PYTHON_310_ONLY = pytest.mark.skipif(
+    sys.version_info[:2] != (3, 10),
+    reason="these examples are type-checked against Python 3.10 in the 3.10 suite",
+)
 
 
 def test_usage_examples_compile() -> None:
@@ -51,14 +58,17 @@ def _run_mypy(example: Path) -> subprocess.CompletedProcess[str]:
             check=False,
             capture_output=True,
             text=True,
+            timeout=90,
         )
 
 
+@PYTHON_310_ONLY
 def test_usage_examples_require_mypy_strict() -> None:
     result = _run_mypy(EXAMPLE)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@PYTHON_310_ONLY
 def test_session_only_adapter_is_rejected_by_mypy() -> None:
     result = _run_mypy(INVALID_ADAPTER_EXAMPLE)
     diagnostics = result.stdout + result.stderr
