@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -376,6 +377,40 @@ async def test_confirmed_turn_interrupt_keeps_codex_process_reusable() -> None:
         },
         {"method": "turn/start"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_native_failed_tool_result_preserves_mapping_error_message() -> None:
+    adapter = CodexHarnessAdapter(executable="fixture")
+    observations: list[Any] = []
+    native_message = "input_required did not complete within 10 MRTR rounds"
+
+    adapter.consume_frame(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "mcpToolCall",
+                    "id": "native-call-1",
+                    "server": "fixture",
+                    "tool": "ten_rounds",
+                    "arguments": {"rounds": 10},
+                    "status": "failed",
+                    "error": {"message": native_message},
+                }
+            },
+        },
+        1,
+        datetime.now(timezone.utc),
+        0.0,
+        observations,
+    )
+
+    results = [
+        item for item in observations if getattr(item, "status", None) == "tool_error"
+    ]
+    assert len(results) == 1
+    assert results[0].error_message == native_message
 
 
 def test_retry_identity_ignores_only_the_volatile_progress_token() -> None:

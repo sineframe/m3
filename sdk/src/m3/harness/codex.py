@@ -726,9 +726,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                                 result=_json(result),
                                 is_error=is_error,
                                 status="tool_error" if is_error else "success",
-                                error_message=str(error)
-                                if isinstance(error, str)
-                                else None,
+                                error_message=_tool_error_message(error),
                             )
                         )
                 else:
@@ -1073,6 +1071,15 @@ def _json(value: Any) -> Any:
         if value is None or isinstance(value, (str, int, float, bool))
         else {"capture": "unavailable"}
     )
+
+
+def _tool_error_message(error: Any) -> str | None:
+    if isinstance(error, str):
+        return error
+    if isinstance(error, Mapping):
+        message = error.get("message")
+        return message if isinstance(message, str) else None
+    return None
 
 
 __all__ = ["CodexHarnessAdapter", "codex_configuration", "render_codex_config"]
