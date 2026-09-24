@@ -250,6 +250,7 @@ class CodexMRTRAction:
         managed_round_handler: Any = None,
         managed_round_completed: Any = None,
         managed_round_abort: Any = None,
+        protocol_error_for_server: Any = None,
     ) -> None:
         self._launch = launch
         self._plan = plan
@@ -260,6 +261,7 @@ class CodexMRTRAction:
         self._managed_round_handler = managed_round_handler
         self._managed_round_completed = managed_round_completed
         self._managed_round_abort = managed_round_abort
+        self._protocol_error_for_server = protocol_error_for_server
         self._managed_round_active = False
         self._matcher = plan.matcher() if plan is not None else None
         self._subscription: Any = None
@@ -539,6 +541,10 @@ class CodexMRTRAction:
                     )
                 self._operation = None
             return
+        if self._protocol_error_for_server is not None:
+            protocol_error = self._protocol_error_for_server(response_call.server_name)
+            if protocol_error is not None:
+                raise protocol_error
         if required.input_requests is None:
             raise ElicitationExpectationError(
                 "Codex returned input-required without an input request map",

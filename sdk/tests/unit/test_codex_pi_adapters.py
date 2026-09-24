@@ -307,9 +307,9 @@ async def test_codex_native_app_server_handshake_multiturn_and_usage() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("permission_mode,expected_calls", [("allow", 1), ("deny", 0)])
+@pytest.mark.parametrize("permission_mode", ("allow", "deny"))
 async def test_codex_mcp_tool_approval_uses_session_permission_policy(
-    permission_mode: str, expected_calls: int
+    permission_mode: str,
 ) -> None:
     configuration = HarnessServerConfig(
         key="fixture",
@@ -338,11 +338,40 @@ async def test_codex_mcp_tool_approval_uses_session_permission_policy(
     try:
         result = await session.send(HarnessTurnRequest.from_message("quote"))
         assert result.status == "completed"
-        assert len(result.tool_calls) == expected_calls
+        # Codex reports the requested native MCP item even when the permission
+        # callback denies execution; the receipt records the actual decision.
+        assert len(result.tool_calls) == 1
         assert launch.interactions is not None
         receipts = launch.interactions.receipts()
         assert len(receipts) == 1
         assert receipts[0].decision == permission_mode
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_ordinary_session_preserves_explicit_legacy_mcp_version() -> None:
+    configuration = HarnessServerConfig(
+        key="fixture",
+        transport=TransportKind.STDIO,
+        required=True,
+        available=True,
+        connection_id="fixture-connection",
+        command="fixture",
+        environment={"CODEX_MCP_PROTOCOL_VERSION": "2025-06-18"},
+    )
+    launch = _launch(
+        Codex(model="fixture", executable=str(CODEX_FIXTURE)),
+        configurations=(configuration,),
+    )
+    adapter = CodexHarnessAdapter(executable=str(CODEX_FIXTURE))
+
+    session = await adapter.open(launch)
+    try:
+        result = await session.send(HarnessTurnRequest.from_message("ordinary turn"))
+        assert result.status == "completed"
+        assert result.response is not None
+        assert result.response.text == "fixture response"
     finally:
         await session.close()
 

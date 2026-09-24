@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -47,6 +47,14 @@ from .observations import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _NativeMcpToolItem:
+    """Codex-owned item identity eligible for one on-request approval."""
+
+    server: str
+    arguments_json: str
+
+
 def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
     """Return the isolated App Server MCP configuration shape.
 
@@ -66,14 +74,12 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
                 for k, v in config.environment.items()
                 if not isinstance(v, SecretReference)
             }
-            marker = config.environment.get("CODEX_MCP_PROTOCOL_VERSION")
-            if isinstance(marker, SecretReference) or (
-                marker is not None and _config_value(marker) != "2026-07-28"
-            ):
-                raise HarnessStartupError(
-                    "Codex MCP protocol marker conflicts with modern elicitation"
-                )
-            literal_env["CODEX_MCP_PROTOCOL_VERSION"] = "2026-07-28"
+            # Preserve an explicit server choice for ordinary Codex sessions.
+            # M3 enables the modern feature globally, but a server may still
+            # intentionally negotiate the legacy protocol. Planned MRTR is
+            # checked against the observed target server when a prompt arrives.
+            if "CODEX_MCP_PROTOCOL_VERSION" not in config.environment:
+                literal_env["CODEX_MCP_PROTOCOL_VERSION"] = "2026-07-28"
             # Codex's env_vars names are the child-process target variables;
             # values are resolved into those names by environment_for_launch.
             env_vars = [
@@ -140,6 +146,19 @@ def _config_value(value: Any) -> str:
     return str(value)
 
 
+def _canonical_native_json(value: Any) -> str | None:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError, RecursionError):
+        return None
+
+
 def _toml_inline(values: Mapping[str, Any]) -> str:
     return (
         "{ "
@@ -201,6 +220,9 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._mrtr_capability_checked = False
         self._action_interrupt_sent = False
         self._unscoped_elicitation_failure = False
+        self._unapproved_mcp_tool_items: dict[str, _NativeMcpToolItem] = {}
+        self._approved_mcp_tool_items: dict[str, _NativeMcpToolItem] = {}
+        self._mcp_protocol_markers: dict[str, str] = {}
 
     @property
     def capabilities(self) -> HarnessAdapterCapabilities:
@@ -291,6 +313,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     if managed_coordinator is not None
                     else None
                 ),
+                protocol_error_for_server=self._mrtr_protocol_error_for_server,
             )
             try:
                 await action.start()
@@ -382,6 +405,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     ) from exc
         environment = dict(self.environment)
         runtime_secrets: set[str] = set()
+        protocol_markers: dict[str, str] = {}
         environment["CODEX_HOME"] = str(home)
         harness = launch.spec.harness
         if isinstance(harness, Codex):
@@ -401,6 +425,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                         raise HarnessStartupError("Codex MCP credential is unavailable")
                     environment[key] = resolved
                     runtime_secrets.add(resolved)
+                    if key == "CODEX_MCP_PROTOCOL_VERSION":
+                        protocol_markers[configuration.key] = resolved
+                elif key == "CODEX_MCP_PROTOCOL_VERSION":
+                    protocol_markers[configuration.key] = _config_value(value)
             for value in configuration.headers.values():
                 if isinstance(value, SecretReference):
                     resolved = environment.get(value.name) or os.environ.get(value.name)
@@ -409,6 +437,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                     environment[value.name] = resolved
                     runtime_secrets.add(resolved)
         self._runtime_secrets = runtime_secrets
+        self._mcp_protocol_markers = protocol_markers
         add_secrets = getattr(launch.capture, "add_secrets", None)
         if callable(add_secrets) and runtime_secrets:
             add_secrets(runtime_secrets)
@@ -555,6 +584,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         self._unscoped_elicitation_failure = False
         self._observed_tool_call_ids.clear()
         self._streamed_item_ids.clear()
+        self._unapproved_mcp_tool_items.clear()
+        self._approved_mcp_tool_items.clear()
         text = "".join(
             block.text for block in request.message.content if hasattr(block, "text")
         )
@@ -682,6 +713,10 @@ class CodexHarnessAdapter(NativeRPCAdapter):
                         else None
                     )
                     args = item.get("arguments", item.get("input"))
+                    if method == "item/started":
+                        self._remember_unapproved_mcp_tool_item(item)
+                    else:
+                        self._finish_native_mcp_tool_item(item)
                     if call_id not in self._observed_tool_call_ids:
                         calls.append(
                             {
@@ -873,14 +908,21 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             params = params if isinstance(params, Mapping) else {}
             metadata = params.get("_meta")
             metadata = metadata if isinstance(metadata, Mapping) else {}
-            if metadata.get("codex_approval_kind") == "mcp_tool_call":
+            approval_item_id = self._native_approval_item(params)
+            if approval_item_id is not None:
                 # Codex App Server tool approvals are separate from MCP MRTR.
-                # Keep their established policy callback path unchanged.
+                # Only a Codex-owned, not-yet-approved mcpToolCall item may
+                # consume one approval decision. MCP servers can copy the
+                # approval marker into inputRequired metadata, so the marker
+                # alone is never evidence of an approval request.
+                approval_item = self._unapproved_mcp_tool_items.pop(approval_item_id)
+                self._approved_mcp_tool_items[approval_item_id] = approval_item
                 await self._answer_mcp_elicitation(process, frame)
             elif self._active_mrtr_action is not None:
                 # The action coordinator batches all native prompts for one
                 # observed keyed round before writing any response. Returning
                 # immediately keeps the App Server reader live while it waits.
+                self._reject_incompatible_mrtr_server(params)
                 self._active_mrtr_action.submit_native_prompt(frame)
             else:
                 self._unscoped_elicitation_failure = True
@@ -894,6 +936,112 @@ class CodexHarnessAdapter(NativeRPCAdapter):
         ):
             await self._interrupt_turn(process)
         return frame
+
+    def _remember_unapproved_mcp_tool_item(self, item: Mapping[str, Any]) -> None:
+        item_id = item.get("id")
+        server = item.get("server")
+        tool = item.get("tool")
+        arguments = item.get("arguments", item.get("input"))
+        arguments_json = (
+            _canonical_native_json(arguments)
+            if isinstance(arguments, Mapping)
+            else None
+        )
+        if (
+            isinstance(item_id, str)
+            and isinstance(server, str)
+            and isinstance(tool, str)
+            and arguments_json is not None
+        ):
+            self._unapproved_mcp_tool_items[item_id] = _NativeMcpToolItem(
+                server, arguments_json
+            )
+
+    def _finish_native_mcp_tool_item(self, item: Mapping[str, Any]) -> None:
+        item_id = item.get("id")
+        if isinstance(item_id, str):
+            self._unapproved_mcp_tool_items.pop(item_id, None)
+            self._approved_mcp_tool_items.pop(item_id, None)
+
+    def _native_approval_item(self, params: Mapping[str, Any]) -> str | None:
+        metadata = params.get("_meta")
+        if (
+            not isinstance(metadata, Mapping)
+            or metadata.get("codex_approval_kind") != "mcp_tool_call"
+            or params.get("threadId") != self._thread_id
+            or params.get("turnId") != self._turn_id
+        ):
+            return None
+        server = params.get("serverName")
+        tool_params = metadata.get("tool_params")
+        tool_params_json = (
+            _canonical_native_json(tool_params)
+            if isinstance(tool_params, Mapping)
+            else None
+        )
+        if not isinstance(server, str) or tool_params_json is None:
+            return None
+
+        # An item remains active while Codex waits on its tool server. If it
+        # already received its one approval, a later same-server prompt may be
+        # a server-originated inputRequired response with forged metadata. A
+        # second concurrent item on that server is ambiguous without an
+        # app-server correlation field, so fail closed instead of borrowing
+        # the first item's approval authority. `thread/start` sets
+        # approvalPolicy=on-request; Codex 0.156.1 emits item/started before
+        # that item's approval prompt and does not dispatch tools/call until
+        # the approval response. Thus the unique unapproved item is the
+        # Codex-owned pre-invocation state; a server cannot originate its
+        # inputRequired prompt until after this one-shot decision is consumed.
+        if any(
+            item.server == server for item in self._approved_mcp_tool_items.values()
+        ):
+            return None
+        matches = [
+            item_id
+            for item_id, item in self._unapproved_mcp_tool_items.items()
+            if item.server == server and item.arguments_json == tool_params_json
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def _reject_incompatible_mrtr_server(self, params: Mapping[str, Any]) -> None:
+        action = self._active_mrtr_action
+        server_name = params.get("serverName")
+        if action is None or not isinstance(server_name, str):
+            return
+        error = self._mrtr_protocol_error_for_server(server_name)
+        if error is not None:
+            action.fail(error)
+
+    def _mrtr_protocol_error_for_server(
+        self, server_name: str
+    ) -> ElicitationExpectationError | None:
+        if self._launch is None:
+            return None
+        configuration = next(
+            (
+                config
+                for config in self._launch.configurations
+                if config.key == server_name and config.available
+            ),
+            None,
+        )
+        if configuration is None or configuration.transport.value != "stdio":
+            return None
+        marker = configuration.environment.get("CODEX_MCP_PROTOCOL_VERSION")
+        if isinstance(marker, SecretReference):
+            value = self._mcp_protocol_markers.get(server_name)
+        else:
+            value = _config_value(marker) if marker is not None else "2026-07-28"
+        if value != "2026-07-28":
+            return ElicitationExpectationError(
+                "planned Codex elicitation targets a server using the legacy MCP protocol",
+                details={
+                    "reason": "legacy_mcp_protocol",
+                    "server": server_name,
+                },
+            )
+        return None
 
     async def _next_action_frame(
         self, process: JsonRpcProcess, timeout: float | None
