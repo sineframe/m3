@@ -772,7 +772,8 @@ async def test_recovery_terminalization_retries_after_fallback_lease_race(
     coordinator = _ManagedInputCoordinator(
         store.managed_input_store, execution_id.root, recorder
     )
-    coordinator._LEASE_SECONDS = 0.3
+    # Expiry is injected below; a short renewal interval would race this test's
+    # mocked recovery path rather than exercise the intended fallback sequence.
     coordinator.bind_session("session-1")
     coordinator.bind_turn("session-1", "turn-1")
     pending = _pending(execution_id.root)
