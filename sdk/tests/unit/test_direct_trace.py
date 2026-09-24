@@ -17,6 +17,8 @@ from m3.events import EventFactory, EventSequence
 from m3.execution_trace import ExecutionTraceRecorder, TraceRecorderError
 from m3.storage import InMemoryExecutionStore
 from m3.types import (
+    Event,
+    EventId,
     EventKind,
     ExecutionId,
     ExecutionOutcome,
@@ -203,6 +205,33 @@ def test_secret_bind_rejects_lifecycle_events_carrying_extra_values(
         store=store,
         execution_id=execution,
         connection_id="connection-late-bind",
+        event_factory=EventFactory(execution, allocator=EventSequence(start=2)),
+        recorder=recorder,
+    )
+    with pytest.raises(TraceRecorderError):
+        bridge.bind_secret_values("late-canary")
+
+
+def test_secret_bind_rejects_lifecycle_event_whose_identity_holds_the_secret() -> None:
+    # The payload and fields match the SDK lifecycle shape exactly; only the
+    # caller-chosen event ID carries the value about to be bound.
+    execution = ExecutionId("execution-forged-id")
+    store = InMemoryExecutionStore()
+    recorder = ExecutionTraceRecorder(store, execution)
+    recorder.record(
+        Event(
+            event_id=EventId("late-canary"),
+            execution_id=execution,
+            sequence=1,
+            kind=EventKind.EXECUTION_STATE_CHANGED,
+            monotonic_offset_ms=0,
+            payload={"lifecycle": "queued"},
+        )
+    )
+    bridge = DirectTraceBridge(
+        store=store,
+        execution_id=execution,
+        connection_id="connection-forged-id",
         event_factory=EventFactory(execution, allocator=EventSequence(start=2)),
         recorder=recorder,
     )

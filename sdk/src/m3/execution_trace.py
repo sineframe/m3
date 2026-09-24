@@ -17,7 +17,13 @@ from uuid import uuid4
 from ._types.agent_identity import project_agent_identity
 from .storage import ExecutionStore, StorageConflict
 from .trace.counts import tool_call_count
-from .trace.redaction import RedactionConfig, redact_for_persistence, redact_model_json
+from .trace.redaction import (
+    RedactionConfig,
+    RedactionError,
+    redact_for_persistence,
+    redact_model_json,
+    redact_result,
+)
 from .types import (
     ConnectionId,
     Event,
@@ -336,18 +342,32 @@ class ExecutionTraceRecorder:
 
         A managed execution is created and queued before its transport
         resolves a secret, so those lifecycle events may precede the bind.
-        Any other committed event may already hold unredacted values.
+        Every committed event must have the SDK's lifecycle shape and be left
+        unchanged by whole-event redaction under ``config``; otherwise it may
+        already hold a value the new policy would have removed.
         """
 
         with self._record_lock:
             if not allow_after_events and not all(
                 self._is_bare_lifecycle_event(event)
+                and self._is_unchanged_by(event, config)
                 for event in self._store.iter_events(self._execution_id)
             ):
                 raise TraceRecorderError(
                     "redaction policy must be bound before trace capture"
                 )
             self._redaction_config = config
+
+    @staticmethod
+    def _is_unchanged_by(event: Event, config: RedactionConfig) -> bool:
+        """Whether redacting the whole stored event under ``config`` is a no-op."""
+        try:
+            result = redact_result(
+                event.model_dump(mode="python"), config=config, path="$.event"
+            )
+        except RedactionError:
+            return False
+        return not result.paths
 
     def _is_bare_lifecycle_event(self, event: Event) -> bool:
         """Match only the exact lifecycle shape this SDK generates.
