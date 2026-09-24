@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,7 +23,7 @@ from fixtures.codex_responses_provider import (
     open_codex_responses_provider,
 )
 
-from m3 import expect_form, round_of, sequence
+from m3 import expect_form, maybe_url, round_of, sequence
 from m3.async_api import AsyncMCPTestKit
 from m3.elicitation import ElicitationResponse
 from m3.errors import (
@@ -388,6 +390,234 @@ def _wire_records(marker: Path) -> list[dict[str, Any]]:
     return [
         json.loads(line) for line in marker.read_text(encoding="utf-8").splitlines()
     ]
+
+
+@asynccontextmanager
+async def _async_direct_codex_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: ResponsesRun,
+    marker: Path,
+) -> AsyncIterator[tuple[Any, list[FixtureCodexHarnessAdapter]]]:
+    executable = _require_codex()
+    isolated_source_home = tmp_path / "empty-codex-source-home"
+    isolated_source_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(isolated_source_home))
+    adapters: list[FixtureCodexHarnessAdapter] = []
+    with open_codex_responses_provider(provider) as provider_url:
+
+        def make_adapter(harness: HarnessSpec) -> FixtureCodexHarnessAdapter:
+            if not isinstance(harness, Codex):
+                raise TypeError("Codex fixture received a non-Codex harness")
+            adapter = FixtureCodexHarnessAdapter(
+                executable=harness.executable or executable,
+                provider_url=provider_url,
+            )
+            adapters.append(adapter)
+            return adapter
+
+        registry = HarnessAdapterRegistry({"codex": make_adapter})
+        async with AsyncMCPTestKit(
+            env={}, cwd=str(_ROOT.parent), adapter_registry=registry
+        ) as kit:
+            agent = kit.agents([_entry(executable)])[0]
+            yield agent, adapters
+
+
+def _assert_one_successful_tool(
+    result: Any,
+    tool_name: str,
+    *,
+    attempt_count: int = 2,
+) -> None:
+    assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
+    assert result.trace_view is not None
+    calls = [
+        call for call in result.trace_view.tool_calls if call.tool.value == tool_name
+    ]
+    assert len(calls) == 1
+    assert calls[0].tool_status.value == "success"
+    assert len(calls[0].attempts) == attempt_count
+
+
+@pytest.mark.asyncio
+async def test_async_agent_run_uses_action_bound_form_plan_with_one_logical_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = tmp_path / "async-agent-run-wire.jsonl"
+    server = _server(marker)
+    provider = ResponsesRun()
+    provider.enqueue(
+        ModelOutput(
+            function_name="mcp__fixture::book_shipment",
+            arguments={"weight_kg": 2, "zone": "local"},
+        )
+    )
+    provider.enqueue(ModelOutput(text="Book shipment completed."))
+    plan = expect_form(
+        "shipping_address",
+        message="Enter the delivery address.",
+        schema=ADDRESS_SCHEMA,
+        server=server,
+        operation_kind="tool",
+        operation_name="book_shipment",
+    ).accept(HOME_ADDRESS)
+
+    async with _async_direct_codex_agent(tmp_path, monkeypatch, provider, marker) as (
+        agent,
+        adapters,
+    ):
+        result = await agent.run(
+            "Book one local shipment and report its status.",
+            server=server,
+            tools=["fixture:book_shipment"],
+            elicitation=plan,
+            timeout=60,
+            permission_policy="allow",
+        )
+
+    _assert_one_successful_tool(result, "book_shipment")
+    calls = _wire_calls(marker)
+    assert len(calls) == 2
+    assert calls[1]["requestState"] == "shipping-address"
+    assert calls[1]["inputResponses"] == {
+        "shipping_address": {"action": "accept", "content": HOME_ADDRESS}
+    }
+    assert adapters
+    assert len(adapters[0].turn_results) == 1
+    assert provider.requests
+    assert "authorization" not in provider.requests[0].headers
+
+
+@pytest.mark.asyncio
+async def test_async_agent_submit_uses_maybe_url_plan_and_keyed_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = tmp_path / "async-agent-submit-wire.jsonl"
+    server = _server(marker)
+    provider = ResponsesRun()
+    provider.enqueue(ModelOutput(function_name="mcp__fixture::url_round", arguments={}))
+    provider.enqueue(ModelOutput(text="Checkout was reviewed."))
+    plan = maybe_url(
+        "checkout",
+        message="Continue checkout.",
+        url="https://example.test/checkout/123",
+        elicitation_id="checkout-123",
+        server=server,
+        operation_kind="tool",
+        operation_name="url_round",
+    ).accept()
+
+    async with _async_direct_codex_agent(tmp_path, monkeypatch, provider, marker) as (
+        agent,
+        adapters,
+    ):
+        handle = agent.submit(
+            "Review the fixture checkout URL and report the result.",
+            server=server,
+            tools=["fixture:url_round"],
+            elicitation=plan,
+            timeout=60,
+            permission_policy="allow",
+        )
+        result = await handle.result(timeout=90)
+
+    _assert_one_successful_tool(result, "url_round")
+    calls = _wire_calls(marker)
+    assert len(calls) == 2
+    assert calls[1]["requestState"] == "url-state"
+    assert calls[1]["inputResponses"] == {
+        "checkout": {"action": "accept", "content": {}}
+    }
+    assert adapters
+    assert len(adapters[0].turn_results) == 1
+    assert provider.requests
+    assert "authorization" not in provider.requests[0].headers
+
+
+@pytest.mark.asyncio
+async def test_async_session_send_scopes_plan_to_each_turn_and_skips_maybe_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = tmp_path / "async-session-send-wire.jsonl"
+    server = _server(marker)
+    provider = ResponsesRun()
+    provider.enqueue(
+        ModelOutput(
+            function_name="mcp__fixture::book_shipment",
+            arguments={"weight_kg": 1, "zone": "local"},
+        )
+    )
+    provider.enqueue(ModelOutput(text="First shipment completed."))
+    provider.enqueue(
+        ModelOutput(function_name="mcp__fixture::shipping_quote", arguments={})
+    )
+    provider.enqueue(ModelOutput(text="Second quote completed."))
+    first_plan = expect_form(
+        "shipping_address",
+        message="Enter the delivery address.",
+        schema=ADDRESS_SCHEMA,
+        server=server,
+        operation_kind="tool",
+        operation_name="book_shipment",
+    ).accept(HOME_ADDRESS)
+    second_plan = maybe_url(
+        "optional_verification",
+        message="Complete optional verification.",
+        url="https://example.test/verify/optional",
+        server=server,
+        operation_kind="tool",
+        operation_name="shipping_quote",
+    ).accept()
+
+    async with _async_direct_codex_agent(tmp_path, monkeypatch, provider, marker) as (
+        agent,
+        adapters,
+    ):
+        async with agent.session(
+            server=server,
+            tools=["fixture:book_shipment", "fixture:shipping_quote"],
+            timeout=60,
+            permission_policy="allow",
+        ) as session:
+            first = await session.send(
+                "Book one shipment.",
+                elicitation=first_plan,
+                timeout=60,
+            )
+            second = await session.send(
+                "Get the shipping quote.",
+                elicitation=second_plan,
+                timeout=60,
+            )
+        result = session.result
+
+    assert first.snapshot.outcome is TurnOutcome.COMPLETED, first.error
+    assert second.snapshot.outcome is TurnOutcome.COMPLETED, second.error
+    assert result.snapshot.outcome is ExecutionOutcome.COMPLETED
+    assert result.trace_view is not None
+    assert [
+        event.request_key for event in result.trace_view.for_turn(first).elicitations
+    ] == ["shipping_address"]
+    assert not result.trace_view.for_turn(second).elicitations
+    calls = _wire_calls(marker)
+    assert [call["name"] for call in calls] == [
+        "book_shipment",
+        "book_shipment",
+        "shipping_quote",
+    ]
+    assert calls[1]["inputResponses"] == {
+        "shipping_address": {"action": "accept", "content": HOME_ADDRESS}
+    }
+    assert "requestState" not in calls[2]
+    assert "inputResponses" not in calls[2]
+    assert adapters
+    assert len(adapters[0].turn_results) == 2
+    assert provider.requests
+    assert "authorization" not in provider.requests[0].headers
 
 
 def _reopened_rounds(path: Path, execution_id: str) -> tuple[ManagedInputRecord, ...]:
