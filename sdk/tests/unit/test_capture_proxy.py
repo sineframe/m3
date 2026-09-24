@@ -503,9 +503,7 @@ async def test_loopback_capture_writer_timeout_does_not_stall_final_response(
     loop_errors: list[dict[str, Any]] = []
     loop = asyncio.get_running_loop()
     previous_exception_handler = loop.get_exception_handler()
-    loop.set_exception_handler(
-        lambda _loop, context: loop_errors.append(context)
-    )
+    loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))
 
     async def receive() -> dict[str, Any]:
         return {"type": "http.request", "body": b"", "more_body": False}
