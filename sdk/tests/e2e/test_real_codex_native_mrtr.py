@@ -53,6 +53,7 @@ async def _run_turn(
     tool: str,
     arguments: dict[str, Any] | None = None,
     answers: dict[str, dict[str, Any] | None] | None = None,
+    response_actions: dict[str, str] | None = None,
     interrupt_first: bool = False,
     response_meta: dict[str, Any] | None = None,
 ) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...], ResponsesRun]:
@@ -97,16 +98,16 @@ async def _run_turn(
                 payload = (answers or {}).get(str(metadata.get("fixture/request_id")))
                 if payload is None:
                     payload = (answers or {}).get(str(message))
+                action = (response_actions or {}).get(
+                    str(metadata.get("fixture/request_id"))
+                )
+                if action is None:
+                    action = (response_actions or {}).get(str(message), "accept")
                 result: dict[str, Any] = {
-                    "action": "accept",
-                    "content": (
-                        {}
-                        if is_tool_approval
-                        else payload
-                        if elicitation == "form"
-                        else None
-                    ),
+                    "action": action,
                 }
+                if is_tool_approval or (action == "accept" and elicitation == "form"):
+                    result["content"] = {} if is_tool_approval else payload
                 if response_meta is not None and elicitation in {"form", "url"}:
                     result["_meta"] = response_meta
                 if interrupt_first:
@@ -317,6 +318,40 @@ async def test_real_codex_surfaces_url_and_empty_form_requests(
     assert empty_calls[-1]["params"]["inputResponses"] == {
         "confirm": {"action": "accept", "content": {}}
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool,mode,message,key",
+    [
+        ("form_round", "form", "Enter the delivery address.", "shipping_address"),
+        ("url_round", "url", "Continue checkout.", "checkout"),
+    ],
+)
+@pytest.mark.parametrize("action", ["decline", "cancel"])
+async def test_real_codex_forwards_non_accept_form_and_url_responses(
+    tmp_path: Path,
+    tool: str,
+    mode: str,
+    message: str,
+    key: str,
+    action: str,
+) -> None:
+    response_meta = {"fixture/response": action}
+    native, calls, _provider = await _run_turn(
+        tmp_path,
+        tool=tool,
+        response_actions={message: action},
+        response_meta=response_meta,
+    )
+
+    prompts = _mrtr_prompts(native)
+    assert len(prompts) == 1
+    assert prompts[0]["params"]["mode"] == mode
+    assert len(calls) == 2
+    retry = calls[-1]["params"]
+    assert retry["inputResponses"] == {key: {"action": action, "_meta": response_meta}}
+    assert retry["requestState"] == ("form-state" if mode == "form" else "url-state")
 
 
 @pytest.mark.asyncio
