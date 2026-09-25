@@ -94,6 +94,7 @@ from .ephemeral import (
     StorageError,
     _execution_key,
     _report_fields,
+    run_needs_attention,
     run_sort_key,
 )
 from .evidence import (
@@ -229,6 +230,23 @@ def _register_run_search(connection: Any, _record: Any) -> None:
         lambda value: value.casefold() if isinstance(value, str) else "",
         deterministic=True,
     )
+    connection.create_function(
+        "m3_run_needs_attention",
+        1,
+        _record_needs_attention,
+        deterministic=True,
+    )
+
+
+def _record_needs_attention(record_json: object) -> int:
+    """SQL form of `run_needs_attention`, so both stores filter the same runs."""
+    if not isinstance(record_json, str):
+        return 0
+    try:
+        value = json.loads(record_json)
+    except ValueError:
+        return 0
+    return int(isinstance(value, Mapping) and run_needs_attention(value))
 
 
 def _parse_dt(value: str | None) -> datetime:
@@ -1787,6 +1805,37 @@ class SQLiteExecutionStore(_SqliteBase):
                 values.append({**value, "run_label": row[1]})
         return tuple(values)
 
+    @staticmethod
+    def _run_suites(
+        connection: Any, run_ids: Sequence[str]
+    ) -> dict[str, list[dict[str, object]]]:
+        """Each run's registered suites, ordered by name then ID."""
+        suites: dict[str, list[dict[str, object]]] = {}
+        if not run_ids:
+            return suites
+        # One JSON parameter keeps this under SQLite's variable limit.
+        for row in connection.execute(
+            "SELECT DISTINCT t.run_id,s.id,s.suite_name,s.project_id FROM v2_test_results t"
+            " JOIN v2_suites s ON s.id=t.suite_id"
+            " WHERE t.run_id IN (SELECT value FROM json_each(?))"
+            " ORDER BY s.suite_name,s.id",
+            (json.dumps(list(run_ids)),),
+        ):
+            suites.setdefault(str(row[0]), []).append(
+                {
+                    "suite_id": int(row[1]),
+                    "suite_name": str(row[2]),
+                    "project_id": str(row[3]) if row[3] else None,
+                }
+            )
+        return suites
+
+    def get_run_suites(self, run_id: str) -> tuple[Mapping[str, object], ...]:
+        """The registered suites one run's saved tests belong to."""
+        key = str(getattr(run_id, "root", run_id))
+        with self._connect() as connection:
+            return tuple(self._run_suites(connection, [key]).get(key, []))
+
     def list_test_run_page(
         self,
         *,
@@ -1795,11 +1844,13 @@ class SQLiteExecutionStore(_SqliteBase):
         suite_id: int | None = None,
         project_id: str | None = None,
         q: str | None = None,
+        attention: bool = False,
     ) -> tuple[tuple[Mapping[str, object], ...], int]:
         """Return newest-first run manifests with their suites, and the total.
 
         Suites come from saved test results, so a run appears under every
         suite its tests belong to, including tests with no execution.
+        ``attention`` keeps only runs with a failed case or that stopped short.
         """
         clauses: list[str] = []
         params: list[object] = []
@@ -1821,6 +1872,8 @@ class SQLiteExecutionStore(_SqliteBase):
             )
             clauses.append(f"(instr(m3_casefold(run_id), ?) > 0 OR {label_match})")
             params.extend((term, term))
+        if attention:
+            clauses.append("m3_run_needs_attention(record_json)")
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as connection:
             total = int(
@@ -1833,24 +1886,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 " ORDER BY created_at DESC,run_id DESC LIMIT ? OFFSET ?",
                 [*params, -1 if limit is None else int(limit), int(offset)],
             ).fetchall()
-            run_ids = [str(row[0]) for row in rows]
-            suites: dict[str, list[dict[str, object]]] = {}
-            if run_ids:
-                # One JSON parameter keeps this under SQLite's variable limit.
-                for row in connection.execute(
-                    "SELECT DISTINCT t.run_id,s.id,s.suite_name,s.project_id FROM v2_test_results t"
-                    " JOIN v2_suites s ON s.id=t.suite_id"
-                    " WHERE t.run_id IN (SELECT value FROM json_each(?))"
-                    " ORDER BY s.suite_name,s.id",
-                    (json.dumps(run_ids),),
-                ):
-                    suites.setdefault(str(row[0]), []).append(
-                        {
-                            "suite_id": int(row[1]),
-                            "suite_name": str(row[2]),
-                            "project_id": str(row[3]) if row[3] else None,
-                        }
-                    )
+            suites = self._run_suites(connection, [str(row[0]) for row in rows])
         values: list[Mapping[str, object]] = []
         for row in rows:
             value = _loads(row[1])
@@ -1862,6 +1898,91 @@ class SQLiteExecutionStore(_SqliteBase):
                         "suites": suites.get(str(row[0]), []),
                     }
                 )
+        return tuple(values), total
+
+    def list_suite_page(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        q: str | None = None,
+        project_id: str | None = None,
+        suite_id: int | None = None,
+    ) -> tuple[tuple[Mapping[str, object], ...], int]:
+        """Return suites with their latest run, most recently run first.
+
+        Each item has ``suite_id``, ``suite_name``, ``project_id``,
+        ``project_name``, ``run_count`` and ``last_run`` (the newest run's
+        manifest with its suites, or None). Suites that never ran sort last.
+        """
+        clauses: list[str] = []
+        params: list[object] = []
+        if suite_id is not None:
+            clauses.append("s.id=?")
+            params.append(int(suite_id))
+        if project_id is not None:
+            clauses.append("s.project_id=?")
+            params.append(str(project_id))
+        if q and q.strip():
+            clauses.append("instr(m3_casefold(s.suite_name), ?) > 0")
+            params.append(q.strip().casefold())
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        # A run belongs to a suite when any of its saved tests does. The
+        # created_at column is the normalized sort key ("" when undated).
+        ranked = (
+            "WITH members AS ("
+            " SELECT DISTINCT t.suite_id,r.run_id,r.created_at FROM v2_test_results t"
+            " JOIN v2_test_runs r ON r.run_id=t.run_id WHERE t.suite_id IS NOT NULL"
+            "), ranked AS ("
+            " SELECT suite_id,run_id,created_at,"
+            " COUNT(*) OVER (PARTITION BY suite_id) AS run_count,"
+            " ROW_NUMBER() OVER (PARTITION BY suite_id"
+            "  ORDER BY created_at DESC,run_id DESC) AS position"
+            " FROM members)"
+        )
+        with self._connect() as connection:
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM v2_suites s{where}", params
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"{ranked} SELECT s.id,s.suite_name,s.project_id,p.project_name,"
+                " COALESCE(r.run_count,0),r.run_id,t.record_json,t.run_label"
+                " FROM v2_suites s"
+                " LEFT JOIN ranked r ON r.suite_id=s.id AND r.position=1"
+                " LEFT JOIN v2_test_runs t ON t.run_id=r.run_id"
+                " LEFT JOIN v2_projects p ON p.id=s.project_id"
+                f"{where}"
+                " ORDER BY COALESCE(r.created_at,'') DESC,s.suite_name,s.id"
+                " LIMIT ? OFFSET ?",
+                [*params, -1 if limit is None else int(limit), int(offset)],
+            ).fetchall()
+            suites = self._run_suites(
+                connection, [str(row[5]) for row in rows if row[5] is not None]
+            )
+        values: list[Mapping[str, object]] = []
+        for row in rows:
+            manifest = _loads(row[6]) if row[6] is not None else None
+            last_run = (
+                {
+                    **manifest,
+                    "run_label": row[7],
+                    "suites": suites.get(str(row[5]), []),
+                }
+                if isinstance(manifest, Mapping)
+                else None
+            )
+            values.append(
+                {
+                    "suite_id": int(row[0]),
+                    "suite_name": str(row[1]),
+                    "project_id": str(row[2]) if row[2] else None,
+                    "project_name": str(row[3]) if row[3] else None,
+                    "run_count": int(row[4]),
+                    "last_run": last_run,
+                }
+            )
         return tuple(values), total
 
     def save_test_result(

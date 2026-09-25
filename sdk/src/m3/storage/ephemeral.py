@@ -421,6 +421,46 @@ def run_sort_key(value: object) -> str:
         return ""
 
 
+# Run statuses that need a look: failures, and runs that stopped before a
+# verdict. Keep in step with `statusTone` in the UI (m3-ui
+# src/features/reports/feedback-run.ts), which marks the same rows.
+ATTENTION_RUN_STATUSES = frozenset(
+    {
+        "failed",
+        "fail",
+        "error",
+        "failed_assertion",
+        "protocol_error",
+        "setup_error",
+        "teardown_error",
+        "pytest_error",
+        "tool_error",
+        "interrupted",
+        "cancelled",
+        "canceled",
+        "incomplete",
+    }
+)
+
+
+def run_needs_attention(manifest: Mapping[str, object]) -> bool:
+    """Whether a run manifest has a failed case or stopped short."""
+    status = manifest.get("status")
+    if isinstance(status, str) and status.casefold() in ATTENTION_RUN_STATUSES:
+        return True
+    counts = manifest.get("effective_verdict_counts")
+    if not isinstance(counts, Mapping):
+        counts = manifest.get("test_outcome_counts")
+    if not isinstance(counts, Mapping):
+        return False
+    return any(
+        isinstance(counts.get(key), int)
+        and not isinstance(counts.get(key), bool)
+        and cast(int, counts.get(key)) > 0
+        for key in ("failed", "error")
+    )
+
+
 class InMemoryExecutionStore:
     """Thread-safe execution metadata store with commit-gated visibility."""
 
@@ -674,6 +714,32 @@ class InMemoryExecutionStore:
         )
         return tuple(dict(value) for value in values)
 
+    def _suites_by_run(self) -> dict[str, list[dict[str, object]]]:
+        """Each run's registered suites, ordered by name then ID; hold the lock."""
+        suites_by_run: dict[str, list[dict[str, object]]] = {}
+        for run_id, results in self._test_results.items():
+            seen = {
+                (
+                    int(item["suite_id"]),
+                    str(item["suite_name"]),
+                    str(item["project_id"]) if item.get("project_id") else None,
+                )
+                for item in results.values()
+                if item.get("suite_id") is not None
+            }
+            suites_by_run[run_id] = [
+                {"suite_id": sid, "suite_name": name, "project_id": project}
+                for sid, name, project in sorted(
+                    seen, key=lambda pair: (pair[1], pair[0])
+                )
+            ]
+        return suites_by_run
+
+    def get_run_suites(self, run_id: str) -> tuple[Mapping[str, object], ...]:
+        """The registered suites one run's saved tests belong to."""
+        with self._lock:
+            return tuple(self._suites_by_run().get(str(run_id), []))
+
     def list_test_run_page(
         self,
         *,
@@ -682,27 +748,15 @@ class InMemoryExecutionStore:
         suite_id: int | None = None,
         project_id: str | None = None,
         q: str | None = None,
+        attention: bool = False,
     ) -> tuple[tuple[Mapping[str, object], ...], int]:
-        """Return newest-first run manifests with their suites, and the total."""
+        """Return newest-first run manifests with their suites, and the total.
+
+        ``attention`` keeps only runs with a failed case or that stopped short.
+        """
         with self._lock:
             runs = copy.deepcopy(list(self._test_runs.items()))
-            suites_by_run: dict[str, list[dict[str, object]]] = {}
-            for run_id, results in self._test_results.items():
-                seen = {
-                    (
-                        int(item["suite_id"]),
-                        str(item["suite_name"]),
-                        str(item["project_id"]) if item.get("project_id") else None,
-                    )
-                    for item in results.values()
-                    if item.get("suite_id") is not None
-                }
-                suites_by_run[run_id] = [
-                    {"suite_id": sid, "suite_name": name, "project_id": project}
-                    for sid, name, project in sorted(
-                        seen, key=lambda pair: (pair[1], pair[0])
-                    )
-                ]
+            suites_by_run = self._suites_by_run()
         term = (q or "").strip().casefold()
         exact_label = term.startswith("run #") and term[5:].isdigit()
         values = [
@@ -725,6 +779,7 @@ class InMemoryExecutionStore:
                     for item in suites_by_run.get(run_id, [])
                 )
             )
+            and (not attention or run_needs_attention(value))
         ]
         values.sort(
             key=lambda item: (
@@ -735,6 +790,69 @@ class InMemoryExecutionStore:
         )
         end = None if limit is None else offset + limit
         return tuple(values[offset:end]), len(values)
+
+    def list_suite_page(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        q: str | None = None,
+        project_id: str | None = None,
+        suite_id: int | None = None,
+    ) -> tuple[tuple[Mapping[str, object], ...], int]:
+        """Return suites with their latest run, most recently run first.
+
+        Each item has ``suite_id``, ``suite_name``, ``project_id``,
+        ``project_name``, ``run_count`` and ``last_run`` (the newest run's
+        manifest with its suites, or None). Suites that never ran sort last.
+        """
+        with self._lock:
+            suites = list(self._suites.values())
+            runs = copy.deepcopy(self._test_runs)
+            suites_by_run = self._suites_by_run()
+            projects = dict(self._projects)
+        term = (q or "").strip().casefold()
+        runs_by_suite: dict[int, list[tuple[str, str]]] = {}
+        for run_id, members in suites_by_run.items():
+            if run_id not in runs:
+                continue
+            key = (run_sort_key(runs[run_id].get("created_at")), run_id)
+            for member in members:
+                runs_by_suite.setdefault(cast(int, member["suite_id"]), []).append(key)
+        items: list[tuple[str, dict[str, object]]] = []
+        for suite in suites:
+            project = suite.project_id.root if suite.project_id else None
+            if suite_id is not None and suite.id.root != int(suite_id):
+                continue
+            if project_id is not None and project != str(project_id):
+                continue
+            if term and term not in suite.name.casefold():
+                continue
+            keys = runs_by_suite.get(suite.id.root, [])
+            latest = max(keys) if keys else None
+            last_run = (
+                {**runs[latest[1]], "suites": suites_by_run.get(latest[1], [])}
+                if latest
+                else None
+            )
+            items.append(
+                (
+                    latest[0] if latest else "",
+                    {
+                        "suite_id": suite.id.root,
+                        "suite_name": suite.name,
+                        "project_id": project,
+                        "project_name": projects.get(project) if project else None,
+                        "run_count": len(keys),
+                        "last_run": last_run,
+                    },
+                )
+            )
+        # Newest last run first; undated or never-run suites after, by name.
+        items.sort(key=lambda pair: (str(pair[1]["suite_name"]), pair[1]["suite_id"]))
+        items.sort(key=lambda pair: pair[0], reverse=True)
+        end = None if limit is None else offset + limit
+        return tuple(item for _, item in items[offset:end]), len(items)
 
     def save_test_result(
         self, run_id: str, attempt_id: str, value: Mapping[str, object]

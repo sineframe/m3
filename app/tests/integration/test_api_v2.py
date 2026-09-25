@@ -593,6 +593,7 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
         "total": 2,
         "limit": None,
         "offset": 0,
+        "attention_total": 0,
     }
     assert "project_root" not in response.text
     assert "selection" not in response.text

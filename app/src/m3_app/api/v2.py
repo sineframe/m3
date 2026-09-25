@@ -274,6 +274,67 @@ class V2RunListEnvelope(BaseModel):
     total: int = Field(default=0, description="Runs matching the filters.")
     limit: int | None = Field(default=None, description="Page size; null means all.")
     offset: int = Field(default=0, description="Runs skipped before this page.")
+    attention_total: int = Field(
+        default=0,
+        description=(
+            "Runs matching the suite, project and search filters that have a "
+            "failed case or stopped short, whether or not `attention` is set."
+        ),
+    )
+
+
+class V2RunEnvelope(BaseModel):
+    version: Literal["v2"] = "v2"
+    run: V2RunSummary
+
+
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _safe_counts(value: object) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        key: count
+        for key, count in value.items()
+        if isinstance(key, str) and key
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0
+    }
+
+
+def _run_summary(manifest: Mapping[str, object]) -> V2RunSummary | None:
+    """The safe summary of one run manifest, or None without a run ID."""
+    run_id = manifest.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        return None
+    collected = manifest.get("collected_node_ids")
+    test_count = (
+        len(collected)
+        if isinstance(collected, (list, tuple))
+        else manifest.get("collection_count", 0)
+    )
+    safe_test_count = (
+        test_count
+        if isinstance(test_count, int) and not isinstance(test_count, bool)
+        else 0
+    )
+    return V2RunSummary(
+        run_id=run_id,
+        run_label=_optional_string(manifest.get("run_label")),
+        created_at=_optional_string(manifest.get("created_at")),
+        finished_at=_optional_string(manifest.get("finished_at")),
+        status=_optional_string(manifest.get("status")),
+        project_id=_optional_string(manifest.get("project_id")),
+        project_name=_optional_string(manifest.get("project_name")),
+        test_count=max(0, safe_test_count),
+        test_outcome_counts=_safe_counts(manifest.get("test_outcome_counts")),
+        effective_verdict_counts=_safe_counts(manifest.get("effective_verdict_counts")),
+        suites=tuple(
+            V2SuiteRef.model_validate(item)
+            for item in cast(list[object], manifest.get("suites") or [])
+        ),
+    )
 
 
 RunGroup = Literal["suite_name", "suite_id", "date", "month", "project_id", "status"]
@@ -358,9 +419,44 @@ def _group_run_page(
     )
 
 
+class V2SuiteSummary(V2SuiteRef):
+    project_name: str | None = Field(
+        default=None, description="Display name of the owning project."
+    )
+    run_count: int = Field(
+        default=0, description="Runs with at least one saved test in this suite."
+    )
+    last_run: V2RunSummary | None = Field(
+        default=None, description="This suite's newest run, or null if it never ran."
+    )
+
+
+def _suite_summary(value: Mapping[str, object]) -> V2SuiteSummary:
+    last_run = value.get("last_run")
+    run_count = value.get("run_count")
+    return V2SuiteSummary(
+        suite_id=cast(int, value["suite_id"]),
+        suite_name=str(value["suite_name"]),
+        project_id=_optional_string(value.get("project_id")),
+        project_name=_optional_string(value.get("project_name")),
+        run_count=run_count if isinstance(run_count, int) else 0,
+        last_run=_run_summary(last_run) if isinstance(last_run, Mapping) else None,
+    )
+
+
 class V2SuiteListEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
-    suites: tuple[V2SuiteRef, ...]
+    suites: tuple[V2SuiteSummary, ...] = Field(
+        description="Suites, most recently run first; suites that never ran last."
+    )
+    total: int = Field(default=0, description="Suites matching the filters.")
+    limit: int | None = Field(default=None, description="Page size; null means all.")
+    offset: int = Field(default=0, description="Suites skipped before this page.")
+
+
+class V2SuiteEnvelope(BaseModel):
+    version: Literal["v2"] = "v2"
+    suite: V2SuiteSummary
 
 
 class V2DeletedEnvelope(BaseModel):
@@ -697,6 +793,7 @@ def _service_fault(error: AppExecutionError) -> V2Fault:
         "invalid_evaluation_aggregate_query": 422,
         "evaluation_data_unavailable": 500,
         "feedback_not_found": 404,
+        "run_not_found": 404,
         "feedback_baseline_not_found": 404,
         "feedback_data_unavailable": 500,
         "profile_resolution_failed": 422,
@@ -1319,21 +1416,12 @@ def install_v2(
         group: RunGroup | None = Query(
             None, description="group the selected run page by an allowed dimension"
         ),
+        attention: bool = Query(
+            False,
+            description="keep only runs with a failed case or that stopped short",
+        ),
         service: AppExecutionService = Depends(get_service),
     ) -> V2RunListEnvelope | V2GroupedRunListEnvelope:
-        def optional_string(value: object) -> str | None:
-            return value if isinstance(value, str) else None
-
-        def safe_counts(value: object) -> dict[str, int]:
-            if not isinstance(value, Mapping):
-                return {}
-            return {
-                key: count
-                for key, count in value.items()
-                if isinstance(key, str) and key
-                if isinstance(count, int) and not isinstance(count, bool) and count >= 0
-            }
-
         page_limit = limit if limit is not None else (50 if group else None)
         manifests, total = service.list_run_page(
             limit=page_limit,
@@ -1341,45 +1429,13 @@ def install_v2(
             suite_id=suite_id,
             project_id=str(project_id) if project_id else None,
             q=q,
+            attention=attention,
         )
-        summaries: list[V2RunSummary] = []
-        for manifest in manifests:
-            run_id = manifest.get("run_id")
-            if not isinstance(run_id, str) or not run_id:
-                continue
-            collected = manifest.get("collected_node_ids")
-            test_count = (
-                len(collected)
-                if isinstance(collected, (list, tuple))
-                else manifest.get("collection_count", 0)
-            )
-            safe_test_count = (
-                test_count
-                if isinstance(test_count, int) and not isinstance(test_count, bool)
-                else 0
-            )
-            summaries.append(
-                V2RunSummary(
-                    run_id=run_id,
-                    run_label=optional_string(manifest.get("run_label")),
-                    created_at=optional_string(manifest.get("created_at")),
-                    finished_at=optional_string(manifest.get("finished_at")),
-                    status=optional_string(manifest.get("status")),
-                    project_id=optional_string(manifest.get("project_id")),
-                    project_name=optional_string(manifest.get("project_name")),
-                    test_count=max(0, safe_test_count),
-                    test_outcome_counts=safe_counts(
-                        manifest.get("test_outcome_counts")
-                    ),
-                    effective_verdict_counts=safe_counts(
-                        manifest.get("effective_verdict_counts")
-                    ),
-                    suites=tuple(
-                        V2SuiteRef.model_validate(item)
-                        for item in cast(list[object], manifest.get("suites") or [])
-                    ),
-                )
-            )
+        summaries = [
+            summary
+            for summary in (_run_summary(manifest) for manifest in manifests)
+            if summary is not None
+        ]
 
         if group is not None:
             return V2GroupedRunListEnvelope(
@@ -1390,8 +1446,30 @@ def install_v2(
                 offset=offset,
             )
         return V2RunListEnvelope(
-            runs=tuple(summaries), total=total, limit=page_limit, offset=offset
+            runs=tuple(summaries),
+            total=total,
+            limit=page_limit,
+            offset=offset,
+            attention_total=total
+            if attention
+            else service.count_attention_runs(
+                suite_id=suite_id,
+                project_id=str(project_id) if project_id else None,
+                q=q,
+            ),
         )
+
+    # `:path` keeps IDs with an encoded slash ("run id/part") in one parameter.
+    @runs_router.get("/{run_id:path}", response_model=V2RunEnvelope)
+    def get_run(
+        run_id: str,
+        service: AppExecutionService = Depends(get_service),
+    ) -> V2RunEnvelope:
+        manifest = service.get_run(run_id)
+        summary = _run_summary(manifest) if manifest is not None else None
+        if summary is None:
+            raise V2Fault(404, "run_not_found", "run was not found")
+        return V2RunEnvelope(run=summary)
 
     application.include_router(runs_router)
 
@@ -1586,18 +1664,36 @@ def install_v2(
 
     @suite_router.get("", response_model=V2SuiteListEnvelope)
     def list_suites(
+        limit: int | None = Query(None, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+        q: str | None = Query(None, max_length=256, description="Search suite name"),
+        project_id: uuid.UUID | None = Query(
+            None, description="filter by project identity"
+        ),
         service: AppExecutionService = Depends(get_service),
     ) -> V2SuiteListEnvelope:
-        return V2SuiteListEnvelope(
-            suites=tuple(
-                V2SuiteRef(
-                    suite_id=suite.id.root,
-                    suite_name=suite.name,
-                    project_id=suite.project_id.root if suite.project_id else None,
-                )
-                for suite in service.list_suites()
-            )
+        values, total = service.list_suite_page(
+            limit=limit,
+            offset=offset,
+            q=q,
+            project_id=str(project_id) if project_id else None,
         )
+        return V2SuiteListEnvelope(
+            suites=tuple(_suite_summary(value) for value in values),
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    @suite_router.get("/{suite_id}", response_model=V2SuiteEnvelope)
+    def get_suite(
+        suite_id: int,
+        service: AppExecutionService = Depends(get_service),
+    ) -> V2SuiteEnvelope:
+        values, _ = service.list_suite_page(limit=1, suite_id=suite_id)
+        if not values:
+            raise V2Fault(404, "suite_not_found", "suite was not found")
+        return V2SuiteEnvelope(suite=_suite_summary(values[0]))
 
     suite_router.add_api_route(
         "/{suite_id}/executions",
@@ -1713,8 +1809,10 @@ def install_v2(
             "/api/v2/executions/{execution_id}/cancel": "Request cancellation of an active execution.",
             "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay": "Replay one recorded tool call as a new direct execution and return 202. Only the matching server binding is reused; environment references resolve from the server process. The replay has no run, case, or suite identity; spec metadata replayed_from.execution_id and replayed_from.entry_id record its source. An optional {arguments} body replaces the recorded arguments; it is required when the recorded arguments were not observed or contain redacted values. Replay responses redact the copied server's stdio command, args, cwd, HTTP url, and literal environment and header values.",
             "/api/v2/executions/{execution_id}/report": "Read a terminal execution report, trace, test summaries, and bounded event or artifact pages.",
-            "/api/v2/runs": "List safe, newest-first pytest run summaries with their suites, including runs with no executions or evaluations. Optional limit, offset, suite_id, project_id, and page-scoped group.",
-            "/api/v2/suites": "List registered suites for run filters.",
+            "/api/v2/runs": "List safe, newest-first pytest run summaries with their suites, including runs with no executions or evaluations. Optional limit, offset, suite_id, project_id, q, attention, and page-scoped group.",
+            "/api/v2/runs/{run_id}": "Read one safe pytest run summary with every suite it belongs to.",
+            "/api/v2/suites": "List registered suites with their run count and newest run, most recently run first. Optional limit, offset, q, and project_id.",
+            "/api/v2/suites/{suite_id}": "Read one registered suite with its run count and newest run.",
             "/api/v2/suites/{suite_id}/executions": "Page through saved executions belonging to an integer suite ID.",
             "/api/v2/evaluations/aggregate": "Calculate a read-only aggregate from evaluation results already saved by the SDK or CLI.",
             "/api/v2/feedback/{run_id}": "Read saved feedback for a run and optionally compare it with a saved baseline run.",
@@ -1918,6 +2016,8 @@ def install_v2(
             ("get", "/api/v2/executions/{execution_id}/report"),
             ("post", "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay"),
             ("get", "/api/v2/runs"),
+            ("get", "/api/v2/runs/{run_id}"),
+            ("get", "/api/v2/suites/{suite_id}"),
             ("get", "/api/v2/suites/{suite_id}/executions"),
             ("get", "/api/v2/feedback/{run_id}"),
             ("post", "/api/v2/evidence/read"),
@@ -1943,6 +2043,8 @@ def install_v2(
             ("post", "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay"),
             ("get", "/api/v2/runs"),
             ("get", "/api/v2/suites"),
+            ("get", "/api/v2/runs/{run_id}"),
+            ("get", "/api/v2/suites/{suite_id}"),
             ("post", "/api/v2/evaluations/aggregate"),
             ("get", "/api/v2/feedback/{run_id}"),
             ("post", "/api/v2/evidence/read"),
@@ -1967,6 +2069,9 @@ def install_v2(
             ("get", "/api/v2/executions/{execution_id}/report"),
             ("post", "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay"),
             ("get", "/api/v2/runs"),
+            ("get", "/api/v2/runs/{run_id}"),
+            ("get", "/api/v2/suites"),
+            ("get", "/api/v2/suites/{suite_id}"),
             ("get", "/api/v2/suites/{suite_id}/executions"),
             ("post", "/api/v2/evaluations/aggregate"),
             ("post", "/api/v2/evidence/read"),
