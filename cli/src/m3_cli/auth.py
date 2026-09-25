@@ -254,8 +254,10 @@ def login() -> int:
         can_store_developer = False
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(32)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
-    challenge = challenge.rstrip(b"=").decode("ascii")
+    challenge_bytes = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    )
+    challenge = challenge_bytes.rstrip(b"=").decode("ascii")
     callback: dict[str, str] = {}
     callback_lock = threading.Lock()
     completed = threading.Event()
