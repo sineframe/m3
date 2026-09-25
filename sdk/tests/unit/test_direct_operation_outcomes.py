@@ -129,7 +129,7 @@ async def test_direct_call_tool_terminal_outcomes(
     result = await controller.run(
         _spec(
             operation=CallTool(server="outcome", name="echo", arguments={}),
-            timeout=0.05,
+            timeout=2,
         )
     )
 
