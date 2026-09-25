@@ -452,6 +452,7 @@ class InMemoryExecutionStore:
         self._projects: dict[str, str] = {}
         self._turns: dict[str, list[tuple[TurnState, TurnResult | None]]] = {}
         self._test_runs: dict[str, dict[str, Any]] = {}
+        self._next_run_label = 1
         self._test_results: dict[str, dict[str, dict[str, Any]]] = {}
 
     # ACP probe persistence intentionally lives beside execution persistence,
@@ -646,9 +647,16 @@ class InMemoryExecutionStore:
             dict(value), config=self._redaction_config, path="$.test_run"
         )
         with self._lock:
-            self._test_runs[key] = (
-                copy.deepcopy(dict(safe)) if isinstance(safe, Mapping) else {}
-            )
+            existing = self._test_runs.get(key)
+            if existing is None:
+                label = f"Run #{self._next_run_label}"
+                self._next_run_label += 1
+            else:
+                label = str(existing["run_label"])
+            self._test_runs[key] = {
+                **(copy.deepcopy(dict(safe)) if isinstance(safe, Mapping) else {}),
+                "run_label": label,
+            }
 
     def get_test_run(self, run_id: str) -> Mapping[str, object] | None:
         with self._lock:
@@ -673,6 +681,7 @@ class InMemoryExecutionStore:
         offset: int = 0,
         suite_id: int | None = None,
         project_id: str | None = None,
+        q: str | None = None,
     ) -> tuple[tuple[Mapping[str, object], ...], int]:
         """Return newest-first run manifests with their suites, and the total."""
         with self._lock:
@@ -694,10 +703,21 @@ class InMemoryExecutionStore:
                         seen, key=lambda pair: (pair[1], pair[0])
                     )
                 ]
+        term = (q or "").strip().casefold()
+        exact_label = term.startswith("run #") and term[5:].isdigit()
         values = [
             {**value, "suites": suites_by_run.get(run_id, [])}
             for run_id, value in runs
             if (project_id is None or value.get("project_id") == str(project_id))
+            and (
+                not term
+                or term in run_id.casefold()
+                or (
+                    term == str(value.get("run_label", "")).casefold()
+                    if exact_label
+                    else term in str(value.get("run_label", "")).casefold()
+                )
+            )
             and (
                 suite_id is None
                 or any(

@@ -221,6 +221,16 @@ def _iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat()
 
 
+def _register_run_search(connection: Any, _record: Any) -> None:
+    """Use the same Unicode matching rule as the in-memory run store."""
+    connection.create_function(
+        "m3_casefold",
+        1,
+        lambda value: value.casefold() if isinstance(value, str) else "",
+        deterministic=True,
+    )
+
+
 def _parse_dt(value: str | None) -> datetime:
     if not value:
         return _utcnow()
@@ -449,7 +459,10 @@ CREATE TABLE IF NOT EXISTS v2_commands (
 CREATE TABLE IF NOT EXISTS v2_test_runs (
   run_id TEXT PRIMARY KEY, record_json TEXT NOT NULL,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-  project_id TEXT REFERENCES v2_projects(id)
+  project_id TEXT REFERENCES v2_projects(id), run_label TEXT
+);
+CREATE TABLE IF NOT EXISTS v2_run_label_sequence (
+  number INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL UNIQUE
 );
 CREATE TABLE IF NOT EXISTS v2_test_results (
   run_id TEXT NOT NULL REFERENCES v2_test_runs(run_id) ON DELETE CASCADE,
@@ -516,6 +529,9 @@ class _SqliteBase:
             # writes through its normal locking semantics.
             poolclass=null_pool,
         )
+        from sqlalchemy import event
+
+        event.listen(self._engine, "connect", _register_run_search)
         self._initialize()
 
     def _connect(self) -> _CompatConnection:
@@ -586,6 +602,7 @@ class _SqliteBase:
                     ("v2_suites", "project_id", "TEXT"),
                     ("v2_executions", "project_id", "TEXT"),
                     ("v2_test_runs", "project_id", "TEXT"),
+                    ("v2_test_runs", "run_label", "TEXT"),
                 ):
                     columns = connection.execute(
                         f"PRAGMA table_info({table})"
@@ -594,6 +611,24 @@ class _SqliteBase:
                         connection.execute(
                             f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
                         )
+                # Old manifests predate labels. Assign them in history order,
+                # under the same writer lock used by new run creation.
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    rows = connection.execute(
+                        "SELECT run_id FROM v2_test_runs WHERE run_label IS NULL "
+                        "ORDER BY created_at, run_id"
+                    ).fetchall()
+                    for row in rows:
+                        self._assign_run_label(connection, str(row[0]))
+                    connection.execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS v2_test_runs_run_label "
+                        "ON v2_test_runs(run_label)"
+                    )
+                    connection.execute("COMMIT")
+                except BaseException:
+                    connection.execute("ROLLBACK")
+                    raise
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS v2_evaluations_execution_turn ON v2_evaluations(execution_id, turn_id, created_at, id)"
                 )
@@ -636,6 +671,28 @@ class _SqliteBase:
             if _is_database_error(exc):
                 raise StorageError("database initialization failed") from None
             raise
+
+    @staticmethod
+    def _assign_run_label(connection: _CompatConnection, run_id: str) -> str:
+        """Reserve one durable, database-wide run number for an opaque run ID."""
+        row = connection.execute(
+            "SELECT number FROM v2_run_label_sequence WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if row is None:
+            # INSERT OR IGNORE still advances SQLite's AUTOINCREMENT counter on
+            # conflict. Only insert for a genuinely new run, under the writer lock.
+            connection.execute(
+                "INSERT INTO v2_run_label_sequence(run_id) VALUES(?)", (run_id,)
+            )
+            row = connection.execute(
+                "SELECT number FROM v2_run_label_sequence WHERE run_id=?", (run_id,)
+            ).fetchone()
+        label = f"Run #{int(row[0])}"
+        connection.execute(
+            "UPDATE v2_test_runs SET run_label=? WHERE run_id=? AND run_label IS NULL",
+            (label, run_id),
+        )
+        return label
 
     @staticmethod
     def _migrate_suite_uniqueness(connection: _CompatConnection) -> None:
@@ -1699,6 +1756,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 "ON CONFLICT(run_id) DO UPDATE SET record_json=excluded.record_json,created_at=excluded.created_at,updated_at=excluded.updated_at,project_id=excluded.project_id",
                 (key, _json(safe), sort_key, now, safe.get("project_id")),
             )
+            self._assign_run_label(connection, key)
             self._commit(connection)
         except BaseException:
             self._rollback(connection)
@@ -1710,23 +1768,23 @@ class SQLiteExecutionStore(_SqliteBase):
         key = str(getattr(run_id, "root", run_id))
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT record_json FROM v2_test_runs WHERE run_id=?", (key,)
+                "SELECT record_json,run_label FROM v2_test_runs WHERE run_id=?", (key,)
             ).fetchone()
         if row is None:
             return None
         value = _loads(row[0])
-        return dict(value) if isinstance(value, Mapping) else None
+        return {**value, "run_label": row[1]} if isinstance(value, Mapping) else None
 
     def list_test_runs(self) -> tuple[Mapping[str, object], ...]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT record_json FROM v2_test_runs ORDER BY created_at,run_id"
+                "SELECT record_json,run_label FROM v2_test_runs ORDER BY created_at,run_id"
             ).fetchall()
         values: list[Mapping[str, object]] = []
         for row in rows:
             value = _loads(row[0])
             if isinstance(value, Mapping):
-                values.append(dict(value))
+                values.append({**value, "run_label": row[1]})
         return tuple(values)
 
     def list_test_run_page(
@@ -1736,6 +1794,7 @@ class SQLiteExecutionStore(_SqliteBase):
         offset: int = 0,
         suite_id: int | None = None,
         project_id: str | None = None,
+        q: str | None = None,
     ) -> tuple[tuple[Mapping[str, object], ...], int]:
         """Return newest-first run manifests with their suites, and the total.
 
@@ -1752,6 +1811,16 @@ class SQLiteExecutionStore(_SqliteBase):
         if project_id is not None:
             clauses.append("project_id=?")
             params.append(str(project_id))
+        if q and q.strip():
+            term = q.strip().casefold()
+            exact_label = term.startswith("run #") and term[5:].isdigit()
+            label_match = (
+                "m3_casefold(run_label) = ?"
+                if exact_label
+                else "instr(m3_casefold(run_label), ?) > 0"
+            )
+            clauses.append(f"(instr(m3_casefold(run_id), ?) > 0 OR {label_match})")
+            params.extend((term, term))
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as connection:
             total = int(
@@ -1760,7 +1829,7 @@ class SQLiteExecutionStore(_SqliteBase):
                 ).fetchone()[0]
             )
             rows = connection.execute(
-                f"SELECT run_id,record_json FROM v2_test_runs{where}"
+                f"SELECT run_id,record_json,run_label FROM v2_test_runs{where}"
                 " ORDER BY created_at DESC,run_id DESC LIMIT ? OFFSET ?",
                 [*params, -1 if limit is None else int(limit), int(offset)],
             ).fetchall()
@@ -1786,7 +1855,13 @@ class SQLiteExecutionStore(_SqliteBase):
         for row in rows:
             value = _loads(row[1])
             if isinstance(value, Mapping):
-                values.append({**value, "suites": suites.get(str(row[0]), [])})
+                values.append(
+                    {
+                        **value,
+                        "run_label": row[2],
+                        "suites": suites.get(str(row[0]), []),
+                    }
+                )
         return tuple(values), total
 
     def save_test_result(
@@ -1843,6 +1918,7 @@ class SQLiteExecutionStore(_SqliteBase):
                         safe.get("project_id"),
                     ),
                 )
+            self._assign_run_label(connection, key)
             connection.execute(
                 "INSERT INTO v2_test_results(run_id,attempt_id,record_json,created_at,updated_at,suite_id) VALUES(?,?,?,?,?,?) "
                 "ON CONFLICT(run_id,attempt_id) DO UPDATE SET record_json=excluded.record_json,updated_at=excluded.updated_at,suite_id=excluded.suite_id",

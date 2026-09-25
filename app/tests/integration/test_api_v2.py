@@ -423,8 +423,12 @@ def test_v2_feedback_reads_manifest_and_optional_baseline(tmp_path):
         assert response.status_code == 200
         body = response.json()
         assert body["version"] == "v2"
+        assert body["run_label"] == "Run #2"
         assert body["feedback"]["run_id"] == "current-run"
+        assert body["feedback"]["run_label"] == "Run #2"
         assert body["feedback"]["comparison"]["baseline_run_id"] == "baseline-run"
+        assert body["feedback"]["comparison"]["baseline_run_label"] == "Run #1"
+        assert body["feedback"]["comparison"]["current_run_label"] == "Run #2"
         missing = client.get(
             "/api/v2/feedback/current-run", params={"baseline_run_id": "missing"}
         )
@@ -434,6 +438,83 @@ def test_v2_feedback_reads_manifest_and_optional_baseline(tmp_path):
         assert unknown.status_code == 404
         assert unknown.json()["error"]["code"] == "feedback_not_found"
     store.close()
+
+
+def test_v2_runs_searches_label_and_technical_id_before_paging(tmp_path):
+    database = Path(tmp_path).resolve() / "search.sqlite"
+    store = SQLiteExecutionStore(database)
+    for number in range(4):
+        run_id = f"technical-{number}"
+        store.save_test_run(run_id, {"run_id": run_id})
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        for query, expected in (
+            ("run #1", "technical-0"),
+            ("TECHNICAL-0", "technical-0"),
+        ):
+            response = client.get("/api/v2/runs", params={"q": query, "limit": 1})
+            assert response.status_code == 200
+            assert response.json()["total"] == 1
+            assert [run["run_id"] for run in response.json()["runs"]] == [expected]
+        grouped = client.get(
+            "/api/v2/runs", params={"q": "Run #1", "group": "date", "limit": 1}
+        )
+        assert grouped.status_code == 200
+        assert grouped.json()["total"] == 1
+    store.close()
+
+
+def test_v2_runs_and_feedback_accept_older_injected_store(tmp_path):
+    database = Path(tmp_path).resolve() / "older-store.sqlite"
+    backing = SQLiteExecutionStore(database)
+    backing.save_test_run("older-run", {"run_id": "older-run"})
+    backing.save_test_run("older-extra", {"run_id": "older-extra"})
+    backing.save_test_run("Café", {"run_id": "Café"})
+    backing.create(ExecutionState(execution_id="older-execution", run_id="older-run"))
+
+    class OlderStore:
+        def __getattr__(self, name):
+            if name == "get_test_run":
+                raise AttributeError(name)
+            return getattr(backing, name)
+
+        def list_test_run_page(
+            self, *, limit=None, offset=0, suite_id=None, project_id=None
+        ):
+            return backing.list_test_run_page(
+                limit=limit, offset=offset, suite_id=suite_id, project_id=project_id
+            )
+
+    application = create_app(
+        Settings(database_path=str(database)), v2_store=OlderStore()
+    )
+    with TestClient(application) as client:
+        runs = client.get("/api/v2/runs")
+        assert runs.status_code == 200
+        assert {run["run_id"] for run in runs.json()["runs"]} == {
+            "Café",
+            "older-run",
+            "older-extra",
+        }
+        for query, expected in (
+            ("Run #1", "older-run"),
+            ("OLDER-EXTRA", "older-extra"),
+            ("CAFÉ", "Café"),
+        ):
+            found = client.get("/api/v2/runs", params={"q": query, "limit": 1})
+            assert found.status_code == 200
+            assert found.json()["total"] == 1
+            assert [run["run_id"] for run in found.json()["runs"]] == [expected]
+        second = client.get(
+            "/api/v2/runs", params={"q": "older", "limit": 1, "offset": 1}
+        )
+        assert second.status_code == 200
+        assert second.json()["total"] == 2
+        assert [run["run_id"] for run in second.json()["runs"]] == ["older-extra"]
+        feedback = client.get("/api/v2/feedback/older-run")
+        assert feedback.status_code == 200
+        assert feedback.json()["run_label"] is None
+    backing.close()
 
 
 def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_path):
@@ -484,6 +565,7 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
         "runs": [
             {
                 "run_id": "empty-run",
+                "run_label": "Run #2",
                 "created_at": "2026-09-19T10:00:00Z",
                 "finished_at": None,
                 "status": "finished",
@@ -496,6 +578,7 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
             },
             {
                 "run_id": "old-run",
+                "run_label": "Run #1",
                 "created_at": "2026-09-18T10:00:00+00:00",
                 "finished_at": None,
                 "status": "finished",

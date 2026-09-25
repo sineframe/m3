@@ -30,7 +30,7 @@ SDK construction surface for ordinary test authors, but API-v2 clients must
 continue to send and receive the existing `DirectSpec`/`AgentSpec` JSON shapes.
 
 `GET /api/v2/runs` returns a newest first list of safe pytest run summaries.
-Each item contains `run_id`, `created_at`, `finished_at`, `status`, optional
+Each item contains `run_id`, `run_label`, `created_at`, `finished_at`, `status`, optional
 project identifiers and name, `test_count`, independent `test_outcome_counts`,
 derived `effective_verdict_counts`, and `suites`. `suites` lists every
 `{suite_id, suite_name, project_id}` of the run's saved tests, because one run
@@ -39,9 +39,22 @@ names a suite. A suite's `project_id` is `null` for legacy projectless suites.
 Manifest paths, selection arguments, capture settings, and other raw manifest
 fields are not exposed. Runs are listed even when they have no executions or
 saved evaluations.
+`run_id` is the technical identity used in URLs, baseline arguments, and copy
+actions. `run_label` is its immutable, database-wide unique display label
+(`Run #1`, `Run #2`, ...). Existing runs receive labels in creation order when
+the database is opened; updating a manifest never changes its label. Labels
+are scoped to one database, not globally unique across independent databases.
+The feedback envelope also exposes `run_label` alongside `feedback`. The
+`feedback` object and exported `feedback.json` contain that same run label
+next to their `run_id`; when comparing runs, `comparison` carries
+`baseline_run_label` and `current_run_label` next to their technical IDs.
+Labels are `null` when a run has no saved manifest with a label.
 
 The list is unpaginated by default. Optional `limit` (1-100) and `offset` page
-it, and optional `suite_id` and `project_id` filter it; a `suite_id` filter
+it, and optional `suite_id`, `project_id`, and `q` filter it; `q` searches both
+`run_id` and `run_label` case-insensitively before pagination. A complete
+label such as `Run #1` matches that label exactly (not `Run #10`); other
+queries use substring matching. A `suite_id` filter
 keeps every run with at least one test in that suite. The envelope reports
 `total` (runs matching the filters), `limit` (`null` when unpaginated), and
 `offset`. `GET /api/v2/suites` lists the registered
@@ -68,7 +81,8 @@ in all their suite groups, as they do in the plain run-list summaries.
       "run_count": 1,
       "runs": [
         {
-          "run_id": "run-42", "created_at": "2026-09-19T10:00:00Z",
+          "run_id": "run-42", "run_label": "Run #1",
+          "created_at": "2026-09-19T10:00:00Z",
           "finished_at": null, "status": "finished",
           "project_id": "11111111-1111-4111-8111-111111111111",
           "project_name": "shop", "test_count": 1,

@@ -8,6 +8,7 @@ or response-envelope dependencies.
 
 from __future__ import annotations
 
+import inspect
 import math
 import time
 from collections.abc import Iterable, Mapping
@@ -203,6 +204,7 @@ class AppExecutionStore(Protocol):
         offset: int = 0,
         suite_id: int | None = None,
         project_id: str | None = None,
+        q: str | None = None,
     ) -> tuple[tuple[Mapping[str, object], ...], int]: ...
 
     def list_suites(self) -> tuple[Suite, ...]: ...
@@ -602,10 +604,54 @@ class AppExecutionService:
         offset: int = 0,
         suite_id: int | None = None,
         project_id: str | None = None,
+        q: str | None = None,
     ) -> tuple[tuple[Mapping[str, object], ...], int]:
         """Return one newest-first page of run manifests with their suites."""
         self._ensure_open()
         try:
+            if q and q.strip():
+                lister = self.store.list_test_run_page
+                try:
+                    parameters = inspect.signature(lister).parameters
+                    supports_q = "q" in parameters or any(
+                        item.kind is inspect.Parameter.VAR_KEYWORD
+                        for item in parameters.values()
+                    )
+                except (TypeError, ValueError):
+                    supports_q = True
+                if supports_q:
+                    return lister(
+                        limit=limit,
+                        offset=offset,
+                        suite_id=suite_id,
+                        project_id=project_id,
+                        q=q,
+                    )
+                # An older injected store cannot search itself. Filter its
+                # complete ordered result before applying the requested page.
+                runs, _ = lister(
+                    limit=None, offset=0, suite_id=suite_id, project_id=project_id
+                )
+                term = q.strip().casefold()
+                exact_label = term.startswith("run #") and term[5:].isdigit()
+
+                def matches_query(run: Mapping[str, object]) -> bool:
+                    identifier = run.get("run_id")
+                    label = run.get("run_label")
+                    return (
+                        isinstance(identifier, str) and term in identifier.casefold()
+                    ) or (
+                        isinstance(label, str)
+                        and (
+                            label.casefold() == term
+                            if exact_label
+                            else term in label.casefold()
+                        )
+                    )
+
+                matches = tuple(run for run in runs if matches_query(run))
+                end = None if limit is None else offset + limit
+                return matches[offset:end], len(matches)
             return self.store.list_test_run_page(
                 limit=limit, offset=offset, suite_id=suite_id, project_id=project_id
             )

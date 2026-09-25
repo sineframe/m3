@@ -301,6 +301,28 @@ def test_export_keeps_current_and_baseline_supporting_reports(tmp_path):
         assert (tmp_path / ref).is_file()
 
 
+def test_feedback_and_export_include_stored_run_labels(tmp_path):
+    baseline = _report("old", "baseline", "old")
+    current = _report("new", "current", "new")
+    store = _Store(
+        (baseline, current),
+        manifests={
+            "baseline": {"run_id": "baseline", "run_label": "Run #1"},
+            "current": {"run_id": "current", "run_label": "Run #2"},
+        },
+    )
+    feedback = build_feedback(store, "current", baseline_run_id="baseline")
+    assert feedback.run_label == "Run #2"
+    assert feedback.comparison.baseline_run_label == "Run #1"
+    assert feedback.comparison.current_run_label == "Run #2"
+    payload = json.loads(export_feedback(feedback, store, tmp_path).read_text())
+    assert payload["run_id"] == "current"
+    assert payload["run_label"] == "Run #2"
+    assert payload["comparison"]["baseline_run_label"] == "Run #1"
+    assert payload["comparison"]["current_run_label"] == "Run #2"
+    assert payload["comparison"]["baseline_run_id"] == "baseline"
+
+
 def test_feedback_exports_suite_inventory_entries_and_comparison_identity(tmp_path):
     baseline = _report("old", "baseline", "old", suite_id=1, suite_name="catalog")
     current = _report("new", "current", "new", suite_id=2, suite_name="other")
