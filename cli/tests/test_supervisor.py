@@ -106,6 +106,11 @@ def test_competing_listener_never_receives_launch_token_or_ui_link(
     monkeypatch.setattr(
         supervisor.secrets, "token_urlsafe", lambda _size: "fixed-launch-token-123456"
     )
+    monkeypatch.setattr(
+        supervisor.webbrowser,
+        "open",
+        lambda _url: pytest.fail("browser opened before server readiness"),
+    )
     try:
         result = supervisor._run_ui_server(tmp_path / "results.sqlite", port, 1, (), ())
     finally:
@@ -223,10 +228,16 @@ def test_ui_server_prints_links_and_returns_original_failure(
     monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: Child())
     monkeypatch.setattr(supervisor, "_wait_ready", lambda *_args: True)
     monkeypatch.setattr(supervisor, "_terminate_process", lambda _process: None)
+    opened: list[str] = []
+    monkeypatch.setattr(
+        supervisor.webbrowser, "open", lambda url: opened.append(url) or True
+    )
     monkeypatch.setattr(
         supervisor.time,
         "sleep",
-        lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
+        lambda seconds: (
+            None if seconds == 1 else (_ for _ in ()).throw(KeyboardInterrupt())
+        ),
     )
     runs = (_run("run id/1", 1), _run("run-two", 2))
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 1, runs, ()) == 1
@@ -242,6 +253,7 @@ def test_ui_server_prints_links_and_returns_original_failure(
         f"Run: http://127.0.0.1:8123/reports/runs/run%20id%2F1#m3_token={token}",
         f"Run: http://127.0.0.1:8123/reports/runs/run-two#m3_token={token}",
     ]
+    assert opened == [f"http://127.0.0.1:8123/reports/runs/run-two#m3_token={token}"]
 
 
 def test_ui_server_zero_runs_prints_message(
@@ -256,15 +268,24 @@ def test_ui_server_zero_runs_prints_message(
     monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: Child())
     monkeypatch.setattr(supervisor, "_wait_ready", lambda *_args: True)
     monkeypatch.setattr(supervisor, "_terminate_process", lambda _process: None)
+    opened: list[str] = []
+    monkeypatch.setattr(
+        supervisor.webbrowser, "open", lambda url: opened.append(url) or True
+    )
     monkeypatch.setattr(
         supervisor.time,
         "sleep",
-        lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
+        lambda seconds: (
+            None if seconds == 1 else (_ for _ in ()).throw(KeyboardInterrupt())
+        ),
     )
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 0, (), ()) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[: len(M3_ASCII_ART.splitlines())] == M3_ASCII_ART.splitlines()
-    assert lines[len(M3_ASCII_ART.splitlines()) :] == ["No new stored runs."]
+    assert lines[len(M3_ASCII_ART.splitlines())] == "No new stored runs."
+    link = lines[-1].removeprefix("UI: ")
+    assert link.startswith("http://127.0.0.1:8123/reports#m3_token=")
+    assert opened == [link]
 
 
 def test_ui_server_prints_authenticated_history_index_only_after_readiness(
@@ -279,10 +300,16 @@ def test_ui_server_prints_authenticated_history_index_only_after_readiness(
     monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: Child())
     monkeypatch.setattr(supervisor, "_wait_ready", lambda *_args: True)
     monkeypatch.setattr(supervisor, "_terminate_process", lambda _process: None)
+    opened: list[str] = []
+    monkeypatch.setattr(
+        supervisor.webbrowser, "open", lambda url: opened.append(url) or True
+    )
     monkeypatch.setattr(
         supervisor.time,
         "sleep",
-        lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
+        lambda seconds: (
+            None if seconds == 1 else (_ for _ in ()).throw(KeyboardInterrupt())
+        ),
     )
     assert (
         supervisor._run_ui_server(
@@ -294,6 +321,86 @@ def test_ui_server_prints_authenticated_history_index_only_after_readiness(
     assert lines[: len(M3_ASCII_ART.splitlines())] == M3_ASCII_ART.splitlines()
     assert len(lines) == len(M3_ASCII_ART.splitlines()) + 1
     assert lines[-1].startswith("UI: http://127.0.0.1:8123/reports#m3_token=")
+    assert opened == [lines[-1].removeprefix("UI: ")]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [False, OSError("private path"), supervisor.webbrowser.Error("private path")],
+)
+def test_browser_launch_failure_keeps_server_and_printed_link(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: bool | Exception,
+) -> None:
+    class Child:
+        process = SimpleNamespace(poll=lambda: None)
+
+        def alive(self) -> bool:
+            return True
+
+    events: list[object] = []
+    monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: Child())
+    monkeypatch.setattr(
+        supervisor, "_wait_ready", lambda _child: events.append("ready") or True
+    )
+    monkeypatch.setattr(supervisor, "_terminate_process", lambda _process: None)
+
+    def sleep(seconds: float) -> None:
+        events.append(seconds)
+        if seconds != 1:
+            raise KeyboardInterrupt
+
+    def open_browser(url: str) -> bool:
+        events.append(url)
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    monkeypatch.setattr(supervisor.time, "sleep", sleep)
+    monkeypatch.setattr(supervisor.webbrowser, "open", open_browser)
+    assert (
+        supervisor._run_ui_server(
+            Path("results.sqlite"), 8123, 1, (_run("run-1", 1),), ()
+        )
+        == 1
+    )
+    output = capsys.readouterr()
+    link = next(
+        line.removeprefix("Run: ")
+        for line in output.out.splitlines()
+        if line.startswith("Run: ")
+    )
+    assert events == ["ready", 1, link, 0.1]
+    assert "could not open a browser" in output.err
+    assert "private path" not in output.err
+    assert "m3_token=" not in output.err
+
+
+def test_server_exit_during_browser_delay_does_not_open_browser(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Child:
+        process = SimpleNamespace(poll=lambda: None)
+        running = True
+
+        def alive(self) -> bool:
+            return self.running
+
+    child = Child()
+    monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: child)
+    monkeypatch.setattr(supervisor, "_wait_ready", lambda _child: True)
+    monkeypatch.setattr(supervisor, "_terminate_process", lambda _process: None)
+    monkeypatch.setattr(
+        supervisor.time, "sleep", lambda _seconds: setattr(child, "running", False)
+    )
+    monkeypatch.setattr(
+        supervisor.webbrowser,
+        "open",
+        lambda _url: pytest.fail("browser opened after server exit"),
+    )
+    assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 0, (), ()) == 2
+    assert "stopped unexpectedly" in capsys.readouterr().err
 
 
 def test_ui_from_uninitialized_directory_does_not_create_history(
@@ -504,6 +611,11 @@ def test_ui_server_readiness_failure_is_cleaned_up(
     monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: child)
     monkeypatch.setattr(supervisor, "_wait_ready", lambda *_args: False)
     monkeypatch.setattr(
+        supervisor.webbrowser,
+        "open",
+        lambda _url: pytest.fail("browser opened before server readiness"),
+    )
+    monkeypatch.setattr(
         supervisor, "_terminate_process", lambda process: stopped.append(process)
     )
     assert supervisor._run_ui_server(Path("results.sqlite"), 8123, 1, (), ()) == 2
@@ -580,6 +692,10 @@ def test_ui_serves_existing_run_without_starting_another(
     store.close()
     _use_fixture_ui_in_child(monkeypatch, Path(__file__).parent / "fixtures" / "ui")
     monkeypatch.setattr(supervisor, "_ui_prerequisite_error", lambda _ui_dir: None)
+    opened: list[str] = []
+    monkeypatch.setattr(
+        supervisor.webbrowser, "open", lambda url: opened.append(url) or True
+    )
     monkeypatch.setattr(
         supervisor,
         "_run_pytest_process",
@@ -593,6 +709,8 @@ def test_ui_serves_existing_run_without_starting_another(
     original_sleep = supervisor.time.sleep
 
     def inspect_server(_seconds: float) -> None:
+        if _seconds == 1:
+            return
         monkeypatch.setattr(supervisor.time, "sleep", original_sleep)
         output = capsys.readouterr().out
         link = next(
@@ -601,6 +719,7 @@ def test_ui_serves_existing_run_without_starting_another(
             if line.startswith("UI: ")
         )
         assert link.startswith(f"http://127.0.0.1:{port}/reports#m3_token=")
+        assert opened == [link]
         token = link.split("#m3_token=", 1)[1]
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
         try:
