@@ -74,11 +74,13 @@ m3 ci test --env-file .env --upload -- tests/
 If the network or control plane fails, the local run remains available. Use
 the printed run ID with `m3 upload RUN_ID` to retry without rerunning tests.
 When credentials came from an env file, provide it again with
-`m3 upload RUN_ID --env-file .env`; retries require the original values to be
-available and unchanged. M3 stores keyed fingerprints locally, not secret
-values, and keeps the fingerprint key in your user config directory. Retry on
-the machine that ran the tests; older runs without fingerprints cannot be
-uploaded safely.
+`m3 upload RUN_ID --env-file .env` if the current upload token or provider
+credentials are there. M3 inspects the exact report payloads against
+test-time credentials after the test, recording only a digest and a pass/fail
+result in the local run manifest. A retry may use rotated credentials, but M3
+refuses to publish if those payloads contained a test-time credential, have
+changed since inspection, or contain a current credential. Older runs without
+an inspection cannot be uploaded safely.
 The default database is `.m3/executions.sqlite` and reports are saved under
 `.m3/reports/RUN_ID`. A requested upload failure makes an otherwise passing
 CI job fail. The hosted report viewer is planned separately.

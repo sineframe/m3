@@ -137,6 +137,43 @@ def test_cached_upload_cannot_be_retargeted(tmp_path, monkeypatch):
         store.close()
 
 
+def test_upload_rejects_payload_changed_after_credential_inspection(
+    tmp_path, monkeypatch
+):
+    from m3.feedback import build_feedback, export_feedback
+    from m3.storage import SQLiteExecutionStore
+    from m3_cli import control_plane
+
+    store = SQLiteExecutionStore(tmp_path / "results.sqlite")
+    try:
+        feedback = build_feedback(store, "run-test")
+        directory = tmp_path / "reports" / "run-test"
+        export_feedback(feedback, store, directory)
+        digest, contains_secret = control_plane.inspect_current_run(
+            feedback, store, directory, sensitive_values=("old-secret",)
+        )
+        assert contains_secret is False
+        exported_path = directory / "feedback.json"
+        exported = json.loads(exported_path.read_text())
+        exported["summary"]["changed"] = "later-value"
+        exported_path.write_text(json.dumps(exported))
+        sent = []
+        monkeypatch.setattr(control_plane, "_post", lambda *args: sent.append(args))
+        with pytest.raises(RuntimeError, match="payloads changed"):
+            control_plane.upload_current_run(
+                feedback,
+                store,
+                directory,
+                base_url="https://one.example",
+                token="m3pat_rotated",
+                expected_digest=digest,
+            )
+        assert sent == []
+        assert not (directory / "control-plane" / "summary.json").exists()
+    finally:
+        store.close()
+
+
 def test_ci_metadata_uses_allowlist_and_explicit_overrides(tmp_path):
     path = tmp_path / "metadata.json"
     path.write_text('{"job":"shard-2","pr_number":42}', encoding="utf-8")
@@ -194,11 +231,6 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
         sent = []
         monkeypatch.setattr(
             ci_upload,
-            "_scan_key_path",
-            lambda _database: tmp_path / "private-home" / "upload-scan.key",
-        )
-        monkeypatch.setattr(
-            ci_upload,
             "upload_current_run",
             lambda *args, **kwargs: sent.append((args, kwargs)),
         )
@@ -216,43 +248,51 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
         record = dict(store.get_test_run("run-test") or {})
         record["status"] = "finished"
         store.save_test_run("run-test", record)
-        ci_upload.record_credential_sources(
+        ci_upload.record_upload_inspection(
             database,
             "run-test",
+            root,
             ["codex:VENDOR_API_KEY=DEPLOY_CRED"],
             kwargs["environment"],
         )
-        with pytest.raises(CLIError, match="unavailable or changed"):
-            ci_upload.publish_run(
-                "run-test",
-                project_root=root,
-                database=database,
-                environment={"M3_ACCESS_TOKEN": TOKEN},
-            )
-        with pytest.raises(CLIError, match="unavailable or changed"):
-            ci_upload.publish_run(
-                "run-test",
-                project_root=root,
-                database=database,
-                environment={
-                    "M3_ACCESS_TOKEN": TOKEN,
-                    "DEPLOY_CRED": "changed-deployment-credential",
-                },
-            )
-        ci_upload.publish_run("run-test", **kwargs)
-        assert len(sent) == 1
-        assert sent[0][0][0].run_id == "run-test"
-        assert "opaque-deployment-credential" in sent[0][1]["sensitive_values"]
-        manifest = store.get_test_run("run-test")
-        assert set(manifest["upload_scan_fingerprints"]) == {"DEPLOY_CRED"}
-        assert "upload_scan_sources" not in manifest
-        assert "opaque-deployment-credential" not in json.dumps(manifest)
-        assert ci_upload._scan_key_path(database).parent != database.parent
-
-        manifest["upload_scan_sources"] = ["DEPLOY_CRED"]
-        store.save_test_run("run-test", manifest)
-        ci_upload.publish_run("run-test", **kwargs)
+        ci_upload.publish_run(
+            "run-test",
+            project_root=root,
+            database=database,
+            environment={"M3_ACCESS_TOKEN": TOKEN},
+        )
+        ci_upload.publish_run(
+            "run-test",
+            project_root=root,
+            database=database,
+            environment={
+                "M3_ACCESS_TOKEN": TOKEN,
+                "DEPLOY_CRED": "changed-deployment-credential",
+            },
+        )
         assert len(sent) == 2
-        assert "opaque-deployment-credential" in sent[1][1]["sensitive_values"]
+        assert sent[0][0][0].run_id == "run-test"
+        assert "changed-deployment-credential" in sent[1][1]["sensitive_values"]
+        manifest = store.get_test_run("run-test")
+        assert manifest["upload_scan_sources"] == ["DEPLOY_CRED"]
+        assert manifest["upload_scan_clean"] is True
+        assert len(manifest["upload_scan_digest"]) == 64
+        assert "opaque-deployment-credential" not in json.dumps(manifest)
+        assert sent[0][1]["expected_digest"] == manifest["upload_scan_digest"]
+
+        exported_path = root / ".m3" / "reports" / "run-test" / "feedback.json"
+        exported = json.loads(exported_path.read_text())
+        exported["summary"]["credential_echo"] = "opaque-deployment-credential"
+        exported_path.write_text(json.dumps(exported))
+        ci_upload.record_upload_inspection(
+            database,
+            "run-test",
+            root,
+            ["codex:VENDOR_API_KEY=DEPLOY_CRED"],
+            kwargs["environment"],
+        )
+        assert store.get_test_run("run-test")["upload_scan_clean"] is False
+        with pytest.raises(CLIError, match="test-time credential material"):
+            ci_upload.publish_run("run-test", **kwargs)
     finally:
         store.close()

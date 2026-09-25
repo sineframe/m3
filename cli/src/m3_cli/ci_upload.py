@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import os
 import re
-import secrets
-import stat
-import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from m3.feedback import Feedback
 from m3.storage import SQLiteExecutionStore
@@ -23,38 +19,37 @@ from .ci_credentials import (
     control_plane_url,
     resolved_environment,
 )
-from .control_plane import upload_current_run
+from .control_plane import inspect_current_run, upload_current_run
 from .errors import CLIError
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
-def record_credential_sources(
+def record_upload_inspection(
     database: Path,
     run_id: str,
+    project_root: Path,
     credential_env: Sequence[str],
     environment: dict[str, str],
 ) -> None:
-    """Persist names and keyed fingerprints for safe upload retries."""
-    sources = {
-        name
-        for name in _credential_source_names(credential_env)
-        if environment.get(name)
-    }
-    sources.update(_scan_source_names(environment))
+    """Inspect the finalized upload bytes against test-time credentials."""
+    sources = _credential_source_names(credential_env)
     store = SQLiteExecutionStore(database)
     try:
         manifest = store.get_test_run(run_id)
-        if manifest is None:
-            raise CLIError("the selected run has no saved manifest")
-        fingerprints = {}
-        if sources:
-            key = _load_or_create_scan_key(database)
-            fingerprints = {
-                name: _value_fingerprint(key, name, environment[name])
-                for name in sorted(sources)
-            }
-        manifest["upload_scan_fingerprints"] = fingerprints
+        if manifest is None or manifest.get("status") != "finished":
+            raise CLIError("the selected run has no finalized manifest")
+        directory = project_root / ".m3" / "reports" / run_id
+        feedback = _load_feedback(directory, run_id, manifest)
+        digest, contains_secret = inspect_current_run(
+            feedback,
+            store,
+            directory,
+            sensitive_values=_sensitive_values(environment, source_names=sources),
+        )
+        manifest["upload_scan_digest"] = digest
+        manifest["upload_scan_clean"] = not contains_secret
+        manifest["upload_scan_sources"] = list(sources)
         store.save_test_run(run_id, manifest)
     finally:
         store.close()
@@ -75,7 +70,7 @@ def publish_run(
     url = control_plane_url(env)
     token = access_token(env, base_url=url)
     env = dict(env)
-    env.setdefault("M3_ACCESS_TOKEN", token)
+    env.setdefault(ACCESS_TOKEN_ENV, token)
     directory = project_root / ".m3" / "reports" / run_id
     feedback_path = directory / "feedback.json"
     if not feedback_path.is_file() or feedback_path.is_symlink():
@@ -89,45 +84,18 @@ def publish_run(
             raise CLIError("the selected run has incomplete persisted data")
         if not manifest.get("project_id"):
             raise CLIError("published runs require a valid m3.toml project identity")
-        try:
-            exported = json.loads(feedback_path.read_bytes())
-            if not isinstance(exported, dict):
-                raise ValueError("invalid feedback bundle")
-            feedback = Feedback.model_validate(
-                {
-                    key: value
-                    for key, value in exported.items()
-                    if key in Feedback.model_fields
-                }
-            )
-        except Exception as exc:
-            raise CLIError("the selected run has invalid exported feedback") from exc
-        if feedback.run_id != run_id or feedback.project_id != manifest.get(
-            "project_id"
-        ):
-            raise CLIError("the selected feedback does not match the run")
-        fingerprints = manifest.get("upload_scan_fingerprints", {})
-        if "upload_scan_fingerprints" not in manifest:
-            raise CLIError(
-                "this run predates credential fingerprints and cannot be safely uploaded"
-            )
-        if not isinstance(fingerprints, dict) or any(
-            not isinstance(name, str) or not isinstance(value, str)
-            for name, value in fingerprints.items()
+        feedback = _load_feedback(directory, run_id, manifest)
+        digest = manifest.get("upload_scan_digest")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise CLIError("this run has no valid CI credential inspection")
+        if manifest.get("upload_scan_clean") is not True:
+            raise CLIError("run output contains test-time credential material")
+        sources = manifest.get("upload_scan_sources")
+        if not isinstance(sources, list) or any(
+            not isinstance(name, str) for name in sources
         ):
             raise CLIError("the selected run has invalid credential metadata")
-        if fingerprints:
-            key = _load_scan_key(database)
-            for name, expected in fingerprints.items():
-                value = env.get(name)
-                if not value or not hmac.compare_digest(
-                    _value_fingerprint(key, name, value), expected
-                ):
-                    raise CLIError(
-                        "credential values for this run are unavailable or changed; "
-                        "supply the original environment with --env-file"
-                    )
-        sensitive_values = _sensitive_values(env, source_names=tuple(fingerprints))
+        sensitive_values = _sensitive_values(env, source_names=sources)
         upload_current_run(
             feedback,
             store,
@@ -135,9 +103,29 @@ def publish_run(
             base_url=url,
             token=token,
             sensitive_values=sensitive_values,
+            expected_digest=digest,
         )
     finally:
         store.close()
+
+
+def _load_feedback(directory: Path, run_id: str, manifest: dict[str, Any]) -> Feedback:
+    try:
+        exported = json.loads((directory / "feedback.json").read_bytes())
+        if not isinstance(exported, dict):
+            raise ValueError("invalid feedback bundle")
+        feedback = Feedback.model_validate(
+            {
+                key: value
+                for key, value in exported.items()
+                if key in Feedback.model_fields
+            }
+        )
+    except Exception as exc:
+        raise CLIError("the selected run has invalid exported feedback") from exc
+    if feedback.run_id != run_id or feedback.project_id != manifest.get("project_id"):
+        raise CLIError("the selected feedback does not match the run")
+    return feedback
 
 
 def _sensitive_values(
@@ -171,86 +159,9 @@ def _credential_source_names(credential_env: Sequence[str]) -> tuple[str, ...]:
     )
 
 
-def _scan_source_names(environment: dict[str, str]) -> set[str]:
-    return {
-        name
-        for name, value in environment.items()
-        if value
-        and (
-            name != ACCESS_TOKEN_ENV
-            and len(value) >= 8
-            and any(
-                part in name.upper() for part in ("KEY", "TOKEN", "SECRET", "PASSWORD")
-            )
-        )
-    }
-
-
-def _scan_key_path(database: Path) -> Path:
-    from .auth import _metadata_path
-
-    identity = str(Path(database).expanduser().resolve()).encode("utf-8")
-    filename = "upload-scan-" + hashlib.sha256(identity).hexdigest() + ".key"
-    return _metadata_path().parent / "upload-scan" / filename
-
-
-def _load_scan_key(database: Path) -> bytes:
-    path = _scan_key_path(database)
-    try:
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
-            raise CLIError("upload scan key is not a regular file")
-        if os.name != "nt" and info.st_mode & 0o077:
-            raise CLIError("upload scan key permissions are too broad")
-        if os.name != "nt" and info.st_uid != os.getuid():
-            raise CLIError("upload scan key has an unexpected owner")
-        key = path.read_bytes()
-    except FileNotFoundError as exc:
-        raise CLIError(
-            "local upload scan key is unavailable; retry on the machine that ran the tests"
-        ) from exc
-    if len(key) != 32:
-        raise CLIError("local upload scan key is invalid")
-    return key
-
-
-def _load_or_create_scan_key(database: Path) -> bytes:
-    path = _scan_key_path(database)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    parent_info = path.parent.lstat()
-    if not stat.S_ISDIR(parent_info.st_mode) or stat.S_ISLNK(parent_info.st_mode):
-        raise CLIError("upload scan key directory is not secure")
-    if os.name != "nt" and parent_info.st_uid != os.getuid():
-        raise CLIError("upload scan key directory has an unexpected owner")
-    os.chmod(path.parent, 0o700)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".upload-scan-", dir=path.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        key = secrets.token_bytes(32)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(key)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, 0o600)
-        try:
-            os.link(temporary, path, follow_symlinks=False)
-        except FileExistsError:
-            return _load_scan_key(database)
-        return key
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _value_fingerprint(key: bytes, name: str, value: str) -> str:
-    message = name.encode("utf-8") + b"\0" + value.encode("utf-8")
-    return hmac.new(key, message, hashlib.sha256).hexdigest()
-
-
 __all__ = [
     "DEFAULT_CONTROL_PLANE_URL",
     "control_plane_url",
     "publish_run",
-    "record_credential_sources",
+    "record_upload_inspection",
 ]

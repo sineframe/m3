@@ -16,13 +16,15 @@ report upload. It was performed against the implementation in this branch.
 | Report contents | Traces and pytest output may contain credentials. | Retain capture redaction, reject known resolved credential values in serialized summaries and execution bodies before network writes, and keep cache files owner-only. Unknown or transformed secrets remain a user responsibility. |
 | Upload destination | A cached request could be reused for the wrong run or origin. | Validate run IDs before path construction, bind cache metadata to destination/run ID, validate cached identities, and reject redirects. Publish only finalized runs. |
 
-For a later `m3 upload RUN_ID`, M3 records the names and keyed fingerprints of
-resolved harness/judge credentials in the local run manifest. It requires the
-same values before uploading, then scans the payload for them again. The
-fingerprint key stays in the user's local config directory, outside `.m3/`
-artifacts; a downloaded report alone cannot be safely uploaded from another
-machine. The upload PAT may be rotated independently because it is excluded
-from the test process and checked separately at publication.
+For a later `m3 upload RUN_ID`, M3 inspects the exact serialized summary and
+execution payloads against all recognized test-time credentials, including
+mapped harness/judge sources. It stores only a payload digest, source names,
+and a clean/unsafe result in the local run manifest. Publication refuses an
+unsafe or changed payload and scans current credentials again before network
+writes. Rotating an unrelated CI secret therefore does not prevent a safe
+retry. The upload PAT remains separate from the test process and is checked
+again at publication. Unknown or transformed secrets still require care from
+the test author.
 
 Control-plane already checks PAT hashes, expiry, revocation, current membership
 grant, and account state on each upload. Its browser sessions require verified

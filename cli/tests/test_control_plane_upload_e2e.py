@@ -12,7 +12,7 @@ from m3 import MCPTestKit
 from m3.feedback import build_feedback, export_feedback
 from m3.storage import SQLiteExecutionStore
 from m3.types import CallTool, DirectSpec, ServerBinding, StdioServer
-from m3_cli.control_plane import upload_current_run
+from m3_cli.control_plane import inspect_current_run, upload_current_run
 
 pytestmark = pytest.mark.e2e
 
@@ -57,6 +57,10 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
         feedback = build_feedback(store, "run-upload")
         directory = root / "reports" / "run-upload"
         export_feedback(feedback, store, directory)
+        digest, contains_secret = inspect_current_run(
+            feedback, store, directory, sensitive_values=("unused-test-credential",)
+        )
+        assert contains_secret is False
 
         sent: list[tuple[str, bytes]] = []
         monkeypatch.setattr(
@@ -70,6 +74,7 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
             directory,
             base_url="https://control-plane.example",
             token="m3pat_test",
+            expected_digest=digest,
         )
 
         assert [url.rsplit("/", 1)[-1] for url, _ in sent] == [

@@ -490,6 +490,13 @@ def _parameterize_agent(metafunc: _Any) -> None:
         marked = marker_kwargs.get("agents")
         if marked is None:
             # Bare marker is valid only when CLI supplies a selection.
+            if config.getoption("--m3-ci"):
+                # Parameter-level ci=False marks are not attached to items until
+                # after generation. Defer the error so excluded cases can leave.
+                metafunc.parametrize(
+                    "agent", [None], indirect=True, ids=["missing-harness"]
+                )
+                return
             raise _pytest.UsageError(
                 "agent test requires --harness or m3(agents=[...])"
             )
@@ -624,15 +631,38 @@ def _parametrizes_server(node: _Any) -> bool:
     return False
 
 
+def _has_included_ci_parameter(metafunc: _Any) -> bool:
+    """Whether a generated parameter case overrides inherited ci=False."""
+    for callspec in getattr(metafunc, "_calls", ()):
+        marker_kwargs: dict[str, _Any] = {}
+        for marker in reversed(list(metafunc.definition.iter_markers(name="m3"))):
+            marker_kwargs.update(marker.kwargs)
+        for marker in getattr(callspec, "marks", ()):
+            if getattr(marker, "name", None) == "m3":
+                marker_kwargs.update(marker.kwargs)
+        if marker_kwargs.get("ci") is True:
+            return True
+        if "ci" in marker_kwargs and not isinstance(marker_kwargs["ci"], bool):
+            # Let the normal collection validation report malformed values.
+            return True
+    return False
+
+
+@_pytest.hookimpl(trylast=True)
 def pytest_generate_tests(metafunc: _Any) -> None:
     marker = metafunc.definition.get_closest_marker("m3")
     if marker is None:
         # Unmarked projects may define their own agent/server fixtures.
         return
     marker_kwargs = _merged_m3_marker(metafunc.definition)
-    if metafunc.config.getoption("--m3-ci") and marker_kwargs.get("ci") is False:
-        # Produce an empty parameter set for M3-owned matrix fixtures. The
-        # collection hook will deselect the resulting item before execution.
+    if (
+        metafunc.config.getoption("--m3-ci")
+        and marker_kwargs.get("ci") is False
+        and not _has_included_ci_parameter(metafunc)
+    ):
+        # No generated case overrides ci=False, so avoid validating excluded
+        # agent and server selections. Parameter overrides take the normal
+        # matrix path below.
         if "agent" in metafunc.fixturenames:
             metafunc.parametrize("agent", [], indirect=True)
         fixture_defs = getattr(metafunc, "_arg2fixturedefs", {}).get("server", ())
@@ -730,6 +760,16 @@ def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
             config.hook.pytest_deselected(items=deselected)
 
     for item in items:
+        callspec = getattr(item, "callspec", None)
+        if (
+            config.getoption("--m3-ci")
+            and item.get_closest_marker("m3") is not None
+            and "agent" in getattr(item, "fixturenames", ())
+            and getattr(callspec, "params", {}).get("agent", object()) is None
+        ):
+            raise _pytest.UsageError(
+                "agent test requires --harness or m3(agents=[...])"
+            )
         if "server" not in getattr(item, "fixturenames", ()):
             continue
         if item.get_closest_marker("m3") is None:

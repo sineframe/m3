@@ -262,15 +262,30 @@ def main(argv: list[str] | None = None) -> int:
                     resolved, args.ci_metadata
                 )
                 result = run_ci_test(**test_kwargs)
-                if result.run_id and result.database_path:
-                    from .ci_upload import record_credential_sources
+                inspection_failed = False
+                if (
+                    result.exit_code in (0, 1)
+                    and result.run_id
+                    and result.database_path
+                    and result.project_root
+                ):
+                    from .ci_upload import record_upload_inspection
 
-                    record_credential_sources(
-                        result.database_path,
-                        result.run_id,
-                        args.credential_env,
-                        resolved,
-                    )
+                    try:
+                        record_upload_inspection(
+                            result.database_path,
+                            result.run_id,
+                            result.project_root,
+                            args.credential_env,
+                            resolved,
+                        )
+                    except (CLIError, RuntimeError, OSError, ValueError, TypeError):
+                        inspection_failed = True
+                        print(
+                            "m3 ci: upload inspection unavailable; local test result "
+                            "is unchanged. Rerun tests before uploading",
+                            file=sys.stderr,
+                        )
                 if result.run_id:
                     print(f"Run ID: {result.run_id}")
                     if result.project_root:
@@ -279,6 +294,8 @@ def main(argv: list[str] | None = None) -> int:
                         )
                 if not args.upload or result.exit_code not in (0, 1):
                     return result.exit_code
+                if inspection_failed:
+                    return result.exit_code or 2
                 if (
                     not result.run_id
                     or not result.database_path

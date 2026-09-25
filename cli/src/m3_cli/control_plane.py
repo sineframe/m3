@@ -5,12 +5,13 @@ Ordinary ``m3 test`` does not import or invoke this module.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -153,42 +154,11 @@ def _execution_payload(store: SQLiteExecutionStore, snapshot: Any) -> dict[str, 
     }
 
 
-def upload_current_run(
+def _current_run_summary(
     feedback: Feedback,
     store: SQLiteExecutionStore,
     directory: str | os.PathLike[str],
-    *,
-    base_url: str,
-    token: str,
-    sensitive_values: Sequence[str] = (),
-) -> None:
-    """Upload summary, complete current-run executions, then publish.
-
-    Every body is cached before its first request, making retries byte-identical.
-    """
-    parsed = urlparse(base_url)
-    if (
-        parsed.scheme != "https"
-        or not parsed.netloc
-        or parsed.path not in ("", "/")
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise RuntimeError("control-plane URL must be HTTPS")
-    if parsed.username is not None or parsed.password is not None:
-        raise RuntimeError("control-plane URL must not contain credentials")
-    if not token.startswith("m3pat_"):
-        raise RuntimeError("control-plane token must be a personal access token")
-    root = Path(directory) / "control-plane"
-    if root.exists() and root.is_symlink():
-        raise RuntimeError("upload cache path is a symlink")
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(root, 0o700)
-    execution_cache = root / "executions"
-    if execution_cache.is_symlink():
-        raise RuntimeError("upload cache path is a symlink")
-    execution_cache.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(execution_cache, 0o700)
+) -> tuple[str, list[Any], bytes]:
     run_id = _id_value(feedback.run_id)
     if not _SAFE_ID.fullmatch(run_id) or ".." in run_id:
         raise RuntimeError("invalid run ID")
@@ -224,6 +194,95 @@ def upload_current_run(
             "feedback": neutralize_response("/api/v2/feedback/{run_id}", exported),
         },
     }
+    return run_id, snapshots, _json_bytes(summary)
+
+
+def _current_run_bodies(
+    feedback: Feedback,
+    store: SQLiteExecutionStore,
+    directory: str | os.PathLike[str],
+) -> Iterator[tuple[str, bytes]]:
+    _, snapshots, summary = _current_run_summary(feedback, store, directory)
+    yield "", summary
+    for snapshot in snapshots:
+        yield (
+            snapshot.execution_id.root,
+            _json_bytes(_execution_payload(store, snapshot)),
+        )
+
+
+def _payload_attestation(
+    bodies: Iterable[tuple[str, bytes]], sensitive_values: Sequence[str] = ()
+) -> tuple[str, bool]:
+    digest = hashlib.sha256()
+    encoded_secrets = tuple(
+        value.encode("utf-8") for value in sensitive_values if value
+    )
+    contains_secret = False
+    for execution_id, body in bodies:
+        identifier = execution_id.encode("utf-8")
+        digest.update(len(identifier).to_bytes(4, "big"))
+        digest.update(identifier)
+        digest.update(len(body).to_bytes(8, "big"))
+        digest.update(body)
+        if any(secret in body for secret in encoded_secrets):
+            contains_secret = True
+    return digest.hexdigest(), contains_secret
+
+
+def inspect_current_run(
+    feedback: Feedback,
+    store: SQLiteExecutionStore,
+    directory: str | os.PathLike[str],
+    *,
+    sensitive_values: Sequence[str],
+) -> tuple[str, bool]:
+    """Attest to the exact outgoing bytes and check test-time secrets locally."""
+    return _payload_attestation(
+        _current_run_bodies(feedback, store, directory), sensitive_values
+    )
+
+
+def upload_current_run(
+    feedback: Feedback,
+    store: SQLiteExecutionStore,
+    directory: str | os.PathLike[str],
+    *,
+    base_url: str,
+    token: str,
+    sensitive_values: Sequence[str] = (),
+    expected_digest: str | None = None,
+) -> None:
+    """Upload summary, complete current-run executions, then publish.
+
+    Every body is cached before its first request, making retries byte-identical.
+    """
+    parsed = urlparse(base_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("control-plane URL must be HTTPS")
+    if parsed.username is not None or parsed.password is not None:
+        raise RuntimeError("control-plane URL must not contain credentials")
+    if not token.startswith("m3pat_"):
+        raise RuntimeError("control-plane token must be a personal access token")
+    root = Path(directory) / "control-plane"
+    if root.exists() and root.is_symlink():
+        raise RuntimeError("upload cache path is a symlink")
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(root, 0o700)
+    execution_cache = root / "executions"
+    if execution_cache.is_symlink():
+        raise RuntimeError("upload cache path is a symlink")
+    execution_cache.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(execution_cache, 0o700)
+    run_id, snapshots, rendered_summary = _current_run_summary(
+        feedback, store, directory
+    )
     summary_path = root / "summary.json"
     destination_path = root / "destination.json"
     if destination_path.is_symlink():
@@ -236,8 +295,9 @@ def upload_current_run(
         _cache(destination_path, destination)
     if summary_path.is_symlink():
         raise RuntimeError("upload cache file is a symlink")
+    pending_cache: list[tuple[Path, bytes]] = []
     summary_bytes = (
-        summary_path.read_bytes() if summary_path.is_file() else _json_bytes(summary)
+        summary_path.read_bytes() if summary_path.is_file() else rendered_summary
     )
     try:
         cached_summary = json.loads(summary_bytes)
@@ -251,9 +311,10 @@ def upload_current_run(
     if len(summary_bytes) > 1 << 20:
         raise RuntimeError("control-plane summary is too large")
     if not summary_path.is_file():
-        _cache(summary_path, summary_bytes)
+        pending_cache.append((summary_path, summary_bytes))
     base = base_url.rstrip("/") + "/v1/runs/" + quote(run_id, safe="")
     pending: list[tuple[str, bytes]] = [(base + "/report", summary_bytes)]
+    actual_bodies: list[tuple[str, bytes]] = [("", summary_bytes)]
     for snapshot in snapshots:
         execution_id = snapshot.execution_id.root
         path = execution_cache / (execution_id + ".json")
@@ -274,13 +335,21 @@ def upload_current_run(
             ):
                 raise RuntimeError("cached execution identity does not match this run")
         if not path.is_file():
-            _cache(path, body)
+            pending_cache.append((path, body))
+        actual_bodies.append((execution_id, body))
         pending.append(
             (
                 base + "/executions/" + quote(execution_id, safe="") + "/report",
                 body,
             )
         )
+    if (
+        expected_digest is not None
+        and _payload_attestation(actual_bodies)[0] != expected_digest
+    ):
+        raise RuntimeError("upload payloads changed since CI credential inspection")
+    for path, body in pending_cache:
+        _cache(path, body)
     for url, body in pending:
         _post(url, token, body)
     _post(base + "/publish", token, _json_bytes({"transport_version": 1}))
