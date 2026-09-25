@@ -67,7 +67,9 @@ def access_token(environment: Mapping[str, str], *, base_url: str) -> str:
 
     saved = load_saved_token(base_url)
     if not saved:
-        raise CLIError("M3 access is required; run m3 auth login or set M3_ACCESS_TOKEN")
+        raise CLIError(
+            "M3 access is required; run m3 auth login or set M3_ACCESS_TOKEN"
+        )
     return validate_access_token(saved)
 
 
@@ -79,8 +81,13 @@ def validate_access_token(value: str) -> str:
         try:
             decoded = urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
         except ValueError as exc:
-            raise CLIError("M3_ACCESS_TOKEN must be an M3 personal access token") from exc
-        if len(decoded) != size or urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != segment:
+            raise CLIError(
+                "M3_ACCESS_TOKEN must be an M3 personal access token"
+            ) from exc
+        if (
+            len(decoded) != size
+            or urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != segment
+        ):
             raise CLIError("M3_ACCESS_TOKEN must be an M3 personal access token")
     return value
 

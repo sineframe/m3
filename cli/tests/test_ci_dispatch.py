@@ -16,7 +16,12 @@ def test_ci_upload_publishes_exact_run_and_strips_access_token(monkeypatch, tmp_
 
     def run_ci_test(**kwargs):
         captured["test"] = kwargs
-        return RunResult(0, run_id="run-exact", database_path=tmp_path / "results.sqlite", project_root=tmp_path)
+        return RunResult(
+            0,
+            run_id="run-exact",
+            database_path=tmp_path / "results.sqlite",
+            project_root=tmp_path,
+        )
 
     def publish(run_id, **kwargs):
         captured["upload"] = (run_id, kwargs)
@@ -40,7 +45,11 @@ def test_ci_without_upload_never_calls_publisher(monkeypatch, tmp_path):
         "run_ci_test",
         lambda **_kwargs: RunResult(0, run_id="run-local", project_root=tmp_path),
     )
-    monkeypatch.setattr(ci_upload, "publish_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("uploaded")))
+    monkeypatch.setattr(
+        ci_upload,
+        "publish_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("uploaded")),
+    )
     assert main(["ci", "test", "--project-root", str(tmp_path)]) == 0
 
 
@@ -52,7 +61,12 @@ def test_passing_tests_fail_job_when_requested_upload_fails(monkeypatch, tmp_pat
     monkeypatch.setattr(
         supervisor,
         "run_ci_test",
-        lambda **_kwargs: RunResult(0, run_id="run-failed-upload", database_path=tmp_path / "results.sqlite", project_root=tmp_path),
+        lambda **_kwargs: RunResult(
+            0,
+            run_id="run-failed-upload",
+            database_path=tmp_path / "results.sqlite",
+            project_root=tmp_path,
+        ),
     )
 
     def fail(*_args, **_kwargs):
@@ -70,7 +84,16 @@ def test_failed_test_code_takes_priority_over_upload_failure(monkeypatch, tmp_pa
     monkeypatch.setattr(
         supervisor,
         "run_ci_test",
-        lambda **_kwargs: RunResult(1, run_id="run-failed-test", database_path=tmp_path / "results.sqlite", project_root=tmp_path),
+        lambda **_kwargs: RunResult(
+            1,
+            run_id="run-failed-test",
+            database_path=tmp_path / "results.sqlite",
+            project_root=tmp_path,
+        ),
     )
-    monkeypatch.setattr(ci_upload, "publish_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("network failed")))
+    monkeypatch.setattr(
+        ci_upload,
+        "publish_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("network failed")),
+    )
     assert main(["ci", "test", "--upload", "--project-root", str(tmp_path)]) == 1

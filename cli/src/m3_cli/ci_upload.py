@@ -22,7 +22,15 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 def control_plane_url(environment: dict[str, str]) -> str:
     url = environment.get(CONTROL_PLANE_URL_ENV, DEFAULT_CONTROL_PLANE_URL).rstrip("/")
     parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
         raise CLIError("M3_CONTROL_PLANE_URL must be an HTTPS origin")
     return url
 
@@ -59,17 +67,25 @@ def publish_run(
             if not isinstance(exported, dict):
                 raise ValueError("invalid feedback bundle")
             feedback = Feedback.model_validate(
-                {key: value for key, value in exported.items() if key in Feedback.model_fields}
+                {
+                    key: value
+                    for key, value in exported.items()
+                    if key in Feedback.model_fields
+                }
             )
         except Exception as exc:
             raise CLIError("the selected run has invalid exported feedback") from exc
-        if feedback.run_id != run_id or feedback.project_id != manifest.get("project_id"):
+        if feedback.run_id != run_id or feedback.project_id != manifest.get(
+            "project_id"
+        ):
             raise CLIError("the selected feedback does not match the run")
         sensitive_values = tuple(
             value
             for name, value in env.items()
             if len(value) >= 8
-            and any(part in name.upper() for part in ("KEY", "TOKEN", "SECRET", "PASSWORD"))
+            and any(
+                part in name.upper() for part in ("KEY", "TOKEN", "SECRET", "PASSWORD")
+            )
         )
         upload_current_run(
             feedback,

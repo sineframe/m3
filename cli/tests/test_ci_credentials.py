@@ -37,7 +37,9 @@ def test_ci_token_missing_and_empty_are_explicit():
     with pytest.raises(CLIError, match="required in CI"):
         access_token({"CI": "true"}, base_url="https://example.com")
     with pytest.raises(CLIError, match="is empty"):
-        access_token({"CI": "true", "M3_ACCESS_TOKEN": ""}, base_url="https://example.com")
+        access_token(
+            {"CI": "true", "M3_ACCESS_TOKEN": ""}, base_url="https://example.com"
+        )
 
 
 def test_upload_token_cannot_be_mapped_to_test_credentials():
@@ -62,10 +64,27 @@ def test_cached_upload_cannot_be_retargeted(tmp_path, monkeypatch):
         import m3_cli.control_plane as control_plane
 
         monkeypatch.setattr(control_plane, "_post", lambda *_args: None)
-        upload_current_run(feedback, store, directory, base_url="https://one.example", token="m3pat_test")
-        assert json.loads((directory / "control-plane" / "destination.json").read_text())["base_url"] == "https://one.example"
+        upload_current_run(
+            feedback,
+            store,
+            directory,
+            base_url="https://one.example",
+            token="m3pat_test",
+        )
+        assert (
+            json.loads((directory / "control-plane" / "destination.json").read_text())[
+                "base_url"
+            ]
+            == "https://one.example"
+        )
         with pytest.raises(RuntimeError, match="another destination"):
-            upload_current_run(feedback, store, directory, base_url="https://two.example", token="m3pat_test")
+            upload_current_run(
+                feedback,
+                store,
+                directory,
+                base_url="https://two.example",
+                token="m3pat_test",
+            )
     finally:
         store.close()
 
@@ -125,7 +144,11 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
         feedback = build_feedback(store, "run-test")
         export_feedback(feedback, store, root / ".m3" / "reports" / "run-test")
         sent = []
-        monkeypatch.setattr(ci_upload, "upload_current_run", lambda *args, **kwargs: sent.append((args, kwargs)))
+        monkeypatch.setattr(
+            ci_upload,
+            "upload_current_run",
+            lambda *args, **kwargs: sent.append((args, kwargs)),
+        )
         kwargs = {
             "project_root": root,
             "database": database,

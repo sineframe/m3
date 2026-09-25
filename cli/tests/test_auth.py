@@ -170,7 +170,9 @@ def test_login_uses_hosted_pkce_flow_and_leaves_saved_token_when_no_new_token(
         request.urlopen(wrong_host, timeout=3)
     assert host_error.value.code == 400
     with pytest.raises(error.HTTPError) as path_error:
-        request.urlopen(redirect_uri.replace("/callback", "/other") + "?" + valid_query, timeout=3)
+        request.urlopen(
+            redirect_uri.replace("/callback", "/other") + "?" + valid_query, timeout=3
+        )
     assert path_error.value.code == 404
 
     assert _send_callback(redirect_uri, query["state"][0]) == 200
@@ -182,7 +184,9 @@ def test_login_uses_hosted_pkce_flow_and_leaves_saved_token_when_no_new_token(
     assert exchange_base == base
     assert code == "opaque.one-time-code"
     assert exchange_redirect == redirect_uri
-    expected_challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+    expected_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    )
     assert query["code_challenge"][0] == expected_challenge.rstrip(b"=").decode()
     assert auth.load_saved_token(base) == "m3pat_previous"
     assert "No developer token was created or changed" in capsys.readouterr().out
@@ -224,7 +228,9 @@ def test_login_keeps_available_without_secure_store_and_disables_token_creation(
     keyring: MemoryKeyring,
 ) -> None:
     monkeypatch.setattr(
-        auth, "_probe_keyring", lambda: (_ for _ in ()).throw(RuntimeError("unavailable"))
+        auth,
+        "_probe_keyring",
+        lambda: (_ for _ in ()).throw(RuntimeError("unavailable")),
     )
     login_url, calls, result, thread = _start_login(monkeypatch, {"created": False})
     query, redirect_uri = _callback_url(login_url)

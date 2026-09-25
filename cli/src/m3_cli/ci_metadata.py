@@ -40,11 +40,17 @@ def resolve_ci_metadata(
         }
         values["provider"] = "github"
         values.update(
-            {target: environment[source] for target, source in names.items() if environment.get(source)}
+            {
+                target: environment[source]
+                for target, source in names.items()
+                if environment.get(source)
+            }
         )
         if repository := environment.get("GITHUB_REPOSITORY"):
             if run_id := environment.get("GITHUB_RUN_ID"):
-                values["job_url"] = f"https://github.com/{repository}/actions/runs/{run_id}"
+                values["job_url"] = (
+                    f"https://github.com/{repository}/actions/runs/{run_id}"
+                )
     if path is not None:
         try:
             overrides = json.loads(path.read_text(encoding="utf-8"))

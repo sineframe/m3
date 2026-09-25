@@ -274,57 +274,86 @@ def login() -> int:
                 self.send_error(HTTPStatus.BAD_REQUEST)
                 return
             if time.monotonic() - started > _LOGIN_TTL_SECONDS:
-                self._reply(HTTPStatus.GONE, "This sign-in has expired. Run m3 auth login again.")
+                self._reply(
+                    HTTPStatus.GONE,
+                    "This sign-in has expired. Run m3 auth login again.",
+                )
                 return
             parsed = urlparse(self.path)
             if parsed.path != "/callback" or parsed.fragment:
-                self._reply(HTTPStatus.NOT_FOUND, "This local address is only for M3 sign-in.")
+                self._reply(
+                    HTTPStatus.NOT_FOUND, "This local address is only for M3 sign-in."
+                )
                 return
             try:
-                values = parse_qs(parsed.query, strict_parsing=True, keep_blank_values=True)
+                values = parse_qs(
+                    parsed.query, strict_parsing=True, keep_blank_values=True
+                )
             except ValueError:
                 self._reply(HTTPStatus.BAD_REQUEST, "The sign-in response is invalid.")
                 return
-            if any(len(items) != 1 for items in values.values()) or not set(values).issubset(
-                {"state", "code", "error"}
-            ):
+            if any(len(items) != 1 for items in values.values()) or not set(
+                values
+            ).issubset({"state", "code", "error"}):
                 self._reply(HTTPStatus.BAD_REQUEST, "The sign-in response is invalid.")
                 return
             returned_state = values.get("state", [""])[0]
             code = values.get("code", [""])[0]
             callback_error = values.get("error", [""])[0]
             if not secrets.compare_digest(returned_state, state):
-                self._reply(HTTPStatus.BAD_REQUEST, "The sign-in response could not be verified.")
+                self._reply(
+                    HTTPStatus.BAD_REQUEST,
+                    "The sign-in response could not be verified.",
+                )
                 return
             if callback_error:
-                if code or callback_error not in {"access_denied", "login_required", "server_error"}:
-                    self._reply(HTTPStatus.BAD_REQUEST, "The sign-in response is invalid.")
+                if code or callback_error not in {
+                    "access_denied",
+                    "login_required",
+                    "server_error",
+                }:
+                    self._reply(
+                        HTTPStatus.BAD_REQUEST, "The sign-in response is invalid."
+                    )
                     return
                 with callback_lock:
                     if completed.is_set():
-                        self._reply(HTTPStatus.CONFLICT, "This sign-in response was already received.")
+                        self._reply(
+                            HTTPStatus.CONFLICT,
+                            "This sign-in response was already received.",
+                        )
                         return
                     callback["error"] = callback_error
                     completed.set()
-                self._reply(HTTPStatus.OK, "M3 sign-in was cancelled. You can close this browser tab.")
+                self._reply(
+                    HTTPStatus.OK,
+                    "M3 sign-in was cancelled. You can close this browser tab.",
+                )
                 return
-            if not code or len(code) > 4096 or not re.fullmatch(r"[A-Za-z0-9._~-]+", code):
+            if (
+                not code
+                or len(code) > 4096
+                or not re.fullmatch(r"[A-Za-z0-9._~-]+", code)
+            ):
                 self._reply(HTTPStatus.BAD_REQUEST, "The sign-in response is invalid.")
                 return
             with callback_lock:
                 if completed.is_set():
-                    self._reply(HTTPStatus.CONFLICT, "This sign-in response was already received.")
+                    self._reply(
+                        HTTPStatus.CONFLICT,
+                        "This sign-in response was already received.",
+                    )
                     return
                 callback["code"] = code
                 completed.set()
-            self._reply(HTTPStatus.OK, "M3 sign-in complete. You can close this browser tab.")
+            self._reply(
+                HTTPStatus.OK, "M3 sign-in complete. You can close this browser tab."
+            )
 
         def _reply(self, status: int, message: str) -> None:
             body = (
                 "<!doctype html><meta charset=utf-8><title>M3 sign-in</title>"
-                "<p>"
-                + message
-                + "</p>"
+                "<p>" + message + "</p>"
             ).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -357,13 +386,17 @@ def login() -> int:
     server.block_on_close = False
     server.timeout = 0.25
     redirect_uri = f"http://127.0.0.1:{server.server_address[1]}/callback"
-    login_url = base + "/cli/login?" + urlencode(
-        {
-            "redirect_uri": redirect_uri,
-            "state": state,
-            "code_challenge": challenge,
-            "can_store_developer": "1" if can_store_developer else "0",
-        }
+    login_url = (
+        base
+        + "/cli/login?"
+        + urlencode(
+            {
+                "redirect_uri": redirect_uri,
+                "state": state,
+                "code_challenge": challenge,
+                "can_store_developer": "1" if can_store_developer else "0",
+            }
+        )
     )
     thread = threading.Thread(
         target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True
@@ -396,18 +429,26 @@ def login() -> int:
         return 2
     token = result.get("token")
     if result["created"] != (token is not None):
-        print("m3 auth login: control-plane returned an incomplete token result", file=sys.stderr)
+        print(
+            "m3 auth login: control-plane returned an incomplete token result",
+            file=sys.stderr,
+        )
         return 2
     if token is None:
         print("M3 sign-in complete. No developer token was created or changed.")
         return 0
     if not can_store_developer:
-        print("m3 auth login: control-plane returned a token when secure storage was unavailable", file=sys.stderr)
+        print(
+            "m3 auth login: control-plane returned a token when secure storage was unavailable",
+            file=sys.stderr,
+        )
         return 2
     metadata = result.get("metadata")
     saved_metadata = {
         "token_id": metadata.get("id") if isinstance(metadata, dict) else None,
-        "expires_at": metadata.get("expires_at") if isinstance(metadata, dict) else None,
+        "expires_at": metadata.get("expires_at")
+        if isinstance(metadata, dict)
+        else None,
     }
     try:
         _save_token(base, token, saved_metadata)
@@ -460,7 +501,9 @@ def _exchange_code(
         try:
             validate_access_token(token)
         except CLIError:
-            raise RuntimeError("control-plane returned an invalid developer token") from None
+            raise RuntimeError(
+                "control-plane returned an invalid developer token"
+            ) from None
     if "metadata" in result and not isinstance(result["metadata"], dict):
         raise RuntimeError("control-plane returned invalid token metadata")
     return result

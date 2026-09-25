@@ -83,8 +83,12 @@ def _parser() -> argparse.ArgumentParser:
         dest="ci_command", required=True, parser_class=_RedactingArgumentParser
     )
     ci_test = ci_subparsers.add_parser("test", help="run the CI test selection")
-    ci_test.add_argument("--upload", action="store_true", help="publish this completed run")
-    ci_test.add_argument("--ci-metadata", type=Path, metavar="PATH", help="JSON metadata overrides")
+    ci_test.add_argument(
+        "--upload", action="store_true", help="publish this completed run"
+    )
+    ci_test.add_argument(
+        "--ci-metadata", type=Path, metavar="PATH", help="JSON metadata overrides"
+    )
 
     test = subparsers.add_parser("test", help="run pytest")
     for command in (test, ci_test):
@@ -251,15 +255,23 @@ def main(argv: list[str] | None = None) -> int:
                     access_token(resolved, base_url=control_plane_url(resolved))
                 test_kwargs["env_file"] = None
                 test_kwargs["environment"] = test_environment(resolved)
-                test_kwargs["ci_metadata"] = resolve_ci_metadata(resolved, args.ci_metadata)
+                test_kwargs["ci_metadata"] = resolve_ci_metadata(
+                    resolved, args.ci_metadata
+                )
                 result = run_ci_test(**test_kwargs)
                 if result.run_id:
                     print(f"Run ID: {result.run_id}")
                     if result.project_root:
-                        print(f"Local report: {result.project_root / '.m3' / 'reports' / result.run_id / 'feedback.json'}")
+                        print(
+                            f"Local report: {result.project_root / '.m3' / 'reports' / result.run_id / 'feedback.json'}"
+                        )
                 if not args.upload or result.exit_code not in (0, 1):
                     return result.exit_code
-                if not result.run_id or not result.database_path or not result.project_root:
+                if (
+                    not result.run_id
+                    or not result.database_path
+                    or not result.project_root
+                ):
                     raise CLIError("the selected run has no saved results to publish")
                 try:
                     publish_run(
@@ -269,7 +281,10 @@ def main(argv: list[str] | None = None) -> int:
                         environment=resolved,
                     )
                 except (CLIError, RuntimeError, OSError):
-                    print(f"m3 ci: publishing failed; retry with m3 upload {result.run_id}", file=sys.stderr)
+                    print(
+                        f"m3 ci: publishing failed; retry with m3 upload {result.run_id}",
+                        file=sys.stderr,
+                    )
                     return result.exit_code or 2
                 print("Published: yes")
                 return result.exit_code
@@ -281,9 +296,17 @@ def main(argv: list[str] | None = None) -> int:
             root = (args.project_root or Path.cwd()).resolve()
             database = _absolute_database(args.results_db, project_root=root)
             try:
-                publish_run(args.run_id, project_root=root, database=database, env_file=args.env_file)
+                publish_run(
+                    args.run_id,
+                    project_root=root,
+                    database=database,
+                    env_file=args.env_file,
+                )
             except (RuntimeError, OSError):
-                print("m3 upload: publication failed; local results are unchanged", file=sys.stderr)
+                print(
+                    "m3 upload: publication failed; local results are unchanged",
+                    file=sys.stderr,
+                )
                 return 2
             print(f"Published: {args.run_id}")
             return 0
@@ -367,7 +390,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         else:
-            if command_name in {"test", "ci", "upload"} and str(exc) != "invalid command or configuration":
+            if (
+                command_name in {"test", "ci", "upload"}
+                and str(exc) != "invalid command or configuration"
+            ):
                 print(f"m3 {command_name}: {exc}", file=sys.stderr)
             else:
                 print(_command_error_message(command_name), file=sys.stderr)

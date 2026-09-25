@@ -1304,7 +1304,9 @@ def run_test_with_runs(
 
     try:
         child_environment = (
-            dict(environment) if environment is not None else _test_environment(env_file)
+            dict(environment)
+            if environment is not None
+            else _test_environment(env_file)
         )
     except ProjectPythonError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
