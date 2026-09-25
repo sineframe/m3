@@ -466,7 +466,7 @@ CREATE TABLE IF NOT EXISTS v2_run_label_sequence (
 );
 CREATE TABLE IF NOT EXISTS v2_test_results (
   run_id TEXT NOT NULL REFERENCES v2_test_runs(run_id) ON DELETE CASCADE,
-  attempt_id TEXT NOT NULL, record_json TEXT NOT NULL, suite_id INTEGER REFERENCES v2_suites(id),
+  attempt_id TEXT NOT NULL, record_json TEXT NOT NULL, suite_id INTEGER NOT NULL REFERENCES v2_suites(id),
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   PRIMARY KEY(run_id, attempt_id)
 );
@@ -611,6 +611,7 @@ class _SqliteBase:
                         connection.execute(
                             f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
                         )
+                self._migrate_test_result_suites(connection)
                 # Old manifests predate labels. Assign them in history order,
                 # under the same writer lock used by new run creation.
                 connection.execute("BEGIN IMMEDIATE")
@@ -658,6 +659,9 @@ class _SqliteBase:
                 )
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS v2_test_results_suite ON v2_test_results(suite_id, run_id, attempt_id)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS v2_test_results_run_node ON v2_test_results(run_id, attempt_id)"
                 )
                 migrate = getattr(self, "_migrate_legacy_evaluations", None)
                 if callable(migrate):
@@ -737,6 +741,144 @@ class _SqliteBase:
         foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_keys:
             raise StorageError("suite schema migration left invalid foreign keys")
+
+    @staticmethod
+    def _ensure_suite_connection(
+        connection: _CompatConnection, suite_name: str, project_id: str | None = None
+    ) -> Suite:
+        normalized = normalize_suite_name(suite_name)
+        project = None if project_id is None else ProjectId(project_id)
+        row = connection.execute(
+            "SELECT id,suite_name,project_id FROM v2_suites WHERE suite_name=? AND (project_id IS ? OR project_id=?)",
+            (
+                normalized,
+                None if project is None else project.root,
+                None if project is None else project.root,
+            ),
+        ).fetchone()
+        if row is not None:
+            return Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]), project)
+        next_id = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(id),0)+1 FROM v2_suites"
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT INTO v2_suites(id,suite_name,project_id) VALUES(?,?,?)",
+            (next_id, normalized, None if project is None else project.root),
+        )
+        return Suite(SuiteId(next_id), normalized, normalized, project)
+
+    def _migrate_test_result_suites(self, connection: _CompatConnection) -> None:
+        """Preserve old attempts while making every new attempt reference a suite."""
+        columns = connection.execute("PRAGMA table_info(v2_test_results)").fetchall()
+        if any(str(row[1]) == "suite_id" and int(row[3]) for row in columns):
+            return
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            rows = connection.execute(
+                "SELECT t.run_id,t.attempt_id,t.record_json,t.suite_id,"
+                "r.project_id AS run_project_id,r.record_json AS run_json "
+                "FROM v2_test_results AS t "
+                "LEFT JOIN v2_test_runs AS r ON r.run_id=t.run_id"
+            ).fetchall()
+            for row in rows:
+                try:
+                    decoded = json.loads(str(row["record_json"]))
+                except (ValueError, TypeError):
+                    decoded = None
+                record = dict(decoded) if isinstance(decoded, dict) else {}
+                try:
+                    run_record = json.loads(str(row["run_json"]))
+                except (ValueError, TypeError):
+                    run_record = None
+                run_record = run_record if isinstance(run_record, dict) else {}
+                project_id = None
+                for candidate in (
+                    record.get("project_id"),
+                    row["run_project_id"],
+                    run_record.get("project_id"),
+                ):
+                    if not isinstance(candidate, str):
+                        continue
+                    try:
+                        project_id = ProjectId(candidate).root
+                    except (ValueError, ValidationError):
+                        continue
+                    project_name = (
+                        record.get("project_name")
+                        if candidate == record.get("project_id")
+                        else None
+                    )
+                    if (
+                        not isinstance(project_name, str) or not project_name.strip()
+                    ) and candidate == run_record.get("project_id"):
+                        project_name = run_record.get("project_name")
+                    if not isinstance(project_name, str) or not project_name.strip():
+                        project_name = project_id
+                    now = _iso(_utcnow())
+                    connection.execute(
+                        "INSERT OR IGNORE INTO v2_projects(id,project_name,created_at,updated_at) "
+                        "VALUES(?,?,?,?)",
+                        (project_id, project_name, now, now),
+                    )
+                    break
+                suite_row = (
+                    connection.execute(
+                        "SELECT id,suite_name,project_id FROM v2_suites WHERE id=?",
+                        (row["suite_id"],),
+                    ).fetchone()
+                    if row["suite_id"] is not None
+                    else None
+                )
+                if suite_row is not None:
+                    suite_name = str(suite_row["suite_name"])
+                    if project_id is None:
+                        project_id = suite_row["project_id"]
+                else:
+                    try:
+                        suite_name = normalize_suite_name(record.get("suite_name"))
+                    except (TypeError, ValueError):
+                        suite_name = "Legacy unassigned"
+                if suite_row is not None and project_id == suite_row["project_id"]:
+                    suite_id = int(suite_row["id"])
+                else:
+                    suite = self._ensure_suite_connection(
+                        connection, suite_name, project_id
+                    )
+                    suite_id = suite.id.root
+                    suite_name = suite.name
+                record["suite_id"] = suite_id
+                record["suite_name"] = suite_name
+                if project_id is not None:
+                    record["project_id"] = str(project_id)
+                connection.execute(
+                    "UPDATE v2_test_results SET suite_id=?,record_json=? "
+                    "WHERE run_id=? AND attempt_id=?",
+                    (suite_id, _json(record), row["run_id"], row["attempt_id"]),
+                )
+            connection.execute(
+                "CREATE TABLE v2_test_results_rebuilt ("
+                "run_id TEXT NOT NULL REFERENCES v2_test_runs(run_id) ON DELETE CASCADE, "
+                "attempt_id TEXT NOT NULL, record_json TEXT NOT NULL, "
+                "suite_id INTEGER NOT NULL REFERENCES v2_suites(id), "
+                "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+                "PRIMARY KEY(run_id, attempt_id))"
+            )
+            connection.execute(
+                "INSERT INTO v2_test_results_rebuilt "
+                "(run_id,attempt_id,record_json,suite_id,created_at,updated_at) "
+                "SELECT run_id,attempt_id,record_json,suite_id,created_at,updated_at "
+                "FROM v2_test_results"
+            )
+            connection.execute("DROP TABLE v2_test_results")
+            connection.execute(
+                "ALTER TABLE v2_test_results_rebuilt RENAME TO v2_test_results"
+            )
+            connection.execute("COMMIT")
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
 
     def _migrate_legacy_evaluations(self, connection: _CompatConnection) -> None:
         """Best-effort projection of pre-v2.1 evaluation JSON."""
@@ -1506,35 +1648,6 @@ class SQLiteExecutionStore(_SqliteBase):
         finally:
             connection.close()
 
-    @staticmethod
-    def _ensure_suite_connection(
-        connection: _CompatConnection, suite_name: str, project_id: str | None = None
-    ) -> Suite:
-        normalized = normalize_suite_name(suite_name)
-        from ..types import ProjectId
-
-        project = None if project_id is None else ProjectId(project_id)
-        row = connection.execute(
-            "SELECT id,suite_name,project_id FROM v2_suites WHERE suite_name=? AND (project_id IS ? OR project_id=?)",
-            (
-                normalized,
-                None if project is None else project.root,
-                None if project is None else project.root,
-            ),
-        ).fetchone()
-        if row is not None:
-            return Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]), project)
-        next_id = int(
-            connection.execute(
-                "SELECT COALESCE(MAX(id),0)+1 FROM v2_suites"
-            ).fetchone()[0]
-        )
-        connection.execute(
-            "INSERT INTO v2_suites(id,suite_name,project_id) VALUES(?,?,?)",
-            (next_id, normalized, None if project is None else project.root),
-        )
-        return Suite(SuiteId(next_id), normalized, normalized, project)
-
     def get_suite(self, suite_id: SuiteId | str) -> Suite | None:
         raw_id = suite_id.root if isinstance(suite_id, SuiteId) else suite_id
         with self._connect() as connection:
@@ -1873,25 +1986,19 @@ class SQLiteExecutionStore(_SqliteBase):
         )
         if not isinstance(safe, Mapping):
             raise StorageError("test result could not be redacted")
-        suite_ref = None
+        suite_name = normalize_suite_name(safe.get("suite_name"))
         now = _iso(_utcnow())
         connection = self._connect()
         try:
             self._begin(connection, immediate=True)
-            suite = (
-                self._ensure_suite_connection(
-                    connection,
-                    str(safe["suite_name"]),
-                    str(safe.get("project_id")) if safe.get("project_id") else None,
-                )
-                if safe.get("suite_name")
-                else None
+            suite = self._ensure_suite_connection(
+                connection,
+                suite_name,
+                str(safe.get("project_id")) if safe.get("project_id") else None,
             )
-            suite_ref = suite.id.root if suite else None
-            if suite is not None:
-                safe = dict(safe)
-                safe["suite_id"] = suite.id.root
-                safe["suite_name"] = suite.name
+            safe = dict(safe)
+            safe["suite_id"] = suite.id.root
+            safe["suite_name"] = suite.name
             # xdist workers can publish their first attempt before the
             # controller's manifest update reaches the database.
             if (
@@ -1922,7 +2029,7 @@ class SQLiteExecutionStore(_SqliteBase):
             connection.execute(
                 "INSERT INTO v2_test_results(run_id,attempt_id,record_json,created_at,updated_at,suite_id) VALUES(?,?,?,?,?,?) "
                 "ON CONFLICT(run_id,attempt_id) DO UPDATE SET record_json=excluded.record_json,updated_at=excluded.updated_at,suite_id=excluded.suite_id",
-                (key, str(attempt_id), _json(safe), now, now, suite_ref),
+                (key, str(attempt_id), _json(safe), now, now, suite.id.root),
             )
             self._commit(connection)
         except BaseException:

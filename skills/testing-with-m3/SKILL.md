@@ -41,8 +41,11 @@ Read only the reference needed for the task:
    the dependency manifest or lockfile. Replace the skipped starter with a
    real test and remove its skip.
 4. Write a deterministic direct test that actually calls a server tool, then
-   run it with `m3 test -- tests/PATH.py`. A normal pytest assertion without an
-   M3 client or agent operation produces no execution. Give every test a short
+   give every test selected for the persisted `m3 test` run a non-empty
+   `suite_name` via `@pytest.mark.m3(suite_name="mcp-behavior")` or a module
+   `pytestmark`, and run it with `m3 test -- tests/PATH.py`. A normal pytest
+   assertion without an M3 client or agent operation produces no execution.
+   Give every test a short
    behavior-focused function docstring; M3 saves it as the test description
    shown in the UI. Use the [stdio example](references/test-patterns.md#stdio-local-command)
    or the project's equivalent server fixture. Add agent/provider tests when
@@ -66,7 +69,7 @@ Read only the reference needed for the task:
 | A change helps across cases or harnesses | Stable cases, selections, and trials plus a saved baseline | Matched test/evaluation changes, observed interface change, coverage, and limitations |
 
 For a simple marked test, declare server cases with
-`@pytest.mark.m3(servers=[{"type": "http", "url": URL, "trust": "public"}])`
+`@pytest.mark.m3(suite_name="mcp-behavior", servers=[{"type": "http", "url": URL, "trust": "public"}])`
 or choose them with CLI `--server http --url URL --trust public`. Request
 `server` in the test function and pass it to `agent.run(..., server=server)`
 or `kit.direct(server)`. Each entry runs separately with each selected agent
@@ -102,7 +105,10 @@ operations.
 
 `m3 test` is the primary runner. It runs pytest in the project Python, saves
 executions and pytest outcomes in SQLite, and prints a run ID plus the feedback
-path. Put CLI options before `--` and pytest selectors after it:
+path. `--suite` selects a suite but does not assign its name; tests surviving
+pytest selection must declare or inherit one. Deselected tests and
+`--collect-only` do not need names. Put CLI options before `--` and pytest
+selectors after it:
 
 ```sh
 m3 test --suite mcp-behavior -- tests/test_m3_starter.py
@@ -123,6 +129,9 @@ A marked test requesting `agent` needs `--harness KIND=MODEL` or marker
 specifically needs SDK-only pytest, use the project's approved SDK
 installation workflow. Direct pytest history is in memory unless the kit uses
 `SQLiteExecutionStore` or the M3 pytest plugin receives `--results-db`.
+Only the plugin with `--results-db` requires suite names on pytest items.
+Standalone scripts and notebooks do not require a suite name, even with an
+explicit SQLite store.
 Keep direct-only and agent tests in separate files when running without a
 harness: `-k` filters after collection and does not avoid an agent fixture
 selection error in the same collected file.

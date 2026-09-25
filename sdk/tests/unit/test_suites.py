@@ -49,6 +49,24 @@ def test_sqlite_migration_adds_suite_columns_to_existing_database(
     store.close()
 
 
+def test_direct_sqlite_execution_does_not_require_a_suite(tmp_path: Path) -> None:
+    store = SQLiteExecutionStore(tmp_path / "direct.sqlite")
+    execution_id = ExecutionId("unsuited-direct")
+    store.create(ExecutionState(execution_id=execution_id))
+    snapshot = store.get_snapshot(execution_id)
+    assert snapshot is not None
+    assert snapshot.suite_id is None
+    assert snapshot.suite_name is None
+    with store._connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT suite_id FROM v2_executions WHERE id=?", (execution_id.root,)
+            ).fetchone()[0]
+            is None
+        )
+    store.close()
+
+
 def test_in_memory_suite_survives_events_and_suite_filter() -> None:
     store = InMemoryExecutionStore()
     execution_id = ExecutionId("suite-event")

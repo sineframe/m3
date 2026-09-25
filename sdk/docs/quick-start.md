@@ -38,7 +38,7 @@ m3 test --env-file .env -- tests/test_answer.py
 import pytest
 from m3.judges import LLMJudge
 
-@pytest.mark.m3
+@pytest.mark.m3(suite_name="answers")
 def test_answer(m3_kit):
     """The judge accepts the answer to a simple arithmetic question."""
     judge = LLMJudge(model="judge-model")
@@ -67,7 +67,7 @@ Use an ordinary marked pytest test; the CLI supplies harness and model:
 import pytest
 from m3 import expect
 
-@pytest.mark.m3(servers=[{
+@pytest.mark.m3(suite_name="shipping", servers=[{
     "type": "http", "url": "https://shipping.example.com/mcp", "trust": "public",
 }])
 def test_shipping(agent, server):
@@ -262,7 +262,9 @@ Exiting the kit provides the outer cleanup boundary and finalizes trace data.
 ## Run the test
 
 The separately installed M3 CLI runs the test with pytest in your project
-environment and records M3 executions. From the project root:
+environment and records M3 executions. Give every test that will run a
+non-empty `suite_name` (on the test or via a module-level `pytestmark`) before
+using the CLI. From the project root:
 
 ```bash
 m3 doctor
@@ -299,7 +301,9 @@ Select it with `m3 test --suite catalog -- tests`; combine it
 with `--harness`, `--trials`, paths, `-k`, and `-m`. A standalone kit or
 execution specification can set `suite_name="catalog"` directly. An explicit
 specification name overrides the kit default; the effective name must still
-match the pytest marker when one is active.
+match the pytest marker when one is active. `--suite` selects tests; it does
+not assign names. Deselected items and `--collect-only` runs do not require
+names.
 
 ## Choose whether test executions persist
 
@@ -325,7 +329,9 @@ m3 test --results-db /tmp/m3-runs.sqlite -- tests/test_shipping.py
 Scripts can opt into saved storage without the standalone CLI by passing
 `SQLiteExecutionStore(".m3/executions.sqlite")` to `MCPTestKit(store=...)`.
 Run a selected agent as shown below and use `result.snapshot.execution_id` to
-reopen its trace. Close the store after the kit.
+reopen its trace. Close the store after the kit. Direct Python scripts and
+notebooks may leave `suite_name` unset even when using SQLite; the required
+name applies to persisted pytest *test results*, not direct executions.
 
 Alternatively, a direct pytest invocation can install the same plugin and
 default-store flag used by the CLI:
@@ -354,8 +360,10 @@ When several servers expose different tools, keep each tool under its owning
 items, each receiving one immutable case:
 
 ```python
+import pytest
 from m3.matrix import ServerCase, ToolCase, ToolMatrix
 
+pytestmark = pytest.mark.m3(suite_name="catalog")
 matrix = ToolMatrix(servers=(ServerCase(
     name="catalog",
     server=example_server,
@@ -381,7 +389,7 @@ CLI. Define the server fixture in your project, then request `agent`:
 import pytest
 from m3 import expect
 
-@pytest.mark.m3
+@pytest.mark.m3(suite_name="shipping")
 def test_agent_selects_shipping_quote(agent, shipping_server):
     """The agent selects the shipping quote tool for a local parcel."""
     result = agent.run(
@@ -407,10 +415,10 @@ native login can also authenticate a harness where supported. Claude Code uses
 Put provider keys in `.env` under the names expected by the selected harness.
 
 To keep defaults in code for direct pytest, use
-`@pytest.mark.m3(agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}])`
+`@pytest.mark.m3(suite_name="shipping", agents=[{"harness": "opencode", "models": ["opencode/big-pickle"]}])`
 and load the plugin with `python -m pytest -p m3.pytest_plugin`. CLI choices
-replace those defaults. The marker with no arguments is the clean path for
-CLI-selected tests.
+replace those defaults. A marker without agent selections still works for
+CLI-selected tests; include a suite name when pytest results are persisted.
 
 A normal Python file or notebook needs no pytest:
 

@@ -520,6 +520,7 @@ servers = tuple(
 )
 matrix = ToolMatrix(servers=servers)
 pytestmark = pytest.mark.m3(
+    suite_name="matrix",
     agents=[{{"harness": "acp", "models": ["fixture-a", "fixture-b"],
              "manifest": {{"command": sys.executable, "args": [r"{acp}"],
                           "protocol": "acp", "protocol_version": 1}}}}],

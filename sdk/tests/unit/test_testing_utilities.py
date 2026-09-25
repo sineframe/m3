@@ -721,6 +721,7 @@ def test_native_pytest_setup_and_teardown_errors_remain_in_summary(
     test_file = tmp_path / "test_failures.py"
     test_file.write_text(
         "import pytest\n"
+        "pytestmark = pytest.mark.m3(suite_name='failures')\n"
         "@pytest.fixture\n"
         "def setup_failure():\n    raise RuntimeError('setup')\n"
         "@pytest.fixture\n"

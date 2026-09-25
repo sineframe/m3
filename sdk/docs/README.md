@@ -3,6 +3,9 @@
 Use these pages to start writing tests for MCP servers and agent harnesses.
 Tests are ordinary executable pytest tests; run them through the M3 CLI
 for persisted results and an optional local UI, or invoke pytest directly.
+Persisted pytest runs require a suite name on each selected test; direct
+Python/notebook use and pytest without persisted results do not. See the
+[quick start](quick-start.md#run-the-test) for markers and selection behavior.
 Native harness choices include Claude Code, OpenCode, Codex App Server, and Pi
 RPC; ACP remains the bring-your-own protocol path.
 The project SDK and standalone CLI are separate installations; adding the SDK

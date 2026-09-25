@@ -69,7 +69,12 @@ existing server fixture.
 Direct SDK/pytest use is in memory unless the kit receives
 `store=SQLiteExecutionStore(path)` or pytest loads
 `-p m3.pytest_plugin --results-db PATH`. An explicit kit store takes
-precedence. See [feedback and iteration](feedback-iteration.md) to reopen and
+precedence. For persisted pytest runs, name each test that survives selection
+with a non-empty `suite_name` on an `m3` marker or inherited `pytestmark`;
+`--suite` selects names, but cannot assign one. `-k`/`-m` deselections and
+`--collect-only` do not require names. Direct Python/notebook use and plain
+pytest without `--results-db` remain optional even when a kit uses SQLite.
+See [feedback and iteration](feedback-iteration.md) to reopen and
 inspect saved runs. Ordinary Python assertions are represented by the pytest
 case outcome; only explicit evaluations and M3 matcher checks become saved
 evaluation records.
@@ -228,7 +233,7 @@ import sys
 import pytest
 from m3 import expect
 
-@pytest.mark.m3(servers=[{
+@pytest.mark.m3(suite_name="shipping", servers=[{
     "type": "stdio", "command": sys.executable,
     "args": ["-m", "your_package.mcp_server"],
 }])
@@ -245,6 +250,8 @@ custom `StdioServer` with unmarked or advanced tests:
 import sys
 import pytest
 from m3 import MCPTestKit, StdioServer, expect
+
+pytestmark = pytest.mark.m3(suite_name="shipping")
 
 @pytest.fixture
 def shipping_server():

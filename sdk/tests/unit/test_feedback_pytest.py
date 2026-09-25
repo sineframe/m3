@@ -23,7 +23,10 @@ def _run(
     tmp_path: Path, source: str, *extra: str
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     test_file = tmp_path / "test_case.py"
-    test_file.write_text(source, encoding="utf-8")
+    test_file.write_text(
+        "import pytest\npytestmark = pytest.mark.m3(suite_name='feedback')\n" + source,
+        encoding="utf-8",
+    )
     database = tmp_path / "results.sqlite"
     env = os.environ.copy()
     sdk_source = str(Path(__file__).parents[2] / "src")
@@ -846,7 +849,7 @@ def test_global_credential_mapping_applies_to_marked_agents_without_harness_cli(
 import os, pytest
 from m3 import StdioServer, UserMessage
 os.environ["MARKED_SOURCE"] = "sentinel"
-pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["vendor/model"]}])
+pytestmark = pytest.mark.m3(suite_name="feedback", agents=[{"harness": "opencode", "models": ["vendor/model"]}])
 def test_marked(agent):
     spec = agent._spec(UserMessage(content="x"), server=StdioServer(name="s", command="echo"))
     assert spec.harness.credential_references["VENDOR_KEY"].name == "MARKED_SOURCE"

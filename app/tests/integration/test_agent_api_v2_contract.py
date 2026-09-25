@@ -32,7 +32,7 @@ def _run_agent_test(
     source = f'''\
 import pytest, sys
 from m3 import EvaluationDecision, EvaluationStatus, StdioServer, expect
-pytestmark = pytest.mark.m3(agents=[{{"harness": "acp", "models": ["fixture-a", "fixture-b"], "manifest": {{"command": sys.executable, "args": [r"{agent}"], "protocol": "acp", "protocol_version": 1}}}}], trials=2)
+pytestmark = pytest.mark.m3(suite_name="agent-api", agents=[{{"harness": "acp", "models": ["fixture-a", "fixture-b"], "manifest": {{"command": sys.executable, "args": [r"{agent}"], "protocol": "acp", "protocol_version": 1}}}}], trials=2)
 def test_selected(agent):
     """Checks that the agent selects the shipping quote tool."""
     result = agent.run("Get a local shipping quote.", server=StdioServer(name="example-mcp", command=sys.executable, args=[r"{server}"]))

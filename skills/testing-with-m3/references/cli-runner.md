@@ -116,6 +116,12 @@ Once the project is ready, run a narrow test with normal pytest feedback:
 m3 test -- tests/test_shipping.py
 ```
 
+Before running, name every selected test with
+`@pytest.mark.m3(suite_name="shipping")`, or give all tests in the file an
+inherited `pytestmark = pytest.mark.m3(suite_name="shipping")`. `m3 test`
+persists pytest results and rejects missing or blank names after pytest's
+`-k`/`-m` deselection. `--collect-only` does not require them.
+
 Select a named suite using the existing marker in each suite file:
 
 ```python
@@ -128,6 +134,7 @@ m3 test --suite=catalog -- tests
 m3 test --suite catalog -- tests/catalog_tools.py tests/catalog_prompts.py
 ```
 
+`--suite` filters by name; it does not supply a name to unmarked tests.
 Suite selection is intersected with paths, `-k`, `-m`, harnesses, and trials
 before agent expansion. Add `--harness` and `--trials` to select agent
 combinations when the marked tests provide the required agent configuration.
@@ -158,7 +165,8 @@ remains valid when the standalone CLI is not needed:
 uv run pytest tests/test_shipping.py
 ```
 
-That direct command uses in-memory SDK execution storage by default. A project
+That direct command uses in-memory SDK execution storage by default and does
+not require suite names. A project
 that wants saved history without the standalone CLI can either pass
 `SQLiteExecutionStore` to its kit or invoke pytest with the storage plugin:
 
@@ -166,6 +174,10 @@ that wants saved history without the standalone CLI can either pass
 uv run pytest -p m3.pytest_plugin \
   --results-db .m3/executions.sqlite tests/test_shipping.py
 ```
+
+This plugin-backed pytest command does require suite names on the final
+selected tests. A plain Python script or notebook with an explicit SQLite
+store does not, because it saves executions without pytest test results.
 
 Direct SQLite use requires the `sf-m3[storage]` extra; install
 `sf-m3[pytest,storage]` when both pytest and SQLite support are needed.

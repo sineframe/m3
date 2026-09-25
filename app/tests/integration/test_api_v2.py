@@ -309,6 +309,7 @@ def test_v2_execution_report_links_saved_pytest_results(tmp_path):
             "attempt-a",
             {
                 "attempt_id": "attempt-a",
+                "suite_name": "catalog",
                 "node_id": "tests/test_catalog.py::test_a",
                 "description": "Checks the catalog entry.",
                 "outcome": "failed",
@@ -327,6 +328,7 @@ def test_v2_execution_report_links_saved_pytest_results(tmp_path):
             "attempt-b",
             {
                 "attempt_id": "attempt-b",
+                "suite_name": "catalog",
                 "node_id": "tests/test_catalog.py::test_b",
                 "outcome": "passed",
                 "duration_seconds": None,
@@ -338,6 +340,7 @@ def test_v2_execution_report_links_saved_pytest_results(tmp_path):
             "attempt-unrelated",
             {
                 "attempt_id": "attempt-unrelated",
+                "suite_name": "catalog",
                 "node_id": "tests/test_catalog.py::test_unrelated",
                 "description": "Unrelated test.",
                 "outcome": "passed",
@@ -895,6 +898,8 @@ def test_v2_grouping_preserves_cli_partial_suite_selection(tmp_path):
 
 def test_v2_manifest_not_run_feedback_and_run_list_counts(tmp_path):
     source = """
+import pytest
+pytestmark = pytest.mark.m3(suite_name="manifest")
 def test_first():
     assert False
 

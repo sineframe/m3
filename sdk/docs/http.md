@@ -121,7 +121,7 @@ fixtures. A public endpoint exposed to an agent needs `trust="public"`:
 import pytest
 from m3 import expect
 
-@pytest.mark.m3(servers=[{
+@pytest.mark.m3(suite_name="deepwiki", servers=[{
     "type": "http", "url": "https://mcp.deepwiki.com/mcp", "trust": "public",
 }])
 def test_agent_reads_wiki_structure(agent, server):
@@ -177,6 +177,7 @@ import pytest
 from m3 import expect
 from m3.matrix import ServerCase, ToolCase, ToolMatrix
 
+pytestmark = pytest.mark.m3(suite_name="deepwiki")
 matrix = ToolMatrix(servers=(ServerCase(
     name="deepwiki",
     server=deepwiki_server,

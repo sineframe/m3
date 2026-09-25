@@ -425,7 +425,13 @@ def _persistence_fixture(path: Path, *, include_events: bool = True) -> None:
     store.create(state, specification=spec.model_dump(mode="json"))
     store.save_test_run("pytest-1", {"run_id": "pytest-1", "status": "finished"})
     store.save_test_result(
-        "pytest-1", "attempt-1", {"node_id": "test", "execution_ids": ["execution-1"]}
+        "pytest-1",
+        "attempt-1",
+        {
+            "node_id": "test",
+            "suite_name": "live-ui-gate",
+            "execution_ids": ["execution-1"],
+        },
     )
     store.close()
     connection = sqlite3.connect(path)

@@ -128,7 +128,9 @@ def test_sqlite_manifest_updates_and_test_results_do_not_consume_run_numbers(tmp
     for number in range(5):
         store.save_test_run("first", {"run_id": "first", "updated": number})
         store.save_test_result(
-            "first", f"attempt-{number}", {"node_id": f"test_{number}"}
+            "first",
+            f"attempt-{number}",
+            {"node_id": f"test_{number}", "suite_name": "catalog"},
         )
     store.save_test_run("second", {"run_id": "second"})
     assert store.get_test_run("first")["run_label"] == "Run #1"
