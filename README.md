@@ -169,7 +169,9 @@ the test needs provider keys.
 CLI-managed runs use `.m3/executions.sqlite` by default and write an
 agent-readable report to `.m3/reports/<run-id>/feedback.json`. The CLI
 guide explains how to select pytest arguments, compare a run with a baseline,
-and open the bundled viewer.
+and open the bundled viewer. From that same project directory, `m3 ui`
+opens saved test runs without starting another test; `m3 test --ui` runs
+pytest first and then opens the viewer.
 
 ## Use the SDK with direct pytest
 

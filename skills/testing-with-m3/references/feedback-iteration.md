@@ -18,6 +18,13 @@ guess the ID from a timestamp. The default SQLite database is
 `.m3/executions.sqlite`. If you used `--results-db PATH`, keep using the same
 path for later comparisons.
 
+To browse saved test runs without executing a new test, run `m3 ui` from the
+directory containing `.m3/executions.sqlite` and open the printed `/reports`
+link. It refuses missing or invalid history instead of initializing a new
+database. `m3 ui` does not accept `--results-db` or `--project-root`; an
+alternate database used by `m3 test --results-db` is not selected by this
+command. Use `m3 test --ui` only when a new test run is intended.
+
 ```sh
 report=.m3/reports/RUN_ID/feedback.json
 jq '{summary, limitations, evaluation_stats}' "$report"

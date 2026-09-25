@@ -122,6 +122,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     test.add_argument("--port", type=int, default=8000, metavar="PORT", help="UI port")
 
+    ui_parser = subparsers.add_parser(
+        "ui", help="view saved runs without running tests"
+    )
+    ui_parser.add_argument(
+        "--port", type=int, default=8000, metavar="PORT", help="UI port"
+    )
+
     runtime_parser = subparsers.add_parser(
         "runtime", help="manage managed runtime caches"
     )
@@ -154,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
     command_name = (
         effective_argv[0]
         if effective_argv
-        and effective_argv[0] in {"doctor", "setup", "test", "init", "runtime"}
+        and effective_argv[0] in {"doctor", "setup", "test", "ui", "init", "runtime"}
         else "doctor"
     )
     pytest_args: list[str] = []
@@ -192,6 +199,10 @@ def main(argv: list[str] | None = None) -> int:
                 runtime=args.runtime,
                 harness_cache_dir=args.harness_cache_dir,
             )
+        if args.command == "ui":
+            from .supervisor import run_ui
+
+            return run_ui(port=args.port)
         if args.command == "runtime":
             return runtime.cache_command(
                 args.cache_command,

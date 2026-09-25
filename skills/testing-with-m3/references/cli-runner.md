@@ -1,6 +1,6 @@
 # M3 CLI runner
 
-The public CLI has four subcommands in the tested release. Use `m3 --help`
+The public CLI includes `m3 ui`. Use `m3 --help`
 and `m3 COMMAND --help` for exact options; `m3 --version` and separate
 `m3 report`/`m3 compare` commands are unavailable.
 
@@ -10,6 +10,7 @@ and `m3 COMMAND --help` for exact options; `m3 --version` and separate
 | `m3 setup` | Install the matching SDK into the selected project Python |
 | `m3 doctor` | Check project setup, optionally with `--json` or `--require` |
 | `m3 test` | Run pytest, save feedback, and optionally compare with `--baseline` or open `--ui` |
+| `m3 ui` | Open saved test runs from the current directory without running pytest |
 
 Run `init` before expecting a complete project result from `doctor`. If a
 shell already has `VIRTUAL_ENV` or `CONDA_PREFIX` set, `setup` selects that
@@ -143,10 +144,15 @@ the project root; select another with the CLI's `--results-db` option:
 m3 test --results-db /tmp/m3-runs.sqlite -- tests/test_shipping.py
 ```
 
-Use `m3 test --ui -- tests/test_shipping.py` only when the user wants the
-local viewer. It stays open after pytest finishes until interrupted. Everything
-after `--` is forwarded to pytest. Direct pytest remains valid when the
-standalone CLI is not needed:
+Use `m3 test --ui -- tests/test_shipping.py` when the user wants to run
+pytest and then keep the local viewer open. To inspect old runs without
+starting any new tests, run `m3 ui` from the directory containing the existing
+`.m3/executions.sqlite` database. It prints a tokenized link to `/reports`
+after the server starts, and stays open until interrupted. `m3 ui` neither
+creates a database nor searches parent directories, and has only the optional
+`--port PORT` flag; change directories first if history is elsewhere.
+Everything after `--` in `m3 test` is forwarded to pytest. Direct pytest
+remains valid when the standalone CLI is not needed:
 
 ```bash
 uv run pytest tests/test_shipping.py

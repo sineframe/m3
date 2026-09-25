@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import socket
+import sqlite3
 import sys
 from collections import deque
 from datetime import datetime, timezone
@@ -165,10 +166,11 @@ class _Process:
         return self.returncode
 
 
-def test_only_doctor_and_test_commands_are_public() -> None:
+def test_ui_command_rejects_database_and_project_overrides() -> None:
     parser = main.__module__
     assert parser == "m3_cli.main"
-    assert main(["ui"]) == 2
+    assert main(["ui", "--results-db", "other.sqlite"]) == 2
+    assert main(["ui", "--project-root", "other"]) == 2
 
 
 def test_old_port_flags_are_rejected(capsys: pytest.CaptureFixture[str]) -> None:
@@ -263,6 +265,174 @@ def test_ui_server_zero_runs_prints_message(
     lines = capsys.readouterr().out.splitlines()
     assert lines[: len(M3_ASCII_ART.splitlines())] == M3_ASCII_ART.splitlines()
     assert lines[len(M3_ASCII_ART.splitlines()) :] == ["No new stored runs."]
+
+
+def test_ui_server_prints_authenticated_history_index_only_after_readiness(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Child:
+        process = SimpleNamespace(poll=lambda: None)
+
+        def alive(self) -> bool:
+            return True
+
+    monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: Child())
+    monkeypatch.setattr(supervisor, "_wait_ready", lambda *_args: True)
+    monkeypatch.setattr(supervisor, "_terminate_process", lambda _process: None)
+    monkeypatch.setattr(
+        supervisor.time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    assert (
+        supervisor._run_ui_server(
+            Path("results.sqlite"), 8123, 0, (), (), history_index=True
+        )
+        == 0
+    )
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[: len(M3_ASCII_ART.splitlines())] == M3_ASCII_ART.splitlines()
+    assert len(lines) == len(M3_ASCII_ART.splitlines()) + 1
+    assert lines[-1].startswith("UI: http://127.0.0.1:8123/reports#m3_token=")
+
+
+def test_ui_from_uninitialized_directory_does_not_create_history(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        supervisor,
+        "_run_pytest_process",
+        lambda *_args, **_kwargs: pytest.fail("pytest started"),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_run_ui_server",
+        lambda *_args, **_kwargs: pytest.fail("UI started"),
+    )
+    assert main(["ui"]) == 2
+    assert ".m3/executions.sqlite" in capsys.readouterr().err
+    assert not (tmp_path / ".m3").exists()
+
+
+@pytest.mark.parametrize("contents", [b"not sqlite", b""])
+def test_ui_rejects_non_m3_file_without_modifying_it(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    contents: bytes,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    database = tmp_path / ".m3" / "executions.sqlite"
+    database.parent.mkdir()
+    database.write_bytes(contents)
+    monkeypatch.setattr(
+        supervisor,
+        "_run_ui_server",
+        lambda *_args, **_kwargs: pytest.fail("UI started"),
+    )
+    assert main(["ui"]) == 2
+    error = capsys.readouterr().err
+    assert "M3 history database" in error or "invalid" in error
+    assert database.read_bytes() == contents
+
+
+def test_ui_rejects_unrelated_sqlite_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    database = tmp_path / ".m3" / "executions.sqlite"
+    database.parent.mkdir()
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE unrelated (id INTEGER)")
+    assert main(["ui"]) == 2
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall() == [("unrelated",)]
+
+
+def test_ui_rejects_symlinked_history_without_starting_server(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "executions.sqlite"
+    target.write_bytes(b"not sqlite")
+    (tmp_path / ".m3").symlink_to(tmp_path, target_is_directory=True)
+    monkeypatch.setattr(
+        supervisor,
+        "_run_ui_server",
+        lambda *_args, **_kwargs: pytest.fail("UI started"),
+    )
+    assert main(["ui"]) == 2
+    assert target.read_bytes() == b"not sqlite"
+
+
+def test_ui_uses_existing_empty_database_without_running_pytest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from m3.storage import SQLiteExecutionStore
+
+    monkeypatch.chdir(tmp_path)
+    database = tmp_path / ".m3" / "executions.sqlite"
+    store = SQLiteExecutionStore(database)
+    assert store.list_test_runs() == ()
+    store.close()
+    seen: list[tuple[Path, int, bool]] = []
+    monkeypatch.setattr(supervisor, "_validate_port", lambda _port: None)
+    monkeypatch.setattr(supervisor, "_ui_prerequisite_error", lambda _ui_dir: None)
+    monkeypatch.setattr(
+        supervisor,
+        "_run_pytest_process",
+        lambda *_args, **_kwargs: pytest.fail("pytest started"),
+    )
+
+    def serve(
+        path: Path,
+        port: int,
+        _code: int,
+        _runs: object,
+        _warnings: object,
+        *,
+        history_index: bool,
+    ) -> int:
+        seen.append((path, port, history_index))
+        return 0
+
+    monkeypatch.setattr(supervisor, "_run_ui_server", serve)
+    assert main(["ui", "--port", "8123"]) == 0
+    assert seen == [(database, 8123, True)]
+    store = SQLiteExecutionStore(database)
+    assert store.list_test_runs() == ()
+    store.close()
+
+
+def test_ui_rejects_busy_port_before_server_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    database = tmp_path / ".m3" / "executions.sqlite"
+    database.parent.mkdir()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE v2_executions (id TEXT, snapshot_json TEXT, created_at TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE v2_test_runs "
+            "(run_id TEXT, record_json TEXT, created_at TEXT, updated_at TEXT)"
+        )
+    monkeypatch.setattr(
+        supervisor, "_validate_port", lambda _port: "port is already in use"
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_run_ui_server",
+        lambda *_args, **_kwargs: pytest.fail("UI started"),
+    )
+    assert main(["ui", "--port", "8123"]) == 2
+    assert "port is already in use" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("exit_code", [2, 130, 143])
@@ -391,6 +561,71 @@ def _use_fixture_ui_in_child(monkeypatch: pytest.MonkeyPatch, fixture_ui: Path) 
             str(port),
         ],
     )
+
+
+def test_ui_serves_existing_run_without_starting_another(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from m3.storage import SQLiteExecutionStore
+
+    monkeypatch.chdir(tmp_path)
+    database = tmp_path / ".m3" / "executions.sqlite"
+    store = SQLiteExecutionStore(database)
+    store.save_test_run(
+        "saved-run",
+        {"run_id": "saved-run", "created_at": "2026-09-20T12:00:00Z"},
+    )
+    store.close()
+    _use_fixture_ui_in_child(monkeypatch, Path(__file__).parent / "fixtures" / "ui")
+    monkeypatch.setattr(supervisor, "_ui_prerequisite_error", lambda _ui_dir: None)
+    monkeypatch.setattr(
+        supervisor,
+        "_run_pytest_process",
+        lambda *_args, **_kwargs: pytest.fail("pytest started"),
+    )
+    port_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    port_socket.bind(("127.0.0.1", 0))
+    port = port_socket.getsockname()[1]
+    port_socket.close()
+
+    original_sleep = supervisor.time.sleep
+
+    def inspect_server(_seconds: float) -> None:
+        monkeypatch.setattr(supervisor.time, "sleep", original_sleep)
+        output = capsys.readouterr().out
+        link = next(
+            line.removeprefix("UI: ")
+            for line in output.splitlines()
+            if line.startswith("UI: ")
+        )
+        assert link.startswith(f"http://127.0.0.1:{port}/reports#m3_token=")
+        token = link.split("#m3_token=", 1)[1]
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        try:
+            connection.request("GET", "/reports")
+            page = connection.getresponse()
+            page.read()
+            assert page.status == 200
+            connection.request(
+                "GET",
+                "/api/v2/runs",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            runs = connection.getresponse()
+            body = runs.read()
+            assert runs.status == 200
+            assert b"saved-run" in body
+        finally:
+            connection.close()
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(supervisor.time, "sleep", inspect_server)
+    assert supervisor.run_ui(port=port) == 0
+    store = SQLiteExecutionStore(database)
+    assert [run["run_id"] for run in store.list_test_runs()] == ["saved-run"]
+    store.close()
 
 
 def test_find_new_runs_excludes_existing_and_sorts_stably() -> None:
