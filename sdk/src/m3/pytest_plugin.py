@@ -761,23 +761,6 @@ def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
         if deselected:
             config.hook.pytest_deselected(items=deselected)
 
-    if config.getoption("--results-db"):
-        missing = [
-            str(item.nodeid)
-            for item in items
-            if not _merged_m3_marker(item).get("suite_name")
-        ]
-        if missing:
-            examples = ", ".join(missing[:3])
-            more = f" (and {len(missing) - 3} more)" if len(missing) > 3 else ""
-            config._m3_suite_validation_failed = True
-            raise _pytest.UsageError(
-                "Persisted pytest tests require a non-empty suite name. "
-                "Add @pytest.mark.m3(suite_name='my-suite') to the test, "
-                "or set pytestmark = pytest.mark.m3(suite_name='my-suite') "
-                f"for the module. Missing: {examples}{more}"
-            )
-
     for item in items:
         callspec = getattr(item, "callspec", None)
         if (
@@ -944,6 +927,28 @@ def _record_collected(
 def _pytest_collection_finish(session: _Any) -> None:
     config = session.config
     items = session.items
+    if config.getoption("--results-db") and not config.option.collectonly:
+        missing = [
+            str(item.nodeid)
+            for item in items
+            if not _merged_m3_marker(item).get("suite_name")
+        ]
+        if missing:
+            config._m3_suite_validation_failed = True
+            message = _missing_suite_message(missing)
+            if not config._m3_is_worker:
+                raise _pytest.UsageError(message)
+            # xdist reports worker collection errors to the controller. Raising
+            # UsageError here instead kills the worker without forwarding the
+            # diagnostic, leaving an unhelpful "no active workers" error.
+            config.hook.pytest_collectreport(
+                report=_pytest.CollectReport(
+                    nodeid="", outcome="failed", longrepr=message, result=[]
+                )
+            )
+            items[:] = [
+                item for item in items if _merged_m3_marker(item).get("suite_name")
+            ]
     node_ids = [str(item.nodeid) for item in items]
     suites = {}
     for item in items:
@@ -972,6 +977,17 @@ def _pytest_collection_finish(session: _Any) -> None:
     record["collected_suites"] = suites
     record["collection_count"] = len(node_ids)
     store.save_test_run(run_id.root, record)
+
+
+def _missing_suite_message(missing: list[str]) -> str:
+    examples = ", ".join(missing[:3])
+    more = f" (and {len(missing) - 3} more)" if len(missing) > 3 else ""
+    return (
+        "Persisted pytest tests require a non-empty suite name. "
+        "Add @pytest.mark.m3(suite_name='my-suite') to the test, "
+        "or set pytestmark = pytest.mark.m3(suite_name='my-suite') "
+        f"for the module. Missing: {examples}{more}"
+    )
 
 
 def _pytest_xdist_node_collection_finished(node: _Any, ids: list[str]) -> None:

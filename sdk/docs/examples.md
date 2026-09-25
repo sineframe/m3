@@ -1,6 +1,6 @@
 # Examples
 
-Agent tests use `@pytest.mark.m3`; select models with CLI `--harness` and
+Agent tests use `@pytest.mark.m3(suite_name="shipping")`; select models with CLI `--harness` and
 repeat independent executions with `--trials N`. Use `kit.agents(...)` in
 scripts and notebooks, and `ToolMatrix` for deterministic direct calls.
 For a trusted native Codex test server, pass
@@ -10,8 +10,11 @@ permission policy denies it.
 
 These are ordinary pytest tests using public M3 APIs. In your project,
 run tests with `m3 test -- tests` and add `--ui` before `--` to inspect
-recorded executions in the bundled local viewer. Direct pytest remains
-supported. The local examples use deterministic tools, resources, and prompts.
+recorded executions in the bundled local viewer. Every selected pytest test
+needs a suite name when results are persisted; set it on a test or inherit it
+from `pytestmark = pytest.mark.m3(suite_name="shipping")` in the module.
+Direct pytest without persistence remains supported without a suite name. The
+local examples use deterministic tools, resources, and prompts.
 The Streamable HTTP example uses an external DeepWiki endpoint and is
 documented separately below. The local server is
 [`example_mcp_server.py`](../examples/servers/example_mcp_server.py).
@@ -70,6 +73,7 @@ import pytest
 from m3 import expect
 
 @pytest.mark.m3(
+    suite_name="shipping",
     agents=[
         {"harness": "opencode", "models": ["opencode/big-pickle"]},
         {"harness": "codex", "models": ["gpt-5.6-sol"]},
@@ -441,6 +445,10 @@ pytest -p m3.pytest_plugin \
   --results-db .m3/executions.sqlite tests
 ```
 
+Both persisted pytest commands require names on the selected test items,
+including ordinary direct-client tests. A Python script or notebook using an
+explicit SQLite store does not need a suite name.
+
 This saved history contains executions, traces, sessions/turns, stored
 artifacts/evidence, and explicitly attached `kit.evaluate()` records. When the
 M3 pytest plugin is active, it also contains pytest item outcomes and MCP
@@ -456,7 +464,7 @@ Use normal pytest parameterization for server and prompt variations. The
 import pytest
 from m3 import expect
 
-@pytest.mark.m3
+@pytest.mark.m3(suite_name="tool-choice")
 @pytest.mark.parametrize("prompt,tool", [
     ("Get a local shipping quote for 2 kg", "shipping_quote"),
     ("Normalize Ada Lovelace", "normalize_customer"),
@@ -484,6 +492,7 @@ import pytest
 from m3 import StdioServer, expect
 from m3.matrix import ServerCase, ToolCase, ToolMatrix
 
+pytestmark = pytest.mark.m3(suite_name="tool-matrix")
 _examples = Path("sdk/examples").resolve()
 example_server = StdioServer(
     name="example-mcp", command=sys.executable,

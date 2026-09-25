@@ -84,7 +84,7 @@ as:
 Each case runs through the normal SDK execution boundary and returns the usual
 `ExecutionResult`.
 
-For agent behavior, write one `@pytest.mark.m3` test that requests `agent`.
+For agent behavior, write one `@pytest.mark.m3(suite_name="shipping")` test that requests `agent`.
 Pass harnesses and models with repeated `m3 test --harness KIND=MODEL`
 flags, or set defaults with `@pytest.mark.m3(agents=[...])`. The selected
 agent can run against one selected `server` fixture, a ToolMatrix `ServerCase`,
@@ -251,6 +251,13 @@ SDK persistence is selected at the toolkit boundary:
   `.m3/executions.sqlite` in the project.
 - Direct pytest users may opt into the same behavior explicitly with
   `-p m3.pytest_plugin --results-db PATH`.
+
+When the pytest plugin saves test results (`m3 test` or `--results-db`), each
+test that survives pytest selection must declare or inherit a non-empty
+`m3(suite_name="...")` marker. `-k`/`-m` deselections and `--collect-only` do
+not require names. This constraint applies to stored pytest *attempts*, not
+to Python scripts or notebooks: direct SDK executions can omit a suite name
+even with `SQLiteExecutionStore`.
 
 `SQLiteExecutionStore` and the pytest database flag require the optional
 `sf-m3[storage]` dependency; `sf-m3[pytest,storage]` installs both direct

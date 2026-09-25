@@ -167,8 +167,10 @@ pytestmark = pytest.mark.m3(suite_name="catalog")
 
 When persisting pytest results with `m3 test` or `--results-db`, every selected
 test needs a non-empty `suite_name` on its own or an inherited `m3` marker.
-Missing names fail collection with the affected test IDs. Pytest runs without
-persistence and direct SDK executions do not require a suite name.
+Missing names fail collection with the affected test IDs. Tests deselected by
+pytest (`-k`, `-m`, or `--suite`) and `--collect-only` runs do not need a name.
+Pytest runs without persistence and direct SDK executions do not require a
+suite name, even if a Python script or notebook explicitly uses SQLite.
 
 Combine `--suite` with `--harness`, `--trials`, paths, `-k`, and `-m`; every
 selector must match. An unknown suite exits 5 and a blank value exits 2. The

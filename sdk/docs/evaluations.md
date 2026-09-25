@@ -126,7 +126,7 @@ def answer_and_tool(context):
     )
 
 
-@pytest.mark.m3
+@pytest.mark.m3(suite_name="answer-and-tool")
 def test_answer_and_tool(agent, m3_kit, math_server):
     m3_kit.register_evaluator("project.answer-and-tool.v1", answer_and_tool)
     with agent.session(server=math_server) as session:
@@ -214,7 +214,7 @@ def evaluate_math(context):
     )
 
 
-@pytest.mark.m3
+@pytest.mark.m3(suite_name="math")
 @pytest.mark.parametrize("case_id,prompt,expected,expected_tool", CASES)
 def test_math_agent(agent, m3_kit, math_server, case_id, prompt, expected, expected_tool):
     m3_kit.register_evaluator("example.math.v1", evaluate_math)

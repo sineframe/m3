@@ -56,7 +56,7 @@ Mark one ordinary pytest test and let the CLI supply each harness and model:
 import pytest
 from m3 import expect
 
-@pytest.mark.m3(servers=[{
+@pytest.mark.m3(suite_name="shipping", servers=[{
     "type": "http", "url": "https://shipping.example.com/mcp", "trust": "public",
 }])
 def test_shipping(agent, server):

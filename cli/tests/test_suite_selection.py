@@ -71,7 +71,7 @@ def test_cli_ci_excludes_inherited_false_and_allows_closest_true(
     test_file = tmp_path / "test_ci_selection.py"
     test_file.write_text(
         "import pytest\n"
-        "pytestmark = pytest.mark.m3(ci=False)\n"
+        "pytestmark = pytest.mark.m3(suite_name='ci', ci=False)\n"
         "def test_module_excluded(): assert False\n"
         "@pytest.mark.m3(ci=True)\n"
         "def test_override_included(): pass\n"
@@ -126,6 +126,7 @@ def test_cli_ci_excludes_agent_test_before_harness_validation(tmp_path: Path) ->
     test_file = tmp_path / "test_ci_agent.py"
     test_file.write_text(
         "import pytest\n"
+        "pytestmark = pytest.mark.m3(suite_name='ci')\n"
         "def test_plain_pytest(): pass\n"
         "@pytest.mark.m3(ci=False)\n"
         "def test_agent(agent): pass\n"
@@ -164,6 +165,7 @@ def test_cli_ci_excludes_parameter_marked_agent_without_harness(tmp_path: Path) 
     test_file = tmp_path / "test_ci_agent_parameter.py"
     test_file.write_text(
         "import pytest\n"
+        "pytestmark = pytest.mark.m3(suite_name='ci')\n"
         "def test_plain_pytest(): pass\n"
         "@pytest.mark.m3(ci=True)\n"
         "@pytest.mark.parametrize('case', [pytest.param(1, marks=pytest.mark.m3(ci=False))])\n"
@@ -203,7 +205,7 @@ def test_cli_ci_kept_agent_still_requires_harness(tmp_path: Path) -> None:
     test_file = tmp_path / "test_ci_agent_parameter.py"
     test_file.write_text(
         "import pytest\n"
-        "@pytest.mark.m3(ci=True)\n"
+        "@pytest.mark.m3(suite_name='ci', ci=True)\n"
         "@pytest.mark.parametrize('case', [pytest.param(1, marks=pytest.mark.m3(ci=False)), 2])\n"
         "def test_agent(agent, case): pass\n"
     )
@@ -241,7 +243,7 @@ def test_cli_ci_parameter_true_overrides_inherited_false_for_agent(
     test_file = tmp_path / "test_ci_agent_parameter_override.py"
     test_file.write_text(
         "import pytest, sys\n"
-        "pytestmark = pytest.mark.m3(ci=False, agents=[{'harness':'acp','models':['marker'], 'manifest':{'command':sys.executable,'args':['fixture-agent'],'protocol':'acp','protocol_version':1}}], servers=[{'type':'stdio','command':'echo'}])\n"
+        "pytestmark = pytest.mark.m3(suite_name='ci', ci=False, agents=[{'harness':'acp','models':['marker'], 'manifest':{'command':sys.executable,'args':['fixture-agent'],'protocol':'acp','protocol_version':1}}], servers=[{'type':'stdio','command':'echo'}])\n"
         "@pytest.mark.parametrize('case', [pytest.param(1, marks=pytest.mark.m3(ci=True)), 2])\n"
         "def test_agent(agent, server, case): assert agent.model == 'marker' and server.command == 'echo'\n"
     )
@@ -284,7 +286,10 @@ def test_cli_ci_excludes_inherited_false_agent_without_validating_matrix(
         "def test_agent_and_server(agent, server): assert False\n"
     )
     plain_test_file = tmp_path / "test_plain.py"
-    plain_test_file.write_text("def test_plain_pytest(): pass\n")
+    plain_test_file.write_text(
+        "import pytest\npytestmark = pytest.mark.m3(suite_name='ci')\n"
+        "def test_plain_pytest(): pass\n"
+    )
     env = dict(
         os.environ,
         PYTHONPATH=str(Path(__file__).parents[2] / "src")
@@ -321,7 +326,7 @@ def test_cli_ci_parameter_true_overrides_inherited_false_for_server(
     test_file = tmp_path / "test_ci_server_parameter_override.py"
     test_file.write_text(
         "import pytest\n"
-        "pytestmark = pytest.mark.m3(ci=False, servers=[{'type':'stdio','command':'echo'}])\n"
+        "pytestmark = pytest.mark.m3(suite_name='ci', ci=False, servers=[{'type':'stdio','command':'echo'}])\n"
         "@pytest.mark.parametrize('case', [pytest.param(1, marks=pytest.mark.m3(ci=True)), 2])\n"
         "def test_server(server, case): assert server.command == 'echo'\n"
     )

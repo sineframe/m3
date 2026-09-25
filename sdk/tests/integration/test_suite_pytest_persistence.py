@@ -18,6 +18,7 @@ def _run(
     run_id: str | None = None,
     ci_metadata: str | None = None,
     persist: bool = True,
+    pytest_args: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     db = tmp_path / ("xdist.sqlite" if xdist else "results.sqlite")
     args = [
@@ -40,6 +41,7 @@ def _run(
         args += ["--m3-run-id", run_id]
     if ci_metadata is not None:
         args += ["--m3-ci-metadata", ci_metadata]
+    args += pytest_args
     args += [str(path) for path in files]
     env = {
         "PYTHONPATH": str(Path(__file__).parents[2].resolve() / "src"),
@@ -102,17 +104,20 @@ def test_ci_policy_and_metadata_are_saved_to_manifest_and_feedback(
         ("import pytest\n@pytest.mark.m3(suite_name='   ')\n", "test_missing"),
     ],
 )
+@pytest.mark.parametrize("xdist", [False, True])
 def test_persisted_pytest_requires_suite_name(
-    tmp_path: Path, marker: str, expected: str
+    tmp_path: Path, marker: str, expected: str, xdist: bool
 ) -> None:
     test_file = tmp_path / "test_missing_suite.py"
     test_file.write_text(f"{marker}def test_missing(): pass\n")
-    result = _run(tmp_path, test_file)
+    result = _run(tmp_path, test_file, xdist=xdist)
     assert result.returncode != 0
-    assert "Persisted pytest tests require a non-empty suite name" in result.stderr
-    assert "pytest.mark.m3(suite_name=" in result.stderr
-    assert expected in result.stderr
-    with sqlite3.connect(tmp_path / "results.sqlite") as db:
+    output = result.stdout + result.stderr
+    assert "Persisted pytest tests require a non-empty suite name" in output
+    assert "pytest.mark.m3(suite_name=" in output
+    assert expected in output
+    path = tmp_path / ("xdist.sqlite" if xdist else "results.sqlite")
+    with sqlite3.connect(path) as db:
         assert db.execute("select count(*) from v2_test_results").fetchone()[0] == 0
 
 
@@ -122,6 +127,37 @@ def test_unpersisted_pytest_does_not_require_suite_name(tmp_path: Path) -> None:
     result = _run(tmp_path, test_file, persist=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "1 passed" in result.stdout
+
+
+@pytest.mark.parametrize("selection", [("-k", "chosen"), ("-m", "m3")])
+@pytest.mark.parametrize("xdist", [False, True])
+def test_deselected_pytest_tests_do_not_need_suite_name(
+    tmp_path: Path, selection: tuple[str, str], xdist: bool
+) -> None:
+    test_file = tmp_path / "test_selection.py"
+    test_file.write_text(
+        "import pytest\n"
+        "@pytest.mark.m3(suite_name='selected')\n"
+        "def test_chosen(): pass\n"
+        "def test_unrelated(): pass\n"
+    )
+    result = _run(tmp_path, test_file, xdist=xdist, pytest_args=selection)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ("1 passed" if xdist else "1 passed, 1 deselected") in result.stdout
+    path = tmp_path / ("xdist.sqlite" if xdist else "results.sqlite")
+    with sqlite3.connect(path) as db:
+        rows = db.execute("select suite_id from v2_test_results").fetchall()
+    assert len(rows) == 1 and rows[0][0] is not None
+
+
+def test_collect_only_does_not_require_suite_name(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_collection.py"
+    test_file.write_text("def test_unmarked(): pass\n")
+    result = _run(tmp_path, test_file, pytest_args=("--collect-only",))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "test_unmarked" in result.stdout
+    with sqlite3.connect(tmp_path / "results.sqlite") as db:
+        assert db.execute("select count(*) from v2_test_results").fetchone()[0] == 0
 
 
 def test_not_run_attempt_keeps_collected_suite(tmp_path: Path) -> None:
