@@ -688,7 +688,7 @@ def pytest_generate_tests(metafunc: _Any) -> None:
 
 def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
     if config.getoption("--m3-ci"):
-        kept: list[_Any] = []
+        ci_kept: list[_Any] = []
         excluded: list[_Any] = []
         for item in items:
             marker = _merged_m3_marker(item)
@@ -697,8 +697,8 @@ def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
             if marker.get("ci") is False:
                 excluded.append(item)
             else:
-                kept.append(item)
-        items[:] = kept
+                ci_kept.append(item)
+        items[:] = ci_kept
         config._m3_ci_excluded_count = getattr(
             config, "_m3_ci_excluded_count", 0
         ) + len(excluded)
