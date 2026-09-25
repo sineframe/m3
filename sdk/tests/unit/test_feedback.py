@@ -1755,9 +1755,12 @@ def test_real_direct_plugin_sqlite_two_runs_capture_tool_description_change(
 import os
 from mcp import types
 from mcp.server.lowlevel import Server
+import pytest
 from m3 import MCPTestKit, expect
 from m3.storage import SQLiteExecutionStore
 from m3.types import InProcessServer
+
+pytestmark = pytest.mark.m3(suite_name="direct-feedback")
 
 def _server():
     async def list_tools(_context, _params):

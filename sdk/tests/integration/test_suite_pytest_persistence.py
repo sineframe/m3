@@ -17,6 +17,7 @@ def _run(
     ci: bool = False,
     run_id: str | None = None,
     ci_metadata: str | None = None,
+    persist: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     db = tmp_path / ("xdist.sqlite" if xdist else "results.sqlite")
     args = [
@@ -25,10 +26,10 @@ def _run(
         "pytest",
         "-p",
         "m3.pytest_plugin",
-        "--results-db",
-        str(db),
         "-q",
     ]
+    if persist:
+        args += ["--results-db", str(db)]
     if xdist:
         args += ["-n", "2"]
     if suite is not None:
@@ -53,6 +54,7 @@ def test_ci_policy_and_metadata_are_saved_to_manifest_and_feedback(
     test_file = tmp_path / "test_ci.py"
     test_file.write_text(
         "import pytest\n"
+        "pytestmark = pytest.mark.m3(suite_name='ci')\n"
         "def test_selected(): pass\n"
         "@pytest.mark.m3(ci=False)\n"
         "def test_ignored(): assert False\n",
@@ -91,6 +93,55 @@ def test_ci_policy_and_metadata_are_saved_to_manifest_and_feedback(
     feedback_path = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
     feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
     assert feedback["ci"] == json.loads(ci_metadata)
+
+
+@pytest.mark.parametrize(
+    ("marker", "expected"),
+    [
+        ("", "test_missing"),
+        ("import pytest\n@pytest.mark.m3(suite_name='   ')\n", "test_missing"),
+    ],
+)
+def test_persisted_pytest_requires_suite_name(
+    tmp_path: Path, marker: str, expected: str
+) -> None:
+    test_file = tmp_path / "test_missing_suite.py"
+    test_file.write_text(f"{marker}def test_missing(): pass\n")
+    result = _run(tmp_path, test_file)
+    assert result.returncode != 0
+    assert "Persisted pytest tests require a non-empty suite name" in result.stderr
+    assert "pytest.mark.m3(suite_name=" in result.stderr
+    assert expected in result.stderr
+    with sqlite3.connect(tmp_path / "results.sqlite") as db:
+        assert db.execute("select count(*) from v2_test_results").fetchone()[0] == 0
+
+
+def test_unpersisted_pytest_does_not_require_suite_name(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_unpersisted.py"
+    test_file.write_text("def test_plain(): pass\n")
+    result = _run(tmp_path, test_file, persist=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+def test_not_run_attempt_keeps_collected_suite(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_stopped.py"
+    test_file.write_text(
+        "import pytest\npytestmark=pytest.mark.m3(suite_name='stopped')\n"
+        "def test_first(): pytest.exit('stopped')\n"
+        "def test_second(): pass\n"
+    )
+    result = _run(tmp_path, test_file)
+    assert result.returncode != 0
+    with sqlite3.connect(tmp_path / "results.sqlite") as db:
+        attempts = db.execute(
+            "select suite_id,record_json from v2_test_results"
+        ).fetchall()
+    assert any(
+        row["outcome"] == "not_run" and row["suite_name"] == "stopped" and suite_id
+        for suite_id, value in attempts
+        if (row := json.loads(value))
+    )
 
 
 def test_two_files_share_catalog_suite_and_persist_setup_failure(
@@ -198,6 +249,8 @@ def test_manual_kit_inherits_project_identity_from_pytest_manifest(
     test_file = tmp_path / "manual.py"
     test_file.write_text(
         "import sys\n"
+        "import pytest\n"
+        "pytestmark = pytest.mark.m3(suite_name='manual')\n"
         "from m3 import MCPTestKit\n"
         "from m3.types import CallTool, DirectSpec, ServerBinding, StdioServer\n"
         "def test_manual_kit():\n"
@@ -246,11 +299,65 @@ def test_old_schema_rows_survive_suite_migration(tmp_path: Path) -> None:
         )
         assert (
             connection.execute(
-                "select suite_id from v2_test_results where attempt_id='attempt'"
+                "select s.suite_name from v2_test_results r "
+                "join v2_suites s on s.id=r.suite_id where r.attempt_id='attempt'"
             ).fetchone()[0]
-            is None
+            == "Legacy unassigned"
+        )
+        assert connection.execute("pragma foreign_key_check").fetchall() == []
+        assert (
+            next(
+                row[3]
+                for row in connection.execute("pragma table_info(v2_test_results)")
+                if row[1] == "suite_id"
+            )
+            == 1
         )
     store.close()
+
+
+def test_test_result_suite_id_is_required_and_legacy_names_are_backfilled(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "old-results.sqlite"
+    db = sqlite3.connect(path)
+    db.executescript(
+        "create table v2_test_runs(run_id text primary key,record_json text,created_at text,updated_at text);"
+        "create table v2_test_results(run_id text,attempt_id text,record_json text,created_at text,updated_at text,suite_id integer,primary key(run_id,attempt_id));"
+        "insert into v2_test_runs values ('run','{}','now','now');"
+        """insert into v2_test_results values ('run','old','{"suite_name":"catalog"}','now','now',null);"""
+    )
+    db.close()
+    from m3.storage import SQLiteExecutionStore
+
+    store = SQLiteExecutionStore(path)
+    with store._connect() as connection:
+        assert (
+            connection.execute(
+                "select s.suite_name from v2_test_results r "
+                "join v2_suites s on s.id=r.suite_id where r.attempt_id='old'"
+            ).fetchone()[0]
+            == "catalog"
+        )
+        assert connection.execute("pragma foreign_key_check").fetchall() == []
+    store.close()
+    reopened = SQLiteExecutionStore(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("pragma foreign_keys=on")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "insert into v2_test_results(run_id,attempt_id,record_json,created_at,updated_at,suite_id) "
+                "values ('run','null','{}','now','now',null)"
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "insert into v2_test_results(run_id,attempt_id,record_json,created_at,updated_at,suite_id) "
+                "values ('run','orphan','{}','now','now',99999)"
+            )
+    with pytest.raises((TypeError, ValueError), match="suite_name"):
+        reopened.save_test_result("run", "missing", {"node_id": "test_missing"})
+    assert reopened.list_test_results("run") == ({"suite_name": "catalog"},)
+    reopened.close()
 
 
 def test_legacy_unique_suite_table_rebuild_preserves_foreign_keys(

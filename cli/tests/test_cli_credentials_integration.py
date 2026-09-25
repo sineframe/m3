@@ -17,7 +17,11 @@ def _cli_case(
     ambient: dict[str, str] | None = None,
 ):
     test_file = tmp_path / "test_cli_case.py"
-    test_file.write_text(source, encoding="utf-8")
+    test_file.write_text(
+        "import pytest\npytestmark = pytest.mark.m3(suite_name='credentials')\n"
+        + source,
+        encoding="utf-8",
+    )
     env_file = tmp_path / "provider.env"
     env_file.write_text(env_text, encoding="utf-8")
     database = tmp_path / "results.sqlite"
@@ -96,7 +100,7 @@ def test_env_file_reaches_child_without_interpolation_or_ambient_leak(
 import os
 import pytest
 from m3 import StdioServer, UserMessage
-pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["mystery/model"]}])
+pytestmark = pytest.mark.m3(suite_name="credentials", agents=[{"harness": "opencode", "models": ["mystery/model"]}])
 def test_child(agent):
     assert os.environ["PAL_FILE_ONLY"] == "file-value"
     assert os.environ["PAL_AMBIENT"] == "ambient-value"
@@ -174,7 +178,7 @@ from m3 import StdioServer, UserMessage
 from m3.judges import LLMJudge
 from m3.types import EvaluationContext, EvaluationStatus
 
-pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["mystery/model"]}])
+pytestmark = pytest.mark.m3(suite_name="credentials", agents=[{"harness": "opencode", "models": ["mystery/model"]}])
 
 def test_judge(agent, monkeypatch):
     spec = agent._spec(UserMessage(content="probe"), server=StdioServer(name="s", command="echo"))
@@ -220,7 +224,7 @@ def test_cli_and_marker_credential_precedence_is_scoped(tmp_path: Path) -> None:
     source = """
 import pytest
 from m3 import StdioServer, UserMessage
-pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["vendor/model"], "credential_env": {"VENDOR_API_KEY": "PAL_MARKED"}}])
+pytestmark = pytest.mark.m3(suite_name="credentials", agents=[{"harness": "opencode", "models": ["vendor/model"], "credential_env": {"VENDOR_API_KEY": "PAL_MARKED"}}])
 def test_child(agent):
     spec = agent._spec(UserMessage(content="probe"), server=StdioServer(name="s", command="echo"))
     assert spec.harness.credential_references["VENDOR_API_KEY"].name == "PAL_SCOPED"
@@ -244,7 +248,7 @@ def test_known_mapping_and_unknown_provider_do_not_guess_credentials(
     source = """
 import pytest
 from m3 import StdioServer, UserMessage
-pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["openai/gpt"]}])
+pytestmark = pytest.mark.m3(suite_name="credentials", agents=[{"harness": "opencode", "models": ["openai/gpt"]}])
 def test_known(agent):
     spec = agent._spec(UserMessage(content="probe"), server=StdioServer(name="s", command="echo"))
     assert spec.harness.credential_references["OPENAI_API_KEY"].name == "PAL_FILE_ONLY"
@@ -276,7 +280,7 @@ def test_missing_explicit_credential_names_source_without_value(tmp_path: Path) 
     source = """
 import pytest
 from m3 import StdioServer, UserMessage
-pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["vendor/model"]}])
+pytestmark = pytest.mark.m3(suite_name="credentials", agents=[{"harness": "opencode", "models": ["vendor/model"]}])
 def test_missing(agent):
     agent._spec(UserMessage(content="probe"), server=StdioServer(name="s", command="echo"))
 """
@@ -312,7 +316,7 @@ class EchoAdapter(HarnessAdapter):
     async def close(self):
         return None
 
-pytestmark = pytest.mark.m3(agents=[{"harness": "opencode", "models": ["vendor/model"]}])
+pytestmark = pytest.mark.m3(suite_name="credentials", agents=[{"harness": "opencode", "models": ["vendor/model"]}])
 def test_native(agent, m3_kit):
     m3_kit._adapter_registry = HarnessAdapterRegistry({"opencode": lambda _harness: EchoAdapter()})
     spec = agent._spec(UserMessage(content="probe"), server=StdioServer(name="s", command="echo"), tools=[])

@@ -1276,6 +1276,8 @@ def test_real_subprocess_runs_plugin_and_keeps_pytest_summary(
 ) -> None:
     test_file = tmp_path / "test_one.py"
     test_file.write_text(
+        "import pytest\n"
+        "pytestmark = pytest.mark.m3(suite_name='supervisor')\n"
         "from m3 import MCPTestKit\n"
         "def test_one():\n"
         "    with MCPTestKit() as kit:\n"
@@ -1300,7 +1302,11 @@ def test_two_runs_keep_project_root_and_feedback_location_stable(
     tmp_path: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
     test_file = tmp_path / "test_one.py"
-    test_file.write_text("def test_one():\n    pass\n", encoding="utf-8")
+    test_file.write_text(
+        "import pytest\npytestmark = pytest.mark.m3(suite_name='supervisor')\n"
+        "def test_one():\n    pass\n",
+        encoding="utf-8",
+    )
     database = tmp_path / "nested" / "history.sqlite"
     assert (
         supervisor.run_test(

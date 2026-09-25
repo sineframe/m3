@@ -38,7 +38,7 @@ def test_cli_execution_timeout_persists_partial_trace_and_feedback(
     )
     test_file = tmp_path / "test_timeout.py"
     test_file.write_text(
-        f"""import sys\nimport pytest\nfrom m3 import StdioServer\n\npytestmark = pytest.mark.m3(agents=[{{"harness": "acp", "models": ["fixture"], "manifest": {{"command": sys.executable, "args": [{str(acp)!r}], "protocol": "acp", "protocol_version": 1}}}}])\n\ndef test_stalls(agent):\n    result = agent.run("stall", server=StdioServer(name="unused", command="echo"))\n    assert result.snapshot.outcome.value == "completed"\n""",
+        f"""import sys\nimport pytest\nfrom m3 import StdioServer\n\npytestmark = pytest.mark.m3(suite_name="timeouts", agents=[{{"harness": "acp", "models": ["fixture"], "manifest": {{"command": sys.executable, "args": [{str(acp)!r}], "protocol": "acp", "protocol_version": 1}}}}])\n\ndef test_stalls(agent):\n    result = agent.run("stall", server=StdioServer(name="unused", command="echo"))\n    assert result.snapshot.outcome.value == "completed"\n""",
         encoding="utf-8",
     )
     database = tmp_path / "results.sqlite"

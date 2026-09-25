@@ -441,12 +441,20 @@ def test_store_attempt_state_keeps_finished_execution_requirement_pending(
         store.save_test_result(
             "run-1",
             "attempt-1",
-            {"outcome": "running", "execution_ids": ["attempt-linked-execution"]},
+            {
+                "outcome": "running",
+                "execution_ids": ["attempt-linked-execution"],
+                "suite_name": "catalog",
+            },
         )
         store.save_test_result(
             "run-1",
             "attempt-2",
-            {"outcome": "passed", "execution_ids": ["attempt-linked-execution"]},
+            {
+                "outcome": "passed",
+                "execution_ids": ["attempt-linked-execution"],
+                "suite_name": "catalog",
+            },
         )
         values = store.aggregate_evaluations(query).totals
         assert values.pending_required_count == 1

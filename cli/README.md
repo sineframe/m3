@@ -165,6 +165,11 @@ import pytest
 pytestmark = pytest.mark.m3(suite_name="catalog")
 ```
 
+When persisting pytest results with `m3 test` or `--results-db`, every selected
+test needs a non-empty `suite_name` on its own or an inherited `m3` marker.
+Missing names fail collection with the affected test IDs. Pytest runs without
+persistence and direct SDK executions do not require a suite name.
+
 Combine `--suite` with `--harness`, `--trials`, paths, `-k`, and `-m`; every
 selector must match. An unknown suite exits 5 and a blank value exits 2. The
 selected run ID is printed and can be passed to `--baseline RUN_ID`.
@@ -176,9 +181,9 @@ m3 test --env-file .env --harness opencode=opencode/big-pickle \
   --harness codex=gpt-5.6-sol --trials 2 -- tests/test_shipping.py
 ```
 
-Mark a test with `@pytest.mark.m3` and request the `agent` fixture. The
+Mark a test with `@pytest.mark.m3(suite_name="catalog")` and request the `agent` fixture. The
 CLI supplies its harnesses and models. A marker may instead set defaults with
-`@pytest.mark.m3(agents=[...], trials=2)`. CLI `--harness` replaces those
+`@pytest.mark.m3(suite_name="catalog", agents=[...], trials=2)`. CLI `--harness` replaces those
 defaults; CLI `--trials` replaces the marker's trial count. Ordinary tests
 without an `agent` fixture still run once. For an agent test, the item count is
 ordinary pytest cases × selected harness/model choices × trials.

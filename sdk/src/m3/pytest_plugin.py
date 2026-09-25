@@ -240,6 +240,7 @@ def pytest_configure(config: _Any) -> None:
     }
     _os.environ.update(judge_values)
     config._m3_config_token = _PLUGIN_CONFIG.set(config)
+    config._m3_suite_validation_failed = False
     judge_limit = config.getoption("--judge-max-requests")
     if judge_limit is not None and judge_limit < 0:
         raise _pytest.UsageError("--judge-max-requests must be nonnegative")
@@ -716,6 +717,7 @@ def pytest_generate_tests(metafunc: _Any) -> None:
     _parameterize_agent(metafunc)
 
 
+@_pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
     if config.getoption("--m3-ci"):
         ci_kept: list[_Any] = []
@@ -758,6 +760,23 @@ def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
         items[:] = kept
         if deselected:
             config.hook.pytest_deselected(items=deselected)
+
+    if config.getoption("--results-db"):
+        missing = [
+            str(item.nodeid)
+            for item in items
+            if not _merged_m3_marker(item).get("suite_name")
+        ]
+        if missing:
+            examples = ", ".join(missing[:3])
+            more = f" (and {len(missing) - 3} more)" if len(missing) > 3 else ""
+            config._m3_suite_validation_failed = True
+            raise _pytest.UsageError(
+                "Persisted pytest tests require a non-empty suite name. "
+                "Add @pytest.mark.m3(suite_name='my-suite') to the test, "
+                "or set pytestmark = pytest.mark.m3(suite_name='my-suite') "
+                f"for the module. Missing: {examples}{more}"
+            )
 
     for item in items:
         callspec = getattr(item, "callspec", None)
@@ -924,7 +943,13 @@ def _record_collected(
 
 def _pytest_collection_finish(session: _Any) -> None:
     config = session.config
-    node_ids = [str(item.nodeid) for item in getattr(session, "items", ())]
+    items = session.items
+    node_ids = [str(item.nodeid) for item in items]
+    suites = {}
+    for item in items:
+        suite_name = _merged_m3_marker(item).get("suite_name")
+        if suite_name:
+            suites[str(item.nodeid)] = suite_name
     workerinput = getattr(config, "workerinput", None)
     if isinstance(workerinput, dict):
         workeroutput = getattr(config, "workeroutput", None)
@@ -933,6 +958,7 @@ def _pytest_collection_finish(session: _Any) -> None:
             workeroutput["m3_ci_excluded_count"] = int(
                 getattr(config, "_m3_ci_excluded_count", 0)
             )
+            workeroutput["m3_collected_suites"] = suites
         return
     # At collection-finish this is the controller's final, post-filter item
     # list.  Earlier collection hooks may have observed deselected items; do
@@ -943,6 +969,7 @@ def _pytest_collection_finish(session: _Any) -> None:
         return
     record = dict(store.get_test_run(run_id.root) or {})
     record["collected_node_ids"] = sorted(set(node_ids))
+    record["collected_suites"] = suites
     record["collection_count"] = len(node_ids)
     store.save_test_run(run_id.root, record)
 
@@ -990,6 +1017,13 @@ def _pytest_testnodedown(node: _Any, error: object | None = None) -> None:
         count = max(int(record.get("ci_excluded_count", 0)), excluded_count)
         record["ci_excluded_count"] = count
         config._m3_ci_excluded_count = count
+    if isinstance(workeroutput, dict):
+        suites = workeroutput.get("m3_collected_suites")
+        if isinstance(suites, dict):
+            record["collected_suites"] = {
+                **record.get("collected_suites", {}),
+                **suites,
+            }
     if error is None:
         store.save_test_run(run_id.root, record)
         return
@@ -1180,6 +1214,11 @@ def _manifest_not_run_attempt(
     finished_at = manifest.get("finished_at") if isinstance(manifest, dict) else None
     project_id = manifest.get("project_id") if isinstance(manifest, dict) else None
     project_name = manifest.get("project_name") if isinstance(manifest, dict) else None
+    suites = manifest.get("collected_suites", {}) if isinstance(manifest, dict) else {}
+    suite_name = suites.get(node_id) if isinstance(suites, dict) else None
+    # A worker may die before transmitting its collection metadata. Retain the
+    # incomplete attempt under an explicit suite rather than dropping the audit.
+    suite_name = suite_name or "Unknown (interrupted collection)"
     return {
         "schema_version": 1,
         "attempt_id": f"{run_id}:manifest-not-run:{digest}",
@@ -1188,7 +1227,7 @@ def _manifest_not_run_attempt(
         "description": "",
         "worker_id": "controller",
         "suite_id": None,
-        "suite_name": None,
+        "suite_name": suite_name,
         "project_id": project_id,
         "project_name": project_name,
         "phases": {},
@@ -1490,7 +1529,7 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         record["finished_at"] = finished_at
         # Persist real manifest-only attempts before feedback is built.  The
         # manifest list remains an audit trail even after successful upsert.
-        if not_run_node_ids:
+        if not_run_node_ids and not config._m3_suite_validation_failed:
             if not _persist_manifest_not_run(config, store, run_id.root, record):
                 if effective_exitstatus == 0:
                     effective_exitstatus = 1
