@@ -422,8 +422,8 @@ def run_sort_key(value: object) -> str:
 
 
 # Run statuses that need a look: failures, and runs that stopped before a
-# verdict. Keep in step with `statusTone` in the UI (m3-ui
-# src/features/reports/feedback-run.ts), which marks the same rows.
+# verdict. The API reports the result as `needs_attention` on each run
+# summary, so the UI marks exactly the runs `attention=true` returns.
 ATTENTION_RUN_STATUSES = frozenset(
     {
         "failed",
@@ -443,22 +443,37 @@ ATTENTION_RUN_STATUSES = frozenset(
 )
 
 
-def run_needs_attention(manifest: Mapping[str, object]) -> bool:
-    """Whether a run manifest has a failed case or stopped short."""
-    status = manifest.get("status")
-    if isinstance(status, str) and status.casefold() in ATTENTION_RUN_STATUSES:
-        return True
-    counts = manifest.get("effective_verdict_counts")
-    if not isinstance(counts, Mapping):
-        counts = manifest.get("test_outcome_counts")
+def _positive_count(counts: object, keys: tuple[str, ...]) -> bool:
     if not isinstance(counts, Mapping):
         return False
     return any(
         isinstance(counts.get(key), int)
         and not isinstance(counts.get(key), bool)
         and cast(int, counts.get(key)) > 0
-        for key in ("failed", "error")
+        for key in keys
     )
+
+
+def run_needs_attention(manifest: Mapping[str, object]) -> bool:
+    """Whether a run manifest has a failed case or stopped short.
+
+    Each signal is checked on its own: a finished status can hide a nonzero
+    pytest exit (a required evaluation that did not pass), and a raw setup
+    `error` can become an effective `incomplete` verdict.
+    """
+    status = manifest.get("status")
+    if isinstance(status, str) and status.casefold() in ATTENTION_RUN_STATUSES:
+        return True
+    exit_status = manifest.get("exit_status")
+    if (
+        isinstance(exit_status, int)
+        and not isinstance(exit_status, bool)
+        and exit_status
+    ):
+        return True
+    return _positive_count(
+        manifest.get("effective_verdict_counts"), ("failed", "error", "incomplete")
+    ) or _positive_count(manifest.get("test_outcome_counts"), ("failed", "error"))
 
 
 class InMemoryExecutionStore:

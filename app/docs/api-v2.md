@@ -56,12 +56,14 @@ it, and optional `suite_id`, `project_id`, and `q` filter it; `q` searches both
 label such as `Run #1` matches that label exactly (not `Run #10`); other
 queries use substring matching. A `suite_id` filter
 keeps every run with at least one test in that suite. `attention=true` keeps
-only runs that need a look: a run `status` of failed, error (including
-`failed_assertion`, `protocol_error`, `setup_error`, `teardown_error`,
-`pytest_error`, `tool_error`), `interrupted`, `cancelled`/`canceled`, or
-`incomplete`, or a positive `failed` or `error` count in
-`effective_verdict_counts` (in `test_outcome_counts` when the manifest has no
-effective counts). The envelope reports `total` (runs matching the filters,
+only runs that need a look, checking each signal on its own: a run `status` of
+failed, error (including `failed_assertion`, `protocol_error`, `setup_error`,
+`teardown_error`, `pytest_error`, `tool_error`), `interrupted`,
+`cancelled`/`canceled`, or `incomplete`; a nonzero pytest `exit_status` (a
+finished run whose required evaluation did not pass exits 1); a positive
+`failed`, `error`, or `incomplete` count in `effective_verdict_counts`; or a
+positive `failed` or `error` count in `test_outcome_counts`. Each run summary
+reports the same rule as `needs_attention`. The envelope reports `total` (runs matching the filters,
 including `attention`), `limit` (`null` when unpaginated), `offset`, and
 `attention_total`: how many runs matching the suite, project, and search
 filters need attention, whether or not `attention` is set.

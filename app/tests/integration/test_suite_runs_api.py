@@ -183,3 +183,86 @@ def test_attention_filter_pages_the_filtered_runs(tmp_path, in_memory):
         searched = client.get("/api/v2/runs", params={**params, "q": "pass-0"}).json()
         assert (searched["total"], searched["attention_total"]) == (10, 0)
     store.close()
+
+
+# Manifests as the pytest plugin writes them: `status` stays "finished" for
+# any exit except 2-4, so the exit status and each count map are checked alone.
+ATTENTION_CASES = {
+    "clean": ({"exit_status": 0, "effective_verdict_counts": {"passed": 2}}, False),
+    "required-evaluation-failed": (
+        {"exit_status": 1, "effective_verdict_counts": {"passed": 2}},
+        True,
+    ),
+    "skipped-only-nonzero-exit": (
+        {
+            "exit_status": 1,
+            "test_outcome_counts": {"skipped": 2},
+            "effective_verdict_counts": {"skipped": 2},
+        },
+        True,
+    ),
+    "setup-error-becomes-incomplete": (
+        {
+            "exit_status": 0,
+            "test_outcome_counts": {"error": 1},
+            "effective_verdict_counts": {"incomplete": 1},
+        },
+        True,
+    ),
+    "incomplete-verdict": (
+        {"exit_status": 0, "effective_verdict_counts": {"incomplete": 1}},
+        True,
+    ),
+    "raw-failure-despite-effective-pass": (
+        {
+            "test_outcome_counts": {"failed": 1},
+            "effective_verdict_counts": {"passed": 1},
+        },
+        True,
+    ),
+    "boolean-exit-is-not-a-status": (
+        {"exit_status": True, "effective_verdict_counts": {"passed": 1}},
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("in_memory", [False, True])
+def test_attention_checks_exit_status_raw_failures_and_incomplete(tmp_path, in_memory):
+    store, database = _store(tmp_path, in_memory)
+    for index, (run_id, (manifest, _)) in enumerate(ATTENTION_CASES.items()):
+        _save_run(
+            store,
+            run_id,
+            f"2026-09-{10 + index:02d}T10:00:00Z",
+            ("alpha",),
+            status="finished",
+            **manifest,
+        )
+    expected = {run_id for run_id, (_, flagged) in ATTENTION_CASES.items() if flagged}
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        flagged = client.get("/api/v2/runs", params={"attention": True}).json()
+        assert {run["run_id"] for run in flagged["runs"]} == expected
+        assert (flagged["total"], flagged["attention_total"]) == (5, 5)
+        # Each summary carries the same rule, so the UI marks the same rows.
+        every = client.get("/api/v2/runs").json()["runs"]
+        assert {run["run_id"] for run in every if run["needs_attention"]} == expected
+        one = client.get("/api/v2/runs/skipped-only-nonzero-exit").json()["run"]
+        assert one["needs_attention"] is True
+    store.close()
+
+
+def test_runs_collection_with_trailing_slash_still_redirects(tmp_path):
+    store, database = _store(tmp_path, in_memory=True)
+    application = create_app(Settings(database_path=str(database)), v2_store=store)
+    with TestClient(application) as client:
+        response = client.get(
+            "/api/v2/runs/", params={"limit": 1}, follow_redirects=False
+        )
+        assert response.status_code == 307
+        assert response.headers["location"] == "/api/v2/runs?limit=1"
+        assert client.get("/api/v2/runs/").json()["runs"] == []
+        schema = client.get("/openapi.json").json()["paths"]
+        assert "/api/v2/runs/" not in schema
+    store.close()

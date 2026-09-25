@@ -16,7 +16,7 @@ from typing import Any, Literal, cast
 from fastapi import APIRouter, Body, Depends, Query, Request, status
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from m3 import (
@@ -41,6 +41,7 @@ from m3 import (
     StdioServer,
     TraceView,
 )
+from m3.storage.ephemeral import run_needs_attention
 from m3_app.api.report_payloads import build_execution_envelope, build_report_envelope
 from m3_app.api.wire import (
     internalize_request,
@@ -266,6 +267,13 @@ class V2RunSummary(BaseModel):
         default=(),
         description="Suites of this run's saved tests; a run can span several suites.",
     )
+    needs_attention: bool = Field(
+        default=False,
+        description=(
+            "Whether the run failed or stopped short: the rule `attention=true` "
+            "filters by."
+        ),
+    )
 
 
 class V2RunListEnvelope(BaseModel):
@@ -334,6 +342,7 @@ def _run_summary(manifest: Mapping[str, object]) -> V2RunSummary | None:
             V2SuiteRef.model_validate(item)
             for item in cast(list[object], manifest.get("suites") or [])
         ),
+        needs_attention=run_needs_attention(manifest),
     )
 
 
@@ -1457,6 +1466,16 @@ def install_v2(
                 project_id=str(project_id) if project_id else None,
                 q=q,
             ),
+        )
+
+    # `/{run_id:path}` below would also match an empty ID, so the collection
+    # with a trailing slash keeps redirecting to the collection.
+    @runs_router.get("/", include_in_schema=False)
+    def list_runs_trailing_slash(request: Request) -> RedirectResponse:
+        query = request.url.query
+        return RedirectResponse(
+            f"/api/v2/runs?{query}" if query else "/api/v2/runs",
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
         )
 
     # `:path` keeps IDs with an encoded slash ("run id/part") in one parameter.
