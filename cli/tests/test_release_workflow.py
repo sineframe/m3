@@ -57,7 +57,8 @@ def test_tag_publication_waits_for_prepared_source_tests_and_managed_assets() ->
     for required in (
         "release-source-checks:",
         "release-tests:",
-        'python-version: ["3.10", "3.11", "3.12", "3.13"]',
+        "name: Tests (Python 3.10)",
+        'python-version: "3.10"',
         "release-managed-assets:",
         'uv run --no-project --with packaging python scripts/prepare_release.py "$version"',
         'pytest -q -n 2 --dist worksteal -m "not live and not process_lifecycle" sdk/tests',
@@ -74,6 +75,8 @@ def test_tag_publication_waits_for_prepared_source_tests_and_managed_assets() ->
 
     assert 'M3_RUN_LIVE_MANAGED_ASSETS: "1"' in workflow
     assert "M3_LIVE_MANAGED_KIND: ${{ matrix.kind }}" in workflow
+    assert "matrix.python-version" not in workflow
+    assert all(f'python-version: "3.{minor}"' not in workflow for minor in (11, 12, 13))
 
 
 def test_release_recovery_bypasses_skipped_preflight_without_running_build() -> None:

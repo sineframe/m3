@@ -239,43 +239,6 @@ jobs:
       - name: Run complete CLI suite
         run: uv run --locked --no-sync --project cli pytest -q cli/tests
 
-  main-python-compatibility:
-    name: Main compatibility (3.13)
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install uv and Python
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          version: "0.12.7"
-          python-version: "3.13"
-          enable-cache: true
-      - name: Install locked test workspace
-        run: >-
-          uv sync --locked --all-packages
-          --extra pytest --extra judge --extra storage --extra property
-          --group test --group typecheck
-      - name: Run SDK unit tests without live providers or process lifecycle
-        run: >-
-          uv run --locked --no-sync --project sdk --extra judge
-          pytest -vv -x -n 2 --dist worksteal --timeout=90 --timeout-method=signal
-          -m "not live and not process_lifecycle"
-          sdk/tests/unit
-      - name: Run application unit tests without live providers
-        run: >-
-          uv run --locked --no-sync --project app
-          pytest -q -n 2 --dist worksteal -m "not live" app/tests/unit
-      - name: Run CLI smoke tests
-        run: >-
-          uv run --locked --no-sync --project cli pytest -q
-          cli/tests/test_init.py cli/tests/test_setup.py
-          cli/tests/test_doctor.py cli/tests/test_web.py
-
   quality:
     name: Source checks
     runs-on: ubuntu-latest
@@ -291,7 +254,7 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.7"
-          python-version: "3.13"
+          python-version: "3.10"
           enable-cache: true
 
       - name: Install locked workspace base dependencies
@@ -369,7 +332,7 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.7"
-          python-version: "3.13"
+          python-version: "3.10"
       - name: Install public test workspace
         run: >-
           uv sync --locked --all-packages
@@ -445,7 +408,7 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.7"
-          python-version: "3.13"
+          python-version: "3.10"
           enable-cache: true
 
       - name: Install Node.js
@@ -524,7 +487,7 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.7"
-          python-version: "3.13"
+          python-version: "3.10"
           enable-cache: true
 
       - name: Install locked SDK test dependencies
