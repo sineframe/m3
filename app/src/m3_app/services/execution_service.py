@@ -634,22 +634,22 @@ class AppExecutionService:
                 )
                 term = q.strip().casefold()
                 exact_label = term.startswith("run #") and term[5:].isdigit()
-                matches = tuple(
-                    run
-                    for run in runs
-                    if (
-                        isinstance(run.get("run_id"), str)
-                        and term in run["run_id"].casefold()
-                    )
-                    or (
-                        isinstance(run.get("run_label"), str)
+
+                def matches_query(run: Mapping[str, object]) -> bool:
+                    identifier = run.get("run_id")
+                    label = run.get("run_label")
+                    return (
+                        isinstance(identifier, str) and term in identifier.casefold()
+                    ) or (
+                        isinstance(label, str)
                         and (
-                            run["run_label"].casefold() == term
+                            label.casefold() == term
                             if exact_label
-                            else term in run["run_label"].casefold()
+                            else term in label.casefold()
                         )
                     )
-                )
+
+                matches = tuple(run for run in runs if matches_query(run))
                 end = None if limit is None else offset + limit
                 return matches[offset:end], len(matches)
             return self.store.list_test_run_page(
