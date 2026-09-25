@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import sys
 from pathlib import Path
@@ -19,11 +20,33 @@ class _RedactingArgumentParser(argparse.ArgumentParser):
         raise CLIError("invalid command or configuration")
 
 
+class _VersionAction(argparse.Action):
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> NoReturn:
+        try:
+            version = importlib.metadata.version("sf-m3-cli")
+        except importlib.metadata.PackageNotFoundError:
+            raise CLIError("the CLI installation is incomplete") from None
+        print(f"m3 {version}")
+        parser.exit(0)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = _RedactingArgumentParser(
         prog="m3",
         description=M3_ASCII_ART,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version",
+        action=_VersionAction,
+        nargs=0,
+        help="show the installed CLI version",
     )
     subparsers = parser.add_subparsers(
         dest="command", required=True, parser_class=_RedactingArgumentParser
