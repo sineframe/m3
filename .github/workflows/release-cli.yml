@@ -71,10 +71,16 @@ jobs:
           sh -n scripts/install.sh.in scripts/install-latest.sh
 
   release-tests:
-    name: Tests (Python 3.10)
+    name: Tests (Python ${{ matrix.python-version }})
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'build')
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10"]
+        # Restore the full Python compatibility matrix when release runs are stable.
+        # python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,7 +90,7 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.7"
-          python-version: "3.10"
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
       - name: Prepare tag version in disposable checkout
         env:
@@ -351,7 +357,7 @@ jobs:
         run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ "$RUNNER_TEMP"/m3-release/*.whl
 
   verify-pypi:
-    name: PyPI installs (${{ matrix.os }}, Python 3.10)
+    name: PyPI installs (${{ matrix.os }}, Python ${{ matrix.python }})
     needs: [publish]
     if: always() && needs.publish.result == 'success'
     runs-on: ${{ matrix.os }}
@@ -360,8 +366,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-          - os: macos-latest
+          - { os: ubuntu-latest, python: "3.10" }
+          - { os: macos-latest, python: "3.10" }
+          # - { os: macos-latest, python: "3.13" }
     steps:
       - name: Check out tagged smoke script
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -372,11 +379,11 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.7"
-          python-version: "3.10"
+          python-version: ${{ matrix.python }}
       - name: Exercise independent clean PyPI install methods
         env:
           VERSION: ${{ needs.publish.outputs.version }}
-        run: uv run --no-project --python 3.10 --with packaging python scripts/smoke_pypi_install.py --version "$VERSION"
+        run: uv run --no-project --python "${{ matrix.python }}" --with packaging python scripts/smoke_pypi_install.py --version "$VERSION"
 
   promote:
     name: Publish GitHub release
