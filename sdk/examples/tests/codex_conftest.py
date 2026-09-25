@@ -64,6 +64,15 @@ class FixtureCodexHarnessAdapter(CodexHarnessAdapter):
         self.closed_stderr = ""
         self.last_turn: AdapterTurn | None = None
 
+    async def open(self, launch: HarnessLaunch) -> Any:
+        try:
+            return await super().open(launch)
+        except Exception as exc:
+            # The public session result intentionally hides startup details.
+            # Keep the adapter's sanitized exception visible in CI failures.
+            print(f"Codex fixture startup: {type(exc).__name__}: {exc}")
+            raise
+
     async def send(
         self,
         message: Any,
