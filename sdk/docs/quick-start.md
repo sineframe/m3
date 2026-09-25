@@ -1,5 +1,17 @@
 # Quick start
 
+## CI selection
+
+Run `m3 ci test` from the project root to execute the normal pytest selection
+while excluding tests marked `pytest.mark.m3(ci=False)`. A module or class can
+set the default, and a closer `ci=True` marker can include one test again.
+This composes with paths, `-k`, `-m`, and M3's `--suite` option. Ordinary
+`m3 test` ignores this CI-only exclusion.
+
+Publishing is explicit: use `m3 ci test --upload` with `M3_ACCESS_TOKEN`.
+Provider API keys and `M3_JUDGE_API_KEY` are separate credentials. The
+[CI guide](../../docs/ci.md) covers local sign-in, GitHub Actions, and retries.
+
 ## Response judge
 
 `m3 setup` installs judge support in the project environment. Rerun setup to

@@ -43,7 +43,7 @@ def test_cli_suite_selects_only_marked_files(tmp_path: Path) -> None:
         capture_output=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2 passed" in result.stdout
+    assert "2 passed" in result.stdout, result.stdout + result.stderr
     connection = sqlite3.connect(db)
     assert connection.execute("select count(*) from v2_test_results").fetchone()[0] == 2
 
@@ -63,6 +63,328 @@ def test_cli_blank_suite_is_usage_error(tmp_path: Path) -> None:
         capture_output=True,
     )
     assert result.returncode == 2
+
+
+def test_cli_ci_excludes_inherited_false_and_allows_closest_true(
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_ci_selection.py"
+    test_file.write_text(
+        "import pytest\n"
+        "pytestmark = pytest.mark.m3(ci=False)\n"
+        "def test_module_excluded(): assert False\n"
+        "@pytest.mark.m3(ci=True)\n"
+        "def test_override_included(): pass\n"
+        "@pytest.mark.m3(ci=False)\n"
+        "def test_function_excluded(): assert False\n"
+        "@pytest.mark.m3(ci=True)\n"
+        "@pytest.mark.parametrize('value', [pytest.param(1, marks=pytest.mark.m3(ci=False)), 2])\n"
+        "def test_parameter_override(value): pass\n"
+    )
+    db = tmp_path / "ci.sqlite"
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(Path(__file__).parents[2] / "src")
+        + os.pathsep
+        + str(Path(__file__).parents[2].parent / "sdk/src"),
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "m3_cli",
+            "ci",
+            "test",
+            "--python",
+            sys.executable,
+            "--results-db",
+            str(db),
+            "--",
+            "-q",
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout, result.stdout + result.stderr
+    assert "M3 CI excluded 3 test(s)" in result.stdout
+    connection = sqlite3.connect(db)
+    run_id, serialized_record = connection.execute(
+        "select run_id, record_json from v2_test_runs"
+    ).fetchone()
+    assert run_id.startswith("run-")
+    assert f"M3 run {run_id}" in result.stdout
+    import json
+
+    assert json.loads(serialized_record)["ci_excluded_count"] == 3
+
+
+def test_cli_ci_excludes_agent_test_before_harness_validation(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_ci_agent.py"
+    test_file.write_text(
+        "import pytest\n"
+        "def test_plain_pytest(): pass\n"
+        "@pytest.mark.m3(ci=False)\n"
+        "def test_agent(agent): pass\n"
+    )
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(Path(__file__).parents[2] / "src")
+        + os.pathsep
+        + str(Path(__file__).parents[2].parent / "sdk/src"),
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "m3_cli",
+            "ci",
+            "test",
+            "--python",
+            sys.executable,
+            "--",
+            "-q",
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "agent test requires --harness" not in result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+    assert "M3 CI excluded 1 test(s)" in result.stdout
+
+
+def test_cli_ci_excludes_parameter_marked_agent_without_harness(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_ci_agent_parameter.py"
+    test_file.write_text(
+        "import pytest\n"
+        "def test_plain_pytest(): pass\n"
+        "@pytest.mark.m3(ci=True)\n"
+        "@pytest.mark.parametrize('case', [pytest.param(1, marks=pytest.mark.m3(ci=False))])\n"
+        "def test_agent(agent, case): assert False\n"
+    )
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(Path(__file__).parents[2] / "src")
+        + os.pathsep
+        + str(Path(__file__).parents[2].parent / "sdk/src"),
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "m3_cli",
+            "ci",
+            "test",
+            "--python",
+            sys.executable,
+            "--",
+            "-q",
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "upload inspection unavailable" not in result.stderr
+    assert "1 passed" in result.stdout
+    assert "M3 CI excluded 1 test(s)" in result.stdout
+
+
+def test_cli_ci_kept_agent_still_requires_harness(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_ci_agent_parameter.py"
+    test_file.write_text(
+        "import pytest\n"
+        "@pytest.mark.m3(ci=True)\n"
+        "@pytest.mark.parametrize('case', [pytest.param(1, marks=pytest.mark.m3(ci=False)), 2])\n"
+        "def test_agent(agent, case): pass\n"
+    )
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(Path(__file__).parents[2] / "src")
+        + os.pathsep
+        + str(Path(__file__).parents[2].parent / "sdk/src"),
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "m3_cli",
+            "ci",
+            "test",
+            "--python",
+            sys.executable,
+            "--",
+            "-q",
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 4
+    assert "agent test requires --harness" in result.stdout + result.stderr
+
+
+def test_cli_ci_parameter_true_overrides_inherited_false_for_agent(
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_ci_agent_parameter_override.py"
+    test_file.write_text(
+        "import pytest, sys\n"
+        "pytestmark = pytest.mark.m3(ci=False, agents=[{'harness':'acp','models':['marker'], 'manifest':{'command':sys.executable,'args':['fixture-agent'],'protocol':'acp','protocol_version':1}}], servers=[{'type':'stdio','command':'echo'}])\n"
+        "@pytest.mark.parametrize('case', [pytest.param(1, marks=pytest.mark.m3(ci=True)), 2])\n"
+        "def test_agent(agent, server, case): assert agent.model == 'marker' and server.command == 'echo'\n"
+    )
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(Path(__file__).parents[2] / "src")
+        + os.pathsep
+        + str(Path(__file__).parents[2].parent / "sdk/src"),
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "m3_cli",
+            "ci",
+            "test",
+            "--python",
+            sys.executable,
+            "--",
+            "-q",
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+    assert "M3 CI excluded 1 test(s)" in result.stdout
+
+
+def test_cli_ci_excludes_inherited_false_agent_without_validating_matrix(
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_ci_agent_malformed_excluded.py"
+    test_file.write_text(
+        "import pytest\n"
+        "pytestmark = pytest.mark.m3(ci=False, agents='malformed', servers='malformed')\n"
+        "def test_agent_and_server(agent, server): assert False\n"
+    )
+    plain_test_file = tmp_path / "test_plain.py"
+    plain_test_file.write_text("def test_plain_pytest(): pass\n")
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(Path(__file__).parents[2] / "src")
+        + os.pathsep
+        + str(Path(__file__).parents[2].parent / "sdk/src"),
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "m3_cli",
+            "ci",
+            "test",
+            "--python",
+            sys.executable,
+            "--",
+            "-q",
+            str(test_file),
+            str(plain_test_file),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+    assert "M3 CI excluded 1 test(s)" in result.stdout
+
+
+def test_cli_ci_parameter_true_overrides_inherited_false_for_server(
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_ci_server_parameter_override.py"
+    test_file.write_text(
+        "import pytest\n"
+        "pytestmark = pytest.mark.m3(ci=False, servers=[{'type':'stdio','command':'echo'}])\n"
+        "@pytest.mark.parametrize('case', [pytest.param(1, marks=pytest.mark.m3(ci=True)), 2])\n"
+        "def test_server(server, case): assert server.command == 'echo'\n"
+    )
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(Path(__file__).parents[2] / "src")
+        + os.pathsep
+        + str(Path(__file__).parents[2].parent / "sdk/src"),
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "m3_cli",
+            "ci",
+            "test",
+            "--python",
+            sys.executable,
+            "--",
+            "-q",
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+    assert "M3 CI excluded 1 test(s)" in result.stdout
+
+
+def test_cli_ci_requires_boolean_marker_values(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_ci_invalid_marker.py"
+    test_file.write_text(
+        "import pytest\n@pytest.mark.m3(ci='false')\ndef test_invalid_marker(): pass\n"
+    )
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(Path(__file__).parents[2] / "src")
+        + os.pathsep
+        + str(Path(__file__).parents[2].parent / "sdk/src"),
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "m3_cli",
+            "ci",
+            "test",
+            "--python",
+            sys.executable,
+            "--",
+            "-q",
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "m3(ci=...) must be a Boolean" in result.stdout + result.stderr
 
 
 def test_cli_suite_intersects_path_k_and_marker_selectors(tmp_path: Path) -> None:

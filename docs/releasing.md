@@ -1,5 +1,27 @@
 # Releasing M3
 
+CLI releases must contain no Firebase SDK, Firebase Web config, Firebase Admin
+credentials, service-account keys, or M3 access tokens. The control plane owns
+the temporary browser sign-in page and identity-provider configuration. Before
+publishing a CLI release, run a local browser sign-in smoke test against the
+matching deployed control plane: create developer access, verify OS credential
+storage, and confirm that signing in only to rotate a CI token leaves an
+existing developer credential untouched.
+
+Before enabling the control-plane CLI login routes in production, configure
+Firestore TTL for collection group `cli_login_grants` on timestamp field
+`expires_at` and confirm the policy is active. The server rejects expired
+grants immediately; TTL only removes abandoned records. Consumed grants are
+deleted during the exchange transaction. TTL deletions are billable Firestore
+operations, so include them in the deployment cost review.
+CLI routes are disabled until `CLI_AUTH_ENABLED=true` and a shared
+`CLI_GRANT_SIGNING_SECRET` are configured on every control-plane instance.
+The secret must be a canonical base64url encoding of at least 32 random bytes.
+Invalid grant signatures are rejected before Firestore access; monitor exchange
+traffic and add an upstream abuse control if the route is attacked. Review the
+Firebase browser key's API restrictions and Auth quotas in the deployed Google
+Cloud project; this branch cannot verify those live settings.
+
 M3 publishes version matched `sf-m3`, `sf-m3-app`, and `sf-m3-cli` wheels to PyPI. The `m3` Python import and `m3` command remain stable public interfaces. The tag controls whether a GitHub Release is final or a prerelease: `v0.2.0` is final and `v0.3.0a1` is an alpha.
 
 ## Release from a tag
