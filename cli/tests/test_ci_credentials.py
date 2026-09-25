@@ -6,6 +6,7 @@ import pytest
 
 from m3_cli.ci_credentials import (
     access_token,
+    control_plane_url,
     resolved_environment,
     validate_credential_mappings,
 )
@@ -58,6 +59,19 @@ def test_blank_env_file_token_falls_back_to_saved_token_but_ambient_empty_errors
         access_token(ambient, base_url="https://example.com")
 
 
+def test_control_plane_origin_has_one_strict_policy():
+    assert control_plane_url({"M3_CONTROL_PLANE_URL": "https://example.com/"}) == (
+        "https://example.com"
+    )
+    for invalid in (
+        "https://example.com///",
+        "https://example.com/path",
+        "http://example.com",
+    ):
+        with pytest.raises(CLIError, match="HTTPS origin"):
+            control_plane_url({"M3_CONTROL_PLANE_URL": invalid})
+
+
 def test_mapped_credential_source_values_are_scanned_for_upload():
     from m3_cli.ci_upload import _sensitive_values
     from m3_cli.control_plane import _reject_known_secrets
@@ -65,14 +79,14 @@ def test_mapped_credential_source_values_are_scanned_for_upload():
     value = "opaque-value-without-secret-name"
     sensitive = _sensitive_values(
         {"DEPLOYMENT_CRED": value},
-        ["codex:VENDOR_API_KEY=DEPLOYMENT_CRED", "judge:M3_JUDGE_API_KEY=JUDGE"],
+        source_names=("DEPLOYMENT_CRED",),
     )
     assert sensitive == (value,)
     with pytest.raises(RuntimeError, match="credential material"):
         _reject_known_secrets(value.encode(), sensitive)
     short_value = "x"
     assert _sensitive_values(
-        {"SHORT_CRED": short_value}, ["VENDOR_KEY=SHORT_CRED"]
+        {"SHORT_CRED": short_value}, source_names=("SHORT_CRED",)
     ) == (short_value,)
 
 
@@ -230,10 +244,13 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
         assert sent[0][0][0].run_id == "run-test"
         assert "opaque-deployment-credential" in sent[0][1]["sensitive_values"]
         manifest = store.get_test_run("run-test")
-        assert manifest["upload_scan_sources"] == ["DEPLOY_CRED"]
+        assert set(manifest["upload_scan_fingerprints"]) == {"DEPLOY_CRED"}
+        assert "upload_scan_sources" not in manifest
         assert "opaque-deployment-credential" not in json.dumps(manifest)
         assert ci_upload._scan_key_path(database).parent != database.parent
 
+        manifest["upload_scan_sources"] = ["DEPLOY_CRED"]
+        store.save_test_run("run-test", manifest)
         ci_upload.publish_run("run-test", **kwargs)
         assert len(sent) == 2
         assert "opaque-deployment-credential" in sent[1][1]["sensitive_values"]

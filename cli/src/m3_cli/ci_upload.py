@@ -12,38 +12,21 @@ import stat
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
-from urllib.parse import urlparse
 
 from m3.feedback import Feedback
 from m3.storage import SQLiteExecutionStore
 
 from .ci_credentials import (
     ACCESS_TOKEN_ENV,
-    CONTROL_PLANE_URL_ENV,
+    DEFAULT_CONTROL_PLANE_URL,
     access_token,
+    control_plane_url,
     resolved_environment,
 )
 from .control_plane import upload_current_run
 from .errors import CLIError
 
-DEFAULT_CONTROL_PLANE_URL = "https://control-plane-ulwh0w.fly.dev"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
-
-
-def control_plane_url(environment: dict[str, str]) -> str:
-    url = environment.get(CONTROL_PLANE_URL_ENV, DEFAULT_CONTROL_PLANE_URL).rstrip("/")
-    parsed = urlparse(url)
-    if (
-        parsed.scheme != "https"
-        or not parsed.netloc
-        or parsed.username
-        or parsed.password
-        or parsed.path
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise CLIError("M3_CONTROL_PLANE_URL must be an HTTPS origin")
-    return url
 
 
 def record_credential_sources(
@@ -70,9 +53,7 @@ def record_credential_sources(
             fingerprints = {
                 name: _value_fingerprint(key, name, environment[name])
                 for name in sorted(sources)
-                if environment.get(name)
             }
-        manifest["upload_scan_sources"] = sorted(sources)
         manifest["upload_scan_fingerprints"] = fingerprints
         store.save_test_run(run_id, manifest)
     finally:
@@ -86,7 +67,6 @@ def publish_run(
     database: Path,
     environment: dict[str, str] | None = None,
     env_file: str | os.PathLike[str] | None = None,
-    credential_env: Sequence[str] = (),
 ) -> None:
     """Read the exported run and send it with the existing uploader."""
     env = resolved_environment(env_file) if environment is None else environment
@@ -126,37 +106,16 @@ def publish_run(
             "project_id"
         ):
             raise CLIError("the selected feedback does not match the run")
-        stored_sources = manifest.get("upload_scan_sources", [])
         fingerprints = manifest.get("upload_scan_fingerprints", {})
-        if (
-            "upload_scan_sources" not in manifest
-            or "upload_scan_fingerprints" not in manifest
-        ):
+        if "upload_scan_fingerprints" not in manifest:
             raise CLIError(
                 "this run predates credential fingerprints and cannot be safely uploaded"
             )
-        if (
-            not isinstance(stored_sources, list)
-            or any(not isinstance(value, str) for value in stored_sources)
-            or not isinstance(fingerprints, dict)
-            or any(
-                not isinstance(name, str) or not isinstance(value, str)
-                for name, value in fingerprints.items()
-            )
+        if not isinstance(fingerprints, dict) or any(
+            not isinstance(name, str) or not isinstance(value, str)
+            for name, value in fingerprints.items()
         ):
             raise CLIError("the selected run has invalid credential metadata")
-        explicit_sources = _credential_source_names(credential_env)
-        source_names = tuple(
-            dict.fromkeys(
-                (*stored_sources, *explicit_sources, *_scan_source_names(env))
-            )
-        )
-        if not set(fingerprints).issubset(stored_sources):
-            raise CLIError("the saved run has incomplete credential fingerprints")
-        if any(env.get(name) and name not in fingerprints for name in stored_sources):
-            raise CLIError("the saved run has incomplete credential fingerprints")
-        if any(env.get(name) and name not in fingerprints for name in explicit_sources):
-            raise CLIError("the saved run has incomplete credential fingerprints")
         if fingerprints:
             key = _load_scan_key(database)
             for name, expected in fingerprints.items():
@@ -168,11 +127,7 @@ def publish_run(
                         "credential values for this run are unavailable or changed; "
                         "supply the original environment with --env-file"
                     )
-        elif stored_sources:
-            raise CLIError("the saved run has no credential fingerprints")
-        sensitive_values = _sensitive_values(
-            env, credential_env, source_names=source_names
-        )
+        sensitive_values = _sensitive_values(env, source_names=tuple(fingerprints))
         upload_current_run(
             feedback,
             store,
@@ -187,11 +142,10 @@ def publish_run(
 
 def _sensitive_values(
     environment: dict[str, str],
-    credential_env: Sequence[str],
     *,
     source_names: Sequence[str] = (),
 ) -> tuple[str, ...]:
-    mapped_sources = set(source_names) | set(_credential_source_names(credential_env))
+    mapped_sources = set(source_names)
     return tuple(
         value
         for name, value in environment.items()
@@ -285,8 +239,6 @@ def _load_or_create_scan_key(database: Path) -> bytes:
         except FileExistsError:
             return _load_scan_key(database)
         return key
-    except Exception:
-        raise
     finally:
         temporary.unlink(missing_ok=True)
 

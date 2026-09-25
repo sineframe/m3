@@ -19,29 +19,20 @@ from typing import Any
 from urllib import error, request
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from .ci_credentials import control_plane_url as _validated_control_plane_url
 from .ci_credentials import validate_access_token
 from .errors import CLIError
 
-_DEFAULT_CONTROL_PLANE = "https://control-plane-ulwh0w.fly.dev"
 _SERVICE = "sf-m3"
 _LOGIN_TTL_SECONDS = 600
 _MAX_EXCHANGE_RESPONSE = 64 * 1024
 
 
 def control_plane_url() -> str:
-    raw = os.environ.get("M3_CONTROL_PLANE_URL", _DEFAULT_CONTROL_PLANE)
-    parsed = urlparse(raw)
-    if (
-        parsed.scheme != "https"
-        or not parsed.netloc
-        or parsed.path not in ("", "/")
-        or parsed.query
-        or parsed.fragment
-        or parsed.username is not None
-        or parsed.password is not None
-    ):
-        raise ValueError("M3 control-plane URL must be an HTTPS origin")
-    return raw.rstrip("/")
+    try:
+        return _validated_control_plane_url(os.environ)
+    except CLIError as exc:
+        raise ValueError("M3 control-plane URL must be an HTTPS origin") from exc
 
 
 def _metadata_path() -> Path:

@@ -52,9 +52,7 @@ def test_ci_upload_publishes_exact_run_and_strips_access_token(monkeypatch, tmp_
     assert captured["test"]["environment"]["OPENAI_API_KEY"] == "agent-value"
     assert "M3_ACCESS_TOKEN" not in captured["test"]["environment"]
     assert captured["upload"][1]["environment"]["M3_ACCESS_TOKEN"] == TOKEN
-    assert captured["upload"][1]["credential_env"] == [
-        "codex:VENDOR_API_KEY=DEPLOY_CRED"
-    ]
+    assert "credential_env" not in captured["upload"][1]
 
 
 def test_ci_without_upload_never_calls_publisher(monkeypatch, tmp_path):

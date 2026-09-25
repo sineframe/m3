@@ -81,6 +81,9 @@ def test_control_plane_origin_must_be_https(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("M3_CONTROL_PLANE_URL", "http://control-plane.example")
     with pytest.raises(ValueError, match="HTTPS origin"):
         auth.control_plane_url()
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", "https://control-plane.example///")
+    with pytest.raises(ValueError, match="HTTPS origin"):
+        auth.control_plane_url()
 
 
 def test_only_os_keyring_backends_are_accepted(monkeypatch: pytest.MonkeyPatch) -> None:

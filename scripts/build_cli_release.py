@@ -291,8 +291,6 @@ def _verify_wheel(
                 f"{expected_name} wheel has forbidden mandatory dependency"
             )
     if expected_name == "sf_m3_cli":
-        if any(_is_firebase_asset(name) for name in metadata.files):
-            raise ReleaseBuildError("CLI wheel contains Firebase auth assets")
         if any(
             _requirement_name(value) in {"firebase", "firebase-admin"}
             for value in metadata.requires

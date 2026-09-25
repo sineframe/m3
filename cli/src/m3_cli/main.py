@@ -291,7 +291,6 @@ def main(argv: list[str] | None = None) -> int:
                         project_root=result.project_root,
                         database=result.database_path,
                         environment=resolved,
-                        credential_env=args.credential_env,
                     )
                 except (CLIError, RuntimeError, OSError):
                     print(

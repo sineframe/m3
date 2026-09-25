@@ -7,6 +7,7 @@ import re
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 
@@ -14,7 +15,25 @@ from .errors import CLIError
 
 ACCESS_TOKEN_ENV = "M3_ACCESS_TOKEN"
 CONTROL_PLANE_URL_ENV = "M3_CONTROL_PLANE_URL"
+DEFAULT_CONTROL_PLANE_URL = "https://control-plane-ulwh0w.fly.dev"
 _PAT = re.compile(r"m3pat_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}")
+
+
+def control_plane_url(environment: Mapping[str, str]) -> str:
+    """Return the configured HTTPS origin without a trailing slash."""
+    raw = environment.get(CONTROL_PLANE_URL_ENV, DEFAULT_CONTROL_PLANE_URL)
+    parsed = urlparse(raw)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise CLIError("M3_CONTROL_PLANE_URL must be an HTTPS origin")
+    return raw.rstrip("/")
 
 
 def resolved_environment(
@@ -102,7 +121,9 @@ def validate_access_token(value: str) -> str:
 __all__ = [
     "ACCESS_TOKEN_ENV",
     "CONTROL_PLANE_URL_ENV",
+    "DEFAULT_CONTROL_PLANE_URL",
     "access_token",
+    "control_plane_url",
     "resolved_environment",
     "test_environment",
     "validate_credential_mappings",
