@@ -166,7 +166,10 @@ def test_public_prune_recovers_crashed_worker_lease(tmp_path: Path) -> None:
 
 def test_public_test_forwards_pytest_args_and_exit_code(tmp_path: Path) -> None:
     (tmp_path / "test_exit.py").write_text(
-        "def test_forwarded_marker():\n    assert False\n", encoding="utf-8"
+        "import pytest\n"
+        "pytestmark = pytest.mark.m3(suite_name='cli-executable')\n"
+        "def test_forwarded_marker():\n    assert False\n",
+        encoding="utf-8",
     )
     result = _m3(
         "test",
@@ -214,7 +217,9 @@ def test_public_managed_multiple_versions_collect_without_download(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "test_matrix.py").write_text(
-        "import pytest\n@pytest.mark.m3\ndef test_selected(agent):\n    pass\n",
+        "import pytest\n"
+        "@pytest.mark.m3(suite_name='cli-executable')\n"
+        "def test_selected(agent):\n    pass\n",
         encoding="utf-8",
     )
     result = _m3(
@@ -247,7 +252,11 @@ import asyncio
 import os
 from pathlib import Path
 
+import pytest
+
 from m3.runtime import RuntimeManager
+
+pytestmark = pytest.mark.m3(suite_name="cli-executable")
 
 
 def _acquire(worker):
