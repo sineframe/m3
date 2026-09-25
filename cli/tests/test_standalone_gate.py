@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -128,6 +133,51 @@ def test_standalone_gate_exercises_public_setup_command() -> None:
     assert '"m3.pytest_plugin"' in source
     assert '"m3_cli", "--help"' in source
     assert '"M3_GATE_PYTHONS", "3.10,3.13"' in source
+
+
+def test_standalone_verdict_fixture_supports_persisted_pytest(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "test_verdicts.py"
+    shutil.copyfile(
+        _SCRIPT.parent / "fixtures" / "verdicts" / "test_verdicts.py", fixture
+    )
+    database = tmp_path / "results.sqlite"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        str(_SCRIPT.parents[1] / "sdk" / "src") + os.pathsep + env.get("PYTHONPATH", "")
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "m3.pytest_plugin",
+            "--results-db",
+            str(database),
+            "--project-root",
+            str(tmp_path),
+            str(fixture),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert "2 failed, 2 passed, 1 error" in output
+    with sqlite3.connect(database) as connection:
+        results = connection.execute(
+            "SELECT r.suite_id, s.suite_name FROM v2_test_results AS r "
+            "JOIN v2_suites AS s ON s.id=r.suite_id"
+        ).fetchall()
+    assert len(results) == 5
+    assert {name for _, name in results} == {"standalone"}
 
 
 def test_ci_standalone_gate_runs_pinned_ui_auth_playwright_spec() -> None:

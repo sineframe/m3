@@ -9,6 +9,8 @@ from m3.errors import ProtocolError
 from m3.testing import FaultInjector
 from m3.types import CallTool, DirectSpec, InProcessServer, ServerBinding
 
+pytestmark = pytest.mark.m3(suite_name="standalone")
+
 
 def server():
     async def list_tools(_context, _params):
