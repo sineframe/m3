@@ -56,6 +56,9 @@ def test_two_files_share_catalog_suite_and_persist_setup_failure(
     result = _run(tmp_path, first, second, other)
     assert result.returncode != 0
     db = sqlite3.connect(tmp_path / "results.sqlite")
+    persisted_runs = db.execute("select run_id, run_label from v2_test_runs").fetchall()
+    assert len(persisted_runs) == 1
+    assert persisted_runs[0][1] == "Run #1"
     suites = db.execute("select id,suite_name from v2_suites order by id").fetchall()
     executions = db.execute(
         "select suite_id,snapshot_json from v2_executions"

@@ -196,6 +196,8 @@ class AppExecutionStore(Protocol):
 
     def list_test_runs(self) -> tuple[Mapping[str, object], ...]: ...
 
+    def get_test_run(self, run_id: str) -> Mapping[str, object] | None: ...
+
     def list_test_run_page(
         self,
         *,
@@ -203,6 +205,7 @@ class AppExecutionStore(Protocol):
         offset: int = 0,
         suite_id: int | None = None,
         project_id: str | None = None,
+        q: str | None = None,
     ) -> tuple[tuple[Mapping[str, object], ...], int]: ...
 
     def list_suites(self) -> tuple[Suite, ...]: ...
@@ -602,10 +605,20 @@ class AppExecutionService:
         offset: int = 0,
         suite_id: int | None = None,
         project_id: str | None = None,
+        q: str | None = None,
     ) -> tuple[tuple[Mapping[str, object], ...], int]:
         """Return one newest-first page of run manifests with their suites."""
         self._ensure_open()
         try:
+            # Older injected stores do not accept the optional search argument.
+            if q and q.strip():
+                return self.store.list_test_run_page(
+                    limit=limit,
+                    offset=offset,
+                    suite_id=suite_id,
+                    project_id=project_id,
+                    q=q,
+                )
             return self.store.list_test_run_page(
                 limit=limit, offset=offset, suite_id=suite_id, project_id=project_id
             )
@@ -623,6 +636,16 @@ class AppExecutionService:
             raise AppExecutionError(
                 "run_data_unavailable", "run data is unavailable"
             ) from exc
+
+    def run_label(self, run_id: str) -> str | None:
+        """Return the stored label for one run without changing its identity."""
+        self._ensure_open()
+        getter = getattr(self.store, "get_test_run", None)
+        if not callable(getter):
+            return None
+        manifest = getter(run_id)
+        label = manifest.get("run_label") if manifest else None
+        return label if isinstance(label, str) else None
 
     def feedback(self, run_id: str, *, baseline_run_id: str | None = None) -> Feedback:
         """Build read-only feedback for a recorded test run."""

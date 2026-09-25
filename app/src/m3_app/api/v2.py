@@ -226,6 +226,7 @@ class V2EvaluationAggregateEnvelope(BaseModel):
 class V2FeedbackEnvelope(BaseModel):
     version: Literal["v2"] = "v2"
     feedback: Feedback
+    run_label: str | None = None
 
 
 class V2SuiteRef(BaseModel):
@@ -240,6 +241,9 @@ class V2RunSummary(BaseModel):
     """Safe, compact summary of a persisted pytest run manifest."""
 
     run_id: str = Field(description="Persisted pytest run identity.")
+    run_label: str | None = Field(
+        default=None, description="Unique display label for this run."
+    )
     created_at: str | None = Field(
         default=None, description="Run creation timestamp, if persisted."
     )
@@ -1309,6 +1313,9 @@ def install_v2(
         project_id: uuid.UUID | None = Query(
             None, description="filter by project identity"
         ),
+        q: str | None = Query(
+            None, max_length=256, description="Search run ID or run label"
+        ),
         group: RunGroup | None = Query(
             None, description="group the selected run page by an allowed dimension"
         ),
@@ -1333,6 +1340,7 @@ def install_v2(
             offset=offset,
             suite_id=suite_id,
             project_id=str(project_id) if project_id else None,
+            q=q,
         )
         summaries: list[V2RunSummary] = []
         for manifest in manifests:
@@ -1353,6 +1361,7 @@ def install_v2(
             summaries.append(
                 V2RunSummary(
                     run_id=run_id,
+                    run_label=optional_string(manifest.get("run_label")),
                     created_at=optional_string(manifest.get("created_at")),
                     finished_at=optional_string(manifest.get("finished_at")),
                     status=optional_string(manifest.get("status")),
@@ -1616,7 +1625,8 @@ def install_v2(
         service: AppExecutionService = Depends(get_service),
     ) -> V2FeedbackEnvelope:
         return V2FeedbackEnvelope(
-            feedback=service.feedback(run_id, baseline_run_id=baseline_run_id)
+            feedback=service.feedback(run_id, baseline_run_id=baseline_run_id),
+            run_label=service.run_label(run_id),
         )
 
     application.include_router(feedback_router)
