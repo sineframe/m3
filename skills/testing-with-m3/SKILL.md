@@ -18,7 +18,8 @@ Read only the reference needed for the task:
 - [Test patterns](references/test-patterns.md) before writing a test; use its
   section for the claim under test.
 - [Feedback and iteration](references/feedback-iteration.md) for saved runs,
-  trace inspection, evaluation totals, or a baseline comparison.
+  trace inspection, evaluation totals, a baseline comparison, or opening
+  existing run history without executing tests.
 
 ## Begin in the target project
 

@@ -11,6 +11,7 @@ import secrets
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,7 @@ import time
 import typing
 from collections import deque
 from collections.abc import Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -615,6 +616,12 @@ def build_run_url(run_id: str, port: int, auth_token: str | None = None) -> str:
     return f"{url}#m3_token={auth_token}" if auth_token is not None else url
 
 
+def build_ui_url(port: int, auth_token: str) -> str:
+    """Build the authenticated link to the saved test-runs index."""
+
+    return f"http://127.0.0.1:{port}/reports#m3_token={auth_token}"
+
+
 def _validate_port(port: int) -> str | None:
     if not 1 <= port <= 65535:
         return "port must be between 1 and 65535"
@@ -1070,9 +1077,14 @@ def _print_ui_output(
     auth_token: str,
     new_runs: Sequence[StoredRun],
     warnings: Sequence[str],
+    *,
+    history_index: bool = False,
 ) -> None:
     for warning in dict.fromkeys(warnings):
         print(f"Warning: {warning}", file=sys.stderr)
+    if history_index:
+        print(f"UI: {build_ui_url(port, auth_token)}", flush=True)
+        return
     if not new_runs:
         print("No new stored runs.", flush=True)
         return
@@ -1086,6 +1098,8 @@ def _run_ui_server(
     pytest_code: int,
     new_runs: Sequence[StoredRun],
     warnings: Sequence[str],
+    *,
+    history_index: bool = False,
 ) -> int:
     child: _ServerChild | None = None
     auth_token = secrets.token_urlsafe(32)
@@ -1097,7 +1111,9 @@ def _run_ui_server(
                 print(f"m3: UI server: {line}", file=sys.stderr)
             return OPERATIONAL_ERROR
         print(M3_ASCII_ART, flush=True)
-        _print_ui_output(port, auth_token, new_runs, warnings)
+        _print_ui_output(
+            port, auth_token, new_runs, warnings, history_index=history_index
+        )
         with _termination_signal_handlers():
             while True:
                 if not child.alive():
@@ -1113,6 +1129,63 @@ def _run_ui_server(
         return OPERATIONAL_ERROR
     finally:
         _stop_server(child)
+
+
+def _history_database_error(database: Path) -> str | None:
+    """Inspect existing history without initializing or migrating a store."""
+
+    if database.parent.is_symlink() or database.is_symlink():
+        return "history database must not be a symlink"
+    if not database.is_file():
+        return "no saved history found"
+    try:
+        # The SDK store constructor creates and migrates databases. Preflight
+        # must instead reject an unrelated or broken file without modifying it.
+        with closing(
+            sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+        ) as connection:
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name IN ('v2_executions', 'v2_test_runs')"
+                )
+            }
+            if tables != {"v2_executions", "v2_test_runs"}:
+                return "file is not an M3 history database"
+            connection.execute(
+                "SELECT id, snapshot_json, created_at FROM v2_executions LIMIT 1"
+            ).fetchone()
+            connection.execute(
+                "SELECT run_id, record_json, created_at, updated_at "
+                "FROM v2_test_runs LIMIT 1"
+            ).fetchone()
+    except (OSError, sqlite3.Error):
+        return "history database is unreadable or invalid"
+    return None
+
+
+def run_ui(*, port: int = 8000) -> int:
+    """Serve existing history from the current directory without running pytest."""
+
+    database = Path.cwd() / ".m3" / "executions.sqlite"
+    error = _history_database_error(database)
+    if error is not None:
+        print(
+            f"m3 ui: {error} at {database}; "
+            "run from the directory containing .m3/executions.sqlite",
+            file=sys.stderr,
+        )
+        return OPERATIONAL_ERROR
+    port_error = _validate_port(port)
+    if port_error is not None:
+        print(f"m3 ui: UI startup failed ({port_error})", file=sys.stderr)
+        return OPERATIONAL_ERROR
+    ui_error = _ui_prerequisite_error(None)
+    if ui_error is not None:
+        print(f"m3 ui: {ui_error}", file=sys.stderr)
+        return OPERATIONAL_ERROR
+    return _run_ui_server(database, port, 0, (), (), history_index=True)
 
 
 def run_test_with_runs(

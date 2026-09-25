@@ -67,17 +67,18 @@ python -m pip install "sf-m3[pytest,judge]"
 
 ## Commands
 
-There are four public commands:
+The public commands include:
 
 ```text
 m3 init
 m3 setup [options]
 m3 doctor
 m3 test [options] -- [pytest arguments]
+m3 ui [--port PORT]
 ```
 
-There is no `m3 ui` command. The UI is a mode of `m3 test` because it
-shows the runs produced by that test command.
+Use `m3 test --ui` to run pytest and then view its results. Use `m3 ui` to
+view previously saved test runs without running pytest.
 
 ### `init`
 
@@ -358,9 +359,38 @@ Add `--ui` to keep a local viewer open after pytest finishes:
 m3 test --ui
 ```
 
+### `ui` (saved history only)
+
+From the directory where earlier `m3 test` commands saved their results, run:
+
+```sh
+m3 ui
+# If port 8000 is busy:
+m3 ui --port 8123
+```
+
+This does not run tests, resolve the project Python, or create a results
+database. It requires an existing, readable M3 database at
+`.m3/executions.sqlite` **in the current directory**. It does not search
+parent directories or accept `--project-root` or `--results-db`; if you run
+it from `~`, `/`, or another directory without M3 history, it exits with a
+message asking you to change to the correct directory. A valid database
+with no runs opens an empty runs index.
+
+After the server is ready, `m3 ui` prints a tokenized
+`http://127.0.0.1:8000/reports#m3_token=...` link. Open that link to browse
+all saved test runs in that database; it does not automatically launch a
+browser or select the latest run. Press Ctrl+C to stop serving.
+`m3 test --results-db PATH` can write to another database, but `m3 ui`
+currently views only the default database. Opening the UI itself does not
+start an execution, although the full UI still offers controls that can
+start one later.
+
+### UI server and security
+
 This starts one FastAPI server and one loopback port. The production UI is
 bundled inside the CLI wheel; Node.js, npm, and Vite are not run at runtime.
-The command prints a link for each stored report like this:
+`m3 test --ui` prints a link for each newly stored report like this:
 
 ```text
 Run: http://127.0.0.1:8000/reports/runs/<runId>#m3_token=<token>
@@ -401,3 +431,6 @@ interface or reverse proxy without suitable network controls.
 - The UI shows no runs: confirm the test uses `MCPTestKit` and that the CLI
   results database is the same file passed to the API. Runs are written by
   the SDK's default storage plugin; the CLI never writes test results itself.
+- `m3 ui` reports no saved history: run it from the directory containing
+  `.m3/executions.sqlite`. An existing but invalid or unrelated SQLite file
+  is rejected rather than initialized as new M3 history.
