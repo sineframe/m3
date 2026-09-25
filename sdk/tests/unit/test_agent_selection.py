@@ -153,6 +153,17 @@ def test_explicit_credential_source_is_checked_only_when_building_execution_spec
         agent._spec(UserMessage(content="x"), server=_server())
 
 
+def test_empty_ambient_codex_key_does_not_create_credential_reference(
+    monkeypatch: pytest.MonkeyPatch, kit: MCPTestKit
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    agent = kit.agents([{"harness": "codex", "models": ["fixture-model"]}])[0]
+
+    spec = agent._spec(UserMessage(content="x"), server=_server())
+
+    assert spec.harness.credential_references == {}
+
+
 def test_named_duplicate_configurations_are_allowed_but_exact_duplicates_are_not(
     kit: MCPTestKit,
 ) -> None:

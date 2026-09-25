@@ -75,13 +75,6 @@ class FixtureCodexHarnessAdapter(CodexHarnessAdapter):
         self.native_writes: list[Any] = []
         self.turn_results: list[Any] = []
 
-    async def open(self, launch: HarnessLaunch) -> Any:
-        try:
-            return await super().open(launch)
-        except Exception as exc:
-            print(f"Codex fixture startup: {type(exc).__name__}: {exc}")
-            raise
-
     async def next_frame(self, process: Any, timeout: float | None) -> Any:
         frame = await super().next_frame(process, timeout)
         if frame is not None:
