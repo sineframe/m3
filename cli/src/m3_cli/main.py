@@ -212,7 +212,12 @@ def main(argv: list[str] | None = None) -> int:
         except SystemExit as exc:
             return exc.code if isinstance(exc.code, int) else 2
         if args.command == "test" or args.command == "ci":
-            from .supervisor import run_test
+            from .supervisor import _passthrough_option_error, run_test
+
+            passthrough_error = _passthrough_option_error(pytest_args)
+            if passthrough_error is not None:
+                print(f"m3 {args.command}: {passthrough_error}", file=sys.stderr)
+                return 2
 
             is_ci = args.command == "ci"
 

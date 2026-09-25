@@ -841,6 +841,28 @@ def _has_rootdir_option(args: Sequence[str]) -> bool:
     return any(arg == "--rootdir" or arg.startswith("--rootdir=") for arg in args)
 
 
+_RESERVED_PYTEST_OPTIONS = frozenset(
+    {
+        "--results-db",
+        "--project-root",
+        "--credential-env",
+        "--m3-server-selections",
+        "--m3-ci",
+        "--m3-run-id",
+        "--m3-ci-metadata",
+    }
+)
+
+
+def _passthrough_option_error(args: Sequence[str]) -> str | None:
+    """Keep CLI-owned run state out of raw pytest passthrough arguments."""
+    for arg in args:
+        option = arg.split("=", 1)[0]
+        if option in _RESERVED_PYTEST_OPTIONS:
+            return f"{option} must be set through m3, not pytest passthrough"
+    return None
+
+
 # Keep the implementation name easy to discover for callers that used the old
 # supervisor's private command helper while making the Python argument explicit.
 _pytest_command = pytest_command
@@ -1234,6 +1256,11 @@ def run_test_with_runs(
 ) -> TestRunResult:
     """Run pytest and retain newly stored runs for optional UI serving."""
 
+    passthrough_error = _passthrough_option_error(pytest_args)
+    if passthrough_error is not None:
+        print(f"m3 test: {passthrough_error}", file=sys.stderr)
+        return TestRunResult(OPERATIONAL_ERROR)
+
     option_error = _validate_selection_options(
         harnesses, trials, credential_env, execution_timeout, runtime
     )
@@ -1376,6 +1403,11 @@ def run_test(
     ci_metadata: Mapping[str, object] | None = None,
 ) -> int:
     """Run pytest and return its exact exit status."""
+
+    passthrough_error = _passthrough_option_error(pytest_args)
+    if passthrough_error is not None:
+        print(f"m3 test: {passthrough_error}", file=sys.stderr)
+        return OPERATIONAL_ERROR
 
     if suite is not None and not suite.strip():
         print("m3 test: --suite must not be blank", file=sys.stderr)

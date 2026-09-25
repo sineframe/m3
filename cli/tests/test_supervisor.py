@@ -1087,6 +1087,14 @@ def test_command_forwards_ci_policy_and_cli_run_identity(tmp_path: Path) -> None
     assert command[index + 1] == "run-cli-owned-123"
 
 
+def test_direct_supervisor_run_rejects_owned_pytest_options(capsys) -> None:
+    assert supervisor.run_test(pytest_args=["--m3-run-id=forced"]) == 2
+    assert "--m3-run-id" in capsys.readouterr().err
+    result = supervisor.run_test_with_runs(pytest_args=["--results-db", "other.db"])
+    assert result.exit_code == 2
+    assert "--results-db" in capsys.readouterr().err
+
+
 def test_command_pins_project_root_when_supervisor_runs_pytest(tmp_path: Path) -> None:
     command = supervisor.pytest_command(
         Path("/project/.venv/bin/python"),

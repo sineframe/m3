@@ -1,10 +1,38 @@
 from __future__ import annotations
 
+import pytest
+
 from m3_cli.errors import CLIError
 from m3_cli.main import main
 from m3_cli.supervisor import TestRunResult as RunResult
 
 TOKEN = "m3pat_" + "A" * 22 + "." + "A" * 43
+
+
+@pytest.mark.parametrize(
+    "passthrough",
+    [
+        ["--m3-run-id", "forced"],
+        ["--m3-run-id=forced"],
+        ["--m3-ci-metadata", "{}"],
+        ["--results-db=other.sqlite"],
+        ["--project-root", "/tmp/other"],
+        ["--credential-env", "VENDOR_KEY=UNSCANNED_CRED"],
+        ["--m3-ci"],
+    ],
+)
+def test_cli_rejects_owned_pytest_options_before_running(
+    monkeypatch, capsys, passthrough
+):
+    import m3_cli.supervisor as supervisor
+
+    monkeypatch.setattr(
+        supervisor,
+        "run_ci_test",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("tests started")),
+    )
+    assert main(["ci", "test", "--", "-q", *passthrough]) == 2
+    assert "pytest passthrough" in capsys.readouterr().err
 
 
 def test_ci_upload_publishes_exact_run_and_strips_access_token(monkeypatch, tmp_path):
