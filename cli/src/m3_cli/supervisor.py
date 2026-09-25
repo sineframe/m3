@@ -29,6 +29,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from .branding import M3_ASCII_ART
+from .ci_credentials import parse_credential_mapping
 
 if typing.TYPE_CHECKING:
     import tomli as _tomllib
@@ -156,18 +157,12 @@ def _validate_selection_options(
             selected.add(choice)
     seen: set[tuple[str | None, str]] = set()
     for raw in credential_env:
-        if "=" not in raw:
+        try:
+            scope, target, source = parse_credential_mapping(raw)
+        except ValueError:
             return "--credential-env requires TARGET=SOURCE"
-        target, source = raw.split("=", 1)
-        scope: str | None = None
-        if ":" in target:
-            scope, target = target.split(":", 1)
-            scope = scope.strip().lower().replace("-", "_")
-            if scope == "claude":
-                scope = "claude_code"
-            if scope not in _HARNESS_KINDS | {"judge"}:
-                return f"unknown credential scope {scope!r}"
-        target, source = target.strip(), source.strip()
+        if scope is not None and scope not in _HARNESS_KINDS | {"judge"}:
+            return f"unknown credential scope {scope!r}"
         if not _ENV_NAME.fullmatch(target) or not _ENV_NAME.fullmatch(source):
             return "credential environment names must be Python identifiers"
         key = (scope, target)

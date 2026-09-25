@@ -17,6 +17,7 @@ from .ci_credentials import (
     DEFAULT_CONTROL_PLANE_URL,
     access_token,
     control_plane_url,
+    parse_credential_mapping,
     resolved_environment,
 )
 from .control_plane import inspect_current_run, upload_current_run
@@ -154,7 +155,9 @@ def _sensitive_values(
 def _credential_source_names(credential_env: Sequence[str]) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
-            mapping.split("=", 1)[1] for mapping in credential_env if "=" in mapping
+            parse_credential_mapping(mapping)[2]
+            for mapping in credential_env
+            if "=" in mapping
         )
     )
 

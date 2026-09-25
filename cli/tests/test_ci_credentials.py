@@ -73,7 +73,7 @@ def test_control_plane_origin_has_one_strict_policy():
 
 
 def test_mapped_credential_source_values_are_scanned_for_upload():
-    from m3_cli.ci_upload import _sensitive_values
+    from m3_cli.ci_upload import _credential_source_names, _sensitive_values
     from m3_cli.control_plane import _reject_known_secrets
 
     value = "opaque-value-without-secret-name"
@@ -88,12 +88,20 @@ def test_mapped_credential_source_values_are_scanned_for_upload():
     assert _sensitive_values(
         {"SHORT_CRED": short_value}, source_names=("SHORT_CRED",)
     ) == (short_value,)
+    mapping = "codex:VENDOR_API_KEY= DEPLOY_CRED "
+    sources = _credential_source_names((mapping,))
+    assert sources == ("DEPLOY_CRED",)
+    sensitive = _sensitive_values({"DEPLOY_CRED": value}, source_names=sources)
+    with pytest.raises(RuntimeError, match="credential material"):
+        _reject_known_secrets(value.encode(), sensitive)
 
 
 def test_upload_token_cannot_be_mapped_to_test_credentials():
     for mapping in (
         "OPENAI_API_KEY=M3_ACCESS_TOKEN",
         "judge:M3_ACCESS_TOKEN=MY_KEY",
+        "OPENAI_API_KEY= M3_ACCESS_TOKEN ",
+        "judge: M3_ACCESS_TOKEN =MY_KEY",
     ):
         with pytest.raises(CLIError, match="cannot be mapped"):
             validate_credential_mappings([mapping])

@@ -68,11 +68,26 @@ def resolved_environment(
 def validate_credential_mappings(mappings: Sequence[str]) -> None:
     """The upload credential may never become a harness or judge credential."""
     for mapping in mappings:
-        if "=" not in mapping:
+        try:
+            _, target, source = parse_credential_mapping(mapping)
+        except ValueError:
             continue  # Existing option validation reports the malformed mapping.
-        target, source = mapping.split("=", 1)
-        if target.split(":", 1)[-1] == ACCESS_TOKEN_ENV or source == ACCESS_TOKEN_ENV:
+        if target == ACCESS_TOKEN_ENV or source == ACCESS_TOKEN_ENV:
             raise CLIError("M3_ACCESS_TOKEN cannot be mapped to a test credential")
+
+
+def parse_credential_mapping(mapping: str) -> tuple[str | None, str, str]:
+    """Normalize one CLI credential mapping as the test runner does."""
+    if "=" not in mapping:
+        raise ValueError("--credential-env requires TARGET=SOURCE")
+    target, source = mapping.split("=", 1)
+    scope: str | None = None
+    if ":" in target:
+        scope, target = target.split(":", 1)
+        scope = scope.strip().lower().replace("-", "_")
+        if scope == "claude":
+            scope = "claude_code"
+    return scope, target.strip(), source.strip()
 
 
 def test_environment(environment: Mapping[str, str]) -> dict[str, str]:

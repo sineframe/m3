@@ -108,10 +108,12 @@ def _probe_keyring() -> Any:
 
 def _account(base_url: str) -> str:
     parsed = urlparse(base_url)
+    origin = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
     host = parsed.netloc.lower()
     # Credential-manager account names are bounded and cannot contain secrets.
     slug = re.sub(r"[^A-Za-z0-9._-]", "_", host)
-    return "m3_" + slug[:58]
+    digest = hashlib.sha256(origin.encode("utf-8")).hexdigest()[:32]
+    return f"m3_{slug[:20]}_{digest}"
 
 
 def load_saved_token(base_url: str) -> str | None:

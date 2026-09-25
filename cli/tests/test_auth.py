@@ -62,6 +62,24 @@ def test_saved_token_uses_origin_scoped_credential_and_metadata(
     assert auth.load_saved_token(base) is None
 
 
+def test_saved_tokens_for_long_similar_origins_remain_separate(
+    keyring: MemoryKeyring,
+) -> None:
+    prefix = "a" * 64
+    first = f"https://{prefix}.example.com"
+    second = f"https://{prefix}.example.org"
+    assert auth._account(first) != auth._account(second)
+
+    auth._save_token(first, "first-token", {"token_id": "first"})
+    auth._save_token(second, "second-token", {"token_id": "second"})
+    assert auth.load_saved_token(first) == "first-token"
+    assert auth.load_saved_token(second) == "second-token"
+
+    assert auth._remove_saved_token(first)
+    assert auth.load_saved_token(first) is None
+    assert auth.load_saved_token(second) == "second-token"
+
+
 def test_status_identifies_saved_developer_token_for_rotation(
     keyring: MemoryKeyring,
     monkeypatch: pytest.MonkeyPatch,
