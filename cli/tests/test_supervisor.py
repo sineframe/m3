@@ -1093,6 +1093,8 @@ def test_direct_supervisor_run_rejects_owned_pytest_options(capsys) -> None:
     result = supervisor.run_test_with_runs(pytest_args=["--results-db", "other.db"])
     assert result.exit_code == 2
     assert "--results-db" in capsys.readouterr().err
+    assert supervisor.run_test(pytest_args=["@options.txt"]) == 2
+    assert "response files are not supported" in capsys.readouterr().err
 
 
 def test_command_pins_project_root_when_supervisor_runs_pytest(tmp_path: Path) -> None:

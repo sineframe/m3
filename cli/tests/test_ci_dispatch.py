@@ -35,6 +35,20 @@ def test_cli_rejects_owned_pytest_options_before_running(
     assert "pytest passthrough" in capsys.readouterr().err
 
 
+def test_cli_rejects_pytest_response_file_before_running(monkeypatch, tmp_path, capsys):
+    import m3_cli.supervisor as supervisor
+
+    response_file = tmp_path / "pytest-options.txt"
+    response_file.write_text("--m3-run-id=forced-response-id\n", encoding="utf-8")
+    monkeypatch.setattr(
+        supervisor,
+        "run_ci_test",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("tests started")),
+    )
+    assert main(["ci", "test", "--", f"@{response_file}"]) == 2
+    assert "response files are not supported" in capsys.readouterr().err
+
+
 def test_ci_upload_publishes_exact_run_and_strips_access_token(monkeypatch, tmp_path):
     import m3_cli.ci_upload as ci_upload
     import m3_cli.supervisor as supervisor

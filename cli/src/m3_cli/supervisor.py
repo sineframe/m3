@@ -857,6 +857,8 @@ _RESERVED_PYTEST_OPTIONS = frozenset(
 def _passthrough_option_error(args: Sequence[str]) -> str | None:
     """Keep CLI-owned run state out of raw pytest passthrough arguments."""
     for arg in args:
+        if arg.startswith("@"):
+            return "pytest response files are not supported in m3 passthrough"
         option = arg.split("=", 1)[0]
         if option in _RESERVED_PYTEST_OPTIONS:
             return f"{option} must be set through m3, not pytest passthrough"

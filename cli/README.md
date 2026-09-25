@@ -84,6 +84,9 @@ m3 ui [--port PORT]
 
 Use `m3 test --ui` to run pytest and then view its results. Use `m3 ui` to
 view previously saved test runs without running pytest.
+Arguments after `--` go to pytest, except M3-owned options and pytest `@` response
+files; pass M3 options before `--` so the CLI can track the exact run and scan
+mapped credentials before upload.
 
 ### `init`
 
