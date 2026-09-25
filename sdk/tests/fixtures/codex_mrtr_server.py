@@ -512,6 +512,9 @@ def _call_tool(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> None:
+    startup_delay = os.environ.get("M3_CODEX_MRTR_STARTUP_DELAY")
+    if startup_delay is not None:
+        time.sleep(float(startup_delay))
     _record(
         {
             "method": "server/startup",

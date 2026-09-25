@@ -132,13 +132,16 @@ class FixtureCodexHarnessAdapter(CodexHarnessAdapter):
         return environment
 
 
-def _server(marker: Path) -> StdioServer:
+def _server(marker: Path, *, startup_delay: float = 0) -> StdioServer:
+    environment = {"M3_CODEX_MRTR_WIRE_MARKER": str(marker)}
+    if startup_delay:
+        environment["M3_CODEX_MRTR_STARTUP_DELAY"] = str(startup_delay)
     return StdioServer(
         name="fixture",
         command=sys.executable,
         args=(str(_MCP_SERVER),),
         cwd=str(_ROOT.parent),
-        environment={"M3_CODEX_MRTR_WIRE_MARKER": str(marker)},
+        environment=environment,
     )
 
 
@@ -434,12 +437,14 @@ def _assert_one_successful_tool(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("startup_delay", [0, 2.0])
 async def test_async_agent_run_uses_action_bound_form_plan_with_one_logical_call(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    startup_delay: float,
 ) -> None:
     marker = tmp_path / "async-agent-run-wire.jsonl"
-    server = _server(marker)
+    server = _server(marker, startup_delay=startup_delay)
     provider = ResponsesRun()
     provider.enqueue(
         ModelOutput(

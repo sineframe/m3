@@ -598,6 +598,25 @@ def test_codex_config_is_bounded() -> None:
     assert "mcp_servers" in codex_configuration(launch)
 
 
+@pytest.mark.parametrize("required", [True, False])
+def test_codex_config_preserves_server_requirement(required: bool) -> None:
+    config = HarnessServerConfig(
+        "fixture",
+        TransportKind.STDIO,
+        required,
+        True,
+        "fixture-1",
+        command="fixture",
+    )
+    launch = _launch(Codex(model="fixture"), configurations=(config,))
+
+    assert codex_configuration(launch)["mcp_servers"]["fixture"]["required"] is required
+    assert (
+        tomllib.loads(render_codex_config(launch))["mcp_servers"]["fixture"]["required"]
+        is required
+    )
+
+
 def test_codex_update_setting_is_written_at_toml_root(tmp_path: Path) -> None:
     server = HarnessServerConfig(
         "server",

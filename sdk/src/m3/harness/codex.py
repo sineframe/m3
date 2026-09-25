@@ -96,6 +96,7 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
             servers[config.key] = {
                 "command": config.command,
                 "args": list(config.args),
+                "required": config.required,
                 **({"env": literal_env} if literal_env else {}),
                 **({"env_vars": env_vars} if env_vars else {}),
             }
@@ -114,6 +115,7 @@ def codex_configuration(launch: HarnessLaunch) -> dict[str, Any]:
             }
             servers[config.key] = {
                 "url": _config_value(config.endpoint),
+                "required": config.required,
                 **({"http_headers": literal_headers} if literal_headers else {}),
                 **({"env_http_headers": env_headers} if env_headers else {}),
             }
@@ -128,6 +130,7 @@ def render_codex_config(launch: HarnessLaunch) -> str:
         # json.dumps emits the required escapes for quotes, backslashes, and
         # control characters (and is valid TOML basic-string syntax).
         lines.append(f"\n[mcp_servers.{json.dumps(name)}]")
+        lines.append(f"required = {str(server['required']).lower()}")
         if "command" in server:
             lines.append(f"command = {json.dumps(server['command'])}")
             lines.append(f"args = {json.dumps(server.get('args', []))}")
