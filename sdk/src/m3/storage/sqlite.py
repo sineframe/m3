@@ -742,6 +742,33 @@ class _SqliteBase:
         if foreign_keys:
             raise StorageError("suite schema migration left invalid foreign keys")
 
+    @staticmethod
+    def _ensure_suite_connection(
+        connection: _CompatConnection, suite_name: str, project_id: str | None = None
+    ) -> Suite:
+        normalized = normalize_suite_name(suite_name)
+        project = None if project_id is None else ProjectId(project_id)
+        row = connection.execute(
+            "SELECT id,suite_name,project_id FROM v2_suites WHERE suite_name=? AND (project_id IS ? OR project_id=?)",
+            (
+                normalized,
+                None if project is None else project.root,
+                None if project is None else project.root,
+            ),
+        ).fetchone()
+        if row is not None:
+            return Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]), project)
+        next_id = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(id),0)+1 FROM v2_suites"
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT INTO v2_suites(id,suite_name,project_id) VALUES(?,?,?)",
+            (next_id, normalized, None if project is None else project.root),
+        )
+        return Suite(SuiteId(next_id), normalized, normalized, project)
+
     def _migrate_test_result_suites(self, connection: _CompatConnection) -> None:
         """Preserve old attempts while making every new attempt reference a suite."""
         columns = connection.execute("PRAGMA table_info(v2_test_results)").fetchall()
@@ -1558,35 +1585,6 @@ class SQLiteExecutionStore(_SqliteBase):
             raise
         finally:
             connection.close()
-
-    @staticmethod
-    def _ensure_suite_connection(
-        connection: _CompatConnection, suite_name: str, project_id: str | None = None
-    ) -> Suite:
-        normalized = normalize_suite_name(suite_name)
-        from ..types import ProjectId
-
-        project = None if project_id is None else ProjectId(project_id)
-        row = connection.execute(
-            "SELECT id,suite_name,project_id FROM v2_suites WHERE suite_name=? AND (project_id IS ? OR project_id=?)",
-            (
-                normalized,
-                None if project is None else project.root,
-                None if project is None else project.root,
-            ),
-        ).fetchone()
-        if row is not None:
-            return Suite(SuiteId(int(row[0])), str(row[1]), str(row[1]), project)
-        next_id = int(
-            connection.execute(
-                "SELECT COALESCE(MAX(id),0)+1 FROM v2_suites"
-            ).fetchone()[0]
-        )
-        connection.execute(
-            "INSERT INTO v2_suites(id,suite_name,project_id) VALUES(?,?,?)",
-            (next_id, normalized, None if project is None else project.root),
-        )
-        return Suite(SuiteId(next_id), normalized, normalized, project)
 
     def get_suite(self, suite_id: SuiteId | str) -> Suite | None:
         raw_id = suite_id.root if isinstance(suite_id, SuiteId) else suite_id

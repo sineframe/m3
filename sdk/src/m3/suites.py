@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from ._types.base import ProjectId, SuiteId
 
 
-def normalize_suite_name(value: str) -> str:
+def normalize_suite_name(value: object) -> str:
     """Normalize a user supplied suite name for uniqueness and lookup."""
     if not isinstance(value, str):
         raise TypeError("suite_name must be a string")
