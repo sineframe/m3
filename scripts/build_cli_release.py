@@ -37,6 +37,7 @@ _JUNK_NAMES = {
     "__pycache__",
     "build",
     "dist",
+    "node_modules",
 }
 
 
@@ -352,7 +353,6 @@ def build_release(
         raise ReleaseBuildError("output path is not a directory")
     if output.exists() and any(output.iterdir()):
         raise ReleaseBuildError("output directory must be empty")
-    output.mkdir(parents=True, exist_ok=True)
     expected = project_versions()
     if (
         expected_version is not None
@@ -361,6 +361,7 @@ def build_release(
         raise ReleaseBuildError(
             f"project version {next(iter(expected.values()))} does not match expected version {expected_version}"
         )
+    output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="sf-m3-cli-release-") as temporary:
         staged = _stage_cli(ui, Path(temporary))
         for project in (PROJECTS["sf_m3"], PROJECTS["sf_m3_app"], staged):
@@ -394,7 +395,9 @@ def main(argv: list[str] | None = None) -> int:
                 "--ui-dist and --out-dir are required unless --print-version is used"
             )
         artifacts = build_release(
-            args.ui_dist, args.out_dir, expected_version=args.expected_version
+            args.ui_dist,
+            args.out_dir,
+            expected_version=args.expected_version,
         )
     except ReleaseBuildError as exc:
         print(f"release build failed: {exc}", file=sys.stderr)

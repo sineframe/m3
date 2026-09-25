@@ -9,6 +9,7 @@ license-files = ["LICENSE"]
 dependencies = [
   "sf-m3[storage]==0.2.0a13",
   "sf-m3-app==0.2.0a13",
+  "keyring>=25,<26",
 ]
 
 [project.scripts]

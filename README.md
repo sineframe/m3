@@ -158,6 +158,10 @@ checkout is needed in the project under test. The CLI guide covers installation,
 project setup, environment checks, test selection, persistent results, UI use,
 and troubleshooting.
 
+For CI, run `m3 ci test`; add `--upload` to publish the completed report.
+See the [CI and credentials guide](docs/ci.md) for secrets, GitHub Actions,
+authentication, and report retries.
+
 Start with the [CLI installation guide](cli/README.md#install), then follow the
 [project setup and testing guide](cli/README.md#set-up-a-project).
 

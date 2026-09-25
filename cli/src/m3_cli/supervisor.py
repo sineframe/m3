@@ -26,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from uuid import uuid4
 
 from .branding import M3_ASCII_ART
 
@@ -194,11 +195,14 @@ class StoredRuns:
 
 @dataclass(frozen=True)
 class TestRunResult:
-    """Pytest status plus runs found while preparing the UI."""
+    """Pytest status and the identity and storage location of this invocation."""
 
     exit_code: int
     new_runs: tuple[StoredRun, ...] = ()
     warnings: tuple[str, ...] = ()
+    run_id: str | None = None
+    database_path: Path | None = None
+    project_root: Path | None = None
 
 
 def _absolute_path(value: str | os.PathLike[str]) -> Path:
@@ -788,6 +792,9 @@ def pytest_command(
     execution_timeout: float | None = None,
     judge_max_requests: int | None = None,
     runtime: str = "system",
+    ci_mode: bool = False,
+    run_id: str | None = None,
+    ci_metadata: Mapping[str, object] | None = None,
 ) -> list[str]:
     command = [
         str(python),
@@ -800,6 +807,17 @@ def pytest_command(
     ]
     if baseline:
         command.extend(("--baseline", baseline))
+    if ci_mode:
+        command.append("--m3-ci")
+    if run_id is not None:
+        command.extend(("--m3-run-id", run_id))
+    if ci_metadata is not None:
+        command.extend(
+            (
+                "--m3-ci-metadata",
+                json.dumps(ci_metadata, ensure_ascii=True, separators=(",", ":")),
+            )
+        )
     if project_root is not None:
         command.extend(("--project-root", str(project_root)))
     if project_root is not None and not _has_rootdir_option(pytest_args):
@@ -877,6 +895,9 @@ def _run_pytest_process(
     environment: Mapping[str, str] | None = None,
     runtime: str = "system",
     harness_cache_dir: str | os.PathLike[str] | None = None,
+    ci_mode: bool = False,
+    run_id: str | None = None,
+    ci_metadata: Mapping[str, object] | None = None,
 ) -> int:
     """Run pytest with safe process-group cleanup and return its status."""
 
@@ -933,6 +954,9 @@ def _run_pytest_process(
                     execution_timeout=execution_timeout,
                     judge_max_requests=judge_max_requests,
                     runtime=runtime,
+                    ci_mode=ci_mode,
+                    run_id=run_id,
+                    ci_metadata=ci_metadata,
                 ),
                 env=child_environment,
                 **kwargs,
@@ -1204,10 +1228,14 @@ def run_test_with_runs(
     suite: str | None = None,
     credential_env: Sequence[str] = (),
     env_file: str | os.PathLike[str] | None = None,
+    environment: Mapping[str, str] | None = None,
     execution_timeout: float | None = None,
     judge_max_requests: int | None = None,
     runtime: str = "system",
     harness_cache_dir: str | os.PathLike[str] | None = None,
+    ci_mode: bool = False,
+    run_id: str | None = None,
+    ci_metadata: Mapping[str, object] | None = None,
 ) -> TestRunResult:
     """Run pytest and retain newly stored runs for optional UI serving."""
 
@@ -1231,6 +1259,7 @@ def run_test_with_runs(
             print(f"m3 test: {ui_error}", file=sys.stderr)
             return TestRunResult(OPERATIONAL_ERROR)
     root = (project_root or Path.cwd()).resolve()
+    invocation_run_id = run_id or f"run-{uuid4().hex}"
     database_path = _absolute_database(database, project_root=root)
     try:
         database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1239,13 +1268,22 @@ def run_test_with_runs(
             "m3 test: results database directory could not be created",
             file=sys.stderr,
         )
-        return TestRunResult(OPERATIONAL_ERROR)
+        return TestRunResult(
+            OPERATIONAL_ERROR,
+            run_id=invocation_run_id,
+            database_path=database_path,
+            project_root=root,
+        )
 
     before = list_stored_runs(database_path)
     prepared = _prepare_test(python, database, root)
     if prepared is None:
         return TestRunResult(
-            OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
+            OPERATIONAL_ERROR,
+            warnings=tuple(filter(None, (before.warning,))),
+            run_id=invocation_run_id,
+            database_path=database_path,
+            project_root=root,
         )
     selected, database_path = prepared
     if baseline is not None and not baseline_exists(
@@ -1257,11 +1295,17 @@ def run_test_with_runs(
     ):
         print(f"m3 test: baseline run was not found: {baseline}", file=sys.stderr)
         return TestRunResult(
-            OPERATIONAL_ERROR, warnings=tuple(filter(None, (before.warning,)))
+            OPERATIONAL_ERROR,
+            warnings=tuple(filter(None, (before.warning,))),
+            run_id=invocation_run_id,
+            database_path=database_path,
+            project_root=root,
         )
 
     try:
-        child_environment = _test_environment(env_file)
+        child_environment = (
+            dict(environment) if environment is not None else _test_environment(env_file)
+        )
     except ProjectPythonError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return TestRunResult(
@@ -1283,6 +1327,9 @@ def run_test_with_runs(
         environment=child_environment,
         runtime=runtime,
         harness_cache_dir=harness_cache_dir,
+        ci_mode=ci_mode,
+        run_id=invocation_run_id,
+        ci_metadata=ci_metadata,
     )
     after = list_stored_runs(database_path)
     warnings = tuple(
@@ -1294,11 +1341,17 @@ def run_test_with_runs(
     )
     new_runs = find_new_runs(before, after)
     if not ui:
-        return TestRunResult(exit_code, new_runs, warnings)
+        return TestRunResult(
+            exit_code, new_runs, warnings, invocation_run_id, database_path, root
+        )
     if exit_code in {2, 130} or 128 <= exit_code < 256:
-        return TestRunResult(exit_code, new_runs, warnings)
+        return TestRunResult(
+            exit_code, new_runs, warnings, invocation_run_id, database_path, root
+        )
     server_code = _run_ui_server(database_path, port, exit_code, new_runs, warnings)
-    return TestRunResult(server_code, new_runs, warnings)
+    return TestRunResult(
+        server_code, new_runs, warnings, invocation_run_id, database_path, root
+    )
 
 
 def run_test(
@@ -1321,6 +1374,9 @@ def run_test(
     judge_max_requests: int | None = None,
     runtime: str = "system",
     harness_cache_dir: str | os.PathLike[str] | None = None,
+    ci_mode: bool = False,
+    run_id: str | None = None,
+    ci_metadata: Mapping[str, object] | None = None,
 ) -> int:
     """Run pytest and return its exact exit status."""
 
@@ -1355,6 +1411,9 @@ def run_test(
             judge_max_requests=judge_max_requests,
             runtime=runtime,
             harness_cache_dir=harness_cache_dir,
+            ci_mode=ci_mode,
+            run_id=run_id,
+            ci_metadata=ci_metadata,
         ).exit_code
     root = (project_root or Path.cwd()).resolve()
     prepared = _prepare_test(python, database, root)
@@ -1375,6 +1434,7 @@ def run_test(
     except ProjectPythonError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return OPERATIONAL_ERROR
+    invocation_run_id = run_id or f"run-{uuid4().hex}"
     return _run_pytest_process(
         selected,
         database_path,
@@ -1391,7 +1451,18 @@ def run_test(
         environment=child_environment,
         runtime=runtime,
         harness_cache_dir=harness_cache_dir,
+        ci_mode=ci_mode,
+        run_id=invocation_run_id,
+        ci_metadata=ci_metadata,
     )
+
+
+def run_ci_test(**kwargs: Any) -> TestRunResult:
+    """Run CI-selected pytest tests and return this invocation's exact run."""
+
+    kwargs["ci_mode"] = True
+    kwargs["ui"] = False
+    return run_test_with_runs(**kwargs)
 
 
 __all__ = [
@@ -1406,6 +1477,7 @@ __all__ = [
     "list_stored_runs",
     "pytest_command",
     "resolve_project_python",
+    "run_ci_test",
     "run_test",
     "run_test_with_runs",
     "validate_project_python",

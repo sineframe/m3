@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib as _hashlib
 import inspect as _inspect
+import json as _json
 import math as _math
 import os as _os
 import re as _re
@@ -76,6 +77,18 @@ _NATIVE_PROGRESS_UNSET = object()
 _PLUGIN_CONFIG: _ContextVar[_Any] = _ContextVar("m3_pytest_plugin_config", default=None)
 _ENV_NAME = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _CREDENTIAL_SCOPES = {"claude_code", "opencode", "codex", "pi", "acp", "judge"}
+_CI_METADATA_FIELDS = {
+    "provider",
+    "repository",
+    "commit",
+    "ref",
+    "pr_number",
+    "workflow",
+    "job",
+    "workflow_run_id",
+    "attempt",
+    "job_url",
+}
 
 
 def _items(value: object) -> tuple[object, ...]:
@@ -173,9 +186,46 @@ def pytest_addoption(parser: _Any) -> None:
     group.addoption("--suite", action="store", default=None, metavar="NAME")
     group.addoption("--execution-timeout", action="store", default=None, type=float)
     group.addoption("--judge-max-requests", action="store", default=None, type=int)
+    group.addoption(
+        "--m3-ci",
+        action="store_true",
+        default=False,
+        help="apply the M3 CI test selection policy",
+    )
+    group.addoption(
+        "--m3-run-id",
+        action="store",
+        default=None,
+        help="internal run identity assigned by the M3 CLI",
+    )
+    group.addoption(
+        "--m3-ci-metadata",
+        action="store",
+        default=None,
+        help="internal JSON CI metadata passed by the M3 CLI",
+    )
 
 
 def pytest_configure(config: _Any) -> None:
+    raw_ci_metadata = config.getoption("--m3-ci-metadata")
+    ci_metadata: dict[str, str] = {}
+    if raw_ci_metadata is not None:
+        if not isinstance(raw_ci_metadata, str) or len(raw_ci_metadata) > 16_384:
+            raise _pytest.UsageError("M3 CI metadata is invalid")
+        try:
+            decoded_ci_metadata = _json.loads(raw_ci_metadata)
+        except (TypeError, ValueError) as exc:
+            raise _pytest.UsageError("M3 CI metadata is invalid") from exc
+        if (
+            not isinstance(decoded_ci_metadata, dict)
+            or set(decoded_ci_metadata) - _CI_METADATA_FIELDS
+        ):
+            raise _pytest.UsageError("M3 CI metadata is invalid")
+        for key, value in decoded_ci_metadata.items():
+            if not isinstance(value, str) or not value or len(value) > 512:
+                raise _pytest.UsageError("M3 CI metadata is invalid")
+            ci_metadata[key] = value
+    config._m3_ci_metadata = ci_metadata
     mappings, scoped, judge = _parse_credential_mappings(config)
     environment = dict(_os.environ)
     judge_values: dict[str, str] = {}
@@ -196,7 +246,7 @@ def pytest_configure(config: _Any) -> None:
     config._m3_judge_max_requests = judge_limit
     config.addinivalue_line(
         "markers",
-        "m3(agents=None, servers=None, trials=None, suite_name=None): select agent and server executions",
+        "m3(agents=None, servers=None, trials=None, suite_name=None, ci=None): select agent and server executions; ci=False excludes a test from m3 ci test",
     )
     suite = config.getoption("--suite")
     if suite is not None and not str(suite).strip():
@@ -214,7 +264,12 @@ def pytest_configure(config: _Any) -> None:
         run_id = RunId(str(workerinput["m3_run_id"]))
         worker_id = str(workerinput.get("workerid", "worker"))
     else:
-        run_id = RunId(f"run-{_uuid4().hex}")
+        requested_run_id = config.getoption("--m3-run-id")
+        run_id = (
+            RunId(str(requested_run_id))
+            if requested_run_id
+            else RunId(f"run-{_uuid4().hex}")
+        )
         worker_id = "master"
     config._m3_run_id = run_id
     config._m3_database = path
@@ -266,26 +321,27 @@ def pytest_configure(config: _Any) -> None:
         )
     config._m3_checks_token = _set_default_record_checks(True)
     if not config._m3_is_worker:
+        run_record = _run_record(
+            run_id.root,
+            project_root=str(config._m3_project_root),
+            selection=tuple(str(value) for value in getattr(config, "args", ()) or ()),
+            capture={
+                "mode": getattr(config.option, "capture", None),
+                "show_capture": bool(getattr(config.option, "showcapture", False)),
+                "verbose": int(getattr(config.option, "verbose", 0) or 0),
+            },
+            project_id=(
+                config._m3_project_id.root
+                if config._m3_project_id is not None
+                else None
+            ),
+            project_name=getattr(config, "_m3_project_name", None),
+        )
+        if ci_metadata:
+            run_record["ci"] = dict(ci_metadata)
         config._m3_manifest_store.save_test_run(
             run_id.root,
-            _run_record(
-                run_id.root,
-                project_root=str(config._m3_project_root),
-                selection=tuple(
-                    str(value) for value in getattr(config, "args", ()) or ()
-                ),
-                capture={
-                    "mode": getattr(config.option, "capture", None),
-                    "show_capture": bool(getattr(config.option, "showcapture", False)),
-                    "verbose": int(getattr(config.option, "verbose", 0) or 0),
-                },
-                project_id=(
-                    config._m3_project_id.root
-                    if config._m3_project_id is not None
-                    else None
-                ),
-                project_name=getattr(config, "_m3_project_name", None),
-            ),
+            run_record,
         )
     config._m3_run_id_previous = _install_default_run_id_factory(lambda: run_id)
     config._m3_judge_limit_previous = _install_default_judge_limit_factory(
@@ -370,6 +426,10 @@ def _merged_m3_marker(node: _Any) -> dict[str, _Any]:
     markers = list(node.iter_markers(name="m3"))
     for marker in reversed(markers):
         merged.update(marker.kwargs)
+    callspec = getattr(node, "callspec", None)
+    for marker in getattr(callspec, "marks", ()):
+        if getattr(marker, "name", None) == "m3":
+            merged.update(marker.kwargs)
     if merged.get("suite_name") is not None:
         merged["suite_name"] = str(merged["suite_name"]).strip()
     return merged
@@ -570,6 +630,21 @@ def pytest_generate_tests(metafunc: _Any) -> None:
         # Unmarked projects may define their own agent/server fixtures.
         return
     marker_kwargs = _merged_m3_marker(metafunc.definition)
+    if metafunc.config.getoption("--m3-ci") and marker_kwargs.get("ci") is False:
+        # Produce an empty parameter set for M3-owned matrix fixtures. The
+        # collection hook will deselect the resulting item before execution.
+        if "agent" in metafunc.fixturenames:
+            metafunc.parametrize("agent", [], indirect=True)
+        fixture_defs = getattr(metafunc, "_arg2fixturedefs", {}).get("server", ())
+        if any(
+            fixture.func is getattr(server, "__wrapped__", None)
+            for fixture in fixture_defs
+        ) and not _parametrizes_server(metafunc.definition):
+            metafunc.parametrize("server", [], indirect=True)
+        return
+    if metafunc.config.getoption("--m3-ci") and "ci" in marker_kwargs:
+        if not isinstance(marker_kwargs["ci"], bool):
+            raise _pytest.UsageError("m3(ci=...) must be a Boolean")
     selected_suite = metafunc.config.getoption("--suite")
     if (
         selected_suite is not None
@@ -612,6 +687,33 @@ def pytest_generate_tests(metafunc: _Any) -> None:
 
 
 def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
+    if config.getoption("--m3-ci"):
+        kept: list[_Any] = []
+        excluded: list[_Any] = []
+        for item in items:
+            marker = _merged_m3_marker(item)
+            if "ci" in marker and not isinstance(marker["ci"], bool):
+                raise _pytest.UsageError("m3(ci=...) must be a Boolean")
+            if marker.get("ci") is False:
+                excluded.append(item)
+            else:
+                kept.append(item)
+        items[:] = kept
+        config._m3_ci_excluded_count = getattr(
+            config, "_m3_ci_excluded_count", 0
+        ) + len(excluded)
+        store = getattr(config, "_m3_manifest_store", None)
+        run_id = getattr(config, "_m3_run_id", None)
+        if (
+            store is not None
+            and run_id is not None
+            and not getattr(config, "_m3_is_worker", False)
+        ):
+            record = dict(store.get_test_run(run_id.root) or {})
+            record["ci_excluded_count"] = int(config._m3_ci_excluded_count)
+            store.save_test_run(run_id.root, record)
+        if excluded:
+            config.hook.pytest_deselected(items=excluded)
     selected = config.getoption("--suite")
     if selected is not None:
         selected = str(selected).strip()
@@ -746,11 +848,17 @@ def _pytest_collection_modifyitems(
     record = dict(store.get_test_run(run_id.root) or {})
     record["collected_node_ids"] = [str(item.nodeid) for item in items]
     record["collection_count"] = len(items)
+    if config.getoption("--m3-ci"):
+        record["ci_excluded_count"] = int(getattr(config, "_m3_ci_excluded_count", 0))
     store.save_test_run(run_id.root, record)
 
 
 def _record_collected(
-    config: _Any, node_ids: list[str], *, worker_id: str | None = None
+    config: _Any,
+    node_ids: list[str],
+    *,
+    worker_id: str | None = None,
+    ci_excluded_count: int | None = None,
 ) -> None:
     if getattr(config, "_m3_is_worker", False):
         return
@@ -767,6 +875,10 @@ def _record_collected(
         workers = dict(record.get("worker_collections", {}))
         workers[str(worker_id)] = sorted(str(item) for item in node_ids)
         record["worker_collections"] = workers
+    if ci_excluded_count is not None:
+        count = max(int(record.get("ci_excluded_count", 0)), int(ci_excluded_count))
+        record["ci_excluded_count"] = count
+        config._m3_ci_excluded_count = count
     store.save_test_run(run_id.root, record)
 
 
@@ -778,6 +890,9 @@ def _pytest_collection_finish(session: _Any) -> None:
         workeroutput = getattr(config, "workeroutput", None)
         if isinstance(workeroutput, dict):
             workeroutput["m3_collected_node_ids"] = node_ids
+            workeroutput["m3_ci_excluded_count"] = int(
+                getattr(config, "_m3_ci_excluded_count", 0)
+            )
         return
     # At collection-finish this is the controller's final, post-filter item
     # list.  Earlier collection hooks may have observed deselected items; do
@@ -798,12 +913,25 @@ def _pytest_xdist_node_collection_finished(node: _Any, ids: list[str]) -> None:
     worker_id = (
         getattr(worker_id, "id", None) or getattr(node, "workerid", None) or "worker"
     )
-    _record_collected(config, [str(item) for item in ids], worker_id=str(worker_id))
+    workeroutput = getattr(node, "workeroutput", None)
+    excluded_count = (
+        workeroutput.get("m3_ci_excluded_count")
+        if isinstance(workeroutput, dict)
+        else None
+    )
+    _record_collected(
+        config,
+        [str(item) for item in ids],
+        worker_id=str(worker_id),
+        ci_excluded_count=(
+            int(excluded_count)
+            if isinstance(excluded_count, int) and not isinstance(excluded_count, bool)
+            else None
+        ),
+    )
 
 
 def _pytest_testnodedown(node: _Any, error: object | None = None) -> None:
-    if error is None:
-        return
     config = getattr(node, "config", None) or _PLUGIN_CONFIG.get()
     if config is None or getattr(config, "_m3_is_worker", False):
         return
@@ -812,6 +940,19 @@ def _pytest_testnodedown(node: _Any, error: object | None = None) -> None:
     if store is None or run_id is None:
         return
     record = dict(store.get_test_run(run_id.root) or {})
+    workeroutput = getattr(node, "workeroutput", None)
+    excluded_count = (
+        workeroutput.get("m3_ci_excluded_count")
+        if isinstance(workeroutput, dict)
+        else None
+    )
+    if isinstance(excluded_count, int) and not isinstance(excluded_count, bool):
+        count = max(int(record.get("ci_excluded_count", 0)), excluded_count)
+        record["ci_excluded_count"] = count
+        config._m3_ci_excluded_count = count
+    if error is None:
+        store.save_test_run(run_id.root, record)
+        return
     errors = list(record.get("worker_errors", ()))
     errors.append(
         {
@@ -1696,6 +1837,9 @@ class _Progress:
     @_pytest.hookimpl(tryfirst=True)
     def pytest_terminal_summary(self, terminalreporter: _Any, **_: _Any) -> None:
         self.reporter = terminalreporter
+        excluded = int(getattr(self.config, "_m3_ci_excluded_count", 0))
+        if self.config.getoption("--m3-ci"):
+            terminalreporter.write_line(f"M3 CI excluded {excluded} test(s)")
         self.finish()
 
 

@@ -1,6 +1,6 @@
-"""Report uploader library for a future explicit CLI command.
+"""Shared report uploader for explicit ``m3 ci test --upload`` and ``m3 upload``.
 
-No CLI command or pytest hook imports this module in normal operation.
+Ordinary ``m3 test`` does not import or invoke this module.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import os
 import re
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -159,6 +160,7 @@ def upload_current_run(
     *,
     base_url: str,
     token: str,
+    sensitive_values: Sequence[str] = (),
 ) -> None:
     """Upload summary, complete current-run executions, then publish.
 
@@ -223,18 +225,35 @@ def upload_current_run(
         },
     }
     summary_path = root / "summary.json"
+    destination_path = root / "destination.json"
+    if destination_path.is_symlink():
+        raise RuntimeError("upload cache file is a symlink")
+    destination = _json_bytes({"base_url": base_url.rstrip("/"), "run_id": run_id})
+    if destination_path.is_file():
+        if destination_path.read_bytes() != destination:
+            raise RuntimeError("upload cache belongs to another destination")
+    else:
+        _cache(destination_path, destination)
     if summary_path.is_symlink():
         raise RuntimeError("upload cache file is a symlink")
     summary_bytes = (
         summary_path.read_bytes() if summary_path.is_file() else _json_bytes(summary)
     )
+    try:
+        cached_summary = json.loads(summary_bytes)
+        cached_run_id = cached_summary["feedback"]["feedback"]["run_id"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError("cached run summary is invalid") from exc
+    if cached_run_id != run_id:
+        raise RuntimeError("cached run summary does not match this run")
     _validate_body(summary_bytes, token)
+    _reject_known_secrets(summary_bytes, sensitive_values)
     if len(summary_bytes) > 1 << 20:
         raise RuntimeError("control-plane summary is too large")
     if not summary_path.is_file():
         _cache(summary_path, summary_bytes)
     base = base_url.rstrip("/") + "/v1/runs/" + quote(run_id, safe="")
-    _post(base + "/report", token, summary_bytes)
+    pending: list[tuple[str, bytes]] = [(base + "/report", summary_bytes)]
     for snapshot in snapshots:
         execution_id = snapshot.execution_id.root
         path = execution_cache / (execution_id + ".json")
@@ -246,14 +265,30 @@ def upload_current_run(
             else _json_bytes(_execution_payload(store, snapshot))
         )
         _validate_body(body, token)
+        _reject_known_secrets(body, sensitive_values)
+        if path.is_file():
+            cached_snapshot = json.loads(body).get("snapshot", {})
+            if (
+                cached_snapshot.get("execution_id") != execution_id
+                or cached_snapshot.get("run_id") != run_id
+            ):
+                raise RuntimeError("cached execution identity does not match this run")
         if not path.is_file():
             _cache(path, body)
-        _post(
-            base + "/executions/" + quote(execution_id, safe="") + "/report",
-            token,
-            body,
+        pending.append(
+            (
+                base + "/executions/" + quote(execution_id, safe="") + "/report",
+                body,
+            )
         )
+    for url, body in pending:
+        _post(url, token, body)
     _post(base + "/publish", token, _json_bytes({"transport_version": 1}))
+
+
+def _reject_known_secrets(body: bytes, values: Sequence[str]) -> None:
+    if any(value and value.encode("utf-8") in body for value in values):
+        raise RuntimeError("control-plane upload contains credential material")
 
 
 def _cache(path: Path, data: bytes) -> None:

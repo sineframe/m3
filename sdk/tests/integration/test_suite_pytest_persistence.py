@@ -10,7 +10,13 @@ import pytest
 
 
 def _run(
-    tmp_path: Path, *files: Path, xdist: bool = False, suite: str | None = None
+    tmp_path: Path,
+    *files: Path,
+    xdist: bool = False,
+    suite: str | None = None,
+    ci: bool = False,
+    run_id: str | None = None,
+    ci_metadata: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     db = tmp_path / ("xdist.sqlite" if xdist else "results.sqlite")
     args = [
@@ -27,12 +33,64 @@ def _run(
         args += ["-n", "2"]
     if suite is not None:
         args += [f"--suite={suite}"]
+    if ci:
+        args.append("--m3-ci")
+    if run_id is not None:
+        args += ["--m3-run-id", run_id]
+    if ci_metadata is not None:
+        args += ["--m3-ci-metadata", ci_metadata]
     args += [str(path) for path in files]
     env = {
         "PYTHONPATH": str(Path(__file__).parents[2].resolve() / "src"),
         "SUITE_DB": str(db),
     }
     return subprocess.run(args, cwd=tmp_path, env=env, text=True, capture_output=True)
+
+
+def test_ci_policy_and_metadata_are_saved_to_manifest_and_feedback(
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_ci.py"
+    test_file.write_text(
+        "import pytest\n"
+        "def test_selected(): pass\n"
+        "@pytest.mark.m3(ci=False)\n"
+        "def test_ignored(): assert False\n",
+        encoding="utf-8",
+    )
+    run_id = "run-cli-owned-integration"
+    ci_metadata = json.dumps(
+        {
+            "provider": "github",
+            "repository": "owner/repo",
+            "commit": "abc123",
+            "pr_number": "42",
+            "attempt": "2",
+        },
+        separators=(",", ":"),
+    )
+    result = _run(
+        tmp_path,
+        test_file,
+        xdist=True,
+        ci=True,
+        run_id=run_id,
+        ci_metadata=ci_metadata,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+    assert "M3 CI excluded 1 test(s)" in result.stdout
+    db = sqlite3.connect(tmp_path / "xdist.sqlite")
+    record = json.loads(
+        db.execute(
+            "select record_json from v2_test_runs where run_id=?", (run_id,)
+        ).fetchone()[0]
+    )
+    assert record["ci_excluded_count"] == 1
+    assert record["ci"] == json.loads(ci_metadata)
+    feedback_path = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
+    feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
+    assert feedback["ci"] == json.loads(ci_metadata)
 
 
 def test_two_files_share_catalog_suite_and_persist_setup_failure(

@@ -78,7 +78,61 @@ def _parser() -> argparse.ArgumentParser:
         help="isolated Python environment to update",
     )
 
+    ci = subparsers.add_parser("ci", help="run tests using CI selection rules")
+    ci_subparsers = ci.add_subparsers(
+        dest="ci_command", required=True, parser_class=_RedactingArgumentParser
+    )
+    ci_test = ci_subparsers.add_parser("test", help="run the CI test selection")
+    ci_test.add_argument("--upload", action="store_true", help="publish this completed run")
+    ci_test.add_argument("--ci-metadata", type=Path, metavar="PATH", help="JSON metadata overrides")
+
     test = subparsers.add_parser("test", help="run pytest")
+    for command in (test, ci_test):
+        _add_test_arguments(command, include_ui=command is test)
+
+    upload = subparsers.add_parser("upload", help="publish one saved run")
+    upload.add_argument("run_id", metavar="RUN_ID")
+    upload.add_argument("--project-root", type=Path, default=None)
+    upload.add_argument("--results-db", type=Path, default=None)
+    upload.add_argument("--env-file", type=Path, default=None)
+
+    auth = subparsers.add_parser("auth", help="manage M3 access")
+    auth_sub = auth.add_subparsers(dest="auth_command", required=True)
+    auth_sub.add_parser("login")
+    auth_sub.add_parser("status")
+    auth_sub.add_parser("logout")
+
+    ui_parser = subparsers.add_parser(
+        "ui", help="view saved runs without running tests"
+    )
+    ui_parser.add_argument(
+        "--port", type=int, default=8000, metavar="PORT", help="UI port"
+    )
+
+    runtime_parser = subparsers.add_parser(
+        "runtime", help="manage managed runtime caches"
+    )
+    runtime_sub = runtime_parser.add_subparsers(
+        dest="runtime_command", required=True, parser_class=_RedactingArgumentParser
+    )
+    cache_parser = runtime_sub.add_parser("cache", help="manage managed harness cache")
+    cache_sub = cache_parser.add_subparsers(
+        dest="cache_command", required=True, parser_class=_RedactingArgumentParser
+    )
+    for action in ("list", "prune"):
+        command = cache_sub.add_parser(action, help=f"{action} managed harness cache")
+        command.add_argument(
+            "--cache-dir",
+            "--harness-cache-dir",
+            type=Path,
+            default=None,
+            metavar="PATH",
+        )
+        command.add_argument("--project-root", type=Path, default=None, metavar="PATH")
+    return parser
+
+
+def _add_test_arguments(test: argparse.ArgumentParser, *, include_ui: bool) -> None:
     test.add_argument(
         "--python", type=Path, metavar="PATH", help="Python used to run pytest"
     )
@@ -117,39 +171,13 @@ def _parser() -> argparse.ArgumentParser:
         metavar="[KIND:]TARGET=SOURCE",
     )
     test.add_argument("--env-file", type=Path, default=None, metavar="PATH")
-    test.add_argument(
-        "--ui", action="store_true", help="serve the bundled UI after pytest"
-    )
-    test.add_argument("--port", type=int, default=8000, metavar="PORT", help="UI port")
-
-    ui_parser = subparsers.add_parser(
-        "ui", help="view saved runs without running tests"
-    )
-    ui_parser.add_argument(
-        "--port", type=int, default=8000, metavar="PORT", help="UI port"
-    )
-
-    runtime_parser = subparsers.add_parser(
-        "runtime", help="manage managed runtime caches"
-    )
-    runtime_sub = runtime_parser.add_subparsers(
-        dest="runtime_command", required=True, parser_class=_RedactingArgumentParser
-    )
-    cache_parser = runtime_sub.add_parser("cache", help="manage managed harness cache")
-    cache_sub = cache_parser.add_subparsers(
-        dest="cache_command", required=True, parser_class=_RedactingArgumentParser
-    )
-    for action in ("list", "prune"):
-        command = cache_sub.add_parser(action, help=f"{action} managed harness cache")
-        command.add_argument(
-            "--cache-dir",
-            "--harness-cache-dir",
-            type=Path,
-            default=None,
-            metavar="PATH",
+    if include_ui:
+        test.add_argument(
+            "--ui", action="store_true", help="serve the bundled UI after pytest"
         )
-        command.add_argument("--project-root", type=Path, default=None, metavar="PATH")
-    return parser
+        test.add_argument(
+            "--port", type=int, default=8000, metavar="PORT", help="UI port"
+        )
 
 
 def _command_error_message(command: str) -> str:
@@ -161,12 +189,17 @@ def main(argv: list[str] | None = None) -> int:
     command_name = (
         effective_argv[0]
         if effective_argv
-        and effective_argv[0] in {"doctor", "setup", "test", "ui", "init", "runtime"}
+        and effective_argv[0]
+        in {"doctor", "setup", "test", "ci", "upload", "auth", "ui", "init", "runtime"}
         else "doctor"
     )
     pytest_args: list[str] = []
     try:
-        if effective_argv and effective_argv[0] == "test" and "--" in effective_argv:
+        if (
+            effective_argv
+            and effective_argv[0] in {"test", "ci"}
+            and "--" in effective_argv
+        ):
             separator = effective_argv.index("--")
             pytest_args = effective_argv[separator + 1 :]
             effective_argv = effective_argv[:separator]
@@ -174,19 +207,21 @@ def main(argv: list[str] | None = None) -> int:
             args = _parser().parse_args(effective_argv)
         except SystemExit as exc:
             return exc.code if isinstance(exc.code, int) else 2
-        if args.command == "test":
+        if args.command == "test" or args.command == "ci":
             from .supervisor import run_test
+
+            is_ci = args.command == "ci"
 
             server_selections = normalize_server_groups(
                 getattr(args, "_server_groups", None)
             )
-            return run_test(
+            test_kwargs = dict(
                 python=args.python,
                 project_root=args.project_root,
                 pytest_args=pytest_args,
                 database=args.results_db,
-                ui=args.ui,
-                port=args.port,
+                ui=getattr(args, "ui", False),
+                port=getattr(args, "port", 8000),
                 baseline=args.baseline,
                 harnesses=args.harness,
                 server_selections=server_selections,
@@ -199,6 +234,67 @@ def main(argv: list[str] | None = None) -> int:
                 runtime=args.runtime,
                 harness_cache_dir=args.harness_cache_dir,
             )
+            if is_ci:
+                from .ci_credentials import (
+                    access_token,
+                    resolved_environment,
+                    test_environment,
+                    validate_credential_mappings,
+                )
+                from .ci_metadata import resolve_ci_metadata
+                from .ci_upload import control_plane_url, publish_run
+                from .supervisor import run_ci_test
+
+                validate_credential_mappings(args.credential_env)
+                resolved = resolved_environment(args.env_file)
+                if args.upload:
+                    access_token(resolved, base_url=control_plane_url(resolved))
+                test_kwargs["env_file"] = None
+                test_kwargs["environment"] = test_environment(resolved)
+                test_kwargs["ci_metadata"] = resolve_ci_metadata(resolved, args.ci_metadata)
+                result = run_ci_test(**test_kwargs)
+                if result.run_id:
+                    print(f"Run ID: {result.run_id}")
+                    if result.project_root:
+                        print(f"Local report: {result.project_root / '.m3' / 'reports' / result.run_id / 'feedback.json'}")
+                if not args.upload or result.exit_code not in (0, 1):
+                    return result.exit_code
+                if not result.run_id or not result.database_path or not result.project_root:
+                    raise CLIError("the selected run has no saved results to publish")
+                try:
+                    publish_run(
+                        result.run_id,
+                        project_root=result.project_root,
+                        database=result.database_path,
+                        environment=resolved,
+                    )
+                except (CLIError, RuntimeError, OSError):
+                    print(f"m3 ci: publishing failed; retry with m3 upload {result.run_id}", file=sys.stderr)
+                    return result.exit_code or 2
+                print("Published: yes")
+                return result.exit_code
+            return run_test(**test_kwargs)
+        if args.command == "upload":
+            from .ci_upload import publish_run
+            from .supervisor import _absolute_database
+
+            root = (args.project_root or Path.cwd()).resolve()
+            database = _absolute_database(args.results_db, project_root=root)
+            try:
+                publish_run(args.run_id, project_root=root, database=database, env_file=args.env_file)
+            except (RuntimeError, OSError):
+                print("m3 upload: publication failed; local results are unchanged", file=sys.stderr)
+                return 2
+            print(f"Published: {args.run_id}")
+            return 0
+        if args.command == "auth":
+            from . import auth
+
+            if args.auth_command == "login":
+                return auth.login()
+            if args.auth_command == "status":
+                return auth.status()
+            return auth.logout()
         if args.command == "ui":
             from .supervisor import run_ui
 
@@ -271,11 +367,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         else:
-            if (
-                command_name == "test"
-                and str(exc) != "invalid command or configuration"
-            ):
-                print(f"m3 test: {exc}", file=sys.stderr)
+            if command_name in {"test", "ci", "upload"} and str(exc) != "invalid command or configuration":
+                print(f"m3 {command_name}: {exc}", file=sys.stderr)
             else:
                 print(_command_error_message(command_name), file=sys.stderr)
         return 2

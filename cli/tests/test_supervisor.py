@@ -1074,6 +1074,19 @@ def test_command_forwards_judge_request_cap(tmp_path: Path) -> None:
     assert command[index + 1] == "7"
 
 
+def test_command_forwards_ci_policy_and_cli_run_identity(tmp_path: Path) -> None:
+    command = supervisor.pytest_command(
+        Path("/project/.venv/bin/python"),
+        (tmp_path / "results.sqlite").resolve(),
+        ["-q", "tests"],
+        ci_mode=True,
+        run_id="run-cli-owned-123",
+    )
+    assert "--m3-ci" in command
+    index = command.index("--m3-run-id")
+    assert command[index + 1] == "run-cli-owned-123"
+
+
 def test_command_pins_project_root_when_supervisor_runs_pytest(tmp_path: Path) -> None:
     command = supervisor.pytest_command(
         Path("/project/.venv/bin/python"),

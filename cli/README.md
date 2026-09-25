@@ -74,6 +74,11 @@ m3 init
 m3 setup [options]
 m3 doctor
 m3 test [options] -- [pytest arguments]
+m3 ci test [options] -- [pytest arguments]
+m3 upload RUN_ID [--env-file PATH]
+m3 auth login
+m3 auth status
+m3 auth logout
 m3 ui [--port PORT]
 ```
 
@@ -341,15 +346,23 @@ Each run also writes an agent-readable JSON bundle to
 read-only comparison. The JSON is deterministic for the saved run, and normal
 pytest results remain visible alongside the M3 run ID and feedback path.
 
-### Control-plane upload status
+### CI and publishing
 
-`m3 test` only writes local results. It never uploads a report, even when
-`M3_CONTROL_PLANE_URL` or `M3_CONTROL_PLANE_TOKEN` is present. There is no
-`m3 upload` command yet. The CLI package contains a report uploader module
-for a future explicit command; it is not registered with command dispatch.
-That module prepares the same public v2 responses as the local app, sends the
-feedback summary and complete current-run execution reports, then publishes
-the run. The transport contract is documented in the control-plane repository.
+`m3 ci test` runs the normal test selection except tests marked
+`pytest.mark.m3(ci=False)`. It remains local unless `--upload` is supplied.
+With `--upload`, it publishes completed passing and failing reports using
+`M3_ACCESS_TOKEN`, and an upload failure fails an otherwise passing job.
+`m3 upload RUN_ID` retries a saved run without rerunning tests.
+
+`m3 auth login` opens the M3 control-plane sign-in page in your browser and
+returns to the waiting CLI through a temporary loopback callback. If you choose
+to create a developer token on the hosted page, the CLI saves it in the OS
+credential store. Otherwise, any saved token is left unchanged. CI jobs set
+`M3_ACCESS_TOKEN` as a secret rather than opening a browser. Harness and judge
+keys are separate.
+See the [CI and credentials guide](../docs/ci.md) for the complete flow and
+GitHub Actions example. The transport contract is documented in the
+control-plane repository.
 
 ### `--ui`
 

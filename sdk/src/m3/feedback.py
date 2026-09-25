@@ -66,6 +66,7 @@ class Feedback(FrozenModel):
     run_id: str
     project_id: str | None = None
     project_name: str | None = None
+    ci: Mapping[str, Any] | None = None
     suites: tuple[Mapping[str, Any], ...] = ()
     tests: tuple[Mapping[str, Any], ...] = ()
     executions: tuple[Mapping[str, Any], ...] = ()
@@ -2102,6 +2103,11 @@ def build_feedback(
         run_id=current_id,
         project_id=project_id,
         project_name=project[1] if project else None,
+        ci=(
+            dict(manifest["ci"])
+            if manifest is not None and isinstance(manifest.get("ci"), Mapping)
+            else None
+        ),
         suites=_suites(current, results),
         tests=tests,
         executions=executions,
