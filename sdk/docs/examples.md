@@ -224,9 +224,11 @@ See the two-turn implementation in
 ## Elicitation examples
 
 The maintained modern-protocol examples keep the server fixture and the M3
-test code visibly separate: the server is
-[`modern_mrtr_server.py`](../examples/servers/modern_mrtr_server.py), while
-the six runnable test modules are:
+test code visibly separate. The Pi examples use
+[`modern_mrtr_server.py`](../examples/servers/modern_mrtr_server.py); Codex
+uses the raw discovery-capable
+[`codex_mrtr_server.py`](../tests/fixtures/codex_mrtr_server.py). The nine
+runnable test modules are:
 
 - [`test_modern_mrtr_sdk.py`](../examples/tests/test_modern_mrtr_sdk.py) —
   direct SDK input-required handling and the explicit
@@ -242,6 +244,21 @@ the six runnable test modules are:
 - [`test_modern_mrtr_pi_composed.py`](../examples/tests/test_modern_mrtr_pi_composed.py)
   — one tool call with either/or, optional, or same-round address forms,
   followed by a URL round.
+- [`test_modern_mrtr_codex.py`](../examples/tests/test_modern_mrtr_codex.py)
+  — the Codex 0.156.1 counterparts for qualified and unqualified operations,
+  composed address/URL rounds, session plan scoping, and planned submission.
+  It uses a local deterministic provider, grants tool approval explicitly,
+  and passed the pinned one-logical-call trace gate.
+- [`test_modern_mrtr_codex_action_scopes.py`](../examples/tests/test_modern_mrtr_codex_action_scopes.py)
+  — M3 Codex form/URL decline and cancel responses, two planned turns in one
+  session, and failure for an unused required plan. The Codex guide and
+  action-scope modules passed in the original 40-test native, managed, and
+  example gate against the pinned 0.156.1 binary with a local deterministic
+  provider.
+- [`test_modern_mrtr_codex_approval_spoof.py`](../examples/tests/test_modern_mrtr_codex_approval_spoof.py)
+  — server-supplied metadata cannot impersonate Codex's separate native MCP
+  tool-approval request, with or without an elicitation plan. The two tests use
+  the pinned Codex binary and local deterministic provider.
 
 Run the deterministic direct/server example with plain pytest:
 
@@ -256,6 +273,12 @@ collected by plain pytest; run them with the Pi 0.85.1 gate available. These
 examples are the maintained reference for imports, fixture wiring, complete
 assertions, and separation between server code and test code. They use only
 public `agent` selection and session APIs.
+
+The Codex files require installed Codex 0.156.1 and the local deterministic
+Responses provider. CI installs and verifies the pinned binary in the regular
+PR test job and in the existing push lifecycle and examples jobs; no
+opt-in environment flag is needed. Missing or mismatched Codex fails these
+tests instead of skipping them. They do not call a paid model provider.
 
 Build an intuition for composing tests in the [Elicitation guide](elicitation.md).
 The complete API inventory, signatures, response binding, action boundaries,

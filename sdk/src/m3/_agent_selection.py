@@ -107,7 +107,7 @@ def _credential_refs(
             }.get(model.split("/", 1)[0])
             if kind == "pi" and model.startswith("openai-codex/"):
                 source = "PI_CODING_AGENT_DIR"
-        if source and source in _os.environ:
+        if source and _os.environ.get(source):
             values[source] = source
     if mapping is not None:
         _validate_credential_mapping(mapping)

@@ -546,14 +546,24 @@ evidence that the adapter passed its gate. Use the
 calls, exact helpers, manual and managed input, URL assertions, and trace fields.
 
 The maintained runnable examples keep the server fixture separate from M3 test
-code. Start with
+code. Pi 0.85.1 agent examples are the verified Pi baseline. Codex support uses
+the unmodified App Server, but M3 conformance remains pending until both
+installed-binary suites pass. Its local deterministic provider fixture makes
+no paid provider call. The [canonical Codex limitations](../../../sdk/docs/elicitation-api.md#codex-app-server-support-and-limitations)
+and [exhaustive Pi-to-Codex test inventory](../../../sdk/tests/mrtr-harness-parity.md)
+describe proven behavior and pending cases. Start with
 [modern_mrtr_server.py](../../../sdk/examples/servers/modern_mrtr_server.py)
 and the links in the guide; do not invent an in-test protocol server or copy
 an incomplete pseudo-test.
 
-For testing workflow, remember that a planned call owns its retries and a
-capture proxy only observes. Assert one logical operation and its ordered
-attempts in the finalized trace. Managed Pi delivery is verified for the
-same-worker form, multi-round, and URL paths against installed Pi 0.85.1 with
-SQLiteExecutionStore. Worker/process restart redelivery and recovery remain
-unsupported guarantees and must terminalize when delivery is ambiguous.
+For testing workflow, remember that the harness owns tool selection, dispatch,
+retries, permissions, and cancellation. The Codex integration is designed to
+observe the original MCP exchange and answer only a uniquely associated native
+elicitation request; its capture barrier cannot flush an event that has not
+yet reached the M3 process. Assert one logical operation and its ordered
+attempts in the finalized trace, and require the adapter's bounded exact-retry
+completion check.
+Managed Pi delivery is verified for same-worker form, multi-round, and URL
+paths against installed Pi 0.85.1 with SQLiteExecutionStore. Worker/process
+restart redelivery and recovery remain unsupported guarantees and must
+terminalize when delivery is ambiguous.

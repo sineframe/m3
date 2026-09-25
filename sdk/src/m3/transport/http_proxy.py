@@ -10,7 +10,7 @@ import os
 import re
 import socket
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 from urllib.parse import SplitResult, urljoin, urlsplit, urlunsplit
 
@@ -48,6 +48,7 @@ HOP_BY_HOP = {
 _ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _UPSTREAM_CONNECT_TIMEOUT = 30.0
 _PROXY_START_TIMEOUT = 5.0
+_MAX_SSE_FRAME_BYTES = 8 * 1024 * 1024
 
 
 class UnsafeUpstreamError(ValueError):
@@ -143,6 +144,8 @@ class McpHttpProxy:
         known_servers: tuple[str, ...] = (),
         known_tools: tuple[str, ...] = (),
         known_tools_by_server: dict[str, tuple[str, ...]] | None = None,
+        writer: CaptureWriter | None = None,
+        on_incomplete: Callable[[str], None] | None = None,
     ):
         self.transport = transport
         writer_secrets = set(secrets or ())
@@ -159,7 +162,12 @@ class McpHttpProxy:
         writer_config = (
             writer_secrets if secrets is not None or writer_secrets else None
         )
-        self.writer = CaptureWriter(capture_path, baseline_ns, secrets=writer_config)
+        self.writer = writer or CaptureWriter(
+            capture_path, baseline_ns, secrets=writer_config
+        )
+        self._on_incomplete = on_incomplete
+        if writer is not None and writer_secrets:
+            writer.add_secrets(writer_secrets)
         if secrets is not None:
             secrets.update(writer_secrets)
         self.allow_private = allow_private
@@ -532,19 +540,64 @@ class McpHttpProxy:
 
     async def _stream_sse(self, response: httpx.Response) -> AsyncIterator[bytes]:
         buffer = ""
+        buffer_bytes = 0
         decoder = codecs.getincrementaldecoder("utf-8")()
-        try:
-            async for chunk in response.aiter_bytes():
-                buffer += decoder.decode(chunk)
+        passthrough = False
+
+        def fail_observation() -> None:
+            callback = self._on_incomplete
+            if callback is not None:
+                try:
+                    callback("message_too_large")
+                except Exception:
+                    # Observation failure must not interrupt response streaming.
+                    pass
+
+        async def consume_text(text: str) -> AsyncIterator[bytes]:
+            nonlocal buffer, buffer_bytes, passthrough
+            offset = 0
+            while offset < len(text):
+                if passthrough:
+                    yield text[offset:].encode("utf-8")
+                    return
+                piece = text[offset : offset + 64 * 1024]
+                offset += len(piece)
+                buffer += piece
+                buffer_bytes += len(piece.encode("utf-8"))
                 while True:
                     separator = re.search(r"\r\n\r\n|\n\n|\r\r", buffer)
-                    if not separator:
+                    if separator is None:
                         break
                     frame = buffer[: separator.start()]
-                    buffer = buffer[separator.end() :]
+                    consumed = buffer[: separator.end()]
+                    event_separator = buffer[separator.start() : separator.end()]
+                    remainder = buffer[separator.end() :]
+                    frame_size = len(frame.encode("utf-8"))
+                    if frame_size > _MAX_SSE_FRAME_BYTES:
+                        fail_observation()
+                        yield (consumed + remainder).encode("utf-8")
+                        buffer = ""
+                        buffer_bytes = 0
+                        passthrough = True
+                        return
                     rewritten = self._capture_sse_frame(frame)
-                    yield (rewritten + "\n\n").encode("utf-8")
-            buffer += decoder.decode(b"", final=True)
+                    yield (rewritten + event_separator).encode("utf-8")
+                    buffer = remainder
+                    buffer_bytes -= len(consumed.encode("utf-8"))
+                if buffer_bytes > _MAX_SSE_FRAME_BYTES:
+                    fail_observation()
+                    yield buffer.encode("utf-8")
+                    buffer = ""
+                    buffer_bytes = 0
+                    passthrough = True
+                    return
+
+        try:
+            async for chunk in response.aiter_bytes():
+                async for output in consume_text(decoder.decode(chunk)):
+                    yield output
+            async for output in consume_text(decoder.decode(b"", final=True)):
+                yield output
             if buffer:
                 yield self._capture_sse_frame(buffer).encode("utf-8")
         finally:
@@ -552,24 +605,45 @@ class McpHttpProxy:
 
     def _capture_sse_frame(self, frame: str) -> str:
         output: list[str] = []
-        for line in frame.splitlines():
-            if not line.startswith("data:"):
-                output.append(line)
-                continue
-            data = line[5:].lstrip()
+        data_values: list[str] = []
+        # Keep original line endings for forwarding, while interpreting only
+        # the fields defined by the SSE line grammar.
+        lines = re.split(r"(\r\n|\r|\n)", frame)
+        for index in range(0, len(lines), 2):
+            line = lines[index]
+            forwarded_line = line
+            if line == "data":
+                data_values.append("")
+            elif line.startswith("data:"):
+                raw_data = line[5:]
+                leading_space = " " if raw_data.startswith(" ") else ""
+                # WHATWG removes at most one ASCII space after the colon.
+                data = raw_data[1:] if leading_space else raw_data
+                data_values.append(data)
+                if self.socket and (
+                    data.startswith(self.origin) or data.startswith("/")
+                ):
+                    port = self.socket.getsockname()[1]
+                    suffix = (
+                        data[len(self.origin) :]
+                        if data.startswith(self.origin)
+                        else data
+                    )
+                    rewritten_data = "http://127.0.0.1:" + str(port) + suffix
+                    forwarded_line = "data:" + leading_space + rewritten_data
+            output.append(forwarded_line)
+            if index + 1 < len(lines):
+                output.append(lines[index + 1])
+        if data_values:
+            # An SSE event dispatches one data string formed from all data
+            # fields, each joined by a newline.
+            event_payload = parse_json_payload("\n".join(data_values))
             if self._tool_policy is not None:
-                self._tool_policy.observe(parse_json_payload(data))
+                self._tool_policy.observe(event_payload)
             self.writer.write(
                 transport=self.transport,
                 direction="server_to_client",
-                payload=parse_json_payload(data),
+                payload=event_payload,
                 kind="sse_data",
             )
-            if self.socket and (data.startswith(self.origin) or data.startswith("/")):
-                port = self.socket.getsockname()[1]
-                suffix = (
-                    data[len(self.origin) :] if data.startswith(self.origin) else data
-                )
-                data = "http://127.0.0.1:" + str(port) + suffix
-            output.append("data: " + data)
-        return "\n".join(output)
+        return "".join(output)

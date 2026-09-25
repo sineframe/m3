@@ -20,6 +20,46 @@ Strict `xfail` cases document confirmed regressions. They intentionally become
 suite failures (`XPASS`) when the underlying behavior is fixed, at which point
 the marker should be removed.
 
+## Codex MRTR native, managed, and example suites
+
+The Codex MRTR suites test an unmodified Codex CLI 0.156.1 App Server. They use
+a local MCP fixture and a local deterministic Responses API fixture, so they
+make no paid model-provider calls. The native characterization suite proves
+what Codex itself sends and surfaces; the managed suite proves M3 action and
+SQLite round delivery; the example suite exercises the public Codex action
+patterns in `sdk/docs/elicitation.md`; the action-scope suite covers non-accept
+responses, two planned turns in one session, and required-plan completion. The
+approval-spoof suite verifies that a server cannot impersonate Codex's separate
+native tool-approval request. The test helpers fail if Codex is missing or has
+the wrong version; they do not skip these suites.
+
+```bash
+npm install --global @openai/codex@0.156.1
+test "$(codex --version)" = "codex-cli 0.156.1"
+uv run --project sdk --all-extras pytest -q \
+  sdk/tests/e2e/test_real_codex_native_mrtr.py \
+  sdk/tests/e2e/test_real_codex_managed_mrtr.py \
+  sdk/examples/tests/test_modern_mrtr_codex.py \
+  sdk/examples/tests/test_modern_mrtr_codex_action_scopes.py \
+  sdk/examples/tests/test_modern_mrtr_codex_approval_spoof.py
+```
+
+CI installs and verifies `@openai/codex@0.156.1` in the regular PR test job and
+in the existing push lifecycle and examples jobs. The original four-suite gate
+passed 40 tests; the two approval-spoof cases were added afterward and are now
+included in those required jobs. Coverage includes accept/decline/cancel
+mappings for form and URL prompts, two planned actions in one session, unused
+required-plan failure, and approval-metadata spoofing. The example tests
+explicitly set `permission_policy="allow"` for Codex MCP tool approval; this is
+independent of the action-bound MRTR plan. These tests use a local deterministic
+provider and make no paid provider calls.
+
+Set `M3_CODEX_EXECUTABLE` if the binary is not on `PATH`; the tests require
+`codex-cli 0.156.1`. Read the
+[Codex limitations](../../docs/elicitation-api.md#codex-app-server-support-and-limitations)
+and the [Pi-to-Codex scenario inventory](../mrtr-harness-parity.md) before
+interpreting partial suite results.
+
 The live OpenCode test is isolated from the deterministic suite because it may
 use credentials, make network requests, and incur provider cost. Its default is
 the free `opencode/big-pickle` model. It includes model-selected search,

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import m3.harness.characterize as characterize_module
+import m3.harness.codex as codex_module
 from m3.agent_session import _require_elicitation_capability
 from m3.errors import UnsupportedFeature
 from m3.harness.acp import AcpHarnessAdapter
@@ -48,10 +49,24 @@ def test_native_harness_interaction_evidence_is_not_inferred_from_help() -> None
     assert characterize_module.interaction_capabilities_for("pi").retry_owner == "m3"
 
 
-def test_real_adapter_declarations_remain_explicit() -> None:
+def test_real_adapter_declarations_remain_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    codex_executable = tmp_path / "codex"
+    codex_executable.write_text("fixture", encoding="utf-8")
+    monkeypatch.setattr(
+        codex_module,
+        "probe_help",
+        lambda executable, args: (
+            "codex-cli 0.156.1"
+            if Path(executable).name == "codex" and args == ("--version",)
+            else None
+        ),
+    )
     adapters = (
         (PiHarnessAdapter(executable="pi"), "m3"),
-        (CodexHarnessAdapter(executable="codex"), "harness"),
+        (CodexHarnessAdapter(executable=str(codex_executable)), "harness"),
         (ClaudeCodeHarnessAdapter(executable="claude"), "harness"),
         (AcpHarnessAdapter(), "harness"),
         (OpenCodeHarnessAdapter(executable="opencode"), "harness"),
@@ -59,12 +74,15 @@ def test_real_adapter_declarations_remain_explicit() -> None:
 
     for adapter, retry_owner in adapters:
         capabilities = adapter.capabilities.interaction
-        expected = adapter.__class__ is PiHarnessAdapter
+        expected = adapter.__class__ in {PiHarnessAdapter, CodexHarnessAdapter}
         assert capabilities.supports_elicitation is expected
         assert capabilities.preserves_request_keys is expected
         assert capabilities.preserves_multi_request_rounds is expected
         assert capabilities.supports_interaction_cancellation is expected
         assert capabilities.retry_owner == retry_owner
+        if adapter.__class__ is CodexHarnessAdapter:
+            assert capabilities.supports_interaction_resume is False
+            assert capabilities.supports_idempotent_response_delivery is False
 
 
 @pytest.mark.parametrize(
@@ -77,7 +95,19 @@ def test_real_adapter_declarations_remain_explicit() -> None:
     ],
     ids=["codex", "claude", "acp", "opencode"],
 )
-def test_unverified_harness_rejects_action_bound_elicitation(adapter: object) -> None:
+def test_unverified_harness_rejects_action_bound_elicitation(
+    adapter: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        codex_module,
+        "probe_help",
+        lambda executable, args: (
+            "codex-cli 0.156.2"
+            if Path(executable).name == "codex" and args == ("--version",)
+            else None
+        ),
+    )
     with pytest.raises(UnsupportedFeature):
         _require_elicitation_capability(adapter)
 

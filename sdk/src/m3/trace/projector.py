@@ -302,6 +302,25 @@ def _merge_tool_evidence(reported: ToolCallEntry, wire: ToolCallEntry) -> ToolCa
         if reported.provider_call_id.state is ObservationState.OBSERVED
         else wire.provider_call_id
     )
+    native_terminal_after_input_required = (
+        bool(wire.attempts)
+        and wire.attempts[-1].input_required
+        and wire.tool_status is ToolCallStatus.INCOMPLETE
+        and reported.tool_status
+        in {
+            ToolCallStatus.TOOL_ERROR,
+            ToolCallStatus.PROTOCOL_ERROR,
+            ToolCallStatus.TRANSPORT_ERROR,
+            ToolCallStatus.CANCELLED,
+            ToolCallStatus.TIMED_OUT,
+        }
+    )
+    merged_result = (
+        reported.result
+        if native_terminal_after_input_required
+        and reported.result.state is ObservationState.OBSERVED
+        else wire.result
+    )
     return wire.model_copy(
         update={
             "call_id": reported.call_id,
@@ -312,6 +331,15 @@ def _merge_tool_evidence(reported: ToolCallEntry, wire: ToolCallEntry) -> ToolCa
             "provenance": reported.provenance + wire.provenance,
             "reported": reported.reported,
             "wire": wire.wire,
+            **(
+                {
+                    "status": reported.status,
+                    "tool_status": reported.tool_status,
+                    "result": merged_result,
+                }
+                if native_terminal_after_input_required
+                else {}
+            ),
             "correlation": CorrelationState.CORRELATED,
             "conflicts": _tool_evidence_conflicts(reported, wire),
         }
@@ -338,6 +366,19 @@ def _tool_evidence_conflicts(
         wire_result_observation = _unavailable(
             ObservationReason.CORRELATION_UNAVAILABLE
         )
+    native_terminal_after_input_required = (
+        bool(wire.attempts)
+        and wire.attempts[-1].input_required
+        and wire.tool_status is ToolCallStatus.INCOMPLETE
+        and reported.tool_status
+        in {
+            ToolCallStatus.TOOL_ERROR,
+            ToolCallStatus.PROTOCOL_ERROR,
+            ToolCallStatus.TRANSPORT_ERROR,
+            ToolCallStatus.CANCELLED,
+            ToolCallStatus.TIMED_OUT,
+        }
+    )
     pairs: list[
         tuple[
             Literal["server", "tool", "arguments", "result", "status"],
@@ -348,17 +389,18 @@ def _tool_evidence_conflicts(
         ("server", reported_value.server, wire_value.server),
         ("tool", reported_value.tool, wire_value.tool),
         ("arguments", reported_value.arguments, wire_value.arguments),
-        (
-            "result",
-            reported_value.result,
-            wire_result_observation,
-        ),
-        (
-            "status",
-            reported_value.status,
-            _observed(wire.tool_status.value),
-        ),
     ]
+    if not native_terminal_after_input_required:
+        pairs.extend(
+            (
+                ("result", reported_value.result, wire_result_observation),
+                (
+                    "status",
+                    reported_value.status,
+                    _observed(wire.tool_status.value),
+                ),
+            )
+        )
     conflicts: list[EvidenceConflict] = []
     for field, left, right in pairs:
         if (
@@ -697,18 +739,23 @@ def _normalize_init_item(item: Any, adapter: Any) -> Any:
 
 
 def _tool_result(event: Event) -> ToolResult:
+    raw_result = event.payload.get("result")
+    event_error = event.payload.get("error")
     if (
         event.kind in {EventKind.MCP_RESPONSE, EventKind.TOOL_RESULT_RECEIVED}
-        and "result" not in event.payload
+        and ("result" not in event.payload or raw_result is None)
+        and not isinstance(event_error, Mapping)
     ):
         return ToolResult(error=_unavailable(ObservationReason.MALFORMED_SOURCE))
-    result = _payload(event, "result", {})
-    if not isinstance(result, Mapping):
+    result = raw_result if isinstance(raw_result, Mapping) else {}
+    if not isinstance(raw_result, Mapping) and not isinstance(event_error, Mapping):
         return ToolResult(error=_unavailable(ObservationReason.MALFORMED_SOURCE))
     content = _content(result.get("content", ()))
     structured_present = "structuredContent" in result or "structured_content" in result
     structured = result.get("structuredContent", result.get("structured_content"))
     error = result.get("error")
+    if error is None and isinstance(event_error, Mapping):
+        error = event_error
     if error is None and event.kind is EventKind.MCP_ERROR:
         error = event.payload.get("error")
     error_observation: Observation[Any]
@@ -739,11 +786,11 @@ def _tool_result(event: Event) -> ToolResult:
         error_observation = _unavailable(ObservationReason.MALFORMED_SOURCE)
     else:
         error_observation = _not_emitted()
-    raw_is_error = result.get("isError", result.get("is_error", False))
+    raw_is_error = result.get("isError", result.get("is_error"))
     is_error = (
-        raw_is_error
-        if isinstance(raw_is_error, bool)
-        else event.kind is EventKind.MCP_ERROR
+        event.kind is EventKind.MCP_ERROR
+        or isinstance(error, Mapping)
+        or (raw_is_error if isinstance(raw_is_error, bool) else False)
     )
     return ToolResult(
         content=content,
@@ -1249,7 +1296,12 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
     )
 
 
-def _same_mrtr_operation(left: ToolCallEntry, right: ToolCallEntry) -> bool:
+def _same_mrtr_operation(
+    left: ToolCallEntry,
+    right: ToolCallEntry,
+    *,
+    codex_progress_token: bool = False,
+) -> bool:
     """Compare immutable operation identity before following an MRTR chain."""
 
     if left.connection_id != right.connection_id:
@@ -1270,8 +1322,37 @@ def _same_mrtr_operation(left: ToolCallEntry, right: ToolCallEntry) -> bool:
     return (
         left_params.state is ObservationState.OBSERVED
         and right_params.state is ObservationState.OBSERVED
-        and _json_equal(left_params.value, right_params.value)
+        and _json_equal(
+            _stable_mrtr_operation_params(
+                left_params.value, codex_progress_token=codex_progress_token
+            ),
+            _stable_mrtr_operation_params(
+                right_params.value, codex_progress_token=codex_progress_token
+            ),
+        )
     )
+
+
+def _same_codex_mrtr_operation(left: ToolCallEntry, right: ToolCallEntry) -> bool:
+    return _same_mrtr_operation(left, right, codex_progress_token=True)
+
+
+def _stable_mrtr_operation_params(value: Any, *, codex_progress_token: bool) -> Any:
+    """Ignore only Codex's request-scoped progress token when requested."""
+
+    if not isinstance(value, Mapping):
+        return value
+    params = dict(value)
+    metadata = params.get("_meta")
+    if (
+        codex_progress_token
+        and isinstance(metadata, Mapping)
+        and "progressToken" in metadata
+    ):
+        stable_metadata = dict(metadata)
+        stable_metadata.pop("progressToken")
+        params["_meta"] = stable_metadata
+    return params
 
 
 def _merge_mrtr_tool_calls(
@@ -1413,9 +1494,13 @@ def _has_unresolved_prior_mrtr_source(
 
 
 def _coalesce_mrtr_tool_calls(
-    entries: tuple[TraceEntry, ...],
+    entries: tuple[TraceEntry, ...], *, codex_progress_token: bool = False
 ) -> tuple[TraceEntry, ...]:
     """Follow evidenced MRTR retries without guessing concurrent calls."""
+
+    same_operation = (
+        _same_codex_mrtr_operation if codex_progress_token else _same_mrtr_operation
+    )
 
     result: list[TraceEntry] = []
     consumed: set[int] = set()
@@ -1436,7 +1521,7 @@ def _coalesce_mrtr_tool_calls(
             if previous.continuation_state.state is not ObservationState.NOT_EMITTED:
                 continue
         boundary = _next_mrtr_continuation_boundary(
-            entries, index, source, _same_mrtr_operation
+            entries, index, source, same_operation
         )
         for candidate_index in sorted(tool_indexes):
             if candidate_index <= index:
@@ -1450,13 +1535,13 @@ def _coalesce_mrtr_tool_calls(
                     boundary is None or candidate.attempts[-1].sequence_end <= boundary
                 )
                 and _mrtr_attempts_match_retry(previous, candidate.attempts[0])
-                and _same_mrtr_operation(source, candidate)
+                and same_operation(source, candidate)
                 and not _has_unresolved_prior_mrtr_source(
                     entries,
                     index,
                     source,
                     candidate,
-                    _same_mrtr_operation,
+                    same_operation,
                 )
             ):
                 edges[index].append((candidate_index, candidate))
@@ -1490,7 +1575,12 @@ def _coalesce_mrtr_tool_calls(
     return tuple(result)
 
 
-def _same_mrtr_protocol_operation(left: ProtocolEntry, right: ProtocolEntry) -> bool:
+def _same_mrtr_protocol_operation(
+    left: ProtocolEntry,
+    right: ProtocolEntry,
+    *,
+    codex_progress_token: bool = False,
+) -> bool:
     """Compare immutable prompt/resource identity before following a retry."""
 
     if (
@@ -1513,8 +1603,21 @@ def _same_mrtr_protocol_operation(left: ProtocolEntry, right: ProtocolEntry) -> 
     return (
         left_params.state is ObservationState.OBSERVED
         and right_params.state is ObservationState.OBSERVED
-        and _json_equal(left_params.value, right_params.value)
+        and _json_equal(
+            _stable_mrtr_operation_params(
+                left_params.value, codex_progress_token=codex_progress_token
+            ),
+            _stable_mrtr_operation_params(
+                right_params.value, codex_progress_token=codex_progress_token
+            ),
+        )
     )
+
+
+def _same_codex_mrtr_protocol_operation(
+    left: ProtocolEntry, right: ProtocolEntry
+) -> bool:
+    return _same_mrtr_protocol_operation(left, right, codex_progress_token=True)
 
 
 def _merge_mrtr_protocol_calls(
@@ -1546,9 +1649,15 @@ def _merge_mrtr_protocol_calls(
 
 
 def _coalesce_mrtr_protocol_calls(
-    entries: tuple[TraceEntry, ...],
+    entries: tuple[TraceEntry, ...], *, codex_progress_token: bool = False
 ) -> tuple[TraceEntry, ...]:
     """Follow evidenced prompt/resource retries conservatively."""
+
+    same_operation = (
+        _same_codex_mrtr_protocol_operation
+        if codex_progress_token
+        else _same_mrtr_protocol_operation
+    )
 
     candidates = {
         index: entry
@@ -1570,7 +1679,7 @@ def _coalesce_mrtr_protocol_calls(
         }:
             continue
         boundary = _next_mrtr_continuation_boundary(
-            entries, index, source, _same_mrtr_protocol_operation
+            entries, index, source, same_operation
         )
         for candidate_index in sorted(candidates):
             if candidate_index <= index:
@@ -1582,13 +1691,13 @@ def _coalesce_mrtr_protocol_calls(
                     boundary is None or candidate.attempts[-1].sequence_end <= boundary
                 )
                 and _mrtr_attempts_match_retry(previous, candidate.attempts[0])
-                and _same_mrtr_protocol_operation(source, candidate)
+                and same_operation(source, candidate)
                 and not _has_unresolved_prior_mrtr_source(
                     entries,
                     index,
                     source,
                     candidate,
-                    _same_mrtr_protocol_operation,
+                    same_operation,
                 )
             ):
                 edges[index].append((candidate_index, candidate))
@@ -2441,9 +2550,18 @@ class TraceProjector:
             key=lambda entry: (entry.sequence_start, entry.sequence_end, entry.entry_id)
         )
         projected = tuple(output)
+        codex_progress_token = any(
+            event.provenance.origin is EventOrigin.HARNESS_REPORTED
+            and event.provenance.source == "codex"
+            for event in events
+        )
         projected = TraceProjector._coalesce_harness_chunks(projected)
-        projected = _coalesce_mrtr_tool_calls(projected)
-        projected = _coalesce_mrtr_protocol_calls(projected)
+        projected = _coalesce_mrtr_tool_calls(
+            projected, codex_progress_token=codex_progress_token
+        )
+        projected = _coalesce_mrtr_protocol_calls(
+            projected, codex_progress_token=codex_progress_token
+        )
         projected = TraceProjector._correlate_reported_wire(projected)
         projected = _elicitation_entries(projected)
         return tuple(

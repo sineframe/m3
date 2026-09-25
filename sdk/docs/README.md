@@ -18,6 +18,8 @@ to a project does not install the `m3` command or its bundled UI.
   either/or, optional, same-round, and later-round examples.
 - [Elicitation API reference](elicitation-api.md) — exact helpers, action
   boundaries, manual input, managed rounds, and trace fields.
+- [Pi-to-Codex MRTR parity inventory](../tests/mrtr-harness-parity.md) —
+  scenario-by-scenario test mapping, Codex evidence, and pending gaps.
 - [Examples](examples.md) — choose the example matching a deployed endpoint,
   local stdio server, harness, ACP agent, or matrix workflow.
 - [Evaluations](evaluations.md) — define evaluators, score repeated agent
