@@ -14,11 +14,13 @@ Firestore TTL for collection group `cli_login_grants` on timestamp field
 grants immediately; TTL only removes abandoned records. Consumed grants are
 deleted during the exchange transaction. TTL deletions are billable Firestore
 operations, so include them in the deployment cost review.
-Also enforce and verify a fleet-wide edge rate limit on the unauthenticated
-`POST /v1/cli/exchange` route. Invalid but well-formed codes can otherwise
-consume Firestore reads. Review the Firebase browser key's API restrictions and
-Auth quotas in the deployed Google Cloud project; this branch cannot verify
-those live settings.
+CLI routes are disabled until `CLI_AUTH_ENABLED=true` and a shared
+`CLI_GRANT_SIGNING_SECRET` are configured on every control-plane instance.
+The secret must be a canonical base64url encoding of at least 32 random bytes.
+Invalid grant signatures are rejected before Firestore access; monitor exchange
+traffic and add an upstream abuse control if the route is attacked. Review the
+Firebase browser key's API restrictions and Auth quotas in the deployed Google
+Cloud project; this branch cannot verify those live settings.
 
 M3 publishes version matched `sf-m3`, `sf-m3-app`, and `sf-m3-cli` wheels to PyPI. The `m3` Python import and `m3` command remain stable public interfaces. The tag controls whether a GitHub Release is final or a prerelease: `v0.2.0` is final and `v0.3.0a1` is an alpha.
 

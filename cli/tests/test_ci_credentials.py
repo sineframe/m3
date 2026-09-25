@@ -42,6 +42,40 @@ def test_ci_token_missing_and_empty_are_explicit():
         )
 
 
+def test_blank_env_file_token_falls_back_to_saved_token_but_ambient_empty_errors(
+    tmp_path, monkeypatch
+):
+    import m3_cli.auth as auth
+
+    path = tmp_path / ".env"
+    path.write_text("M3_ACCESS_TOKEN=\n", encoding="utf-8")
+    monkeypatch.setattr(auth, "load_saved_token", lambda _url: TOKEN)
+    resolved = resolved_environment(path, source={"CI": ""})
+    assert "M3_ACCESS_TOKEN" not in resolved
+    assert access_token(resolved, base_url="https://example.com") == TOKEN
+    ambient = resolved_environment(path, source={"M3_ACCESS_TOKEN": ""})
+    with pytest.raises(CLIError, match="is empty"):
+        access_token(ambient, base_url="https://example.com")
+
+
+def test_mapped_credential_source_values_are_scanned_for_upload():
+    from m3_cli.ci_upload import _sensitive_values
+    from m3_cli.control_plane import _reject_known_secrets
+
+    value = "opaque-value-without-secret-name"
+    sensitive = _sensitive_values(
+        {"DEPLOYMENT_CRED": value},
+        ["codex:VENDOR_API_KEY=DEPLOYMENT_CRED", "judge:M3_JUDGE_API_KEY=JUDGE"],
+    )
+    assert sensitive == (value,)
+    with pytest.raises(RuntimeError, match="credential material"):
+        _reject_known_secrets(value.encode(), sensitive)
+    short_value = "x"
+    assert _sensitive_values(
+        {"SHORT_CRED": short_value}, ["VENDOR_KEY=SHORT_CRED"]
+    ) == (short_value,)
+
+
 def test_upload_token_cannot_be_mapped_to_test_credentials():
     for mapping in (
         "OPENAI_API_KEY=M3_ACCESS_TOKEN",
@@ -146,13 +180,21 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
         sent = []
         monkeypatch.setattr(
             ci_upload,
+            "_scan_key_path",
+            lambda _database: tmp_path / "private-home" / "upload-scan.key",
+        )
+        monkeypatch.setattr(
+            ci_upload,
             "upload_current_run",
             lambda *args, **kwargs: sent.append((args, kwargs)),
         )
         kwargs = {
             "project_root": root,
             "database": database,
-            "environment": {"M3_ACCESS_TOKEN": TOKEN},
+            "environment": {
+                "M3_ACCESS_TOKEN": TOKEN,
+                "DEPLOY_CRED": "opaque-deployment-credential",
+            },
         }
         with pytest.raises(CLIError, match="incomplete"):
             ci_upload.publish_run("run-test", **kwargs)
@@ -160,8 +202,40 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
         record = dict(store.get_test_run("run-test") or {})
         record["status"] = "finished"
         store.save_test_run("run-test", record)
+        ci_upload.record_credential_sources(
+            database,
+            "run-test",
+            ["codex:VENDOR_API_KEY=DEPLOY_CRED"],
+            kwargs["environment"],
+        )
+        with pytest.raises(CLIError, match="unavailable or changed"):
+            ci_upload.publish_run(
+                "run-test",
+                project_root=root,
+                database=database,
+                environment={"M3_ACCESS_TOKEN": TOKEN},
+            )
+        with pytest.raises(CLIError, match="unavailable or changed"):
+            ci_upload.publish_run(
+                "run-test",
+                project_root=root,
+                database=database,
+                environment={
+                    "M3_ACCESS_TOKEN": TOKEN,
+                    "DEPLOY_CRED": "changed-deployment-credential",
+                },
+            )
         ci_upload.publish_run("run-test", **kwargs)
         assert len(sent) == 1
         assert sent[0][0][0].run_id == "run-test"
+        assert "opaque-deployment-credential" in sent[0][1]["sensitive_values"]
+        manifest = store.get_test_run("run-test")
+        assert manifest["upload_scan_sources"] == ["DEPLOY_CRED"]
+        assert "opaque-deployment-credential" not in json.dumps(manifest)
+        assert ci_upload._scan_key_path(database).parent != database.parent
+
+        ci_upload.publish_run("run-test", **kwargs)
+        assert len(sent) == 2
+        assert "opaque-deployment-credential" in sent[1][1]["sensitive_values"]
     finally:
         store.close()

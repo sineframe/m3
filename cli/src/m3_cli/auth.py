@@ -211,7 +211,10 @@ def status() -> int:
     except (OSError, json.JSONDecodeError):
         pass
     expires = metadata.get("expires_at")
+    token_id = metadata.get("token_id")
     description = "saved developer token found in the OS credential store"
+    if isinstance(token_id, str) and token_id:
+        description += f" (ID {token_id})"
     if isinstance(expires, str):
         description += f" (expires {expires})"
     print(description + "; server validity has not been checked.")
@@ -460,7 +463,13 @@ def login() -> int:
             file=sys.stderr,
         )
         return 2
-    print("M3 sign-in complete. Developer token saved in the OS credential store.")
+    token_id = saved_metadata["token_id"]
+    identifier = f" (ID {token_id})" if isinstance(token_id, str) and token_id else ""
+    print(
+        "M3 sign-in complete. Developer token"
+        f"{identifier} saved in the OS credential store. "
+        "Older developer tokens remain active until revoked in the sign-in page."
+    )
     return 0
 
 

@@ -240,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             if is_ci:
                 from .ci_credentials import (
+                    ACCESS_TOKEN_ENV,
                     access_token,
                     resolved_environment,
                     test_environment,
@@ -252,13 +253,24 @@ def main(argv: list[str] | None = None) -> int:
                 validate_credential_mappings(args.credential_env)
                 resolved = resolved_environment(args.env_file)
                 if args.upload:
-                    access_token(resolved, base_url=control_plane_url(resolved))
+                    resolved[ACCESS_TOKEN_ENV] = access_token(
+                        resolved, base_url=control_plane_url(resolved)
+                    )
                 test_kwargs["env_file"] = None
                 test_kwargs["environment"] = test_environment(resolved)
                 test_kwargs["ci_metadata"] = resolve_ci_metadata(
                     resolved, args.ci_metadata
                 )
                 result = run_ci_test(**test_kwargs)
+                if result.run_id and result.database_path:
+                    from .ci_upload import record_credential_sources
+
+                    record_credential_sources(
+                        result.database_path,
+                        result.run_id,
+                        args.credential_env,
+                        resolved,
+                    )
                 if result.run_id:
                     print(f"Run ID: {result.run_id}")
                     if result.project_root:
@@ -279,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
                         project_root=result.project_root,
                         database=result.database_path,
                         environment=resolved,
+                        credential_env=args.credential_env,
                     )
                 except (CLIError, RuntimeError, OSError):
                     print(

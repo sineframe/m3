@@ -34,7 +34,14 @@ def resolved_environment(
     except Exception as exc:
         raise CLIError("requested environment file could not be read") from exc
     for key, value in values.items():
-        if key and value is not None and key not in result:
+        # Blank dotenv placeholders are absent; explicit ambient empties remain
+        # in ``result`` and are rejected by access_token.
+        if (
+            key
+            and value is not None
+            and not (key == ACCESS_TOKEN_ENV and not value)
+            and key not in result
+        ):
             result[key] = value
     return result
 

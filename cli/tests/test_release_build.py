@@ -94,6 +94,7 @@ def _wheel(
     entry_point: str | None = None,
     ui: bool = False,
     app_ui: bool = False,
+    ui_content: str = "js",
 ) -> Path:
     wheel = output / f"{filename_dist}-{version}-py3-none-any.whl"
     info = f"{filename_dist}-{version}.dist-info"
@@ -112,7 +113,7 @@ def _wheel(
             )
         if ui:
             archive.writestr("m3_cli/ui/index.html", "html")
-            archive.writestr("m3_cli/ui/assets/app.js", "js")
+            archive.writestr("m3_cli/ui/assets/app.js", ui_content)
         if app_ui:
             archive.writestr("m3_app/ui/__init__.py", "")
     return wheel
@@ -127,6 +128,7 @@ def _synthetic_release(
     app_requires: tuple[str, ...] = (),
     app_provides_extras: tuple[str, ...] = (),
     app_ui: bool = False,
+    cli_ui_content: str = "js",
 ) -> tuple[dict[str, str], Path]:
     version = "1.0"
     _wheel(root, "sf_m3", "sf-m3", version)
@@ -148,6 +150,7 @@ def _synthetic_release(
         or (f"sf-m3[storage]=={version}", f"sf-m3-app=={version}"),
         entry_point=cli_entry_point,
         ui=cli_ui,
+        ui_content=cli_ui_content,
     )
     return {
         "sf_m3": version,
@@ -189,6 +192,72 @@ def test_verify_release_checks_metadata_entry_point_dependencies_and_ui(
 def test_verify_release_rejects_cli_without_packaged_ui(tmp_path: Path) -> None:
     expected, ui = _synthetic_release(tmp_path, cli_ui=False)
     with pytest.raises(release.ReleaseBuildError, match=r"ui/index\.html"):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+def test_verify_release_rejects_firebase_assets_in_cli_wheel(tmp_path: Path) -> None:
+    version = "1.0"
+    _wheel(tmp_path, "sf_m3", "sf-m3", version)
+    _wheel(
+        tmp_path,
+        "sf_m3_app",
+        "sf-m3-app",
+        version,
+        requires=(f"sf-m3[storage]=={version}",),
+    )
+    cli = _wheel(
+        tmp_path,
+        "sf_m3_cli",
+        "sf-m3-cli",
+        version,
+        requires=(f"sf-m3[storage]=={version}", f"sf-m3-app=={version}"),
+        entry_point="m3 = m3_cli.main:main",
+        ui=True,
+    )
+    with zipfile.ZipFile(cli, "a") as archive:
+        archive.writestr("m3_cli/firebase/google-services.json", "{}")
+    ui = _valid_ui(tmp_path)
+    expected = {"sf_m3": version, "sf_m3_app": version, "sf_m3_cli": version}
+    with pytest.raises(release.ReleaseBuildError, match="Firebase auth assets"):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+def test_verify_release_rejects_firebase_auth_marker_in_generic_app_bundle(
+    tmp_path: Path,
+) -> None:
+    expected, ui = _synthetic_release(
+        tmp_path, cli_ui_content='import { getAuth } from "firebase/auth";'
+    )
+    with pytest.raises(release.ReleaseBuildError, match="Firebase auth code or config"):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+def test_verify_release_rejects_firebase_cli_dependency(tmp_path: Path) -> None:
+    version = "1.0"
+    _wheel(tmp_path, "sf_m3", "sf-m3", version)
+    _wheel(
+        tmp_path,
+        "sf_m3_app",
+        "sf-m3-app",
+        version,
+        requires=(f"sf-m3[storage]=={version}",),
+    )
+    _wheel(
+        tmp_path,
+        "sf_m3_cli",
+        "sf-m3-cli",
+        version,
+        requires=(
+            f"sf-m3[storage]=={version}",
+            f"sf-m3-app=={version}",
+            "firebase-admin>=6",
+        ),
+        entry_point="m3 = m3_cli.main:main",
+        ui=True,
+    )
+    ui = _valid_ui(tmp_path)
+    expected = {"sf_m3": version, "sf_m3_app": version, "sf_m3_cli": version}
+    with pytest.raises(release.ReleaseBuildError, match="Firebase dependency"):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
 

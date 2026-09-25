@@ -39,10 +39,32 @@ _JUNK_NAMES = {
     "dist",
     "node_modules",
 }
+_FIREBASE_ASSET_NAMES = {"google-services.json", "googleservice-info.plist"}
+_FIREBASE_SIGNATURES = (
+    b"firebase/auth",
+    b"@firebase/auth",
+    b"firebase.initializeapp",
+    b"authdomain",
+    b"firebaseapp.com",
+)
 
 
 class ReleaseBuildError(RuntimeError):
     """A safe, user-facing release build error."""
+
+
+def _is_firebase_asset(name: str) -> bool:
+    lowered = name.lower()
+    return "firebase" in lowered or Path(lowered).name in _FIREBASE_ASSET_NAMES
+
+
+def _contains_firebase_signature(name: str, contents: bytes) -> bool:
+    if not name.startswith("m3_cli/") or ".dist-info/" in name:
+        return False
+    if Path(name).suffix.lower() not in {".js", ".json", ".py"}:
+        return False
+    lowered = contents.lower()
+    return any(signature in lowered for signature in _FIREBASE_SIGNATURES)
 
 
 @dataclass(frozen=True)
@@ -269,6 +291,13 @@ def _verify_wheel(
                 f"{expected_name} wheel has forbidden mandatory dependency"
             )
     if expected_name == "sf_m3_cli":
+        if any(_is_firebase_asset(name) for name in metadata.files):
+            raise ReleaseBuildError("CLI wheel contains Firebase auth assets")
+        if any(
+            _requirement_name(value) in {"firebase", "firebase-admin"}
+            for value in metadata.requires
+        ):
+            raise ReleaseBuildError("CLI wheel has a Firebase dependency")
         normalized_requires = {
             re.sub(r"\s+", "", value).lower() for value in metadata.requires
         }
@@ -323,6 +352,13 @@ def verify_release(
             raise ReleaseBuildError(
                 "CLI wheel contains source maps absent from the production UI"
             )
+        if any(_is_firebase_asset(name) for name in names):
+            raise ReleaseBuildError("CLI wheel contains Firebase auth assets")
+        for name in names:
+            if _contains_firebase_signature(name, archive.read(name)):
+                raise ReleaseBuildError(
+                    "CLI wheel contains Firebase auth code or config"
+                )
     return classified
 
 

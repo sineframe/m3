@@ -62,6 +62,21 @@ def test_saved_token_uses_origin_scoped_credential_and_metadata(
     assert auth.load_saved_token(base) is None
 
 
+def test_status_identifies_saved_developer_token_for_rotation(
+    keyring: MemoryKeyring,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    base = "https://control-plane.example"
+    auth._save_token(base, "m3pat_secret", {"token_id": "current-token-id"})
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
+
+    assert auth.status() == 0
+    output = capsys.readouterr().out
+    assert "ID current-token-id" in output
+    assert "m3pat_secret" not in output
+
+
 def test_control_plane_origin_must_be_https(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("M3_CONTROL_PLANE_URL", "http://control-plane.example")
     with pytest.raises(ValueError, match="HTTPS origin"):

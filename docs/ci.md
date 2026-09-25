@@ -49,10 +49,13 @@ actions:
 Select **Done** when finished. The page sends a short-lived, one-use code to
 the CLI on the same computer; the CLI exchanges it over HTTPS. An M3 bearer
 token is never placed in the browser redirect URL. Signing in alone does not
-issue a developer token, and rotating a CI token does not replace a saved one.
-The page ends its browser session on Done. `m3 auth status` reports saved local
-credentials; `m3 auth logout` removes them locally. Revoke a token through the
-sign-in page when it must stop working everywhere.
+issue a developer token. Creating a new developer token does not revoke an
+older one; revoke old tokens explicitly when they should stop working.
+`/cli/login` clears any existing control-plane browser session and requires a
+fresh sign-in before issuing a 10-minute session. Done and Cancel clear that
+session; closing the tab may leave it active until expiry. `m3 auth status`
+reports the saved developer token's ID, which you can match in the sign-in
+page before revoking an older token; `m3 auth logout` removes it locally.
 
 The CLI contains no Firebase SDK or Firebase configuration. Authentication
 provider changes are owned by the control plane. The browser and CLI must be
@@ -70,6 +73,12 @@ m3 ci test --env-file .env --upload -- tests/
 
 If the network or control plane fails, the local run remains available. Use
 the printed run ID with `m3 upload RUN_ID` to retry without rerunning tests.
+When credentials came from an env file, provide it again with
+`m3 upload RUN_ID --env-file .env`; retries require the original values to be
+available and unchanged. M3 stores keyed fingerprints locally, not secret
+values, and keeps the fingerprint key in your user config directory. Retry on
+the machine that ran the tests; older runs without fingerprints cannot be
+uploaded safely.
 The default database is `.m3/executions.sqlite` and reports are saved under
 `.m3/reports/RUN_ID`. A requested upload failure makes an otherwise passing
 CI job fail. The hosted report viewer is planned separately.
@@ -84,9 +93,10 @@ GitHub values. The JSON accepts only those fields plus `provider` and
 
 Create a dedicated CI token using `m3 auth login` and store it as the
 `M3_ACCESS_TOKEN` repository secret. Store provider and judge keys separately.
-This example pins the M3 release used by both CLI and SDK; replace the version
-with the release adopted by your project. Install project dependencies and the
-selected harness before running tests.
+To rotate it, create a replacement in the sign-in page, update the CI secret,
+confirm a run succeeds, and then revoke the old token there.
+Replace the M3 version placeholder with a release that includes `m3 ci test`.
+Install project dependencies and the selected harness before running tests.
 
 ```yaml
 name: M3 CI
@@ -109,7 +119,7 @@ jobs:
         with:
           version: "0.12.7"
           python-version: "3.11"
-      - run: uv tool install sf-m3-cli==0.2.0a13
+      - run: uv tool install 'sf-m3-cli==<release-with-m3-ci-test>'
       - run: |
           uv sync --locked
           m3 setup
