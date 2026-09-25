@@ -291,12 +291,21 @@ def main(argv: list[str] | None = None) -> int:
                             "is unchanged. Rerun tests before uploading",
                             file=sys.stderr,
                         )
-                if result.run_id:
-                    print(f"Run ID: {result.run_id}")
-                    if result.project_root:
-                        print(
-                            f"Local report: {result.project_root / '.m3' / 'reports' / result.run_id / 'feedback.json'}"
-                        )
+                if result.run_id and result.project_root and result.database_path:
+                    report_path = (
+                        result.project_root
+                        / ".m3"
+                        / "reports"
+                        / result.run_id
+                        / "feedback.json"
+                    )
+                    if (
+                        any(run.run_id == result.run_id for run in result.new_runs)
+                        and report_path.is_file()
+                        and not report_path.is_symlink()
+                    ):
+                        print(f"Run ID: {result.run_id}")
+                        print(f"Local report: {report_path}")
                 if not args.upload or result.exit_code not in (0, 1):
                     return result.exit_code
                 if inspection_failed:
