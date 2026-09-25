@@ -777,23 +777,85 @@ class _SqliteBase:
         connection.execute("BEGIN IMMEDIATE")
         try:
             rows = connection.execute(
-                "SELECT run_id,attempt_id,record_json FROM v2_test_results "
-                "WHERE suite_id IS NULL"
+                "SELECT t.run_id,t.attempt_id,t.record_json,t.suite_id,"
+                "r.project_id AS run_project_id,r.record_json AS run_json "
+                "FROM v2_test_results AS t "
+                "LEFT JOIN v2_test_runs AS r ON r.run_id=t.run_id"
             ).fetchall()
             for row in rows:
                 try:
-                    record = json.loads(str(row[2]))
+                    decoded = json.loads(str(row["record_json"]))
                 except (ValueError, TypeError):
-                    record = None
-                name = record.get("suite_name") if isinstance(record, dict) else None
+                    decoded = None
+                record = dict(decoded) if isinstance(decoded, dict) else {}
                 try:
-                    name = normalize_suite_name(name)
-                except (TypeError, ValueError):
-                    name = "Legacy unassigned"
-                suite = self._ensure_suite_connection(connection, name)
+                    run_record = json.loads(str(row["run_json"]))
+                except (ValueError, TypeError):
+                    run_record = None
+                run_record = run_record if isinstance(run_record, dict) else {}
+                project_id = None
+                for candidate in (
+                    record.get("project_id"),
+                    row["run_project_id"],
+                    run_record.get("project_id"),
+                ):
+                    if not isinstance(candidate, str):
+                        continue
+                    try:
+                        project_id = ProjectId(candidate).root
+                    except (ValueError, ValidationError):
+                        continue
+                    project_name = (
+                        record.get("project_name")
+                        if candidate == record.get("project_id")
+                        else None
+                    )
+                    if (
+                        not isinstance(project_name, str) or not project_name.strip()
+                    ) and candidate == run_record.get("project_id"):
+                        project_name = run_record.get("project_name")
+                    if not isinstance(project_name, str) or not project_name.strip():
+                        project_name = project_id
+                    now = _iso(_utcnow())
+                    connection.execute(
+                        "INSERT OR IGNORE INTO v2_projects(id,project_name,created_at,updated_at) "
+                        "VALUES(?,?,?,?)",
+                        (project_id, project_name, now, now),
+                    )
+                    break
+                suite_row = (
+                    connection.execute(
+                        "SELECT id,suite_name,project_id FROM v2_suites WHERE id=?",
+                        (row["suite_id"],),
+                    ).fetchone()
+                    if row["suite_id"] is not None
+                    else None
+                )
+                if suite_row is not None:
+                    suite_name = str(suite_row["suite_name"])
+                    if project_id is None:
+                        project_id = suite_row["project_id"]
+                else:
+                    try:
+                        suite_name = normalize_suite_name(record.get("suite_name"))
+                    except (TypeError, ValueError):
+                        suite_name = "Legacy unassigned"
+                if suite_row is not None and project_id == suite_row["project_id"]:
+                    suite_id = int(suite_row["id"])
+                else:
+                    suite = self._ensure_suite_connection(
+                        connection, suite_name, project_id
+                    )
+                    suite_id = suite.id.root
+                    suite_name = suite.name
+                record["suite_id"] = suite_id
+                record["suite_name"] = suite_name
+                if project_id is not None:
+                    record["project_id"] = str(project_id)
                 connection.execute(
-                    "UPDATE v2_test_results SET suite_id=? WHERE run_id=? AND attempt_id=?",
-                    (suite.id.root, row[0], row[1]),
+                    "UPDATE v2_test_results SET suite_id=?,record_json=? "
+                    "WHERE run_id=? AND attempt_id=?",
+                    (suite_id, _json(record), row["run_id"], row["attempt_id"]),
                 )
             connection.execute(
                 "CREATE TABLE v2_test_results_rebuilt ("

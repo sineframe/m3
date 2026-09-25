@@ -50,6 +50,7 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
             {
                 "attempt_id": "attempt-upload",
                 "node_id": "tests/test_upload.py::test_result",
+                "suite_name": "upload",
                 "outcome": "passed",
                 "execution_ids": [execution_id],
             },

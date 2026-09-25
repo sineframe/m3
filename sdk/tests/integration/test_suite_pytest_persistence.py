@@ -350,6 +350,11 @@ def test_old_schema_rows_survive_suite_migration(tmp_path: Path) -> None:
             == 1
         )
     store.close()
+    old = SQLiteExecutionStore(path)
+    legacy = old.list_test_results("run")[0]
+    assert legacy["suite_name"] == "Legacy unassigned"
+    assert isinstance(legacy["suite_id"], int)
+    old.close()
 
 
 def test_test_result_suite_id_is_required_and_legacy_names_are_backfilled(
@@ -392,7 +397,113 @@ def test_test_result_suite_id_is_required_and_legacy_names_are_backfilled(
             )
     with pytest.raises((TypeError, ValueError), match="suite_name"):
         reopened.save_test_result("run", "missing", {"node_id": "test_missing"})
-    assert reopened.list_test_results("run") == ({"suite_name": "catalog"},)
+    (migrated,) = reopened.list_test_results("run")
+    assert migrated["suite_name"] == "catalog"
+    assert isinstance(migrated["suite_id"], int)
+    reopened.close()
+
+
+def test_migrated_attempts_keep_project_scoped_suite_identity(tmp_path: Path) -> None:
+    path = tmp_path / "project-suites.sqlite"
+    first_project = "11111111-1111-4111-8111-111111111111"
+    second_project = "22222222-2222-4222-8222-222222222222"
+    db = sqlite3.connect(path)
+    db.executescript(
+        "create table v2_suites(id integer primary key, suite_name text not null unique);"
+        "insert into v2_suites values (1,'catalog');"
+        "create table v2_test_runs(run_id text primary key,record_json text,created_at text,updated_at text,project_id text);"
+        "create table v2_test_results(run_id text,attempt_id text,record_json text,created_at text,updated_at text,suite_id integer,primary key(run_id,attempt_id));"
+    )
+    for run_id, run_record, run_project, result_record, suite_id in (
+        (
+            "one",
+            {"project_id": first_project, "project_name": "First"},
+            first_project,
+            {
+                "suite_name": "catalog",
+                "suite_id": None,
+                "node_id": "test_catalog",
+                "outcome": "passed",
+            },
+            None,
+        ),
+        (
+            "two",
+            {"project_id": second_project, "project_name": "Second"},
+            None,
+            {"suite_name": "catalog", "project_id": second_project},
+            None,
+        ),
+        (
+            "old-global",
+            {"project_id": first_project, "project_name": "First"},
+            first_project,
+            {"suite_name": "catalog", "suite_id": 1, "project_id": first_project},
+            1,
+        ),
+        (
+            "override",
+            {"project_id": second_project, "project_name": "Second"},
+            second_project,
+            {"suite_name": "catalog", "project_id": first_project},
+            None,
+        ),
+    ):
+        db.execute(
+            "insert into v2_test_runs values (?,?,?,?,?)",
+            (run_id, json.dumps(run_record), "now", "now", run_project),
+        )
+        db.execute(
+            "insert into v2_test_results values (?,?,?,?,?,?)",
+            (run_id, run_id, json.dumps(result_record), "now", "now", suite_id),
+        )
+    db.commit()
+    db.close()
+
+    from m3.storage import SQLiteExecutionStore
+
+    store = SQLiteExecutionStore(path)
+    first = store.list_test_results("one")[0]
+    second = store.list_test_results("two")[0]
+    old_global = store.list_test_results("old-global")[0]
+    override = store.list_test_results("override")[0]
+    assert first["suite_id"] == old_global["suite_id"] != second["suite_id"]
+    assert override["suite_id"] == first["suite_id"]
+    assert first["suite_id"] != 1  # The old unscoped suite is not reused.
+    assert (first["project_id"], second["project_id"]) == (
+        first_project,
+        second_project,
+    )
+    assert first["suite_name"] == second["suite_name"] == "catalog"
+    store.save_test_result(
+        "current",
+        "current",
+        {
+            "suite_name": "catalog",
+            "project_id": first_project,
+            "node_id": "test_catalog",
+            "outcome": "passed",
+        },
+    )
+    assert store.list_test_results("current")[0]["suite_id"] == first["suite_id"]
+    from m3.feedback import build_feedback
+
+    comparison = build_feedback(store, "current", baseline_run_id="one").comparison
+    assert comparison is not None
+    assert comparison.test_changes == ()
+    with store._connect() as connection:
+        rows = connection.execute(
+            "select id,project_id from v2_suites where suite_name='catalog'"
+        ).fetchall()
+        assert {(row[0], row[1]) for row in rows} == {
+            (1, None),
+            (first["suite_id"], first_project),
+            (second["suite_id"], second_project),
+        }
+        assert connection.execute("pragma foreign_key_check").fetchall() == []
+    store.close()
+    reopened = SQLiteExecutionStore(path)
+    assert reopened.list_test_results("one")[0] == first
     reopened.close()
 
 
@@ -429,6 +540,9 @@ def test_legacy_unique_suite_table_rebuild_preserves_foreign_keys(
             == 1
         )
         assert connection.execute("pragma foreign_key_check").fetchall() == []
+    (migrated,) = store.list_test_results("run")
+    assert migrated["suite_id"] == 1
+    assert migrated["suite_name"] == "catalog"
     store.close()
 
 
