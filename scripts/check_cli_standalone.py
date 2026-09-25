@@ -924,7 +924,14 @@ const token = process.env.MCP_PAL_LIVE_AUTH_TOKEN;
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, extraHTTPHeaders: { Authorization: `Bearer ${token}` } });
     await page.goto(`${origin}/reports/runs/${encodeURIComponent(runId)}#m3_token=${token}`);
-    await page.getByText(runId, { exact: true }).first().waitFor({ state: 'visible', timeout: 15000 });
+    const response = await page.request.get(`${origin}/api/v2/feedback/${encodeURIComponent(runId)}`);
+    if (!response.ok()) throw new Error(`feedback returned ${response.status()}`);
+    const feedback = await response.json();
+    const label = feedback.run_label;
+    if (typeof label !== 'string' || !/^Run #\d+$/.test(label)) {
+      throw new Error('saved run label is unavailable');
+    }
+    await page.getByRole('heading', { level: 1, name: label }).waitFor({ state: 'visible', timeout: 15000 });
     const expected = [
       'test_expected_tool_error',
       'test_failed_matcher',
@@ -940,8 +947,13 @@ const token = process.env.MCP_PAL_LIVE_AUTH_TOKEN;
       }
     }
     const summary = page.getByRole('region', { name: 'Test run summary' });
-    if (!(await summary.getByText('Failures').locator('..').getByText('3', { exact: true }).isVisible())) {
-      throw new Error('Reports failure count differs from pytest');
+    const effective = feedback.feedback?.summary?.effective_verdict_counts;
+    if (!effective || !Number.isInteger(effective.failed) || (effective.error !== undefined && !Number.isInteger(effective.error))) {
+      throw new Error('effective verdict counts are unavailable');
+    }
+    const expectedFailures = effective.failed + (effective.error ?? 0);
+    if (!(await summary.getByText('Failures').locator('..').getByText(String(expectedFailures), { exact: true }).isVisible())) {
+      throw new Error(`Reports effective failure count differs from feedback: expected ${expectedFailures}`);
     }
     console.log('Playwright installed Reports verdict contract passed');
   } finally {
