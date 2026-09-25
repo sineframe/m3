@@ -650,7 +650,11 @@ def test_list_stored_runs_uses_manifests_even_without_executions(
         def list_test_runs(self) -> tuple[dict[str, str], ...]:
             self.calls += 1
             return (
-                {"run_id": "pytest-run", "created_at": "2026-09-20T12:00:00Z"},
+                {
+                    "run_id": "pytest-run",
+                    "run_label": "Run #42",
+                    "created_at": "2026-09-20T12:00:00Z",
+                },
                 {"run_id": "bad", "created_at": "not a timestamp"},
                 {"run_id": "naive", "created_at": "2026-09-20T12:00:00"},
             )
@@ -666,10 +670,23 @@ def test_list_stored_runs_uses_manifests_even_without_executions(
     assert result.warning is None
     assert result.runs == (
         supervisor.StoredRun(
-            "pytest-run", datetime(2026, 9, 20, 12, tzinfo=timezone.utc)
+            "pytest-run", datetime(2026, 9, 20, 12, tzinfo=timezone.utc), "Run #42"
         ),
     )
     assert store.calls == 1
+
+
+def test_ui_output_prints_label_without_changing_parseable_run_link(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run = supervisor.StoredRun(
+        "pytest-run", datetime(2026, 9, 20, 12, tzinfo=timezone.utc), "Run #42"
+    )
+    supervisor._print_ui_output(8123, "token", (run,), ())
+    assert capsys.readouterr().out.splitlines() == [
+        "Run label: Run #42",
+        "Run: http://127.0.0.1:8123/reports/runs/pytest-run#m3_token=token",
+    ]
 
 
 def test_list_stored_runs_returns_safe_warning_for_unreadable_database(

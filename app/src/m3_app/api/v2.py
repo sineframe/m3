@@ -1624,9 +1624,10 @@ def install_v2(
         baseline_run_id: str | None = Query(None),
         service: AppExecutionService = Depends(get_service),
     ) -> V2FeedbackEnvelope:
+        feedback = service.feedback(run_id, baseline_run_id=baseline_run_id)
         return V2FeedbackEnvelope(
-            feedback=service.feedback(run_id, baseline_run_id=baseline_run_id),
-            run_label=service.run_label(run_id),
+            feedback=feedback,
+            run_label=feedback.run_label,
         )
 
     application.include_router(feedback_router)

@@ -425,7 +425,10 @@ def test_v2_feedback_reads_manifest_and_optional_baseline(tmp_path):
         assert body["version"] == "v2"
         assert body["run_label"] == "Run #2"
         assert body["feedback"]["run_id"] == "current-run"
+        assert body["feedback"]["run_label"] == "Run #2"
         assert body["feedback"]["comparison"]["baseline_run_id"] == "baseline-run"
+        assert body["feedback"]["comparison"]["baseline_run_label"] == "Run #1"
+        assert body["feedback"]["comparison"]["current_run_label"] == "Run #2"
         missing = client.get(
             "/api/v2/feedback/current-run", params={"baseline_run_id": "missing"}
         )

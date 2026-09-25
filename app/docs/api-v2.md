@@ -44,7 +44,11 @@ actions. `run_label` is its immutable, database-wide unique display label
 (`Run #1`, `Run #2`, ...). Existing runs receive labels in creation order when
 the database is opened; updating a manifest never changes its label. Labels
 are scoped to one database, not globally unique across independent databases.
-The feedback envelope also exposes `run_label` alongside `feedback`.
+The feedback envelope also exposes `run_label` alongside `feedback`. The
+`feedback` object and exported `feedback.json` contain that same run label
+next to their `run_id`; when comparing runs, `comparison` carries
+`baseline_run_label` and `current_run_label` next to their technical IDs.
+Labels are `null` when a run has no saved manifest with a label.
 
 The list is unpaginated by default. Optional `limit` (1-100) and `offset` page
 it, and optional `suite_id`, `project_id`, and `q` filter it; `q` searches both

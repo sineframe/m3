@@ -394,11 +394,14 @@ bundled inside the CLI wheel; Node.js, npm, and Vite are not run at runtime.
 `m3 test --ui` prints a link for each newly stored report like this:
 
 ```text
+Run label: Run #42
 Run: http://127.0.0.1:8000/reports/runs/<runId>#m3_token=<token>
 ```
 
 The `<runId>` in the direct link is the pytest run ID stored in the test-run
-manifest and returned by `/api/v2/feedback/<runId>`. The CLI stays open so the
+manifest and returned by `/api/v2/feedback/<runId>`. The adjacent label is the
+human-facing name; the `Run:` URL line remains unchanged for tools that parse it.
+The CLI stays open so the
 browser can load results; press Ctrl+C to stop it. A normal pytest failure
 still opens the UI and keeps that pytest exit code. Collection/configuration
 errors, interruption, server startup errors, and invalid configuration return

@@ -49,6 +49,8 @@ class Comparison(FrozenModel):
 
     baseline_run_id: str
     current_run_id: str
+    baseline_run_label: str | None = None
+    current_run_label: str | None = None
     baseline_suites: tuple[Mapping[str, Any], ...] = ()
     current_suites: tuple[Mapping[str, Any], ...] = ()
     interface_changes: tuple[Mapping[str, Any], ...] = ()
@@ -64,6 +66,7 @@ class Feedback(FrozenModel):
 
     schema_version: int = 1
     run_id: str
+    run_label: str | None = None
     project_id: str | None = None
     project_name: str | None = None
     suites: tuple[Mapping[str, Any], ...] = ()
@@ -1112,6 +1115,11 @@ def _test_values(
     return results, manifest
 
 
+def _run_label(manifest: Mapping[str, Any] | None) -> str | None:
+    label = manifest.get("run_label") if manifest is not None else None
+    return label if isinstance(label, str) and label else None
+
+
 def _normalise_node_id(node_id: str, manifest: Mapping[str, Any] | None) -> str:
     """Remove run-specific checkout prefixes while retaining pytest identity."""
     if manifest is not None:
@@ -1816,6 +1824,7 @@ def build_feedback(
         raise ValueError("run_id is required")
     current = _entries(store, current_id)
     results, manifest = _test_values(store, current_id)
+    current_label = _run_label(manifest)
     project_id = (
         str(manifest.get("project_id"))
         if manifest and manifest.get("project_id")
@@ -2024,6 +2033,8 @@ def build_feedback(
         comparison = Comparison(
             baseline_run_id=baseline_id,
             current_run_id=current_id,
+            baseline_run_label=_run_label(baseline_manifest),
+            current_run_label=current_label,
             baseline_suites=_suites(baseline, baseline_results),
             current_suites=_suites(current, results),
             interface_changes=_interface_changes(
@@ -2100,6 +2111,7 @@ def build_feedback(
     }
     return Feedback(
         run_id=current_id,
+        run_label=current_label,
         project_id=project_id,
         project_name=project[1] if project else None,
         suites=_suites(current, results),

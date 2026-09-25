@@ -182,6 +182,7 @@ class StoredRun:
 
     run_id: str
     created_at: datetime
+    run_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -465,6 +466,7 @@ def list_stored_runs(database: Path) -> StoredRuns:
         for manifest in store.list_test_runs():
             run_id = manifest.get("run_id")
             created_at = manifest.get("created_at")
+            run_label = manifest.get("run_label")
             if (
                 not isinstance(run_id, str)
                 or not run_id
@@ -477,7 +479,15 @@ def list_stored_runs(database: Path) -> StoredRuns:
                 continue
             if timestamp.utcoffset() is None:
                 continue
-            runs.append(StoredRun(run_id=run_id, created_at=timestamp))
+            runs.append(
+                StoredRun(
+                    run_id=run_id,
+                    created_at=timestamp,
+                    run_label=run_label
+                    if isinstance(run_label, str) and run_label
+                    else None,
+                )
+            )
         return StoredRuns(tuple(runs))
     except Exception:
         # The test process must remain useful even when an old, locked, or
@@ -1089,6 +1099,8 @@ def _print_ui_output(
         print("No new stored runs.", flush=True)
         return
     for run in new_runs:
+        if run.run_label is not None:
+            print(f"Run label: {run.run_label}", flush=True)
         print(f"Run: {build_run_url(run.run_id, port, auth_token)}", flush=True)
 
 
