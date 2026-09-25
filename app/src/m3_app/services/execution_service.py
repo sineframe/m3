@@ -8,6 +8,7 @@ or response-envelope dependencies.
 
 from __future__ import annotations
 
+import inspect
 import math
 import time
 from collections.abc import Iterable, Mapping
@@ -608,15 +609,49 @@ class AppExecutionService:
         """Return one newest-first page of run manifests with their suites."""
         self._ensure_open()
         try:
-            # Older injected stores do not accept the optional search argument.
             if q and q.strip():
-                return self.store.list_test_run_page(
-                    limit=limit,
-                    offset=offset,
-                    suite_id=suite_id,
-                    project_id=project_id,
-                    q=q,
+                lister = self.store.list_test_run_page
+                try:
+                    parameters = inspect.signature(lister).parameters
+                    supports_q = "q" in parameters or any(
+                        item.kind is inspect.Parameter.VAR_KEYWORD
+                        for item in parameters.values()
+                    )
+                except (TypeError, ValueError):
+                    supports_q = True
+                if supports_q:
+                    return lister(
+                        limit=limit,
+                        offset=offset,
+                        suite_id=suite_id,
+                        project_id=project_id,
+                        q=q,
+                    )
+                # An older injected store cannot search itself. Filter its
+                # complete ordered result before applying the requested page.
+                runs, _ = lister(
+                    limit=None, offset=0, suite_id=suite_id, project_id=project_id
                 )
+                term = q.strip().casefold()
+                exact_label = term.startswith("run #") and term[5:].isdigit()
+                matches = tuple(
+                    run
+                    for run in runs
+                    if (
+                        isinstance(run.get("run_id"), str)
+                        and term in run["run_id"].casefold()
+                    )
+                    or (
+                        isinstance(run.get("run_label"), str)
+                        and (
+                            run["run_label"].casefold() == term
+                            if exact_label
+                            else term in run["run_label"].casefold()
+                        )
+                    )
+                )
+                end = None if limit is None else offset + limit
+                return matches[offset:end], len(matches)
             return self.store.list_test_run_page(
                 limit=limit, offset=offset, suite_id=suite_id, project_id=project_id
             )

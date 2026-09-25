@@ -86,6 +86,16 @@ def test_run_labels_are_unique_immutable_and_searchable_across_pages(store):
         assert [item["run_id"] for item in page] == [expected]
 
 
+def test_run_search_casefolds_unicode_ids(store):
+    store.save_test_run("Café", {"run_id": "Café"})
+    kelvin_id = "\N{KELVIN SIGN}ernel"
+    store.save_test_run(kelvin_id, {"run_id": kelvin_id})
+    for query, expected in (("CAFÉ", "Café"), ("kernel", kelvin_id)):
+        page, total = store.list_test_run_page(limit=1, q=query)
+        assert total == 1
+        assert [item["run_id"] for item in page] == [expected]
+
+
 def test_sqlite_backfills_legacy_runs_in_history_order(tmp_path):
     path = Path(tmp_path) / "legacy.sqlite"
     with sqlite3.connect(path) as connection:

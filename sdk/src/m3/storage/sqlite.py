@@ -221,6 +221,16 @@ def _iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat()
 
 
+def _register_run_search(connection: Any, _record: Any) -> None:
+    """Use the same Unicode matching rule as the in-memory run store."""
+    connection.create_function(
+        "m3_casefold",
+        1,
+        lambda value: value.casefold() if isinstance(value, str) else "",
+        deterministic=True,
+    )
+
+
 def _parse_dt(value: str | None) -> datetime:
     if not value:
         return _utcnow()
@@ -519,6 +529,9 @@ class _SqliteBase:
             # writes through its normal locking semantics.
             poolclass=null_pool,
         )
+        from sqlalchemy import event
+
+        event.listen(self._engine, "connect", _register_run_search)
         self._initialize()
 
     def _connect(self) -> _CompatConnection:
@@ -1799,14 +1812,14 @@ class SQLiteExecutionStore(_SqliteBase):
             clauses.append("project_id=?")
             params.append(str(project_id))
         if q and q.strip():
-            term = q.strip()
-            exact_label = term.casefold().startswith("run #") and term[5:].isdigit()
+            term = q.strip().casefold()
+            exact_label = term.startswith("run #") and term[5:].isdigit()
             label_match = (
-                "lower(run_label) = lower(?)"
+                "m3_casefold(run_label) = ?"
                 if exact_label
-                else "instr(lower(run_label), lower(?)) > 0"
+                else "instr(m3_casefold(run_label), ?) > 0"
             )
-            clauses.append(f"(instr(lower(run_id), lower(?)) > 0 OR {label_match})")
+            clauses.append(f"(instr(m3_casefold(run_id), ?) > 0 OR {label_match})")
             params.extend((term, term))
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as connection:

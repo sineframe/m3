@@ -468,6 +468,8 @@ def test_v2_runs_and_feedback_accept_older_injected_store(tmp_path):
     database = Path(tmp_path).resolve() / "older-store.sqlite"
     backing = SQLiteExecutionStore(database)
     backing.save_test_run("older-run", {"run_id": "older-run"})
+    backing.save_test_run("older-extra", {"run_id": "older-extra"})
+    backing.save_test_run("Café", {"run_id": "Café"})
     backing.create(ExecutionState(execution_id="older-execution", run_id="older-run"))
 
     class OlderStore:
@@ -489,7 +491,26 @@ def test_v2_runs_and_feedback_accept_older_injected_store(tmp_path):
     with TestClient(application) as client:
         runs = client.get("/api/v2/runs")
         assert runs.status_code == 200
-        assert runs.json()["runs"][0]["run_id"] == "older-run"
+        assert {run["run_id"] for run in runs.json()["runs"]} == {
+            "Café",
+            "older-run",
+            "older-extra",
+        }
+        for query, expected in (
+            ("Run #1", "older-run"),
+            ("OLDER-EXTRA", "older-extra"),
+            ("CAFÉ", "Café"),
+        ):
+            found = client.get("/api/v2/runs", params={"q": query, "limit": 1})
+            assert found.status_code == 200
+            assert found.json()["total"] == 1
+            assert [run["run_id"] for run in found.json()["runs"]] == [expected]
+        second = client.get(
+            "/api/v2/runs", params={"q": "older", "limit": 1, "offset": 1}
+        )
+        assert second.status_code == 200
+        assert second.json()["total"] == 2
+        assert [run["run_id"] for run in second.json()["runs"]] == ["older-extra"]
         feedback = client.get("/api/v2/feedback/older-run")
         assert feedback.status_code == 200
         assert feedback.json()["run_label"] is None
