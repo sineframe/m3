@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import typing
+import webbrowser
 from collections import deque
 from collections.abc import Mapping, Sequence
 from contextlib import closing, contextmanager
@@ -1087,9 +1088,31 @@ def _print_ui_output(
         return
     if not new_runs:
         print("No new stored runs.", flush=True)
+        print(f"UI: {build_ui_url(port, auth_token)}", flush=True)
         return
     for run in new_runs:
         print(f"Run: {build_run_url(run.run_id, port, auth_token)}", flush=True)
+
+
+def _open_ui_in_browser(
+    port: int, auth_token: str, new_runs: Sequence[StoredRun], *, history_index: bool
+) -> None:
+    """Open the newest report, or the runs index if there is no new report."""
+
+    url = (
+        build_run_url(new_runs[-1].run_id, port, auth_token)
+        if new_runs and not history_index
+        else build_ui_url(port, auth_token)
+    )
+    try:
+        opened = webbrowser.open(url)
+    except (OSError, webbrowser.Error):
+        opened = False
+    if not opened:
+        print(
+            "Warning: could not open a browser; use the printed UI link.",
+            file=sys.stderr,
+        )
 
 
 def _run_ui_server(
@@ -1115,6 +1138,11 @@ def _run_ui_server(
             port, auth_token, new_runs, warnings, history_index=history_index
         )
         with _termination_signal_handlers():
+            time.sleep(1)
+            if not child.alive():
+                print("m3: UI server stopped unexpectedly", file=sys.stderr)
+                return OPERATIONAL_ERROR
+            _open_ui_in_browser(port, auth_token, new_runs, history_index=history_index)
             while True:
                 if not child.alive():
                     print("m3: UI server stopped unexpectedly", file=sys.stderr)

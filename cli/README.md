@@ -378,10 +378,11 @@ it from `~`, `/`, or another directory without M3 history, it exits with a
 message asking you to change to the correct directory. A valid database
 with no runs opens an empty runs index.
 
-After the server is ready, `m3 ui` prints a tokenized
-`http://127.0.0.1:8000/reports#m3_token=...` link. Open that link to browse
-all saved test runs in that database; it does not automatically launch a
-browser or select the latest run. Press Ctrl+C to stop serving.
+After the server is ready, `m3 ui` waits one second and opens the saved-runs
+index in your default browser. It also prints a tokenized
+`http://127.0.0.1:8000/reports#m3_token=...` link in case the browser cannot
+be opened automatically. It does not select the latest run. Press Ctrl+C to
+stop serving.
 `m3 test --results-db PATH` can write to another database, but `m3 ui`
 currently views only the default database. Opening the UI itself does not
 start an execution, although the full UI still offers controls that can
@@ -391,7 +392,9 @@ start one later.
 
 This starts one FastAPI server and one loopback port. The production UI is
 bundled inside the CLI wheel; Node.js, npm, and Vite are not run at runtime.
-`m3 test --ui` prints a link for each newly stored report like this:
+`m3 test --ui` waits one second after the server is ready, then opens the
+newest newly stored report in your default browser. It prints a link for each
+newly stored report like this:
 
 ```text
 Run: http://127.0.0.1:8000/reports/runs/<runId>#m3_token=<token>
@@ -404,12 +407,13 @@ still opens the UI and keeps that pytest exit code. Collection/configuration
 errors, interruption, server startup errors, and invalid configuration return
 an operational failure.
 
-Open a link printed by the current CLI process to authorize the browser. The
-browser removes the token fragment from its address bar and keeps the token in
-the current tab's session storage for API requests. A new CLI launch uses a new
-token, so old links stop working. If the test run saves no results, the CLI
-prints `No new stored runs.` instead of a link. Treat the printed links as
-credentials while the server is running.
+If the test run saves no results, the browser opens the saved-runs index and
+the CLI prints `No new stored runs.` and its index link. If opening the browser
+fails (for example, on a headless machine), use a printed link from the current
+CLI process to authorize the browser. The browser removes the token fragment
+from its address bar and keeps the token in the current tab's session storage
+for API requests. A new CLI launch uses a new token, so old links stop working.
+Treat the printed links as credentials while the server is running.
 
 When stdout is an interactive terminal, the SDK plugin shows a compact test
 progress bar. It is disabled for non-TTY output and for verbose pytest modes,
