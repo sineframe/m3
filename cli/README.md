@@ -70,6 +70,7 @@ python -m pip install "sf-m3[pytest,judge]"
 The public commands include:
 
 ```text
+m3 --version
 m3 init
 m3 setup [options]
 m3 doctor
