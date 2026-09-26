@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
 from _local_client import TestClient
 from pydantic import TypeAdapter
 
@@ -29,6 +30,8 @@ from m3.storage import SQLiteExecutionStore
 from m3_app.api.app import create_app
 from m3_app.api.wire import internalize_request
 from m3_app.settings import Settings
+
+pytestmark = [pytest.mark.e2e, pytest.mark.process_lifecycle]
 
 
 def _wait_terminal(client: TestClient, execution_id: str) -> dict:

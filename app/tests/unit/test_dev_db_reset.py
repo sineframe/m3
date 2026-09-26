@@ -6,7 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parents[2] / "scripts" / "dev_db_reset.py"
+pytestmark = pytest.mark.process_lifecycle
 
 
 def _run(
