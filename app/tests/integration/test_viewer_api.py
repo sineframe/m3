@@ -80,7 +80,7 @@ def test_openapi_matches_standard_and_viewer_surfaces(tmp_path: Path) -> None:
         for method in item
         if method in {"get", "post", "patch", "delete"}
     }
-    assert len(standard_ops) == 35
+    assert len(standard_ops) == 37
     replay = ("post", "/api/v2/executions/{execution_id}/tool-calls/{entry_id}/replay")
     assert replay in standard_ops
     assert replay not in viewer_ops
@@ -98,9 +98,11 @@ def test_openapi_matches_standard_and_viewer_surfaces(tmp_path: Path) -> None:
             "/api/v2/harness-profiles/{profile_id}/probes",
             "/api/v2/executions",
             "/api/v2/runs",
+            "/api/v2/runs/{run_id}",
             "/api/v2/executions/{execution_id}",
             "/api/v2/executions/{execution_id}/report",
             "/api/v2/suites",
+            "/api/v2/suites/{suite_id}",
             "/api/v2/suites/{suite_id}/executions",
             "/api/v2/feedback/{run_id}",
         )
