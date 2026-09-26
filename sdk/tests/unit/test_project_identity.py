@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 
 from m3.execution_trace import ExecutionTraceRecorder
 from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
+from m3.testing import MockMCPServer
 from m3.types import (
     CallTool,
     DirectSpec,
@@ -80,27 +80,26 @@ def test_in_memory_aggregate_uses_registered_project_name() -> None:
     assert filtered.total_groups == 1
 
 
-def test_kit_run_persists_project_column_and_filter(tmp_path: Path) -> None:
+def test_kit_submit_persists_project_column_and_filter(tmp_path: Path) -> None:
+    """Submitting work persists its project on the execution and suite."""
     store = SQLiteExecutionStore(tmp_path / "run-project.sqlite")
     store.ensure_project(PROJECT.root, "Orders")
-    # A valid submission shape is enough to exercise the persisted project path;
-    # the missing command produces a terminal failed execution deterministically.
     spec = DirectSpec(
         project_id=PROJECT,
         suite_name="orders",
         servers=(
             ServerBinding(
-                server=StdioServer(name="missing", command="m3-no-such-server"),
-                alias="missing",
+                server=StdioServer(name="unused", command="unused"),
+                alias="unused",
             ),
         ),
-        operation=CallTool(server="missing", name="echo", arguments={}),
-        timeout_seconds=0.1,
+        operation=CallTool(server="unused", name="echo", arguments={}),
     )
     from m3 import MCPTestKit
 
-    with MCPTestKit(store=store) as kit:
-        result = kit.run(spec)
+    with MCPTestKit(store=store, embedded_worker=False) as kit:
+        handle = kit.submit(spec)
+    result = handle.result()
     assert result.snapshot.project_id == PROJECT
     assert store.list_executions(project_id=PROJECT.root).total == 1
     with store._connect() as connection:
@@ -121,23 +120,24 @@ def test_kit_run_persists_project_column_and_filter(tmp_path: Path) -> None:
     store.close()
 
 
-def test_kit_run_registers_project_on_fresh_store(tmp_path: Path) -> None:
+def test_kit_submit_registers_project_on_fresh_store(tmp_path: Path) -> None:
+    """Submitting work registers an unknown project before execution."""
     store = SQLiteExecutionStore(tmp_path / "fresh-project.sqlite")
     spec = DirectSpec(
         project_id=PROJECT,
         servers=(
             ServerBinding(
-                server=StdioServer(name="missing", command="m3-no-such-server"),
-                alias="missing",
+                server=StdioServer(name="unused", command="unused"),
+                alias="unused",
             ),
         ),
-        operation=CallTool(server="missing", name="echo", arguments={}),
-        timeout_seconds=0.1,
+        operation=CallTool(server="unused", name="echo", arguments={}),
     )
     from m3 import MCPTestKit
 
-    with MCPTestKit(store=store) as kit:
-        result = kit.run(spec)
+    with MCPTestKit(store=store, embedded_worker=False) as kit:
+        handle = kit.submit(spec)
+    result = handle.result()
     assert store.get_project(PROJECT.root) == (PROJECT.root, PROJECT.root)
     assert (
         store.list_executions(project_id=PROJECT.root).items[0].execution_id
@@ -164,18 +164,13 @@ def test_sync_and_async_kits_preserve_existing_project_name(tmp_path: Path) -> N
 
 
 def test_kit_direct_trace_retains_project(tmp_path: Path) -> None:
+    """An in-process direct trace retains the configured project."""
     store = SQLiteExecutionStore(tmp_path / "direct-project.sqlite")
     store.ensure_project(PROJECT.root, "Orders")
     from m3 import MCPTestKit
 
     with MCPTestKit(store=store, project_id=PROJECT) as kit:
-        client = kit.direct(
-            StdioServer(
-                name="echo",
-                command=sys.executable,
-                args=("-m", "m3.fixtures.echo_server"),
-            )
-        )
+        client = kit.direct(MockMCPServer().in_process(name="echo"))
         with client:
             client.initialize()
             client.list_tools()

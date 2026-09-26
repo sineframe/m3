@@ -35,7 +35,11 @@ testpaths = ["tests"]
 pythonpath = ["tests", "src", "../sdk/src"]
 asyncio_mode = "auto"
 addopts = "-p no:cacheprovider"
-markers = ["live: opt-in external network tests", "e2e: end-to-end tests"]
+markers = [
+  "live: opt-in external network tests",
+  "e2e: end-to-end tests",
+  "process_lifecycle: tests that launch or assert cleanup of real subprocesses; run serially in CI",
+]
 
 [build-system]
 requires = ["hatchling>=1.27"]

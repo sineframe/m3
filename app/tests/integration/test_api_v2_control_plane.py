@@ -8,6 +8,7 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
 from _local_client import TestClient
 from _pid_marker import wait_for_pid
 
@@ -592,6 +593,7 @@ def test_v2_harness_profile_import_export_and_readiness(tmp_path: Path) -> None:
         assert client.get("/api/v2/health").json()["checks"]["database"] is True
 
 
+@pytest.mark.process_lifecycle
 def test_v2_probe_start_history_and_cancel_use_real_subprocess(tmp_path: Path) -> None:
     database = tmp_path / "probes.sqlite"
     executable = _agent(tmp_path / "agent.py")
@@ -697,6 +699,7 @@ def test_v2_probe_history_matches_full_probe_session_configuration(
         runtime.close()
 
 
+@pytest.mark.process_lifecycle
 def test_v2_probe_cancel_running_subprocess_during_shutdown(tmp_path: Path) -> None:
     database = tmp_path / "cancel.sqlite"
     pidfile = tmp_path / "agent.pid"

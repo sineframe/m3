@@ -76,10 +76,16 @@ jobs:
             sdk/examples/tests/test_modern_mrtr_codex.py \
             sdk/examples/tests/test_modern_mrtr_codex_action_scopes.py \
             sdk/examples/tests/test_modern_mrtr_codex_approval_spoof.py
-      - name: Run application unit tests without live providers
+      - name: Run application unit tests without live providers or process lifecycle
         run: >-
           uv run --locked --no-sync --project app
-          pytest -q -n 2 --dist worksteal -m "not live" app/tests/unit
+          pytest -q -n 2 --dist worksteal
+          -m "not live and not process_lifecycle" app/tests/unit
+      - name: Run application process lifecycle unit tests serially
+        run: >-
+          uv run --locked --no-sync --project app
+          pytest -q --timeout=90 --timeout-method=signal
+          -m "not live and process_lifecycle" app/tests/unit
       - name: Run CLI smoke tests
         run: >-
           uv run --locked --no-sync --project cli pytest -q
@@ -210,10 +216,16 @@ jobs:
           uv sync --locked --all-packages
           --extra pytest --extra judge --extra storage --extra property
           --group test --group typecheck
-      - name: Run application tests without live providers
+      - name: Run application tests without live providers or process lifecycle
         run: >-
           uv run --locked --no-sync --project app
-          pytest -q -n 2 --dist worksteal -m "not live" app/tests
+          pytest -q -n 2 --dist worksteal
+          -m "not live and not process_lifecycle" app/tests
+      - name: Run application process lifecycle tests serially
+        run: >-
+          uv run --locked --no-sync --project app
+          pytest -q --timeout=90 --timeout-method=signal
+          -m "not live and process_lifecycle" app/tests
 
   main-cli-tests:
     name: Main CLI tests (3.10)
@@ -266,10 +278,16 @@ jobs:
           pytest -vv -x -n 2 --dist worksteal --timeout=90 --timeout-method=signal
           -m "not live and not process_lifecycle"
           sdk/tests/unit
-      - name: Run application unit tests without live providers
+      - name: Run application unit tests without live providers or process lifecycle
         run: >-
           uv run --locked --no-sync --project app
-          pytest -q -n 2 --dist worksteal -m "not live" app/tests/unit
+          pytest -q -n 2 --dist worksteal
+          -m "not live and not process_lifecycle" app/tests/unit
+      - name: Run application process lifecycle unit tests serially
+        run: >-
+          uv run --locked --no-sync --project app
+          pytest -q --timeout=90 --timeout-method=signal
+          -m "not live and process_lifecycle" app/tests/unit
       - name: Run CLI smoke tests
         run: >-
           uv run --locked --no-sync --project cli pytest -q

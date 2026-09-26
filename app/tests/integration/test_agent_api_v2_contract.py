@@ -5,11 +5,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from _local_client import TestClient
 
 from m3.storage import SQLiteExecutionStore
 from m3_app.api.app import create_app
 from m3_app.settings import Settings
+
+pytestmark = pytest.mark.process_lifecycle
 
 
 def _run_agent_test(

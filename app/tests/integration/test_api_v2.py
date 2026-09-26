@@ -841,6 +841,7 @@ def test_v2_grouped_runs_limit_and_offset_count_distinct_runs(tmp_path, in_memor
     store.close()
 
 
+@pytest.mark.process_lifecycle
 def test_v2_grouping_preserves_cli_partial_suite_selection(tmp_path):
     test_file = tmp_path / "test_catalog.py"
     test_file.write_text(
@@ -896,6 +897,7 @@ def test_v2_grouping_preserves_cli_partial_suite_selection(tmp_path):
     assert run["suites"][0]["suite_name"] == "catalog"
 
 
+@pytest.mark.process_lifecycle
 def test_v2_manifest_not_run_feedback_and_run_list_counts(tmp_path):
     source = """
 import pytest
@@ -1004,6 +1006,7 @@ def test_second():
     assert current_summary["effective_verdict_counts"]["incomplete"] == 1
 
 
+@pytest.mark.process_lifecycle
 def test_v2_feedback_reads_real_two_run_interface_and_score_changes(tmp_path):
     """Exercise pytest plugin -> SQLite -> HTTP feedback without fake rows."""
 
@@ -1215,6 +1218,7 @@ def test_order_tool_catalog():
     assert evaluation_change["delta"]["pass_rate"] == 1.0
 
 
+@pytest.mark.process_lifecycle
 def test_v2_feedback_distinguishes_pytest_and_evaluation_evidence(tmp_path):
     """Persist and serve the three independent evidence combinations."""
     source = """
