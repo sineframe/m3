@@ -207,6 +207,7 @@ jobs:
         run: |
           npm ci
           npm run build
+          npm run build:cli
           npx playwright install --with-deps chromium
       - name: Derive and validate tag version
         id: version
@@ -242,7 +243,7 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/m3-release"
           mkdir -p "$out"
-          python scripts/build_cli_release.py --ui-dist .release-ui/dist --out-dir "$out" --expected-version "$VERSION"
+          python scripts/build_cli_release.py --ui-dist .release-ui/dist-cli --out-dir "$out" --expected-version "$VERSION"
           python scripts/render_cli_installers.py --version "$VERSION" --output-dir "$out"
           cp scripts/install-latest.sh "$out/install-latest.sh"
           chmod 755 "$out/install-latest.sh"

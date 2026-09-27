@@ -1188,7 +1188,7 @@ def check(
             version = version_result.stdout.strip().splitlines()[-1]
             ui_dist = temp_path / "ui-dist"
             _run(
-                ["npm", "run", "build", "--", "--outDir", str(ui_dist)],
+                ["npm", "run", "build:cli", "--", "--outDir", str(ui_dist)],
                 cwd=selected_ui,
                 env=install_env,
                 timeout=process_timeout,

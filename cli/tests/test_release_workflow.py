@@ -33,6 +33,9 @@ def test_release_builds_production_ui_and_skips_ui_quality_suites() -> None:
 
     assert "npm ci" in workflow
     assert "npm run build" in workflow
+    assert "npm run build:cli" in workflow
+    assert "--ui-dist .release-ui/dist-cli" in workflow
+    assert "--ui-dist .release-ui/dist " not in workflow
     assert "npm test" not in workflow
     assert "npm run typecheck" not in workflow
     assert "npm run lint" not in workflow
