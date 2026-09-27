@@ -39,9 +39,11 @@ management flow but does not sign out the browser. Browser sign-out is a
 separate action and does not delete the PAT saved in the CLI's OS credential
 store; `m3 auth logout` removes only that local copy.
 
-Release validation checks CLI provider-code/configuration markers and scans
-every archive member in all three release wheels for recognizable Supabase
-key prefixes and provider/browser JWT claims. Each wheel's dependency list
+Release validation scans every archive member in all three release wheels for
+Firebase/Supabase code and configuration markers, Google/Firebase API keys,
+Supabase key prefixes, PEM private keys (including service-account JSON), and
+recognizable Firebase/Supabase JWT claims. No wheel, directory, filename
+extension, or metadata member is exempt. Each wheel's dependency list
 rejects Firebase/Supabase requirements, including extra- and platform-marked
 requirements, to cover the CLI's SDK/application dependency chain. These are
 static artifact checks, not arbitrary third-party dependency resolution or a

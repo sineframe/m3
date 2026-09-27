@@ -311,7 +311,7 @@ def test_verify_release_rejects_supabase_key_prefix_in_cli_ui(
         cli_ui_content=f'const key = "{key_prefix}SYNTHETIC_FIXTURE";',
     )
     with pytest.raises(
-        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+        release.ReleaseBuildError, match="release wheel contains a provider credential"
     ):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
@@ -394,7 +394,7 @@ def test_verify_release_rejects_key_prefix_in_any_wheel_entry(
         # must come from credential detection rather than source-map validation.
         (ui / "assets" / "app.js.map").write_text("{}", encoding="utf-8")
     with pytest.raises(
-        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+        release.ReleaseBuildError, match="release wheel contains a provider credential"
     ) as exc:
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
     assert key_prefix not in str(exc.value)
@@ -406,7 +406,7 @@ def test_verify_release_rejects_key_prefix_in_archive_filename(tmp_path: Path) -
         sdk_entries=(("arbitrary/sb_secret_SYNTHETIC_FIXTURE.bin", b"benign"),),
     )
     with pytest.raises(
-        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+        release.ReleaseBuildError, match="release wheel contains a provider credential"
     ):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
@@ -453,7 +453,7 @@ def test_verify_release_rejects_supabase_jwt_credentials_in_any_wheel(
     }[wheel_name]
     expected, ui = _synthetic_release(tmp_path, **kwargs)
     with pytest.raises(
-        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+        release.ReleaseBuildError, match="release wheel contains a provider credential"
     ) as exc:
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
     assert token.decode() not in str(exc.value)
@@ -482,7 +482,7 @@ def test_verify_release_scans_arbitrary_binary_entries_in_all_wheels(
     )
     expected, ui = _synthetic_release(tmp_path, **kwargs)
     with pytest.raises(
-        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+        release.ReleaseBuildError, match="release wheel contains a provider credential"
     ):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
@@ -523,7 +523,7 @@ def test_verify_release_detects_whitespace_jwt_header_and_new_algorithm(
         cli_entries=(("arbitrary/token.bin", token),),
     )
     with pytest.raises(
-        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+        release.ReleaseBuildError, match="release wheel contains a provider credential"
     ):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
@@ -542,7 +542,7 @@ def test_verify_release_detects_duplicate_jwt_claims(
     )
     expected, ui = _synthetic_release(tmp_path, app_entries=(entry,))
     with pytest.raises(
-        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+        release.ReleaseBuildError, match="release wheel contains a provider credential"
     ) as exc:
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
     assert token.decode() not in str(exc.value)
@@ -558,7 +558,7 @@ def test_verify_release_scans_duplicate_archive_members(tmp_path: Path) -> None:
             )
             archive.writestr("arbitrary/duplicate.bin", b"benign duplicate entry")
     with pytest.raises(
-        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+        release.ReleaseBuildError, match="release wheel contains a provider credential"
     ):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
@@ -593,7 +593,7 @@ def test_verify_release_fails_closed_for_uninspectable_jwt_claims(
         tmp_path, sdk_entries=(("arbitrary/token.bin", token),)
     )
     with pytest.raises(
-        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+        release.ReleaseBuildError, match="release wheel contains a provider credential"
     ):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 

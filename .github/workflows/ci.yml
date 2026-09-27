@@ -93,6 +93,7 @@ jobs:
           cli/tests/test_doctor.py cli/tests/test_web.py
           cli/tests/test_auth.py cli/tests/test_release_build.py
           cli/tests/test_release_dependencies.py
+          cli/tests/test_release_provider_assets.py
 
   main-sdk-tests:
     name: Main SDK tests (3.10)
@@ -297,6 +298,7 @@ jobs:
           cli/tests/test_doctor.py cli/tests/test_web.py
           cli/tests/test_auth.py cli/tests/test_release_build.py
           cli/tests/test_release_dependencies.py
+          cli/tests/test_release_provider_assets.py
 
   quality:
     name: Source checks

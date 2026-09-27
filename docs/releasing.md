@@ -10,14 +10,25 @@ storage, and confirm that managing CI tokens leaves an existing developer
 credential untouched.
 
 Release verification scans every archive member in the SDK, application, and
-CLI wheels for Supabase key prefixes and recognizable provider/browser JWT
-credentials, regardless of filename or asset format. Signature verification
+CLI wheels for Firebase/Supabase code and configuration markers, Google/Firebase
+API keys, Supabase key prefixes, PEM private keys (including service-account
+JSON), and recognizable provider/browser JWT credentials. No wheel, directory,
+filename extension, or metadata member is exempt. Signature verification
 and expiry are irrelevant to detecting a bundled credential. Recognizable
 JWTs whose JSON exceeds safe inspection limits fail closed. All three
 wheels reject direct Firebase/Supabase provider requirements, including extra-
 and platform-marked requirements, so SDK/application wheel requirements cannot
 silently add them to a CLI installation. This is a conservative artifact
 policy, not a resolver for arbitrary third-party dependencies from PyPI.
+
+Firebase JWT detection uses the documented
+[ID-token issuer](https://firebase.google.com/docs/auth/admin/verify-id-tokens),
+[session-cookie issuer](https://firebase.google.com/docs/auth/admin/manage-cookies),
+and [custom-token audience](https://firebase.google.com/docs/auth/admin/create-custom-tokens).
+Service-account JSON embeds a sensitive private key; PEM private keys are
+rejected even without Firebase-specific filenames or project metadata. Public
+keys and unrelated JWTs are allowed. These static signatures do not guarantee
+detection of obfuscated or opaque credentials; never bundle live credentials.
 
 The control plane persists hashed one-use CLI grants in Supabase Postgres,
 checks expiry and the PKCE challenge during exchange, and consumes the grant

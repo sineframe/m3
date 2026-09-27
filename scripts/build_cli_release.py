@@ -46,12 +46,20 @@ _JUNK_NAMES = {
 _FIREBASE_ASSET_NAMES = {"google-services.json", "googleservice-info.plist"}
 _FIREBASE_SIGNATURES = (
     b"firebase/auth",
-    b"@firebase/auth",
+    b"@firebase/",
+    b"firebase-admin",
+    b"firebase_admin",
+    b"firebase_",
     b"firebase.initializeapp",
     b"authdomain",
     b"firebaseapp.com",
+    b"firebaseio.com",
+    b"firebasestorage.googleapis.com",
+    b"securetoken.google.com",
+    b"session.firebase.google.com",
+    b"identitytoolkit.googleapis.com",
+    b".gserviceaccount.com",
 )
-_MODULE_ASSET_EXTENSIONS = {".cjs", ".mjs"}
 _SUPABASE_SIGNATURES = (
     b"@supabase",
     b"@supabase/supabase-js",
@@ -76,11 +84,19 @@ _SUPABASE_SIGNATURES = (
 )
 _SUPABASE_PACKAGES = {"supabase", "gotrue", "postgrest", "realtime", "storage3"}
 _SUPABASE_KEY_PREFIXES = (b"sb_secret_", b"sb_publishable_")
+_GOOGLE_API_KEY_RE = re.compile(
+    rb"(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"
+)
 _JWT_CANDIDATE_RE = re.compile(
     rb"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)(?![A-Za-z0-9_-])"
 )
 _MAX_JWT_HEADER_BYTES = 4 * 1024
 _MAX_JWT_JSON_BYTES = 32 * 1024
+_PRIVATE_KEY_RE = re.compile(
+    rb"-----begin (?:rsa |ec |dsa |openssh |encrypted )?private key-----"
+)
+_FIREBASE_TOKEN_HOSTS = {"securetoken.google.com", "session.firebase.google.com"}
+_FIREBASE_CUSTOM_TOKEN_AUDIENCE = "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit"
 
 
 class ReleaseBuildError(RuntimeError):
@@ -92,14 +108,7 @@ def _is_firebase_asset(name: str) -> bool:
     return "firebase" in lowered or Path(lowered).name in _FIREBASE_ASSET_NAMES
 
 
-def _contains_firebase_signature(name: str, contents: bytes) -> bool:
-    if not name.startswith("m3_cli/") or ".dist-info/" in name:
-        return False
-    if (
-        Path(name).suffix.lower()
-        not in {".js", ".json", ".py"} | _MODULE_ASSET_EXTENSIONS
-    ):
-        return False
+def _contains_firebase_signature(contents: bytes) -> bool:
     lowered = contents.lower()
     return any(signature in lowered for signature in _FIREBASE_SIGNATURES)
 
@@ -112,23 +121,7 @@ def _is_supabase_asset(name: str) -> bool:
     )
 
 
-def _contains_supabase_signature(name: str, contents: bytes) -> bool:
-    if not name.startswith("m3_cli/") or ".dist-info/" in name:
-        return False
-    if (
-        Path(name).suffix.lower()
-        not in {
-            ".js",
-            ".json",
-            ".py",
-            ".html",
-            ".toml",
-            ".yaml",
-            ".yml",
-        }
-        | _MODULE_ASSET_EXTENSIONS
-    ):
-        return False
+def _contains_supabase_signature(contents: bytes) -> bool:
     lowered = contents.lower()
     return any(signature in lowered for signature in _SUPABASE_SIGNATURES)
 
@@ -212,7 +205,25 @@ def _supabase_jwt_claims(claims: object) -> bool:
     )
 
 
-def _contains_supabase_jwt(contents: bytes) -> bool:
+def _firebase_jwt_claims(claims: object) -> bool:
+    if not isinstance(claims, _JSONObjectPairs):
+        return False
+    for key, value in claims:
+        if key == "iss" and isinstance(value, str):
+            try:
+                issuer = urlsplit(value)
+            except ValueError:
+                continue
+            if issuer.hostname in _FIREBASE_TOKEN_HOSTS and issuer.path.strip("/"):
+                return True
+        elif key == "aud":
+            audiences = value if isinstance(value, list) else [value]
+            if _FIREBASE_CUSTOM_TOKEN_AUDIENCE in audiences:
+                return True
+    return False
+
+
+def _contains_provider_jwt(contents: bytes) -> bool:
     for match in _JWT_CANDIDATE_RE.finditer(contents):
         header_start, header_end = match.span(1)
         payload_start, payload_end = match.span(2)
@@ -247,20 +258,27 @@ def _contains_supabase_jwt(contents: bytes) -> bool:
             return True
         except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
             continue
-        if _supabase_jwt_claims(claims):
+        if _supabase_jwt_claims(claims) or _firebase_jwt_claims(claims):
             return True
     return False
 
 
-def _contains_supabase_credential(name: str, contents: bytes) -> bool:
+def _contains_provider_credential(name: str, contents: bytes) -> bool:
     name_bytes = name.encode("utf-8", errors="surrogatepass")
     lowered_name = name_bytes.lower()
     lowered_contents = contents.lower()
     return (
         any(prefix in lowered_name for prefix in _SUPABASE_KEY_PREFIXES)
         or any(prefix in lowered_contents for prefix in _SUPABASE_KEY_PREFIXES)
-        or _contains_supabase_jwt(name_bytes)
-        or _contains_supabase_jwt(contents)
+        or _GOOGLE_API_KEY_RE.search(name_bytes) is not None
+        or _GOOGLE_API_KEY_RE.search(contents) is not None
+        # Service-account JSON embeds a PEM key even when its filename and
+        # project/email fields do not mention Firebase. No private key belongs
+        # in a public release, so inspect the PEM marker rather than the suffix.
+        or _PRIVATE_KEY_RE.search(lowered_contents) is not None
+        or _PRIVATE_KEY_RE.search(lowered_name) is not None
+        or _contains_provider_jwt(name_bytes)
+        or _contains_provider_jwt(contents)
     )
 
 
@@ -550,27 +568,29 @@ def verify_release(
             raise ReleaseBuildError(
                 "CLI wheel contains source maps absent from the production UI"
             )
-        if any(_is_firebase_asset(name) for name in names):
-            raise ReleaseBuildError("CLI wheel contains Firebase auth assets")
-        if any(_is_supabase_asset(name) for name in names):
-            raise ReleaseBuildError("CLI wheel contains Supabase auth assets")
     for project_name in ("sf_m3", "sf_m3_app", "sf_m3_cli"):
         with zipfile.ZipFile(classified[project_name]) as archive:
             for entry in archive.infolist():
                 contents = archive.read(entry)
-                if _contains_supabase_credential(entry.filename, contents):
+                if _contains_provider_credential(entry.filename, contents):
                     raise ReleaseBuildError(
-                        "release wheel contains a Supabase credential"
+                        "release wheel contains a provider credential"
                     )
-                if project_name != "sf_m3_cli":
-                    continue
-                if _contains_firebase_signature(entry.filename, contents):
+                if _is_firebase_asset(entry.filename):
                     raise ReleaseBuildError(
-                        "CLI wheel contains Firebase auth code or config"
+                        "release wheel contains Firebase auth assets"
                     )
-                if _contains_supabase_signature(entry.filename, contents):
+                if _is_supabase_asset(entry.filename):
                     raise ReleaseBuildError(
-                        "CLI wheel contains Supabase auth code or config"
+                        "release wheel contains Supabase auth assets"
+                    )
+                if _contains_firebase_signature(contents):
+                    raise ReleaseBuildError(
+                        "release wheel contains Firebase auth code or config"
+                    )
+                if _contains_supabase_signature(contents):
+                    raise ReleaseBuildError(
+                        "release wheel contains Supabase auth code or config"
                     )
     return classified
 
