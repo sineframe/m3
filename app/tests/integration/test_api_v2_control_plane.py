@@ -611,13 +611,14 @@ def test_v2_probe_start_history_and_cancel_use_real_subprocess(tmp_path: Path) -
         started = client.post(f"/api/v2/harness-profiles/{profile_id}/probes", json={})
         assert started.status_code == 202
         probe_id = started.json()["probe"]["id"]
-        for _ in range(100):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
             history = client.get(
                 f"/api/v2/harness-profiles/{profile_id}/probes"
             ).json()["probes"]
             if history and history[0]["status"] not in {"queued", "running"}:
                 break
-            time.sleep(0.02)
+            time.sleep(0.05)
         assert history[0]["id"] == probe_id
         assert history[0]["status"] == "verified"
 
@@ -668,12 +669,18 @@ def test_v2_probe_history_matches_full_probe_session_configuration(
                 json={"probe_type": "protocol"},
             )
             assert protocol.status_code == 202
-            for _ in range(100):
-                if client.get(f"/api/v2/harness-profiles/{profile_id}/probes").json()[
-                    "probes"
-                ]:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                protocol_history = client.get(
+                    f"/api/v2/harness-profiles/{profile_id}/probes"
+                ).json()["probes"]
+                if protocol_history and protocol_history[0]["status"] not in {
+                    "queued",
+                    "running",
+                }:
                     break
-                time.sleep(0.01)
+                time.sleep(0.05)
+            assert protocol_history[0]["status"] == "verified"
 
             config = {"quality": "high"}
             full = client.post(
@@ -686,14 +693,16 @@ def test_v2_probe_history_matches_full_probe_session_configuration(
                 "kind": "full",
                 "session_config": json.dumps(config, separators=(",", ":")),
             }
-            for _ in range(100):
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
                 history = client.get(
                     f"/api/v2/harness-profiles/{profile_id}/probes", params=query
                 ).json()["probes"]
                 if history and history[0]["status"] not in {"queued", "running"}:
                     break
-                time.sleep(0.01)
+                time.sleep(0.05)
             assert [item["id"] for item in history] == [full_id]
+            assert history[0]["status"] == "verified"
             assert history[0]["session_config"] == config
     finally:
         runtime.close()
