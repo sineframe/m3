@@ -9,6 +9,16 @@ matching deployed control plane: create developer access, verify OS credential
 storage, and confirm that managing CI tokens leaves an existing developer
 credential untouched.
 
+Release verification scans every archive member in the SDK, application, and
+CLI wheels for Supabase key prefixes and recognizable provider/browser JWT
+credentials, regardless of filename or asset format. Signature verification
+and expiry are irrelevant to detecting a bundled credential. Recognizable
+JWTs whose JSON exceeds safe inspection limits fail closed. All three
+wheels reject direct Firebase/Supabase provider requirements, including extra-
+and platform-marked requirements, so SDK/application wheel requirements cannot
+silently add them to a CLI installation. This is a conservative artifact
+policy, not a resolver for arbitrary third-party dependencies from PyPI.
+
 The control plane persists hashed one-use CLI grants in Supabase Postgres,
 checks expiry and the PKCE challenge during exchange, and consumes the grant
 atomically with any developer-token issuance. Expired grants are rejected

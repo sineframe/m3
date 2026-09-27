@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
+import json
 import sys
 import zipfile
 from pathlib import Path
@@ -96,6 +98,7 @@ def _wheel(
     app_ui: bool = False,
     ui_content: str = "js",
     ui_assets: tuple[tuple[str, str], ...] = (),
+    archive_entries: tuple[tuple[str, bytes | str], ...] = (),
 ) -> Path:
     wheel = output / f"{filename_dist}-{version}-py3-none-any.whl"
     info = f"{filename_dist}-{version}.dist-info"
@@ -119,12 +122,15 @@ def _wheel(
                 archive.writestr(f"m3_cli/ui/assets/{name}", content)
         if app_ui:
             archive.writestr("m3_app/ui/__init__.py", "")
+        for name, content in archive_entries:
+            archive.writestr(name, content)
     return wheel
 
 
 def _synthetic_release(
     root: Path,
     *,
+    sdk_requires: tuple[str, ...] = (),
     cli_requires: tuple[str, ...] | None = None,
     cli_entry_point: str | None = "m3 = m3_cli.main:main",
     cli_ui: bool = True,
@@ -133,9 +139,20 @@ def _synthetic_release(
     app_ui: bool = False,
     cli_ui_content: str = "js",
     cli_ui_assets: tuple[tuple[str, str], ...] = (),
+    sdk_entries: tuple[tuple[str, bytes | str], ...] = (),
+    app_entries: tuple[tuple[str, bytes | str], ...] = (),
+    cli_entries: tuple[tuple[str, bytes | str], ...] = (),
 ) -> tuple[dict[str, str], Path]:
     version = "1.0"
-    _wheel(root, "sf_m3", "sf-m3", version)
+    _wheel(
+        root,
+        "sf_m3",
+        "sf-m3",
+        version,
+        requires=sdk_requires,
+        provides_extras=("storage",),
+        archive_entries=sdk_entries,
+    )
     _wheel(
         root,
         "sf_m3_app",
@@ -144,6 +161,7 @@ def _synthetic_release(
         requires=app_requires or (f"sf-m3[storage]=={version}",),
         provides_extras=app_provides_extras,
         app_ui=app_ui,
+        archive_entries=app_entries,
     )
     _wheel(
         root,
@@ -156,6 +174,7 @@ def _synthetic_release(
         ui=cli_ui,
         ui_content=cli_ui_content,
         ui_assets=cli_ui_assets,
+        archive_entries=cli_entries,
     )
     return {
         "sf_m3": version,
@@ -291,7 +310,9 @@ def test_verify_release_rejects_supabase_key_prefix_in_cli_ui(
         tmp_path,
         cli_ui_content=f'const key = "{key_prefix}SYNTHETIC_FIXTURE";',
     )
-    with pytest.raises(release.ReleaseBuildError, match="Supabase auth code or config"):
+    with pytest.raises(
+        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+    ):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
 
@@ -326,6 +347,255 @@ def test_verify_release_allows_provider_independent_module_assets(
         cli_ui_assets=((f"provider.{extension}", "export const ready = true;"),),
     )
     assert release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+def _synthetic_jwt(claims: dict[str, object]) -> bytes:
+    return _synthetic_jwt_parts({"alg": "HS256", "typ": "JWT"}, claims)
+
+
+def _synthetic_jwt_parts(header: object, claims: object) -> bytes:
+    return _synthetic_jwt_raw(
+        json.dumps(header, separators=(",", ":")).encode(),
+        json.dumps(claims, separators=(",", ":")).encode(),
+    )
+
+
+def _synthetic_jwt_raw(header: bytes, claims: bytes) -> bytes:
+    return (
+        base64.urlsafe_b64encode(header).rstrip(b"=")
+        + b"."
+        + base64.urlsafe_b64encode(claims).rstrip(b"=")
+        + b".synthetic-signature"
+    )
+
+
+@pytest.mark.parametrize(
+    ("wheel_name", "archive_name", "key_prefix"),
+    [
+        ("sf_m3_cli", "m3_cli/.env", "sb_secret_"),
+        ("sf_m3_cli", "m3_cli/ui/assets/app.js.map", "sb_publishable_"),
+        ("sf_m3", "arbitrary/root/credential.bin", "sb_secret_"),
+        ("sf_m3", "sf_m3-1.0.dist-info/NOTICE", "sb_publishable_"),
+        ("sf_m3_app", "arbitrary/root/settings.env", "sb_publishable_"),
+    ],
+)
+def test_verify_release_rejects_key_prefix_in_any_wheel_entry(
+    tmp_path: Path, wheel_name: str, archive_name: str, key_prefix: str
+) -> None:
+    entry = ((archive_name, f"credential={key_prefix}SYNTHETIC_FIXTURE"),)
+    kwargs = {
+        "sf_m3": {"sdk_entries": entry},
+        "sf_m3_app": {"app_entries": entry},
+        "sf_m3_cli": {"cli_entries": entry},
+    }[wheel_name]
+    expected, ui = _synthetic_release(tmp_path, **kwargs)
+    if archive_name.endswith(".map"):
+        # A source map exists in the supplied production source, so the failure
+        # must come from credential detection rather than source-map validation.
+        (ui / "assets" / "app.js.map").write_text("{}", encoding="utf-8")
+    with pytest.raises(
+        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+    ) as exc:
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+    assert key_prefix not in str(exc.value)
+
+
+def test_verify_release_rejects_key_prefix_in_archive_filename(tmp_path: Path) -> None:
+    expected, ui = _synthetic_release(
+        tmp_path,
+        sdk_entries=(("arbitrary/sb_secret_SYNTHETIC_FIXTURE.bin", b"benign"),),
+    )
+    with pytest.raises(
+        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+    ):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+@pytest.mark.parametrize(
+    ("claims", "wheel_name"),
+    [
+        (
+            {"iss": "supabase", "ref": "synthetic-project", "role": "service_role"},
+            "sf_m3_cli",
+        ),
+        ({"iss": "supabase", "ref": "synthetic-project", "role": "anon"}, "sf_m3_app"),
+        ({"iss": "https://auth.example.test/auth/v1"}, "sf_m3"),
+        ({"role": "service_role"}, "sf_m3_app"),
+        ({"role": "anon", "ref": "synthetic-project"}, "sf_m3_cli"),
+        (
+            {
+                "iss": "https://auth.example.test/auth/v1",
+                "role": "authenticated",
+                "aud": "authenticated",
+                "session_id": "synthetic-session",
+            },
+            "sf_m3",
+        ),
+    ],
+    ids=[
+        "legacy-service-role",
+        "legacy-anon",
+        "issuer-only",
+        "service-role-only",
+        "anon-role-and-ref",
+        "browser-access-token",
+    ],
+)
+def test_verify_release_rejects_supabase_jwt_credentials_in_any_wheel(
+    tmp_path: Path, claims: dict[str, object], wheel_name: str
+) -> None:
+    token = _synthetic_jwt(claims)
+    entries = (("arbitrary/root/credential.bin", token),)
+    kwargs = {
+        "sf_m3": {"sdk_entries": entries},
+        "sf_m3_app": {"app_entries": entries},
+        "sf_m3_cli": {"cli_ui_content": "const auth = " + repr(token.decode()) + ";"},
+    }[wheel_name]
+    expected, ui = _synthetic_release(tmp_path, **kwargs)
+    with pytest.raises(
+        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+    ) as exc:
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+    assert token.decode() not in str(exc.value)
+
+
+@pytest.mark.parametrize("wheel_name", ["sf_m3", "sf_m3_app", "sf_m3_cli"])
+def test_verify_release_scans_arbitrary_binary_entries_in_all_wheels(
+    tmp_path: Path, wheel_name: str
+) -> None:
+    token = _synthetic_jwt(
+        {
+            "iss": "supabase",
+            "ref": "synthetic-project",
+            "role": "service_role",
+        }
+    )
+    entries = (("arbitrary/root/opaque.bin", b"\x00binary-prefix\xff" + token),)
+    kwargs = (
+        {"sdk_entries": entries}
+        if wheel_name == "sf_m3"
+        else (
+            {"app_entries": entries}
+            if wheel_name == "sf_m3_app"
+            else {"cli_entries": entries}
+        )
+    )
+    expected, ui = _synthetic_release(tmp_path, **kwargs)
+    with pytest.raises(
+        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+    ):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+def test_verify_release_allows_unrelated_or_malformed_jwts_and_benign_binary(
+    tmp_path: Path,
+) -> None:
+    unrelated = _synthetic_jwt(
+        {"iss": "https://issuer.example.test", "sub": "synthetic", "role": "user"}
+    )
+    unrelated_ref = _synthetic_jwt(
+        {
+            "iss": "https://issuer.example.test",
+            "sub": "synthetic",
+            "ref": "not-a-project",
+        }
+    )
+    malformed = b"eyJhbGciOiJIUzI1NiJ9.not-json.synthetic-signature"
+    entries = (
+        ("arbitrary/dotted.txt", b"ordinary.dotted.string"),
+        ("arbitrary/malformed.bin", malformed),
+        ("arbitrary/benign.bin", b"\x00\xffbinary-data." + unrelated),
+        ("arbitrary/unrelated-ref.bin", unrelated_ref),
+    )
+    expected, ui = _synthetic_release(tmp_path, cli_entries=entries)
+    assert release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+def test_verify_release_detects_whitespace_jwt_header_and_new_algorithm(
+    tmp_path: Path,
+) -> None:
+    token = _synthetic_jwt_raw(
+        b'{ "ALG" : "UNLISTED-ALGORITHM", "typ": "custom" }',
+        b'{"role":"service_role","exp":1}',
+    )
+    expected, ui = _synthetic_release(
+        tmp_path,
+        cli_entries=(("arbitrary/token.bin", token),),
+    )
+    with pytest.raises(
+        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+    ):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+@pytest.mark.parametrize("location", ["filename", "contents"])
+def test_verify_release_detects_duplicate_jwt_claims(
+    tmp_path: Path, location: str
+) -> None:
+    token = _synthetic_jwt_raw(
+        b'{"alg":"HS256"}', b'{"role":"service_role","role":"user"}'
+    )
+    entry = (
+        (f"arbitrary/{token.decode()}.bin", b"benign")
+        if location == "filename"
+        else ("arbitrary/token.bin", token)
+    )
+    expected, ui = _synthetic_release(tmp_path, app_entries=(entry,))
+    with pytest.raises(
+        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+    ) as exc:
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+    assert token.decode() not in str(exc.value)
+
+
+def test_verify_release_scans_duplicate_archive_members(tmp_path: Path) -> None:
+    expected, ui = _synthetic_release(tmp_path)
+    cli = tmp_path / "sf_m3_cli-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(cli, "a") as archive:
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            archive.writestr(
+                "arbitrary/duplicate.bin", b"sb_secret_DUPLICATE_SYNTHETIC"
+            )
+            archive.writestr("arbitrary/duplicate.bin", b"benign duplicate entry")
+    with pytest.raises(
+        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+    ):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+@pytest.mark.parametrize("kind", ["oversized", "oversized-header", "deeply-nested"])
+def test_verify_release_fails_closed_for_uninspectable_jwt_claims(
+    tmp_path: Path, kind: str
+) -> None:
+    if kind == "oversized":
+        token = _synthetic_jwt_parts(
+            {"alg": "new-alg"},
+            {"padding": "x" * release._MAX_JWT_JSON_BYTES},
+        )
+    elif kind == "oversized-header":
+        token = _synthetic_jwt_parts(
+            {"padding": "x" * release._MAX_JWT_HEADER_BYTES, "alg": "custom"},
+            {"role": "service_role"},
+        )
+    else:
+        # pytest can raise the interpreter's recursion limit. Construct raw
+        # JSON above the actual limit without recursing in the test itself.
+        depth = sys.getrecursionlimit() + 50
+        token = _synthetic_jwt_raw(
+            b'{"alg":"new-alg"}',
+            b'{"padding":'
+            + b"[" * depth
+            + b"0"
+            + b"]" * depth
+            + b',"role":"service_role"}',
+        )
+    expected, ui = _synthetic_release(
+        tmp_path, sdk_entries=(("arbitrary/token.bin", token),)
+    )
+    with pytest.raises(
+        release.ReleaseBuildError, match="release wheel contains a Supabase credential"
+    ):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
 
 @pytest.mark.parametrize("dependency", ["supabase>=2", "supabase-auth>=2", "gotrue>=2"])

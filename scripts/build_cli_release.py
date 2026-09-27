@@ -8,7 +8,10 @@ never modified and no generated UI files are committed.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import email
+import json
 import os
 import re
 import shutil
@@ -18,6 +21,7 @@ import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECTS = {
@@ -71,6 +75,12 @@ _SUPABASE_SIGNATURES = (
     b"sb_secret_",
 )
 _SUPABASE_PACKAGES = {"supabase", "gotrue", "postgrest", "realtime", "storage3"}
+_SUPABASE_KEY_PREFIXES = (b"sb_secret_", b"sb_publishable_")
+_JWT_CANDIDATE_RE = re.compile(
+    rb"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)(?![A-Za-z0-9_-])"
+)
+_MAX_JWT_HEADER_BYTES = 4 * 1024
+_MAX_JWT_JSON_BYTES = 32 * 1024
 
 
 class ReleaseBuildError(RuntimeError):
@@ -121,6 +131,137 @@ def _contains_supabase_signature(name: str, contents: bytes) -> bool:
         return False
     lowered = contents.lower()
     return any(signature in lowered for signature in _SUPABASE_SIGNATURES)
+
+
+class _JSONObjectPairs(list[tuple[str, object]]):
+    """Preserve duplicate JWT claims so a later benign duplicate cannot hide one."""
+
+
+def _decode_base64url(value: bytes) -> bytes:
+    if len(value) % 4 == 1:
+        raise binascii.Error("invalid base64url length")
+    return base64.b64decode(
+        value + b"=" * (-len(value) % 4), altchars=b"-_", validate=True
+    )
+
+
+def _jwt_header_is_meaningful(encoded: bytes) -> bool:
+    if len(encoded) > _MAX_JWT_HEADER_BYTES:
+        return False
+    try:
+        header = json.loads(
+            _decode_base64url(encoded).decode("utf-8"),
+            object_pairs_hook=_JSONObjectPairs,
+        )
+    except (
+        binascii.Error,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ):
+        return False
+    if not isinstance(header, _JSONObjectPairs):
+        return False
+    algorithms = [
+        value
+        for key, value in header
+        if isinstance(key, str)
+        and key.casefold() == "alg"
+        and isinstance(value, str)
+        and value
+    ]
+    return bool(algorithms)
+
+
+def _supabase_auth_issuer(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    if value.casefold() == "supabase":
+        return True
+    try:
+        return urlsplit(value).path.rstrip("/").endswith("/auth/v1")
+    except ValueError:
+        return False
+
+
+def _supabase_jwt_claims(claims: object) -> bool:
+    if not isinstance(claims, _JSONObjectPairs):
+        return False
+    roles: set[str] = set()
+    issuers: list[object] = []
+    has_project_ref = False
+    for key, value in claims:
+        if not isinstance(key, str):
+            continue
+        normalized_key = key.casefold()
+        if normalized_key == "role" and isinstance(value, str):
+            roles.add(value.casefold())
+        elif normalized_key == "iss":
+            issuers.append(value)
+        elif normalized_key == "ref" and isinstance(value, str) and value:
+            has_project_ref = True
+    if any(_supabase_auth_issuer(issuer) for issuer in issuers):
+        return True
+    # Supabase service/browser roles identify credentials without an issuer;
+    # legacy anon keys use the project ref. Unrelated tokens may carry a `ref`.
+    return (
+        "service_role" in roles
+        or "authenticated" in roles
+        or ("anon" in roles and has_project_ref)
+    )
+
+
+def _contains_supabase_jwt(contents: bytes) -> bool:
+    for match in _JWT_CANDIDATE_RE.finditer(contents):
+        header_start, header_end = match.span(1)
+        payload_start, payload_end = match.span(2)
+        header_size = header_end - header_start
+        payload_size = payload_end - payload_start
+        if header_size > _MAX_JWT_HEADER_BYTES:
+            # Avoid rejecting arbitrary dotted strings: fail closed only when a
+            # bounded prefix is recognizable as a JSON JWT header.
+            prefix_size = (_MAX_JWT_HEADER_BYTES // 4) * 4
+            try:
+                prefix = _decode_base64url(
+                    contents[header_start : header_start + prefix_size]
+                )
+            except binascii.Error:
+                continue
+            if prefix.lstrip().startswith(b"{"):
+                return True
+            continue
+        if not _jwt_header_is_meaningful(contents[header_start:header_end]):
+            continue
+        if payload_size > _MAX_JWT_JSON_BYTES:
+            # Claims cannot be safely inspected under the JSON size bound.
+            return True
+        try:
+            claims = json.loads(
+                _decode_base64url(contents[payload_start:payload_end]).decode("utf-8"),
+                object_pairs_hook=_JSONObjectPairs,
+            )
+        except RecursionError:
+            # A recognized JWT with deeply nested claims cannot be inspected
+            # safely, so fail closed without exposing the payload.
+            return True
+        except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            continue
+        if _supabase_jwt_claims(claims):
+            return True
+    return False
+
+
+def _contains_supabase_credential(name: str, contents: bytes) -> bool:
+    name_bytes = name.encode("utf-8", errors="surrogatepass")
+    lowered_name = name_bytes.lower()
+    lowered_contents = contents.lower()
+    return (
+        any(prefix in lowered_name for prefix in _SUPABASE_KEY_PREFIXES)
+        or any(prefix in lowered_contents for prefix in _SUPABASE_KEY_PREFIXES)
+        or _contains_supabase_jwt(name_bytes)
+        or _contains_supabase_jwt(contents)
+    )
 
 
 @dataclass(frozen=True)
@@ -322,6 +463,14 @@ def _verify_wheel(
         raise ReleaseBuildError(
             f"wheel metadata does not match {expected_name} {expected_version}: {metadata.path.name}"
         )
+    requirement_names = {_requirement_name(value) for value in metadata.requires}
+    if requirement_names.intersection({"firebase", "firebase-admin"}):
+        raise ReleaseBuildError(f"{expected_name} wheel has a Firebase dependency")
+    if any(
+        name.startswith("supabase") or name in _SUPABASE_PACKAGES
+        for name in requirement_names
+    ):
+        raise ReleaseBuildError(f"{expected_name} wheel has a Supabase dependency")
     forbidden_requires = {"streamlit", "requests"}
     if expected_name == "sf_m3_app":
         forbidden = forbidden_requires.intersection(
@@ -347,17 +496,6 @@ def _verify_wheel(
                 f"{expected_name} wheel has forbidden mandatory dependency"
             )
     if expected_name == "sf_m3_cli":
-        if any(
-            _requirement_name(value) in {"firebase", "firebase-admin"}
-            for value in metadata.requires
-        ):
-            raise ReleaseBuildError("CLI wheel has a Firebase dependency")
-        if any(
-            _requirement_name(value).startswith("supabase")
-            or _requirement_name(value) in _SUPABASE_PACKAGES
-            for value in metadata.requires
-        ):
-            raise ReleaseBuildError("CLI wheel has a Supabase dependency")
         normalized_requires = {
             re.sub(r"\s+", "", value).lower() for value in metadata.requires
         }
@@ -416,15 +554,24 @@ def verify_release(
             raise ReleaseBuildError("CLI wheel contains Firebase auth assets")
         if any(_is_supabase_asset(name) for name in names):
             raise ReleaseBuildError("CLI wheel contains Supabase auth assets")
-        for name in names:
-            if _contains_firebase_signature(name, archive.read(name)):
-                raise ReleaseBuildError(
-                    "CLI wheel contains Firebase auth code or config"
-                )
-            if _contains_supabase_signature(name, archive.read(name)):
-                raise ReleaseBuildError(
-                    "CLI wheel contains Supabase auth code or config"
-                )
+    for project_name in ("sf_m3", "sf_m3_app", "sf_m3_cli"):
+        with zipfile.ZipFile(classified[project_name]) as archive:
+            for entry in archive.infolist():
+                contents = archive.read(entry)
+                if _contains_supabase_credential(entry.filename, contents):
+                    raise ReleaseBuildError(
+                        "release wheel contains a Supabase credential"
+                    )
+                if project_name != "sf_m3_cli":
+                    continue
+                if _contains_firebase_signature(entry.filename, contents):
+                    raise ReleaseBuildError(
+                        "CLI wheel contains Firebase auth code or config"
+                    )
+                if _contains_supabase_signature(entry.filename, contents):
+                    raise ReleaseBuildError(
+                        "CLI wheel contains Supabase auth code or config"
+                    )
     return classified
 
 
