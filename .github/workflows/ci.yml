@@ -478,6 +478,7 @@ jobs:
         run: |
           npm ci
           npm run build
+          npm run build:cli
           npx playwright install --with-deps chromium
 
       - name: Build the three production wheels
@@ -489,7 +490,7 @@ jobs:
           mkdir -p "$release_dir"
           version=$(python scripts/build_cli_release.py --print-version)
           python scripts/build_cli_release.py \
-            --ui-dist .release-ui/dist \
+            --ui-dist .release-ui/dist-cli \
             --out-dir "$release_dir" \
             --expected-version "$version"
           python scripts/render_cli_installers.py --version "$version" --output-dir "$release_dir"
