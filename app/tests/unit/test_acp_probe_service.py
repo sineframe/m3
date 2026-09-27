@@ -679,7 +679,10 @@ def test_readiness_requires_verified_protocol_for_full_verification(
 
 
 def test_cancelled_run_is_persisted_and_reraised(tmp_path: Path) -> None:
+    started = asyncio.Event()
+
     async def hanging(_request: ACPProbeRequest) -> dict[str, JsonValue]:
+        started.set()
         await asyncio.sleep(10)
         return {"status": "verified"}
 
@@ -690,7 +693,7 @@ def test_cancelled_run_is_persisted_and_reraised(tmp_path: Path) -> None:
 
     async def check() -> None:
         task = asyncio.create_task(service.run(request))
-        await asyncio.sleep(0.02)
+        await asyncio.wait_for(started.wait(), timeout=5)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
