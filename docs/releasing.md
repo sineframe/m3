@@ -1,26 +1,47 @@
 # Releasing M3
 
-CLI releases must contain no Firebase SDK, Firebase Web config, Firebase Admin
-credentials, service-account keys, or M3 access tokens. The control plane owns
-the temporary browser sign-in page and identity-provider configuration. Before
-publishing a CLI release, run a local browser sign-in smoke test against the
+CLI releases must contain no Firebase or Supabase SDKs, provider configuration,
+project URLs or keys, browser ID/access/refresh tokens, or service credentials.
+M3 personal access tokens are the only credentials used for API uploads. The
+control plane owns the temporary browser sign-in page and Auth configuration.
+Before publishing a CLI release, run a browser sign-in smoke test against the
 matching deployed control plane: create developer access, verify OS credential
-storage, and confirm that signing in only to rotate a CI token leaves an
-existing developer credential untouched.
+storage, and confirm that managing CI tokens leaves an existing developer
+credential untouched.
 
-Before enabling the control-plane CLI login routes in production, configure
-Firestore TTL for collection group `cli_login_grants` on timestamp field
-`expires_at` and confirm the policy is active. The server rejects expired
-grants immediately; TTL only removes abandoned records. Consumed grants are
-deleted during the exchange transaction. TTL deletions are billable Firestore
-operations, so include them in the deployment cost review.
-CLI routes are disabled until `CLI_AUTH_ENABLED=true` and a shared
-`CLI_GRANT_SIGNING_SECRET` are configured on every control-plane instance.
-The secret must be a canonical base64url encoding of at least 32 random bytes.
-Invalid grant signatures are rejected before Firestore access; monitor exchange
-traffic and add an upstream abuse control if the route is attacked. Review the
-Firebase browser key's API restrictions and Auth quotas in the deployed Google
-Cloud project; this branch cannot verify those live settings.
+Release verification scans every archive member in the SDK, application, and
+CLI wheels for Firebase/Supabase code and configuration markers, Google/Firebase
+API keys, Supabase key prefixes, PEM private keys (including service-account
+JSON), and recognizable provider/browser JWT credentials. No wheel, directory,
+filename extension, or metadata member is exempt. Signature verification
+and expiry are irrelevant to detecting a bundled credential. Recognizable
+JWTs whose JSON exceeds safe inspection limits fail closed. All three
+wheels reject direct Firebase/Supabase provider requirements, including extra-
+and platform-marked requirements, so SDK/application wheel requirements cannot
+silently add them to a CLI installation. This is a conservative artifact
+policy, not a resolver for arbitrary third-party dependencies from PyPI.
+
+Firebase JWT detection uses the documented
+[ID-token issuer](https://firebase.google.com/docs/auth/admin/verify-id-tokens),
+[session-cookie issuer](https://firebase.google.com/docs/auth/admin/manage-cookies),
+and [custom-token audience](https://firebase.google.com/docs/auth/admin/create-custom-tokens).
+Service-account JSON embeds a sensitive private key; PEM private keys are
+rejected even without Firebase-specific filenames or project metadata. Public
+keys and unrelated JWTs are allowed. These static signatures do not guarantee
+detection of obfuscated or opaque credentials; never bundle live credentials.
+
+The control plane persists hashed one-use CLI grants in Supabase Postgres,
+checks expiry and the PKCE challenge during exchange, and consumes the grant
+atomically with any developer-token issuance. Expired grants are rejected
+immediately; database cleanup is separate from authorization. Before
+production CLI login, configure `CLI_AUTH_ENABLED=true` and a
+`CLI_GRANT_SIGNING_SECRET` containing at least 32 random bytes encoded as
+canonical base64url. Keep the same secret server-side on every control-plane
+instance; never put it in M3, browser assets, or source control. See the
+[control-plane deployment instructions](https://github.com/sineframe/control-plane/blob/main/README.md#persistence-and-deployment)
+for production configuration. Review the hosted Auth redirect allowlist,
+asymmetric signing-key configuration, and email confirmation/recovery flows
+before enabling CLI login in production.
 
 M3 publishes version matched `sf-m3`, `sf-m3-app`, and `sf-m3-cli` wheels to PyPI. The `m3` Python import and `m3` command remain stable public interfaces. The tag controls whether a GitHub Release is final or a prerelease: `v0.2.0` is final and `v0.3.0a1` is an alpha.
 

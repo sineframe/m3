@@ -279,6 +279,30 @@ def test_login_keeps_available_without_secure_store_and_disables_token_creation(
     assert auth.load_saved_token("https://control-plane.example") is None
 
 
+def test_login_cancel_callback_does_not_exchange_or_replace_saved_token(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    keyring: MemoryKeyring,
+) -> None:
+    base = "https://control-plane.example"
+    auth._save_token(base, "m3pat_previous", {"token_id": "previous-id"})
+    login_url, calls, result, thread = _start_login(monkeypatch, {"created": False})
+    query, redirect_uri = _callback_url(login_url)
+    target = (
+        redirect_uri
+        + "?"
+        + parse.urlencode({"state": query["state"][0], "error": "access_denied"})
+    )
+    with request.urlopen(target, timeout=3) as response:
+        assert response.status == 200
+    thread.join(timeout=3)
+    assert not thread.is_alive()
+    assert result == [0]
+    assert calls == []
+    assert auth.load_saved_token(base) == "m3pat_previous"
+    assert "sign-in cancelled" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     "exchange_result",
     [
@@ -302,8 +326,17 @@ def test_login_rejects_inconsistent_or_invalid_token_results(
     assert auth.load_saved_token(base) == "m3pat_previous"
 
 
-def test_exchange_rejects_noncanonical_personal_access_token(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "m3pat_invalid",
+        "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyIn0.signature",
+        "supabase-refresh-token-that-is-not-an-m3-pat",
+    ],
+    ids=["invalid-m3pat", "supabase-jwt", "supabase-refresh-token"],
+)
+def test_exchange_rejects_noncanonical_credentials(
+    monkeypatch: pytest.MonkeyPatch, credential: str
 ) -> None:
     class Response:
         status = 200
@@ -315,7 +348,7 @@ def test_exchange_rejects_noncanonical_personal_access_token(
             return None
 
         def read(self, _size: int) -> bytes:
-            return json.dumps({"created": True, "token": "m3pat_invalid"}).encode()
+            return json.dumps({"created": True, "token": credential}).encode()
 
     class Opener:
         def open(self, req, *, timeout: int):

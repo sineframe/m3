@@ -5,11 +5,11 @@ report upload. It was performed against the implementation in this branch.
 
 | Boundary | Finding | Resolution and verification |
 | --- | --- | --- |
-| Browser sign-in | Provider-specific code and ID tokens would couple the CLI to Firebase. | Serve the temporary page from the control plane's HTTPS origin. The browser uses the existing session, organization, and token APIs; the CLI contains no Firebase code or config. Browser session cookies and CSRF values never enter the CLI. |
+| Browser sign-in | Provider-specific credentials or SDKs in the CLI would couple it to one identity provider and expose tokens to a second client. | Serve the temporary page from the control plane's HTTPS origin. The page uses the Supabase browser SDK and existing M3 organization/token APIs. The CLI contains no Supabase or Firebase SDK, project URL/key, browser session, ID token, or refresh token. |
 | Browser to CLI callback | A redirect can be intercepted or forged locally. | Bind only `127.0.0.1` on an ephemeral port, validate callback path and random state, accept only a short-lived one-time code, and bind its HTTPS exchange with PKCE S256. No PAT appears in the URL. |
 | Code redemption | Concurrent or replayed exchanges could mint extra PATs. | Persist grants with expiry and atomically consume a grant with any optional developer-token issuance; reject a second exchange. Signing in to manage CI tokens need not mint a developer token. |
-| Public exchange endpoint | Random, well-formed codes could otherwise trigger billable Firestore reads. | CLI grants now contain a truncated HMAC; the control plane verifies it before a database lookup. CLI routes are off by default and require a shared signing secret when enabled. A stolen valid code can still trigger reads until it expires, so monitor exchange traffic and use an upstream abuse control if needed. |
-| Abandoned grants | The browser or CLI may close after authorization but before code exchange, leaving a grant record. | Configure Firestore TTL on `cli_login_grants.expires_at`; also check expiry on every exchange because TTL deletion is not immediate. |
+| Public exchange endpoint | Random, well-formed codes could otherwise trigger billable database reads; replay or forged codes could create PATs. | Verify the truncated HMAC before database lookup; CLI routes require the existing shared signing secret. Store only a hash of a random one-use code in Supabase Postgres, bind it to the exact redirect URI and PKCE challenge, check expiry and the current Auth session, and consume it in the same transaction as optional PAT issuance. |
+| Abandoned grants | The browser or CLI may close after authorization but before code exchange, leaving an unused grant. | Check expiry on every exchange. Expired grants are invalid regardless of when database cleanup removes them. |
 | Token issuance | CI tokens are visible once in the browser for copying into the CI provider; developer PATs are not. | Keep CI token creation explicit and return developer PATs only to the CLI over the HTTPS exchange. Token names distinguish use, but the current control plane does not enforce different privileges for developer and CI PATs. |
 | Developer credential storage | A positive keyring priority alone does not prove secure OS storage. | Accept only supported OS credential backends; refuse developer-token issuance when secure storage is unavailable. Keep only token metadata in an owner-only local file. |
 | CI secret scope | Test code can access inherited environment and same-user resources. | Remove `M3_ACCESS_TOKEN` from the pytest environment and reject mappings into harness/judge credentials. Keep the CI job restricted to trusted code. This is a reduction in accidental exposure, not a sandbox. |
@@ -27,23 +27,28 @@ again at publication. Unknown or transformed secrets still require care from
 the test author.
 
 Control-plane already checks PAT hashes, expiry, revocation, current membership
-grant, and account state on each upload. Its browser sessions require verified
-email, recent authentication, and CSRF protection. The browser page uses the
-control-plane origin, so production CORS need not allow localhost.
+grant, and account state on each upload. Browser API calls use bearer access
+tokens; the server verifies the current account and session state. Recent
+password authentication is required for CLI authorization grants and
+destructive actions. The browser page uses the control-plane origin, so
+production CORS need not allow localhost.
 
-The CLI sign-in page clears an existing browser session and requires fresh
-authentication to issue a 10-minute session token. Selecting Done or Cancel
-clears that session; closing the tab does not sign out immediately, so the
-cookie may remain usable until the token expires.
+The CLI sign-in page requires password authentication within five minutes
+before issuing a short-lived authorization grant. Selecting Done or Cancel ends the token
+management flow but does not sign out the browser. Browser sign-out is a
+separate action and does not delete the PAT saved in the CLI's OS credential
+store; `m3 auth logout` removes only that local copy.
 
-Release validation must confirm that no Firebase code or Web config is packaged
-into the CLI. The control-plane page still uses a public Firebase Web key;
-restrict it to required Firebase APIs and review Auth quotas. Those live Google
-Cloud settings were not accessible in this workspace and remain unverified. Production login
-and grant-exchange smoke tests require an authorized test account. Do not
-authorize `localhost` in production Firebase merely for email/password sign-in.
-The control-plane CI job runs the emulator-backed grant tests, while a local
-run without the emulators does not validate those paths. The browser bundle is
-checked against a reproducible build in control-plane CI. Neither check
-replaces a production smoke test or verification of Firestore TTL, Firebase
-key restrictions, and Auth quotas.
+Release validation scans every archive member in all three release wheels for
+Firebase/Supabase code and configuration markers, Google/Firebase API keys,
+Supabase key prefixes, PEM private keys (including service-account JSON), and
+recognizable Firebase/Supabase JWT claims. No wheel, directory, filename
+extension, or metadata member is exempt. Each wheel's dependency list
+rejects Firebase/Supabase requirements, including extra- and platform-marked
+requirements, to cover the CLI's SDK/application dependency chain. These are
+static artifact checks, not arbitrary third-party dependency resolution or a
+guarantee against obfuscated secrets. Production login and grant-exchange
+smoke tests require an authorized test account. The local
+SQL integration tests validate grant redemption and token persistence against
+the Supabase schema; they do not replace a production smoke test or review of
+hosted Auth redirect settings and email delivery.
