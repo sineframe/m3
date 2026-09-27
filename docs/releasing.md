@@ -12,9 +12,15 @@ credential untouched.
 The control plane persists hashed one-use CLI grants in Supabase Postgres,
 checks expiry and the PKCE challenge during exchange, and consumes the grant
 atomically with any developer-token issuance. Expired grants are rejected
-immediately; database cleanup is separate from authorization. Review the
-hosted Auth redirect allowlist, asymmetric signing-key configuration, and
-email confirmation/recovery flows before enabling CLI login in production.
+immediately; database cleanup is separate from authorization. Before
+production CLI login, configure `CLI_AUTH_ENABLED=true` and a
+`CLI_GRANT_SIGNING_SECRET` containing at least 32 random bytes encoded as
+canonical base64url. Keep the same secret server-side on every control-plane
+instance; never put it in M3, browser assets, or source control. See the
+[control-plane deployment instructions](https://github.com/sineframe/control-plane/blob/main/README.md#persistence-and-deployment)
+for production configuration. Review the hosted Auth redirect allowlist,
+asymmetric signing-key configuration, and email confirmation/recovery flows
+before enabling CLI login in production.
 
 M3 publishes version matched `sf-m3`, `sf-m3-app`, and `sf-m3-cli` wheels to PyPI. The `m3` Python import and `m3` command remain stable public interfaces. The tag controls whether a GitHub Release is final or a prerelease: `v0.2.0` is final and `v0.3.0a1` is an alpha.
 

@@ -47,6 +47,7 @@ _FIREBASE_SIGNATURES = (
     b"authdomain",
     b"firebaseapp.com",
 )
+_MODULE_ASSET_EXTENSIONS = {".cjs", ".mjs"}
 _SUPABASE_SIGNATURES = (
     b"@supabase",
     b"@supabase/supabase-js",
@@ -66,6 +67,8 @@ _SUPABASE_SIGNATURES = (
     b"supabase_publishable_key",
     b"supabase_secret_key",
     b"supabase_service_role_key",
+    b"sb_publishable_",
+    b"sb_secret_",
 )
 _SUPABASE_PACKAGES = {"supabase", "gotrue", "postgrest", "realtime", "storage3"}
 
@@ -82,7 +85,10 @@ def _is_firebase_asset(name: str) -> bool:
 def _contains_firebase_signature(name: str, contents: bytes) -> bool:
     if not name.startswith("m3_cli/") or ".dist-info/" in name:
         return False
-    if Path(name).suffix.lower() not in {".js", ".json", ".py"}:
+    if (
+        Path(name).suffix.lower()
+        not in {".js", ".json", ".py"} | _MODULE_ASSET_EXTENSIONS
+    ):
         return False
     lowered = contents.lower()
     return any(signature in lowered for signature in _FIREBASE_SIGNATURES)
@@ -99,15 +105,19 @@ def _is_supabase_asset(name: str) -> bool:
 def _contains_supabase_signature(name: str, contents: bytes) -> bool:
     if not name.startswith("m3_cli/") or ".dist-info/" in name:
         return False
-    if Path(name).suffix.lower() not in {
-        ".js",
-        ".json",
-        ".py",
-        ".html",
-        ".toml",
-        ".yaml",
-        ".yml",
-    }:
+    if (
+        Path(name).suffix.lower()
+        not in {
+            ".js",
+            ".json",
+            ".py",
+            ".html",
+            ".toml",
+            ".yaml",
+            ".yml",
+        }
+        | _MODULE_ASSET_EXTENSIONS
+    ):
         return False
     lowered = contents.lower()
     return any(signature in lowered for signature in _SUPABASE_SIGNATURES)

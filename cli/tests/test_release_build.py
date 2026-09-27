@@ -95,6 +95,7 @@ def _wheel(
     ui: bool = False,
     app_ui: bool = False,
     ui_content: str = "js",
+    ui_assets: tuple[tuple[str, str], ...] = (),
 ) -> Path:
     wheel = output / f"{filename_dist}-{version}-py3-none-any.whl"
     info = f"{filename_dist}-{version}.dist-info"
@@ -114,6 +115,8 @@ def _wheel(
         if ui:
             archive.writestr("m3_cli/ui/index.html", "html")
             archive.writestr("m3_cli/ui/assets/app.js", ui_content)
+            for name, content in ui_assets:
+                archive.writestr(f"m3_cli/ui/assets/{name}", content)
         if app_ui:
             archive.writestr("m3_app/ui/__init__.py", "")
     return wheel
@@ -129,6 +132,7 @@ def _synthetic_release(
     app_provides_extras: tuple[str, ...] = (),
     app_ui: bool = False,
     cli_ui_content: str = "js",
+    cli_ui_assets: tuple[tuple[str, str], ...] = (),
 ) -> tuple[dict[str, str], Path]:
     version = "1.0"
     _wheel(root, "sf_m3", "sf-m3", version)
@@ -151,6 +155,7 @@ def _synthetic_release(
         entry_point=cli_entry_point,
         ui=cli_ui,
         ui_content=cli_ui_content,
+        ui_assets=cli_ui_assets,
     )
     return {
         "sf_m3": version,
@@ -276,6 +281,51 @@ def test_verify_release_rejects_supabase_import_in_cli_ui(tmp_path: Path) -> Non
     )
     with pytest.raises(release.ReleaseBuildError, match="Supabase auth code or config"):
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+@pytest.mark.parametrize("key_prefix", ["sb_secret_", "sb_publishable_"])
+def test_verify_release_rejects_supabase_key_prefix_in_cli_ui(
+    tmp_path: Path, key_prefix: str
+) -> None:
+    expected, ui = _synthetic_release(
+        tmp_path,
+        cli_ui_content=f'const key = "{key_prefix}SYNTHETIC_FIXTURE";',
+    )
+    with pytest.raises(release.ReleaseBuildError, match="Supabase auth code or config"):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+@pytest.mark.parametrize("extension", ["mjs", "cjs"])
+@pytest.mark.parametrize(
+    ("provider_code", "message"),
+    [
+        ('import { getAuth } from "firebase/auth";', "Firebase auth code or config"),
+        (
+            'import { createClient } from "@supabase/supabase-js";',
+            "Supabase auth code or config",
+        ),
+    ],
+)
+def test_verify_release_rejects_provider_code_in_module_assets(
+    tmp_path: Path, extension: str, provider_code: str, message: str
+) -> None:
+    expected, ui = _synthetic_release(
+        tmp_path,
+        cli_ui_assets=((f"provider.{extension}", provider_code),),
+    )
+    with pytest.raises(release.ReleaseBuildError, match=message):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+@pytest.mark.parametrize("extension", ["mjs", "cjs"])
+def test_verify_release_allows_provider_independent_module_assets(
+    tmp_path: Path, extension: str
+) -> None:
+    expected, ui = _synthetic_release(
+        tmp_path,
+        cli_ui_assets=((f"provider.{extension}", "export const ready = true;"),),
+    )
+    assert release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
 
 @pytest.mark.parametrize("dependency", ["supabase>=2", "supabase-auth>=2", "gotrue>=2"])
