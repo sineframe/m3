@@ -36,9 +36,14 @@ names to their consumers. M3 does not use a harness key as a judge fallback.
 
 ## Sign in and manage tokens
 
-Run `m3 auth login`. The CLI opens a temporary control-plane page in your
-browser. Sign in, choose or create an organization, then choose any of these
-actions:
+Run `m3 auth login`. The CLI opens a temporary page on the M3 control-plane
+origin (`https://control-plane-ulwh0w.fly.dev` by default; override it with
+`M3_CONTROL_PLANE_URL` when using another HTTPS origin). The page uses the
+Supabase browser SDK for account sign-in, then the existing M3 organization
+and token APIs. Supabase sessions and refresh tokens stay in the browser; the
+CLI receives only a short-lived, one-use M3 authorization code and redeems it
+over HTTPS with PKCE. The CLI contains no Supabase SDK, project URL, or key.
+Sign in, choose or create an organization, then choose any of these actions:
 
 - Request a 30-day developer token for this computer; the CLI saves it in the
   OS credential store after you select Done.
@@ -46,21 +51,25 @@ actions:
   your CI provider's secret store.
 - List or revoke your tokens.
 
-Select **Done** when finished. The page sends a short-lived, one-use code to
-the CLI on the same computer; the CLI exchanges it over HTTPS. An M3 bearer
-token is never placed in the browser redirect URL. Signing in alone does not
-issue a developer token. Creating a new developer token does not revoke an
-older one; revoke old tokens explicitly when they should stop working.
-`/cli/login` clears any existing control-plane browser session and requires a
-fresh sign-in before issuing a 10-minute session. Done and Cancel clear that
-session; closing the tab may leave it active until expiry. `m3 auth status`
-reports the saved developer token's ID, which you can match in the sign-in
-page before revoking an older token; `m3 auth logout` removes it locally.
+Select **Done** when finished. Only an M3 bearer token returned by the
+one-time exchange is saved, in the OS credential store; no bearer token is
+placed in the browser redirect URL. Signing in alone does not issue a
+developer token. Creating a new developer token does not revoke an older one;
+revoke old tokens explicitly when they should stop working. **Done** and
+**Cancel** end the token-management flow but do not sign the browser out.
+Browser sign-out is separate and does not delete the CLI's saved developer
+token. `m3 auth status` reports the saved token's ID, which you can match in
+the sign-in page before revoking an older token. `m3 auth logout` removes the
+local copy only; it neither signs the browser out nor revokes copies held by
+other systems.
 
-The CLI contains no Firebase SDK or Firebase configuration. Authentication
-provider changes are owned by the control plane. The browser and CLI must be
-on the same computer for the loopback callback; noninteractive CI uses a
-separately created `M3_ACCESS_TOKEN` instead of browser sign-in.
+This cutover starts with fresh Supabase accounts: Firebase accounts, cookies,
+sessions, and existing M3 PATs are not imported. Sign up and verify a new
+account, create a replacement PAT, and update each CI secret or other saved
+copy that used a previous PAT. Revoke an old PAT explicitly if its previous
+control plane remains active. The browser and CLI must be on the same computer
+for the loopback callback; noninteractive CI uses a separately created
+`M3_ACCESS_TOKEN` instead of browser sign-in.
 
 ## Publish a run
 

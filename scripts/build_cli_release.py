@@ -47,6 +47,27 @@ _FIREBASE_SIGNATURES = (
     b"authdomain",
     b"firebaseapp.com",
 )
+_SUPABASE_SIGNATURES = (
+    b"@supabase",
+    b"@supabase/supabase-js",
+    b"@supabase/ssr",
+    b"supabase-js",
+    b"supabase.create_client",
+    b"from supabase import",
+    b"import supabase",
+    b"supabase_auth",
+    b"from gotrue",
+    b"import gotrue",
+    b"postgrest",
+    b"supabase.co",
+    b"supabase.in",
+    b"supabase_url",
+    b"supabase_anon_key",
+    b"supabase_publishable_key",
+    b"supabase_secret_key",
+    b"supabase_service_role_key",
+)
+_SUPABASE_PACKAGES = {"supabase", "gotrue", "postgrest", "realtime", "storage3"}
 
 
 class ReleaseBuildError(RuntimeError):
@@ -65,6 +86,31 @@ def _contains_firebase_signature(name: str, contents: bytes) -> bool:
         return False
     lowered = contents.lower()
     return any(signature in lowered for signature in _FIREBASE_SIGNATURES)
+
+
+def _is_supabase_asset(name: str) -> bool:
+    parts = name.lower().replace("\\", "/").split("/")
+    return any(
+        part == "supabase" or part.startswith(("supabase.", "supabase_", "supabase-"))
+        for part in parts
+    )
+
+
+def _contains_supabase_signature(name: str, contents: bytes) -> bool:
+    if not name.startswith("m3_cli/") or ".dist-info/" in name:
+        return False
+    if Path(name).suffix.lower() not in {
+        ".js",
+        ".json",
+        ".py",
+        ".html",
+        ".toml",
+        ".yaml",
+        ".yml",
+    }:
+        return False
+    lowered = contents.lower()
+    return any(signature in lowered for signature in _SUPABASE_SIGNATURES)
 
 
 @dataclass(frozen=True)
@@ -296,6 +342,12 @@ def _verify_wheel(
             for value in metadata.requires
         ):
             raise ReleaseBuildError("CLI wheel has a Firebase dependency")
+        if any(
+            _requirement_name(value).startswith("supabase")
+            or _requirement_name(value) in _SUPABASE_PACKAGES
+            for value in metadata.requires
+        ):
+            raise ReleaseBuildError("CLI wheel has a Supabase dependency")
         normalized_requires = {
             re.sub(r"\s+", "", value).lower() for value in metadata.requires
         }
@@ -352,10 +404,16 @@ def verify_release(
             )
         if any(_is_firebase_asset(name) for name in names):
             raise ReleaseBuildError("CLI wheel contains Firebase auth assets")
+        if any(_is_supabase_asset(name) for name in names):
+            raise ReleaseBuildError("CLI wheel contains Supabase auth assets")
         for name in names:
             if _contains_firebase_signature(name, archive.read(name)):
                 raise ReleaseBuildError(
                     "CLI wheel contains Firebase auth code or config"
+                )
+            if _contains_supabase_signature(name, archive.read(name)):
+                raise ReleaseBuildError(
+                    "CLI wheel contains Supabase auth code or config"
                 )
     return classified
 

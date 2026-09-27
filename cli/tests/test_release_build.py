@@ -261,6 +261,39 @@ def test_verify_release_rejects_firebase_cli_dependency(tmp_path: Path) -> None:
         release.verify_release(tmp_path, expected, ui_source_dist=ui)
 
 
+def test_verify_release_rejects_supabase_config_asset(tmp_path: Path) -> None:
+    expected, ui = _synthetic_release(tmp_path)
+    cli = tmp_path / "sf_m3_cli-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(cli, "a") as archive:
+        archive.writestr("m3_cli/supabase/config.toml", "[auth]\nenabled = true\n")
+    with pytest.raises(release.ReleaseBuildError, match="Supabase auth assets"):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+def test_verify_release_rejects_supabase_import_in_cli_ui(tmp_path: Path) -> None:
+    expected, ui = _synthetic_release(
+        tmp_path, cli_ui_content='import { createClient } from "@supabase/supabase-js";'
+    )
+    with pytest.raises(release.ReleaseBuildError, match="Supabase auth code or config"):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
+@pytest.mark.parametrize("dependency", ["supabase>=2", "supabase-auth>=2", "gotrue>=2"])
+def test_verify_release_rejects_supabase_cli_dependencies(
+    tmp_path: Path, dependency: str
+) -> None:
+    expected, ui = _synthetic_release(
+        tmp_path,
+        cli_requires=(
+            "sf-m3[storage]==1.0",
+            "sf-m3-app==1.0",
+            dependency,
+        ),
+    )
+    with pytest.raises(release.ReleaseBuildError, match="Supabase dependency"):
+        release.verify_release(tmp_path, expected, ui_source_dist=ui)
+
+
 @pytest.mark.parametrize(
     ("requires", "entry_point", "message"),
     [
