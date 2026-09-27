@@ -91,6 +91,7 @@ jobs:
           uv run --locked --no-sync --project cli pytest -q
           cli/tests/test_init.py cli/tests/test_setup.py
           cli/tests/test_doctor.py cli/tests/test_web.py
+          cli/tests/test_auth.py cli/tests/test_release_build.py
 
   main-sdk-tests:
     name: Main SDK tests (3.10)
@@ -293,6 +294,7 @@ jobs:
           uv run --locked --no-sync --project cli pytest -q
           cli/tests/test_init.py cli/tests/test_setup.py
           cli/tests/test_doctor.py cli/tests/test_web.py
+          cli/tests/test_auth.py cli/tests/test_release_build.py
 
   quality:
     name: Source checks
