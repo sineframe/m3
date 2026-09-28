@@ -10,8 +10,12 @@ Start from the first-test project and save this as
 import sys
 from pathlib import Path
 
+import pytest
+
 from m3 import MCPTestKit, StdioServer
 from m3.snapshots import snapshot
+
+pytestmark = pytest.mark.m3(suite_name="shipping")
 
 
 def test_shipping_snapshot() -> None:

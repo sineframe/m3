@@ -4,7 +4,9 @@ Use ACP when the agent implements the Agent Client Protocol and you want M3 to l
 
 ## Requirements
 
-Install M3 with pytest and an ACP-compatible agent. Set `ACP_AGENT_COMMAND` to its executable, `ACP_AGENT_ARGS` to a JSON array of arguments, and `M3_DOCS_AGENT_MODEL` to the model identifier expected by that agent. Configure provider credentials through the agent’s documented login or environment mechanism. Do not put secrets in the manifest committed to source control.
+Install M3 with pytest and an ACP-compatible agent. Set `ACP_AGENT_COMMAND` to its executable, `ACP_AGENT_ARGS` to a JSON array of arguments, and `M3_DOCS_AGENT_MODEL` to the model identifier expected by that agent. Set `ACP_AGENT_CREDENTIAL_ENV` to the environment-variable name the agent reads for provider authentication, then set `M3_DOCS_PROVIDER_API_KEY` to the corresponding credential. Do not put the credential in the manifest.
+
+M3 starts the ACP process with a temporary `HOME` and an allowlisted environment. It does not expose your normal login state or inherit arbitrary environment variables. If the selected agent cannot authenticate from an environment variable, this example does not apply without agent-specific provisioning.
 
 The agent must support the MCP server access and tool behavior the test needs. Review any approval prompt from the agent before accepting it. ACP adapter support alone does not establish support for every interaction or evidence type.
 
@@ -31,7 +33,7 @@ def test_acp_agent_calls_the_shipping_tool() -> None:
         "protocol_version": 1,
         "command": os.environ["ACP_AGENT_COMMAND"],
         "args": json.loads(os.environ["ACP_AGENT_ARGS"]),
-        "env": {},
+        "env": {os.environ["ACP_AGENT_CREDENTIAL_ENV"]: "${M3_DOCS_PROVIDER_API_KEY}"},
     }
     selection = {
         "harness": "acp",
@@ -64,6 +66,6 @@ def test_acp_agent_calls_the_shipping_tool() -> None:
 
 Run it from the project directory with `python -m pytest -q test_acp_agent.py`. The assertion checks M3’s recorded tool evidence. An ACP message that says the tool was used does not establish that it was.
 
-The manifest’s `env` object is literal process configuration. Keep secrets in the ACP agent’s supported credential store or inject them from CI without committing them. ACP does not use M3-managed native harness downloads.
+The manifest’s `env` values are references to variables in the parent process. M3 resolves `M3_DOCS_PROVIDER_API_KEY` at launch and passes its value under the child variable named by `ACP_AGENT_CREDENTIAL_ENV`. A missing reference fails before the agent starts. ACP does not use M3-managed native harness downloads.
 
 Next: [compare harness features](/guides/agents/harnesses) and review [the tested compatibility notes](/reference/compatibility).

@@ -7,9 +7,10 @@ calls.
 
 ## Requirements
 
-Use Python 3.10 or newer with a project prepared by `m3 setup`. The
-[stdio example project](https://github.com/sineframe/m3/tree/main/sdk/examples/docs/servers-stdio) holds
-orders in the server process memory for the lifetime of its subprocess.
+Use Python 3.10 or newer with a project prepared by `m3 setup`. Download the
+example [`shipping_server.py`](../../../../sdk/examples/docs/servers-stdio/shipping_server.py)
+and save it as `shipping_server.py` in the project root. It holds orders in
+process memory for the lifetime of its subprocess.
 
 ## Create and retrieve an order
 

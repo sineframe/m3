@@ -26,8 +26,12 @@ Then pass an explicit store:
 import sys
 from pathlib import Path
 
+import pytest
+
 from m3 import MCPTestKit, StdioServer
 from m3.storage import SQLiteExecutionStore
+
+pytestmark = pytest.mark.m3(suite_name="shipping")
 
 
 def test_reopen_saved_execution(tmp_path: Path) -> None:

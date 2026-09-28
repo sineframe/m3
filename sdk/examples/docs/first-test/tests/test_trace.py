@@ -1,8 +1,12 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 from m3 import MCPTestKit, StdioServer
 from m3.types import ExecutionOutcome
+
+pytestmark = pytest.mark.m3(suite_name="shipping")
 
 
 def test_shipping_trace():

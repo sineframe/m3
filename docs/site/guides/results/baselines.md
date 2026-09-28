@@ -14,8 +14,8 @@ Run the test once:
 m3 test -- tests/test_m3_starter.py
 ```
 
-The command prints `Run ID: …` and the local report path. Copy that value into
-your shell without the `Run ID:` label.
+The command prints `M3 run <id>` and the local report path. Copy the value after
+`M3 run` into your shell.
 
 For Bash or zsh:
 

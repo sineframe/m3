@@ -6,6 +6,8 @@ import pytest
 from m3.async_api import AsyncMCPTestKit
 from m3.types import StdioServer
 
+pytestmark = pytest.mark.m3(suite_name="shipping")
+
 
 @pytest.mark.asyncio
 async def test_shipping_async() -> None:

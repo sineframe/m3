@@ -14,8 +14,10 @@ validate the docs manifest and links:
 
 ```sh
 python3 scripts/render_docs_examples.py --check
+python3 scripts/render_docs_navigation.py --check
 python3 scripts/validate_docs_site.py
 python3 scripts/validate_docs_examples.py
+.venv/bin/python scripts/render_docs_api_reference.py --check
 ```
 
 Render the combined site from the landing repository before merging a docs

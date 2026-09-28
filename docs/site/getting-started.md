@@ -163,7 +163,7 @@ m3 ui
 ```
 
 M3 opens the saved-run list in a local browser. Select the run from the test
-you just completed. The CLI stores history in `.m3/executions.sqlite` by
+you completed. The CLI stores history in `.m3/executions.sqlite` by
 default. See [inspect a saved run](/guides/results/viewer) for navigating the
 report.
 

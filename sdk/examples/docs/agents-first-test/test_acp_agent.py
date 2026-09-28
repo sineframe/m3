@@ -16,7 +16,7 @@ def test_acp_agent_calls_the_shipping_tool() -> None:
         "protocol_version": 1,
         "command": os.environ["ACP_AGENT_COMMAND"],
         "args": json.loads(os.environ["ACP_AGENT_ARGS"]),
-        "env": {},
+        "env": {os.environ["ACP_AGENT_CREDENTIAL_ENV"]: "${M3_DOCS_PROVIDER_API_KEY}"},
     }
     selection = {
         "harness": "acp",

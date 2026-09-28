@@ -1,6 +1,8 @@
 # Explicit evaluations
 
-This page moved to the SDK documentation: see
-[`sdk/docs/evaluations.md`](../sdk/docs/evaluations.md).
+The evaluation documentation is organized by task:
 
-See the SDK page for examples and saving details.
+- [Write a custom evaluation](site/guides/evaluations/custom.md)
+- [Use built-in assertions](site/guides/evaluations/assertions.md)
+- [Use an LLM judge](site/guides/evaluations/judges.md)
+- [Aggregate evaluation results](site/guides/evaluations/aggregate.md)

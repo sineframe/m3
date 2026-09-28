@@ -5,8 +5,12 @@ Use a mock to test client behavior against a controlled MCP exchange.
 Save as `tests/test_mock_shipping.py`:
 
 ```python
+import pytest
+
 from m3 import MCPTestKit
 from m3.testing import MockMCPServer
+
+pytestmark = pytest.mark.m3(suite_name="shipping")
 
 
 def test_mock_shipping() -> None:

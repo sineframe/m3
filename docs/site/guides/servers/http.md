@@ -13,13 +13,16 @@ service listens on loopback port 8765 and needs no credentials.
 
 ## Start the local MCP service
 
-In terminal one, from the example project root, run:
+In terminal one, run the service with the project interpreter selected and
+reported by `m3 setup`. When setup created the default `.venv`, run:
 
 ```sh
 ./.venv/bin/python shipping_http_server.py
 ```
 
-On Windows, run `.\.venv\Scripts\python.exe shipping_http_server.py`.
+On Windows with the default `.venv`, run `.\.venv\Scripts\python.exe shipping_http_server.py`.
+If setup selected an active virtual or Conda environment, use that
+environment's Python command instead.
 
 Keep it running while the test executes. The server exposes the
 `shipping_quote` tool at `http://127.0.0.1:8765/mcp/`.

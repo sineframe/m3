@@ -7,9 +7,10 @@ client closes.
 ## Requirements
 
 Use Python 3.10 or newer and run `m3 init` and `m3 setup` in the project. The
-server command must be available in the project environment. This example
-uses the deterministic shipping server in the
-[stdio example project](https://github.com/sineframe/m3/tree/main/sdk/examples/docs/servers-stdio).
+server command must be available in the project environment. Download the
+example [`shipping_server.py`](../../../../sdk/examples/docs/servers-stdio/shipping_server.py)
+and save it as `shipping_server.py` in the project root. It starts without
+credentials or external services.
 
 ## Discover and call a tool
 
