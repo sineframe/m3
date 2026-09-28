@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "servers-http",
+  "owning_pages": ["guides-servers-http", "start-your-server"],
+  "target_release": "resolved from the published release pin",
+  "python": ">=3.10",
+  "dependencies": ["sf-m3-cli", "sf-m3[pytest]", "mcp (installed with sf-m3)"],
+  "files": ["shipping_http_server.py", "tests/test_shipping_http.py"],
+  "displayed_blocks": [
+    {"page": "guides-servers-http", "label": "HTTP direct test", "source": "tests/test_shipping_http.py", "kind": "file"},
+    {"page": "start-your-server", "label": "HTTP direct test", "source": "tests/test_shipping_http.py", "kind": "file"}
+  ],
+  "setup": ["m3 init", "m3 setup"],
+  "working_directory": "project root",
+  "run_services": ["./.venv/bin/python shipping_http_server.py", ".\\.venv\\Scripts\\python.exe shipping_http_server.py", "MCP endpoint: http://127.0.0.1:8765/mcp/"],
+  "scenarios": [
+    {"id": "http-tool-call", "page": "guides-servers-http", "command": "m3 test -- tests/test_shipping_http.py", "expected_exit_code": 0, "assertions": ["HTTP connection initializes", "shipping_quote is discovered", "structured quote is 9.0 USD"], "verification": "deterministic"}
+  ],
+  "compatibility": {"transport": "Streamable HTTP", "minimum_python": "3.10", "network": "loopback only", "credentials": false, "account": false},
+  "network": "loopback only after package installation",
+  "credentials": "none",
+  "cleanup": "Stop the HTTP server with Ctrl-C after the pytest command completes"
+}

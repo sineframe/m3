@@ -319,10 +319,17 @@ jobs:
           enable-cache: true
 
       - name: Validate documentation publishing source
-        run: python3 scripts/validate_docs_site.py
+        run: |
+          python3 scripts/render_docs_navigation.py --check
+          python3 scripts/render_docs_examples.py --check
+          python3 scripts/validate_docs_site.py
+          python3 scripts/validate_docs_examples.py
 
       - name: Install locked workspace base dependencies
         run: uv sync --locked --all-packages --no-dev --group lint --group typecheck
+
+      - name: Check generated Python API reference
+        run: uv run --no-sync python scripts/render_docs_api_reference.py --check
 
       - name: Verify lockfile
         run: uv lock --check

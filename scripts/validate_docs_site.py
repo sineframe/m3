@@ -16,18 +16,18 @@ MANIFEST = SITE / "navigation.json"
 REQUIRED = {
     "index.md",
     "getting-started.md",
-    "ci.md",
-    "cli/index.md",
-    "cli/commands.md",
-    "sdk/index.md",
-    "sdk/quick-start.md",
-    "sdk/http.md",
-    "sdk/concepts.md",
-    "sdk/examples.md",
-    "sdk/evaluations.md",
-    "sdk/elicitation.md",
-    "sdk/elicitation-api.md",
+    "start/install.md",
+    "start/your-server.md",
+    "reference/index.md",
+    "reference/cli/index.md",
+    "reference/python/index.md",
+    "reference/python/api.md",
+    "reference/pytest.md",
+    "reference/configuration.md",
+    "reference/compatibility.md",
 }
+LEGACY_PREFIXES = ("sdk/", "cli/")
+LEGACY_FILES = {"ci.md"}
 LINK = re.compile(r"!?(?:\[[^\]]*\])\(([^)]+)\)")
 
 
@@ -74,9 +74,13 @@ def main() -> int:
     if not isinstance(pages, list):
         print("docs manifest must contain a pages array", file=sys.stderr)
         return 1
+    schema_version = data.get("schemaVersion", 1)
+    if schema_version not in {1, 2}:
+        errors.append(f"unsupported docs schemaVersion: {schema_version}")
     routes: dict[str, str] = {}
     normalized_routes: dict[str, str] = {}
     sources: set[str] = set()
+    page_ids: set[str] = set()
     for number, page in enumerate(pages, 1):
         where = f"pages[{number}]"
         if not isinstance(page, dict) or not all(
@@ -88,6 +92,22 @@ def main() -> int:
             )
             continue
         source, route = page["source"], page["route"]
+        if schema_version == 2:
+            identifier = page.get("id")
+            kind = page.get("kind")
+            if not isinstance(identifier, str) or not identifier.strip():
+                errors.append(f"{where} requires a non-empty id")
+            elif identifier in page_ids:
+                errors.append(f"duplicate page id: {identifier}")
+            else:
+                page_ids.add(identifier)
+            if not isinstance(kind, str) or not kind.strip():
+                errors.append(f"{where} requires a non-empty kind")
+            aliases = page.get("searchAliases", [])
+            if not isinstance(aliases, list) or not all(
+                isinstance(alias, str) and alias.strip() for alias in aliases
+            ):
+                errors.append(f"{where} searchAliases must be non-empty strings")
         if (
             "\\" in source
             or ".." in PurePosixPath(source).parts
@@ -132,9 +152,67 @@ def main() -> int:
     if missing:
         errors.append("required pages missing from manifest: " + ", ".join(missing))
     markdown_files = {path.relative_to(SITE).as_posix() for path in SITE.rglob("*.md")}
-    unlisted = sorted(markdown_files - sources)
+    legacy = {
+        source
+        for source in markdown_files
+        if source in LEGACY_FILES or source.startswith(LEGACY_PREFIXES)
+    }
+    unlisted = sorted(markdown_files - sources - legacy)
     if unlisted:
         errors.append("Markdown files missing from manifest: " + ", ".join(unlisted))
+    redirect_routes: dict[str, str] = {}
+    if schema_version == 2:
+        navigation = data.get("navigation")
+        if not isinstance(navigation, list):
+            errors.append("schemaVersion 2 requires a navigation array")
+        else:
+
+            def check_items(items: object, where: str) -> None:
+                if not isinstance(items, list):
+                    errors.append(f"{where} items must be an array")
+                    return
+                for index, item in enumerate(items):
+                    item_where = f"{where}.items[{index}]"
+                    if isinstance(item, str):
+                        if item not in page_ids:
+                            errors.append(
+                                f"{item_where} references unknown page id: {item}"
+                            )
+                    elif isinstance(item, dict) and isinstance(item.get("title"), str):
+                        check_items(item.get("items"), item_where)
+                    else:
+                        errors.append(
+                            f"{item_where} must be a page id or navigation group"
+                        )
+
+            for index, group in enumerate(navigation):
+                if not isinstance(group, dict) or not isinstance(
+                    group.get("title"), str
+                ):
+                    errors.append(f"navigation[{index}] requires a title")
+                    continue
+                check_items(group.get("items"), f"navigation[{index}]")
+        redirects = data.get("redirects", [])
+        if not isinstance(redirects, list):
+            errors.append("redirects must be an array")
+        else:
+            for index, redirect in enumerate(redirects):
+                where = f"redirects[{index}]"
+                if not isinstance(redirect, dict):
+                    errors.append(f"{where} must be an object")
+                    continue
+                old, new = redirect.get("from"), redirect.get("to")
+                if not isinstance(old, str) or not old.startswith("/"):
+                    errors.append(f"{where} requires an absolute from route")
+                    continue
+                if not isinstance(new, str) or new not in routes:
+                    errors.append(f"{where} targets an unknown canonical route: {new}")
+                    continue
+                if old in routes or old in redirect_routes:
+                    errors.append(f"{where} duplicates a page or redirect route: {old}")
+                    continue
+                redirect_routes[old] = new
+
     for source in sorted(sources):
         page = SITE / source
         if not page.is_file():
@@ -157,11 +235,11 @@ def main() -> int:
                     errors.append(
                         f"{source}: site-root link must omit the configured /docs base: {target}"
                     )
-                elif path not in routes:
+                elif path not in routes and path not in redirect_routes:
                     errors.append(
                         f"{source}: unresolved site link or wrong trailing slash {target}"
                     )
-                elif parsed.fragment:
+                elif parsed.fragment and path in routes:
                     target_source = routes[path]
                     target_text = (
                         (SITE / target_source).resolve().read_text(encoding="utf-8")
@@ -177,7 +255,7 @@ def main() -> int:
                 errors.append(
                     f"{source}: local link escapes the M3 repository: {target}"
                 )
-            elif not resolved.is_file():
+            elif not resolved.exists():
                 errors.append(
                     f"{source}: unresolved local link in M3 repository: {target}"
                 )
