@@ -58,6 +58,71 @@ For an alpha, use a PEP 440 prerelease tag such as `v0.3.0a1`. The workflow buil
 
 Before creating the tag, render the combined landing site locally. From the landing repository root, set `M3_DOCS_DIR` to this M3 repository root and run `M3_DOCS_DIR=/path/to/m3 npm run build`; inspect the generated docs pages and navigation before tagging. This is the pre-tag render gate. The M3 release workflow starts only after a tag is pushed, so its source validator checks manifest consistency and links but cannot replace the rendered-site check.
 
+## Publish the hosted documentation
+
+The docs source ships in an M3 release tag; the landing repository builds the
+site from that exact tag. Pushing an M3 tag starts the full wheel and CLI
+release workflow, including PyPI publication. There is no docs-only tag or
+Cloudflare credential in M3. The landing site does **not** update just because
+an M3 tag exists: someone must update and merge its pinned release commit.
+
+For the first docs rollout, merge the M3 docs changes into `main` and prepare
+the next M3 version (for example, `v0.2.13` after `v0.2.12`). From the M3
+repository, check that the exact commit to tag contains the docs manifest:
+
+```sh
+git fetch origin main --tags
+git switch main
+git pull --ff-only origin main
+git show HEAD:docs/site/navigation.json >/dev/null
+python3 scripts/validate_docs_site.py
+```
+
+Before pushing the tag, build and inspect the combined site from the sibling
+landing checkout. This uses local M3 files only for the pre-release preview:
+
+```sh
+cd ../sineframe-landing
+M3_DOCS_DIR=../m3 npm run build
+npm run preview -- --host 127.0.0.1
+```
+
+Open `/` and `/docs/` in that preview, check the docs navigation and links,
+then stop the preview. After the usual release checks, return to M3 and tag
+the reviewed `main` commit. Replace the example version if a different version
+is next:
+
+```sh
+cd ../m3
+git tag -a v0.2.13 HEAD -m "Release v0.2.13"
+git push origin v0.2.13
+```
+
+Wait for the `Release CLI` workflow to finish and the GitHub Release to be
+published. A failed or draft release is not ready to pin in the landing site.
+Then update the landing pull request with the released tag:
+
+```sh
+cd ../sineframe-landing
+# First rollout only; use a new branch from landing main for later releases.
+git switch docs/cloudflare-site
+npm run docs:pin -- v0.2.13
+npm run build
+git add docs-site/m3-release.json
+git commit -m "Pin M3 docs to v0.2.13"
+git push origin docs/cloudflare-site
+```
+
+The pin command records the tag's peeled commit. The landing build fetches the
+tag, verifies that it still points to that commit, and renders the docs into
+`dist/docs`. Check the Cloudflare Pages preview before merging the landing PR:
+`/docs/` and `/docs/sdk/quick-start` must show the docs, and an unknown
+`/docs/*` path must show a docs 404 with HTTP status 404. Also check `/` and
+the existing landing routes. Merging the landing PR triggers its normal
+Cloudflare production deployment; verify `https://m3.sineframe.com/docs/`
+afterward. For later M3 releases, repeat the pin, build, preview, and landing
+merge steps with the new tag. No Cloudflare token is needed in M3.
+
 
 CI runs source checks and a fast test selection when a pull request is opened
 or updated. A push to `main` runs the complete non-live suite, including SDK
