@@ -19,8 +19,6 @@ REQUIRED = {
     "ci.md",
     "cli/index.md",
     "cli/commands.md",
-    "cli/harnesses.md",
-    "cli/results-and-ui.md",
     "sdk/index.md",
     "sdk/quick-start.md",
     "sdk/http.md",
@@ -99,15 +97,15 @@ def main() -> int:
                 f"{where} source must be a relative .md path without '..' or backslashes: {source}"
             )
             continue
-        source_path = (SITE / source).resolve()
-        if (
-            source_path.parent != SITE.resolve()
-            and SITE.resolve() not in source_path.parents
-        ):
-            errors.append(f"{where} source escapes docs/site: {source}")
+        source_entry = SITE / source
+        source_path = source_entry.resolve()
+        if ROOT.resolve() not in source_path.parents:
+            errors.append(f"{where} source escapes the M3 repository: {source}")
             continue
         if not source_path.is_file():
             errors.append(f"{where} source does not exist: {source}")
+        if source_entry.is_symlink() and not source_path.is_file():
+            errors.append(f"{where} symlink target is not a file: {source}")
         if source in sources:
             errors.append(f"duplicate source: {source}")
         sources.add(source)
@@ -142,10 +140,14 @@ def main() -> int:
         if not page.is_file():
             continue
         text = page.read_text(encoding="utf-8")
+        physical_page = page.resolve()
         for raw in LINK.findall(text):
             target = raw.split()[0].strip("<>")
             parsed = urlsplit(target)
             if parsed.scheme or parsed.netloc or not parsed.path:
+                if not parsed.path and parsed.fragment:
+                    if unquote(parsed.fragment).lower() not in heading_anchors(text):
+                        errors.append(f"{source}: unresolved local heading anchor {target}")
                 continue
             path = unquote(parsed.path)
             if path.startswith("/"):
@@ -159,18 +161,22 @@ def main() -> int:
                     )
                 elif parsed.fragment:
                     target_source = routes[path]
-                    target_text = (SITE / target_source).read_text(encoding="utf-8")
+                    target_text = (SITE / target_source).resolve().read_text(encoding="utf-8")
                     anchors = heading_anchors(target_text)
                     if unquote(parsed.fragment).lower() not in anchors:
                         errors.append(
                             f"{source}: unresolved heading anchor in {target}"
                         )
                 continue
-            resolved = (page.parent / path).resolve()
-            if SITE.resolve() not in resolved.parents and resolved != SITE.resolve():
-                errors.append(f"{source}: link escapes docs/site: {target}")
+            resolved = (physical_page.parent / path).resolve()
+            if ROOT.resolve() not in resolved.parents and resolved != ROOT.resolve():
+                errors.append(f"{source}: local link escapes the M3 repository: {target}")
             elif not resolved.is_file():
-                errors.append(f"{source}: unresolved local link {target}")
+                errors.append(f"{source}: unresolved local link in M3 repository: {target}")
+            elif parsed.fragment and resolved.suffix.lower() == ".md":
+                target_text = resolved.read_text(encoding="utf-8")
+                if unquote(parsed.fragment).lower() not in heading_anchors(target_text):
+                    errors.append(f"{source}: unresolved local heading anchor in {target}")
     if errors:
         print("Documentation validation failed:", file=sys.stderr)
         for error in errors:

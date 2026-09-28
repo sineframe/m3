@@ -24,7 +24,7 @@ m3 test -- tests/test_m3_starter.py
 ```
 
 Set provider credentials in the environment or pass an env file explicitly
-with `--env-file .env`. M3 does not load `.env` automatically. See the [CLI
-commands](/cli/commands) for options, [harness runtimes](/cli/harnesses)
-for agent setup, and [results and UI](/cli/results-and-ui) for saved runs.
+with `--env-file .env`. M3 does not load `.env` automatically. See [CLI
+installation](/cli/commands#install), [command options](/cli/commands#commands),
+and [managed harness runtimes](/cli/commands#managed-harness-runtimes).
 For direct Python testing, continue to the [SDK quick start](/sdk/quick-start).

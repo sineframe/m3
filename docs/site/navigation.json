@@ -22,25 +22,13 @@
       "title": "CLI",
       "source": "cli/index.md",
       "route": "/cli/",
-      "description": "Explore M3 CLI installation, commands, harnesses, results, and CI guides."
+      "description": "Find CLI installation, command, harness, results, and CI guidance."
     },
     {
       "title": "Commands",
       "source": "cli/commands.md",
       "route": "/cli/commands",
       "description": "Find M3 CLI commands, options, project setup, test selection, and troubleshooting."
-    },
-    {
-      "title": "Harness runtimes",
-      "source": "cli/harnesses.md",
-      "route": "/cli/harnesses",
-      "description": "Configure native and managed agent harness runtimes for M3 test runs."
-    },
-    {
-      "title": "Results and UI",
-      "source": "cli/results-and-ui.md",
-      "route": "/cli/results-and-ui",
-      "description": "Save M3 test results and inspect run history in the local browser UI."
     },
     {
       "title": "Python SDK",
