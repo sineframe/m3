@@ -56,6 +56,9 @@ git push origin v0.2.0
 
 For an alpha, use a PEP 440 prerelease tag such as `v0.3.0a1`. The workflow builds the three matching wheels and installer, stages them in a draft GitHub Release, publishes the wheels to PyPI, and runs fresh install checks before publishing the GitHub Release.
 
+Before creating the tag, render the combined landing site locally. From the landing repository root, set `M3_DOCS_DIR` to this M3 repository root and run `M3_DOCS_DIR=/path/to/m3 npm run build`; inspect the generated docs pages and navigation before tagging. This is the pre-tag render gate. The M3 release workflow starts only after a tag is pushed, so its source validator checks manifest consistency and links but cannot replace the rendered-site check.
+
+
 CI runs source checks and a fast test selection when a pull request is opened
 or updated. A push to `main` runs the complete non-live suite, including SDK
 process lifecycle tests serially, and compatibility checks. These results are

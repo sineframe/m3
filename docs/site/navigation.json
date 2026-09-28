@@ -1,0 +1,82 @@
+{
+  "pages": [
+    {
+      "title": "M3",
+      "source": "index.md",
+      "route": "/",
+      "description": "Learn how M3 makes MCP server and agent behavior testable with Python and pytest."
+    },
+    {
+      "title": "Getting started",
+      "source": "getting-started.md",
+      "route": "/getting-started",
+      "description": "Install the M3 CLI, initialize a project, and run your first test."
+    },
+    {
+      "title": "CI and report publishing",
+      "source": "ci.md",
+      "route": "/ci",
+      "description": "Configure M3 CI selection, credentials, report publishing, and GitHub Actions."
+    },
+    {
+      "title": "CLI",
+      "source": "cli/index.md",
+      "route": "/cli/",
+      "description": "Find CLI installation, command, harness, results, and CI guidance."
+    },
+    {
+      "title": "Commands",
+      "source": "cli/commands.md",
+      "route": "/cli/commands",
+      "description": "Find M3 CLI commands, options, project setup, test selection, and troubleshooting."
+    },
+    {
+      "title": "Python SDK",
+      "source": "sdk/index.md",
+      "route": "/sdk/",
+      "description": "Explore the M3 Python SDK guides for MCP testing, agents, and evaluations."
+    },
+    {
+      "title": "Quick start",
+      "source": "sdk/quick-start.md",
+      "route": "/sdk/quick-start",
+      "description": "Install the SDK and write, run, and persist your first M3 test."
+    },
+    {
+      "title": "Streamable HTTP",
+      "source": "sdk/http.md",
+      "route": "/sdk/http",
+      "description": "Test deployed MCP servers over Streamable HTTP directly or through agents."
+    },
+    {
+      "title": "Concepts",
+      "source": "sdk/concepts.md",
+      "route": "/sdk/concepts",
+      "description": "Understand M3 server bindings, execution lifecycle, traces, storage, and isolation."
+    },
+    {
+      "title": "Examples",
+      "source": "sdk/examples.md",
+      "route": "/sdk/examples",
+      "description": "Browse runnable M3 examples for MCP servers, agents, and test workflows."
+    },
+    {
+      "title": "Evaluations",
+      "source": "sdk/evaluations.md",
+      "route": "/sdk/evaluations",
+      "description": "Define evaluators and analyze scores across repeated agent trials."
+    },
+    {
+      "title": "Elicitation",
+      "source": "sdk/elicitation.md",
+      "route": "/sdk/elicitation",
+      "description": "Write M3 tests for MCP elicitation plans and interactive requests."
+    },
+    {
+      "title": "Elicitation API",
+      "source": "sdk/elicitation-api.md",
+      "route": "/sdk/elicitation-api",
+      "description": "Reference the M3 elicitation API, response models, managed input, and traces."
+    }
+  ]
+}
