@@ -147,7 +147,9 @@ def main() -> int:
             if parsed.scheme or parsed.netloc or not parsed.path:
                 if not parsed.path and parsed.fragment:
                     if unquote(parsed.fragment).lower() not in heading_anchors(text):
-                        errors.append(f"{source}: unresolved local heading anchor {target}")
+                        errors.append(
+                            f"{source}: unresolved local heading anchor {target}"
+                        )
                 continue
             path = unquote(parsed.path)
             if path.startswith("/"):
@@ -161,7 +163,9 @@ def main() -> int:
                     )
                 elif parsed.fragment:
                     target_source = routes[path]
-                    target_text = (SITE / target_source).resolve().read_text(encoding="utf-8")
+                    target_text = (
+                        (SITE / target_source).resolve().read_text(encoding="utf-8")
+                    )
                     anchors = heading_anchors(target_text)
                     if unquote(parsed.fragment).lower() not in anchors:
                         errors.append(
@@ -170,13 +174,19 @@ def main() -> int:
                 continue
             resolved = (physical_page.parent / path).resolve()
             if ROOT.resolve() not in resolved.parents and resolved != ROOT.resolve():
-                errors.append(f"{source}: local link escapes the M3 repository: {target}")
+                errors.append(
+                    f"{source}: local link escapes the M3 repository: {target}"
+                )
             elif not resolved.is_file():
-                errors.append(f"{source}: unresolved local link in M3 repository: {target}")
+                errors.append(
+                    f"{source}: unresolved local link in M3 repository: {target}"
+                )
             elif parsed.fragment and resolved.suffix.lower() == ".md":
                 target_text = resolved.read_text(encoding="utf-8")
                 if unquote(parsed.fragment).lower() not in heading_anchors(target_text):
-                    errors.append(f"{source}: unresolved local heading anchor in {target}")
+                    errors.append(
+                        f"{source}: unresolved local heading anchor in {target}"
+                    )
     if errors:
         print("Documentation validation failed:", file=sys.stderr)
         for error in errors:
