@@ -578,6 +578,7 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
                 "test_outcome_counts": {},
                 "effective_verdict_counts": {},
                 "suites": [],
+                "needs_attention": False,
             },
             {
                 "run_id": "old-run",
@@ -591,11 +592,13 @@ def test_v2_runs_lists_safe_manifests_in_newest_order_including_empty_run(tmp_pa
                 "test_outcome_counts": {"passed": 1},
                 "effective_verdict_counts": {"passed": 1},
                 "suites": [],
+                "needs_attention": False,
             },
         ],
         "total": 2,
         "limit": None,
         "offset": 0,
+        "attention_total": 0,
     }
     assert "project_root" not in response.text
     assert "selection" not in response.text

@@ -55,10 +55,32 @@ it, and optional `suite_id`, `project_id`, and `q` filter it; `q` searches both
 `run_id` and `run_label` case-insensitively before pagination. A complete
 label such as `Run #1` matches that label exactly (not `Run #10`); other
 queries use substring matching. A `suite_id` filter
-keeps every run with at least one test in that suite. The envelope reports
-`total` (runs matching the filters), `limit` (`null` when unpaginated), and
-`offset`. `GET /api/v2/suites` lists the registered
-`{suite_id, suite_name, project_id}` records for building suite filters.
+keeps every run with at least one test in that suite. `attention=true` keeps
+only runs that need a look, checking each signal on its own: a run `status` of
+failed, error (including `failed_assertion`, `protocol_error`, `setup_error`,
+`teardown_error`, `pytest_error`, `tool_error`), `interrupted`,
+`cancelled`/`canceled`, or `incomplete`; a nonzero pytest `exit_status` (a
+finished run whose required evaluation did not pass exits 1); a positive
+`failed`, `error`, or `incomplete` count in `effective_verdict_counts`; or a
+positive `failed` or `error` count in `test_outcome_counts`. Each run summary
+reports the same rule as `needs_attention`. The envelope reports `total` (runs matching the filters,
+including `attention`), `limit` (`null` when unpaginated), `offset`, and
+`attention_total`: how many runs matching the suite, project, and search
+filters need attention, whether or not `attention` is set.
+
+`GET /api/v2/runs/{run_id}` returns `{run}`, one run summary in the same shape,
+with every suite it belongs to; an unknown run is `404 run_not_found`. Use it
+to resolve a run without searching or paging.
+
+`GET /api/v2/suites` lists registered suites, most recently run first; suites
+that never ran (or whose runs have no start time) follow, by name. Each item
+has `suite_id`, `suite_name`, `project_id`, `project_name`, `run_count` (runs
+with at least one saved test in the suite), and `last_run`: the newest run's
+summary, or `null`. It is unpaginated by default; optional `limit` (1-100),
+`offset`, `q` (case-insensitive suite name substring), and `project_id` page
+and filter it, and the envelope reports `total`, `limit`, and `offset`.
+`GET /api/v2/suites/{suite_id}` returns `{suite}`, one item in that shape; an
+unknown suite is `404 suite_not_found`.
 
 To group runs, pass `group=suite_name`, `suite_id`, `date`, `month`, `project_id`,
 or `status`. Grouped requests select the newest matching **runs** first, with
@@ -226,6 +248,9 @@ JSON `session_config` query parameter to retrieve the same history.
 | Method and path | Purpose |
 |---|---|
 | `GET /api/v2/runs` | List saved pytest runs; optionally filter, page, and group the selected run page. |
+| `GET /api/v2/runs/{run_id}` | Read one saved pytest run summary with its suites. |
+| `GET /api/v2/suites` | List suites with run counts and their newest run, most recently run first. |
+| `GET /api/v2/suites/{suite_id}` | Read one suite with its run count and newest run. |
 | `POST /api/v2/executions` | Start a direct or agent execution. |
 | `GET /api/v2/executions` | List saved executions with paging and filters. |
 | `GET /api/v2/suites/{suite_id}/executions` | List executions belonging to one suite with paging and run/lifecycle/outcome filters. |

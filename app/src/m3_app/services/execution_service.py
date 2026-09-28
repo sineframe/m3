@@ -13,7 +13,7 @@ import math
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 from urllib.parse import quote
 
 from m3 import (
@@ -40,6 +40,7 @@ from m3.feedback import project_test_attempts
 from m3.observability import ObservationState, ToolCallEntry
 from m3.services.profiles import ProfileResolutionError
 from m3.storage import ExecutionStore, StorageConflict, StorageError
+from m3.storage.ephemeral import run_needs_attention
 from m3.suites import Suite
 from m3.trace.redaction import REDACTED
 
@@ -153,6 +154,18 @@ def project_test_results(
     return tuple(summaries)
 
 
+def _keyword_support(function: object, names: Iterable[str]) -> dict[str, bool]:
+    """Which keyword arguments an injected store method accepts."""
+    try:
+        parameters = inspect.signature(cast(Any, function)).parameters
+    except (TypeError, ValueError):
+        return {name: True for name in names}
+    open_ended = any(
+        item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters.values()
+    )
+    return {name: open_ended or name in parameters for name in names}
+
+
 class AppExecutionStore(Protocol):
     """Minimal public SDK store surface required by the app."""
 
@@ -205,6 +218,7 @@ class AppExecutionStore(Protocol):
         suite_id: int | None = None,
         project_id: str | None = None,
         q: str | None = None,
+        attention: bool = False,
     ) -> tuple[tuple[Mapping[str, object], ...], int]: ...
 
     def list_suites(self) -> tuple[Suite, ...]: ...
@@ -605,55 +619,127 @@ class AppExecutionService:
         suite_id: int | None = None,
         project_id: str | None = None,
         q: str | None = None,
+        attention: bool = False,
     ) -> tuple[tuple[Mapping[str, object], ...], int]:
-        """Return one newest-first page of run manifests with their suites."""
+        """Return one newest-first page of run manifests with their suites.
+
+        ``attention`` keeps only runs with a failed case or that stopped short,
+        and ``total`` counts the filtered runs.
+        """
+        self._ensure_open()
+        term = q.strip() if q and q.strip() else None
+        try:
+            lister = self.store.list_test_run_page
+            supported = _keyword_support(lister, ("q", "attention"))
+            if (term is None or supported["q"]) and (
+                not attention or supported["attention"]
+            ):
+                options: dict[str, Any] = {}
+                if term is not None:
+                    options["q"] = term
+                if attention:
+                    options["attention"] = True
+                return lister(
+                    limit=limit,
+                    offset=offset,
+                    suite_id=suite_id,
+                    project_id=project_id,
+                    **options,
+                )
+            # An older injected store cannot filter itself. Filter its
+            # complete ordered result before applying the requested page.
+            runs, _ = lister(
+                limit=None, offset=0, suite_id=suite_id, project_id=project_id
+            )
+            folded = term.casefold() if term else ""
+            exact_label = folded.startswith("run #") and folded[5:].isdigit()
+
+            def matches_query(run: Mapping[str, object]) -> bool:
+                if not folded:
+                    return True
+                identifier = run.get("run_id")
+                label = run.get("run_label")
+                return (
+                    isinstance(identifier, str) and folded in identifier.casefold()
+                ) or (
+                    isinstance(label, str)
+                    and (
+                        label.casefold() == folded
+                        if exact_label
+                        else folded in label.casefold()
+                    )
+                )
+
+            matches = tuple(
+                run
+                for run in runs
+                if matches_query(run) and (not attention or run_needs_attention(run))
+            )
+            end = None if limit is None else offset + limit
+            return matches[offset:end], len(matches)
+        except StorageError as exc:
+            raise AppExecutionError(
+                "run_data_unavailable", "run data is unavailable"
+            ) from exc
+
+    def count_attention_runs(
+        self,
+        *,
+        suite_id: int | None = None,
+        project_id: str | None = None,
+        q: str | None = None,
+    ) -> int:
+        """How many runs matching these filters need attention."""
+        _, total = self.list_run_page(
+            limit=0, suite_id=suite_id, project_id=project_id, q=q, attention=True
+        )
+        return total
+
+    def get_run(self, run_id: str) -> Mapping[str, object] | None:
+        """One run manifest with its suites, or None when it is unknown."""
         self._ensure_open()
         try:
-            if q and q.strip():
-                lister = self.store.list_test_run_page
-                try:
-                    parameters = inspect.signature(lister).parameters
-                    supports_q = "q" in parameters or any(
-                        item.kind is inspect.Parameter.VAR_KEYWORD
-                        for item in parameters.values()
-                    )
-                except (TypeError, ValueError):
-                    supports_q = True
-                if supports_q:
-                    return lister(
-                        limit=limit,
-                        offset=offset,
-                        suite_id=suite_id,
-                        project_id=project_id,
-                        q=q,
-                    )
-                # An older injected store cannot search itself. Filter its
-                # complete ordered result before applying the requested page.
-                runs, _ = lister(
-                    limit=None, offset=0, suite_id=suite_id, project_id=project_id
-                )
-                term = q.strip().casefold()
-                exact_label = term.startswith("run #") and term[5:].isdigit()
+            getter = getattr(self.store, "get_test_run", None)
+            suites_of = getattr(self.store, "get_run_suites", None)
+            if callable(getter) and callable(suites_of):
+                manifest = getter(run_id)
+                if not isinstance(manifest, Mapping):
+                    return None
+                return {**manifest, "suites": list(suites_of(run_id))}
+            # An older injected store: find the run in its full listing.
+            runs, _ = self.store.list_test_run_page(limit=None, offset=0)
+            return next((run for run in runs if run.get("run_id") == run_id), None)
+        except StorageError as exc:
+            raise AppExecutionError(
+                "run_data_unavailable", "run data is unavailable"
+            ) from exc
 
-                def matches_query(run: Mapping[str, object]) -> bool:
-                    identifier = run.get("run_id")
-                    label = run.get("run_label")
-                    return (
-                        isinstance(identifier, str) and term in identifier.casefold()
-                    ) or (
-                        isinstance(label, str)
-                        and (
-                            label.casefold() == term
-                            if exact_label
-                            else term in label.casefold()
-                        )
-                    )
-
-                matches = tuple(run for run in runs if matches_query(run))
-                end = None if limit is None else offset + limit
-                return matches[offset:end], len(matches)
-            return self.store.list_test_run_page(
-                limit=limit, offset=offset, suite_id=suite_id, project_id=project_id
+    def list_suite_page(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        q: str | None = None,
+        project_id: str | None = None,
+        suite_id: int | None = None,
+    ) -> tuple[tuple[Mapping[str, object], ...], int]:
+        """Suites with their run count and latest run, most recently run first."""
+        self._ensure_open()
+        lister = getattr(self.store, "list_suite_page", None)
+        if not callable(lister):
+            raise AppExecutionError(
+                "run_data_unavailable", "suite run summaries are unavailable"
+            )
+        try:
+            return cast(
+                tuple[tuple[Mapping[str, object], ...], int],
+                lister(
+                    limit=limit,
+                    offset=offset,
+                    q=q.strip() if q and q.strip() else None,
+                    project_id=project_id,
+                    suite_id=suite_id,
+                ),
             )
         except StorageError as exc:
             raise AppExecutionError(
