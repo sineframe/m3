@@ -139,6 +139,17 @@
       "kind": "guides"
     },
     {
+      "id": "guides-agents-skill",
+      "title": "Install the M3 agent skill",
+      "source": "guides/agents/skill.md",
+      "description": "Install the M3 testing skill from GitHub with npx.",
+      "kind": "guides",
+      "searchAliases": [
+        "npx skills",
+        "testing-with-m3"
+      ]
+    },
+    {
       "id": "guides-ci-access",
       "title": "Manage access tokens",
       "source": "guides/ci/access.md",
@@ -514,6 +525,7 @@
         {
           "title": "Test agents",
           "items": [
+            "guides-agents-skill",
             "guides-agents-first-test",
             "guides-agents-harnesses",
             "guides-agents-managed-runtimes",

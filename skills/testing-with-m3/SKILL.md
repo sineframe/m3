@@ -152,7 +152,7 @@ Start with the complete [Elicitation guide](https://m3.sineframe.com/docs/guides
 Its runnable test sends one prompt, answers either an address form or its
 alternative, then answers a URL request on a later retry. It asserts one
 successful logical tool call after `agent.run` returns. Copy the maintained
-[composed tests](../../sdk/examples/tests/test_modern_mrtr_pi_composed.py),
+[composed tests](https://github.com/sineframe/m3/blob/main/sdk/examples/tests/test_modern_mrtr_pi_composed.py),
 which also run the optional-address and two-addresses-in-one-round variants.
 
 To write a new test, first build a deterministic server fixture that emits
@@ -166,15 +166,15 @@ operation result or `expect(result).to_have_tool_call(...)`; inspect attempts
 and elicitation entries when order matters. The tool assertion runs after the
 action because one logical call owns all retries.
 
-The maintained [server](../../sdk/examples/servers/modern_mrtr_server.py),
-[direct test](../../sdk/examples/tests/test_modern_mrtr_direct.py), and
-[session test](../../sdk/examples/tests/test_modern_mrtr_pi_session.py) show
+The maintained [server](https://github.com/sineframe/m3/blob/main/sdk/examples/servers/modern_mrtr_server.py),
+[direct test](https://github.com/sineframe/m3/blob/main/sdk/examples/tests/test_modern_mrtr_direct.py), and
+[session test](https://github.com/sineframe/m3/blob/main/sdk/examples/tests/test_modern_mrtr_pi_session.py) show
 those action boundaries. Pi 0.85.1 is the verified Pi baseline. Codex support
 uses the unmodified App Server and local deterministic provider fixtures; its
 full M3 conformance gate is pending. Do not treat native Codex characterization
 or a skipped binary test as proof that M3 action integration passed. The
 [Codex limitations section](https://m3.sineframe.com/docs/reference/python/m3/elicitation)
-is canonical, and the [Pi-to-Codex parity inventory](../../sdk/tests/mrtr-harness-parity.md)
+is canonical, and the [Pi-to-Codex parity inventory](https://github.com/sineframe/m3/blob/main/sdk/tests/mrtr-harness-parity.md)
 lists each existing Pi scenario, its Codex counterpart, and remaining gaps.
 For exact helper signatures, prompt/resource actions, manual and managed
 input, URL details, and trace fields, use the
