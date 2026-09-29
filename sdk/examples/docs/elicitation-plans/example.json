@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "elicitation-plans",
+  "owning_pages": ["guides-elicitation-plans"],
+  "target_release": "resolved from the published release pin",
+  "python": ">=3.10",
+  "files": ["elicitation_server.py", "test_plan.py"],
+  "displayed_blocks": [
+    {"page": "guides-elicitation-plans", "label": "direct elicitation plan", "source": "test_plan.py", "kind": "file"}
+  ],
+  "dependencies": ["sf-m3[pytest]"],
+  "working_directory": "project directory",
+  "scenarios": [
+    {
+      "id": "direct-form-plan",
+      "command": "python -m pytest -q test_plan.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["server requests shipping_address", "plan submits keyed form response", "tool returns booked result"],
+      "compatibility": {
+        "harness": "none; direct SDK operation",
+        "mcp_protocol_revision": "2026-07-28",
+        "mode": "deterministic local",
+        "status": "verified locally"
+      },
+      "verification": "deterministic"
+    }
+  ],
+  "network": "none",
+  "credentials": "none",
+  "cleanup": "InProcessServer and direct client are closed by their context managers."
+}

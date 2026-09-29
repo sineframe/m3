@@ -1,0 +1,48 @@
+---
+title: "Compatibility and current boundaries"
+description: "These docs describe the release shown in the site header. The SDK requires Python 3.10 or newer. A CLI-managed project must use the matching SDK version."
+---
+
+# Compatibility and current boundaries
+
+These docs describe the release shown in the site header. The SDK requires
+Python 3.10 or newer. A CLI-managed project must use the matching SDK version.
+
+## Harness capabilities
+
+| Capability | Current documented boundary |
+| --- | --- |
+| Direct MCP operations | Independent of an agent harness. |
+| Native agent tool tests | Claude Code, OpenCode, Codex, and Pi where the selected operation is supported. |
+| Bring-your-own agent | ACP v1 adapter path. |
+| Agent-driven elicitation | Codex and Pi, using the tested versions and action scopes documented with the guide. |
+| Direct elicitation | Sync and async SDK operations; it does not require Codex or Pi. |
+
+Harness availability does not imply identical evidence, approval, resume,
+elicitation, or cancellation behavior. Each agent guide names the tested path.
+
+## Codex elicitation
+
+Codex owns tool selection, dispatch, approval, retries, and cancellation. M3
+observes and answers supported native requests when their association is
+unambiguous. Overlapping same-server approval or elicitation cannot currently
+be associated reliably and is rejected. The effective tested plan limit is
+nine surfaced prompts. Prompt/resource elicitation and sampling/roots callbacks
+inside a native Codex tool round are not verified supported paths.
+
+## Pi elicitation
+
+Pi supports the native request-key and round behavior used by M3's interaction
+bridge. Its tested round capacity differs from Codex. Use the version named in
+the elicitation guide and do not transfer Codex-specific limits to Pi.
+
+## Viewer database
+
+`m3 ui` currently opens `.m3/executions.sqlite` in the current project. It does
+not accept the custom path supported by `m3 test --results-db`.
+
+## Managed runtimes
+
+Managed mode downloads and verifies a harness executable selected for the
+current OS and CPU. It isolates that executable and writable runtime state but
+is not an operating-system sandbox.

@@ -34,9 +34,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate documentation publishing source
-        run: python3 scripts/validate_docs_site.py
-
       - name: Install uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -54,6 +51,14 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Install locked source-check dependencies
         run: uv sync --locked --all-packages --no-dev --group lint --group typecheck
+      - name: Validate documentation sources and generated references
+        run: |
+          set -euo pipefail
+          python3 scripts/render_docs_navigation.py --check
+          python3 scripts/render_docs_examples.py --check
+          python3 scripts/validate_docs_site.py
+          python3 scripts/validate_docs_examples.py
+          uv run --locked --no-sync python scripts/render_docs_api_reference.py --check
       - name: Run source and lock checks
         run: |
           set -euo pipefail

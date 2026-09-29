@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "id": "first-test",
+  "owning_pages": [
+    "getting-started",
+    "start-install",
+    "start-your-server",
+    "guides-results-traces",
+    "guides-results-persistence",
+    "guides-evaluations-aggregate",
+    "guides-evaluations-custom",
+    "guides-advanced-async",
+    "guides-advanced-mocks-replay",
+    "guides-advanced-snapshots",
+    "guides-advanced-scripts"
+  ],
+  "target_release": "resolved from the published release pin",
+  "python": ">=3.10",
+  "dependencies": ["sf-m3-cli", "sf-m3[pytest]", "mcp (installed with sf-m3)"],
+  "files": [
+    "shipping_server.py",
+    "check_shipping.py",
+    "report_evaluations.py",
+    "tests/test_m3_starter.py",
+    "tests/test_trace.py",
+    "tests/test_persistence.py",
+    "tests/test_shipping_evaluation.py",
+    "tests/test_shipping_async.py",
+    "tests/test_mock_shipping.py",
+    "tests/test_shipping_snapshot.py"
+  ],
+  "displayed_blocks": [
+    {"page": "getting-started", "label": "shipping server", "source": "shipping_server.py", "kind": "file"},
+    {"page": "getting-started", "label": "first test", "source": "tests/test_m3_starter.py", "kind": "file"},
+    {"page": "start-your-server", "label": "stdio first test", "source": "tests/test_m3_starter.py", "kind": "file"},
+    {"page": "start-your-server", "label": "replace the server command", "source": "tests/test_m3_starter.py", "kind": "snippet", "context": "Replace the StdioServer constructor inside test_shipping_quote with a descriptor for the reader's installed server module; adapt the following tool assertion to that server's contract."},
+    {"page": "guides-results-traces", "label": "finalized trace test", "source": "tests/test_trace.py", "kind": "file"},
+    {"page": "guides-results-persistence", "label": "SQLite persistence test", "source": "tests/test_persistence.py", "kind": "file"},
+    {"page": "guides-evaluations-aggregate", "label": "evaluation report script", "source": "report_evaluations.py", "kind": "file"},
+    {"page": "guides-evaluations-custom", "label": "custom evaluator test", "source": "tests/test_shipping_evaluation.py", "kind": "file"},
+    {"page": "guides-advanced-async", "label": "async direct test", "source": "tests/test_shipping_async.py", "kind": "file"},
+    {"page": "guides-advanced-mocks-replay", "label": "mock server test", "source": "tests/test_mock_shipping.py", "kind": "file"},
+    {"page": "guides-advanced-snapshots", "label": "snapshot test", "source": "tests/test_shipping_snapshot.py", "kind": "file"},
+    {"page": "guides-advanced-scripts", "label": "standalone script", "source": "check_shipping.py", "kind": "file"}
+  ],
+  "working_directory": "project root",
+  "setup": [
+    "uv tool install sf-m3-cli",
+    "uv tool upgrade sf-m3-cli",
+    "mkdir shipping-test",
+    "cd shipping-test",
+    "m3 init",
+    "m3 setup",
+    "m3 doctor",
+    "uv add \"sf-m3[pytest]\""
+  ],
+  "scenarios": [
+    {
+      "id": "first-test-pass",
+      "command": "m3 test -- tests/test_m3_starter.py",
+      "expected_exit_code": 0,
+      "assertions": ["shipping_quote is discovered", "structured quote is 9.0 USD"],
+      "credentials": [],
+      "verification": "deterministic"
+    },
+    {
+      "id": "first-test-deliberate-assertion-failure",
+      "change": "expect amount 10.0 instead of 9.0",
+      "command": "m3 test -- tests/test_m3_starter.py",
+      "expected_exit_code": 1,
+      "assertions": ["pytest reports the structured-content assertion failure"],
+      "credentials": [],
+      "verification": "deterministic"
+    },
+    {
+      "id": "first-test-open-viewer",
+      "command": "m3 ui",
+      "expected_exit_code": 0,
+      "assertions": ["the new saved run opens in the local viewer"],
+      "credentials": [],
+      "verification": "manual-ui"
+    },
+    {
+      "id": "first-test-guide-extensions",
+      "command": "m3 test -- tests/test_trace.py tests/test_persistence.py tests/test_shipping_evaluation.py tests/test_shipping_async.py tests/test_mock_shipping.py tests/test_shipping_snapshot.py",
+      "expected_exit_code": 0,
+      "assertions": ["trace, storage, evaluator, async, mock, and snapshot guide tests pass"],
+      "verification": "deterministic"
+    },
+    {
+      "id": "first-test-standalone-script",
+      "command": "python check_shipping.py",
+      "expected_exit_code": 0,
+      "assertions": ["the standalone direct check returns the documented quote"],
+      "verification": "deterministic"
+    },
+    {
+      "id": "first-test-evaluation-report",
+      "command": "RUN_ID=<captured run ID> python report_evaluations.py",
+      "expected_exit_code": 0,
+      "assertions": ["the report includes the saved shipping evaluator result"],
+      "verification": "deterministic"
+    }
+  ],
+  "compatibility": {
+    "transports": ["stdio"],
+    "minimum_python": "3.10",
+    "provider_credentials_required": false,
+    "account_required": false
+  },
+  "network": "none after package installation",
+  "credentials": "none",
+  "cleanup": "MCPTestKit closes the client and server subprocess"
+}

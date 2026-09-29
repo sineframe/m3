@@ -1,82 +1,667 @@
 {
+  "schemaVersion": 2,
   "pages": [
     {
-      "title": "M3",
-      "source": "index.md",
-      "route": "/",
-      "description": "Learn how M3 makes MCP server and agent behavior testable with Python and pytest."
-    },
-    {
-      "title": "Getting started",
-      "source": "getting-started.md",
-      "route": "/getting-started",
-      "description": "Install the M3 CLI, initialize a project, and run your first test."
-    },
-    {
-      "title": "CI and report publishing",
-      "source": "ci.md",
-      "route": "/ci",
-      "description": "Configure M3 CI selection, credentials, report publishing, and GitHub Actions."
-    },
-    {
-      "title": "CLI",
+      "id": "cli",
+      "title": "M3 CLI",
       "source": "cli/index.md",
-      "route": "/cli/",
-      "description": "Find CLI installation, command, harness, results, and CI guidance."
+      "description": "Install and use the standalone M3 command to initialize projects, run pytest with selected agents and servers, and inspect saved results.",
+      "kind": "cli"
     },
     {
-      "title": "Commands",
-      "source": "cli/commands.md",
-      "route": "/cli/commands",
-      "description": "Find M3 CLI commands, options, project setup, test selection, and troubleshooting."
+      "id": "concepts-evidence",
+      "title": "Evidence and traces",
+      "source": "concepts/evidence.md",
+      "description": "M3 records what it can observe at the transport and harness boundaries. A recorded tool call is evidence that the call crossed an observed boundary; an agent's prose saying that it used a tool is not.",
+      "kind": "concepts"
     },
     {
-      "title": "Python SDK",
-      "source": "sdk/index.md",
-      "route": "/sdk/",
-      "description": "Explore the M3 Python SDK guides for MCP testing, agents, and evaluations."
+      "id": "concepts-identity",
+      "title": "Runs, suites, cases, and executions",
+      "source": "concepts/identity.md",
+      "description": "A **run** is one invocation of pytest or one explicit SDK run ID. The CLI prints its run ID and writes the corresponding feedback under .m3/reports/<run-id>/feedback.json.",
+      "kind": "concepts"
     },
     {
-      "title": "Quick start",
-      "source": "sdk/quick-start.md",
-      "route": "/sdk/quick-start",
-      "description": "Install the SDK and write, run, and persist your first M3 test."
+      "id": "concepts-isolation",
+      "title": "Isolation and repeatability",
+      "source": "concepts/isolation.md",
+      "description": "Each execution receives its own identity and trace. Trials are independent executions; they are not automatic retries. A server subprocess can still retain state for the lifetime of one connection, and an external HTTP service can retain state beyond the test.",
+      "kind": "concepts"
     },
     {
-      "title": "Streamable HTTP",
-      "source": "sdk/http.md",
-      "route": "/sdk/http",
-      "description": "Test deployed MCP servers over Streamable HTTP directly or through agents."
+      "id": "concepts-lifecycle",
+      "title": "Runtime and connection lifecycle",
+      "source": "concepts/lifecycle.md",
+      "description": "MCPTestKit owns the surrounding runtime. A direct client owns one initialized MCP connection. Entering the client starts its transport; leaving it closes the connection and any subprocess that client started.",
+      "kind": "concepts"
+    },
+    {
+      "id": "concepts-outcomes",
+      "title": "Test, execution, and evaluation outcomes",
+      "source": "concepts/outcomes.md",
+      "description": "M3 keeps three judgments separate:",
+      "kind": "concepts"
+    },
+    {
+      "id": "concepts-testing-model",
+      "title": "Direct tests and agent tests",
+      "source": "concepts/testing-model.md",
+      "description": "M3 supports two different questions.",
+      "kind": "concepts"
+    },
+    {
+      "id": "examples",
+      "title": "Examples by task",
+      "source": "examples.md",
+      "description": "Examples are explained and run from their owning guides:",
+      "kind": "examples"
+    },
+    {
+      "id": "getting-started",
+      "title": "Write your first MCP test",
+      "source": "getting-started.md",
+      "description": "This walkthrough starts a small MCP server as a local process, discovers its shipping_quote tool, calls it, and checks the structured response. You will also make the assertion fail, restore it, and open the saved run.",
+      "kind": "getting-started",
+      "searchAliases": [
+        "quick start",
+        "first MCP test"
+      ]
+    },
+    {
+      "id": "guides-advanced-async",
+      "title": "Use the async SDK",
+      "source": "guides/advanced/async.md",
+      "description": "Use AsyncMCPTestKit when the surrounding test is asynchronous. Await direct operations instead of creating another event loop.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-advanced-mocks-replay",
+      "title": "Use mocks and replay",
+      "source": "guides/advanced/mocks-replay.md",
+      "description": "Use a mock to test client behavior against a controlled MCP exchange.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-advanced-scripts",
+      "title": "Run M3 without pytest",
+      "source": "guides/advanced/scripts.md",
+      "description": "The SDK can run in a normal Python program. Persistence is in memory unless you select a store.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-advanced-snapshots",
+      "title": "Snapshot stable values",
+      "source": "guides/advanced/snapshots.md",
+      "description": "Use snapshot for a public value whose full stable projection is meaningful to review. Prefer field assertions when only a few behaviors matter.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-acp",
+      "title": "Run an ACP agent",
+      "source": "guides/agents/acp.md",
+      "description": "Use ACP when the agent implements the Agent Client Protocol and you want M3 to launch it from a manifest. ACP launch configuration is distinct from M3’s native CLI adapters.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-first-test",
+      "title": "Test an agent’s tool use",
+      "source": "guides/agents/first-test.md",
+      "description": "This test starts a local MCP server, gives Codex access to one named tool, and checks the recorded call. It verifies the interaction M3 observed; it does not prove that the agent’s final prose is correct.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-harnesses",
+      "title": "Choose an agent harness",
+      "source": "guides/agents/harnesses.md",
+      "description": "M3 connects to agent harnesses through native adapters or an ACP manifest. Choose the integration your agent provides, then check the capabilities and version your test needs.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-managed-runtimes",
+      "title": "Pin a managed harness runtime",
+      "source": "guides/agents/managed-runtimes.md",
+      "description": "Select a managed runtime when a test must use an explicit native harness version. M3 records the resolved runtime identity with the execution.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-matrices",
+      "title": "Run agent cases as a matrix",
+      "source": "guides/agents/matrices.md",
+      "description": "Use HarnessMatrix to run the same MCP cases across harnesses and trials. A matrix expands test work; it does not make model behavior deterministic.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-sessions",
+      "title": "Test a multi-turn agent session",
+      "source": "guides/agents/sessions.md",
+      "description": "An agent session keeps one conversation open across turns. Use it when later prompts depend on earlier work, and assert evidence against the turn that produced it.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-ci-access",
+      "title": "Manage access tokens",
+      "source": "guides/ci/access.md",
+      "description": "Run m3 auth login on a computer with a browser. The login page lets you manage organization access and tokens; the CLI receives a one-use authorization result and can save a developer token in the operating-system credential store.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-ci-github-actions",
+      "title": "Run M3 in GitHub Actions",
+      "source": "guides/ci/github-actions.md",
+      "description": "Start with a credential-free direct-server job. This complete workflow assumes the repository declares its project dependencies and contains the tests from the first-test guide.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-ci-publish",
+      "title": "Publish or retry a CI run",
+      "source": "guides/ci/publish.md",
+      "description": "Publishing is explicit. Run locally without upload first, then add --upload with M3_ACCESS_TOKEN in the environment:",
+      "kind": "guides",
+      "searchAliases": [
+        "upload failed",
+        "retry upload"
+      ]
+    },
+    {
+      "id": "guides-ci-run",
+      "title": "Run M3 tests in CI",
+      "source": "guides/ci/run.md",
+      "description": "m3 ci test uses the normal project Python, storage, harness, and pytest selection. It excludes tests whose nearest M3 marker sets ci=False.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-elicitation-managed-input",
+      "title": "Submit input to a paused execution",
+      "source": "guides/elicitation/managed-input.md",
+      "description": "Managed input lets an agent execution pause while it waits for a person’s response. The caller reads the persisted request, submits a response keyed by the request name, then waits for the worker to finish.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-elicitation-plans",
+      "title": "Plan answers to elicitation requests",
+      "source": "guides/elicitation/plans.md",
+      "description": "An elicitation plan describes the requests an operation may make and the response M3 should submit. Attach the plan to the action that can trigger those requests, then assert the action’s result.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-evaluations-aggregate",
+      "title": "Aggregate saved evaluations",
+      "source": "guides/evaluations/aggregate.md",
+      "description": "Aggregate records from one reader-created run so older rows in the same database do not alter the result.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-evaluations-assertions",
+      "title": "Assert the evidence that matters",
+      "source": "guides/evaluations/assertions.md",
+      "description": "Use ordinary Python assertions for direct operation results. Use expect when you need to ask a question about a complete M3 execution or agent turn.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-evaluations-custom",
+      "title": "Write a custom evaluator",
+      "source": "guides/evaluations/custom.md",
+      "description": "A custom evaluator turns an explicit subject into a named evaluation result. It does not run automatically because an execution completed.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-evaluations-judges",
+      "title": "Evaluate a response with an LLM judge",
+      "source": "guides/evaluations/judges.md",
+      "description": "An LLM judge sends the selected subject text to its configured endpoint. Use it for criteria that cannot be expressed as deterministic assertions, and avoid sending private data unless that transfer is intended.",
+      "kind": "guides",
+      "searchAliases": [
+        "judge key",
+        "M3_JUDGE_API_KEY"
+      ]
+    },
+    {
+      "id": "guides-results-baselines",
+      "title": "Compare a run with a baseline",
+      "source": "guides/results/baselines.md",
+      "description": "--baseline compares a new feedback bundle with an earlier run in the same results database. Capture the ID produced by your own first run; IDs printed in documentation do not exist in your database.",
+      "kind": "guides",
+      "searchAliases": [
+        "compare runs",
+        "baseline run ID"
+      ]
+    },
+    {
+      "id": "guides-results-persistence",
+      "title": "Save and reopen executions",
+      "source": "guides/results/persistence.md",
+      "description": "Direct SDK use keeps data in memory unless you choose a persistent store. The CLI chooses SQLite automatically.",
+      "kind": "guides",
+      "searchAliases": [
+        "results database",
+        "saved runs"
+      ]
+    },
+    {
+      "id": "guides-results-traces",
+      "title": "Read a finalized trace",
+      "source": "guides/results/traces.md",
+      "description": "Use the operation result for the immediate response and the finalized trace for the complete observed execution.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-results-viewer",
+      "title": "Open saved test results",
+      "source": "guides/results/viewer.md",
+      "description": "The standalone CLI includes a local viewer for runs saved in the default project database.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-servers-errors-schemas",
+      "title": "Test tool errors and input schemas",
+      "source": "guides/servers/errors-schemas.md",
+      "description": "An MCP tool can report an expected application error as a normal call result. When schema validation is enabled, M3 can also reject test arguments that do not match the tool's advertised input schema before sending the call.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-servers-http",
+      "title": "Test a Streamable HTTP server",
+      "source": "guides/servers/http.md",
+      "description": "Use HTTPServer for an MCP endpoint that is already running. The direct test below uses a local deterministic service, so it does not depend on a public endpoint or network service.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-servers-resources-prompts",
+      "title": "Test resources and prompts",
+      "source": "guides/servers/resources-prompts.md",
+      "description": "Use resource operations to read server data. Use prompt operations to retrieve a named message template and supply its declared arguments. These operations do not require an agent harness.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-servers-stateful-tests",
+      "title": "Test state across tool calls",
+      "source": "guides/servers/stateful-tests.md",
+      "description": "Keep dependent calls inside one direct-client context when a later operation uses state created by an earlier operation. This example captures the server-returned customer and order identifiers and passes them to subsequent calls.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-servers-stdio",
+      "title": "Test a stdio server",
+      "source": "guides/servers/stdio.md",
+      "description": "Use StdioServer when M3 should launch a local MCP server process for the test. M3 starts it for the connection and closes the process when the direct client closes.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-servers-tools",
+      "title": "Test MCP tools",
+      "source": "guides/servers/tools.md",
+      "description": "Test a tool in two steps: discover its advertised schema, then call it with known arguments and check the result that matters to your application.",
+      "kind": "guides"
+    },
+    {
+      "id": "home",
+      "title": "Test MCP servers and the agents that use them",
+      "source": "index.md",
+      "description": "M3 turns MCP behavior into Python tests. Test a server directly when you need a deterministic protocol contract; put an agent in the loop when you need to check tool selection, arguments, or multi-turn behavior.",
+      "kind": "home"
+    },
+    {
+      "id": "reference-cli",
+      "title": "CLI reference",
+      "source": "reference/cli/index.md",
+      "description": "The standalone m3 command selects the project Python and coordinates pytest, saved history, the local viewer, managed harnesses, authentication, and report publishing. Options after -- are passed to pytest unchanged.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-compatibility",
+      "title": "Compatibility and current boundaries",
+      "source": "reference/compatibility.md",
+      "description": "These docs describe the release shown in the site header. The SDK requires Python 3.10 or newer. A CLI-managed project must use the matching SDK version.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-configuration",
+      "title": "Configuration and credentials",
+      "source": "reference/configuration.md",
+      "description": "m3.toml stores project identity. Keep its generated project ID stable; renaming a project changes its name, not that identity.",
+      "kind": "reference",
+      "searchAliases": [
+        "env file",
+        "credentials"
+      ]
+    },
+    {
+      "id": "reference",
+      "title": "Reference",
+      "source": "reference/index.md",
+      "description": "Use reference pages when you already know what you need to look up. For a working sequence, start with a guide instead.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-pytest",
+      "title": "pytest integration",
+      "source": "reference/pytest.md",
+      "description": "Install sf-m3[pytest] or run m3 setup. The plugin adds M3 fixtures, selection, storage integration, and feedback generation while leaving ordinary pytest selection after -- intact.",
+      "kind": "reference",
+      "searchAliases": [
+        "suite_name",
+        "pytest marker",
+        "fixtures"
+      ]
+    },
+    {
+      "id": "reference-python-api",
+      "title": "Python API inventory",
+      "source": "reference/python/api.md",
+      "description": "This page is generated from the release's declared public exports. It records exact signatures, model fields, and public members. The capability pages explain how these objects work together; use this inventory for exact lookup.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python",
+      "title": "Python SDK reference",
+      "source": "reference/python/index.md",
+      "description": "Start with the small package-root surface for ordinary synchronous tests:",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-core",
+      "title": "Core execution API",
+      "source": "reference/python/m3/core.md",
+      "description": "The synchronous runtime and cleanup boundary. Construct it with optional environment, store, evaluator, runtime, and harness-cache configuration. Enter it before opening direct clients or agent sessions and close it after all work.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-elicitation",
+      "title": "Elicitation and managed-input API",
+      "source": "reference/python/m3/elicitation.md",
+      "description": "ElicitationPlan describes expected form or URL input requests and the responses M3 may submit. Build plans with:",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-errors",
+      "title": "Exceptions",
+      "source": "reference/python/m3/errors.md",
+      "description": "Normal MCP tool errors usually remain typed tool results rather than raised exceptions. Test result.is_error when the server intentionally returned a tool-level failure.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-evaluations",
+      "title": "Evaluation API",
+      "source": "reference/python/m3/evaluations.md",
+      "description": "An Evaluator or AsyncEvaluator receives EvaluationContext and returns an EvaluationDecision. EvaluatorCallable is the accepted callback union.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-matchers",
+      "title": "Matchers",
+      "source": "reference/python/m3/matchers.md",
+      "description": "expect(subject) creates an Expectation whose methods raise AssertionError when captured evidence does not satisfy the predicate. check(subject) records failures through a CheckGroup, allowing several related checks to be reported together when the plugin has a recording binding.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-matrix",
+      "title": "Matrix API",
+      "source": "reference/python/m3/matrix.md",
+      "description": "ToolCase names one tool invocation and its arguments. ServerCase groups tool cases under the server that owns them. ToolMatrix validates and expands those cases without starting processes or network work.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-observability",
+      "title": "Observability models",
+      "source": "reference/python/m3/observability.md",
+      "description": "TraceView is the stable typed projection for reading a finalized trace. Its entries preserve whether a value was observed, reported, inferred, redacted, or unavailable.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-storage",
+      "title": "Storage API",
+      "source": "reference/python/m3/storage.md",
+      "description": "InMemoryExecutionStore is the default direct-SDK execution store. SQLiteExecutionStore persists execution specs, snapshots, traces, sessions, turns, evaluations, profiles, and test-run records when the storage extra is installed.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-testing",
+      "title": "Testing utilities",
+      "source": "reference/python/m3/testing.md",
+      "description": "MockMCPServer and ExpectedCall define a controlled protocol interaction. Unexpected calls raise MockExpectationError; invalid mock protocol behavior raises MockProtocolError.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-types",
+      "title": "Public value types",
+      "source": "reference/python/m3/types.md",
+      "description": "Public values are immutable, serializable contracts. Construct server and operation specifications as inputs; treat result, trace, evidence, and report models as outputs.",
+      "kind": "reference"
+    },
+    {
+      "id": "start-install",
+      "title": "Install and update M3",
+      "source": "start/install.md",
+      "description": "Install the M3 CLI and the project SDK separately. The CLI runs m3 and includes the local results viewer. The SDK runs inside the Python project being tested.",
+      "kind": "start"
+    },
+    {
+      "id": "start-your-server",
+      "title": "Test your own server",
+      "source": "start/your-server.md",
+      "description": "Use a StdioServer when M3 should start your local server process for each test connection. Use an HTTPServer when the MCP endpoint is already running. Both direct paths can run without an agent provider.",
+      "kind": "start"
+    },
+    {
+      "id": "troubleshooting-agents",
+      "title": "Agent readiness, approvals, and timeouts",
+      "source": "troubleshooting/agents.md",
+      "description": "Use m3 doctor --require harness:NAME for a system runtime, or select a managed runtime/version supported on the current OS and CPU.",
+      "kind": "troubleshooting"
+    },
+    {
+      "id": "troubleshooting-ci",
+      "title": "CI credentials and uploads",
+      "source": "troubleshooting/ci.md",
+      "description": "An ambient variable takes precedence even when its value is empty. Unset it if the file should supply the value. M3 does not interpolate dotenv values.",
+      "kind": "troubleshooting"
+    },
+    {
+      "id": "troubleshooting",
+      "title": "Troubleshooting",
+      "source": "troubleshooting/index.md",
+      "description": "Start with the symptom:",
+      "kind": "troubleshooting"
+    },
+    {
+      "id": "troubleshooting-install",
+      "title": "Installation and project Python",
+      "source": "troubleshooting/install.md",
+      "description": "Run m3 setup from the project root. It installs the SDK version matching the standalone CLI into the selected isolated environment. If M3 selected the wrong environment, pass --python PATH to setup and doctor.",
+      "kind": "troubleshooting"
+    },
+    {
+      "id": "troubleshooting-results",
+      "title": "Missing traces or saved results",
+      "source": "troubleshooting/results.md",
+      "description": "Use m3 test, or configure SQLiteExecutionStore explicitly in direct SDK code. Plain pytest without the storage plugin keeps SDK executions in memory.",
+      "kind": "troubleshooting"
+    },
+    {
+      "id": "troubleshooting-servers",
+      "title": "Server startup and connection failures",
+      "source": "troubleshooting/servers.md",
+      "description": "Run the configured command directly from the configured working directory. Check that its stdout contains only MCP protocol traffic; write diagnostics to stderr. Confirm every argument is a separate StdioServer.args value.",
+      "kind": "troubleshooting"
+    }
+  ],
+  "navigation": [
+    {
+      "title": "Start",
+      "items": [
+        "home",
+        "getting-started",
+        "cli",
+        "start-install",
+        "start-your-server"
+      ]
+    },
+    {
+      "title": "Guides",
+      "items": [
+        {
+          "title": "Test servers",
+          "items": [
+            "guides-servers-stdio",
+            "guides-servers-http",
+            "guides-servers-tools",
+            "guides-servers-resources-prompts",
+            "guides-servers-errors-schemas",
+            "guides-servers-stateful-tests"
+          ]
+        },
+        {
+          "title": "Test agents",
+          "items": [
+            "guides-agents-first-test",
+            "guides-agents-harnesses",
+            "guides-agents-managed-runtimes",
+            "guides-agents-acp",
+            "guides-agents-sessions",
+            "guides-agents-matrices"
+          ]
+        },
+        {
+          "title": "Inspect results",
+          "items": [
+            "guides-results-viewer",
+            "guides-results-traces",
+            "guides-results-persistence",
+            "guides-results-baselines"
+          ]
+        },
+        {
+          "title": "Evaluate behavior",
+          "items": [
+            "guides-evaluations-assertions",
+            "guides-evaluations-custom",
+            "guides-evaluations-judges",
+            "guides-evaluations-aggregate"
+          ]
+        },
+        {
+          "title": "Handle interaction",
+          "items": [
+            "guides-elicitation-plans",
+            "guides-elicitation-managed-input"
+          ]
+        },
+        {
+          "title": "Run in CI",
+          "items": [
+            "guides-ci-run",
+            "guides-ci-github-actions",
+            "guides-ci-publish",
+            "guides-ci-access"
+          ]
+        },
+        {
+          "title": "Advanced",
+          "items": [
+            "guides-advanced-async",
+            "guides-advanced-mocks-replay",
+            "guides-advanced-snapshots",
+            "guides-advanced-scripts"
+          ]
+        },
+        "examples"
+      ]
     },
     {
       "title": "Concepts",
-      "source": "sdk/concepts.md",
-      "route": "/sdk/concepts",
-      "description": "Understand M3 server bindings, execution lifecycle, traces, storage, and isolation."
+      "items": [
+        "concepts-testing-model",
+        "concepts-lifecycle",
+        "concepts-identity",
+        "concepts-evidence",
+        "concepts-outcomes",
+        "concepts-isolation"
+      ]
     },
     {
-      "title": "Examples",
-      "source": "sdk/examples.md",
-      "route": "/sdk/examples",
-      "description": "Browse runnable M3 examples for MCP servers, agents, and test workflows."
+      "title": "Reference",
+      "items": [
+        "reference",
+        "reference-cli",
+        {
+          "title": "Python SDK",
+          "items": [
+            "reference-python",
+            "reference-python-m3-core",
+            "reference-python-m3-types",
+            "reference-python-m3-matchers",
+            "reference-python-m3-observability",
+            "reference-python-m3-evaluations",
+            "reference-python-m3-elicitation",
+            "reference-python-m3-matrix",
+            "reference-python-m3-testing",
+            "reference-python-m3-storage",
+            "reference-python-m3-errors",
+            "reference-python-api"
+          ]
+        },
+        "reference-pytest",
+        "reference-configuration",
+        "reference-compatibility"
+      ]
     },
     {
-      "title": "Evaluations",
-      "source": "sdk/evaluations.md",
-      "route": "/sdk/evaluations",
-      "description": "Define evaluators and analyze scores across repeated agent trials."
+      "title": "Troubleshooting",
+      "items": [
+        "troubleshooting",
+        "troubleshooting-install",
+        "troubleshooting-servers",
+        "troubleshooting-agents",
+        "troubleshooting-results",
+        "troubleshooting-ci"
+      ]
+    }
+  ],
+  "redirects": [
+    {
+      "from": "/cli/commands",
+      "to": "/reference/cli/"
     },
     {
-      "title": "Elicitation",
-      "source": "sdk/elicitation.md",
-      "route": "/sdk/elicitation",
-      "description": "Write M3 tests for MCP elicitation plans and interactive requests."
+      "from": "/sdk/",
+      "to": "/reference/python/"
     },
     {
-      "title": "Elicitation API",
-      "source": "sdk/elicitation-api.md",
-      "route": "/sdk/elicitation-api",
-      "description": "Reference the M3 elicitation API, response models, managed input, and traces."
+      "from": "/sdk/quick-start",
+      "to": "/getting-started"
+    },
+    {
+      "from": "/sdk/http",
+      "to": "/guides/servers/http"
+    },
+    {
+      "from": "/sdk/concepts",
+      "to": "/concepts/testing-model"
+    },
+    {
+      "from": "/sdk/examples",
+      "to": "/examples"
+    },
+    {
+      "from": "/sdk/evaluations",
+      "to": "/guides/evaluations/assertions"
+    },
+    {
+      "from": "/sdk/elicitation",
+      "to": "/guides/elicitation/plans"
+    },
+    {
+      "from": "/sdk/elicitation-api",
+      "to": "/reference/python/m3/elicitation"
+    },
+    {
+      "from": "/ci",
+      "to": "/guides/ci/run"
+    },
+    {
+      "from": "/evaluations",
+      "to": "/guides/evaluations/assertions"
     }
   ]
 }

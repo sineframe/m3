@@ -1,0 +1,28 @@
+from elicitation_server import ADDRESS_SCHEMA, build_server
+
+from m3 import Config, InProcessServer, MCPTestKit, expect_form
+from m3.sync_api import ToolCallResult
+
+
+def test_direct_tool_call_answers_a_form_request() -> None:
+    server = InProcessServer(name="shipping", factory=build_server)
+    plan = expect_form(
+        "shipping_address",
+        message="Enter the delivery address.",
+        schema=ADDRESS_SCHEMA,
+        server="shipping",
+        operation_kind="tool",
+        operation_name="book_shipment",
+    ).accept({"street": "1 Main Street", "city": "Pune"})
+
+    with MCPTestKit(config=Config(protocol_revision="2026-07-28"), env={}) as kit:
+        with kit.direct(server) as client:
+            result = client.call_tool(
+                "book_shipment",
+                {"weight_kg": 2, "zone": "local"},
+                elicitation=plan,
+            )
+
+    assert isinstance(result, ToolCallResult)
+    assert result.is_error is False
+    assert result.structured_content == {"status": "booked", "city": "Pune"}

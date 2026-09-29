@@ -1,11 +1,16 @@
+---
+title: "M3 CLI"
+description: "Install and use the standalone M3 command to initialize projects, run pytest with selected agents and servers, and inspect saved results."
+---
+
 # M3 CLI
 
 Install and use the standalone M3 command to initialize projects, run pytest
 with selected agents and servers, and inspect saved results.
 
-- [Install M3](/cli/commands#install)
-- [Set up a project](/cli/commands#set-up-a-project)
-- [Browse commands](/cli/commands#commands)
-- [Configure harness runtimes](/cli/commands#managed-harness-runtimes)
-- [View results and the local UI](/cli/commands#ui-server-and-security)
-- [Configure CI and report publishing](/ci)
+- [Install M3](../start/install.md)
+- [Set up a project](../getting-started.md)
+- [Browse commands and options](../reference/cli/index.md)
+- [Configure harness runtimes](../guides/agents/managed-runtimes.md)
+- [View results and the local UI](../guides/results/viewer.md)
+- [Configure CI and report publishing](../guides/ci/run.md)

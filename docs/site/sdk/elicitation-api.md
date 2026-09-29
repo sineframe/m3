@@ -1,1 +1,0 @@
-../../../sdk/docs/elicitation-api.md

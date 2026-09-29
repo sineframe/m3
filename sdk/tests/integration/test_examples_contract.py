@@ -10,35 +10,43 @@ from pathlib import Path
 _SDK = Path(__file__).parents[2]
 _EXAMPLES = _SDK / "examples"
 _REPO = _SDK.parent
+_SITE = _REPO / "docs" / "site"
+
+
+def _assert_sdk_doc_is_relocation_stub(filename: str, route: str) -> str:
+    text = (_SDK / "docs" / filename).read_text(encoding="utf-8")
+    assert "moved" in text.splitlines()[0].lower(), filename
+    assert f"https://m3.sineframe.com/docs/{route}" in text, filename
+    return text
 
 
 def test_examples_docs_are_goal_oriented_and_not_a_synthetic_catalog() -> None:
-    text = (_SDK / "docs" / "examples.md").read_text(encoding="utf-8")
-    assert text.startswith("# Examples\n")
-    headings = [line for line in text.splitlines() if line.startswith("## ")]
-    assert headings[0] == "## 1. Test a deployed MCP endpoint with Streamable HTTP"
-    assert headings[1] == "## 2. Discover a direct local server tool before calling it"
-    assert headings[2] == "## 3. Run one test across native harnesses"
-    assert "client.list_all_tools()" in text
-    assert "example_mcp_server.py" in text
-    # The examples documentation is migrated with the broad documentation
-    # cleanup checkpoint; keep this contract aligned with the current docs.
-    assert "@pytest.mark.m3" in text
-    assert "--harness opencode=" in text
-    assert "kit.agents(agents, trials=2)" in text
-    assert "HarnessMatrix" not in text
-    assert "AgentSpec" not in text
-    assert "deterministic_acp_agent.py" in text
-    assert "test_streamable_http.py" in text
-    assert (_EXAMPLES / "nondeterministic" / "test_streamable_http.py").exists()
-    assert "Verified examples" not in text
-    assert "pass count" not in text.lower()
-    assert "source of truth" not in text.lower()
-    assert not (_EXAMPLES / "tests" / "test_tool_usage_assertions.py").exists()
-    assert all(
-        "Event" not in path.read_text(encoding="utf-8")
-        for path in (_EXAMPLES / "tests").glob("*.py")
+    text = (_SITE / "examples.md").read_text(encoding="utf-8")
+    assert text.startswith('---\ntitle: "Examples by task"\n')
+    assert "# Examples by task" in text
+
+    pages = (
+        "getting-started.md",
+        "guides/servers/stdio.md",
+        "guides/servers/http.md",
+        "guides/agents/first-test.md",
+        "guides/agents/sessions.md",
+        "guides/results/baselines.md",
+        "guides/evaluations/custom.md",
+        "guides/elicitation/plans.md",
     )
+    for page in pages:
+        assert f"]({page})" in text
+        assert (_SITE / page).is_file(), page
+
+    # The documentation links to executable projects maintained in the SDK.
+    assert "sdk/examples/docs/elicitation-plans" in (
+        _SITE / "guides" / "elicitation" / "plans.md"
+    ).read_text(encoding="utf-8")
+    project = _EXAMPLES / "docs" / "elicitation-plans"
+    assert (project / "test_plan.py").is_file()
+    assert (project / "elicitation_server.py").is_file()
+    _assert_sdk_doc_is_relocation_stub("examples.md", "examples")
 
 
 def test_live_math_matrix_example_remains_opt_in_and_outside_ci_catalog() -> None:
@@ -155,10 +163,14 @@ def test_modern_mrtr_pi_examples_collect_with_plain_pytest_command() -> None:
 
 
 def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> None:
-    examples = (_SDK / "docs" / "examples.md").read_text(encoding="utf-8")
-    concepts = (_SDK / "docs" / "concepts.md").read_text(encoding="utf-8")
-    elicitation = (_SDK / "docs" / "elicitation.md").read_text(encoding="utf-8")
-    elicitation_api = (_SDK / "docs" / "elicitation-api.md").read_text(encoding="utf-8")
+    examples = (_SITE / "examples.md").read_text(encoding="utf-8")
+    concepts = (_SITE / "concepts" / "testing-model.md").read_text(encoding="utf-8")
+    elicitation = (_SITE / "guides" / "elicitation" / "plans.md").read_text(
+        encoding="utf-8"
+    )
+    elicitation_api = (
+        _SITE / "reference" / "python" / "m3" / "elicitation.md"
+    ).read_text(encoding="utf-8")
     index = (_SDK / "docs" / "README.md").read_text(encoding="utf-8")
     parity = (_SDK / "tests" / "mrtr-harness-parity.md").read_text(encoding="utf-8")
     api = (_REPO / "app" / "docs" / "api-v2.md").read_text(encoding="utf-8")
@@ -169,38 +181,21 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
         _REPO / "skills" / "testing-with-m3" / "references" / "test-patterns.md"
     ).read_text(encoding="utf-8")
 
-    for filename in (
-        "test_modern_mrtr_sdk.py",
-        "test_modern_mrtr_direct.py",
-        "test_modern_mrtr_pi_qualified.py",
-        "test_modern_mrtr_pi_unqualified.py",
-        "test_modern_mrtr_pi_session.py",
-        "test_modern_mrtr_pi_composed.py",
-        "test_modern_mrtr_codex.py",
-        "test_modern_mrtr_codex_action_scopes.py",
-    ):
-        assert filename in examples
-    assert "modern_mrtr_server.py" in examples
+    assert "guides/elicitation/plans.md" in examples
     assert "## Modern MRTR elicitation" not in concepts
     assert "elicitation" not in concepts.lower()
-    assert "[Elicitation](elicitation.md)" in index
-    assert "Pi-to-Codex MRTR parity inventory" in index
-    assert elicitation.startswith("# Elicitation\n")
-    assert elicitation_api.startswith("# Elicitation API reference\n")
-    assert "[API reference](elicitation-api.md)" in elicitation
-    assert 'one_of(address(example_server, "home"' in elicitation
-    assert "optional(one_of(" in elicitation
-    assert 'round_of(address(example_server, "home"' in elicitation
-    assert "expect(result).to_have_tool_call(" in elicitation
-    assert "There is no tool-call node inside the elicitation plan" in elicitation
-    assert "Codex App Server support" in elicitation
-    assert "mrtr-harness-parity.md" in elicitation
-    assert (
-        "https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation"
-        in elicitation_api
+    assert "https://m3.sineframe.com/docs/reference/python/" in index
+    assert elicitation.startswith(
+        '---\ntitle: "Plan answers to elicitation requests"\n'
     )
-    assert "AgentSpec" not in elicitation
-    assert "Modern MRTR" not in elicitation
+    assert "elicitation plan" in elicitation.lower()
+    assert "sequence(...)" in elicitation
+    assert "one_of(...)" in elicitation
+    assert "round_of(...)" in elicitation
+    assert "sdk/examples/docs/elicitation-plans" in elicitation
+    assert elicitation_api.startswith(
+        '---\ntitle: "Elicitation and managed-input API"\n'
+    )
     assert all(
         term in elicitation_api
         for term in (
@@ -214,39 +209,19 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
             "expect_url",
             "maybe_url",
             "sequence",
-            "optional",
-            "one_of",
             "round_of",
-            "call_tool",
-            "get_prompt",
-            "read_resource",
-            "allow_input_required",
+            "one_of",
+            "optional",
             "agent.run",
             "agent.submit",
             "session.send",
-            "pending_elicitation",
-            "respond_elicitation",
-            "ElicitationEntry",
-            "ProtocolCallAttempt",
-            "ToolCallAttempt",
-            "TraceView.elicitations",
-            "ToolCallEntry.attempts",
-            "input_required",
-            "never perform",
-            "trace",
-            "Pi 0.85.1",
-            "SQLiteExecutionStore",
-            "same-worker",
-            "form, multi-round, and URL",
-            "terminal recovery error",
-            "Worker/process restart",
-            "Codex App Server support and limitations",
-            "Implementation status: verified for unmodified Codex CLI 0.156.1",
-            "serverRequest/resolved",
-            "input_required",
-            "effective supported plan limit is at most nine",
         )
     )
+    _assert_sdk_doc_is_relocation_stub("elicitation.md", "guides/elicitation/plans")
+    _assert_sdk_doc_is_relocation_stub(
+        "elicitation-api.md", "reference/python/m3/elicitation"
+    )
+    assert "Modern MRTR" not in elicitation
     assert "test_pi_mrtr_bridge.py" in parity
     assert "test_pi_control.py" in parity
     assert "test_real_pi_mrtr_gate.py" in parity
@@ -263,9 +238,9 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     assert "sends a `DirectSpec` or `AgentSpec` through `MCPTestKit`" in api
     assert "no replacement discriminator or variant" in api
     assert "Elicitation guide" in skill
-    assert "sdk/docs/elicitation.md" in patterns
-    assert "elicitation-api.md" in skill
-    assert "elicitation-api.md" in patterns
+    assert "https://m3.sineframe.com/docs/guides/elicitation/plans" in patterns
+    assert "https://m3.sineframe.com/docs/reference/python/m3/elicitation" in skill
+    assert "https://m3.sineframe.com/docs/reference/python/m3/elicitation" in patterns
     assert "AgentSpec" not in skill
     assert "AgentSpec" not in patterns
 
@@ -273,8 +248,10 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
 def test_elicitation_python_snippets_compile() -> None:
     """Documentation Python examples stay syntactically executable."""
 
-    guide = (_SDK / "docs" / "elicitation.md").read_text(encoding="utf-8")
-    reference = (_SDK / "docs" / "elicitation-api.md").read_text(encoding="utf-8")
+    guide = (_SITE / "guides" / "elicitation" / "plans.md").read_text(encoding="utf-8")
+    reference = (_SITE / "reference" / "python" / "m3" / "elicitation.md").read_text(
+        encoding="utf-8"
+    )
     snippets: list[str] = []
     for text in (guide, reference):
         in_python = False
@@ -295,26 +272,27 @@ def test_elicitation_python_snippets_compile() -> None:
         headings = [line for line in text.splitlines() if line.startswith("### ")]
         assert len(headings) == len(set(headings)), "duplicate elicitation heading"
     assert snippets
-    assert "\ntry:\ntry:" not in reference
-    assert reference.count("### Inventory 21") == 1
-    assert reference.count('assert view.elicitations[0].request_key == "address"') == 1
     for index, snippet in enumerate(snippets):
         compile(snippet, f"<elicitation-doc-snippet-{index}>", "exec")
 
+    source = (_EXAMPLES / "docs" / "elicitation-plans" / "test_plan.py").read_text(
+        encoding="utf-8"
+    )
+    ast.parse(source)
+    assert "client.call_tool(" in source
+    assert "elicitation=plan" in source
+    assert "test_plan.py" in guide
+
 
 def test_direct_elicitation_docs_select_current_protocol() -> None:
-    """Direct MRTR examples opt into the protocol that carries elicitation."""
+    """Canonical guide and runnable docs example select elicitation support."""
 
-    text = (_SDK / "docs" / "elicitation-api.md").read_text(encoding="utf-8")
-    action_section = text.split("direct action parameters", 1)[1].split(
-        "### Manual escape hatch", 1
-    )[0]
-    manual_section = text.split("### Manual escape hatch", 1)[1].split(
-        "### Inventory 24", 1
-    )[0]
-    trace_section = text.split("## Trace assertions", 1)[1]
-    selected = 'with kit.direct(server, protocol="2026-07-28") as client:'
+    guide = (_SITE / "guides" / "elicitation" / "plans.md").read_text(encoding="utf-8")
+    example = (_EXAMPLES / "docs" / "elicitation-plans" / "test_plan.py").read_text(
+        encoding="utf-8"
+    )
 
-    assert selected in action_section
-    assert selected in manual_section
-    assert selected in trace_section
+    assert 'Config(protocol_revision="2026-07-28")' in guide
+    assert 'Config(protocol_revision="2026-07-28")' in example
+    assert "elicitation=plan" in example
+    assert "with kit.direct(server) as client" in example
