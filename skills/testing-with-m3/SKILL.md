@@ -148,7 +148,7 @@ Small trial counts show observations, not reliable improvement estimates.
 
 ## Elicitation
 
-Start with the complete [Elicitation guide](https://m3.sineframe.com/docs/guides/elicitation/plans).
+Start with the complete [Elicitation guide](../../sdk/docs/elicitation.md#one-prompt-two-elicitation-rounds-one-tool-call).
 Its runnable test sends one prompt, answers either an address form or its
 alternative, then answers a URL request on a later retry. It asserts one
 successful logical tool call after `agent.run` returns. Copy the maintained
@@ -173,12 +173,12 @@ those action boundaries. Pi 0.85.1 is the verified Pi baseline. Codex support
 uses the unmodified App Server and local deterministic provider fixtures; its
 full M3 conformance gate is pending. Do not treat native Codex characterization
 or a skipped binary test as proof that M3 action integration passed. The
-[Codex limitations section](https://m3.sineframe.com/docs/reference/python/m3/elicitation)
+[Codex limitations section](../../sdk/docs/elicitation-api.md#codex-app-server-support-and-limitations)
 is canonical, and the [Pi-to-Codex parity inventory](../../sdk/tests/mrtr-harness-parity.md)
 lists each existing Pi scenario, its Codex counterpart, and remaining gaps.
 For exact helper signatures, prompt/resource actions, manual and managed
 input, URL details, and trace fields, use the
-[MRTR API reference](https://m3.sineframe.com/docs/reference/python/m3/elicitation).
+[MRTR API reference](../../sdk/docs/elicitation-api.md).
 
 Run the pinned Codex MRTR gate only with Codex CLI 0.156.1 installed; both
 suites use local deterministic MCP and Responses API fixtures and make no

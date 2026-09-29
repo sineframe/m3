@@ -27,8 +27,7 @@ a local MCP fixture and a local deterministic Responses API fixture, so they
 make no paid model-provider calls. The native characterization suite proves
 what Codex itself sends and surfaces; the managed suite proves M3 action and
 SQLite round delivery; the example suite exercises the public Codex action
-patterns in the [hosted elicitation guide](https://m3.sineframe.com/docs/guides/elicitation/plans);
-the action-scope suite covers non-accept
+patterns in `sdk/docs/elicitation.md`; the action-scope suite covers non-accept
 responses, two planned turns in one session, and required-plan completion. The
 approval-spoof suite verifies that a server cannot impersonate Codex's separate
 native tool-approval request. The test helpers fail if Codex is missing or has

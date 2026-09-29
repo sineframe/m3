@@ -16,7 +16,7 @@ those additions. The rows below identify verified evidence, Pi-only
 mechanisms, and Codex behaviors outside the tested scope. Missing or
 mismatched Codex fails the suites instead of skipping them. The canonical
 limits and ownership model are in the
-[Codex App Server section of the API reference](https://m3.sineframe.com/docs/reference/python/m3/elicitation).
+[Codex App Server section of the API reference](../docs/elicitation-api.md#codex-app-server-support-and-limitations).
 
 Run the local Codex gates with no paid provider call:
 
@@ -184,7 +184,7 @@ tests use installed Pi 0.85.1 and a deterministic local provider.
 
 [`test_modern_mrtr_codex.py`](../examples/tests/test_modern_mrtr_codex.py)
 runs the harness-bound examples from
-the [hosted elicitation guide](https://m3.sineframe.com/docs/guides/elicitation/plans) through installed Codex 0.156.1 and
+[`elicitation.md`](../docs/elicitation.md) through installed Codex 0.156.1 and
 the local deterministic provider. Each test gives the separate Codex tool
 approval path an explicit `permission_policy="allow"`, then verifies that the
 MRTR plan handles only native elicitation prompts. Execution reaches the
