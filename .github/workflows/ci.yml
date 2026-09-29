@@ -324,6 +324,7 @@ jobs:
           python3 scripts/render_docs_examples.py --check
           python3 scripts/validate_docs_site.py
           python3 scripts/validate_docs_examples.py
+          python3 scripts/validate_public_docs_prose.py
 
       - name: Install locked workspace base dependencies
         run: uv sync --locked --all-packages --no-dev --group lint --group typecheck

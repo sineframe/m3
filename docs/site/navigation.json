@@ -349,7 +349,7 @@
       "id": "reference-python-api",
       "title": "Python API inventory",
       "source": "reference/python/api.md",
-      "description": "This page is generated from the release's declared public exports. It records exact signatures, model fields, and public members. The capability pages explain how these objects work together; use this inventory for exact lookup.",
+      "description": "Exact signatures, model fields, and public members for the documented release. The capability pages explain how these objects work together.",
       "kind": "reference"
     },
     {

@@ -58,6 +58,7 @@ jobs:
           python3 scripts/render_docs_examples.py --check
           python3 scripts/validate_docs_site.py
           python3 scripts/validate_docs_examples.py
+          python3 scripts/validate_public_docs_prose.py
           # Signature rendering differs across supported Python versions. Keep
           # this freshness check on the same runtime used by PR source checks.
           uv run --isolated --python 3.13 --locked --all-packages --no-dev \

@@ -1,20 +1,19 @@
 # API v2 capability guide
 
-## Browser and machine readable API reference
+## Browser and machine-readable API reference
 
 The standard local app publishes generated OpenAPI 3.1 at
 `http://127.0.0.1:8000/openapi.json`, with Swagger UI at `/docs` and ReDoc at
-`/redoc`. The schema is generated from the route declarations and SDK models,
+`/redoc`. FastAPI builds the schema from the route declarations and SDK models,
 including direct and agent execution discriminators, typed reports, trace
-entries, and the v2 error envelope. The app is unauthenticated and must stay
-bound to loopback; Host, loopback-client, and same-origin mutation checks are
-enforced by middleware.
+entries, and the v2 error envelope. Keep the unauthenticated app bound to
+loopback. Middleware checks the Host header, loopback client, and browser origin.
 
 The history viewer publishes a read-only OpenAPI surface: GET and HEAD reads,
 plus `POST /api/v2/evidence/read` and `POST /api/v2/evaluations/aggregate`.
 Other mutation requests receive `405` with `{"detail":"viewer API is read-only"}`.
 
-## What API v2 can do
+## Capabilities and boundaries
 
 API v2 reads and manages M3 executions in the SQLite store selected for
 the app. It can accept `DirectSpec` or `AgentSpec` execution specs, submit them to the
@@ -23,11 +22,9 @@ cancel active executions, delete terminal executions, read bounded evidence,
 and summarize evaluations that are already saved. It does not treat a pytest
 result or a normal Python assertion as an execution or evaluation result.
 
-The JSON API v2 `ExecutionSpec` discriminator still has the `DirectSpec` and
-`AgentSpec` schema variants. Those names are part of the API-v2 wire contract;
-there is no replacement discriminator or variant. `AgentSpec` is not a Python
-SDK construction surface for ordinary test authors, but API-v2 clients must
-continue to send and receive the existing `DirectSpec`/`AgentSpec` JSON shapes.
+`DirectSpec` and `AgentSpec` are the API v2 `ExecutionSpec` wire variants. API
+clients send and receive those JSON shapes. Ordinary Python tests use the
+smaller marked-test or `kit.agents(...)` interfaces.
 
 `GET /api/v2/runs` returns a newest first list of safe pytest run summaries.
 Each item contains `run_id`, `run_label`, `created_at`, `finished_at`, `status`, optional
@@ -155,28 +152,20 @@ are test outcomes; they are not automatically saved as evaluation decisions.
 
 ## Evaluation boundary
 
-API v2 currently cannot register or run an evaluator. `ExecutionSpec.evaluations`
-is saved as part of the execution spec only. Each declaration has an evaluator
-`name` and `required` flag, but API v2 does not register or run it; there is no
-standalone API endpoint to run an evaluator. SDK users run `kit.evaluate(...)` or an
-`EvaluationRunner` against an execution and the same SQLite store. The saved
-evaluation then appears in the execution report, and
-`POST /api/v2/evaluations/aggregate` can summarize it.
+`ExecutionSpec.evaluations` saves declarations with an evaluator `name` and
+`required` flag. API v2 does not register or run the evaluator. SDK users run
+`kit.evaluate(...)`, `kit.judge_response(...)`, or an `EvaluationRunner`
+against the execution and the same SQLite store. The saved result appears in
+the execution report, and `POST /api/v2/evaluations/aggregate` can summarize it.
 
-M3 does not provide a built-in LLM judge. SDK users may write an
-evaluator callback, including one that calls an LLM; credentials and client
-setup remain user-owned. API v2 only reads saved evaluation results and
-provenance, then calculates summaries when asked.
+The SDK provides `LLMJudge`; API v2 does not configure or execute it. API v2
+reads the saved evaluation result and provenance after SDK code runs the judge.
 
 ## Machine-readable contract and common envelope
 
 `/openapi.json` is the machine-readable request/response schema, including
-the `ExecutionSpec` and `TraceView` discriminators. This guide explains the
-behavior, persistence effect, and important fields clients use.
-The wire schema still names direct and agent execution specifications for API
-clients. SDK test authors can use the smaller marked-test or `kit.agents([...])`
-interfaces. Reports, raw evidence, and evaluation summaries keep their
-existing v2 payload shapes.
+the `ExecutionSpec` and `TraceView` discriminators. Reports, raw evidence, and
+evaluation summaries use the v2 payload shapes described below.
 
 Managed native harness executions add an optional `agent` object to the
 execution snapshot, report, and trace. Its `harness` object records `kind`,
@@ -360,7 +349,7 @@ The list response is `{version, page}` with `items`, `total`, `limit`, and
 `{version, execution_id, deleted: true}`. A report can contain a partial trace
 when the provider did not emit complete evidence.
 
-Route details:
+### Execution routes
 
 - `GET /api/v2/executions` accepts integer `limit` (1-100), integer `offset`
   (0 or greater),
@@ -579,8 +568,7 @@ To inspect daily outcomes for one suite and evaluator:
 {"filters":{"suite_name":["catalog"],"evaluator":["quality.v1"]},"group_by":["time.day"]}
 ```
 
-Those `pass_rate` values describe saved evaluation outcomes, rather than
-execution lifecycle completion.
+Those `pass_rate` values measure saved evaluation outcomes.
 
 Example grouped response:
 
@@ -622,17 +610,13 @@ The request fields are:
 | `filters` | Optional map from those non-time labels to one value or a non-empty list of values. `time.*` cannot be filtered. |
 | `limit`, `offset` | Group paging; `limit` defaults to 200 and is 1-1000, `offset` defaults to 0 and is non-negative. |
 
-The query must either filter to exactly one evaluator or include `evaluator`
-in `group_by`; it may do both. This prevents one pass rate from combining
-different evaluators. Unknown labels, duplicate group labels, invalid time
-buckets, empty filter lists, mixed evaluator filters, naive timestamps, and
-`from >= to` are rejected with `422 invalid_evaluation_aggregate_query`.
-
-Use one evaluator filter or include `evaluator` in `group_by`. This makes each
-evaluator's trend independently visible. Totals are recomputed from the full
-filtered population before group pagination; they are not obtained by summing
-group values. This matters for distinct trial/execution counts, averages, and
-percentiles.
+The query must filter to exactly one evaluator, include `evaluator` in
+`group_by`, or do both. This keeps each evaluator's trend separate. Unknown
+labels, duplicate group labels, invalid time buckets, empty filter lists, mixed
+evaluator filters, naive timestamps, and `from >= to` are rejected with `422
+invalid_evaluation_aggregate_query`. Totals are recomputed from the full
+filtered population before group pagination; summing group values can produce
+different trial counts, averages, and percentiles.
 
 `judge_provider`, `judge_model`, and `rubric_id` are optional labels copied
 from the provenance saved with a user-supplied evaluator result. They do not
@@ -732,16 +716,15 @@ execution ID to open a single report. The UI continues reading
 `POST /api/v2/evaluations/aggregate`, and
 `GET /api/v2/feedback/{run_id}` without a route or envelope change.
 
-### User-supplied LLM evaluator
+### LLM judge evaluations
 
-M3 does not include an LLM judge. An SDK user can write an evaluator
-callback that calls an LLM and returns the same `EvaluationDecision` as a
-deterministic evaluator. Save provider, model, and rubric provenance with
-that result. Group by `evaluator`, `judge_provider`, or `judge_model`; do not
-combine its pass rate with a deterministic evaluator. API v2 only groups the
-saved result and its provenance; it never registers or runs the callback.
+SDK code can run `LLMJudge` through `kit.judge_response(...)` and save the
+result in the shared store. Group that result by `evaluator`, `judge_provider`,
+or `judge_model`; do not combine its pass rate with a deterministic evaluator.
+API v2 groups the saved result and provenance but does not configure or run the
+judge.
 
-## Live example gate
+## Run the live DeepWiki example
 
 The DeepWiki Streamable HTTP example is opt-in:
 
@@ -754,7 +737,6 @@ pytest -q app/tests/e2e/test_deepwiki_live_evaluation.py
 It submits real executions, reopens SQLite, evaluates saved traces, queries
 run and calendar trends, checks health/latency, and opens one returned trial
 report. Normal CI skips this external test.
-# Authoring executions
 
 ## Suites and feedback identity
 
@@ -839,5 +821,5 @@ The supported authoring paths are a marked pytest test selected with
 `m3 test --harness ... --trials N`, or a Python loop over
 `kit.agents(...)`. Provider keys are supplied through the process environment
 or an explicit `--env-file`; MCP endpoint keys remain server header
-references. These paths write the same execution records consumed by the
-unchanged report, evaluation aggregate, and feedback routes documented below.
+references. These paths write the execution records consumed by the report,
+evaluation aggregate, and feedback routes.

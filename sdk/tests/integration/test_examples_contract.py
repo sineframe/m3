@@ -236,7 +236,7 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     assert "DirectSpec" in api
     assert "AgentSpec" in api
     assert "sends a `DirectSpec` or `AgentSpec` through `MCPTestKit`" in api
-    assert "no replacement discriminator or variant" in api
+    assert "are the API v2 `ExecutionSpec` wire variants" in api
     assert "Elicitation guide" in skill
     assert "https://m3.sineframe.com/docs/guides/elicitation/plans" in patterns
     assert "https://m3.sineframe.com/docs/reference/python/m3/elicitation" in skill

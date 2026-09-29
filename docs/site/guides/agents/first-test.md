@@ -14,7 +14,8 @@ This test starts a local MCP server, gives Codex access to one named tool, and c
 - Set `M3_DOCS_CODEX_MODEL` to a model identifier available to that installation. M3 does not choose a provider model for you.
 - Review Codex’s MCP approval prompt before accepting it. The M3 policy below restricts the test to `shipping:shipping_quote`; keep approval scoped to this local test.
 
-**Compatibility:** this is a live Codex example. It needs a working Codex installation and provider access, so it is not part of credential-free documentation checks. See [harness compatibility](../../reference/compatibility.md).
+Credential-free documentation checks skip this live example. See
+[harness compatibility](../../reference/compatibility.md).
 
 ## Example project
 

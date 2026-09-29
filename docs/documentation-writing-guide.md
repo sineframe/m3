@@ -91,6 +91,22 @@ Avoid marketing adjectives and filler: “seamless,” “powerful,” “robust
 Do not use a feature list where the reader needs an explanation. Do not say a
 tool “ensures correctness”; say which evidence the test checks.
 
+## Editorial cleanup
+
+State the fact without a staged opener, invented objection, or closing sentence
+that repeats the paragraph. Keep a contrast only when both outcomes affect what
+the reader should do. Use bold for meaningful emphasis, not labels such as
+`**Note:**` or `**Compatibility:**`.
+
+Do not use em or en dashes as general-purpose sentence connectors. Choose the
+punctuation that describes the relationship between clauses. Dashes and hyphens
+inside code, commands, paths, and URLs keep their exact spelling.
+
+Generated reference text must add information about the symbol. When a field or
+method has no description, show its name, type, signature, and default without
+inserting a generic description. Keep generator instructions out of published
+reader content.
+
 Output blocks must be captured from a verified scenario. Normalize only named
 variable fields such as a temporary path, run ID, or elapsed time. Never invent
 a transcript or normalize away a failure.
