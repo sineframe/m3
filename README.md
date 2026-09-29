@@ -13,7 +13,7 @@ Install the CLI with uv:
 uv tool install sf-m3-cli
 ```
 
-On macOS or Linux, the hosted shell installer is an alternative:
+On macOS or Linux, the shell installer is an alternative:
 
 ```sh
 curl -LsSf https://m3.sineframe.com/install.sh | sh

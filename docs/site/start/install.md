@@ -29,7 +29,7 @@ The CLI runs outside your project environment. To update it, use:
 uv tool upgrade sf-m3-cli
 ```
 
-On macOS or Linux, you can use the hosted shell installer instead:
+On macOS or Linux, you can use the shell installer instead:
 
 ```sh
 curl -LsSf https://m3.sineframe.com/install.sh | sh

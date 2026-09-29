@@ -90,8 +90,8 @@ Assets include the three wheels, versioned `install.sh`, stable first `install-l
 
 The landing build fetches `install-latest.sh` from its pinned M3 GitHub Release,
 checks the release version and source commit, verifies the asset against
-`manifest.json`, and publishes it at the stable hosted URL. Updating the landing
-release pin advances the documentation and hosted bootstrap together.
+`manifest.json`, and publishes it at the stable URL. Updating the landing
+release pin advances the documentation and installer together.
 
 ## Recovery after partial publication
 
