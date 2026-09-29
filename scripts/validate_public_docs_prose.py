@@ -31,6 +31,7 @@ STAGED_OPENING = re.compile(
     re.IGNORECASE,
 )
 BOLD_LABEL = re.compile(r"^\s*\*\*[^*]+:\*\*")
+FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
 def public_documents() -> tuple[Path, ...]:
@@ -42,42 +43,98 @@ def public_documents() -> tuple[Path, ...]:
     return tuple(sorted(paths))
 
 
+def _strip_inline_code(text: str) -> str:
+    output: list[str] = []
+    cursor = 0
+    while cursor < len(text):
+        opening = text.find("`", cursor)
+        if opening < 0:
+            output.append(text[cursor:])
+            break
+        output.append(text[cursor:opening])
+        opening_end = opening + 1
+        while opening_end < len(text) and text[opening_end] == "`":
+            opening_end += 1
+        delimiter_size = opening_end - opening
+        search = opening_end
+        closing_end: int | None = None
+        while search < len(text):
+            closing = text.find("`", search)
+            if closing < 0:
+                break
+            run_end = closing + 1
+            while run_end < len(text) and text[run_end] == "`":
+                run_end += 1
+            if run_end - closing == delimiter_size:
+                closing_end = run_end
+                break
+            search = run_end
+        if closing_end is None:
+            output.append(text[opening:opening_end])
+            cursor = opening_end
+            continue
+        output.append("\n" * text[opening:closing_end].count("\n"))
+        cursor = closing_end
+    return "".join(output)
+
+
 def visible_lines(text: str) -> list[tuple[int, str]]:
-    lines: list[tuple[int, str]] = []
-    in_fence = False
-    for number, line in enumerate(text.splitlines(), start=1):
-        if line.lstrip().startswith("```"):
-            in_fence = not in_fence
+    visible: list[str] = []
+    fence_character: str | None = None
+    fence_size = 0
+    for line in text.splitlines():
+        if fence_character is not None:
+            closing = re.match(
+                rf"^ {{0,3}}{re.escape(fence_character)}{{{fence_size},}}[ \t]*$",
+                line,
+            )
+            if closing:
+                fence_character = None
+                fence_size = 0
+            visible.append("")
             continue
-        if in_fence:
+        opening = FENCE_OPEN.match(line)
+        if opening:
+            delimiter = opening.group(1)
+            fence_character = delimiter[0]
+            fence_size = len(delimiter)
+            visible.append("")
             continue
-        without_code = re.sub(r"`[^`]*`", "", line)
-        lines.append((number, without_code))
-    return lines
+        visible.append(line)
+
+    without_inline_code = _strip_inline_code("\n".join(visible)).split("\n")
+    return list(enumerate(without_inline_code, start=1))
+
+
+def validation_errors(relative: Path, text: str) -> list[str]:
+    errors: list[str] = []
+    lines = visible_lines(text)
+    prose = "\n".join(line for _, line in lines)
+    headings = [number for number, line in lines if re.match(r"^#\s+", line)]
+    if len(headings) != 1:
+        errors.append(f"{relative}: expected exactly one H1, found {len(headings)}")
+    for forbidden in FORBIDDEN_TEXT:
+        if forbidden in prose:
+            errors.append(f"{relative}: contains generic public prose: {forbidden}")
+    for number, line in lines:
+        if "\u2014" in line or "\u2013" in line:
+            errors.append(f"{relative}:{number}: prose contains an em or en dash")
+        if BOLD_LABEL.match(line):
+            errors.append(
+                f"{relative}:{number}: prose starts with a decorative bold label"
+            )
+        if STAGED_OPENING.match(line.strip()):
+            errors.append(f"{relative}:{number}: prose starts with staged wording")
+    return errors
 
 
 def main() -> int:
     errors: list[str] = []
     paths = public_documents()
     for path in paths:
-        relative = path.relative_to(ROOT)
-        text = path.read_text(encoding="utf-8")
-        lines = visible_lines(text)
-        headings = [number for number, line in lines if re.match(r"^#\s+", line)]
-        if len(headings) != 1:
-            errors.append(f"{relative}: expected exactly one H1, found {len(headings)}")
-        for forbidden in FORBIDDEN_TEXT:
-            if forbidden in text:
-                errors.append(f"{relative}: contains generic public prose: {forbidden}")
-        for number, line in lines:
-            if "\u2014" in line or "\u2013" in line:
-                errors.append(f"{relative}:{number}: prose contains an em or en dash")
-            if BOLD_LABEL.match(line):
-                errors.append(
-                    f"{relative}:{number}: prose starts with a decorative bold label"
-                )
-            if STAGED_OPENING.match(line.strip()):
-                errors.append(f"{relative}:{number}: prose starts with staged wording")
+        errors.extend(
+            validation_errors(path.relative_to(ROOT), path.read_text(encoding="utf-8"))
+        )
     if errors:
         print("Public documentation prose validation failed:")
         for error in errors:
