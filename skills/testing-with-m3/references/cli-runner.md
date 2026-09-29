@@ -77,7 +77,7 @@ uv tool install sf-m3-cli
 Or use the shell installer on macOS or Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sineframe/m3/main/scripts/install-latest.sh | sh
+curl -LsSf https://m3.sineframe.com/install.sh | sh
 ```
 
 The installer keeps the CLI and bundled UI outside the project environment.

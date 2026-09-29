@@ -11,21 +11,31 @@ being tested.
 
 ## Requirements
 
-M3 supports Python 3.10 and newer. The commands below use [uv](https://docs.astral.sh/uv/).
+M3 supports Python 3.10 and newer. The one-command installer supports macOS
+and Linux and requires `curl` plus either Python 3 or
+[uv](https://docs.astral.sh/uv/).
 
 ## Install the CLI
 
 Install the standalone command once for your user:
 
 ```sh
+curl -LsSf https://m3.sineframe.com/install.sh | sh
+```
+
+The installer selects the latest stable GitHub release, verifies its release
+installer and checksums, and installs the CLI in isolated tool storage. It uses
+uv when available and otherwise creates a dedicated virtual environment. To
+update M3, rerun the same command.
+
+To install directly from PyPI with uv instead, use:
+
+```sh
 uv tool install sf-m3-cli
 ```
 
-The CLI runs outside your project environment. To update it, use:
-
-```sh
-uv tool upgrade sf-m3-cli
-```
+The CLI runs outside your project environment. Update a direct uv installation
+with `uv tool upgrade sf-m3-cli`.
 
 ## Install the project SDK
 

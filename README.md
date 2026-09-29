@@ -8,7 +8,7 @@ tests, captures MCP evidence, and can save runs for inspection and comparison.
 ## Install and start
 
 ```sh
-uv tool install sf-m3-cli
+curl -LsSf https://m3.sineframe.com/install.sh | sh
 m3 init
 m3 setup
 m3 doctor

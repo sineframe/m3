@@ -69,8 +69,9 @@ tag's release workflow and GitHub Release succeed, update the docs pin in
 `sineframe-landing` with `npm run docs:pin -- <tag>`, build from that public
 tag, and open a landing pull request. Verify its Cloudflare preview before
 merging; the existing landing Git integration deploys the new docs with the
-landing site. Verify production after that merge. Do not update the landing
-pin before the M3 release succeeds.
+landing site and publishes that release's `scripts/install-latest.sh` at
+`https://m3.sineframe.com/install.sh`. Verify production after that merge. Do
+not update the landing pin before the M3 release succeeds.
 
 
 CI runs source checks and a fast test selection when a pull request is opened
@@ -86,6 +87,10 @@ asset matrix remains available by manually dispatching CI. Post-publication
 PyPI and public installer checks still run after upload.
 
 Assets include the three wheels, versioned `install.sh`, stable first `install-latest.sh`, `SHA256SUMS`, and `manifest.json`. The shell installer chooses the highest final version and falls back to prereleases only when no final release exists. Use `--prerelease` for an alpha, or `--tag vX.Y.Z` for an exact tag.
+
+When `scripts/install-latest.sh` changes, copy it byte-for-byte to
+`sineframe-landing/public/install.sh` in the landing release pull request. The
+landing build publishes that reviewed bootstrap at the stable hosted URL.
 
 ## Recovery after partial publication
 
