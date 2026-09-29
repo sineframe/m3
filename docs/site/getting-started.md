@@ -12,10 +12,16 @@ also make the assertion fail, restore it, and open the saved run.
 ## Requirements
 
 - Python 3.10 or newer.
-- The standalone M3 CLI.
+- [uv](https://docs.astral.sh/uv/) and the standalone M3 CLI.
 - No agent provider key, M3 account, or external server.
 
-Install the CLI once:
+Install the CLI once with uv:
+
+```sh
+uv tool install sf-m3-cli
+```
+
+On macOS or Linux, you can use the hosted shell installer instead:
 
 ```sh
 curl -LsSf https://m3.sineframe.com/install.sh | sh

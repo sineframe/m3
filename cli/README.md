@@ -5,6 +5,12 @@ runs pytest, saves results, manages harness runtimes, and serves the local
 viewer.
 
 ```sh
+uv tool install sf-m3-cli
+```
+
+On macOS or Linux, you can use the hosted shell installer instead:
+
+```sh
 curl -LsSf https://m3.sineframe.com/install.sh | sh
 ```
 

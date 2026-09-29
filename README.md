@@ -7,8 +7,21 @@ tests, captures MCP evidence, and can save runs for inspection and comparison.
 
 ## Install and start
 
+Install the CLI with uv:
+
+```sh
+uv tool install sf-m3-cli
+```
+
+On macOS or Linux, the hosted shell installer is an alternative:
+
 ```sh
 curl -LsSf https://m3.sineframe.com/install.sh | sh
+```
+
+Then initialize your project:
+
+```sh
 m3 init
 m3 setup
 m3 doctor
