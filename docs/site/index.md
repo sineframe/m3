@@ -13,6 +13,45 @@ check tool selection, arguments, or multi-turn behavior.
 credentials. The walkthrough includes a passing test, an intentional failure,
 and the saved evidence behind both results.
 
+<div class="m3-harness-strip" aria-label="Test your MCP with">
+  <p class="m3-harness-label">Test your MCP with</p>
+  <div class="m3-harness-logos">
+    <a class="m3-harness-link" href="/docs/guides/agents/harnesses">
+      <span class="m3-harness-icon">
+        <img src="/harnesses/claude-code.svg" alt="" width="32" height="32">
+      </span>
+      <span>Claude Code</span>
+    </a>
+    <a class="m3-harness-link" href="/docs/guides/agents/harnesses">
+      <span class="m3-harness-icon">
+        <img class="m3-harness-logo-light" src="/harnesses/codex.svg" alt="" width="32" height="32">
+        <img class="m3-harness-logo-dark" src="/harnesses/codex-dark.svg" alt="" width="32" height="32">
+      </span>
+      <span>Codex</span>
+    </a>
+    <a class="m3-harness-link" href="/docs/guides/agents/harnesses">
+      <span class="m3-harness-icon">
+        <img class="m3-harness-logo-light" src="/harnesses/opencode.svg" alt="" width="32" height="32">
+        <img class="m3-harness-logo-dark" src="/harnesses/opencode-dark.svg" alt="" width="32" height="32">
+      </span>
+      <span>OpenCode</span>
+    </a>
+    <a class="m3-harness-link" href="/docs/guides/agents/harnesses">
+      <span class="m3-harness-icon">
+        <img src="/harnesses/pi.svg" alt="" width="32" height="32">
+      </span>
+      <span>Pi</span>
+    </a>
+    <a class="m3-harness-link m3-harness-acp" href="/docs/guides/agents/acp">
+      <span class="m3-harness-icon">
+        <img class="m3-harness-logo-light" src="/harnesses/acp.svg" alt="" width="64" height="32">
+        <img class="m3-harness-logo-dark" src="/harnesses/acp-dark.svg" alt="" width="64" height="32">
+      </span>
+      <span>ACP agents</span>
+    </a>
+  </div>
+</div>
+
 ## Choose a task
 
 | I need to… | Start here |
