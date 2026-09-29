@@ -9,5 +9,7 @@ ACP: https://mintcdn.com/zed-685ed6d6/ZwvtxaoaZwBJrK5s/logo/light.svg
 The Codex mark is copyright (c) 2025 OpenAI. Its upstream MIT notice is
 retained in the SVG files; the dark variant changes only the fill color.
 OpenCode uses the unmodified light/dark SVGs from its official brand kit.
+Claude and the Claude logo belong to Anthropic PBC and are used only to
+identify compatibility with Claude Code.
 Product names and trademarks belong to their respective owners.
 These marks identify supported integrations, not endorsement.
