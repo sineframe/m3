@@ -142,7 +142,7 @@
       "id": "guides-agents-skill",
       "title": "Install the M3 agent skill",
       "source": "guides/agents/skill.md",
-      "description": "Install testing-with-m3 from the M3 GitHub repository so a coding agent can set up M3, write tests, run them, and inspect saved evidence.",
+      "description": "Install the M3 testing skill from GitHub with npx.",
       "kind": "guides",
       "searchAliases": [
         "npx skills",
