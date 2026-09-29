@@ -1,0 +1,15 @@
+Harness logo sources
+
+Claude: https://claude.ai/favicon.svg
+Codex: https://github.com/agentsmd/agents.md/blob/6ae22720966e9cca6b2c2dd0780fb7265a87a46c/public/logos/codex.svg
+OpenCode: https://opencode.ai/brand (logo light/dark SVG downloads)
+Pi: https://pi.dev/logo-auto.svg (empty outer margins trimmed)
+ACP: https://mintcdn.com/zed-685ed6d6/ZwvtxaoaZwBJrK5s/logo/light.svg
+
+The Codex mark is copyright (c) 2025 OpenAI. Its upstream MIT notice is
+retained in the SVG files; the dark variant changes only the fill color.
+OpenCode uses the unmodified light/dark SVGs from its official brand kit.
+Claude and the Claude logo belong to Anthropic PBC and are used only to
+identify compatibility with Claude Code.
+Product names and trademarks belong to their respective owners.
+These marks identify supported integrations, not endorsement.

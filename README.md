@@ -5,6 +5,52 @@
 M3 tests MCP servers and the agents that use them. It runs Python and pytest
 tests, captures MCP evidence, and can save runs for inspection and comparison.
 
+<p><strong>Test your MCP with</strong></p>
+
+<table>
+  <tr>
+    <td align="center" width="110">
+      <a href="https://m3.sineframe.com/docs/guides/agents/harnesses">
+        <img src="docs/assets/harnesses/claude-code.svg" alt="" width="32" height="32">
+        <br>Claude Code
+      </a>
+    </td>
+    <td align="center" width="110">
+      <a href="https://m3.sineframe.com/docs/guides/agents/harnesses">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="docs/assets/harnesses/codex-dark.svg">
+          <img src="docs/assets/harnesses/codex.svg" alt="" width="32" height="32">
+        </picture>
+        <br>Codex
+      </a>
+    </td>
+    <td align="center" width="110">
+      <a href="https://m3.sineframe.com/docs/guides/agents/harnesses">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="docs/assets/harnesses/opencode-dark.svg">
+          <img src="docs/assets/harnesses/opencode.svg" alt="" width="32" height="32">
+        </picture>
+        <br>OpenCode
+      </a>
+    </td>
+    <td align="center" width="110">
+      <a href="https://m3.sineframe.com/docs/guides/agents/harnesses">
+        <img src="docs/assets/harnesses/pi.svg" alt="" width="32" height="32">
+        <br>Pi
+      </a>
+    </td>
+    <td align="center" width="110">
+      <a href="https://m3.sineframe.com/docs/guides/agents/acp">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="docs/assets/harnesses/acp-dark.svg">
+          <img src="docs/assets/harnesses/acp.svg" alt="" width="64" height="32">
+        </picture>
+        <br>ACP agents
+      </a>
+    </td>
+  </tr>
+</table>
+
 ## Install and start
 
 Install the CLI with uv:
