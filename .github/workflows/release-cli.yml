@@ -58,7 +58,11 @@ jobs:
           python3 scripts/render_docs_examples.py --check
           python3 scripts/validate_docs_site.py
           python3 scripts/validate_docs_examples.py
-          uv run --locked --no-sync python scripts/render_docs_api_reference.py --check
+          # Signature rendering differs across supported Python versions. Keep
+          # this freshness check on the same runtime used by PR source checks.
+          uv run --isolated --python 3.13 --locked --all-packages --no-dev \
+            --group lint --group typecheck \
+            python scripts/render_docs_api_reference.py --check
       - name: Run source and lock checks
         run: |
           set -euo pipefail
