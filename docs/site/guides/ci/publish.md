@@ -1,3 +1,8 @@
+---
+title: "Publish or retry a CI run"
+description: "Publishing is explicit. Run locally without upload first, then add --upload with M3_ACCESS_TOKEN in the environment:"
+---
+
 # Publish or retry a CI run
 
 Publishing is explicit. Run locally without upload first, then add `--upload`

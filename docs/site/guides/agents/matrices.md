@@ -1,3 +1,8 @@
+---
+title: "Run agent cases as a matrix"
+description: "Use HarnessMatrix to run the same MCP cases across harnesses and trials. A matrix expands test work; it does not make model behavior deterministic."
+---
+
 # Run agent cases as a matrix
 
 Use `HarnessMatrix` to run the same MCP cases across harnesses and trials. A matrix expands test work; it does not make model behavior deterministic.
@@ -8,7 +13,7 @@ This live example runs four Codex executions. Install M3 with pytest, sign in to
 
 ## Define and run the cases
 
-Save `shipping_server.py` from [the first agent test](/guides/agents/first-test) beside this complete test as `test_agent_matrix.py`:
+Save `shipping_server.py` from [the first agent test](first-test.md) beside this complete test as `test_agent_matrix.py`:
 
 ```python
 from __future__ import annotations
@@ -90,4 +95,4 @@ Run `python -m pytest -q test_agent_matrix.py` from the project directory. Two t
 
 `each_server` creates a case for each server and harness. `all_servers` gives one harness case all declared servers. `each_tool` creates a case for each tool, server, harness, and trial. Trials repeat a case; they are not automatic retries. Keep the harness, model, server, and prompts fixed when comparing runs.
 
-The assertions check observed calls, not whether the agent’s prose is correct. Next: [read the pytest selection rules](/reference/pytest).
+The assertions check observed calls, not whether the agent’s prose is correct. Next: [read the pytest selection rules](../../reference/pytest.md).

@@ -1,3 +1,8 @@
+---
+title: "Compatibility and current boundaries"
+description: "These docs describe the release shown in the site header. The SDK requires Python 3.10 or newer. A CLI-managed project must use the matching SDK version."
+---
+
 # Compatibility and current boundaries
 
 These docs describe the release shown in the site header. The SDK requires

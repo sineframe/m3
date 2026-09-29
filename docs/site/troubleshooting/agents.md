@@ -1,3 +1,8 @@
+---
+title: "Agent readiness, approvals, and timeouts"
+description: "Use m3 doctor --require harness:NAME for a system runtime, or select a managed runtime/version supported on the current OS and CPU."
+---
+
 # Agent readiness, approvals, and timeouts
 
 ## Harness executable is unavailable

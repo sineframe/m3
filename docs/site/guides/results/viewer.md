@@ -1,3 +1,8 @@
+---
+title: "Open saved test results"
+description: "The standalone CLI includes a local viewer for runs saved in the default project database."
+---
+
 # Open saved test results
 
 The standalone CLI includes a local viewer for runs saved in the default
@@ -5,7 +10,7 @@ project database.
 
 ## Create and open a run
 
-From the project root used in [Your first MCP test](/getting-started):
+From the project root used in [Your first MCP test](../../getting-started.md):
 
 ```sh
 m3 test --ui -- tests/test_m3_starter.py

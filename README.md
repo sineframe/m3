@@ -24,16 +24,16 @@ It uses a local server and needs no model credentials.
 - [Test agent behavior](https://m3.sineframe.com/docs/guides/agents/first-test)
 - [CLI reference](https://m3.sineframe.com/docs/reference/cli/)
 - [Python reference](https://m3.sineframe.com/docs/reference/python/)
-- [Contributing](docs/contributing.md)
+- [Contributing](https://github.com/sineframe/m3/blob/main/docs/contributing.md)
 
 The SDK and CLI use separate environments. The CLI runs pytest in the project
 environment and saves history; tests import the SDK.
 
 ## Development
 
-Read [Architecture](docs/architecture.md), then use the package README for the
+Read [Architecture](https://github.com/sineframe/m3/blob/main/docs/architecture.md), then use the package README for the
 area you are changing. Documentation changes follow the
-[documentation writing guide](docs/documentation-writing-guide.md).
+[documentation writing guide](https://github.com/sineframe/m3/blob/main/docs/documentation-writing-guide.md).
 
 ```sh
 just setup

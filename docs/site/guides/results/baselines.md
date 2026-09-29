@@ -1,10 +1,15 @@
+---
+title: "Compare a run with a baseline"
+description: "--baseline compares a new feedback bundle with an earlier run in the same results database. Capture the ID produced by your own first run; IDs printed in documentation do not exist in your database."
+---
+
 # Compare a run with a baseline
 
 `--baseline` compares a new feedback bundle with an earlier run in the same
 results database. Capture the ID produced by your own first run; IDs printed in
 documentation do not exist in your database.
 
-Run these commands from the project in [Your first MCP test](/getting-started).
+Run these commands from the project in [Your first MCP test](../../getting-started.md).
 
 ## Create the baseline
 

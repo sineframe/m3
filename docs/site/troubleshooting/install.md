@@ -1,3 +1,8 @@
+---
+title: "Installation and project Python"
+description: "Run m3 setup from the project root. It installs the SDK version matching the standalone CLI into the selected isolated environment. If M3 selected the wrong environment, pass --python PATH to setup and doctor."
+---
+
 # Installation and project Python
 
 ## `project Python ... does not match`

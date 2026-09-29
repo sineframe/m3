@@ -1,10 +1,15 @@
+---
+title: "Test a multi-turn agent session"
+description: "An agent session keeps one conversation open across turns. Use it when later prompts depend on earlier work, and assert evidence against the turn that produced it."
+---
+
 # Test a multi-turn agent session
 
 An agent session keeps one conversation open across turns. Use it when later prompts depend on earlier work, and assert evidence against the turn that produced it.
 
 ## Requirements
 
-Use `shipping_server.py` from [the first agent test](/guides/agents/first-test), install pytest, sign in to Codex, and set `M3_DOCS_CODEX_MODEL` to a model available to that login. This live example needs provider access. The selected harness must report multi-turn readiness before the test relies on it.
+Use `shipping_server.py` from [the first agent test](first-test.md), install pytest, sign in to Codex, and set `M3_DOCS_CODEX_MODEL` to a model available to that login. This live example needs provider access. The selected harness must report multi-turn readiness before the test relies on it.
 
 ## Send two turns and inspect each separately
 
@@ -71,4 +76,4 @@ Run it from the project directory with `python -m pytest -q test_session.py`. Th
 
 Read `result` after the session context closes so the execution has reached its terminal state. A failed first turn may leave the session unusable for the second; this test reports either turn’s failure.
 
-Next: [inspect turn-level traces](/guides/results/traces) or run cases with [a matrix](/guides/agents/matrices).
+Next: [inspect turn-level traces](../results/traces.md) or run cases with [a matrix](matrices.md).

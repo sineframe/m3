@@ -1,3 +1,8 @@
+---
+title: "Elicitation and managed-input API"
+description: "ElicitationPlan describes expected form or URL input requests and the responses M3 may submit. Build plans with:"
+---
+
 # Elicitation and managed-input API
 
 `ElicitationPlan` describes expected form or URL input requests and the
@@ -20,11 +25,11 @@ A plan does not belong to the creation of a long-lived session.
 
 Direct sync and async operations do not require an agent harness. M3 has tested
 agent-driven elicitation through Codex and Pi, with different boundaries. See
-[Compatibility](/reference/compatibility) before choosing a harness.
+[Compatibility](../../compatibility.md) before choosing a harness.
 
 Managed handles expose pending input, submission, cancellation, and terminal
 results. A stale round, invalid response, unused required plan, round overflow,
 or ambiguous request association fails explicitly.
 
-The [Python API inventory](/reference/python/api) lists every public helper and
+The [Python API inventory](../api.md) lists every public helper and
 model.

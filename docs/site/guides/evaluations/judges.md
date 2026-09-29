@@ -1,3 +1,8 @@
+---
+title: "Evaluate a response with an LLM judge"
+description: "An LLM judge sends the selected subject text to its configured endpoint. Use it for criteria that cannot be expressed as deterministic assertions, and avoid sending private data unless that transfer is intended."
+---
+
 # Evaluate a response with an LLM judge
 
 An LLM judge sends the selected subject text to its configured endpoint. Use it
@@ -22,9 +27,7 @@ from m3.types import EvaluationStatus
 @pytest.mark.m3(suite_name="answers")
 def test_answer(m3_kit):
     judge = LLMJudge(model="YOUR_JUDGE_MODEL")
-    result = m3_kit.judge_response(
-        name="answer.correctness.v1",
-        input="What is 2 + 3?",
+    result = m3_kit.judge_response(name="answer.correctness.v1", input="What is 2 + 3?",
         actual="The answer is 5.",
         expected="The answer is 5.",
         judge=judge,

@@ -1,3 +1,8 @@
+---
+title: "Run M3 tests in CI"
+description: "m3 ci test uses the normal project Python, storage, harness, and pytest selection. It excludes tests whose nearest M3 marker sets ci=False."
+---
+
 # Run M3 tests in CI
 
 `m3 ci test` uses the normal project Python, storage, harness, and pytest
@@ -26,4 +31,4 @@ Ordinary `m3 test` still includes the marked test. Paths, `-k`, `-m`, and
 `--suite` combine with the CI exclusion. Publishing is separate and occurs
 only when `--upload` is present.
 
-Continue to [GitHub Actions](/guides/ci/github-actions).
+Continue to [GitHub Actions](github-actions.md).

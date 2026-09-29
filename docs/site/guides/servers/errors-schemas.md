@@ -1,3 +1,8 @@
+---
+title: "Test tool errors and input schemas"
+description: "An MCP tool can report an expected application error as a normal call result. When schema validation is enabled, M3 can also reject test arguments that do not match the tool's advertised input schema before sending the call."
+---
+
 # Test tool errors and input schemas
 
 An MCP tool can report an expected application error as a normal call result.
@@ -68,4 +73,4 @@ The first test asserts an MCP result with `is_error=True`; the call itself
 returns normally. Schema mismatch raises `ModelValidationError` because
 `validate_schemas=True`. Without that option, the client does not perform
 this local input-schema check. A server can still reject input for its own
-reasons. Continue to [test a tool contract](/guides/servers/tools).
+reasons. Continue to [test a tool contract](tools.md).

@@ -11,13 +11,16 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "docs" / "site"
 OUTPUT = SITE / "navigation.json"
-LEGACY_PREFIXES = ("sdk/", "cli/")
-LEGACY_FILES = {"ci.md"}
-
 NAVIGATION = [
     {
         "title": "Start",
-        "items": ["home", "getting-started", "start-install", "start-your-server"],
+        "items": [
+            "home",
+            "getting-started",
+            "cli",
+            "start-install",
+            "start-your-server",
+        ],
     },
     {
         "title": "Guides",
@@ -142,7 +145,6 @@ NAVIGATION = [
 ]
 
 REDIRECTS = [
-    {"from": "/cli/", "to": "/reference/cli/"},
     {"from": "/cli/commands", "to": "/reference/cli/"},
     {"from": "/sdk/", "to": "/reference/python/"},
     {"from": "/sdk/quick-start", "to": "/getting-started"},
@@ -167,13 +169,6 @@ ALIASES = {
 }
 
 
-def route_for(source: str) -> str:
-    path = PurePosixPath(source)
-    if path.name == "index.md":
-        return "/" if str(path.parent) == "." else f"/{path.parent.as_posix()}/"
-    return f"/{path.with_suffix('').as_posix()}"
-
-
 def page_id(source: str) -> str:
     if source == "index.md":
         return "home"
@@ -184,16 +179,24 @@ def page_id(source: str) -> str:
     return "-".join(parts)
 
 
-def description(text: str) -> str:
-    paragraphs = re.split(r"\n\s*\n", text)
-    for paragraph in paragraphs:
-        value = " ".join(line.strip() for line in paragraph.splitlines())
-        if not value or value.startswith(("#", "```", "|", "- ")):
-            continue
-        value = re.sub(r"\[([^]]+)\]\([^)]+\)", r"\1", value)
-        value = value.replace("`", "")
-        return value
-    raise ValueError("page needs an introductory paragraph")
+def metadata(text: str, source: str) -> tuple[str, str, str]:
+    match = re.match(r"\A---\r?\n(.*?)\r?\n---\r?\n", text, re.DOTALL)
+    if match is None:
+        raise ValueError(f"{source} needs YAML frontmatter")
+    fields: dict[str, str] = {}
+    for key in ("title", "description"):
+        value = re.search(rf"^{key}:\s*(.*?)\s*$", match.group(1), re.MULTILINE)
+        if value is None:
+            raise ValueError(f"{source} frontmatter needs {key}")
+        raw = value.group(1)
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = raw.strip("'\"")
+        if not isinstance(parsed, str) or not parsed.strip():
+            raise ValueError(f"{source} frontmatter needs non-empty {key}")
+        fields[key] = parsed
+    return fields["title"], fields["description"], text[match.end() :]
 
 
 def page_kind(source: str) -> str:
@@ -206,19 +209,17 @@ def render() -> str:
     pages = []
     for path in sorted(SITE.rglob("*.md")):
         source = path.relative_to(SITE).as_posix()
-        if source in LEGACY_FILES or source.startswith(LEGACY_PREFIXES):
-            continue
         text = path.read_text(encoding="utf-8")
-        heading = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+        title, page_description, content = metadata(text, source)
+        heading = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
         if heading is None:
             raise ValueError(f"{source} needs one H1")
         identifier = page_id(source)
         page = {
             "id": identifier,
-            "title": heading.group(1).strip(),
+            "title": title,
             "source": source,
-            "route": route_for(source),
-            "description": description(text),
+            "description": page_description,
             "kind": page_kind(source),
         }
         if identifier in ALIASES:

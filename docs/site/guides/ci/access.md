@@ -1,3 +1,8 @@
+---
+title: "Manage access tokens"
+description: "Run m3 auth login on a computer with a browser. The login page lets you manage organization access and tokens; the CLI receives a one-use authorization result and can save a developer token in the operating-system credential store."
+---
+
 # Manage access tokens
 
 Run `m3 auth login` on a computer with a browser. The login page lets you

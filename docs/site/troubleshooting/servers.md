@@ -1,3 +1,8 @@
+---
+title: "Server startup and connection failures"
+description: "Run the configured command directly from the configured working directory. Check that its stdout contains only MCP protocol traffic; write diagnostics to stderr. Confirm every argument is a separate StdioServer.args value."
+---
+
 # Server startup and connection failures
 
 ## Stdio process exits during initialization

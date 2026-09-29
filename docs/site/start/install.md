@@ -1,3 +1,8 @@
+---
+title: "Install and update M3"
+description: "Install the M3 CLI and the project SDK separately. The CLI runs m3 and includes the local results viewer. The SDK runs inside the Python project being tested."
+---
+
 # Install and update M3
 
 Install the M3 CLI and the project SDK separately. The CLI runs `m3` and
@@ -54,4 +59,4 @@ uv add "sf-m3[pytest]"
 This declares the SDK in the project manifest. The standalone CLI remains a
 separate user-level installation.
 
-Continue to [your first MCP test](/getting-started), or [test your own server](/start/your-server).
+Continue to [your first MCP test](../getting-started.md), or [test your own server](your-server.md).

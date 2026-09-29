@@ -1,3 +1,8 @@
+---
+title: "Matrix API"
+description: "ToolCase names one tool invocation and its arguments. ServerCase groups tool cases under the server that owns them. ToolMatrix validates and expands those cases without starting processes or network work."
+---
+
 # Matrix API
 
 `ToolCase` names one tool invocation and its arguments. `ServerCase` groups

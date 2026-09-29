@@ -1,3 +1,8 @@
+---
+title: "Runs, suites, cases, and executions"
+description: "A **run** is one invocation of pytest or one explicit SDK run ID. The CLI prints its run ID and writes the corresponding feedback under .m3/reports/<run-id>/feedback.json."
+---
+
 # Runs, suites, cases, and executions
 
 A **run** is one invocation of pytest or one explicit SDK run ID. The CLI
@@ -14,5 +19,5 @@ two executions while retaining the same case identity. An agent session can
 contain several **turns**, each with its own response and evidence.
 
 Pytest records whether the test passed. M3 separately records execution and
-evaluation outcomes. See [Outcomes](/concepts/outcomes) before using evaluation
+evaluation outcomes. See [Outcomes](outcomes.md) before using evaluation
 pass rates as test pass rates.

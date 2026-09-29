@@ -22,5 +22,5 @@ uv run --project sdk --extra pytest --group typecheck pytest sdk/tests
 ```
 
 Runnable guide projects live under `sdk/examples/docs`. Follow the
-[documentation writing guide](../docs/documentation-writing-guide.md) when
-changing them.
+[documentation writing guide](https://github.com/sineframe/m3/blob/main/docs/documentation-writing-guide.md)
+when changing them.

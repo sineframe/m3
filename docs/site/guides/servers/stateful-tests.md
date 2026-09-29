@@ -1,3 +1,8 @@
+---
+title: "Test state across tool calls"
+description: "Keep dependent calls inside one direct-client context when a later operation uses state created by an earlier operation. This example captures the server-returned customer and order identifiers and passes them to subsequent calls."
+---
+
 # Test state across tool calls
 
 Keep dependent calls inside one direct-client context when a later operation
@@ -68,4 +73,4 @@ The order ID comes from this test's `create_order` response. The client context
 keeps one MCP connection open for all three calls, and M3 starts a fresh server
 process for the test. This example's in-memory order does not persist between
 separate test runs. For saved M3 execution history, see [persist test
-results](/guides/results/persistence).
+results](../results/persistence.md).

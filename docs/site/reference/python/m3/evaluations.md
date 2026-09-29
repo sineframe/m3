@@ -1,3 +1,8 @@
+---
+title: "Evaluation API"
+description: "An Evaluator or AsyncEvaluator receives EvaluationContext and returns an EvaluationDecision. EvaluatorCallable is the accepted callback union."
+---
+
 # Evaluation API
 
 An `Evaluator` or `AsyncEvaluator` receives `EvaluationContext` and returns an
@@ -17,6 +22,6 @@ non-passing required evidence can raise `RequiredEvaluationError` after the
 result has been persisted.
 
 `EvaluationVerdict` is the callback-facing status input; public durable values
-use `EvaluationStatus`. See [Custom evaluators](/guides/evaluations/custom),
-[Judges](/guides/evaluations/judges), and
-[Aggregation](/guides/evaluations/aggregate).
+use `EvaluationStatus`. See [Custom evaluators](../../../guides/evaluations/custom.md),
+[Judges](../../../guides/evaluations/judges.md), and
+[Aggregation](../../../guides/evaluations/aggregate.md).

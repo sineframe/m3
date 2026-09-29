@@ -1,3 +1,8 @@
+---
+title: "Exceptions"
+description: "Normal MCP tool errors usually remain typed tool results rather than raised exceptions. Test result.is_error when the server intentionally returned a tool-level failure."
+---
+
 # Exceptions
 
 | Exception | Meaning |

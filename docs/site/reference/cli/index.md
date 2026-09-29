@@ -1,3 +1,8 @@
+---
+title: "CLI reference"
+description: "The standalone m3 command selects the project Python and coordinates pytest, saved history, the local viewer, managed harnesses, authentication, and report publishing. Options after -- are passed to pytest unchanged."
+---
+
 # CLI reference
 
 The standalone `m3` command selects the project Python and coordinates pytest,

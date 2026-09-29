@@ -1,3 +1,8 @@
+---
+title: "Pin a managed harness runtime"
+description: "Select a managed runtime when a test must use an explicit native harness version. M3 records the resolved runtime identity with the execution."
+---
+
 # Pin a managed harness runtime
 
 Select a managed runtime when a test must use an explicit native harness version. M3 records the resolved runtime identity with the execution.
@@ -15,7 +20,7 @@ Replace both values before running the test. `M3_DOCS_CODEX_VERSION` must be a v
 
 ## Run the pinned version
 
-Save `shipping_server.py` from [the first agent test](/guides/agents/first-test) beside this complete test as `test_managed_runtime.py`:
+Save `shipping_server.py` from [the first agent test](first-test.md) beside this complete test as `test_managed_runtime.py`:
 
 ```python
 import os
@@ -70,4 +75,4 @@ def test_managed_codex_version_is_recorded(tmp_path: Path) -> None:
 
 Run it from the project directory with `python -m pytest -q test_managed_runtime.py`. A passing test confirms the tool call and the resolved version recorded by M3. The requested selector alone does not prove which executable version ran.
 
-If M3 cannot acquire the version or readiness fails, the run fails before the assertion. Do not report a system-installed executable as a managed-runtime pass. Next: see [harness compatibility](/reference/compatibility).
+If M3 cannot acquire the version or readiness fails, the run fails before the assertion. Do not report a system-installed executable as a managed-runtime pass. Next: see [harness compatibility](../../reference/compatibility.md).

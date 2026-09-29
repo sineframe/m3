@@ -1,3 +1,8 @@
+---
+title: "Run an ACP agent"
+description: "Use ACP when the agent implements the Agent Client Protocol and you want M3 to launch it from a manifest. ACP launch configuration is distinct from M3’s native CLI adapters."
+---
+
 # Run an ACP agent
 
 Use ACP when the agent implements the Agent Client Protocol and you want M3 to launch it from a manifest. ACP launch configuration is distinct from M3’s native CLI adapters.
@@ -12,7 +17,7 @@ The agent must support the MCP server access and tool behavior the test needs. R
 
 ## Launch from a manifest
 
-Save `shipping_server.py` from [the first agent test](/guides/agents/first-test) beside this complete test as `test_acp_agent.py`:
+Save `shipping_server.py` from [the first agent test](first-test.md) beside this complete test as `test_acp_agent.py`:
 
 ```python
 import json
@@ -68,4 +73,4 @@ Run it from the project directory with `python -m pytest -q test_acp_agent.py`. 
 
 The manifest’s `env` values are references to variables in the parent process. M3 resolves `M3_DOCS_PROVIDER_API_KEY` at launch and passes its value under the child variable named by `ACP_AGENT_CREDENTIAL_ENV`. A missing reference fails before the agent starts. ACP does not use M3-managed native harness downloads.
 
-Next: [compare harness features](/guides/agents/harnesses) and review [the tested compatibility notes](/reference/compatibility).
+Next: [compare harness features](harnesses.md) and review [the tested compatibility notes](../../reference/compatibility.md).

@@ -1,3 +1,8 @@
+---
+title: "Aggregate saved evaluations"
+description: "Aggregate records from one reader-created run so older rows in the same database do not alter the result."
+---
+
 # Aggregate saved evaluations
 
 Aggregate records from one reader-created run so older rows in the same

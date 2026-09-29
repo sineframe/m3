@@ -1,3 +1,8 @@
+---
+title: "Matchers"
+description: "expect(subject) creates an Expectation whose methods raise AssertionError when captured evidence does not satisfy the predicate. check(subject) records failures through a CheckGroup, allowing several related checks to be reported together when the plugin has a recording binding."
+---
+
 # Matchers
 
 `expect(subject)` creates an `Expectation` whose methods raise
@@ -12,9 +17,7 @@ Pass a `TurnResult` when a check should apply to one turn rather than the whole
 session.
 
 ```python
-expect(result).to_have_tool_call(
-    "shipping_quote",
-    arguments={"weight_kg": 2, "zone": "local"},
+expect(result).to_have_tool_call("shipping_quote", arguments={"weight_kg": 2, "zone": "local"},
     status="success",
 )
 ```

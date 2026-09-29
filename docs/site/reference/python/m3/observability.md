@@ -1,3 +1,8 @@
+---
+title: "Observability models"
+description: "TraceView is the stable typed projection for reading a finalized trace. Its entries preserve whether a value was observed, reported, inferred, redacted, or unavailable."
+---
+
 # Observability models
 
 `TraceView` is the stable typed projection for reading a finalized trace. Its

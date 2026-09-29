@@ -1,3 +1,8 @@
+---
+title: "Test a Streamable HTTP server"
+description: "Use HTTPServer for an MCP endpoint that is already running. The direct test below uses a local deterministic service, so it does not depend on a public endpoint or network service."
+---
+
 # Test a Streamable HTTP server
 
 Use `HTTPServer` for an MCP endpoint that is already running. The direct test
@@ -8,7 +13,7 @@ endpoint or network service.
 
 Use Python 3.10 or newer and install the CLI/project SDK with `m3 init` and
 `m3 setup`. Run the supplied service and test from the
-[HTTP example project](https://github.com/sineframe/m3/tree/main/sdk/examples/docs/servers-http). The
+[HTTP example project](../../../../sdk/examples/docs/servers-http). The
 service listens on loopback port 8765 and needs no credentials.
 
 ## Start the local MCP service
@@ -71,5 +76,5 @@ client connection; it does not manage the HTTP server process.
 For an endpoint that requires authentication, pass static headers on
 `HTTPServer.headers` or use a `SecretReference` for a credential supplied by
 environment. Keep provider credentials separate from MCP endpoint headers.
-See [test your own server](/start/your-server) and the
-[HTTPServer reference](/reference/python/m3/types).
+See [test your own server](../../start/your-server.md) and the
+[HTTPServer reference](../../reference/python/m3/types.md).

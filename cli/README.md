@@ -23,4 +23,4 @@ just setup
 uv run --project cli --group test pytest cli/tests
 ```
 
-Release procedures are in [Releasing M3](../docs/releasing.md).
+Release procedures are in [Releasing M3](https://github.com/sineframe/m3/blob/main/docs/releasing.md).

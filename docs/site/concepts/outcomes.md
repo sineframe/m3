@@ -1,3 +1,8 @@
+---
+title: "Test, execution, and evaluation outcomes"
+description: "M3 keeps three judgments separate:"
+---
+
 # Test, execution, and evaluation outcomes
 
 M3 keeps three judgments separate:
@@ -14,5 +19,5 @@ when the M3 plugin is active. An LLM judge can error even when the underlying
 execution completed.
 
 When reporting a pass rate, state which evaluation defines its numerator and
-denominator. [Aggregate evaluations](/guides/evaluations/aggregate) shows how
+denominator. [Aggregate evaluations](../guides/evaluations/aggregate.md) shows how
 required, missing, and error results affect the count.

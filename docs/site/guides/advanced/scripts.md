@@ -1,3 +1,8 @@
+---
+title: "Run M3 without pytest"
+description: "The SDK can run in a normal Python program. Persistence is in memory unless you select a store."
+---
+
 # Run M3 without pytest
 
 The SDK can run in a normal Python program. Persistence is in memory unless you

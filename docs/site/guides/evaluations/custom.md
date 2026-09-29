@@ -1,3 +1,8 @@
+---
+title: "Write a custom evaluator"
+description: "A custom evaluator turns an explicit subject into a named evaluation result. It does not run automatically because an execution completed."
+---
+
 # Write a custom evaluator
 
 A custom evaluator turns an explicit subject into a named evaluation result.

@@ -1,3 +1,8 @@
+---
+title: "Save and reopen executions"
+description: "Direct SDK use keeps data in memory unless you choose a persistent store. The CLI chooses SQLite automatically."
+---
+
 # Save and reopen executions
 
 Direct SDK use keeps data in memory unless you choose a persistent store. The

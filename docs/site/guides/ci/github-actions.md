@@ -1,3 +1,8 @@
+---
+title: "Run M3 in GitHub Actions"
+description: "Start with a credential-free direct-server job. This complete workflow assumes the repository declares its project dependencies and contains the tests from the first-test guide."
+---
+
 # Run M3 in GitHub Actions
 
 Start with a credential-free direct-server job. This complete workflow assumes

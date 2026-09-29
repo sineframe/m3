@@ -1,3 +1,8 @@
+---
+title: "Snapshot stable values"
+description: "Use snapshot for a public value whose full stable projection is meaningful to review. Prefer field assertions when only a few behaviors matter."
+---
+
 # Snapshot stable values
 
 Use `snapshot` for a public value whose full stable projection is meaningful to

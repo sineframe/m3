@@ -1,3 +1,8 @@
+---
+title: "Runtime and connection lifecycle"
+description: "MCPTestKit owns the surrounding runtime. A direct client owns one initialized MCP connection. Entering the client starts its transport; leaving it closes the connection and any subprocess that client started."
+---
+
 # Runtime and connection lifecycle
 
 `MCPTestKit` owns the surrounding runtime. A direct client owns one initialized
@@ -21,4 +26,4 @@ A deployed HTTP service is not owned by the client and remains running. A
 stdio subprocess started from `StdioServer` is owned and stopped by the client.
 Agent sessions likewise finalize their result when their context exits.
 
-See [Read finalized traces](/guides/results/traces) for an executable test.
+See [Read finalized traces](../guides/results/traces.md) for an executable test.

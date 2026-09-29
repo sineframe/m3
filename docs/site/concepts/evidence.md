@@ -1,3 +1,8 @@
+---
+title: "Evidence and traces"
+description: "M3 records what it can observe at the transport and harness boundaries. A recorded tool call is evidence that the call crossed an observed boundary; an agent's prose saying that it used a tool is not."
+---
+
 # Evidence and traces
 
 M3 records what it can observe at the transport and harness boundaries. A
@@ -13,5 +18,5 @@ Traces become final after the owning client or agent session closes. Before
 then, assert on the immediate operation result. After finalization, use the
 typed trace view for calls, results, messages, timing, and outcome.
 
-See [Read traces](/guides/results/traces) for code and
-[Compatibility](/reference/compatibility) for harness-specific boundaries.
+See [Read traces](../guides/results/traces.md) for code and
+[Compatibility](../reference/compatibility.md) for harness-specific boundaries.

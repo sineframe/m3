@@ -1,3 +1,8 @@
+---
+title: "Testing utilities"
+description: "MockMCPServer and ExpectedCall define a controlled protocol interaction. Unexpected calls raise MockExpectationError; invalid mock protocol behavior raises MockProtocolError."
+---
+
 # Testing utilities
 
 `MockMCPServer` and `ExpectedCall` define a controlled protocol interaction.

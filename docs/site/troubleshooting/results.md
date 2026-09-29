@@ -1,3 +1,8 @@
+---
+title: "Missing traces or saved results"
+description: "Use m3 test, or configure SQLiteExecutionStore explicitly in direct SDK code. Plain pytest without the storage plugin keeps SDK executions in memory."
+---
+
 # Missing traces or saved results
 
 ## No saved run

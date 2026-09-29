@@ -1,3 +1,8 @@
+---
+title: "Use the async SDK"
+description: "Use AsyncMCPTestKit when the surrounding test is asynchronous. Await direct operations instead of creating another event loop."
+---
+
 # Use the async SDK
 
 Use `AsyncMCPTestKit` when the surrounding test is asynchronous. Await direct

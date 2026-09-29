@@ -58,6 +58,20 @@ For an alpha, use a PEP 440 prerelease tag such as `v0.3.0a1`. The workflow buil
 
 Before creating the tag, render the combined landing site locally. From the landing repository root, set `M3_DOCS_DIR` to this M3 repository root and run `M3_DOCS_DIR=/path/to/m3 npm run build`; inspect the generated docs pages and navigation before tagging. This is the pre-tag render gate. The M3 release workflow starts only after a tag is pushed, so its source validator checks manifest consistency and links but cannot replace the rendered-site check.
 
+`docs/site/navigation.json` keeps page `source` paths and navigation metadata;
+it does not store routes. The landing renderer must derive routes from `source`:
+`index.md` maps to `/`, a nested `dir/index.md` maps to `/dir/`, and a leaf
+`dir/page.md` maps to `/dir/page`. Do not add a manifest `route` field or use
+one as an independent route authority.
+
+The tag-triggered M3 release does not deploy the documentation site. After the
+tag's release workflow and GitHub Release succeed, update the docs pin in
+`sineframe-landing` with `npm run docs:pin -- <tag>`, build from that public
+tag, and open a landing pull request. Verify its Cloudflare preview before
+merging; the existing landing Git integration deploys the new docs with the
+landing site. Verify production after that merge. Do not update the landing
+pin before the M3 release succeeds.
+
 
 CI runs source checks and a fast test selection when a pull request is opened
 or updated. A push to `main` runs the complete non-live suite, including SDK

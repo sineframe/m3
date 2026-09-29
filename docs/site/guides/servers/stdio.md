@@ -1,3 +1,8 @@
+---
+title: "Test a stdio server"
+description: "Use StdioServer when M3 should launch a local MCP server process for the test. M3 starts it for the connection and closes the process when the direct client closes."
+---
+
 # Test a stdio server
 
 Use `StdioServer` when M3 should launch a local MCP server process for the
@@ -54,7 +59,7 @@ m3 test -- tests/test_tools.py
 The server script is resolved from the test file, and `cwd` sets its working
 directory. The assertion checks discovery and the returned quote. Change the
 command, arguments, and working directory to match your own server; see
-[test your own server](/start/your-server).
+[test your own server](../../start/your-server.md).
 
 ## If startup fails
 
@@ -62,4 +67,4 @@ First run the server command manually from the configured working directory.
 Check that it starts an MCP stdio transport and does not print ordinary logs
 to stdout, where they would interfere with protocol messages. Then check the
 Python executable and paths in `StdioServer`. Continue to [troubleshoot server
-startup](/troubleshooting/servers).
+startup](../../troubleshooting/servers.md).

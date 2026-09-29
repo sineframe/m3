@@ -1,3 +1,8 @@
+---
+title: "Configuration and credentials"
+description: "m3.toml stores project identity. Keep its generated project ID stable; renaming a project changes its name, not that identity."
+---
+
 # Configuration and credentials
 
 `m3.toml` stores project identity. Keep its generated project ID stable;

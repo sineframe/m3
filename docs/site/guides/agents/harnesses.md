@@ -1,3 +1,8 @@
+---
+title: "Choose an agent harness"
+description: "M3 connects to agent harnesses through native adapters or an ACP manifest. Choose the integration your agent provides, then check the capabilities and version your test needs."
+---
+
 # Choose an agent harness
 
 M3 connects to agent harnesses through native adapters or an ACP manifest. Choose the integration your agent provides, then check the capabilities and version your test needs.
@@ -8,7 +13,7 @@ This example uses Codex. Install and sign in to the Codex CLI, install M3 with p
 
 ## Run the same assertion through Codex
 
-Save `shipping_server.py` from [the first agent test](/guides/agents/first-test) beside this complete test as `test_harness.py`:
+Save `shipping_server.py` from [the first agent test](first-test.md) beside this complete test as `test_harness.py`:
 
 ```python
 import os
@@ -56,6 +61,6 @@ From the directory containing both files, run `python -m pytest -q test_harness.
 | Codex, Pi, Claude Code, OpenCode | Native M3 harness selection | Each needs its installed executable and provider configuration. Readiness and captured evidence vary by integration. |
 | ACP agent | Manifest with command, arguments, and protocol settings | M3 launches the supplied ACP process; it is not a native CLI runtime. |
 
-These adapters do not have identical capabilities. M3 tests agent-driven elicitation with Codex CLI `0.156.1` and Pi `0.85.1`. That limit does not apply to direct SDK elicitation. The [compatibility reference](/reference/compatibility) has the feature-specific support notes.
+These adapters do not have identical capabilities. M3 tests agent-driven elicitation with Codex CLI `0.156.1` and Pi `0.85.1`. That limit does not apply to direct SDK elicitation. The [compatibility reference](../../reference/compatibility.md) has the feature-specific support notes.
 
-If M3 reports a capability as unavailable, keep the assertion and inspect readiness or the execution result. Next: [configure an ACP agent](/guides/agents/acp) or [pin a managed runtime](/guides/agents/managed-runtimes).
+If M3 reports a capability as unavailable, keep the assertion and inspect readiness or the execution result. Next: [configure an ACP agent](acp.md) or [pin a managed runtime](managed-runtimes.md).

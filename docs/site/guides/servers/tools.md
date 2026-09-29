@@ -1,3 +1,8 @@
+---
+title: "Test MCP tools"
+description: "Test a tool in two steps: discover its advertised schema, then call it with known arguments and check the result that matters to your application."
+---
+
 # Test MCP tools
 
 Test a tool in two steps: discover its advertised schema, then call it with
@@ -55,5 +60,5 @@ expected structured quote. A non-error result by itself would not verify the
 quote contract.
 
 For invalid inputs and expected tool errors, continue to [test errors and
-schemas](/guides/servers/errors-schemas). For the server command setup, see
-[stdio servers](/guides/servers/stdio).
+schemas](errors-schemas.md). For the server command setup, see
+[stdio servers](stdio.md).

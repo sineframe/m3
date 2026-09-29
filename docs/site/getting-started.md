@@ -1,3 +1,8 @@
+---
+title: "Write your first MCP test"
+description: "This walkthrough starts a small MCP server as a local process, discovers its shipping_quote tool, calls it, and checks the structured response. You will also make the assertion fail, restore it, and open the saved run."
+---
+
 # Write your first MCP test
 
 This walkthrough starts a small MCP server as a local process, discovers its
@@ -30,7 +35,7 @@ When `m3 init` asks for a project name and suite name, enter `shipping-test`
 and `shipping`. `m3 setup` installs the SDK and pytest support into the
 project's Python environment. It does not install the CLI or edit your
 dependency manifest or lockfile. The CLI and SDK are separate installations;
-keep them on matching releases. See [install and update M3](/start/install).
+keep them on matching releases. See [install and update M3](start/install.md).
 
 ## Add the server and test
 
@@ -164,7 +169,7 @@ m3 ui
 
 M3 opens the saved-run list in a local browser. Select the run from the test
 you completed. The CLI stores history in `.m3/executions.sqlite` by
-default. See [inspect a saved run](/guides/results/viewer) for navigating the
+default. See [inspect a saved run](guides/results/viewer.md) for navigating the
 report.
 
-To test a server you already have, continue to [test your own server](/start/your-server).
+To test a server you already have, continue to [test your own server](start/your-server.md).

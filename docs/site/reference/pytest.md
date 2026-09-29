@@ -1,3 +1,8 @@
+---
+title: "pytest integration"
+description: "Install sf-m3[pytest] or run m3 setup. The plugin adds M3 fixtures, selection, storage integration, and feedback generation while leaving ordinary pytest selection after -- intact."
+---
+
 # pytest integration
 
 Install `sf-m3[pytest]` or run `m3 setup`. The plugin adds M3 fixtures,

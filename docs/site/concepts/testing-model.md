@@ -1,3 +1,8 @@
+---
+title: "Direct tests and agent tests"
+description: "M3 supports two different questions."
+---
+
 # Direct tests and agent tests
 
 M3 supports two different questions.
@@ -13,4 +18,4 @@ agent test:  test code -> agent turn -> MCP operation(s) -> evidence -> assertio
 
 An agent’s final answer is not evidence that it called the expected tool. Assert recorded tool evidence, and assert the final response separately only when that response is part of the contract. Agent runs also depend on harness, model, provider configuration, and approval behavior; record those inputs when comparing results.
 
-Start with [a direct server test](/guides/servers/tools), then [test an agent’s tool use](/guides/agents/first-test).
+Start with [a direct server test](../guides/servers/tools.md), then [test an agent’s tool use](../guides/agents/first-test.md).

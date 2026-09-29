@@ -97,6 +97,11 @@ def render() -> str:
         modules[module_name] = tuple(getattr(module, "__all__", ()))
 
     output = [
+        "---",
+        'title: "Python API inventory"',
+        'description: "This page is generated from the release\'s declared public exports. It records exact signatures, model fields, and public members. The capability pages explain how these objects work together; use this inventory for exact lookup."',
+        "---",
+        "",
         "# Python API inventory",
         "",
         "This page is generated from the release's declared public exports. It records ",

@@ -1,12 +1,17 @@
+---
+title: "Plan answers to elicitation requests"
+description: "An elicitation plan describes the requests an operation may make and the response M3 should submit. Attach the plan to the action that can trigger those requests, then assert the action’s result."
+---
+
 # Plan answers to elicitation requests
 
 An elicitation plan describes the requests an operation may make and the response M3 should submit. Attach the plan to the action that can trigger those requests, then assert the action’s result.
 
 ## Requirements and support
 
-Direct SDK operations can use elicitation without an agent harness. M3 tests agent-driven elicitation with Codex CLI `0.156.1` and Pi `0.85.1`; other harnesses have not been verified for this action. This limit does not apply to direct SDK elicitation. See [compatibility details](/reference/compatibility).
+Direct SDK operations can use elicitation without an agent harness. M3 tests agent-driven elicitation with Codex CLI `0.156.1` and Pi `0.85.1`; other harnesses have not been verified for this action. This limit does not apply to direct SDK elicitation. See [compatibility details](../../reference/compatibility.md).
 
-This example uses a local MCP server that returns `InputRequiredResult` for `book_shipment`, asks for the `shipping_address` form, and completes only when it receives the keyed response. The [runnable project](https://github.com/sineframe/m3/tree/main/sdk/examples/docs/elicitation-plans) contains that server as `elicitation_server.py` and the test as `test_plan.py`.
+This example uses a local MCP server that returns `InputRequiredResult` for `book_shipment`, asks for the `shipping_address` form, and completes only when it receives the keyed response. The [runnable project](../../../../sdk/examples/docs/elicitation-plans) contains that server as `elicitation_server.py` and the test as `test_plan.py`.
 
 ## Bind a form answer to a direct operation
 
@@ -49,4 +54,4 @@ The plan’s request key, mode, server, and operation must match the request sen
 
 To require a second request in a later protocol round, compose bound leaves with `sequence(...)`. Use `one_of(...)` when one listed request may arrive, and `round_of(...)` when all listed requests belong to the same round. The server must exhibit that ordering; these helpers do not cause the server to ask.
 
-Tool calls, prompt retrieval, resource reads, and agent actions bind the plan at different API boundaries. Agent-driven elicitation also depends on harness capability and may require explicit tool approval. Identify the execution mode before applying an example. Next: [submit input to a paused execution](/guides/elicitation/managed-input).
+Tool calls, prompt retrieval, resource reads, and agent actions bind the plan at different API boundaries. Agent-driven elicitation also depends on harness capability and may require explicit tool approval. Identify the execution mode before applying an example. Next: [submit input to a paused execution](managed-input.md).

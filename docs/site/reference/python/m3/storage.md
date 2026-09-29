@@ -1,3 +1,8 @@
+---
+title: "Storage API"
+description: "InMemoryExecutionStore is the default direct-SDK execution store. SQLiteExecutionStore persists execution specs, snapshots, traces, sessions, turns, evaluations, profiles, and test-run records when the storage extra is installed."
+---
+
 # Storage API
 
 `InMemoryExecutionStore` is the default direct-SDK execution store.

@@ -1,3 +1,8 @@
+---
+title: "Test your own server"
+description: "Use a StdioServer when M3 should start your local server process for each test connection. Use an HTTPServer when the MCP endpoint is already running. Both direct paths can run without an agent provider."
+---
+
 # Test your own server
 
 Use a `StdioServer` when M3 should start your local server process for each
@@ -6,7 +11,7 @@ Both direct paths can run without an agent provider.
 
 ## Requirements
 
-Install the M3 CLI and prepare the project SDK as described in [install M3](/start/install).
+Install the M3 CLI and prepare the project SDK as described in [install M3](install.md).
 For stdio, the server command must run in the project environment. For HTTP,
 start the service before running the test; M3 does not start or stop a deployed
 HTTP service.
@@ -14,7 +19,7 @@ HTTP service.
 ## Stdio: start a local process
 
 The first-test project contains the server used below. Put its
-[`shipping_server.py` source](https://github.com/sineframe/m3/blob/main/sdk/examples/docs/first-test/shipping_server.py)
+[`shipping_server.py` source](../../../sdk/examples/docs/first-test/shipping_server.py)
 beside your `tests` directory, then use this complete test as
 `tests/test_m3_starter.py`:
 
@@ -49,7 +54,7 @@ def test_shipping_quote() -> None:
 The `StdioServer` command uses the test's Python environment and resolves the
 server file relative to the test. The M3 context closes the client and owned
 subprocess even when an assertion fails. The first-test project
-[source files](https://github.com/sineframe/m3/tree/main/sdk/examples/docs/first-test)
+[source files](../../../sdk/examples/docs/first-test)
 include this server and test.
 
 Run from the project root:
@@ -67,9 +72,7 @@ this snippet, changing the module name, arguments, and working directory to
 match your project:
 
 ```python
-server = StdioServer(
-    name="inventory",
-    command=sys.executable,
+server = StdioServer(name="inventory", command=sys.executable,
     args=("-m", "inventory_mcp"),
     cwd=str(Path(__file__).parents[1]),
 )
@@ -116,6 +119,6 @@ m3 test -- tests/test_shipping_http.py
 For this loopback service, set `TrustLevel.TRUSTED_PRIVATE` as shown;
 `HTTPServer` otherwise defaults to untrusted.
 
-The [HTTP guide](/guides/servers/http) includes a local server and test that
+The [HTTP guide](../guides/servers/http.md) includes a local server and test that
 you can run in two terminals. For authentication, use a header or secret
 reference; never put a credential in the URL.

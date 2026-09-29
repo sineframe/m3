@@ -1,3 +1,8 @@
+---
+title: "Public value types"
+description: "Public values are immutable, serializable contracts. Construct server and operation specifications as inputs; treat result, trace, evidence, and report models as outputs."
+---
+
 # Public value types
 
 Public values are immutable, serializable contracts. Construct server and

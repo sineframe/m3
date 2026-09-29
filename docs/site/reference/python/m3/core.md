@@ -1,3 +1,8 @@
+---
+title: "Core execution API"
+description: "The synchronous runtime and cleanup boundary. Construct it with optional environment, store, evaluator, runtime, and harness-cache configuration. Enter it before opening direct clients or agent sessions and close it after all work."
+---
+
 # Core execution API
 
 ## `MCPTestKit`

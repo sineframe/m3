@@ -1,3 +1,8 @@
+---
+title: "Use mocks and replay"
+description: "Use a mock to test client behavior against a controlled MCP exchange."
+---
+
 # Use mocks and replay
 
 Use a mock to test client behavior against a controlled MCP exchange.
@@ -49,5 +54,5 @@ Mocks prove behavior against the declared fixture. They do not prove that a
 deployed server or agent provider currently behaves the same way. Keep one
 direct integration test for the boundary the mock replaces.
 
-See the [testing utility reference](/reference/python/m3/testing) for those
+See the [testing utility reference](../../reference/python/m3/testing.md) for those
 object contracts.

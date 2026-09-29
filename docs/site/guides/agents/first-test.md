@@ -1,3 +1,8 @@
+---
+title: "Test an agent’s tool use"
+description: "This test starts a local MCP server, gives Codex access to one named tool, and checks the recorded call. It verifies the interaction M3 observed; it does not prove that the agent’s final prose is correct."
+---
+
 # Test an agent’s tool use
 
 This test starts a local MCP server, gives Codex access to one named tool, and checks the recorded call. It verifies the interaction M3 observed; it does not prove that the agent’s final prose is correct.
@@ -9,7 +14,7 @@ This test starts a local MCP server, gives Codex access to one named tool, and c
 - Set `M3_DOCS_CODEX_MODEL` to a model identifier available to that installation. M3 does not choose a provider model for you.
 - Review Codex’s MCP approval prompt before accepting it. The M3 policy below restricts the test to `shipping:shipping_quote`; keep approval scoped to this local test.
 
-**Compatibility:** this is a live Codex example. It needs a working Codex installation and provider access, so it is not part of credential-free documentation checks. See [harness compatibility](/reference/compatibility).
+**Compatibility:** this is a live Codex example. It needs a working Codex installation and provider access, so it is not part of credential-free documentation checks. See [harness compatibility](../../reference/compatibility.md).
 
 ## Example project
 
@@ -151,4 +156,4 @@ To test a different server, change the `StdioServer` command and arguments, then
 
 If Codex is unavailable or the test times out, first run `codex --version`, confirm the selected model is available, and inspect the M3 turn result. Do not treat an unavailable harness as a passing agent test.
 
-Next: compare transports in [the server guides](/guides/servers/stdio), or run multiple agent configurations with [a matrix](/guides/agents/matrices).
+Next: compare transports in [the server guides](../servers/stdio.md), or run multiple agent configurations with [a matrix](matrices.md).

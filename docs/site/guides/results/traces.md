@@ -1,3 +1,8 @@
+---
+title: "Read a finalized trace"
+description: "Use the operation result for the immediate response and the finalized trace for the complete observed execution."
+---
+
 # Read a finalized trace
 
 Use the operation result for the immediate response and the finalized trace for
@@ -5,7 +10,7 @@ the complete observed execution.
 
 ## Requirements
 
-Start from the project in [Your first MCP test](/getting-started). This example
+Start from the project in [Your first MCP test](../../getting-started.md). This example
 uses the same `server` fixture and needs no credentials.
 
 ## Complete test
@@ -56,5 +61,5 @@ The result assertion checks the server response. The trace assertions check
 the call M3 observed. Moving `client.final_trace` inside the `with` block is an
 error because the trace is not final yet.
 
-Next, [open the saved run](/guides/results/viewer) or read about
-[evidence availability](/concepts/evidence).
+Next, [open the saved run](viewer.md) or read about
+[evidence availability](../../concepts/evidence.md).
