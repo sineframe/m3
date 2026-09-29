@@ -1,8 +1,9 @@
 # M3 architecture
 
 This document is for contributors and maintainers. End users should start with
-the [root README](../README.md), the [CLI guide](../cli/README.md), or the
-[SDK documentation](../sdk/docs/README.md).
+the [root README](https://github.com/sineframe/m3/blob/main/README.md), the
+[CLI guide](https://github.com/sineframe/m3/blob/main/cli/README.md), or the
+[SDK documentation](https://m3.sineframe.com/docs/reference/python/).
 
 ## Product boundary
 
@@ -66,7 +67,7 @@ event still queued in the child-side relay. Codex also omits the MCP request
 key, reverses multi-prompt order in observed cases, normalizes accepted URL
 responses to empty content, and supports at most nine MRTR prompts in tested
 version 0.156.1. The canonical details and evolving verification state live in
-the [Codex limitations section](../sdk/docs/elicitation-api.md#codex-app-server-support-and-limitations)
+the [Codex limitations section](https://m3.sineframe.com/docs/reference/python/m3/elicitation)
 and [Pi-to-Codex parity inventory](../sdk/tests/mrtr-harness-parity.md).
 
 ## Persistence and feedback

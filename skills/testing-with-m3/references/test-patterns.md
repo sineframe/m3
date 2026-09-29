@@ -370,9 +370,9 @@ Use `client.list_resources()`, `client.read_resource(uri)`,
 `client.list_prompts()`, and `client.get_prompt(name, arguments)` when the server
 advertises those surfaces. Assert a known URI, content, prompt arguments and
 returned messages. See the runnable
-[resource and prompt examples](../../../sdk/docs/examples.md#8-test-resources-prompts-errors-and-schemas).
+[resource and prompt examples](https://m3.sineframe.com/docs/guides/servers/resources-prompts).
 For async project code, use `AsyncMCPTestKit`, `async with`, and `await`; the
-[async examples](../../../sdk/docs/examples.md#9-use-async-apis)
+[async examples](https://m3.sineframe.com/docs/guides/advanced/async)
 show the corresponding method calls.
 
 For several known calls, `ToolMatrix` makes one collected pytest item per
@@ -410,7 +410,7 @@ def test_quote_matrix(case):
 Define the server at module scope for this matrix; a pytest fixture cannot be
 used while the decorator is evaluated. Replace values with independently
 documented expectations. See the
-[full matrix example](../../../sdk/docs/examples.md#compose-toolmatrix-with-agent-selection).
+[full matrix example](https://m3.sineframe.com/docs/guides/agents/matrices).
 
 ## Agent choice and multiple turns
 
@@ -461,7 +461,7 @@ assert session.result.trace_view.for_turn(first).tool_calls
 
 Test a continuing conversation only when the harness and project behavior
 support it. If the second turn depends on the first, assert its arguments or
-result as well. The [agent examples](../../../sdk/docs/examples.md#5-match-arguments-results-status-counts-and-choices)
+result as well. The [agent examples](https://m3.sineframe.com/docs/guides/agents/first-test)
 cover argument predicates and exact call order.
 
 ## Inspect trace metadata
@@ -532,11 +532,11 @@ ID across harnesses and trials. Call `kit.evaluate(...)` once per completed
 execution or turn and aggregate saved decisions by `metadata.harness_config`.
 In a script, use `kit.agents([...], trials=N)` and pass the same explicit
 `case_id` for every selection of a logical case. See the
-[SDK evaluation guide](../../../sdk/docs/evaluations.md) for a worked example.
+[SDK evaluation guide](https://m3.sineframe.com/docs/guides/evaluations/assertions) for a worked example.
 
 ## Elicitation
 
-Copy the complete [either/or form then URL test](../../../sdk/docs/elicitation.md#one-prompt-two-elicitation-rounds-one-tool-call)
+Copy the complete [either/or form then URL test](https://m3.sineframe.com/docs/guides/elicitation/plans)
 and its [runnable source](../../../sdk/examples/tests/test_modern_mrtr_pi_composed.py).
 Build bound leaves, combine alternatives with `one_of`, and put the later URL
 in `sequence`. Keep the plan on one `agent.run`, then assert the single logical
@@ -549,14 +549,14 @@ Run the composed Pi test with
 `uv run --project sdk --extra pytest pytest -q sdk/examples/tests/test_modern_mrtr_pi_composed.py`.
 The Pi examples skip when the required binary is unavailable; a skip is not
 evidence that the adapter passed its gate. Use the
-[MRTR API reference](../../../sdk/docs/elicitation-api.md) for prompt/resource
+[MRTR API reference](https://m3.sineframe.com/docs/reference/python/m3/elicitation) for prompt/resource
 calls, exact helpers, manual and managed input, URL assertions, and trace fields.
 
 The maintained runnable examples keep the server fixture separate from M3 test
 code. Pi 0.85.1 agent examples are the verified Pi baseline. Codex support uses
 the unmodified App Server, but M3 conformance remains pending until both
 installed-binary suites pass. Its local deterministic provider fixture makes
-no paid provider call. The [canonical Codex limitations](../../../sdk/docs/elicitation-api.md#codex-app-server-support-and-limitations)
+no paid provider call. The [canonical Codex limitations](https://m3.sineframe.com/docs/reference/python/m3/elicitation)
 and [exhaustive Pi-to-Codex test inventory](../../../sdk/tests/mrtr-harness-parity.md)
 describe proven behavior and pending cases. Start with
 [modern_mrtr_server.py](../../../sdk/examples/servers/modern_mrtr_server.py)
