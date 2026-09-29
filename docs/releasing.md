@@ -88,9 +88,10 @@ PyPI and public installer checks still run after upload.
 
 Assets include the three wheels, versioned `install.sh`, stable first `install-latest.sh`, `SHA256SUMS`, and `manifest.json`. The shell installer chooses the highest final version and falls back to prereleases only when no final release exists. Use `--prerelease` for an alpha, or `--tag vX.Y.Z` for an exact tag.
 
-When `scripts/install-latest.sh` changes, copy it byte-for-byte to
-`sineframe-landing/public/install.sh` in the landing release pull request. The
-landing build publishes that reviewed bootstrap at the stable hosted URL.
+The landing build fetches `install-latest.sh` from its pinned M3 GitHub Release,
+checks the release version and source commit, verifies the asset against
+`manifest.json`, and publishes it at the stable hosted URL. Updating the landing
+release pin advances the documentation and hosted bootstrap together.
 
 ## Recovery after partial publication
 
