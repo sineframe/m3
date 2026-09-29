@@ -40,8 +40,8 @@ npx skills add sineframe/m3@testing-with-m3
 ```
 
 Use `-g` to make the skill available across projects. The published skill and
-its supporting references are also available in the
-[M3 skill catalog](https://m3.sineframe.com/skills/testing-with-m3/).
+its supporting references are explained in the
+[agent skill guide](https://m3.sineframe.com/docs/guides/agents/skill).
 
 ## Documentation
 

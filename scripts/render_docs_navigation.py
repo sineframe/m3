@@ -39,6 +39,7 @@ NAVIGATION = [
             {
                 "title": "Test agents",
                 "items": [
+                    "guides-agents-skill",
                     "guides-agents-first-test",
                     "guides-agents-harnesses",
                     "guides-agents-managed-runtimes",
@@ -160,6 +161,7 @@ REDIRECTS = [
 
 ALIASES = {
     "getting-started": ["quick start", "first MCP test"],
+    "guides-agents-skill": ["npx skills", "testing-with-m3"],
     "reference-pytest": ["suite_name", "pytest marker", "fixtures"],
     "guides-results-baselines": ["compare runs", "baseline run ID"],
     "guides-results-persistence": ["results database", "saved runs"],
