@@ -13,7 +13,7 @@ SITE = ROOT / "docs" / "site"
 OUTPUT = SITE / "navigation.json"
 NAVIGATION = [
     {
-        "title": "Start",
+        "title": "Getting started",
         "items": [
             "home",
             "getting-started",
