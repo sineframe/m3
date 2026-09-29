@@ -537,7 +537,7 @@ In a script, use `kit.agents([...], trials=N)` and pass the same explicit
 ## Elicitation
 
 Copy the complete [either/or form then URL test](https://m3.sineframe.com/docs/guides/elicitation/plans)
-and its [runnable source](../../../sdk/examples/tests/test_modern_mrtr_pi_composed.py).
+and its [runnable source](https://github.com/sineframe/m3/blob/main/sdk/examples/tests/test_modern_mrtr_pi_composed.py).
 Build bound leaves, combine alternatives with `one_of`, and put the later URL
 in `sequence`. Keep the plan on one `agent.run`, then assert the single logical
 tool call after it completes. The same test module runs `optional(one_of(...))`
@@ -557,9 +557,9 @@ code. Pi 0.85.1 agent examples are the verified Pi baseline. Codex support uses
 the unmodified App Server, but M3 conformance remains pending until both
 installed-binary suites pass. Its local deterministic provider fixture makes
 no paid provider call. The [canonical Codex limitations](https://m3.sineframe.com/docs/reference/python/m3/elicitation)
-and [exhaustive Pi-to-Codex test inventory](../../../sdk/tests/mrtr-harness-parity.md)
+and [exhaustive Pi-to-Codex test inventory](https://github.com/sineframe/m3/blob/main/sdk/tests/mrtr-harness-parity.md)
 describe proven behavior and pending cases. Start with
-[modern_mrtr_server.py](../../../sdk/examples/servers/modern_mrtr_server.py)
+[modern_mrtr_server.py](https://github.com/sineframe/m3/blob/main/sdk/examples/servers/modern_mrtr_server.py)
 and the links in the guide; do not invent an in-test protocol server or copy
 an incomplete pseudo-test.
 

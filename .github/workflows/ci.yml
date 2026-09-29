@@ -43,6 +43,8 @@ jobs:
           uv sync --locked --all-packages
           --extra pytest --extra judge --extra storage --extra property
           --group test --group typecheck
+      - name: Validate installable skills
+        run: python3 scripts/validate_skills.py
       - name: Install Node for installed harness tests
         uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
         with:

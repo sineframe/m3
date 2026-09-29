@@ -30,6 +30,19 @@ m3 doctor
 Then follow the [first MCP test](https://m3.sineframe.com/docs/getting-started).
 It uses a local server and needs no model credentials.
 
+## Agent skill
+
+Install the `testing-with-m3` skill in the project where you want an agent to
+write or debug M3 tests:
+
+```sh
+npx skills add sineframe/m3@testing-with-m3
+```
+
+Use `-g` to make the skill available across projects. The published skill and
+its supporting references are also available in the
+[M3 skill catalog](https://m3.sineframe.com/skills/testing-with-m3/).
+
 ## Documentation
 
 - [Documentation](https://m3.sineframe.com/docs/)
