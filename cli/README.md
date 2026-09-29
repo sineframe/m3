@@ -8,6 +8,12 @@ viewer.
 uv tool install sf-m3-cli
 ```
 
+On macOS or Linux, you can use the shell installer instead:
+
+```sh
+curl -LsSf https://m3.sineframe.com/install.sh | sh
+```
+
 Start with the [installation guide](https://m3.sineframe.com/docs/start/install)
 and use the [CLI reference](https://m3.sineframe.com/docs/reference/cli/) for
 commands and options.
