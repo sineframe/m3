@@ -13,6 +13,8 @@ The consumer repository needs a locked uv project, a `.python-version` file, and
 
 The CLI requires the `pytest`, `storage`, and `judge` extras in the project environment, even when a test does not use an LLM judge. `storage` supplies the SQLAlchemy dependency for the SQLite execution store that records the run. Add these extras to the project and update its lockfile before running the workflow.
 
+For uploads, the repository must also contain a committed `m3.toml`. Run `m3 init` locally from the repository root to generate it, then commit the file before enabling the upload workflow. Keep its `project_id` stable, including when renaming the project. Do not run `m3 init` in CI or generate a new identity for each run; publishing rejects runs without a valid project identity.
+
 ## Credential-free pull request workflow
 
 Save this workflow as `.github/workflows/m3.yml`:
