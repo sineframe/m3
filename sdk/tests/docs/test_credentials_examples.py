@@ -12,7 +12,37 @@ from pathlib import Path
 
 import pytest
 
+from m3.async_api import AsyncMCPTestKit
+from m3.types import SecretReference, StdioServer
+
 _ROOT = Path(__file__).parents[3]
+
+
+@pytest.mark.asyncio
+@pytest.mark.process_lifecycle
+async def test_stdio_credential_is_absent_from_finalized_trace(monkeypatch):
+    token = "dummy-service-token"
+    monkeypatch.setenv("M3_DEMO_SERVICE_KEY", token)
+    server = StdioServer(
+        name="credential-demo",
+        command=sys.executable,
+        args=(str(_ROOT / "sdk/examples/docs/credentials/stdio_server.py"),),
+        environment={
+            "DEMO_SERVICE_TOKEN": SecretReference(
+                source="environment", name="M3_DEMO_SERVICE_KEY"
+            )
+        },
+    )
+    async with AsyncMCPTestKit(env={}) as kit:
+        async with kit.direct(server) as client:
+            result = await client.call_tool("credential_check", {})
+            assert result.structured_content == {"authenticated": True}
+
+    trace = client.final_trace
+    assert trace is not None
+    serialized = json.dumps(trace.model_dump(mode="json"))
+    assert "credential_check" in serialized
+    assert token not in serialized
 
 
 @pytest.mark.process_lifecycle

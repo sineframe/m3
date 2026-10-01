@@ -88,8 +88,7 @@ from m3.types import SecretReference, StdioServer
 
 @pytest.mark.asyncio
 async def test_stdio_server_receives_named_credential(monkeypatch):
-    token = "dummy-service-token"
-    monkeypatch.setenv("M3_DEMO_SERVICE_KEY", token)
+    monkeypatch.setenv("M3_DEMO_SERVICE_KEY", "dummy-service-token")
     kit = AsyncMCPTestKit(env={})
     try:
         server = StdioServer(
@@ -106,8 +105,6 @@ async def test_stdio_server_receives_named_credential(monkeypatch):
             result = await client.call_tool("credential_check", {})
             assert result.content[0]["text"] == "credential accepted"
             assert result.structured_content == {"authenticated": True}
-            assert client.trace is not None
-            assert token not in repr(client.trace.model_dump(mode="json"))
     finally:
         await kit.aclose()
 ```
@@ -120,7 +117,7 @@ From the project directory, run:
 python -m pytest -q test_credentials.py
 ```
 
-The test sets `M3_DEMO_SERVICE_KEY` to a dummy value. M3 maps it to the child variable `DEMO_SERVICE_TOKEN`, then the test checks the actual tool result and confirms the value is absent from the trace.
+The test sets `M3_DEMO_SERVICE_KEY` to a dummy value. M3 maps it to the child variable `DEMO_SERVICE_TOKEN`. The successful tool result proves the server received the expected credential.
 
 ```text
 1 passed
