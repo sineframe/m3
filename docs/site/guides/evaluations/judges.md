@@ -42,6 +42,18 @@ Replace `YOUR_JUDGE_MODEL`, then run with a request cap:
 m3 test --env-file .env --judge-max-requests 1 -- tests/test_answer.py
 ```
 
+## Map a differently named judge key
+
+If your environment or explicitly selected `.env` file stores the judge key as `MY_JUDGE_KEY`, keep `tests/test_answer.py` unchanged and replace the command above with:
+
+```sh
+m3 test --env-file .env \
+  --credential-env judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY \
+  --judge-max-requests 1 -- tests/test_answer.py
+```
+
+The mapping reads `MY_JUDGE_KEY` and supplies `M3_JUDGE_API_KEY` for the judge. The `judge:` scope does not configure an agent credential. Keep upload credentials separate; `M3_ACCESS_TOKEN` is rejected as either mapping name. See the [credential reference](../../reference/credentials.md) for custom judge endpoints and authentication restrictions.
+
 The default threshold is `0.8`. Abstention, refusal, malformed output, and
 provider failure produce an error result. `required=True` persists the result
 before enforcing the required-evaluation policy.

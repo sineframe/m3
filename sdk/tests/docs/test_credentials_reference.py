@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -14,9 +15,36 @@ from pathlib import Path
 import pytest
 import yaml
 
-from m3.types import SecretReference
+from m3 import MCPTestKit
+from m3.types import SecretReference, StdioServer, UserMessage
 
 _ROOT = Path(__file__).parents[3]
+
+
+def test_harness_guide_selection_resolves_documented_credential(monkeypatch):
+    source = _ROOT / "sdk/examples/docs/agents-first-test/test_harness.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    selection = next(
+        node.args[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "agents"
+    )
+    monkeypatch.setenv("M3_DOCS_CODEX_MODEL", "fixture-model")
+    monkeypatch.setenv("MY_OPENAI_KEY", "dummy-provider-key")
+    selections = eval(
+        compile(ast.Expression(selection), str(source), "eval"), {"os": os}
+    )
+    with MCPTestKit(env={}) as kit:
+        agent = kit.agents(selections)[0]
+        spec = agent._spec(
+            UserMessage(content="test"),
+            server=StdioServer(name="fixture", command=sys.executable),
+        )
+    assert spec.harness.credential_references["OPENAI_API_KEY"] == SecretReference(
+        source="environment", name="MY_OPENAI_KEY"
+    )
 
 
 def test_credentials_reference_constructs_the_public_value() -> None:
