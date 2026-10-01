@@ -9,6 +9,11 @@ import socket
 import sys
 import time
 
+if os.environ.get("M3_DOCS_LOCAL_PROVIDER") == "1":
+    from docs_live_mcp_client import pi_call
+else:
+    pi_call = None
+
 control_socket: socket.socket | None = None
 control_host = os.environ.get("M3_PI_CONTROL_HOST")
 control_port = os.environ.get("M3_PI_CONTROL_PORT")
@@ -45,7 +50,7 @@ if (
         raise RuntimeError("Pi control handshake failed")
 
 if "--version" in sys.argv:
-    print("0.85.1")
+    print(os.environ.get("M3_DOCS_FIXTURE_VERSION", "0.85.1"))
     raise SystemExit(0)
 
 if "--help" in sys.argv:
@@ -86,6 +91,16 @@ for line in sys.stdin:
             flush=True,
         )
     elif frame.get("type") == "prompt":
+        local_call = None
+        if pi_call is not None:
+            try:
+                local_call = pi_call(str(frame.get("message", "")))
+            except Exception as error:
+                marker = os.environ.get("M3_DOCS_MCP_WIRE_MARKER")
+                if marker:
+                    with open(marker + ".errors", "a", encoding="utf-8") as output:
+                        output.write(type(error).__name__ + ": " + str(error) + "\n")
+                raise
         if os.environ.get("M3_PI_FIXTURE_BLOCK") == "1":
             time.sleep(2)
         print(
@@ -114,6 +129,32 @@ for line in sys.stdin:
             )
             print(json.dumps({"type": "agent_settled"}), flush=True)
             continue
+        if local_call is not None:
+            _server, _tool, qualified_name, arguments, result = local_call
+            call_id = f"docs-call-{frame.get('id', 'one')}"
+            print(
+                json.dumps(
+                    {
+                        "type": "tool_execution_start",
+                        "toolCallId": call_id,
+                        "toolName": qualified_name,
+                        "args": arguments,
+                    }
+                ),
+                flush=True,
+            )
+            print(
+                json.dumps(
+                    {
+                        "type": "tool_execution_end",
+                        "toolCallId": call_id,
+                        "toolName": qualified_name,
+                        "result": result,
+                        "isError": bool(result.get("isError", False)),
+                    }
+                ),
+                flush=True,
+            )
         print(
             json.dumps(
                 {

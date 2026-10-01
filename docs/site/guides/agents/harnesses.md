@@ -78,3 +78,9 @@ Codex can reuse eligible host authentication when no explicit credential referen
 These adapters do not have identical capabilities. M3 tests agent-driven elicitation with Codex CLI `0.156.1` and Pi `0.85.1`. That limit does not apply to direct SDK elicitation. The [compatibility reference](../../reference/compatibility.md) has the feature-specific support notes.
 
 If M3 reports a capability as unavailable, keep the assertion and inspect readiness or the execution result. Next: [configure an ACP agent](acp.md) or [pin a managed runtime](managed-runtimes.md).
+
+For the harness-specific setup, authentication, and evidence boundaries, see
+the [harness compatibility reference](../../reference/compatibility.md). To
+compare one unchanged test across four native agents, see [run the same test
+across agent harnesses](multiple-harnesses.md). For ACP setup, see the
+[ACP overview](acp.md).

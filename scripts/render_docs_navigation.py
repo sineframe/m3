@@ -42,6 +42,7 @@ NAVIGATION = [
                 "items": [
                     "guides-agents-first-test",
                     "guides-agents-harnesses",
+                    "guides-agents-multiple-harnesses",
                     "guides-agents-managed-runtimes",
                     "guides-agents-acp",
                     "guides-agents-sessions",

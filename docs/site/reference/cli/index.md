@@ -59,6 +59,9 @@ Run pytest in the project environment and save M3 history.
 | `--ui` | Open the bundled viewer after pytest. |
 | `--port PORT` | Viewer port; `8000` by default. |
 
+For repeatable native harness selections across one pytest test, see the
+[multiple-harness guide](../../guides/agents/multiple-harnesses.md).
+
 ## `m3 ci test`
 
 Accepts the test options except viewer options. It applies CI marker selection.
