@@ -48,8 +48,7 @@ def call_mcp(
         if "error" in response:
             raise RuntimeError("MCP initialization failed")
         process.stdin.write(
-            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"})
-            + "\n"
+            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
         )
         for identifier, current_method, current_params in (
             (2, "tools/list", {}),
@@ -120,7 +119,11 @@ for line in sys.stdin:
                 },
             }
         )
-        text = "".join(item.get("text", "") for item in result.get("content", []) if isinstance(item, dict))
+        text = "".join(
+            item.get("text", "")
+            for item in result.get("content", [])
+            if isinstance(item, dict)
+        )
         send(
             {
                 "jsonrpc": "2.0",

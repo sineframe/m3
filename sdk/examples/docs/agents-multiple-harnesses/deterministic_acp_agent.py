@@ -84,7 +84,9 @@ for line in sys.stdin:
         send({"jsonrpc": "2.0", "id": identifier, "result": {"sessionId": session_id}})
     elif method == "session/prompt":
         prompt = " ".join(
-            item["text"] for item in params.get("prompt", []) if item.get("type") == "text"
+            item["text"]
+            for item in params.get("prompt", [])
+            if item.get("type") == "text"
         )
         if prompt != PROMPT:
             raise RuntimeError("unexpected prompt for deterministic ACP fixture")

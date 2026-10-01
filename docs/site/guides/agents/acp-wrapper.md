@@ -161,9 +161,7 @@ class Agent:
         await self.mcp_writer.drain()
         await self.mcp_call("tools/list", {})
 
-    async def mcp_call(
-        self, method: str, params: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def mcp_call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if self.mcp_reader is None or self.mcp_writer is None:
             raise RuntimeError("MCP server is not connected")
 

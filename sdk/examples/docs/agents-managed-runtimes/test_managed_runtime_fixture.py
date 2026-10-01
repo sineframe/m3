@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from m3 import ExecutionOutcome, expect
 from m3.types import StdioServer
 

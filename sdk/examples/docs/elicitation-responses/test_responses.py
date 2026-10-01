@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from shipping_server import ADDRESS_SCHEMA, build_server
+
 from m3 import (
     Config,
     ElicitationPlan,
@@ -10,13 +12,13 @@ from m3 import (
     expect_url,
 )
 
-from shipping_server import ADDRESS_SCHEMA, build_server
-
 
 def test_form_acceptance_and_decline_have_distinct_content() -> None:
     for action in ("accept", "decline"):
         calls: list[dict[str, object]] = []
-        server = InProcessServer(name="shipping", factory=lambda: build_server(calls))
+        server = InProcessServer(
+            name="shipping", factory=lambda calls=calls: build_server(calls)
+        )
         leaf = expect_form(
             "input",
             message="Enter your city.",
@@ -55,7 +57,9 @@ def test_form_cancellation_is_an_elicitation_response() -> None:
 def test_url_decline_and_cancel_never_send_form_content() -> None:
     for action in ("decline", "cancel"):
         calls: list[dict[str, object]] = []
-        server = InProcessServer(name="shipping", factory=lambda: build_server(calls))
+        server = InProcessServer(
+            name="shipping", factory=lambda calls=calls: build_server(calls)
+        )
         leaf = expect_url(
             "input",
             message="Continue checkout.",

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from mcp import types
+from shipping_server import build_server
 
 from m3 import Config, InProcessServer, MCPTestKit
 from m3.sync_api import InputRequiredResult, ToolCallResult
-
-from shipping_server import build_server
 
 
 def test_manual_input_reuses_returned_state_and_keyed_response() -> None:

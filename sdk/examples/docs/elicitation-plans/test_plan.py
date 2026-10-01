@@ -1,6 +1,5 @@
-from elicitation_server import ADDRESS_SCHEMA, build_server
-
 import pytest
+from elicitation_server import ADDRESS_SCHEMA, build_server
 
 from m3 import (
     Config,

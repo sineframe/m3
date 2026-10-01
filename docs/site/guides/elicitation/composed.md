@@ -148,6 +148,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from shipping_server import ADDRESS_SCHEMA, ADDRESSES, build_server
+
 from m3 import (
     Config,
     InProcessServer,
@@ -159,8 +161,6 @@ from m3 import (
     round_of,
     sequence,
 )
-
-from shipping_server import ADDRESS_SCHEMA, ADDRESSES, build_server
 
 
 def form(server: InProcessServer, key: str):

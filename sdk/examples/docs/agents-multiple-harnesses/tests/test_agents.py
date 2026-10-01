@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from m3 import ExecutionOutcome, expect
 from m3.types import StdioServer
 
@@ -18,9 +19,7 @@ ACP_MANIFEST = {
 }
 pytestmark = pytest.mark.m3(
     suite_name="shipping",
-    agents=[
-        {"harness": "acp", "models": ["fixture"], "manifest": ACP_MANIFEST}
-    ],
+    agents=[{"harness": "acp", "models": ["fixture"], "manifest": ACP_MANIFEST}],
 )
 
 

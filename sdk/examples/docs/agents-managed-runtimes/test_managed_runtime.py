@@ -27,9 +27,7 @@ def test_codex_pin_is_recorded(tmp_path: Path) -> None:
         "version": version,
     }
 
-    with MCPTestKit(
-        env={}, harness_cache_dir=tmp_path / "harness-cache"
-    ) as kit:
+    with MCPTestKit(env={}, harness_cache_dir=tmp_path / "harness-cache") as kit:
         agent = kit.agents([selection])[0]
         result = agent.run(
             "Use shipping:shipping_quote once with weight_kg 2 and zone local.",

@@ -320,7 +320,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
