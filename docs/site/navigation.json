@@ -182,6 +182,13 @@
       "kind": "guides"
     },
     {
+      "id": "guides-credentials",
+      "title": "Configure credentials",
+      "source": "guides/credentials.md",
+      "description": "Map endpoint, agent, judge, and M3 credentials to the process that needs each one.",
+      "kind": "guides"
+    },
+    {
       "id": "guides-elicitation-managed-input",
       "title": "Submit input to a paused execution",
       "source": "guides/elicitation/managed-input.md",
@@ -336,6 +343,13 @@
         "env file",
         "credentials"
       ]
+    },
+    {
+      "id": "reference-credentials",
+      "title": "Credential reference",
+      "source": "reference/credentials.md",
+      "description": "Credential types, resolution points, precedence, validation, and isolation boundaries.",
+      "kind": "reference"
     },
     {
       "id": "reference",
@@ -552,6 +566,7 @@
             "guides-evaluations-aggregate"
           ]
         },
+        "guides-credentials",
         {
           "title": "Handle interaction",
           "items": [
@@ -596,6 +611,7 @@
       "items": [
         "reference",
         "reference-cli",
+        "reference-credentials",
         {
           "title": "Python SDK",
           "items": [

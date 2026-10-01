@@ -22,6 +22,51 @@ env:
   OPENCODE_API_KEY: ""
 
 jobs:
+  docs-credentials:
+    name: Credential documentation examples (3.10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.10"
+          enable-cache: true
+      - name: Install locked test workspace
+        run: >-
+          uv sync --locked --all-packages
+          --extra pytest --extra judge --extra storage
+          --group test --group typecheck
+      - name: Validate documentation and source mappings
+        run: |
+          python3 scripts/render_docs_examples.py --check
+          python3 scripts/render_docs_navigation.py --check
+          python3 scripts/validate_docs_site.py
+          python3 scripts/validate_docs_examples.py
+      - name: Run credential examples and reference value test
+        run: |
+          uv run --locked --no-sync --project sdk --extra pytest \
+            pytest -q sdk/tests/docs/test_credentials_reference.py
+          cp -R sdk/examples/docs/credentials "$RUNNER_TEMP/credentials"
+          cd "$RUNNER_TEMP/credentials"
+          "$GITHUB_WORKSPACE/.venv/bin/python" -m pytest -q test_credentials.py
+      - name: Run CLI credential contract suites
+        run: >-
+          uv run --locked --no-sync --project cli
+          pytest -q cli/tests/test_cli_credentials_integration.py
+          cli/tests/test_ci_credentials.py
+      - name: Lint and format focused docs test
+        run: |
+          uv run --locked --no-sync --project . --group typecheck \
+            ruff check sdk/tests/docs/test_credentials_reference.py
+          uv run --locked --no-sync --project . --group typecheck \
+            ruff format --check sdk/tests/docs/test_credentials_reference.py
+
   pr-tests:
     name: PR tests (3.10)
     if: github.event_name == 'pull_request'
