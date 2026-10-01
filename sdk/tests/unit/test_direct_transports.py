@@ -344,6 +344,24 @@ def test_missing_authentication_is_safe_and_does_not_retain_secret(
     assert "MCP_MISSING_TOKEN" not in str(caught.value)
 
 
+@pytest.mark.parametrize("value", [None, ""])
+def test_default_http_resolver_rejects_missing_or_empty_secret(
+    monkeypatch: pytest.MonkeyPatch, value: str | None
+) -> None:
+    if value is None:
+        monkeypatch.delenv("MCP_TEST_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("MCP_TEST_TOKEN", value)
+    with pytest.raises(TransportConnectionError) as caught:
+        resolve_headers(
+            {},
+            resolver=EnvironmentSecretResolver(),
+            bearer_token=SecretReference(source="environment", name="MCP_TEST_TOKEN"),
+        )
+    assert caught.value.phase == "authentication"
+    assert "MCP_TEST_TOKEN" not in str(caught.value)
+
+
 def test_hostile_secret_resolver_and_observer_fail_closed_without_values() -> None:
     class HostileResolver:
         def resolve(self, reference: SecretReference) -> str:

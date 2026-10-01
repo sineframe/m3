@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 
+from m3._credentials import validate_credential_environment_names
+
 from .errors import CLIError
 
 ACCESS_TOKEN_ENV = "M3_ACCESS_TOKEN"
@@ -72,8 +74,10 @@ def validate_credential_mappings(mappings: Sequence[str]) -> None:
             _, target, source = parse_credential_mapping(mapping)
         except ValueError:
             continue  # Existing option validation reports the malformed mapping.
-        if target == ACCESS_TOKEN_ENV or source == ACCESS_TOKEN_ENV:
-            raise CLIError("M3_ACCESS_TOKEN cannot be mapped to a test credential")
+        try:
+            validate_credential_environment_names(target, source)
+        except ValueError as exc:
+            raise CLIError(str(exc)) from None
 
 
 def parse_credential_mapping(mapping: str) -> tuple[str | None, str, str]:

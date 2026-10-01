@@ -24,6 +24,9 @@ from ._check_recording import (
 from ._check_recording import (
     set_default_record_checks as _set_default_record_checks,
 )
+from ._credentials import (
+    validate_credential_environment_names as _validate_reserved_names,
+)
 from ._default_store import (
     install_default_judge_limit_factory as _install_default_judge_limit_factory,
 )
@@ -117,6 +120,10 @@ def _parse_credential_mappings(
             if scope not in _CREDENTIAL_SCOPES:
                 raise _pytest.UsageError("unknown credential scope")
         target, source = target.strip(), source.strip()
+        try:
+            _validate_reserved_names(target, source)
+        except ValueError as exc:
+            raise _pytest.UsageError(str(exc)) from None
         if not _ENV_NAME.fullmatch(target) or not _ENV_NAME.fullmatch(source):
             raise _pytest.UsageError(
                 "credential environment names must be Python identifiers"

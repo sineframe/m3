@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -105,6 +107,78 @@ def test_upload_token_cannot_be_mapped_to_test_credentials():
     ):
         with pytest.raises(CLIError, match="cannot be mapped"):
             validate_credential_mappings([mapping])
+
+
+@pytest.mark.parametrize("command", ["test", "ci test"])
+@pytest.mark.parametrize("source_present", [False, True])
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        "TOKEN=M3_ACCESS_TOKEN",
+        "judge:M3_ACCESS_TOKEN=SOURCE",
+        "TOKEN= M3_ACCESS_TOKEN ",
+        "judge: M3_ACCESS_TOKEN = SOURCE ",
+    ],
+)
+def test_test_and_ci_reject_upload_token_mapping_before_runner(
+    monkeypatch, capsys, command, source_present, mapping
+):
+    from m3_cli import supervisor
+    from m3_cli.main import main
+
+    called = []
+    if source_present:
+        monkeypatch.setenv("M3_ACCESS_TOKEN", "nonsecret-test-value")
+    else:
+        monkeypatch.delenv("M3_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr(supervisor, "run_test", lambda **_: called.append("test"))
+    monkeypatch.setattr(supervisor, "run_ci_test", lambda **_: called.append("ci"))
+    args = [*command.split(), "--credential-env", mapping]
+    assert main(args) == 2
+    assert called == []
+    error = capsys.readouterr().err
+    assert "M3_ACCESS_TOKEN cannot be mapped" in error
+    assert "SOURCE" not in error
+    assert "nonsecret-test-value" not in error
+
+
+def test_ci_forwards_agent_and_judge_mappings_without_upload_token(monkeypatch):
+    from m3_cli import supervisor
+    from m3_cli.main import main
+
+    argv = [
+        "ci",
+        "test",
+        "--python",
+        ".venv/bin/python",
+        "--upload",
+        "--harness",
+        "codex=fixture-model",
+        "--credential-env",
+        "codex:OPENAI_API_KEY=MY_AGENT_KEY",
+        "--credential-env",
+        "judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY",
+        "--",
+        "tests/",
+        "-q",
+    ]
+
+    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
+    captured = {}
+
+    def fake_runner(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(exit_code=2)
+
+    monkeypatch.setattr(supervisor, "run_ci_test", fake_runner)
+    assert main(argv) == 2
+    assert captured["harnesses"] == ["codex=fixture-model"]
+    assert captured["python"] == Path(".venv/bin/python")
+    assert captured["credential_env"] == [
+        "codex:OPENAI_API_KEY=MY_AGENT_KEY",
+        "judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY",
+    ]
+    assert "M3_ACCESS_TOKEN" not in captured["environment"]
 
 
 def test_cached_upload_cannot_be_retargeted(tmp_path, monkeypatch):

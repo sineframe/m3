@@ -59,6 +59,7 @@ and the saved evidence behind both results.
 | Check a local MCP server | [Test a stdio server](guides/servers/stdio.md) |
 | Check a deployed endpoint | [Test Streamable HTTP](guides/servers/http.md) |
 | Verify how an agent uses tools | [Write an agent test](guides/agents/first-test.md) |
+| Configure credentials | [Configure credentials](guides/credentials.md) |
 | Inspect a failed run | [Read traces](guides/results/traces.md) |
 | Compare a change with an earlier run | [Compare with a baseline](guides/results/baselines.md) |
 | Run tests in automation | [Run M3 in CI](guides/ci/run.md) |

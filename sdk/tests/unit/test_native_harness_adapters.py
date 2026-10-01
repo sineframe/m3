@@ -2890,3 +2890,18 @@ Path({str(marker)!r}).write_text("spawned", encoding="utf-8")
     with pytest.raises(HarnessStartupError, match="not ready"):
         await adapter.open(launch)
     assert not marker.exists()
+
+
+@pytest.mark.asyncio
+async def test_acp_empty_manifest_reference_is_forwarded_to_child(tmp_path):
+    from m3.harness.acp import _isolated_acp_env
+
+    environment = _isolated_acp_env(
+        {"env": {"TOKEN": "${M3_EMPTY_ACP_TOKEN}"}},
+        sys.executable,
+        set(),
+        root=str(tmp_path),
+        environment={"M3_EMPTY_ACP_TOKEN": ""},
+    )
+
+    assert environment["TOKEN"] == ""

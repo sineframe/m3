@@ -447,6 +447,25 @@ async def test_in_process_loopback_is_observed_without_rewriting_endpoint() -> N
     assert endpoint is not None
     assert manager.capture is not None
     subscription = manager.capture.subscribe()
+    live: list[Any] = []
+
+    async def observe_tool_exchange() -> None:
+        requests: dict[str, Any] = {}
+        responses: set[Any] = set()
+        while set(requests) != {"tools/list", "tools/call"} or not set(
+            requests.values()
+        ).issubset(responses):
+            event = await anext(subscription)
+            live.append(event)
+            if not isinstance(event.payload, dict):
+                continue
+            if event.direction == "client_to_server" and event.payload.get(
+                "method"
+            ) in {"tools/list", "tools/call"}:
+                requests[event.payload["method"]] = event.payload["id"]
+            if event.direction == "server_to_client" and "result" in event.payload:
+                responses.add(event.payload.get("id"))
+
     try:
         async with AsyncMCPTestKit() as kit:
             async with kit.direct(
@@ -454,15 +473,14 @@ async def test_in_process_loopback_is_observed_without_rewriting_endpoint() -> N
             ) as client:
                 await client.list_tools()
                 await client.call_tool("draw", {})
+                # Loopback capture is asynchronous. Observe both complete
+                # exchanges before closing the client and reading its snapshot.
+                await asyncio.wait_for(observe_tool_exchange(), timeout=5)
         assert manager.capture is not None
         snapshot = manager.capture.snapshots()[0]
         assert snapshot.transport == "in_process"
         assert any(event.method == "tools/list" for event in snapshot.events)
         assert any(event.method == "tools/call" for event in snapshot.events)
-        live = [
-            await asyncio.wait_for(anext(subscription), timeout=1)
-            for _ in snapshot.events
-        ]
         assert any(
             event.direction == "client_to_server"
             and event.payload.get("method") == "tools/call"

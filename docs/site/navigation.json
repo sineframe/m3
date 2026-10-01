@@ -160,7 +160,7 @@
       "id": "guides-ci-github-actions",
       "title": "Run M3 in GitHub Actions",
       "source": "guides/ci/github-actions.md",
-      "description": "Start with a credential-free direct-server job. This complete workflow assumes the repository declares its project dependencies and contains the tests from the first-test guide.",
+      "description": "Run M3 tests in a consumer repository with a credential-free pull request workflow and an optional trusted upload workflow.",
       "kind": "guides"
     },
     {
@@ -179,6 +179,20 @@
       "title": "Run M3 tests in CI",
       "source": "guides/ci/run.md",
       "description": "m3 ci test uses the normal project Python, storage, harness, and pytest selection. It excludes tests whose nearest M3 marker sets ci=False.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-credentials-endpoints",
+      "title": "Pass a credential to a stdio MCP server",
+      "source": "guides/credentials/endpoints.md",
+      "description": "Map a parent environment variable to a stdio server and verify its tool result.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-credentials",
+      "title": "Configure credentials",
+      "source": "guides/credentials.md",
+      "description": "Choose the credential path for an MCP endpoint, agent, judge, or uploaded run.",
       "kind": "guides"
     },
     {
@@ -328,14 +342,21 @@
     },
     {
       "id": "reference-configuration",
-      "title": "Configuration and credentials",
+      "title": "Configuration",
       "source": "reference/configuration.md",
-      "description": "m3.toml stores project identity. Keep its generated project ID stable; renaming a project changes its name, not that identity.",
+      "description": "Project identity and environment-file loading behavior.",
       "kind": "reference",
       "searchAliases": [
         "env file",
         "credentials"
       ]
+    },
+    {
+      "id": "reference-credentials",
+      "title": "Credential reference",
+      "source": "reference/credentials.md",
+      "description": "Resolution and validation behavior for endpoint, agent, judge, ACP, and upload credentials.",
+      "kind": "reference"
     },
     {
       "id": "reference",
@@ -552,6 +573,8 @@
             "guides-evaluations-aggregate"
           ]
         },
+        "guides-credentials",
+        "guides-credentials-endpoints",
         {
           "title": "Handle interaction",
           "items": [
@@ -596,6 +619,7 @@
       "items": [
         "reference",
         "reference-cli",
+        "reference-credentials",
         {
           "title": "Python SDK",
           "items": [

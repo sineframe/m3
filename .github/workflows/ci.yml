@@ -60,6 +60,7 @@ jobs:
             sdk/tests/unit
           M3_REQUIRE_PI_MRTR=1 uv run --locked --no-sync --project sdk --extra judge \
             pytest -q \
+            sdk/tests/docs \
             sdk/tests/integration/test_direct_client_mrtr.py \
             sdk/tests/integration/test_examples_contract.py \
             sdk/tests/e2e/test_real_pi_mrtr_gate.py \

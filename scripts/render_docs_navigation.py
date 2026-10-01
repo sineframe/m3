@@ -66,6 +66,8 @@ NAVIGATION = [
                     "guides-evaluations-aggregate",
                 ],
             },
+            "guides-credentials",
+            "guides-credentials-endpoints",
             {
                 "title": "Handle interaction",
                 "items": [
@@ -110,6 +112,7 @@ NAVIGATION = [
         "items": [
             "reference",
             "reference-cli",
+            "reference-credentials",
             {
                 "title": "Python SDK",
                 "items": [

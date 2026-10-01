@@ -132,6 +132,6 @@
     }
   ],
   "network": "Provider access is required for native and ACP runs. Managed Codex tests also need runtime acquisition. The MCP server is local stdio.",
-  "credentials": "Native harnesses use their configured login. The ACP example requires ACP_AGENT_CREDENTIAL_ENV to name the child provider variable and M3_DOCS_PROVIDER_API_KEY to supply its value through a manifest reference. Set model variables to identifiers available to the configured account.",
+  "credentials": "test_harness.py explicitly maps MY_OPENAI_KEY to the Codex child OPENAI_API_KEY. Other Codex examples may reuse eligible host authentication when no explicit references are selected; do not assume other adapters copy host login files. The ACP example requires ACP_AGENT_CREDENTIAL_ENV to name the child provider variable and M3_DOCS_PROVIDER_API_KEY to supply its value through a manifest reference. Set model variables to identifiers available to the configured account.",
   "cleanup": "MCPTestKit and the session contexts own and close the harness and server processes."
 }

@@ -9,7 +9,7 @@ M3 connects to agent harnesses through native adapters or an ACP manifest. Choos
 
 ## Requirements
 
-This example uses Codex. Install and sign in to the Codex CLI, install M3 with pytest, and set `M3_DOCS_CODEX_MODEL` to a model available to that login. Provider access is required and the run may incur cost. Review Codex’s tool approval prompt before accepting it; this test limits M3 tool access to one named tool.
+This example uses Codex. Install the Codex CLI and M3 with pytest. Set `MY_OPENAI_KEY` to your OpenAI API key and `M3_DOCS_CODEX_MODEL` to a model available to that key. Provider access is required and the run may incur cost. Review Codex’s tool approval prompt before accepting it; this test limits M3 tool access to one named tool.
 
 ## Run the same assertion through Codex
 
@@ -35,7 +35,13 @@ def test_codex_calls_the_shipping_tool() -> None:
     )
     with MCPTestKit(env={}) as kit:
         agent = kit.agents(
-            [{"harness": "codex", "models": [os.environ["M3_DOCS_CODEX_MODEL"]]}]
+            [
+                {
+                    "harness": "codex",
+                    "models": [os.environ["M3_DOCS_CODEX_MODEL"]],
+                    "credential_env": {"OPENAI_API_KEY": "MY_OPENAI_KEY"},
+                }
+            ]
         )[0]
         result = agent.run(
             "Call shipping_quote once for weight_kg 2 in zone local.",
@@ -55,6 +61,14 @@ def test_codex_calls_the_shipping_tool() -> None:
 ```
 
 From the directory containing both files, run `python -m pytest -q test_harness.py`. Keep the server, prompt, and assertion fixed when comparing harnesses.
+
+## Map native agent credentials
+
+The example's `credential_env` maps the child variable `OPENAI_API_KEY` to the parent variable `MY_OPENAI_KEY`. Set the parent variable before running the test; the mapping contains names, not the key itself.
+
+Codex, Pi, Claude Code, and OpenCode accept this mapping in their `kit.agents(...)` selections. Use the target variable required by the selected harness and provider. For tests that select their agent through the M3 pytest fixture, the CLI equivalent is `--credential-env codex:OPENAI_API_KEY=MY_OPENAI_KEY`; replace the scope when choosing another harness. CLI mappings do not replace the explicit SDK selection in this example.
+
+Codex can reuse eligible host authentication when no explicit credential references are selected. Do not assume a host login works for every adapter: Pi, Claude Code, and OpenCode do not copy host login files into their temporary homes. See the [credential reference](../../reference/credentials.md) for resolution and isolation rules.
 
 | Integration | Configuration | Difference to account for |
 |---|---|---|

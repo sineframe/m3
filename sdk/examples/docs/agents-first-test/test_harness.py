@@ -17,7 +17,13 @@ def test_codex_calls_the_shipping_tool() -> None:
     )
     with MCPTestKit(env={}) as kit:
         agent = kit.agents(
-            [{"harness": "codex", "models": [os.environ["M3_DOCS_CODEX_MODEL"]]}]
+            [
+                {
+                    "harness": "codex",
+                    "models": [os.environ["M3_DOCS_CODEX_MODEL"]],
+                    "credential_env": {"OPENAI_API_KEY": "MY_OPENAI_KEY"},
+                }
+            ]
         )[0]
         result = agent.run(
             "Call shipping_quote once for weight_kg 2 in zone local.",

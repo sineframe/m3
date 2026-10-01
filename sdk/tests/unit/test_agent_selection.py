@@ -8,11 +8,16 @@ import pytest
 from m3 import MCPTestKit, ServerBinding, StdioServer
 from m3.elicitation import expect_form
 from m3.types import (
+    ClaudeCode,
+    Codex,
     FullToolPolicy,
     NativeToolPolicy,
+    OpenCode,
     PermissionPolicy,
+    Pi,
     RestrictiveToolPolicy,
     RevisionSelection,
+    SecretReference,
     ServerProfileRef,
     UserMessage,
 )
@@ -111,6 +116,116 @@ def test_selection_validates_credential_names_and_acp_manifest_without_io(
                 }
             ]
         )
+    for manifest in (
+        {"command": "agent", "env": {"M3_ACCESS_TOKEN": "${SOURCE}"}},
+        {"command": "agent", "env": {"TOKEN": "${M3_ACCESS_TOKEN}"}},
+    ):
+        with pytest.raises(ValueError, match="invalid ACP manifest"):
+            kit.agents(
+                [{"harness": "acp", "models": ["fixture"], "manifest": manifest}]
+            )
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {"TOKEN": "M3_ACCESS_TOKEN"},
+        {"M3_ACCESS_TOKEN": "SOURCE"},
+        {"TOKEN": " M3_ACCESS_TOKEN "},
+        {" M3_ACCESS_TOKEN ": "SOURCE"},
+    ],
+)
+@pytest.mark.parametrize("source_present", [False, True])
+def test_selection_reserves_upload_token_name_before_source_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    kit: MCPTestKit,
+    mapping: dict[str, str],
+    source_present: bool,
+) -> None:
+    if source_present:
+        monkeypatch.setenv("M3_ACCESS_TOKEN", "nonsecret-test-value")
+    else:
+        monkeypatch.delenv("M3_ACCESS_TOKEN", raising=False)
+    with pytest.raises(ValueError, match="cannot be mapped") as error:
+        kit.agents(
+            [
+                {
+                    "harness": "opencode",
+                    "models": ["vendor/model"],
+                    "credential_env": mapping,
+                }
+            ]
+        )
+    assert "nonsecret-test-value" not in str(error.value)
+
+
+@pytest.mark.parametrize("source_present", [False, True])
+def test_selection_only_checks_mapped_source_existence_before_launch(
+    monkeypatch: pytest.MonkeyPatch, kit: MCPTestKit, source_present: bool
+) -> None:
+    if source_present:
+        monkeypatch.setenv("M3_EMPTY_SELECTION_KEY", "")
+    else:
+        monkeypatch.delenv("M3_EMPTY_SELECTION_KEY", raising=False)
+    agent = kit.agents(
+        [
+            {
+                "harness": "opencode",
+                "models": ["vendor/model"],
+                "credential_env": {"TOKEN": "M3_EMPTY_SELECTION_KEY"},
+            }
+        ]
+    )[0]
+    if not source_present:
+        with pytest.raises(ValueError, match="is not set"):
+            agent._spec(UserMessage(content="x"), server=_server())
+        return
+    spec = agent._spec(UserMessage(content="x"), server=_server())
+    from m3.harness.contracts import HarnessStartupError
+    from m3.harness.native import _resolve_runtime_value
+
+    reference = spec.harness.credential_references["TOKEN"]
+    with pytest.raises(HarnessStartupError):
+        _resolve_runtime_value(reference)
+
+
+def test_selection_allows_ordinary_credential_names(kit: MCPTestKit) -> None:
+    agent = kit.agents(
+        [
+            {
+                "harness": "opencode",
+                "models": ["vendor/model"],
+                "credential_env": {"VENDOR_TOKEN": "MY_VENDOR_KEY"},
+            }
+        ]
+    )[0]
+    assert agent is not None
+
+
+@pytest.mark.parametrize("harness", [ClaudeCode, OpenCode, Codex, Pi])
+@pytest.mark.parametrize(
+    "references",
+    [
+        {"M3_ACCESS_TOKEN": SecretReference(source="environment", name="SOURCE")},
+        {"TOKEN": SecretReference(source="environment", name="M3_ACCESS_TOKEN")},
+    ],
+)
+def test_native_harness_types_reserve_upload_token_name(harness, references):
+    with pytest.raises(ValueError, match="cannot be mapped") as error:
+        harness(model="fixture", credential_references=references)
+    assert "nonsecret-test-value" not in str(error.value)
+
+
+@pytest.mark.parametrize("harness", [ClaudeCode, OpenCode, Codex, Pi])
+def test_native_harness_types_allow_ordinary_and_provider_references(harness):
+    value = harness(
+        model="fixture",
+        credential_references={
+            "VENDOR_KEY": SecretReference(source="environment", name="VENDOR_SOURCE"),
+            "OTHER_KEY": SecretReference(source="provider", name="M3_ACCESS_TOKEN"),
+        },
+    )
+    assert set(value.credential_references) == {"VENDOR_KEY", "OTHER_KEY"}
 
 
 @pytest.mark.parametrize(
