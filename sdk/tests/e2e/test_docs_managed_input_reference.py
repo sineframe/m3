@@ -41,7 +41,7 @@ def test_managed_input_reference_fence_against_native_codex_and_local_provider(
 ) -> None:
     executable = os.environ.get("M3_DOCS_CODEX_EXECUTABLE") or shutil.which("codex")
     cache_root = os.environ.get("M3_HARNESS_CACHE_DIR") or str(
-        tmp_path / "managed-runtime-cache"
+        tmp_path.parent / f"{tmp_path.name}-managed-runtime-cache"
     )
     if executable is None:
         pytest.fail("install Codex CLI 0.156.1 or set M3_DOCS_CODEX_EXECUTABLE")
