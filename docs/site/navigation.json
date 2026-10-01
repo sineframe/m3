@@ -114,7 +114,7 @@
       "id": "guides-agents-harnesses",
       "title": "Choose an agent harness",
       "source": "guides/agents/harnesses.md",
-      "description": "M3 connects to agent harnesses through native adapters or an ACP manifest. Choose the integration your agent provides, then check the capabilities and version your test needs.",
+      "description": "Choose between M3 native harness adapters and ACP based on the agent process you want to run and the evidence it can provide.",
       "kind": "guides"
     },
     {
@@ -128,7 +128,14 @@
       "id": "guides-agents-matrices",
       "title": "Run agent cases as a matrix",
       "source": "guides/agents/matrices.md",
-      "description": "Use HarnessMatrix to run the same MCP cases across harnesses and trials. A matrix expands test work; it does not make model behavior deterministic.",
+      "description": "Expand multiple MCP server and tool cases across native harnesses and trials, with explicit handling of Claude Code's server-scope policy.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-multiple-harnesses",
+      "title": "Run the same test across agent harnesses",
+      "source": "guides/agents/multiple-harnesses.md",
+      "description": "Select Codex, Pi, Claude Code, and OpenCode for one unchanged pytest test and compare the recorded tool call for each execution.",
       "kind": "guides"
     },
     {
@@ -549,6 +556,7 @@
           "items": [
             "guides-agents-first-test",
             "guides-agents-harnesses",
+            "guides-agents-multiple-harnesses",
             "guides-agents-managed-runtimes",
             "guides-agents-acp",
             "guides-agents-sessions",

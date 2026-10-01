@@ -21,10 +21,26 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
 
+if os.environ.get("M3_DOCS_LOCAL_PROVIDER") == "1":
+    from docs_live_mcp_client import opencode_call
+
+    _opencode_config_path = os.environ.get("OPENCODE_CONFIG")
+    _opencode_config = (
+        json.loads(Path(_opencode_config_path).read_text(encoding="utf-8"))
+        if _opencode_config_path and Path(_opencode_config_path).is_file()
+        else None
+    )
+else:
+    opencode_call = None
+    _opencode_config = None
+
 mode = os.environ.get("M3_OPENCODE_MODE", "normal")
 if "--version" in sys.argv:
+    fixture_version = os.environ.get("M3_DOCS_FIXTURE_VERSION")
     version_marker = os.environ.get("M3_VERSION_MARKER")
-    if version_marker:
+    if fixture_version:
+        print(fixture_version)
+    elif version_marker:
         marker_path = Path(version_marker)
         try:
             version_count = int(marker_path.read_text(encoding="utf-8"))
@@ -190,6 +206,41 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(parts, list) and parts and isinstance(parts[0], dict)
                 else ""
             )
+            if opencode_call is not None:
+                server, tool, _native_name, arguments, result = opencode_call(
+                    text, _opencode_config
+                )
+                self._json(
+                    200,
+                    {
+                        "info": {
+                            "providerID": model.get("providerID")
+                            if isinstance(model, dict)
+                            else "opencode",
+                            "modelID": model.get("modelID")
+                            if isinstance(model, dict)
+                            else "fixture",
+                            "finish": "stop",
+                        },
+                        "parts": [
+                            {
+                                "type": "tool",
+                                "tool": f"{server}_{tool}",
+                                "callID": "docs-opencode-tool-1",
+                                "state": {
+                                    "status": "completed",
+                                    "input": arguments,
+                                    "output": result,
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": "The local fixture completed the requested MCP call.",
+                            },
+                        ],
+                    },
+                )
+                return
             if text == "huge":
                 self._json(200, {"text": "x" * (1024 * 1024 + 1)})
                 return

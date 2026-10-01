@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "agents-matrices",
+  "owning_pages": ["guides-agents-matrices"],
+  "target_release": "development preview from untagged candidate 25738ca",
+  "python": ">=3.10",
+  "files": ["shipping_server.py", "inventory_server.py", "test_agent_matrix.py"],
+  "displayed_blocks": [
+    {"page": "guides-agents-matrices", "label": "shipping server for the matrix project", "source": "shipping_server.py", "kind": "file"},
+    {"page": "guides-agents-matrices", "label": "inventory server for the matrix project", "source": "inventory_server.py", "kind": "file"},
+    {"page": "guides-agents-matrices", "label": "multi-server native harness matrix test", "source": "test_agent_matrix.py", "kind": "file"}
+  ],
+  "dependencies": ["sf-m3[pytest] from the candidate checkout", "Codex CLI", "Pi", "Claude Code", "OpenCode"],
+  "working_directory": "agent-matrix project directory",
+  "scenarios": [
+    {
+      "id": "four-native-harness-matrix",
+      "command": "python -m pytest -q test_agent_matrix.py",
+      "working_directory": "agent-matrix project directory",
+      "expected_exit_code": 0,
+      "assertions": ["two servers times two tools per server times four harnesses times two trials produce 32 cases", "every execution completes and records its selected tool call, server, arguments, success, and structured result"],
+      "compatibility": {
+        "harness": "Codex CLI, Pi, Claude Code, and OpenCode native adapters",
+        "models": "M3_DOCS_CODEX_MODEL, M3_DOCS_PI_MODEL, M3_DOCS_CLAUDE_MODEL, M3_DOCS_OPENCODE_MODEL",
+        "mode": "native live provider",
+        "status": "requires live verification; authentication is unknown and four provider/model selections are not configured in this preview"
+      },
+      "verification": "live-provider"
+    }
+  ],
+  "network": "The MCP servers use local stdio. Native agents make provider requests and may incur charges.",
+  "credentials": "Each adapter needs its own configured provider credentials. Values are referenced from environment variables and are not printed.",
+  "cleanup": "MCPTestKit closes agent and server processes after test execution.",
+  "verification_mode": "live-provider; not run in this development preview"
+}

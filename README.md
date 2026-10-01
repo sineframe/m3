@@ -99,6 +99,7 @@ its supporting references are explained in the
 - [Documentation](https://m3.sineframe.com/docs/)
 - [Test a local server](https://m3.sineframe.com/docs/guides/servers/stdio)
 - [Test agent behavior](https://m3.sineframe.com/docs/guides/agents/first-test)
+- [Compare native agent harnesses](https://m3.sineframe.com/docs/guides/agents/multiple-harnesses)
 - [Configure credentials](https://m3.sineframe.com/docs/guides/credentials)
 - [CLI reference](https://m3.sineframe.com/docs/reference/cli/)
 - [Python reference](https://m3.sineframe.com/docs/reference/python/)
