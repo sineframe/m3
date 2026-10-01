@@ -31,9 +31,13 @@ PIN_A = "0.156.1"
 PIN_B = "0.155.1"
 MODEL = "fixture-codex"
 
-pytestmark = pytest.mark.skipif(
-    os.name == "nt", reason="the fake managed-runtime archives use POSIX shell wrappers"
-)
+pytestmark = [
+    pytest.mark.process_lifecycle,
+    pytest.mark.skipif(
+        os.name == "nt",
+        reason="the fake managed-runtime archives use POSIX shell wrappers",
+    ),
+]
 
 
 def _copy_project(project_id: str, destination: Path) -> Path:

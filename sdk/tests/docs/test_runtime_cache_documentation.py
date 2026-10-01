@@ -18,6 +18,8 @@ import pytest
 
 from m3.runtime.core import detect_target
 
+pytestmark = pytest.mark.process_lifecycle
+
 _ROOT = Path(__file__).parents[3]
 _PROJECT = _ROOT / "sdk" / "examples" / "docs" / "agents-runtime-cache"
 
