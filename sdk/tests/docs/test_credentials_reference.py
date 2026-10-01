@@ -65,9 +65,7 @@ def test_complete_credentials_project_runs_from_clean_copy(tmp_path: Path) -> No
 def test_github_actions_example_keeps_secrets_in_final_step() -> None:
     blocks = re.findall(
         r"```yaml\n(.*?)\n```",
-        (_ROOT / "docs/site/guides/ci/github-actions.md").read_text(
-            encoding="utf-8"
-        ),
+        (_ROOT / "docs/site/guides/ci/github-actions.md").read_text(encoding="utf-8"),
         flags=re.DOTALL,
     )
     baseline, upload = [yaml.load(block, Loader=yaml.BaseLoader) for block in blocks]
