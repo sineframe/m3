@@ -22,6 +22,48 @@ env:
   OPENCODE_API_KEY: ""
 
 jobs:
+  docs-api-reference:
+    name: Python API reference inventory (3.13.15)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.13.15"
+          enable-cache: true
+      - name: Install locked test workspace
+        run: >-
+          uv sync --locked --all-packages
+          --extra pytest --group test --group typecheck
+      - name: Validate documentation
+        run: |
+          python3 scripts/render_docs_examples.py --check
+          python3 scripts/render_docs_navigation.py --check
+          python3 scripts/validate_docs_site.py
+          python3 scripts/validate_docs_examples.py
+      - name: Check API inventory with canonical Python
+        run: >-
+          uv run --locked --no-sync --project sdk
+          python scripts/render_docs_api_reference.py --check
+      - name: Test API reference renderer
+        run: >-
+          uv run --locked --no-sync --project sdk --extra pytest
+          pytest -q sdk/tests/unit/test_docs_api_reference.py
+      - name: Lint and format renderer tests
+        run: |
+          uv run --locked --no-sync --project . --group typecheck \
+            ruff check scripts/render_docs_api_reference.py \
+            sdk/tests/unit/test_docs_api_reference.py
+          uv run --locked --no-sync --project . --group typecheck \
+            ruff format --check scripts/render_docs_api_reference.py \
+            sdk/tests/unit/test_docs_api_reference.py
+
   pr-tests:
     name: PR tests (3.10)
     if: github.event_name == 'pull_request'
