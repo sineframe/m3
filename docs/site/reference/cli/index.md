@@ -87,6 +87,10 @@ token.
 `list` shows managed harness assets. `prune` removes unused assets. Both accept
 `--cache-dir` (also `--harness-cache-dir`) and `--project-root`.
 
+See [runtime cache management](../../guides/agents/runtime-cache.md) for cache
+locations, inspection output, and active lease behavior, and [managed runtime
+selection](../../guides/agents/managed-runtimes.md) for pinning a harness.
+
 Invalid command/configuration is an operational error. Pytest failures retain
 pytest's failure exit behavior; requested upload failures can turn an otherwise
 passing CI invocation into an operational failure.

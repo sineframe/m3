@@ -133,9 +133,9 @@
     },
     {
       "id": "guides-agents-managed-runtimes",
-      "title": "Pin a managed harness runtime",
+      "title": "Run a pinned agent harness",
       "source": "guides/agents/managed-runtimes.md",
-      "description": "Select a managed runtime when a test must use an explicit native harness version. M3 records the resolved runtime identity with the execution.",
+      "description": "Acquire an explicit native harness version, run an agent test, and check the requested and resolved runtime identity recorded by M3.",
       "kind": "guides"
     },
     {
@@ -143,6 +143,13 @@
       "title": "Run agent cases as a matrix",
       "source": "guides/agents/matrices.md",
       "description": "Use HarnessMatrix to run the same MCP cases across harnesses and trials. A matrix expands test work; it does not make model behavior deterministic.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-runtime-cache",
+      "title": "Inspect and maintain the runtime cache",
+      "source": "guides/agents/runtime-cache.md",
+      "description": "Acquire one pinned Codex runtime into a temporary cache, inspect its receipt, verify reuse and lease protection, then prune that cache.",
       "kind": "guides"
     },
     {
@@ -162,6 +169,13 @@
         "npx skills",
         "testing-with-m3"
       ]
+    },
+    {
+      "id": "guides-agents-versions",
+      "title": "Compare harness versions",
+      "source": "guides/agents/versions.md",
+      "description": "Run one unchanged agent test with two pinned native harness versions and compare execution identity and deterministic evaluations.",
+      "kind": "guides"
     },
     {
       "id": "guides-ci-access",
@@ -387,6 +401,13 @@
       "kind": "reference"
     },
     {
+      "id": "reference-managed-runtimes",
+      "title": "Managed harness runtimes",
+      "source": "reference/managed-runtimes.md",
+      "description": "Reference for native harness selection, version resolution, executable acquisition, provenance, cache configuration, leases, and failure behavior.",
+      "kind": "reference"
+    },
+    {
       "id": "reference-pytest",
       "title": "pytest integration",
       "source": "reference/pytest.md",
@@ -571,6 +592,8 @@
             "guides-agents-first-test",
             "guides-agents-harnesses",
             "guides-agents-managed-runtimes",
+            "guides-agents-versions",
+            "guides-agents-runtime-cache",
             "guides-agents-acp",
             "guides-agents-acp-connect",
             "guides-agents-acp-wrapper",
@@ -663,6 +686,7 @@
         },
         "reference-pytest",
         "reference-configuration",
+        "reference-managed-runtimes",
         "reference-compatibility"
       ]
     },

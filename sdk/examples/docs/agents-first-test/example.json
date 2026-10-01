@@ -4,7 +4,6 @@
   "owning_pages": [
     "guides-agents-first-test",
     "guides-agents-harnesses",
-    "guides-agents-managed-runtimes",
     "guides-agents-sessions",
     "guides-agents-matrices"
   ],
@@ -16,14 +15,12 @@
     "test_agent.py",
     "test_harness.py",
     "test_session.py",
-    "test_managed_runtime.py",
     "test_agent_matrix.py"
   ],
   "displayed_blocks": [
     {"page": "guides-agents-first-test", "label": "shipping server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-agents-first-test", "label": "first agent test", "source": "test_agent.py", "kind": "file"},
     {"page": "guides-agents-harnesses", "label": "harness selection test", "source": "test_harness.py", "kind": "file"},
-    {"page": "guides-agents-managed-runtimes", "label": "managed runtime test", "source": "test_managed_runtime.py", "kind": "file"},
     {"page": "guides-agents-sessions", "label": "session test", "source": "test_session.py", "kind": "file"},
     {"page": "guides-agents-matrices", "label": "agent matrix test", "source": "test_agent_matrix.py", "kind": "file"}
   ],
@@ -82,20 +79,6 @@
         "model": "M3_DOCS_CODEX_MODEL environment variable",
         "mode": "native live provider",
         "status": "requires live verification and provider access"
-      },
-      "verification": "live-provider"
-    },
-    {
-      "id": "codex-managed-runtime",
-      "command": "python -m pytest -q test_managed_runtime.py",
-      "working_directory": "project directory",
-      "expected_exit_code": 0,
-      "assertions": ["tool call succeeds", "recorded managed runtime version matches requested version"],
-      "compatibility": {
-        "harness": "Codex CLI managed runtime",
-        "version": "M3_DOCS_CODEX_VERSION environment variable",
-        "mode": "native live provider",
-        "status": "requires live verification, provider access, and managed acquisition"
       },
       "verification": "live-provider"
     },

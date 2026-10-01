@@ -7,6 +7,16 @@ import json
 import os
 import sys
 
+if os.environ.get("M3_DOCS_LOCAL_PROVIDER") == "1":
+    from docs_live_mcp_client import codex_call, prompt_text
+else:
+    codex_call = None
+    prompt_text = None
+
+if "--version" in sys.argv:
+    print(f"codex-cli {os.environ.get('M3_DOCS_FIXTURE_VERSION', '0.156.1')}")
+    raise SystemExit(0)
+
 if "--help" in sys.argv:
     print("codex app-server --help")
     raise SystemExit(0)
@@ -47,6 +57,81 @@ for line in sys.stdin:
             ),
             flush=True,
         )
+        if codex_call is not None and prompt_text is not None:
+            prompt = prompt_text(frame.get("params", {}))
+            server, tool, arguments, result = codex_call(prompt)
+            call_id = f"fixture-call-{turn}"
+            print(
+                json.dumps(
+                    {
+                        "method": "item/started",
+                        "params": {
+                            "threadId": thread,
+                            "turnId": f"fixture-turn-{turn}",
+                            "item": {
+                                "type": "mcpToolCall",
+                                "id": call_id,
+                                "server": server,
+                                "tool": tool,
+                                "arguments": arguments,
+                                "status": "inProgress",
+                            },
+                        },
+                    }
+                ),
+                flush=True,
+            )
+            print(
+                json.dumps(
+                    {
+                        "method": "item/completed",
+                        "params": {
+                            "threadId": thread,
+                            "turnId": f"fixture-turn-{turn}",
+                            "item": {
+                                "type": "mcpToolCall",
+                                "id": call_id,
+                                "server": server,
+                                "tool": tool,
+                                "arguments": arguments,
+                                "status": "completed",
+                                "result": result,
+                            },
+                        },
+                    }
+                ),
+                flush=True,
+            )
+            print(
+                json.dumps(
+                    {
+                        "method": "item/agentMessage/delta",
+                        "params": {
+                            "threadId": thread,
+                            "turnId": f"fixture-turn-{turn}",
+                            "delta": "The local fixture completed the requested MCP call.",
+                        },
+                    }
+                ),
+                flush=True,
+            )
+            print(
+                json.dumps(
+                    {
+                        "method": "turn/completed",
+                        "params": {
+                            "threadId": thread,
+                            "turn": {
+                                "id": f"fixture-turn-{turn}",
+                                "status": "completed",
+                                "model": "fixture",
+                            },
+                        },
+                    }
+                ),
+                flush=True,
+            )
+            continue
         if approval:
             arguments = {"weight_kg": 2, "zone": "local"}
             print(
