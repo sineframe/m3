@@ -19,6 +19,7 @@ NAVIGATION = [
             "getting-started",
             "cli",
             "start-install",
+            "guides-agents-skill",
             "start-your-server",
         ],
     },
@@ -39,7 +40,6 @@ NAVIGATION = [
             {
                 "title": "Test agents",
                 "items": [
-                    "guides-agents-skill",
                     "guides-agents-first-test",
                     "guides-agents-harnesses",
                     "guides-agents-managed-runtimes",
