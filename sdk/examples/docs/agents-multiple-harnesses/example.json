@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "id": "agents-multiple-harnesses",
+  "owning_pages": ["guides-agents-multiple-harnesses"],
+  "target_release": "development preview from untagged candidate 25738ca",
+  "python": ">=3.10",
+  "files": ["shipping_server.py", "tests/test_agents.py", "deterministic_acp_agent.py", "test_sdk_pins.py"],
+  "displayed_blocks": [
+    {"page": "guides-agents-multiple-harnesses", "label": "single-tool shipping MCP server", "source": "shipping_server.py", "kind": "file"},
+    {"page": "guides-agents-multiple-harnesses", "label": "unchanged multi-harness pytest test", "source": "tests/test_agents.py", "kind": "file"},
+    {"page": "guides-agents-multiple-harnesses", "label": "deterministic ACP fixture", "source": "deterministic_acp_agent.py", "kind": "file"},
+    {"page": "guides-agents-multiple-harnesses", "label": "SDK per-entry runtime selection", "source": "test_sdk_pins.py", "kind": "file"}
+  ],
+  "dependencies": ["workspace candidate: sdk[pytest], app, and cli editable installs", "Codex CLI", "Pi", "Claude Code", "OpenCode"],
+  "working_directory": "multi-harness project directory",
+  "scenarios": [
+    {
+      "id": "four-native-harnesses-two-trials",
+      "command": "m3 test --python \"$M3_DOCS_PYTHON\" --harness \"codex=$M3_DOCS_CODEX_MODEL\" --harness \"pi=$M3_DOCS_PI_MODEL\" --harness \"claude_code=$M3_DOCS_CLAUDE_MODEL\" --harness \"opencode=$M3_DOCS_OPENCODE_MODEL\" --credential-env \"pi:${M3_DOCS_PI_KEY_NAME}=M3_DOCS_PI_API_KEY\" --credential-env \"claude_code:${M3_DOCS_CLAUDE_KEY_NAME}=M3_DOCS_CLAUDE_API_KEY\" --credential-env \"opencode:${M3_DOCS_OPENCODE_KEY_NAME}=M3_DOCS_OPENCODE_API_KEY\" --trials 2 -- tests/test_agents.py",
+      "working_directory": "multi-harness project directory",
+      "expected_exit_code": 0,
+      "assertions": ["four harness selections times two trials expand to eight executions", "each passing execution records the shipping_quote call, arguments, success status, and structured quote"],
+      "compatibility": {
+        "harness": "Codex CLI, Pi, Claude Code, and OpenCode native adapters",
+        "models": "M3_DOCS_CODEX_MODEL, M3_DOCS_PI_MODEL, M3_DOCS_CLAUDE_MODEL, M3_DOCS_OPENCODE_MODEL",
+        "mode": "native live provider",
+        "status": "requires live verification; configured provider authentication is unknown and model selection is not set in this preview"
+      },
+      "verification": "live-provider"
+    },
+    {
+      "id": "local-acp-two-trials",
+      "command": "m3 test --python \"$M3_DOCS_PYTHON\" --harness \"acp=fixture\" --trials 2 -- tests/test_agents.py",
+      "working_directory": "multi-harness project directory",
+      "expected_exit_code": 0,
+      "assertions": ["two completed local ACP executions", "each execution records the same shipping_quote call and structured quote"],
+      "compatibility": {
+        "harness": "local deterministic ACP fixture",
+        "mode": "deterministic local; no provider request",
+        "status": "verified locally; two ACP executions completed without native provider calls"
+      },
+      "verification": "deterministic"
+    },
+    {
+      "id": "five-agent-cli-selection",
+      "command": "m3 test --python \"$M3_DOCS_PYTHON\" --harness \"codex=$M3_DOCS_CODEX_MODEL\" --harness \"pi=$M3_DOCS_PI_MODEL\" --harness \"claude_code=$M3_DOCS_CLAUDE_MODEL\" --harness \"opencode=$M3_DOCS_OPENCODE_MODEL\" --harness \"acp=fixture\" --credential-env \"pi:${M3_DOCS_PI_KEY_NAME}=M3_DOCS_PI_API_KEY\" --credential-env \"claude_code:${M3_DOCS_CLAUDE_KEY_NAME}=M3_DOCS_CLAUDE_API_KEY\" --credential-env \"opencode:${M3_DOCS_OPENCODE_KEY_NAME}=M3_DOCS_OPENCODE_API_KEY\" --trials 2 -- tests/test_agents.py",
+      "working_directory": "multi-harness project directory",
+      "expected_exit_code": 0,
+      "assertions": ["four native selections and one ACP marker configuration times two trials expand to ten executions", "each completed execution records the same shipping_quote call and structured quote"],
+      "compatibility": {
+        "harness": "Codex CLI, Pi, Claude Code, OpenCode, and local deterministic ACP",
+        "models": "native M3_DOCS_*_MODEL environment variables and ACP fixture model",
+        "mode": "four native live providers plus local deterministic ACP",
+        "status": "requires live verification; native provider authentication is unknown and models are not selected in this preview"
+      },
+      "verification": "live-provider"
+    },
+    {
+      "id": "sdk-per-entry-pins-plus-acp",
+      "command": "python -m pytest -q test_sdk_pins.py",
+      "working_directory": "multi-harness project directory",
+      "expected_exit_code": 0,
+      "assertions": ["four explicit native pins and ACP fixture expand to ten executions", "each completed execution records the same shipping_quote call and structured quote"],
+      "compatibility": {
+        "harness": "Codex CLI, Pi, Claude Code, OpenCode, and local deterministic ACP",
+        "models": "M3_DOCS_*_MODEL environment variables; explicit M3_DOCS_*_VERSION pins",
+        "mode": "four native live providers plus local deterministic ACP",
+        "status": "requires live verification; provider authentication, models, and versions are not selected in this preview"
+      },
+      "verification": "live-provider"
+    }
+  ],
+  "network": "The MCP server uses local stdio. Each native provider may make network requests and incur model charges.",
+  "credentials": "Each native CLI must be configured and authenticated independently. Do not copy credentials between adapters.",
+  "cleanup": "M3 closes each harness and local MCP server process after the execution.",
+  "verification_mode": "live-provider; not run in this development preview"
+}

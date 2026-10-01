@@ -59,6 +59,11 @@ and the saved evidence behind both results.
 | Check a local MCP server | [Test a stdio server](guides/servers/stdio.md) |
 | Check a deployed endpoint | [Test Streamable HTTP](guides/servers/http.md) |
 | Verify how an agent uses tools | [Write an agent test](guides/agents/first-test.md) |
+| Run the same test with several agents | [Compare native harnesses](guides/agents/multiple-harnesses.md) |
+| Pin a native harness version | [Run a pinned agent harness](guides/agents/managed-runtimes.md) |
+| Configure model credentials | [Provider credentials](guides/credentials.md) |
+| Connect an ACP agent | [Connect an ACP-compatible agent](guides/agents/acp-connect.md) |
+| Test elicitation | [Elicitation plans](guides/elicitation/plans.md) |
 | Inspect a failed run | [Read traces](guides/results/traces.md) |
 | Compare a change with an earlier run | [Compare with a baseline](guides/results/baselines.md) |
 | Run tests in automation | [Run M3 in CI](guides/ci/run.md) |

@@ -97,10 +97,24 @@
       "kind": "guides"
     },
     {
+      "id": "guides-agents-acp-connect",
+      "title": "Connect an ACP-compatible agent",
+      "source": "guides/agents/acp-connect.md",
+      "description": "Run a local test through an already available ACP agent and assert its MCP result.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-acp-wrapper",
+      "title": "Expose your custom agent through ACP",
+      "source": "guides/agents/acp-wrapper.md",
+      "description": "Wrap custom agent logic in an ACP process and record the real MCP result.",
+      "kind": "guides"
+    },
+    {
       "id": "guides-agents-acp",
-      "title": "Run an ACP agent",
+      "title": "Bring your own agent",
       "source": "guides/agents/acp.md",
-      "description": "Use ACP when the agent implements the Agent Client Protocol and you want M3 to launch it from a manifest. ACP launch configuration is distinct from M3’s native CLI adapters.",
+      "description": "Connect an existing ACP-compatible agent or expose a custom agent through ACP.",
       "kind": "guides"
     },
     {
@@ -114,21 +128,35 @@
       "id": "guides-agents-harnesses",
       "title": "Choose an agent harness",
       "source": "guides/agents/harnesses.md",
-      "description": "M3 connects to agent harnesses through native adapters or an ACP manifest. Choose the integration your agent provides, then check the capabilities and version your test needs.",
+      "description": "Choose between M3 native harness adapters and ACP based on the agent process you want to run and the evidence it can provide.",
       "kind": "guides"
     },
     {
       "id": "guides-agents-managed-runtimes",
-      "title": "Pin a managed harness runtime",
+      "title": "Run a pinned agent harness",
       "source": "guides/agents/managed-runtimes.md",
-      "description": "Select a managed runtime when a test must use an explicit native harness version. M3 records the resolved runtime identity with the execution.",
+      "description": "Acquire an explicit native harness version, run an agent test, and check the requested and resolved runtime identity recorded by M3.",
       "kind": "guides"
     },
     {
       "id": "guides-agents-matrices",
       "title": "Run agent cases as a matrix",
       "source": "guides/agents/matrices.md",
-      "description": "Use HarnessMatrix to run the same MCP cases across harnesses and trials. A matrix expands test work; it does not make model behavior deterministic.",
+      "description": "Expand multiple MCP server and tool cases across native harnesses and trials, with explicit handling of Claude Code's server-scope policy.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-multiple-harnesses",
+      "title": "Run the same test across agent harnesses",
+      "source": "guides/agents/multiple-harnesses.md",
+      "description": "Select Codex, Pi, Claude Code, and OpenCode for one unchanged pytest test and compare the recorded tool call for each execution.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-runtime-cache",
+      "title": "Inspect and maintain the runtime cache",
+      "source": "guides/agents/runtime-cache.md",
+      "description": "Acquire one pinned Codex runtime into a temporary cache, inspect its receipt, verify reuse and lease protection, then prune that cache.",
       "kind": "guides"
     },
     {
@@ -148,6 +176,13 @@
         "npx skills",
         "testing-with-m3"
       ]
+    },
+    {
+      "id": "guides-agents-versions",
+      "title": "Compare harness versions",
+      "source": "guides/agents/versions.md",
+      "description": "Run one unchanged agent test with two pinned native harness versions and compare execution identity and deterministic evaluations.",
+      "kind": "guides"
     },
     {
       "id": "guides-ci-access",
@@ -182,6 +217,27 @@
       "kind": "guides"
     },
     {
+      "id": "guides-credentials",
+      "title": "Configure credentials",
+      "source": "guides/credentials.md",
+      "description": "Map endpoint, agent, judge, and M3 credentials to the process that needs each one.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-elicitation-agents",
+      "title": "Handle elicitation in agent tests",
+      "source": "guides/elicitation/agents.md",
+      "description": "Test action-bound elicitation in Codex and Pi sessions with a fresh plan for each turn.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-elicitation-composed",
+      "title": "Compose elicitation workflows",
+      "source": "guides/elicitation/composed.md",
+      "description": "Combine address alternatives, optional requests, same-round forms, and a later URL request in direct SDK tests.",
+      "kind": "guides"
+    },
+    {
       "id": "guides-elicitation-managed-input",
       "title": "Submit input to a paused execution",
       "source": "guides/elicitation/managed-input.md",
@@ -189,10 +245,24 @@
       "kind": "guides"
     },
     {
+      "id": "guides-elicitation-manual",
+      "title": "Handle elicitation directly with the SDK",
+      "source": "guides/elicitation/manual.md",
+      "description": "Read an InputRequiredResult, preserve its request state, and submit a response under the server request key.",
+      "kind": "guides"
+    },
+    {
       "id": "guides-elicitation-plans",
       "title": "Plan answers to elicitation requests",
       "source": "guides/elicitation/plans.md",
       "description": "An elicitation plan describes the requests an operation may make and the response M3 should submit. Attach the plan to the action that can trigger those requests, then assert the action’s result.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-elicitation-responses",
+      "title": "Respond to elicitation requests",
+      "source": "guides/elicitation/responses.md",
+      "description": "Test accepted, declined, and cancelled form and URL responses on direct MCP operations.",
       "kind": "guides"
     },
     {
@@ -313,6 +383,13 @@
       "kind": "home"
     },
     {
+      "id": "reference-acp",
+      "title": "ACP reference",
+      "source": "reference/acp.md",
+      "description": "Manifest, launch, session, policy, evidence, and failure behavior for ACP agents.",
+      "kind": "reference"
+    },
+    {
       "id": "reference-cli",
       "title": "CLI reference",
       "source": "reference/cli/index.md",
@@ -338,10 +415,24 @@
       ]
     },
     {
+      "id": "reference-credentials",
+      "title": "Credential reference",
+      "source": "reference/credentials.md",
+      "description": "Credential types, resolution points, precedence, validation, and isolation boundaries.",
+      "kind": "reference"
+    },
+    {
       "id": "reference",
       "title": "Reference",
       "source": "reference/index.md",
       "description": "Use reference pages when you already know what you need to look up. For a working sequence, start with a guide instead.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-managed-runtimes",
+      "title": "Managed harness runtimes",
+      "source": "reference/managed-runtimes.md",
+      "description": "Reference for native harness selection, version resolution, executable acquisition, provenance, cache configuration, leases, and failure behavior.",
       "kind": "reference"
     },
     {
@@ -379,9 +470,9 @@
     },
     {
       "id": "reference-python-m3-elicitation",
-      "title": "Elicitation and managed-input API",
+      "title": "Elicitation plans and direct request handling",
       "source": "reference/python/m3/elicitation.md",
-      "description": "ElicitationPlan describes expected form or URL input requests and the responses M3 may submit. Build plans with:",
+      "description": "Reference for immutable elicitation plans, matching, response actions, and direct SDK request handling.",
       "kind": "reference"
     },
     {
@@ -396,6 +487,13 @@
       "title": "Evaluation API",
       "source": "reference/python/m3/evaluations.md",
       "description": "An Evaluator or AsyncEvaluator receives EvaluationContext and returns an EvaluationDecision. EvaluatorCallable is the accepted callback union.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-m3-managed-input",
+      "title": "Managed elicitation input API",
+      "source": "reference/python/m3/managed-input.md",
+      "description": "Reference for persistent execution handles, typed pending rounds, keyed response submission, validation, and recovery limits.",
       "kind": "reference"
     },
     {
@@ -528,8 +626,13 @@
           "items": [
             "guides-agents-first-test",
             "guides-agents-harnesses",
+            "guides-agents-multiple-harnesses",
             "guides-agents-managed-runtimes",
+            "guides-agents-versions",
+            "guides-agents-runtime-cache",
             "guides-agents-acp",
+            "guides-agents-acp-connect",
+            "guides-agents-acp-wrapper",
             "guides-agents-sessions",
             "guides-agents-matrices"
           ]
@@ -552,10 +655,15 @@
             "guides-evaluations-aggregate"
           ]
         },
+        "guides-credentials",
         {
-          "title": "Handle interaction",
+          "title": "Elicitation",
           "items": [
             "guides-elicitation-plans",
+            "guides-elicitation-composed",
+            "guides-elicitation-responses",
+            "guides-elicitation-agents",
+            "guides-elicitation-manual",
             "guides-elicitation-managed-input"
           ]
         },
@@ -596,6 +704,7 @@
       "items": [
         "reference",
         "reference-cli",
+        "reference-acp",
         {
           "title": "Python SDK",
           "items": [
@@ -606,6 +715,7 @@
             "reference-python-m3-observability",
             "reference-python-m3-evaluations",
             "reference-python-m3-elicitation",
+            "reference-python-m3-managed-input",
             "reference-python-m3-matrix",
             "reference-python-m3-testing",
             "reference-python-m3-storage",
@@ -615,6 +725,8 @@
         },
         "reference-pytest",
         "reference-configuration",
+        "reference-credentials",
+        "reference-managed-runtimes",
         "reference-compatibility"
       ]
     },

@@ -12,5 +12,8 @@ with selected agents and servers, and inspect saved results.
 - [Set up a project](../getting-started.md)
 - [Browse commands and options](../reference/cli/index.md)
 - [Configure harness runtimes](../guides/agents/managed-runtimes.md)
+- [Compare harness versions](../guides/agents/versions.md)
+- [Inspect and prune the runtime cache](../guides/agents/runtime-cache.md)
+- [Select several native harnesses](../guides/agents/multiple-harnesses.md)
 - [View results and the local UI](../guides/results/viewer.md)
 - [Configure CI and report publishing](../guides/ci/run.md)

@@ -4,33 +4,22 @@
   "owning_pages": [
     "guides-agents-first-test",
     "guides-agents-harnesses",
-    "guides-agents-managed-runtimes",
-    "guides-agents-acp",
-    "guides-agents-sessions",
-    "guides-agents-matrices"
+    "guides-agents-sessions"
   ],
-  "target_release": "resolved from the published release pin",
+  "target_release": "development preview from untagged candidate 25738ca",
   "python": ">=3.10",
   "files": [
     "shipping_server.py",
     "test_server_contract.py",
     "test_agent.py",
-    "test_harness.py",
-    "test_session.py",
-    "test_managed_runtime.py",
-    "test_agent_matrix.py",
-    "test_acp_agent.py"
+    "test_session.py"
   ],
   "displayed_blocks": [
     {"page": "guides-agents-first-test", "label": "shipping server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-agents-first-test", "label": "first agent test", "source": "test_agent.py", "kind": "file"},
-    {"page": "guides-agents-harnesses", "label": "harness selection test", "source": "test_harness.py", "kind": "file"},
-    {"page": "guides-agents-managed-runtimes", "label": "managed runtime test", "source": "test_managed_runtime.py", "kind": "file"},
-    {"page": "guides-agents-acp", "label": "ACP test", "source": "test_acp_agent.py", "kind": "file"},
-    {"page": "guides-agents-sessions", "label": "session test", "source": "test_session.py", "kind": "file"},
-    {"page": "guides-agents-matrices", "label": "agent matrix test", "source": "test_agent_matrix.py", "kind": "file"}
+    {"page": "guides-agents-sessions", "label": "session test", "source": "test_session.py", "kind": "file"}
   ],
-  "dependencies": ["sf-m3[pytest]", "Codex CLI system installation"],
+  "dependencies": ["sf-m3[pytest]", "Codex CLI"],
   "working_directory": "project directory",
   "scenarios": [
     {
@@ -61,20 +50,6 @@
       "verification": "live-provider"
     },
     {
-      "id": "codex-harness-choice",
-      "command": "python -m pytest -q test_harness.py",
-      "working_directory": "project directory",
-      "expected_exit_code": 0,
-      "assertions": ["Codex run completes with one successful shipping_quote call and expected arguments"],
-      "compatibility": {
-        "harness": "Codex CLI",
-        "model": "M3_DOCS_CODEX_MODEL environment variable",
-        "mode": "native live provider",
-        "status": "requires live verification and provider access"
-      },
-      "verification": "live-provider"
-    },
-    {
       "id": "codex-two-turn-session",
       "command": "python -m pytest -q test_session.py",
       "working_directory": "project directory",
@@ -87,51 +62,9 @@
         "status": "requires live verification and provider access"
       },
       "verification": "live-provider"
-    },
-    {
-      "id": "codex-managed-runtime",
-      "command": "python -m pytest -q test_managed_runtime.py",
-      "working_directory": "project directory",
-      "expected_exit_code": 0,
-      "assertions": ["tool call succeeds", "recorded managed runtime version matches requested version"],
-      "compatibility": {
-        "harness": "Codex CLI managed runtime",
-        "version": "M3_DOCS_CODEX_VERSION environment variable",
-        "mode": "native live provider",
-        "status": "requires live verification, provider access, and managed acquisition"
-      },
-      "verification": "live-provider"
-    },
-    {
-      "id": "codex-harness-matrix",
-      "command": "python -m pytest -q test_agent_matrix.py",
-      "working_directory": "project directory",
-      "expected_exit_code": 0,
-      "assertions": ["two tool cases times two trials produce four runs", "every run records its selected successful tool call"],
-      "compatibility": {
-        "harness": "Codex CLI",
-        "model": "M3_DOCS_CODEX_MODEL environment variable",
-        "mode": "native live provider",
-        "status": "requires live verification and provider access"
-      },
-      "verification": "live-provider"
-    },
-    {
-      "id": "acp-tool-call",
-      "command": "python -m pytest -q test_acp_agent.py",
-      "working_directory": "project directory",
-      "expected_exit_code": 0,
-      "assertions": ["ACP agent records one successful shipping_quote call with expected arguments"],
-      "compatibility": {
-        "harness": "user supplied ACP-compatible agent",
-        "model": "M3_DOCS_AGENT_MODEL environment variable",
-        "mode": "live provider",
-        "status": "requires live verification against the selected agent and provider"
-      },
-      "verification": "live-provider"
     }
   ],
-  "network": "Provider access is required for native and ACP runs. Managed Codex tests also need runtime acquisition. The MCP server is local stdio.",
-  "credentials": "Native harnesses use their configured login. The ACP example requires ACP_AGENT_CREDENTIAL_ENV to name the child provider variable and M3_DOCS_PROVIDER_API_KEY to supply its value through a manifest reference. Set model variables to identifiers available to the configured account.",
+  "network": "Provider access is required for native runs. Managed Codex tests also need runtime acquisition. The MCP server is local stdio.",
+  "credentials": "Native harnesses use their configured login. Set model variables to identifiers available to the configured account.",
   "cleanup": "MCPTestKit and the session contexts own and close the harness and server processes."
 }

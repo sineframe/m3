@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import enum
 import importlib
 import inspect
 import re
@@ -65,6 +66,16 @@ def _members(value: type[Any]) -> list[str]:
                 and repr(default) != "PydanticUndefined"
             ):
                 suffix = f" (default: `{_inline_code(repr(default))}`)"
+            else:
+                factory = getattr(field, "default_factory", None)
+                if factory is not None:
+                    factory_name = getattr(factory, "__qualname__", None)
+                    if not isinstance(factory_name, str):
+                        factory_name = type(factory).__qualname__
+                    factory_module = getattr(factory, "__module__", None)
+                    if isinstance(factory_module, str):
+                        factory_name = f"{factory_module}.{factory_name}"
+                    suffix = f" (default factory: `{_inline_code(factory_name)}`)"
             description = getattr(field, "description", None)
             line = f"- `{_inline_code(f'{name}: {annotation}')}`{suffix}"
             field_description = _one_line(description)
@@ -73,6 +84,11 @@ def _members(value: type[Any]) -> list[str]:
             )
     for name, member in value.__dict__.items():
         if name.startswith("_") or name in {"model_config", "model_fields"}:
+            continue
+        if isinstance(member, property):
+            line = f"- `{_inline_code(name)}` (property)"
+            description = _one_line(member.__doc__)
+            lines.append(f"{line}: {description}" if description else line)
             continue
         raw = (
             member.__func__
@@ -83,6 +99,20 @@ def _members(value: type[Any]) -> list[str]:
             continue
         line = f"- `{_inline_code(name + _signature(raw))}`"
         description = _one_line(raw.__doc__)
+        lines.append(f"{line}: {description}" if description else line)
+    local_names = set(value.__dict__)
+    inherited_properties = {
+        name
+        for owner in value.__mro__[1:]
+        for name, member in owner.__dict__.items()
+        if owner.__module__.startswith("m3.")
+        and not name.startswith("_")
+        and isinstance(member, property)
+    }
+    for name in sorted(inherited_properties - local_names):
+        member = inspect.getattr_static(value, name)
+        line = f"- `{_inline_code(name)}` (property)"
+        description = _one_line(member.__doc__)
         lines.append(f"{line}: {description}" if description else line)
     return lines
 
@@ -132,8 +162,13 @@ def render() -> str:
                 output.extend(("", description))
             if inspect.isclass(value):
                 members = _members(value)
+                if isinstance(value, type) and issubclass(value, enum.Enum):
+                    members.extend(
+                        f"- `{_inline_code(name)}` = `{_inline_code(repr(member.value))}`"
+                        for name, member in value.__members__.items()
+                )
                 if members:
-                    output.extend(("", "Public fields and methods:", "", *members))
+                    output.extend(("", "Public members:", "", *members))
     return "\n".join(output) + "\n"
 
 

@@ -4,9 +4,11 @@
   "owning_pages": ["guides-elicitation-managed-input"],
   "target_release": "resolved from the published release pin",
   "python": ">=3.10",
-  "files": ["shipping_server.py", "test_managed_input.py"],
+  "files": ["shipping_server.py", "test_managed_input.py", "test_managed_store.py"],
   "displayed_blocks": [
-    {"page": "guides-elicitation-managed-input", "label": "managed input flow", "source": "test_managed_input.py", "kind": "file"}
+    {"page": "guides-elicitation-managed-input", "label": "managed input server", "source": "shipping_server.py", "kind": "file"},
+    {"page": "guides-elicitation-managed-input", "label": "managed input flow", "source": "test_managed_input.py", "kind": "file"},
+    {"page": "guides-elicitation-managed-input", "label": "managed input store test", "source": "test_managed_store.py", "kind": "file"}
   ],
   "dependencies": ["sf-m3[pytest]", "Codex CLI managed runtime"],
   "working_directory": "project directory",
@@ -24,6 +26,15 @@
         "status": "requires live verification and provider access"
       },
       "verification": "live-provider"
+    },
+    {
+      "id": "managed-store-idempotency-and-stale-lease",
+      "command": "python -m pytest -q test_managed_store.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["invalid keyed response leaves the round pending", "same response and key replay after SQLite reopen", "expired lease rejects a stale response"],
+      "compatibility": {"harness": "none; persistent store contract", "mode": "deterministic local", "status": "verified locally"},
+      "verification": "deterministic"
     }
   ],
   "network": "Codex managed-runtime acquisition and provider access are required; the MCP server is local stdio.",

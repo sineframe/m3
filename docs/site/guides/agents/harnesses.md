@@ -1,66 +1,30 @@
 ---
 title: "Choose an agent harness"
-description: "M3 connects to agent harnesses through native adapters or an ACP manifest. Choose the integration your agent provides, then check the capabilities and version your test needs."
+description: "Choose between M3 native harness adapters and ACP based on the agent process you want to run and the evidence it can provide."
 ---
 
 # Choose an agent harness
 
-M3 connects to agent harnesses through native adapters or an ACP manifest. Choose the integration your agent provides, then check the capabilities and version your test needs.
+Choose a native adapter when you want M3 to launch a supported coding-agent
+CLI and collect its native session evidence. Choose ACP when your existing
+agent speaks Agent Client Protocol or you can provide a process that does. M3
+does not download or manage an ACP executable.
 
-## Requirements
+| Integration | M3 launches | Useful when | Important limit |
+| --- | --- | --- | --- |
+| Codex CLI | Native Codex app-server session | You want Codex-specific session and tool evidence. | Requires a configured Codex login/model; approval behavior belongs to Codex. |
+| Pi | Native Pi RPC session | You want Pi's provider/model selection and RPC trace. | Provider configuration and model syntax are Pi-specific. |
+| Claude Code | Native Claude Code stream-json session | You want Claude Code's native messages and MCP trace. | M3 does not support its exact per-tool restrictions; keep a one-tool server or use server-scope policy. |
+| OpenCode | Native OpenCode HTTP session | You want to select an OpenCode provider/model. | Use `provider/model` or a matching explicit provider and model. |
+| ACP | A command and arguments from the ACP manifest | Your agent already implements ACP or you can wrap its interface. | The executable, credentials, and provider setup remain your responsibility; ACP is excluded from managed runtime acquisition. |
 
-This example uses Codex. Install and sign in to the Codex CLI, install M3 with pytest, and set `M3_DOCS_CODEX_MODEL` to a model available to that login. Provider access is required and the run may incur cost. Review Codex’s tool approval prompt before accepting it; this test limits M3 tool access to one named tool.
-
-## Run the same assertion through Codex
-
-Save `shipping_server.py` from [the first agent test](first-test.md) beside this complete test as `test_harness.py`:
-
-```python
-import os
-import sys
-from pathlib import Path
-
-from m3 import ExecutionOutcome, MCPTestKit, expect
-from m3.types import StdioServer
-
-HERE = Path(__file__).resolve().parent
-
-
-def test_codex_calls_the_shipping_tool() -> None:
-    server = StdioServer(
-        name="shipping",
-        command=sys.executable,
-        args=(str(HERE / "shipping_server.py"),),
-        cwd=str(HERE),
-    )
-    with MCPTestKit(env={}) as kit:
-        agent = kit.agents(
-            [{"harness": "codex", "models": [os.environ["M3_DOCS_CODEX_MODEL"]]}]
-        )[0]
-        result = agent.run(
-            "Call shipping_quote once for weight_kg 2 in zone local.",
-            server=server,
-            tools=["shipping:shipping_quote"],
-            timeout=120,
-        )
-
-    assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
-    expect(result).to_have_tool_call(
-        "shipping_quote",
-        server="shipping",
-        arguments={"weight_kg": 2, "zone": "local"},
-        status="success",
-        count=1,
-    )
-```
-
-From the directory containing both files, run `python -m pytest -q test_harness.py`. Keep the server, prompt, and assertion fixed when comparing harnesses.
-
-| Integration | Configuration | Difference to account for |
-|---|---|---|
-| Codex, Pi, Claude Code, OpenCode | Native M3 harness selection | Each needs its installed executable and provider configuration. Readiness and captured evidence vary by integration. |
-| ACP agent | Manifest with command, arguments, and protocol settings | M3 launches the supplied ACP process; it is not a native CLI runtime. |
-
-These adapters do not have identical capabilities. M3 tests agent-driven elicitation with Codex CLI `0.156.1` and Pi `0.85.1`. That limit does not apply to direct SDK elicitation. The [compatibility reference](../../reference/compatibility.md) has the feature-specific support notes.
-
-If M3 reports a capability as unavailable, keep the assertion and inspect readiness or the execution result. Next: [configure an ACP agent](acp.md) or [pin a managed runtime](managed-runtimes.md).
+All integrations have different setup, authentication, approval, and evidence
+boundaries. A completed assistant message is not proof of a server call; check
+the structured tool-call result in the execution trace. For one unchanged
+pytest test selected across four native agents, see [run the same test across
+agent harnesses](multiple-harnesses.md). For a local ACP example, see
+[connect an ACP-compatible agent](acp-connect.md) or
+[expose a custom agent through ACP](acp-wrapper.md). For native version pins,
+see [managed runtimes](managed-runtimes.md) and [compare versions](versions.md).
+The [harness compatibility reference](../../reference/compatibility.md) lists
+feature-specific tested limits; do not infer equivalence from a shared API.
