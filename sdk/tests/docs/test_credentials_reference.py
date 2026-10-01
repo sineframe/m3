@@ -148,3 +148,11 @@ def test_github_actions_example_keeps_secrets_in_final_step() -> None:
     assert "-- tests/ -q" in steps[-1]["run"]
     assert "uv sync" not in steps[-1]["run"]
     assert "--python .venv/bin/python" in steps[-1]["run"]
+
+
+def test_github_actions_requirements_match_cli_setup_extras() -> None:
+    setup = (_ROOT / "cli/src/m3_cli/setup.py").read_text(encoding="utf-8")
+    requirement = re.search(r"sf-m3\[([^\]]+)\]==", setup)
+    assert requirement is not None
+    page = (_ROOT / "docs/site/guides/ci/github-actions.md").read_text(encoding="utf-8")
+    assert f"`sf-m3[{requirement.group(1)}]`" in page

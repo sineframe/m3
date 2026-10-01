@@ -5,11 +5,13 @@ description: "Run M3 tests in a consumer repository with a credential-free pull 
 
 # Run M3 in GitHub Actions
 
-Use these workflows in a consumer repository whose `pyproject.toml` and `uv.lock` include the project dependencies `sf-m3[pytest,judge]`. The first runs without credentials for pull requests. The optional upload workflow is limited to trusted pushes to `main` and manual dispatch; secrets enter only in the final test step.
+Use these workflows in a consumer repository whose `pyproject.toml` and `uv.lock` include `sf-m3[pytest,storage,judge]`. The first runs without credentials for pull requests. The optional upload workflow is limited to trusted pushes to `main` and manual dispatch; secrets enter only in the final test step.
 
 ## Requirements
 
 The consumer repository needs a locked uv project, a `.python-version` file, and tests under `tests/`. The workflows below use pinned actions, read-only repository permissions, and disable checkout credential persistence.
+
+The CLI requires the `pytest`, `storage`, and `judge` extras in the project environment, even when a test does not use an LLM judge. `storage` supplies the SQLAlchemy dependency for the SQLite execution store that records the run. Add these extras to the project and update its lockfile before running the workflow.
 
 ## Credential-free pull request workflow
 
