@@ -100,14 +100,14 @@
       "id": "guides-agents-acp-connect",
       "title": "Connect an ACP-compatible agent",
       "source": "guides/agents/acp-connect.md",
-      "description": "Run a local test through an already available ACP agent and assert its MCP result.",
+      "description": "Launch your existing ACP agent with M3 and check the MCP server result.",
       "kind": "guides"
     },
     {
       "id": "guides-agents-acp-wrapper",
       "title": "Expose your custom agent through ACP",
       "source": "guides/agents/acp-wrapper.md",
-      "description": "Wrap custom agent logic in an ACP process and record the real MCP result.",
+      "description": "Use the ACP SDK to wrap agent logic and check its real MCP result.",
       "kind": "guides"
     },
     {

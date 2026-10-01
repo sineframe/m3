@@ -35,7 +35,7 @@ Example:
 
 `m3.harness.manifest.validate_manifest(value)` validates shape without examining the host. With `check_local=True`, it resolves the executable, checks that it is executable, and reports missing referenced variables; it does not launch the process. `load_manifest` accepts a path or `-` for stdin. `export_manifest` returns sorted, indented JSON. These helpers raise `ManifestValidationError` for malformed manifests.
 
-The runtime also accepts manifest defaults when the optional schema fields are omitted. It rejects unsupported protocol values and an unavailable executable during readiness. A missing referenced parent variable fails launch with the typed environment error `acp_environment_missing`. A missing command reports readiness reason `acp_executable_missing`; M3 does not fall back to another harness.
+The runtime accepts manifest defaults when the optional schema fields are omitted. Readiness reports `acp_environment_unavailable` for a missing environment reference and `acp_executable_missing` for an unavailable command. An attempted run that cannot start reports a harness startup failure; it does not expose the internal `acp_environment_missing` diagnostic. M3 does not fall back to another harness.
 
 ## Agent fields and session selection
 
@@ -51,17 +51,19 @@ The runtime also accepts manifest defaults when the optional schema fields are o
 | `model` | string | required by base harness | Recorded selection label. ACP agents choose and interpret the actual model; M3 does not pass this field as a portable ACP model switch. |
 | `runtime` | `"system"` or `"managed"` | `"system"` | `"managed"` is rejected for ACP. |
 
-M3 sends `initialize` with protocol version 1 and then `session/new`, including the selected MCP servers and the M3 workspace path. On `session/new`, the agent can advertise modes, configuration options, identity, and capabilities. M3 applies `agent_mode_id` and each `session_config` value before the first prompt. If the agent advertises no compatible list or the saved ID is absent, startup fails with a stale-option error. ACP metadata is recorded only when emitted by the agent.
+M3 sends `initialize` with protocol version 1. Its response advertises `agentInfo` and `agentCapabilities`. M3 then sends `session/new` with the selected MCP servers and workspace path; its response supplies the session ID, modes, and configuration options. These fields are defined by the [ACP 0.12.1 schema](https://github.com/agentclientprotocol/agent-client-protocol/blob/v0.12.1/schema/schema.json).
+
+M3 applies `agent_mode_id` and each `session_config` value before the first prompt. If a selected mode or option is absent from the advertised list, the adapter raises `HarnessStartupError("ACP harness could not start")`. Public executions report a startup failure, not a distinct stale-option error.
 
 ACP readiness indicates that the executable, manifest, credentials, content, and policy can be launched under the requested configuration. It does not guarantee a specific model, vendor behavior, tool invocation, or evidence type. Readiness may create and remove a temporary probe `HOME`; it does not install the agent.
 
 ## Process and credential boundary
 
-M3 starts ACP in a temporary workspace and `HOME`. Its child environment is allowlisted: `PATH` contains the agent executable directory and platform default path; `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` point into the temporary home; locale, timezone, `NO_COLOR`, and `CI` receive fixed values. M3 then resolves the manifest’s `${ENV}` references and adds those named child variables. Other ambient variables are not inherited by the ACP process.
+By default, M3 starts ACP in a temporary workspace. An explicitly configured workspace root is used instead, so the agent can write into that directory. M3 gives ACP a temporary `HOME` in either case. Its child environment is allowlisted: `PATH` contains the agent executable directory and platform default path; `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` point into the temporary home; locale, timezone, `NO_COLOR`, and `CI` receive fixed values. M3 resolves the manifest's `${ENV}` references and adds those named child variables. Other parent environment variables are not inherited.
 
 Values referenced by the manifest are registered for redaction in captured ACP frames and response text. Environment values in the recorded `session/new` MCP-server list are redacted. Do not put literal secrets in manifests or prompts. Use the environment configuration described in [configuration reference](configuration.md) for local credential setup. An ACP wrapper that starts another process is responsible for narrowing the environment it passes to that process.
 
-M3 closes the ACP connection, terminates the owned process group, reaps the child, and removes its temporary workspace during session cleanup. If a turn is cancelled or times out, M3 sends `session/cancel` when possible, cancels the prompt operation, and terminates the owned process. Cleanup failures are reflected in session evidence.
+During session cleanup, M3 closes the ACP connection, reaps the child, and removes its temporary control directory. It does not remove an explicitly configured workspace root. On POSIX, cleanup terminates the owned process group, including descendants that remain in that group. On Windows, it terminates the direct child; descendant cleanup is not guaranteed. If a turn is cancelled or times out, M3 sends `session/cancel` when possible and stops the owned process. Cleanup failures are reflected in session evidence.
 
 ## Tool policy and evidence
 
@@ -75,6 +77,4 @@ ACP `tool_call` and `tool_call_update` frames are agent-reported observations. M
 
 The adapter supports text prompts, session cancellation, request timeouts, ACP updates, and configured session mode and options. The agent advertises its capabilities in `initialize`; M3 records them as metadata and does not infer unadvertised behavior. ACP permission, terminal, and filesystem requests can use configured interaction handlers; without an applicable handler, requests fail closed. ACP elicitation is currently fail-closed in the adapter, even when an elicitation handler exists. Native Codex and Pi elicitation support does not establish ACP elicitation support. An ACP extension method whose name contains `sampling` calls the configured sampling interaction with the request prompt or message; if there is no handler or it declines, the request fails with `acp_interaction_required: sampling`. Other unknown extension methods return an empty object. These extension paths are not covered by the deterministic guide projects.
 
-ACP behavior varies with the selected executable and its version. M3 does not manage its installation or version. See [agent harness compatibility](../guides/agents/harnesses.md) for tested boundaries. Live provider behavior remains unverified unless the specific agent, provider, model, OS, and date are recorded as tested.
-
-Evidence for these statements: the development candidate identified by the repository checkout; implementation in `m3.harness.acp` and `m3.harness.manifest`; contract coverage in `tests/integration/test_acp_adapter_contract.py` and `tests/unit/test_harness_manifest.py`. Local fixture-backed process tests establish the adapter contract. They do not establish a live vendor agent or provider behavior.
+ACP behavior varies with the selected executable and its version. M3 does not manage its installation or version. See [agent harness compatibility](../guides/agents/harnesses.md) for feature support.

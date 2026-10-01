@@ -3,258 +3,106 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sys
 import uuid
-from typing import Any
+
+from acp import Agent, Client, run_agent
+from acp.schema import (
+    AgentMessageChunk,
+    Implementation,
+    InitializeResponse,
+    McpServerStdio,
+    NewSessionResponse,
+    PromptResponse,
+    TextContentBlock,
+    ToolCallProgress,
+)
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 
-def send(value: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
-    sys.stdout.flush()
+class WrappedAgent(Agent):
+    def on_connect(self, conn: Client) -> None:
+        self.client = conn
+        self.active_prompt = None
 
-
-async def read_message(reader: asyncio.StreamReader) -> dict[str, Any]:
-    line = await reader.readline()
-    if not line:
-        raise EOFError
-    value = json.loads(line)
-    if not isinstance(value, dict):
-        raise ValueError("ACP input frame must be a JSON object")
-    return value
-
-
-class Agent:
-    def __init__(self) -> None:
-        self.session_id = "m3-wrapper-" + uuid.uuid4().hex[:12]
-        self.mcp: asyncio.subprocess.Process | None = None
-        self.mcp_reader: asyncio.StreamReader | None = None
-        self.mcp_writer: asyncio.StreamWriter | None = None
-        self.servers: list[dict[str, Any]] = []
-        self.rpc_id = 0
-        self.prompt_task: asyncio.Task[None] | None = None
-
-    async def start_mcp(self, servers: list[dict[str, Any]]) -> None:
-        if len(servers) != 1 or servers[0].get("type", "stdio") != "stdio":
-            raise ValueError("example wrapper expects one stdio MCP server")
-
-        server = servers[0]
-        self.servers = servers
-        environment = os.environ.copy()
-        for item in server.get("env") or []:
-            if isinstance(item, dict) and isinstance(item.get("name"), str):
-                environment[item["name"]] = str(item.get("value", ""))
-
-        self.mcp = await asyncio.create_subprocess_exec(
-            str(server["command"]),
-            *(str(arg) for arg in server.get("args", [])),
-            cwd=server.get("cwd"),
-            env=environment,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+    async def initialize(self, protocol_version, **kwargs):
+        return InitializeResponse(
+            protocol_version=1,
+            agent_info=Implementation(name="wrapped-agent", version="1"),
         )
-        self.mcp_reader = self.mcp.stdout
-        self.mcp_writer = self.mcp.stdin
-        await self.mcp_call(
-            "initialize",
-            {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "wrapped-agent", "version": "1"},
-            },
-        )
-        assert self.mcp_writer is not None
-        notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
-        self.mcp_writer.write((json.dumps(notification) + "\n").encode())
-        await self.mcp_writer.drain()
-        await self.mcp_call("tools/list", {})
 
-    async def mcp_call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        if self.mcp_reader is None or self.mcp_writer is None:
-            raise RuntimeError("MCP server is not connected")
+    async def new_session(self, cwd, mcp_servers=None, **kwargs):
+        if not mcp_servers or len(mcp_servers) != 1:
+            raise ValueError("This example requires one stdio MCP server")
+        self.server = mcp_servers[0]
+        if not isinstance(self.server, McpServerStdio):
+            raise ValueError("This example requires stdio")
+        self.cwd = cwd
+        self.session_id = uuid.uuid4().hex
+        return NewSessionResponse(session_id=self.session_id)
 
-        self.rpc_id += 1
-        request = {
-            "jsonrpc": "2.0",
-            "id": self.rpc_id,
-            "method": method,
-            "params": params,
+    async def run_agent(self, text):
+        """Replace JSON instruction parsing with your agent's tool selection."""
+        instruction = json.loads(text)
+        environment = {
+            **os.environ,
+            **{item.name: item.value for item in self.server.env},
         }
-        self.mcp_writer.write((json.dumps(request) + "\n").encode())
-        await self.mcp_writer.drain()
-        line = await self.mcp_reader.readline()
-        if not line:
-            raise RuntimeError("MCP server exited before responding")
-        response = json.loads(line)
-        if "error" in response or not isinstance(response.get("result"), dict):
-            raise RuntimeError("MCP request failed")
-        return response["result"]
-
-    async def run_agent(self, prompt: str) -> tuple[dict[str, Any], str]:
-        """Replace this seam with agent logic and return its actual MCP result."""
-        if self.mcp is None or self.mcp.returncode is not None:
-            await self.start_mcp(self.servers)
-        request = json.loads(prompt)
-        result = await self.mcp_call(
-            "tools/call",
-            {"name": request["tool"], "arguments": request["arguments"]},
+        params = StdioServerParameters(
+            command=self.server.command,
+            args=self.server.args,
+            env=environment,
+            cwd=self.cwd,
         )
-        text = "".join(
-            item.get("text", "")
-            for item in result.get("content", [])
-            if isinstance(item, dict)
-        )
-        return result, text
-
-    async def prompt(self, request: dict[str, Any]) -> None:
-        identifier = request["id"]
-        try:
-            parts = request.get("params", {}).get("prompt", [])
-            text = " ".join(
-                item.get("text", "")
-                for item in parts
-                if isinstance(item, dict) and item.get("type") == "text"
-            )
-            result, message = await self.run_agent(text)
-            arguments = json.loads(text)["arguments"]
-            send(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "session/update",
-                    "params": {
-                        "sessionId": self.session_id,
-                        "update": {
-                            "sessionUpdate": "tool_call_update",
-                            "toolCallId": "echo-1",
-                            "title": "echo:echo",
-                            "rawInput": arguments,
-                            "rawOutput": result,
-                            "status": "completed",
-                        },
-                    },
-                }
-            )
-            send(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "session/update",
-                    "params": {
-                        "sessionId": self.session_id,
-                        "update": {
-                            "sessionUpdate": "agent_message_chunk",
-                            "content": {"type": "text", "text": message},
-                        },
-                    },
-                }
-            )
-            send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": identifier,
-                    "result": {"stopReason": "end_turn"},
-                }
-            )
-        except asyncio.CancelledError:
-            send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": identifier,
-                    "result": {"stopReason": "cancelled"},
-                }
-            )
-            raise
-        except Exception as exc:
-            send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": identifier,
-                    "error": {"code": -32000, "message": str(exc)},
-                }
-            )
-
-    async def close(self) -> None:
-        await self.cancel_prompt()
-        await self.stop_mcp()
-
-    async def cancel_prompt(self) -> None:
-        if self.prompt_task is not None and not self.prompt_task.done():
-            self.prompt_task.cancel()
-            await asyncio.gather(self.prompt_task, return_exceptions=True)
-
-    async def stop_mcp(self) -> None:
-        if self.mcp is not None and self.mcp.returncode is None:
-            self.mcp.terminate()
-            try:
-                await asyncio.wait_for(self.mcp.wait(), timeout=1)
-            except asyncio.TimeoutError:
-                self.mcp.kill()
-                await self.mcp.wait()
-        self.mcp = None
-        self.mcp_reader = None
-        self.mcp_writer = None
-
-
-async def serve() -> None:
-    reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    await asyncio.get_running_loop().connect_read_pipe(lambda: protocol, sys.stdin)
-    agent = Agent()
-    try:
-        while True:
-            request = await read_message(reader)
-            method = request.get("method")
-            identifier = request.get("id")
-            params = request.get("params") or {}
-            if method == "initialize":
-                send(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": identifier,
-                        "result": {
-                            "protocolVersion": 1,
-                            "agentInfo": {
-                                "name": "m3-wrapper-example",
-                                "version": "1",
-                            },
-                            "agentCapabilities": {
-                                "mcpCapabilities": {
-                                    "stdio": True,
-                                    "http": False,
-                                }
-                            },
-                        },
-                    }
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as mcp:
+                await mcp.initialize()
+                await mcp.list_tools()
+                result = await mcp.call_tool(
+                    instruction["tool"], instruction["arguments"]
                 )
-            elif method == "session/new":
-                try:
-                    await agent.start_mcp(params.get("mcpServers", []))
-                    send(
-                        {
-                            "jsonrpc": "2.0",
-                            "id": identifier,
-                            "result": {"sessionId": agent.session_id},
-                        }
-                    )
-                except Exception as exc:
-                    send(
-                        {
-                            "jsonrpc": "2.0",
-                            "id": identifier,
-                            "error": {"code": -32000, "message": str(exc)},
-                        }
-                    )
-            elif method == "session/prompt":
-                agent.prompt_task = asyncio.create_task(agent.prompt(request))
-            elif method == "session/cancel":
-                await agent.cancel_prompt()
-                await agent.stop_mcp()
-            elif identifier is not None:
-                send({"jsonrpc": "2.0", "id": identifier, "result": {}})
-    except (asyncio.IncompleteReadError, ConnectionError, EOFError):
-        pass
-    finally:
-        await agent.close()
+        return instruction, result
+
+    async def prompt(self, session_id, prompt, **kwargs):
+        if session_id != self.session_id:
+            raise ValueError("Unknown session")
+        self.active_prompt = asyncio.current_task()
+        try:
+            text = " ".join(
+                block.text for block in prompt if isinstance(block, TextContentBlock)
+            )
+            instruction, result = await self.run_agent(text)
+            await self.client.session_update(
+                session_id,
+                ToolCallProgress(
+                    session_update="tool_call_update",
+                    tool_call_id="call-1",
+                    title=f"{self.server.name}:{instruction['tool']}",
+                    raw_input=instruction["arguments"],
+                    raw_output=result.model_dump(mode="json", by_alias=True),
+                    status="failed" if result.is_error else "completed",
+                ),
+            )
+            message = "".join(
+                item.text for item in result.content if item.type == "text"
+            )
+            await self.client.session_update(
+                session_id,
+                AgentMessageChunk(
+                    session_update="agent_message_chunk",
+                    content=TextContentBlock(type="text", text=message),
+                ),
+            )
+            return PromptResponse(stop_reason="end_turn")
+        except asyncio.CancelledError:
+            return PromptResponse(stop_reason="cancelled")
+        finally:
+            self.active_prompt = None
+
+    async def cancel(self, session_id, **kwargs):
+        if session_id == self.session_id and self.active_prompt is not None:
+            self.active_prompt.cancel()
 
 
 if __name__ == "__main__":
-    asyncio.run(serve())
+    asyncio.run(run_agent(WrappedAgent()))

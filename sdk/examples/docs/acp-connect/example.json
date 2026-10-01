@@ -7,10 +7,10 @@
   "dependencies": ["sf-m3[pytest] from the candidate checkout", "agent-client-protocol==0.12.1"],
   "files": ["shipping_server.py", "deterministic_acp_agent.py", "test_connect.py", "test_connect_external.py"],
   "displayed_blocks": [
+    {"page": "guides-agents-acp-connect", "label": "external agent test", "source": "test_connect_external.py", "kind": "file"},
     {"page": "guides-agents-acp-connect", "label": "shipping MCP server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-agents-acp-connect", "label": "local existing ACP agent", "source": "deterministic_acp_agent.py", "kind": "file"},
-    {"page": "guides-agents-acp-connect", "label": "ACP connection test", "source": "test_connect.py", "kind": "file"},
-    {"page": "guides-agents-acp-connect", "label": "external agent variation", "source": "test_connect_external.py", "kind": "file"}
+    {"page": "guides-agents-acp-connect", "label": "local connection test", "source": "test_connect.py", "kind": "file"}
   ],
   "working_directory": "project directory",
   "scenarios": [

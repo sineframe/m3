@@ -1,25 +1,88 @@
 ---
 title: "Connect an ACP-compatible agent"
-description: "Run a local test through an already available ACP agent and assert its MCP result."
+description: "Launch your existing ACP agent with M3 and check the MCP server result."
 ---
 
 # Connect an ACP-compatible agent
 
-Connect an agent that already implements ACP when you want M3 to launch it for a test and record the MCP interaction. This complete local example starts a deterministic ACP fixture and a local shipping server. It makes no provider request. The fixture is a small teaching process, not a general ACP conformance test or an LLM.
+Use M3 to launch an agent that already speaks ACP and check how it calls your MCP server. This test asks for one shipping quote, then checks the captured MCP response.
 
 ## Requirements
 
-Use Python 3.10 or later. From the repository root, install this development candidate with pytest:
+Use Python 3.10 or later with `sf-m3[pytest]` installed in the project environment. Your agent must support ACP over stdin and stdout and accept a stdio MCP server. Install and authenticate it using its own instructions.
 
-```sh
-python -m pip install -e 'sdk[pytest]'
+Set these variables before running the test:
+
+| Variable | Value |
+| --- | --- |
+| `ACP_AGENT_COMMAND` | The installed agent executable, as an absolute path or a command on `PATH`. |
+| `ACP_AGENT_ARGS` | Optional JSON array of command arguments; defaults to `[]`. |
+| `ACP_AGENT_CREDENTIAL_ENV` | The provider credential variable the agent reads. |
+| `M3_DOCS_PROVIDER_API_KEY` | The provider key to pass to that variable. |
+| `M3_DOCS_AGENT_MODEL` | A label for the selected agent/model. This is not a portable ACP model switch; configure the actual model in your agent. |
+
+Provider access may incur cost. Confirm the agent's model, approvals, and command arguments before running it.
+
+## Complete test
+
+Create a project directory containing `test_connect_external.py` and `shipping_server.py`.
+
+`test_connect_external.py`:
+
+```python
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+from m3 import ExecutionOutcome, MCPTestKit, expect
+from m3.types import StdioServer
+
+HERE = Path(__file__).resolve().parent
+
+
+def test_external_acp_agent_calls_shipping_tool() -> None:
+    manifest = {
+        "schema_version": "m3.harness.v1",
+        "protocol": "acp",
+        "protocol_version": 1,
+        "command": os.environ["ACP_AGENT_COMMAND"],
+        "args": json.loads(os.environ.get("ACP_AGENT_ARGS", "[]")),
+        "env": {os.environ["ACP_AGENT_CREDENTIAL_ENV"]: "${M3_DOCS_PROVIDER_API_KEY}"},
+    }
+    selection = {
+        "harness": "acp",
+        "models": [os.environ["M3_DOCS_AGENT_MODEL"]],
+        "manifest": manifest,
+    }
+    server = StdioServer(
+        name="shipping",
+        command=sys.executable,
+        args=(str(HERE / "shipping_server.py"),),
+        cwd=str(HERE),
+    )
+    prompt = (
+        "Call shipping_quote once for weight_kg 2 in zone local. "
+        "Return the amount from the tool result."
+    )
+    with MCPTestKit() as kit:
+        result = kit.agents([selection])[0].run(
+            prompt, server=server, tools=["shipping:shipping_quote"], timeout=120
+        )
+
+    assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
+    expect(result).to_have_tool_call(
+        "shipping_quote",
+        server="shipping",
+        arguments={"weight_kg": 2, "zone": "local"},
+        status="success",
+        count=1,
+    )
+    captured = result.trace_view.tool_calls[0].result.value
+    assert captured.content[0].text == "9.00 USD"
 ```
-
-The project uses the ACP dependency pinned by the SDK (`agent-client-protocol==0.12.1`). The local test uses no API key. It needs a process-capable environment that can launch Python subprocesses. Installing `sf-m3[pytest]` from the package index selects a published release; this guide’s candidate comes from the checkout command above.
-
-## Complete local project
-
-Create a directory named `acp-connect` and add these files.
 
 `shipping_server.py`:
 
@@ -95,162 +158,103 @@ for line in sys.stdin:
         reply({"jsonrpc": "2.0", "id": identifier, "result": {}})
 ```
 
+## Run it
+
+From that project directory, run:
+
+```sh
+python -m pytest -q test_connect_external.py
+```
+
+A passing test checks one successful `shipping_quote` call with the requested arguments and the server's captured `9.00 USD` response. An agent-reported tool update alone is not enough for the result assertion.
+
+The manifest maps the parent `M3_DOCS_PROVIDER_API_KEY` to the child variable named by `ACP_AGENT_CREDENTIAL_ENV`. The agent receives an isolated environment; it does not inherit all of your shell variables.
+
+## Try the connection without a provider
+
+For a local smoke test, add these two files to the same directory. The fixture uses the ACP SDK's typed API and an MCP client. It selects a fixed tool call instead of using a model.
+
 `deterministic_acp_agent.py`:
 
 ```python
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import subprocess
-import sys
+
+from acp import Agent, Client, run_agent
+from acp.schema import (
+    AgentMessageChunk,
+    Implementation,
+    InitializeResponse,
+    NewSessionResponse,
+    PromptResponse,
+    TextContentBlock,
+)
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 
-def send(value: dict[str, object]) -> None:
-    print(json.dumps(value, separators=(",", ":")), flush=True)
+class ShippingAgent(Agent):
+    def on_connect(self, conn: Client) -> None:
+        self.client = conn
 
-
-def call_mcp(
-    server: dict[str, object],
-    method: str,
-    params: dict[str, object],
-    request_id: int,
-) -> dict[str, object]:
-    command = str(server["command"])
-    environment = os.environ.copy()
-    for item in server.get("env", []):
-        if isinstance(item, dict) and isinstance(item.get("name"), str):
-            environment[item["name"]] = str(item.get("value", ""))
-    process = subprocess.Popen(
-        [command, *(str(arg) for arg in server.get("args", []))],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        env=environment,
-        cwd=server.get("cwd"),
-    )
-    try:
-        assert process.stdin is not None and process.stdout is not None
-        initialize = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "local-acp-example", "version": "1"},
-            },
-        }
-        process.stdin.write(json.dumps(initialize) + "\n")
-        process.stdin.flush()
-        response = json.loads(process.stdout.readline())
-        if "error" in response:
-            raise RuntimeError("MCP initialization failed")
-        process.stdin.write(
-            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
+    async def initialize(self, protocol_version, **kwargs):
+        return InitializeResponse(
+            protocol_version=1,
+            agent_info=Implementation(name="shipping-fixture", version="1"),
         )
-        for identifier, current_method, current_params in (
-            (2, "tools/list", {}),
-            (request_id, method, params),
+
+    async def new_session(self, cwd, mcp_servers=None, **kwargs):
+        self.server = mcp_servers[0]
+        self.cwd = cwd
+        return NewSessionResponse(session_id="shipping-session")
+
+    async def prompt(self, session_id, prompt, **kwargs):
+        text = " ".join(
+            block.text for block in prompt if isinstance(block, TextContentBlock)
+        )
+        if text == (
+            "Call shipping_quote once for weight_kg 2 in zone local. "
+            "Return the amount from the tool result."
         ):
-            request = {
-                "jsonrpc": "2.0",
-                "id": identifier,
-                "method": current_method,
-                "params": current_params,
-            }
-            process.stdin.write(json.dumps(request) + "\n")
-            process.stdin.flush()
-            result = json.loads(process.stdout.readline())
-            if "error" in result:
-                raise RuntimeError("MCP request failed")
-        return result["result"]
-    finally:
-        process.terminate()
-        try:
-            process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-
-
-session_id = "local-acp-session"
-servers: list[dict[str, object]] = []
-for line in sys.stdin:
-    request = json.loads(line)
-    method = request.get("method")
-    identifier = request.get("id")
-    params = request.get("params") or {}
-    if method == "initialize":
-        send({"jsonrpc": "2.0", "id": identifier, "result": {"protocolVersion": 1}})
-    elif method == "session/new":
-        servers = params.get("mcpServers", [])
-        send({"jsonrpc": "2.0", "id": identifier, "result": {"sessionId": session_id}})
-    elif method == "session/prompt":
-        prompt_text = " ".join(
-            item["text"]
-            for item in params.get("prompt", [])
-            if item.get("type") == "text"
-        )
-        try:
-            instruction = json.loads(prompt_text)
-        except json.JSONDecodeError:
-            if prompt_text != (
-                "Call shipping_quote once for weight_kg 2 in zone local. "
-                "Return the amount from the tool result."
-            ):
-                raise
             instruction = {
-                "server": "shipping",
                 "tool": "shipping_quote",
                 "arguments": {"weight_kg": 2, "zone": "local"},
             }
-        server = next(item for item in servers if item["name"] == instruction["server"])
-        result = call_mcp(
-            server,
-            "tools/call",
-            {"name": instruction["tool"], "arguments": instruction["arguments"]},
-            3,
+        else:
+            instruction = json.loads(text)
+        environment = {
+            **os.environ,
+            **{item.name: item.value for item in self.server.env},
+        }
+        params = StdioServerParameters(
+            command=self.server.command,
+            args=self.server.args,
+            env=environment,
+            cwd=self.cwd,
         )
-        send(
-            {
-                "jsonrpc": "2.0",
-                "method": "session/update",
-                "params": {
-                    "sessionId": session_id,
-                    "update": {
-                        "sessionUpdate": "tool_call_update",
-                        "toolCallId": "shipping-call-1",
-                        "title": f"{instruction['server']}:{instruction['tool']}",
-                        "rawInput": instruction["arguments"],
-                        "rawOutput": result,
-                        "status": "completed",
-                    },
-                },
-            }
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as mcp:
+                await mcp.initialize()
+                await mcp.list_tools()
+                result = await mcp.call_tool(
+                    instruction["tool"], instruction["arguments"]
+                )
+        message = "".join(item.text for item in result.content if item.type == "text")
+        await self.client.session_update(
+            session_id,
+            AgentMessageChunk(
+                session_update="agent_message_chunk",
+                content=TextContentBlock(type="text", text=message),
+            ),
         )
-        text = "".join(
-            item.get("text", "")
-            for item in result.get("content", [])
-            if isinstance(item, dict)
-        )
-        send(
-            {
-                "jsonrpc": "2.0",
-                "method": "session/update",
-                "params": {
-                    "sessionId": session_id,
-                    "update": {
-                        "sessionUpdate": "agent_message_chunk",
-                        "content": {"type": "text", "text": text},
-                    },
-                },
-            }
-        )
-        send({"jsonrpc": "2.0", "id": identifier, "result": {"stopReason": "end_turn"}})
-    elif identifier is not None:
-        send({"jsonrpc": "2.0", "id": identifier, "result": {}})
+        return PromptResponse(stop_reason="end_turn")
+
+
+if __name__ == "__main__":
+    asyncio.run(run_agent(ShippingAgent()))
 ```
 
 `test_connect.py`:
@@ -311,89 +315,20 @@ def test_existing_local_acp_agent_calls_shipping_tool() -> None:
     }
 ```
 
-## Run and inspect the result
-
-Run the command from the `acp-connect` project directory:
+From the same directory, run:
 
 ```sh
 python -m pytest -q test_connect.py
 ```
 
-The verified local output is:
-
 ```text
 1 passed
 ```
 
-The execution assertion checks completion. `to_have_tool_call` checks the recorded tool name, server, arguments, success status, and count. The final assertion reads the recorded MCP tool result from M3’s trace; it checks the server’s `9.00 USD` response. The ACP message alone is not used as proof.
+This local test checks the ACP connection and captured MCP result without provider credentials.
 
-The sample `tools` selection asks M3 to enforce the named tool through its capture proxy. Enforcement readiness requires proof that the active capture path applies the portable policy. ACP does not provide a portable way to restrict exact tools within an agent; see [tool-policy limits](../../reference/acp.md#tool-policy-and-evidence).
+## Startup failures
 
-Complete source project: [`sdk/examples/docs/acp-connect`](../../../../sdk/examples/docs/acp-connect).
+If readiness reports `acp_executable_missing`, check the command on the test machine. For `acp_environment_unavailable`, set the referenced parent variable. An invalid `agent_mode_id` or `session_config` causes a generic startup failure; choose IDs advertised in the agent's `session/new` response.
 
-## Use an externally supplied agent
-
-For an externally supplied provider agent, keep the local project and add this complete `test_connect_external.py`. It reads the executable, child credential variable name, model, and secret from your environment. The manifest contains only a reference to the secret. Set those values in the environment as described in [configuration](../../reference/configuration.md); do not place the credential value in the file.
-
-`test_connect_external.py`:
-
-```python
-from __future__ import annotations
-
-import json
-import os
-import sys
-from pathlib import Path
-
-from m3 import ExecutionOutcome, MCPTestKit, expect
-from m3.types import StdioServer
-
-HERE = Path(__file__).resolve().parent
-
-
-def test_external_acp_agent_calls_shipping_tool() -> None:
-    manifest = {
-        "schema_version": "m3.harness.v1",
-        "protocol": "acp",
-        "protocol_version": 1,
-        "command": os.environ["ACP_AGENT_COMMAND"],
-        "args": json.loads(os.environ.get("ACP_AGENT_ARGS", "[]")),
-        "env": {os.environ["ACP_AGENT_CREDENTIAL_ENV"]: "${M3_DOCS_PROVIDER_API_KEY}"},
-    }
-    selection = {
-        "harness": "acp",
-        "models": [os.environ["M3_DOCS_AGENT_MODEL"]],
-        "manifest": manifest,
-    }
-    server = StdioServer(
-        name="shipping",
-        command=sys.executable,
-        args=(str(HERE / "shipping_server.py"),),
-        cwd=str(HERE),
-    )
-    prompt = (
-        "Call shipping_quote once for weight_kg 2 in zone local. "
-        "Return the amount from the tool result."
-    )
-    with MCPTestKit() as kit:
-        result = kit.agents([selection])[0].run(
-            prompt, server=server, tools=["shipping:shipping_quote"], timeout=120
-        )
-
-    assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
-    expect(result).to_have_tool_call(
-        "shipping_quote",
-        server="shipping",
-        arguments={"weight_kg": 2, "zone": "local"},
-        status="success",
-        count=1,
-    )
-    captured = result.trace_view.tool_calls[0].result.value
-    assert captured.content[0].text == "9.00 USD"
-```
-
-Run this variation from the `acp-connect` project directory with `python -m pytest -q test_connect_external.py`. It has not been verified here. Its model, credential variable, session options, required MCP transport, approval behavior, and provider costs depend on the selected agent. Confirm those requirements with the agent vendor before running it. The assertion proves the shipping MCP server response was captured; it does not establish that the provider’s model behavior is correct.
-
-If preflight reports `acp_executable_missing`, check that the command resolves on the test machine. If startup reports a missing environment reference, set the referenced parent variable. A stale `agent_mode_id` or `session_config` fails session startup; use values advertised by that agent in `session/new`.
-
-Next: [expose a custom agent through ACP](acp-wrapper.md), or compare ACP’s limits with [native harnesses](harnesses.md). Exact fields and failure behavior are in the [ACP reference](../../reference/acp.md).
+Next: [Expose a custom agent through ACP](acp-wrapper.md). The [ACP reference](../../reference/acp.md) covers manifest fields, workspace behavior, and platform-specific cleanup.

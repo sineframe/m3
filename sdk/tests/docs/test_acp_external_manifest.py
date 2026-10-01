@@ -10,13 +10,33 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
+from runpy import run_path
 
 import pytest
+from acp.schema import InitializeResponse, McpServerStdio, NewSessionResponse
 
 pytestmark = pytest.mark.process_lifecycle
 
 _ROOT = Path(__file__).parents[3]
 _PROJECT = _ROOT / "sdk" / "examples" / "docs" / "acp-connect"
+
+
+@pytest.mark.asyncio
+async def test_wrapper_returns_typed_initialization_and_session_responses(tmp_path):
+    source = _ROOT / "sdk/examples/docs/acp-wrapper/wrapped_agent.py"
+    agent = run_path(str(source))["WrappedAgent"]()
+    initialized = await agent.initialize(1)
+    assert isinstance(initialized, InitializeResponse)
+    wire = initialized.model_dump(mode="json", by_alias=True, exclude_none=True)
+    assert wire["agentInfo"]["name"] == "wrapped-agent"
+    assert "stdio" not in wire["agentCapabilities"]["mcpCapabilities"]
+    session = await agent.new_session(
+        str(tmp_path),
+        [McpServerStdio(name="echo", command=sys.executable, args=[], env=[])],
+    )
+    assert isinstance(session, NewSessionResponse)
+    assert session.session_id
+    assert "agentInfo" not in session.model_dump(by_alias=True)
 
 
 def _copy_project(project_id: str, destination: Path) -> Path:
@@ -70,14 +90,22 @@ def _run_project_test(
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def test_external_manifest_variation_runs_matching_local_agent(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "source_value,expected_success",
+    [("local-fixture-placeholder", True), ("wrong-credential", False)],
+)
+def test_external_manifest_forwards_credential_to_agent(
+    tmp_path: Path, source_value: str, expected_success: bool
+) -> None:
     project = _copy_project("acp-connect", tmp_path / "acp-connect")
 
     executable_dir = tmp_path / "bin"
     executable_dir.mkdir()
     wrapper = executable_dir / "external-acp-agent"
     wrapper.write_text(
-        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n',
+        "#!/bin/sh\n"
+        '[ "${M3_LOCAL_PROVIDER_KEY:-}" = "local-fixture-placeholder" ] || exit 23\n'
+        f'exec {shlex.quote(sys.executable)} "$@"\n',
         encoding="utf-8",
     )
     wrapper.chmod(0o755)
@@ -97,14 +125,17 @@ def test_external_manifest_variation_runs_matching_local_agent(tmp_path: Path) -
         "ACP_AGENT_ARGS": json.dumps([str(project / "deterministic_acp_agent.py")]),
         "ACP_AGENT_CREDENTIAL_ENV": "M3_LOCAL_PROVIDER_KEY",
         "M3_DOCS_AGENT_MODEL": "local-acp-fixture",
-        "M3_DOCS_PROVIDER_API_KEY": "local-fixture-placeholder",
+        "M3_DOCS_PROVIDER_API_KEY": source_value,
     }
     local = _run_project_test(project, "test_connect.py", environment)
     assert local.returncode == 0, local.stdout + local.stderr
-    assert "1 passed" in local.stdout
     completed = _run_project_test(project, "test_connect_external.py", environment)
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "1 passed" in completed.stdout
+    if expected_success:
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+    else:
+        assert completed.returncode != 0, (
+            "Agent accepted an incorrect mapped credential"
+        )
 
 
 def test_wrapper_project_runs_from_clean_copy(tmp_path: Path) -> None:
@@ -121,4 +152,3 @@ def test_wrapper_project_runs_from_clean_copy(tmp_path: Path) -> None:
     }
     completed = _run_project_test(project, "test_wrapper.py", environment)
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "1 passed" in completed.stdout

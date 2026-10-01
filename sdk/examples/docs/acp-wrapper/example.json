@@ -7,9 +7,9 @@
   "dependencies": ["sf-m3[pytest] from the candidate checkout", "agent-client-protocol==0.12.1"],
   "files": ["echo_server.py", "wrapped_agent.py", "test_wrapper.py"],
   "displayed_blocks": [
-    {"page": "guides-agents-acp-wrapper", "label": "echo MCP server", "source": "echo_server.py", "kind": "file"},
+    {"page": "guides-agents-acp-wrapper", "label": "wrapper test", "source": "test_wrapper.py", "kind": "file"},
     {"page": "guides-agents-acp-wrapper", "label": "custom ACP wrapper", "source": "wrapped_agent.py", "kind": "file"},
-    {"page": "guides-agents-acp-wrapper", "label": "wrapper test", "source": "test_wrapper.py", "kind": "file"}
+    {"page": "guides-agents-acp-wrapper", "label": "echo MCP server", "source": "echo_server.py", "kind": "file"}
   ],
   "working_directory": "project directory",
   "scenarios": [

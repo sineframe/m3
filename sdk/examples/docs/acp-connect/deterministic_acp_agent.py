@@ -1,153 +1,78 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import subprocess
-import sys
+
+from acp import Agent, Client, run_agent
+from acp.schema import (
+    AgentMessageChunk,
+    Implementation,
+    InitializeResponse,
+    NewSessionResponse,
+    PromptResponse,
+    TextContentBlock,
+)
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 
-def send(value: dict[str, object]) -> None:
-    print(json.dumps(value, separators=(",", ":")), flush=True)
+class ShippingAgent(Agent):
+    def on_connect(self, conn: Client) -> None:
+        self.client = conn
 
-
-def call_mcp(
-    server: dict[str, object],
-    method: str,
-    params: dict[str, object],
-    request_id: int,
-) -> dict[str, object]:
-    command = str(server["command"])
-    environment = os.environ.copy()
-    for item in server.get("env", []):
-        if isinstance(item, dict) and isinstance(item.get("name"), str):
-            environment[item["name"]] = str(item.get("value", ""))
-    process = subprocess.Popen(
-        [command, *(str(arg) for arg in server.get("args", []))],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        env=environment,
-        cwd=server.get("cwd"),
-    )
-    try:
-        assert process.stdin is not None and process.stdout is not None
-        initialize = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "local-acp-example", "version": "1"},
-            },
-        }
-        process.stdin.write(json.dumps(initialize) + "\n")
-        process.stdin.flush()
-        response = json.loads(process.stdout.readline())
-        if "error" in response:
-            raise RuntimeError("MCP initialization failed")
-        process.stdin.write(
-            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
+    async def initialize(self, protocol_version, **kwargs):
+        return InitializeResponse(
+            protocol_version=1,
+            agent_info=Implementation(name="shipping-fixture", version="1"),
         )
-        for identifier, current_method, current_params in (
-            (2, "tools/list", {}),
-            (request_id, method, params),
+
+    async def new_session(self, cwd, mcp_servers=None, **kwargs):
+        self.server = mcp_servers[0]
+        self.cwd = cwd
+        return NewSessionResponse(session_id="shipping-session")
+
+    async def prompt(self, session_id, prompt, **kwargs):
+        text = " ".join(
+            block.text for block in prompt if isinstance(block, TextContentBlock)
+        )
+        if text == (
+            "Call shipping_quote once for weight_kg 2 in zone local. "
+            "Return the amount from the tool result."
         ):
-            request = {
-                "jsonrpc": "2.0",
-                "id": identifier,
-                "method": current_method,
-                "params": current_params,
-            }
-            process.stdin.write(json.dumps(request) + "\n")
-            process.stdin.flush()
-            result = json.loads(process.stdout.readline())
-            if "error" in result:
-                raise RuntimeError("MCP request failed")
-        return result["result"]
-    finally:
-        process.terminate()
-        try:
-            process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-
-
-session_id = "local-acp-session"
-servers: list[dict[str, object]] = []
-for line in sys.stdin:
-    request = json.loads(line)
-    method = request.get("method")
-    identifier = request.get("id")
-    params = request.get("params") or {}
-    if method == "initialize":
-        send({"jsonrpc": "2.0", "id": identifier, "result": {"protocolVersion": 1}})
-    elif method == "session/new":
-        servers = params.get("mcpServers", [])
-        send({"jsonrpc": "2.0", "id": identifier, "result": {"sessionId": session_id}})
-    elif method == "session/prompt":
-        prompt_text = " ".join(
-            item["text"]
-            for item in params.get("prompt", [])
-            if item.get("type") == "text"
-        )
-        try:
-            instruction = json.loads(prompt_text)
-        except json.JSONDecodeError:
-            if prompt_text != (
-                "Call shipping_quote once for weight_kg 2 in zone local. "
-                "Return the amount from the tool result."
-            ):
-                raise
             instruction = {
-                "server": "shipping",
                 "tool": "shipping_quote",
                 "arguments": {"weight_kg": 2, "zone": "local"},
             }
-        server = next(item for item in servers if item["name"] == instruction["server"])
-        result = call_mcp(
-            server,
-            "tools/call",
-            {"name": instruction["tool"], "arguments": instruction["arguments"]},
-            3,
+        else:
+            instruction = json.loads(text)
+        environment = {
+            **os.environ,
+            **{item.name: item.value for item in self.server.env},
+        }
+        params = StdioServerParameters(
+            command=self.server.command,
+            args=self.server.args,
+            env=environment,
+            cwd=self.cwd,
         )
-        send(
-            {
-                "jsonrpc": "2.0",
-                "method": "session/update",
-                "params": {
-                    "sessionId": session_id,
-                    "update": {
-                        "sessionUpdate": "tool_call_update",
-                        "toolCallId": "shipping-call-1",
-                        "title": f"{instruction['server']}:{instruction['tool']}",
-                        "rawInput": instruction["arguments"],
-                        "rawOutput": result,
-                        "status": "completed",
-                    },
-                },
-            }
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as mcp:
+                await mcp.initialize()
+                await mcp.list_tools()
+                result = await mcp.call_tool(
+                    instruction["tool"], instruction["arguments"]
+                )
+        message = "".join(item.text for item in result.content if item.type == "text")
+        await self.client.session_update(
+            session_id,
+            AgentMessageChunk(
+                session_update="agent_message_chunk",
+                content=TextContentBlock(type="text", text=message),
+            ),
         )
-        text = "".join(
-            item.get("text", "")
-            for item in result.get("content", [])
-            if isinstance(item, dict)
-        )
-        send(
-            {
-                "jsonrpc": "2.0",
-                "method": "session/update",
-                "params": {
-                    "sessionId": session_id,
-                    "update": {
-                        "sessionUpdate": "agent_message_chunk",
-                        "content": {"type": "text", "text": text},
-                    },
-                },
-            }
-        )
-        send({"jsonrpc": "2.0", "id": identifier, "result": {"stopReason": "end_turn"}})
-    elif identifier is not None:
-        send({"jsonrpc": "2.0", "id": identifier, "result": {}})
+        return PromptResponse(stop_reason="end_turn")
+
+
+if __name__ == "__main__":
+    asyncio.run(run_agent(ShippingAgent()))
