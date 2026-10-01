@@ -147,6 +147,24 @@ def test_stdio_environment_secret_observer_classifies_api_keys_and_references(
     ]
 
 
+def test_stdio_environment_preserves_present_empty_secret_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("M3_EMPTY_STDIO_REFERENCE", "")
+    transport = StdioMCPTransport(
+        StdioServer(
+            name="echo",
+            command=sys.executable,
+            environment={
+                "TOKEN": SecretReference(
+                    source="environment", name="M3_EMPTY_STDIO_REFERENCE"
+                )
+            },
+        )
+    )
+    assert transport._environment() == {"TOKEN": ""}
+
+
 @pytest.mark.asyncio
 @pytest.mark.process_lifecycle
 async def test_stdio_connection_accepts_an_existing_absolute_cwd(

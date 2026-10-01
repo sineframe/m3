@@ -20,8 +20,12 @@ from m3.sync_api import MCPTestKit
 from m3.types import EvaluationContext, EvaluationStatus
 
 
-def test_missing_judge_key_is_safe_and_does_not_request(monkeypatch):
-    monkeypatch.delenv("M3_JUDGE_API_KEY", raising=False)
+@pytest.mark.parametrize("key", [None, ""])
+def test_missing_judge_key_is_safe_and_does_not_request(monkeypatch, key):
+    if key is None:
+        monkeypatch.delenv("M3_JUDGE_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("M3_JUDGE_API_KEY", key)
     monkeypatch.setenv("OPENAI_API_KEY", "agent-secret")
     monkeypatch.setattr(
         "m3.judges._openai_sync",
@@ -34,6 +38,51 @@ def test_missing_judge_key_is_safe_and_does_not_request(monkeypatch):
     assert result.status is EvaluationStatus.ERROR
     assert result.details["error_code"] == "judge_credentials_missing"
     assert "M3_JUDGE_API_KEY" in result.rationale
+
+
+def test_judge_rejects_upload_token_environment_name():
+    with pytest.raises(ValueError, match="cannot be used as a judge credential"):
+        LLMJudge(model="judge", api_key_env="M3_ACCESS_TOKEN")
+
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+def test_judge_auth_none_accepts_loopback_only(host):
+    judge = LLMJudge(
+        model="judge",
+        base_url=f"http://{host}:1234/v1",
+        auth="none",
+        response_mode="json_text",
+    )
+    assert judge.auth == "none"
+    with pytest.raises(ValueError, match="only for loopback"):
+        LLMJudge(
+            model="judge",
+            base_url="https://judge.example/v1",
+            auth="none",
+            response_mode="json_text",
+        )
+
+
+def test_custom_judge_endpoint_requires_response_mode_and_explicit_env_name():
+    with pytest.raises(ValueError, match="require response_mode"):
+        LLMJudge(
+            model="judge",
+            base_url="https://judge.example/v1",
+            api_key_env="MY_JUDGE_KEY",
+        )
+    with pytest.raises(ValueError, match="explicit api_key_env"):
+        LLMJudge(
+            model="judge",
+            base_url="https://judge.example/v1",
+            response_mode="json_text",
+        )
+    judge = LLMJudge(
+        model="judge",
+        base_url="https://judge.example/v1",
+        api_key_env="MY_JUDGE_KEY",
+        response_mode="json_text",
+    )
+    assert judge.api_key_env == "MY_JUDGE_KEY"
 
 
 def test_default_judge_key_is_separate_from_agent_key(monkeypatch):

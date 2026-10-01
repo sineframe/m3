@@ -12,7 +12,7 @@ Examples are explained and run from their owning guides:
 - [Streamable HTTP server](guides/servers/http.md)
 - [Agent tool-use test](guides/agents/first-test.md)
 - [Continuing agent session](guides/agents/sessions.md)
-- [Provider credentials](guides/credentials.md)
+- [Configure credentials](guides/credentials.md)
 - [Saved history and baselines](guides/results/baselines.md)
 - [Custom evaluator](guides/evaluations/custom.md)
 - [Elicitation plan](guides/elicitation/plans.md)

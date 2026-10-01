@@ -235,7 +235,10 @@ def main(argv: list[str] | None = None) -> int:
         except SystemExit as exc:
             return exc.code if isinstance(exc.code, int) else 2
         if args.command == "test" or args.command == "ci":
+            from .ci_credentials import validate_credential_mappings
             from .supervisor import _passthrough_option_error, run_test
+
+            validate_credential_mappings(args.credential_env)
 
             passthrough_error = _passthrough_option_error(pytest_args)
             if passthrough_error is not None:
@@ -272,13 +275,11 @@ def main(argv: list[str] | None = None) -> int:
                     access_token,
                     resolved_environment,
                     test_environment,
-                    validate_credential_mappings,
                 )
                 from .ci_metadata import resolve_ci_metadata
                 from .ci_upload import control_plane_url, publish_run
                 from .supervisor import run_ci_test
 
-                validate_credential_mappings(args.credential_env)
                 resolved = resolved_environment(args.env_file)
                 if args.upload:
                     resolved[ACCESS_TOKEN_ENV] = access_token(

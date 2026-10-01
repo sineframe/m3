@@ -160,7 +160,7 @@
       "id": "guides-ci-github-actions",
       "title": "Run M3 in GitHub Actions",
       "source": "guides/ci/github-actions.md",
-      "description": "Start with a credential-free direct-server job. This complete workflow assumes the repository declares its project dependencies and contains the tests from the first-test guide.",
+      "description": "Run M3 tests in a consumer repository with a credential-free pull request workflow and an optional trusted upload workflow.",
       "kind": "guides"
     },
     {
@@ -182,10 +182,17 @@
       "kind": "guides"
     },
     {
+      "id": "guides-credentials-endpoints",
+      "title": "Pass a credential to a stdio MCP server",
+      "source": "guides/credentials/endpoints.md",
+      "description": "Map a parent environment variable to a stdio server and verify its tool result.",
+      "kind": "guides"
+    },
+    {
       "id": "guides-credentials",
       "title": "Configure credentials",
       "source": "guides/credentials.md",
-      "description": "Map endpoint, agent, judge, and M3 credentials to the process that needs each one.",
+      "description": "Choose the credential path for an MCP endpoint, agent, judge, or uploaded run.",
       "kind": "guides"
     },
     {
@@ -335,9 +342,9 @@
     },
     {
       "id": "reference-configuration",
-      "title": "Configuration and credentials",
+      "title": "Configuration",
       "source": "reference/configuration.md",
-      "description": "m3.toml stores project identity. Keep its generated project ID stable; renaming a project changes its name, not that identity.",
+      "description": "Project identity and environment-file loading behavior.",
       "kind": "reference",
       "searchAliases": [
         "env file",
@@ -348,7 +355,7 @@
       "id": "reference-credentials",
       "title": "Credential reference",
       "source": "reference/credentials.md",
-      "description": "Credential types, resolution points, precedence, validation, and isolation boundaries.",
+      "description": "Resolution and validation behavior for endpoint, agent, judge, ACP, and upload credentials.",
       "kind": "reference"
     },
     {
@@ -567,6 +574,7 @@
           ]
         },
         "guides-credentials",
+        "guides-credentials-endpoints",
         {
           "title": "Handle interaction",
           "items": [

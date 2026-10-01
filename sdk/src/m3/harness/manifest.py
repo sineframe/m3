@@ -32,6 +32,10 @@ class HarnessManifest(BaseModel):
     @classmethod
     def references_only(cls, value: dict[str, str]) -> dict[str, str]:
         for name, ref in value.items():
+            if name == "M3_ACCESS_TOKEN" or ref == "${M3_ACCESS_TOKEN}":
+                raise ValueError(
+                    "M3_ACCESS_TOKEN cannot be mapped to a test credential"
+                )
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
                 raise ValueError(f"invalid environment variable name: {name}")
             if not re.fullmatch(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", ref):

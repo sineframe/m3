@@ -108,6 +108,8 @@ class LLMJudge:
             )
         ):
             raise ValueError("api_key_env must be an environment variable name")
+        if self.api_key_env == "M3_ACCESS_TOKEN":
+            raise ValueError("M3_ACCESS_TOKEN cannot be used as a judge credential")
         if not 0 <= self.threshold <= 1 or not math.isfinite(self.threshold):
             raise ValueError("threshold must be between 0 and 1")
         if self.timeout_seconds <= 0 or not math.isfinite(self.timeout_seconds):

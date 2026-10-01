@@ -67,6 +67,7 @@ NAVIGATION = [
                 ],
             },
             "guides-credentials",
+            "guides-credentials-endpoints",
             {
                 "title": "Handle interaction",
                 "items": [

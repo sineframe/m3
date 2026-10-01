@@ -17,6 +17,18 @@ def test_manifest_rejects_literal_secrets_and_unknown_fields():
         validate_manifest({"command": "agent", "unexpected": True})
 
 
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"M3_ACCESS_TOKEN": "${ORDINARY_SOURCE}"},
+        {"TOKEN": "${M3_ACCESS_TOKEN}"},
+    ],
+)
+def test_manifest_reserves_upload_token_name_in_targets_and_references(env):
+    with pytest.raises(ManifestValidationError, match="cannot be mapped"):
+        validate_manifest({"command": "agent", "env": env})
+
+
 def test_manifest_export_contains_references_only():
     value = validate_manifest({"command": "agent", "env": {"TOKEN": "${TEAM_TOKEN}"}})
     exported = json.loads(export_manifest(value["manifest"]))

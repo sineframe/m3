@@ -34,8 +34,8 @@ async def call_tool(
             is_error=True,
         )
     return types.CallToolResult(
-        content=[types.TextContent(text="stdio credential accepted")],
-        structured_content={"credential_present": True},
+        content=[types.TextContent(text="credential accepted")],
+        structured_content={"authenticated": True},
     )
 
 

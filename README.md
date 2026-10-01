@@ -99,7 +99,7 @@ its supporting references are explained in the
 - [Documentation](https://m3.sineframe.com/docs/)
 - [Test a local server](https://m3.sineframe.com/docs/guides/servers/stdio)
 - [Test agent behavior](https://m3.sineframe.com/docs/guides/agents/first-test)
-- [Configure provider credentials](https://m3.sineframe.com/docs/guides/credentials)
+- [Configure credentials](https://m3.sineframe.com/docs/guides/credentials)
 - [CLI reference](https://m3.sineframe.com/docs/reference/cli/)
 - [Python reference](https://m3.sineframe.com/docs/reference/python/)
 - [Contributing](https://github.com/sineframe/m3/blob/main/docs/contributing.md)

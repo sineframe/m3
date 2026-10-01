@@ -11,6 +11,9 @@ from pydantic import field_validator as _field_validator
 from pydantic import model_serializer as _model_serializer
 from pydantic import model_validator as _model_validator
 
+from .._credentials import (
+    validate_credential_environment_names as _validate_reserved_names,
+)
 from ..elicitation import ElicitationPlan as _ElicitationPlan
 from .base import (
     ArtifactPolicy,
@@ -214,6 +217,11 @@ class ClaudeCode(HarnessValue):
             for key in values
         ):
             raise ValueError("Claude Code credential target is invalid")
+        for key, reference in values.items():
+            _validate_reserved_names(
+                key,
+                reference.name if reference.source == "environment" else "",
+            )
         return values
 
 
@@ -237,6 +245,11 @@ class OpenCode(HarnessValue):
             for key in values
         ):
             raise ValueError("OpenCode credential target is invalid")
+        for key, reference in values.items():
+            _validate_reserved_names(
+                key,
+                reference.name if reference.source == "environment" else "",
+            )
         return values
 
 
@@ -260,6 +273,11 @@ class Codex(HarnessValue):
             for key in values
         ):
             raise ValueError("Codex credential target is invalid")
+        for key, reference in values.items():
+            _validate_reserved_names(
+                key,
+                reference.name if reference.source == "environment" else "",
+            )
         return values
 
 
@@ -284,6 +302,11 @@ class Pi(HarnessValue):
             for key in values
         ):
             raise ValueError("Pi credential target is invalid")
+        for key, reference in values.items():
+            _validate_reserved_names(
+                key,
+                reference.name if reference.source == "environment" else "",
+            )
         return values
 
 

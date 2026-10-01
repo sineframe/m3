@@ -16,6 +16,9 @@ from typing import Any as _Any
 from typing import Literal as _Literal
 from typing import cast as _cast
 
+from ._credentials import (
+    validate_credential_environment_names as _validate_reserved_names,
+)
 from ._types.specs import AgentSpec as _AgentSpec
 from .elicitation import ElicitationPlan as _ElicitationPlan
 from .errors import UnsupportedFeature as _UnsupportedFeature
@@ -83,6 +86,7 @@ def _validate_credential_mapping(mapping: _Mapping[str, str] | None) -> None:
     for target, source in mapping.items():
         target = _name(target, "credential target")
         source = _name(source, "credential source")
+        _validate_reserved_names(target, source)
         if _NAME.fullmatch(target) is None or _NAME.fullmatch(source) is None:
             raise ValueError("credential environment names must be Python identifiers")
 

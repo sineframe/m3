@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from m3.types import SecretReference
 
@@ -58,4 +59,66 @@ def test_complete_credentials_project_runs_from_clean_copy(tmp_path: Path) -> No
         stdout, stderr = process.communicate()
         pytest.fail(f"credential example timed out\n{stdout}{stderr}")
     assert process.returncode == 0, stdout + stderr
-    assert "3 passed" in stdout
+    assert "1 passed" in stdout
+
+
+def test_github_actions_example_keeps_secrets_in_final_step() -> None:
+    blocks = re.findall(
+        r"```yaml\n(.*?)\n```",
+        (_ROOT / "docs/site/guides/ci/github-actions.md").read_text(
+            encoding="utf-8"
+        ),
+        flags=re.DOTALL,
+    )
+    baseline, upload = [yaml.load(block, Loader=yaml.BaseLoader) for block in blocks]
+    assert baseline["on"] == {
+        "pull_request": "",
+        "push": {"branches": ["main"]},
+    }
+    assert baseline["permissions"] == {"contents": "read"}
+    baseline_steps = baseline["jobs"]["m3-tests"]["steps"]
+    assert baseline_steps[0]["uses"] == (
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    )
+    assert baseline_steps[0]["with"] == {"persist-credentials": "false"}
+    assert baseline_steps[1]["uses"] == (
+        "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9"
+    )
+    assert all("secrets." not in str(step) for step in baseline_steps)
+    assert "--upload" not in baseline_steps[-1]["run"]
+
+    workflow = upload
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["on"] == {
+        "push": {"branches": ["main"]},
+        "workflow_dispatch": "",
+    }
+    steps = workflow["jobs"]["m3-tests"]["steps"]
+    assert steps[0]["uses"] == (
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    )
+    assert steps[0]["with"] == {"persist-credentials": "false"}
+    assert steps[1]["uses"] == (
+        "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9"
+    )
+    assert steps[2]["run"] == "uv sync --locked"
+    assert steps[3]["run"].startswith(
+        'uv tool install "sf-m3-cli==$(uv run --locked --no-sync'
+    )
+    assert 'version("sf-m3")' in steps[3]["run"]
+    assert steps[4]["run"] == "m3 setup --python .venv/bin/python"
+    assert not any("--all-packages" in str(step) for step in steps)
+    assert all("secrets." not in str(step) for step in steps[:-1])
+    assert set(steps[-1]["env"]) == {
+        "M3_ACCESS_TOKEN",
+        "MY_AGENT_KEY",
+        "MY_JUDGE_KEY",
+    }
+    assert "M3_AGENT_MODEL" not in steps[-1]["env"]
+    assert "m3 ci test --upload" in steps[-1]["run"]
+    assert '--harness "codex=$M3_AGENT_MODEL"' in steps[-1]["run"]
+    assert "--credential-env codex:OPENAI_API_KEY=MY_AGENT_KEY" in steps[-1]["run"]
+    assert "--credential-env judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY" in steps[-1]["run"]
+    assert "-- tests/ -q" in steps[-1]["run"]
+    assert "uv sync" not in steps[-1]["run"]
+    assert "--python .venv/bin/python" in steps[-1]["run"]
