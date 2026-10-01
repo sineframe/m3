@@ -11,6 +11,8 @@ Examples are explained and run from their owning guides:
 - [Stdio server](guides/servers/stdio.md)
 - [Streamable HTTP server](guides/servers/http.md)
 - [Agent tool-use test](guides/agents/first-test.md)
+- [Connect an ACP-compatible agent](guides/agents/acp-connect.md)
+- [Expose a custom agent through ACP](guides/agents/acp-wrapper.md)
 - [Continuing agent session](guides/agents/sessions.md)
 - [Configure credentials](guides/credentials.md)
 - [Saved history and baselines](guides/results/baselines.md)
