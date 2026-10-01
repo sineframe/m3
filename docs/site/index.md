@@ -58,6 +58,8 @@ and the saved evidence behind both results.
 | --- | --- |
 | Check a local MCP server | [Test a stdio server](guides/servers/stdio.md) |
 | Check a deployed endpoint | [Test Streamable HTTP](guides/servers/http.md) |
+| Handle a server's elicitation request | [Plan an elicitation response](guides/elicitation/plans.md) |
+| Submit input to a paused agent execution | [Use managed input](guides/elicitation/managed-input.md) |
 | Verify how an agent uses tools | [Write an agent test](guides/agents/first-test.md) |
 | Configure credentials | [Configure credentials](guides/credentials.md) |
 | Connect an existing ACP agent | [Connect an ACP-compatible agent](guides/agents/acp-connect.md) |

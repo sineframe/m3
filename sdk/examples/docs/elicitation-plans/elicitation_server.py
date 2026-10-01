@@ -21,11 +21,8 @@ async def list_tools(_context: object, _params: object) -> types.ListToolsResult
                 description="Book a shipment after confirming a delivery address",
                 input_schema={
                     "type": "object",
-                    "properties": {
-                        "weight_kg": {"type": "number"},
-                        "zone": {"type": "string"},
-                    },
-                    "required": ["weight_kg", "zone"],
+                    "properties": {"weight_kg": {"type": "number"}},
+                    "required": ["weight_kg"],
                 },
             )
         ]
