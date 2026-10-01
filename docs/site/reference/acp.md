@@ -35,7 +35,7 @@ Example:
 
 `m3.harness.manifest.validate_manifest(value)` checks the manifest's shape. With `check_local=True`, it also checks the executable and referenced environment variables on the host, without launching the process. `load_manifest` accepts a path or `-` for stdin. `export_manifest` returns sorted, indented JSON. These helpers raise `ManifestValidationError` for malformed manifests.
 
-Omitted optional fields use the defaults above. Readiness reports `acp_environment_unavailable` for a missing environment reference and `acp_executable_missing` for an unavailable command. During execution, these conditions produce a harness startup failure; the internal `acp_environment_missing` diagnostic stays private. The run stops with the selected harness.
+Omitted optional fields use the defaults above. Readiness reports `acp_environment_unavailable` for a missing environment reference and `acp_executable_missing` for an unavailable command. During execution, these conditions produce a harness startup failure. The run stops with the selected harness.
 
 ## Agent fields and session selection
 
@@ -79,8 +79,8 @@ The policy record shows which policy you selected, which policy M3 enforced, and
 
 The adapter supports text prompts, session cancellation, request timeouts, ACP updates, and configured session mode and options. M3 records the capabilities the agent advertises in `initialize` as metadata. Unadvertised capabilities remain unknown.
 
-Configure interaction handlers to answer permission, terminal, and filesystem requests. M3 rejects a request when its handler is missing. Elicitation is unsupported for ACP, including when a handler is configured; it is supported by the native Codex and Pi adapters.
+Configure interaction handlers to answer permission, terminal, and filesystem requests. M3 rejects a request when its handler is missing. Elicitation is unsupported for ACP, including when a handler is configured.
 
 For extension methods containing `sampling` in their name, M3 passes the request prompt or message to the sampling handler. A missing handler or a declined request returns `acp_interaction_required: sampling`. Other unknown extension methods return an empty object.
 
-These extensions are outside the local guide examples. Install and update your agent yourself; its version affects ACP behavior. See [agent harness compatibility](../guides/agents/harnesses.md) for feature support.
+Install and update your agent yourself; its version affects ACP behavior. See [agent harness compatibility](../guides/agents/harnesses.md) for feature support.
