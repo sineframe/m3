@@ -11,6 +11,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.process_lifecycle
+
 _ROOT = Path(__file__).parents[3]
 _PROJECT = _ROOT / "sdk" / "examples" / "docs" / "acp-connect"
 
