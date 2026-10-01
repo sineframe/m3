@@ -166,7 +166,7 @@ def render() -> str:
                     members.extend(
                         f"- `{_inline_code(name)}` = `{_inline_code(repr(member.value))}`"
                         for name, member in value.__members__.items()
-                )
+                    )
                 if members:
                     output.extend(("", "Public members:", "", *members))
     return "\n".join(output) + "\n"
