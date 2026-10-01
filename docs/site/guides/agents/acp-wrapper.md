@@ -5,7 +5,7 @@ description: "Use the ACP SDK to wrap agent logic and check its real MCP result.
 
 # Expose your custom agent through ACP
 
-Wrap your agent in an ACP process so M3 can launch it and record its MCP interactions. This example implements the ACP SDK's `Agent` interface and uses `run_agent` for protocol handling. Its agent logic selects an echo tool from a JSON instruction; replace that selection with your own orchestration.
+Implement the ACP SDK's `Agent` interface so M3 can launch your agent and record its MCP interactions. Use `run_agent` to handle the protocol. The example selects an echo tool from a JSON instruction; replace that selection with your own orchestration.
 
 ## Requirements
 
@@ -273,13 +273,13 @@ The test checks one echo call with the requested arguments, the captured MCP res
 
 Replace `WrappedAgent.run_agent` with your tool-selection logic. Return the chosen instruction and actual MCP result so `prompt` can report them. Keep stdout reserved for ACP frames; send diagnostics to stderr.
 
-`ToolCallProgress` produces an agent-reported `tool_call_update`. That update describes what the agent says happened. The test's result assertions rely on the MCP requests and responses that M3 captures separately, not on that report alone.
+`ToolCallProgress` produces an agent-reported `tool_call_update`. The test checks the MCP requests and responses captured separately by M3, so the agent's report alone cannot make the result assertions pass.
 
 The typed `InitializeResponse` advertises agent identity during `initialize`. `NewSessionResponse` returns the session ID. Stdio MCP support is baseline ACP behavior; it is not a `mcpCapabilities.stdio` flag.
 
 ## Cancellation and cleanup
 
-The wrapper tracks its active prompt. Its `cancel` handler cancels that task and returns a cancelled stop reason. Each MCP connection is scoped to a prompt with `stdio_client` and `ClientSession`, so their context managers own connection and child-process cleanup.
+The wrapper tracks the active prompt task so its `cancel` handler can cancel it and return a cancelled stop reason. Each prompt opens an MCP connection through `stdio_client` and `ClientSession`. Their context managers close the connection and clean up the child process.
 
 This example supports one active session, one stdio server, and text prompts containing JSON instructions. It does not implement optional mode selection, filesystem, terminal, or permission requests. M3's platform-specific process cleanup and workspace behavior are described in the [ACP reference](../../reference/acp.md).
 
