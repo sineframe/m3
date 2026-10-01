@@ -134,6 +134,7 @@ jobs:
         run: |
           uv run --locked --no-sync --project sdk --extra judge \
             pytest -q \
+            sdk/tests/e2e/test_docs_managed_input_reference.py \
             sdk/tests/e2e/test_real_codex_native_mrtr.py \
             sdk/tests/e2e/test_real_codex_managed_mrtr.py \
             sdk/examples/tests/test_modern_mrtr_codex.py \

@@ -93,6 +93,10 @@ NAVIGATION = [
                 "title": "Handle interaction",
                 "items": [
                     "guides-elicitation-plans",
+                    "guides-elicitation-composed",
+                    "guides-elicitation-responses",
+                    "guides-elicitation-agents",
+                    "guides-elicitation-manual",
                     "guides-elicitation-managed-input",
                 ],
             },
@@ -146,6 +150,7 @@ NAVIGATION = [
                     "reference-python-m3-observability",
                     "reference-python-m3-evaluations",
                     "reference-python-m3-elicitation",
+                    "reference-python-m3-managed-input",
                     "reference-python-m3-matrix",
                     "reference-python-m3-testing",
                     "reference-python-m3-storage",

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "elicitation-agents",
+  "owning_pages": ["guides-elicitation-agents"],
+  "target_release": "resolved from the published release pin",
+  "python": ">=3.10",
+  "files": ["shipping_server.py", "test_agent_sessions.py"],
+  "displayed_blocks": [
+    {"page": "guides-elicitation-agents", "label": "agent elicitation server", "source": "shipping_server.py", "kind": "file"},
+    {"page": "guides-elicitation-agents", "label": "agent session tests", "source": "test_agent_sessions.py", "kind": "file"}
+  ],
+  "dependencies": ["sf-m3[pytest]", "Codex CLI managed runtime", "Pi managed runtime"],
+  "working_directory": "project directory",
+  "scenarios": [
+    {
+      "id": "codex-fresh-plan-per-turn",
+      "command": "python -m pytest -q test_agent_sessions.py -k codex",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["first turn contains accepted shipping_address evidence and successful booking", "second turn contains accepted business_address evidence and successful booking"],
+      "compatibility": {"harness": "Codex CLI", "version": "0.156.1", "mode": "live provider", "status": "requires live verification with M3_DOCS_CODEX_MODEL and Codex authentication"},
+      "verification": "live-provider"
+    },
+    {
+      "id": "pi-fresh-plan-per-turn",
+      "command": "python -m pytest -q test_agent_sessions.py -k pi",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["first turn contains accepted shipping_address evidence and successful booking", "second turn contains accepted business_address evidence and successful booking"],
+      "compatibility": {"harness": "Pi", "version": "0.85.1", "mode": "live provider", "status": "requires live verification with M3_DOCS_PI_MODEL and Pi authentication"},
+      "verification": "live-provider"
+    }
+  ],
+  "network": "Managed harness runtime acquisition and model provider access are required; the MCP server is local stdio.",
+  "credentials": "Codex and Pi provider credentials; set M3_DOCS_CODEX_MODEL and M3_DOCS_PI_MODEL to account-accessible models.",
+  "cleanup": "MCPTestKit, agent session, harness sessions, and stdio server processes close through context managers."
+}
