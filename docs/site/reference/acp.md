@@ -5,11 +5,11 @@ description: "Manifest, launch, session, policy, evidence, and failure behavior 
 
 # ACP reference
 
-M3 launches an ACP agent as a user-supplied subprocess and exchanges ACP v1 frames over stdin and stdout. ACP does not use M3-managed native executable downloads. See [connect an ACP-compatible agent](../guides/agents/acp-connect.md) for an existing agent and [expose a custom agent through ACP](../guides/agents/acp-wrapper.md) for a wrapper example.
+Install your ACP agent and give M3 its launch command. M3 starts it as a subprocess and exchanges ACP v1 frames over stdin and stdout. See [connect an ACP-compatible agent](../guides/agents/acp-connect.md) for an existing agent and [expose a custom agent through ACP](../guides/agents/acp-wrapper.md) for a wrapper example.
 
 ## Manifest contract
 
-The manifest is a JSON object with these exact fields. Unknown fields are rejected by the public manifest validator.
+The manifest is a JSON object. The validator accepts the fields below and rejects unknown fields.
 
 | Field | Type | Default | Validation and behavior |
 | --- | --- | --- | --- |
@@ -33,9 +33,9 @@ Example:
 }
 ```
 
-`m3.harness.manifest.validate_manifest(value)` validates shape without examining the host. With `check_local=True`, it resolves the executable, checks that it is executable, and reports missing referenced variables; it does not launch the process. `load_manifest` accepts a path or `-` for stdin. `export_manifest` returns sorted, indented JSON. These helpers raise `ManifestValidationError` for malformed manifests.
+`m3.harness.manifest.validate_manifest(value)` checks the manifest's shape. With `check_local=True`, it also checks the executable and referenced environment variables on the host, without launching the process. `load_manifest` accepts a path or `-` for stdin. `export_manifest` returns sorted, indented JSON. These helpers raise `ManifestValidationError` for malformed manifests.
 
-The runtime accepts manifest defaults when the optional schema fields are omitted. Readiness reports `acp_environment_unavailable` for a missing environment reference and `acp_executable_missing` for an unavailable command. An attempted run that cannot start reports a harness startup failure; it does not expose the internal `acp_environment_missing` diagnostic. M3 does not fall back to another harness.
+Omitted optional fields use the defaults above. Readiness reports `acp_environment_unavailable` for a missing environment reference and `acp_executable_missing` for an unavailable command. During execution, these conditions produce a harness startup failure; the internal `acp_environment_missing` diagnostic stays private. The run stops with the selected harness.
 
 ## Agent fields and session selection
 
@@ -51,11 +51,11 @@ The runtime accepts manifest defaults when the optional schema fields are omitte
 | `model` | string | required by base harness | Recorded selection label. ACP agents choose and interpret the actual model; M3 does not pass this field as a portable ACP model switch. |
 | `runtime` | `"system"` or `"managed"` | `"system"` | `"managed"` is rejected for ACP. |
 
-M3 sends `initialize` with protocol version 1. Its response advertises `agentInfo` and `agentCapabilities`. M3 then sends `session/new` with the selected MCP servers and workspace path; its response supplies the session ID, modes, and configuration options. These fields are defined by the [ACP 0.12.1 schema](https://github.com/agentclientprotocol/agent-client-protocol/blob/v0.12.1/schema/schema.json).
+M3 sends `initialize` with protocol version 1. The agent can include its identity in `agentInfo` and supported features in `agentCapabilities`. M3 then sends `session/new` with the selected MCP servers and workspace path. The response includes a session ID and may include modes and configuration options. See the [ACP 0.12.1 schema](https://github.com/agentclientprotocol/agent-client-protocol/blob/v0.12.1/schema/schema.json) for these response fields.
 
-M3 applies `agent_mode_id` and each `session_config` value before the first prompt. If a selected mode or option is absent from the advertised list, the adapter raises `HarnessStartupError("ACP harness could not start")`. Public executions report a startup failure, not a distinct stale-option error.
+M3 applies `agent_mode_id` and each `session_config` value before the first prompt. If a selected mode or option is absent from the advertised list, the adapter raises `HarnessStartupError("ACP harness could not start")`. Public executions report this as a startup failure.
 
-Readiness checks whether M3 can launch the executable with your manifest, credentials, content, and policy. It does not guarantee model or vendor behavior, tool calls, or evidence types. The check may create and remove a temporary probe `HOME`. You must install the agent yourself.
+Readiness checks the executable, manifest environment references, server credentials, prompt content types, and tool policy before launch. It may create and remove a temporary probe `HOME`. A passing check means these prerequisites passed; protocol startup and the agent's model, tool use, and reported results still depend on the installed executable.
 
 ## Process and credential boundary
 
@@ -67,20 +67,20 @@ During session cleanup, M3 closes the ACP connection, reaps the child, and remov
 
 ## Tool policy and evidence
 
-Portable restrictive and full policies require capture-layer enforcement for every selected server connection. If M3 cannot confirm enforcement, readiness fails with `tool_policy_unsupported`. An agent's claim that it restricts tools is insufficient.
+For portable restrictive and full policies, M3's capture proxy must enforce the policy on every selected server connection. Readiness fails with `tool_policy_unsupported` when that check fails, even if the agent reports that it restricts tools.
 
-For ACP, `NativeToolPolicy` accepts harness `acp`, `mode: "agent_default"`, and one selected server key. The agent chooses the tools under this policy, which is not portable to other harnesses. Other native ACP policy shapes fail readiness. For portable policies, `supports_tool_policy` is true only after M3 confirms capture-proxy enforcement.
+For ACP, `NativeToolPolicy` accepts harness `acp`, `mode: "agent_default"`, and one selected server key. This ACP-specific policy lets the agent choose tools. Other native ACP policy shapes fail readiness. For portable policies, M3 sets `supports_tool_policy` to true after checking that the capture proxy enforces the policy.
 
-ACP `tool_call` and `tool_call_update` frames report what the agent says happened. M3's capture proxy records MCP requests and responses separately. Check the captured result and status to confirm that the server returned data; an agent report can lack a matching wire response.
+ACP `tool_call` and `tool_call_update` frames describe the agent's actions. M3's capture proxy records the MCP requests and responses. To check what the server returned, assert against the captured result and status. Some agent reports have no matching MCP response.
 
-Policy evidence separates the requested policy from what was enforced and observed. ACP has no portable cost or usage budget. When usage is missing, M3 records it as unavailable without estimating a value.
+The policy record shows which policy you selected, which policy M3 enforced, and what M3 observed during the run. ACP has no portable cost or usage budget. Missing usage values remain unavailable.
 
 ## Capability and compatibility limits
 
 The adapter supports text prompts, session cancellation, request timeouts, ACP updates, and configured session mode and options. M3 records the capabilities the agent advertises in `initialize` as metadata. Unadvertised capabilities remain unknown.
 
-Permission, terminal, and filesystem requests use configured interaction handlers and fail closed when no applicable handler exists. ACP elicitation fails closed even with a handler. The elicitation support in native Codex and Pi does not apply to ACP.
+Configure interaction handlers to answer permission, terminal, and filesystem requests. M3 rejects a request when its handler is missing. Elicitation is unsupported for ACP, including when a handler is configured; it is supported by the native Codex and Pi adapters.
 
-An extension method containing `sampling` in its name passes the request prompt or message to the configured sampling interaction. If no handler exists or it declines, the request fails with `acp_interaction_required: sampling`. Other unknown extension methods return an empty object. The local guide examples do not exercise these extensions.
+For extension methods containing `sampling` in their name, M3 passes the request prompt or message to the sampling handler. A missing handler or a declined request returns `acp_interaction_required: sampling`. Other unknown extension methods return an empty object.
 
-ACP behavior varies with the selected executable and its version. M3 does not manage its installation or version. See [agent harness compatibility](../guides/agents/harnesses.md) for feature support.
+These extensions are outside the local guide examples. Install and update your agent yourself; its version affects ACP behavior. See [agent harness compatibility](../guides/agents/harnesses.md) for feature support.

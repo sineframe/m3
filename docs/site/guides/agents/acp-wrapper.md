@@ -9,7 +9,7 @@ Implement the ACP SDK's `Agent` interface so M3 can launch your agent and record
 
 ## Requirements
 
-Use Python 3.10 or later with `sf-m3[pytest]` installed in the project environment. The SDK supplies `agent-client-protocol==0.12.1`. This example uses one local stdio MCP server and needs no API key.
+Use Python 3.10 or later with `sf-m3[pytest]` installed in the project environment. Its dependencies include `agent-client-protocol==0.12.1`. This example uses one local stdio MCP server and needs no API key.
 
 ## Complete project
 
@@ -273,9 +273,9 @@ The test checks one echo call with the requested arguments, the captured MCP res
 
 Replace `WrappedAgent.run_agent` with your tool-selection logic. Return the chosen instruction and actual MCP result so `prompt` can report them. Keep stdout reserved for ACP frames; send diagnostics to stderr.
 
-`ToolCallProgress` produces an agent-reported `tool_call_update`. The test checks the MCP requests and responses captured separately by M3, so the agent's report alone cannot make the result assertions pass.
+`ToolCallProgress` produces an agent-reported `tool_call_update`. The result assertions use MCP requests and responses captured by M3, independently of that update.
 
-The typed `InitializeResponse` advertises agent identity during `initialize`. `NewSessionResponse` returns the session ID. Stdio MCP support is baseline ACP behavior; it is not a `mcpCapabilities.stdio` flag.
+The typed `InitializeResponse` includes agent identity during `initialize`. `NewSessionResponse` returns the session ID. Stdio MCP support is baseline ACP behavior. Omit the undefined `mcpCapabilities.stdio` flag.
 
 ## Cancellation and cleanup
 

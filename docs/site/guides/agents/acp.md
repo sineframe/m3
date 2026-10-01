@@ -12,6 +12,6 @@ Choose the task that matches your setup:
 - [Connect an ACP-compatible agent](acp-connect.md) when an existing agent already speaks ACP.
 - [Expose your custom agent through ACP](acp-wrapper.md) when your agent uses another interface and you will provide a small ACP process.
 
-Both paths pass MCP servers to the agent for a session and record its messages, tool calls, results, and lifecycle frames. Check the captured MCP result to confirm what the server returned. An agent's tool-call report alone cannot confirm that response.
+M3 passes your MCP servers to the agent for a session and records its messages, tool calls, results, and lifecycle frames. Assertions against captured MCP responses check what the server returned. Agent-reported tool updates describe the agent's actions and may lack a matching server response.
 
 The [ACP reference](../../reference/acp.md) covers manifest fields, session selection, environment isolation, tool-policy evidence, cancellation, and failures. Compare ACP with native harnesses in [agent harness compatibility](harnesses.md).
