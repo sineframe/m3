@@ -114,7 +114,7 @@
       "id": "guides-agents-harnesses",
       "title": "Choose an agent harness",
       "source": "guides/agents/harnesses.md",
-      "description": "Choose between M3 native harness adapters and ACP based on the agent process you want to run and the evidence it can provide.",
+      "description": "M3 connects to agent harnesses through native adapters or an ACP manifest. Choose the integration your agent provides, then check the capabilities and version your test needs.",
       "kind": "guides"
     },
     {

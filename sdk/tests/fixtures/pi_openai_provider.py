@@ -59,10 +59,6 @@ def open_provider(run: ProviderRun) -> Iterator[str]:
                 if tool_marker in user_text
                 else None
             )
-            if requested_tool is None and "Book one 2 kg shipment" in user_text:
-                requested_tool = "book_shipment"
-            elif requested_tool is None and "Book one business shipment" in user_text:
-                requested_tool = "book_verified_shipment"
             tool_call = None
             if requested_tool and not any(
                 item.get("role") == "tool" for item in current_turn_messages
@@ -73,22 +69,12 @@ def open_provider(run: ProviderRun) -> Iterator[str]:
                     if (
                         requested_tool in function.get("name", "")
                         or requested_tool in description
-                        or (
-                            requested_tool == "book_verified_shipment"
-                            and "address_kind"
-                            in function.get("parameters", {}).get("properties", {})
-                        )
                     ):
-                        if requested_tool == "book_shipment":
-                            arguments = (
-                                '{"weight_kg":2}'
-                                if "Book one 2 kg shipment" in user_text
-                                else '{"weight_kg":1,"zone":"local"}'
-                            )
-                        elif requested_tool == "book_verified_shipment":
-                            arguments = '{"address_kind":"business"}'
-                        else:
-                            arguments = "{}"
+                        arguments = (
+                            '{"weight_kg":1,"zone":"local"}'
+                            if requested_tool == "book_shipment"
+                            else "{}"
+                        )
                         tool_call = {
                             "index": 0,
                             "id": f"m3-call-{len(run.requests)}",
