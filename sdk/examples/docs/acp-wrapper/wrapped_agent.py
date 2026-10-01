@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 
 from acp import Agent, Client, run_agent
@@ -44,10 +43,7 @@ class WrappedAgent(Agent):
     async def run_agent(self, text):
         """Replace JSON instruction parsing with your agent's tool selection."""
         instruction = json.loads(text)
-        environment = {
-            **os.environ,
-            **{item.name: item.value for item in self.server.env},
-        }
+        environment = {item.name: item.value for item in self.server.env}
         params = StdioServerParameters(
             command=self.server.command,
             args=self.server.args,

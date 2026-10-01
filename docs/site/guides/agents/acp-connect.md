@@ -181,7 +181,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 
 from acp import Agent, Client, run_agent
 from acp.schema import (
@@ -225,10 +224,7 @@ class ShippingAgent(Agent):
             }
         else:
             instruction = json.loads(text)
-        environment = {
-            **os.environ,
-            **{item.name: item.value for item in self.server.env},
-        }
+        environment = {item.name: item.value for item in self.server.env}
         params = StdioServerParameters(
             command=self.server.command,
             args=self.server.args,

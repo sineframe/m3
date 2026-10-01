@@ -10,7 +10,7 @@ from m3.types import StdioServer
 HERE = Path(__file__).resolve().parent
 
 
-def test_custom_acp_agent_exposes_real_mcp_result() -> None:
+def test_custom_acp_agent_exposes_mcp_result() -> None:
     selection = {
         "harness": "acp",
         "models": ["fixture"],

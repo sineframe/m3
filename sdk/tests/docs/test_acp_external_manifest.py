@@ -15,10 +15,64 @@ from runpy import run_path
 import pytest
 from acp.schema import InitializeResponse, McpServerStdio, NewSessionResponse
 
+from m3 import ExecutionOutcome, MCPTestKit
+from m3.types import StdioServer
+
 pytestmark = pytest.mark.process_lifecycle
 
 _ROOT = Path(__file__).parents[3]
 _PROJECT = _ROOT / "sdk" / "examples" / "docs" / "acp-connect"
+
+
+@pytest.mark.parametrize(
+    "agent_source",
+    ["acp-wrapper/wrapped_agent.py", "acp-connect/deterministic_acp_agent.py"],
+)
+def test_acp_examples_keep_agent_credentials_out_of_mcp_server(
+    tmp_path: Path, agent_source: str, monkeypatch
+) -> None:
+    monkeypatch.setenv("PROVIDER_KEY_SOURCE", "dummy-provider-key")
+    monkeypatch.setenv("FUTURE_KEY_SOURCE", "dummy-future-key")
+    launcher = tmp_path / "agent_launcher.py"
+    launcher.write_text(
+        "import os, runpy, sys\n"
+        "assert os.environ['WRAPPER_PROVIDER_KEY'] == 'dummy-provider-key'\n"
+        "assert os.environ['WRAPPER_FUTURE_KEY'] == 'dummy-future-key'\n"
+        "runpy.run_path(sys.argv[1], run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    selection = {
+        "harness": "acp",
+        "models": ["fixture"],
+        "manifest": {
+            "command": sys.executable,
+            "args": [str(launcher), str(_ROOT / "sdk/examples/docs" / agent_source)],
+            "env": {
+                "WRAPPER_PROVIDER_KEY": "${PROVIDER_KEY_SOURCE}",
+                "WRAPPER_FUTURE_KEY": "${FUTURE_KEY_SOURCE}",
+            },
+        },
+    }
+    server = StdioServer(
+        name="boundary",
+        command=sys.executable,
+        args=(str(_ROOT / "sdk/tests/fixtures/credential_boundary_mcp_server.py"),),
+        environment={"MCP_SERVER_KEY": "dummy-server-key"},
+    )
+    with MCPTestKit() as kit:
+        result = kit.agents([selection])[0].run(
+            json.dumps({"tool": "credential_boundary", "arguments": {}}),
+            server=server,
+            tools=["boundary:credential_boundary"],
+            timeout=20,
+        )
+    assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
+    captured = result.trace_view.tool_calls[0].result.value
+    assert captured.structured_content.value == {
+        "provider_key_present": False,
+        "future_key_present": False,
+        "server_key_received": True,
+    }
 
 
 @pytest.mark.asyncio

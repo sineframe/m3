@@ -1,6 +1,6 @@
 ---
 title: "Expose your custom agent through ACP"
-description: "Use the ACP SDK to wrap agent logic and check its real MCP result."
+description: "Use the ACP SDK to wrap agent logic and check its captured MCP response."
 ---
 
 # Expose your custom agent through ACP
@@ -30,7 +30,7 @@ from m3.types import StdioServer
 HERE = Path(__file__).resolve().parent
 
 
-def test_custom_acp_agent_exposes_real_mcp_result() -> None:
+def test_custom_acp_agent_exposes_mcp_result() -> None:
     selection = {
         "harness": "acp",
         "models": ["fixture"],
@@ -83,7 +83,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 
 from acp import Agent, Client, run_agent
@@ -125,10 +124,7 @@ class WrappedAgent(Agent):
     async def run_agent(self, text):
         """Replace JSON instruction parsing with your agent's tool selection."""
         instruction = json.loads(text)
-        environment = {
-            **os.environ,
-            **{item.name: item.value for item in self.server.env},
-        }
+        environment = {item.name: item.value for item in self.server.env}
         params = StdioServerParameters(
             command=self.server.command,
             args=self.server.args,
@@ -272,6 +268,8 @@ The test checks one echo call with the requested arguments, the captured MCP res
 ## Connect your agent logic
 
 Replace `WrappedAgent.run_agent` with your tool-selection logic. Return the chosen instruction and actual MCP result so `prompt` can report them. Keep stdout reserved for ACP frames; send diagnostics to stderr.
+
+Pass only the MCP server's configured environment entries to its subprocess. The MCP client adds its small platform-variable allowlist. Keep the wrapper's provider credentials out of this mapping unless the MCP server itself needs them.
 
 `ToolCallProgress` produces an agent-reported `tool_call_update`. The result assertions use MCP requests and responses captured by M3, independently of that update.
 

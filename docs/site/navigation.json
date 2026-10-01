@@ -107,7 +107,7 @@
       "id": "guides-agents-acp-wrapper",
       "title": "Expose your custom agent through ACP",
       "source": "guides/agents/acp-wrapper.md",
-      "description": "Use the ACP SDK to wrap agent logic and check its real MCP result.",
+      "description": "Use the ACP SDK to wrap agent logic and check its captured MCP response.",
       "kind": "guides"
     },
     {

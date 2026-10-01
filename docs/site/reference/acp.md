@@ -51,11 +51,11 @@ Omitted optional fields use the defaults above. Readiness reports `acp_environme
 | `model` | string | required by base harness | Recorded selection label. ACP agents choose and interpret the actual model; M3 does not pass this field as a portable ACP model switch. |
 | `runtime` | `"system"` or `"managed"` | `"system"` | `"managed"` is rejected for ACP. |
 
-M3 sends `initialize` with protocol version 1. The agent can include its identity in `agentInfo` and supported features in `agentCapabilities`. M3 then sends `session/new` with the selected MCP servers and workspace path. The response includes a session ID and may include modes and configuration options. See the [ACP 0.12.1 schema](https://github.com/agentclientprotocol/agent-client-protocol/blob/v0.12.1/schema/schema.json) for these response fields.
+M3 sends `initialize` with protocol version 1. The response requires only the protocol version; the agent may advertise its identity in `agentInfo` and supported features in `agentCapabilities`. M3 then sends `session/new` with the selected MCP servers and workspace path. The response requires only a session ID; modes and configuration options are optional. See the [ACP 0.12.1 schema](https://github.com/agentclientprotocol/agent-client-protocol/blob/v0.12.1/schema/schema.json) for these response fields.
 
 M3 applies `agent_mode_id` and each `session_config` value before the first prompt. If a selected mode or option is absent from the advertised list, the adapter raises `HarnessStartupError("ACP harness could not start")`. Public executions report this as a startup failure.
 
-Readiness checks the executable, manifest environment references, server credentials, prompt content types, and tool policy before launch. It may create and remove a temporary probe `HOME`. A passing check means these prerequisites passed; protocol startup and the agent's model, tool use, and reported results still depend on the installed executable.
+Readiness validates the executable, manifest environment references, server credentials, prompt content types, and tool policy before launch. It may create and remove a temporary probe `HOME`. This preflight check neither starts the process nor negotiates session modes or configuration options. Rejected selections fail during session startup, before the first prompt.
 
 ## Process and credential boundary
 
@@ -79,7 +79,9 @@ The policy record shows which policy you selected, which policy M3 enforced, and
 
 The adapter supports text prompts, session cancellation, request timeouts, ACP updates, and configured session mode and options. M3 records the capabilities the agent advertises in `initialize` as metadata. Unadvertised capabilities remain unknown.
 
-Configure interaction handlers to answer permission, terminal, and filesystem requests. M3 rejects a request when its handler is missing. Elicitation is unsupported for ACP, including when a handler is configured.
+Configure a permission handler to answer approval requests. M3 rejects a request when its handler is missing.
+
+M3 advertises filesystem and terminal capabilities as disabled, even when handlers are configured. Agents following the protocol should not request these operations. Elicitation is also unsupported for ACP.
 
 For extension methods containing `sampling` in their name, M3 passes the request prompt or message to the sampling handler. A missing handler or a declined request returns `acp_interaction_required: sampling`. Other unknown extension methods return an empty object.
 
