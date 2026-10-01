@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "acp-connect",
+  "owning_pages": ["guides-agents-acp-connect"],
+  "target_release": "development candidate from the source checkout; not a published release",
+  "python": ">=3.10",
+  "dependencies": ["sf-m3[pytest] from the candidate checkout", "agent-client-protocol==0.12.1"],
+  "files": ["shipping_server.py", "deterministic_acp_agent.py", "test_connect.py", "test_connect_external.py"],
+  "displayed_blocks": [
+    {"page": "guides-agents-acp-connect", "label": "shipping MCP server", "source": "shipping_server.py", "kind": "file"},
+    {"page": "guides-agents-acp-connect", "label": "local existing ACP agent", "source": "deterministic_acp_agent.py", "kind": "file"},
+    {"page": "guides-agents-acp-connect", "label": "ACP connection test", "source": "test_connect.py", "kind": "file"},
+    {"page": "guides-agents-acp-connect", "label": "external agent variation", "source": "test_connect_external.py", "kind": "file"}
+  ],
+  "working_directory": "project directory",
+  "scenarios": [
+    {
+      "id": "local-acp-connect",
+      "command": "python -m pytest -q test_connect.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["execution completes", "one successful shipping_quote call is recorded with the requested server and arguments", "captured MCP result content and structured content contain the $9.00 USD quote"],
+      "compatibility": {"harness": "local deterministic ACP protocol fixture", "mode": "local process and stdio MCP", "status": "verified locally; fixture is not a full conformance test"},
+      "verification": "deterministic"
+    },
+    {
+      "id": "external-acp-agent",
+      "command": "python -m pytest -q test_connect_external.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["execution completes", "one successful shipping_quote call is recorded with expected arguments", "captured MCP result content is 9.00 USD"],
+      "compatibility": {"harness": "externally supplied ACP-compatible agent", "model": "M3_DOCS_AGENT_MODEL", "mode": "live provider", "status": "requires live verification against the selected agent and provider"},
+      "verification": "live-provider"
+    }
+  ],
+  "network": "none for the deterministic scenario",
+  "credentials": "none for the deterministic scenario; external agent credentials use manifest environment references",
+  "external_requirements": "An externally supplied agent variation requires ACP_AGENT_COMMAND, optional JSON-array ACP_AGENT_ARGS, ACP_AGENT_CREDENTIAL_ENV, M3_DOCS_AGENT_MODEL, M3_DOCS_PROVIDER_API_KEY, an installed ACP executable, agent-specific session setup, and provider access. That variation is unverified.",
+  "cleanup": "MCPTestKit owns M3 processes; the local ACP fixture terminates and reaps its MCP subprocess after each call."
+}

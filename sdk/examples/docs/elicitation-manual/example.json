@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "elicitation-manual",
+  "owning_pages": ["guides-elicitation-manual"],
+  "target_release": "resolved from the published release pin",
+  "python": ">=3.10",
+  "files": ["shipping_server.py", "test_manual.py"],
+  "displayed_blocks": [
+    {"page": "guides-elicitation-manual", "label": "manual input server", "source": "shipping_server.py", "kind": "file"},
+    {"page": "guides-elicitation-manual", "label": "manual input test", "source": "test_manual.py", "kind": "file"}
+  ],
+  "dependencies": ["sf-m3[pytest]"],
+  "working_directory": "project directory",
+  "scenarios": [
+    {
+      "id": "manual-input-required-response",
+      "command": "python -m pytest -q test_manual.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["direct call returns typed InputRequiredResult", "request_state is preserved and resent", "responses are keyed by current request keys", "server completes the tool call"],
+      "compatibility": {"harness": "none; direct SDK operation", "mcp_protocol_revision": "2026-07-28", "mode": "deterministic local", "status": "verified locally"},
+      "verification": "deterministic"
+    }
+  ],
+  "network": "none",
+  "credentials": "none",
+  "cleanup": "Direct client, in-process server, and MCPTestKit close through context managers."
+}

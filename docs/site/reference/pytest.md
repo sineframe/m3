@@ -33,5 +33,9 @@ CLI server groups replace marker server lists. CLI harness selections replace
 marker defaults. Ordinary pytest parametrization composes with these M3 axes.
 Each combination is a separate execution; `--trials` is not a retry count.
 
+See [the multi-harness guide](../guides/agents/multiple-harnesses.md) for one
+pytest test selected across native harnesses, and [the matrix guide](../guides/agents/matrices.md)
+for SDK case expansion.
+
 `m3 ci test` excludes tests whose nearest marker has `ci=False`. `m3 test`
 does not apply that exclusion.

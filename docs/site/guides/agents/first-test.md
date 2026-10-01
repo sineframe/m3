@@ -157,4 +157,6 @@ To test a different server, change the `StdioServer` command and arguments, then
 
 If Codex is unavailable or the test times out, first run `codex --version`, confirm the selected model is available, and inspect the M3 turn result. Do not treat an unavailable harness as a passing agent test.
 
-Next: compare transports in [the server guides](../servers/stdio.md), or run multiple agent configurations with [a matrix](matrices.md).
+Next: compare transports in [the server guides](../servers/stdio.md), run
+multiple agent configurations with [a matrix](matrices.md), or select one test
+across [native harnesses](multiple-harnesses.md).

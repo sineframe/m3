@@ -42,8 +42,13 @@ NAVIGATION = [
                 "items": [
                     "guides-agents-first-test",
                     "guides-agents-harnesses",
+                    "guides-agents-multiple-harnesses",
                     "guides-agents-managed-runtimes",
+                    "guides-agents-versions",
+                    "guides-agents-runtime-cache",
                     "guides-agents-acp",
+                    "guides-agents-acp-connect",
+                    "guides-agents-acp-wrapper",
                     "guides-agents-sessions",
                     "guides-agents-matrices",
                 ],
@@ -66,10 +71,15 @@ NAVIGATION = [
                     "guides-evaluations-aggregate",
                 ],
             },
+            "guides-credentials",
             {
-                "title": "Handle interaction",
+                "title": "Elicitation",
                 "items": [
                     "guides-elicitation-plans",
+                    "guides-elicitation-composed",
+                    "guides-elicitation-responses",
+                    "guides-elicitation-agents",
+                    "guides-elicitation-manual",
                     "guides-elicitation-managed-input",
                 ],
             },
@@ -110,6 +120,7 @@ NAVIGATION = [
         "items": [
             "reference",
             "reference-cli",
+            "reference-acp",
             {
                 "title": "Python SDK",
                 "items": [
@@ -120,6 +131,7 @@ NAVIGATION = [
                     "reference-python-m3-observability",
                     "reference-python-m3-evaluations",
                     "reference-python-m3-elicitation",
+                    "reference-python-m3-managed-input",
                     "reference-python-m3-matrix",
                     "reference-python-m3-testing",
                     "reference-python-m3-storage",
@@ -129,6 +141,8 @@ NAVIGATION = [
             },
             "reference-pytest",
             "reference-configuration",
+            "reference-credentials",
+            "reference-managed-runtimes",
             "reference-compatibility",
         ],
     },

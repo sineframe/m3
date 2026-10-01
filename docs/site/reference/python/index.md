@@ -29,5 +29,6 @@ Use focused modules for the rest of the supported contract:
 Each page explains ownership, inputs, results, and failure behavior. Exact
 signatures are checked against the release's public export contract.
 
-Use the [Python API inventory](api.md) for exact signatures,
-model fields, and public methods across every declared module.
+Use the [Python API inventory](api.md) for exact signatures, model fields,
+default factories, enum values, properties, and public methods across every
+declared module. Compatibility import modules appear under their own headings.

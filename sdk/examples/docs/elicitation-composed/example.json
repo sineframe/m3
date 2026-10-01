@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "elicitation-composed",
+  "owning_pages": ["guides-elicitation-composed"],
+  "target_release": "resolved from the published release pin",
+  "python": ">=3.10",
+  "files": ["shipping_server.py", "test_composed.py"],
+  "displayed_blocks": [
+    {"page": "guides-elicitation-composed", "label": "composed local server", "source": "shipping_server.py", "kind": "file"},
+    {"page": "guides-elicitation-composed", "label": "composed direct tests", "source": "test_composed.py", "kind": "file"}
+  ],
+  "dependencies": ["sf-m3[pytest]"],
+  "working_directory": "project directory",
+  "scenarios": [
+    {
+      "id": "composed-alternative-optional-and-round-of",
+      "command": "python -m pytest -q test_composed.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["address alternatives precede the URL round", "optional addresses can be skipped", "same-round forms are sent together", "retries carry only current keyed responses and server state"],
+      "compatibility": {"harness": "none; direct SDK operation", "mcp_protocol_revision": "2026-07-28", "mode": "deterministic local", "status": "verified locally"},
+      "verification": "deterministic"
+    }
+  ],
+  "network": "none",
+  "credentials": "none",
+  "cleanup": "Direct clients, in-process servers, and MCPTestKit instances close through context managers."
+}
