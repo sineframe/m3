@@ -90,4 +90,4 @@ jobs:
 
 `uv sync --locked` installs the consumer project's locked dependencies without synchronizing unrelated workspace packages. The CLI version matches the locked SDK metadata. `m3 setup` and all installation steps run before the final step supplies credentials. The final command uses the project's `.venv` explicitly and passes only variable names in the credential mappings.
 
-The upload workflow is an example for consumer repositories; it does not verify GitHub authentication behavior or whether an external model provider accepts the configured key. See [Configure credentials](../credentials.md) for other credential paths.
+See [Configure credentials](../credentials.md) for other credential paths.

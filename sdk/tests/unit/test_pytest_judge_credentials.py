@@ -1,6 +1,4 @@
 import os
-import re
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,16 +13,11 @@ from m3.pytest_plugin import (
 def test_judge_credential_mapping_is_restored_after_direct_pytest(monkeypatch):
     monkeypatch.setenv("MY_JUDGE_KEY", "source-secret")
     monkeypatch.setenv("M3_JUDGE_API_KEY", "original-secret")
-    page = (
-        Path(__file__).parents[3] / "docs/site/guides/evaluations/judges.md"
-    ).read_text(encoding="utf-8")
-    mapping = re.search(r"--credential-env (judge:\S+)", page)
-    assert mapping is not None
 
     class Config:
         def getoption(self, name):
             return {
-                "--credential-env": [mapping.group(1)],
+                "--credential-env": ["judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY"],
             }.get(name)
 
         def addinivalue_line(self, *_args):

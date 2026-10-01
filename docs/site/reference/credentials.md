@@ -19,15 +19,21 @@ endpoint_key = SecretReference(source="environment", name="MCP_ENDPOINT_KEY")
 
 For direct HTTP, the default environment resolver treats a missing or empty environment value as an authentication failure: `TransportConnectionError(transport="streamable_http", phase="authentication")`. A custom resolver controls its own lookup behavior. Header names and values containing CR or LF also fail during authentication setup.
 
-For stdio, an environment `SecretReference` fails with `TransportStartupError` when its source name is absent. A present empty value is copied to the child as an empty string. A custom resolver determines its own behavior. These are direct transport results; they do not describe native harness or ACP launch behavior.
+For stdio, an environment `SecretReference` fails with `TransportStartupError` when its source name is absent. A present empty value is copied to the child as an empty string. A custom resolver determines its own behavior.
 
 ## Native harnesses
 
-`Codex`, `Pi`, `ClaudeCode`, and `OpenCode` accept `credential_references: Mapping[str, SecretReference]`. SDK selection and CLI/pytest `--credential-env` map a child target name to a source environment name. Supported agent and judge mappings reserve the exact name `M3_ACCESS_TOKEN` as either target or source. This check applies to those mapping entry points; it is not a general boundary against aliases, copied values, or arbitrary application code.
+In `kit.agents(...)`, set `credential_env={"OPENAI_API_KEY": "MY_OPENAI_KEY"}` to pass the parent process's `MY_OPENAI_KEY` value as `OPENAI_API_KEY` in the agent process. For pytest-selected agents, use `--credential-env codex:OPENAI_API_KEY=MY_OPENAI_KEY`. See [Choose an agent harness](../guides/agents/harnesses.md) for a complete SDK example.
 
-Native inference uses non-empty standard variables for the selected harness and model. SDK selectors check that an explicitly mapped source name exists when building the execution specification; an empty value can therefore pass selection and fail later at launch. Native launch raises `HarnessStartupError` when it cannot resolve a non-empty referenced value. An empty value in an explicitly supplied lookup falls back to the ambient process environment if that name has a non-empty value. A mapping does not verify that a provider accepts the value.
+When constructing `Codex`, `Pi`, `ClaudeCode`, or `OpenCode` directly, use `credential_references`. Its keys are agent environment variable names; its values are `SecretReference` objects naming the credential source.
+
+M3 also selects non-empty standard credential variables for the chosen harness and provider, such as `OPENAI_API_KEY` for Codex and `ANTHROPIC_API_KEY` for Claude Code. An explicit `credential_env` entry overrides the default for that target variable.
+
+With `kit.agents(...)`, a missing mapped source raises `ValueError` when you start the run, before launching the agent. A present empty source passes that check, but launch requires a non-empty value and otherwise raises `HarnessStartupError`.
 
 Codex, Claude Code, Pi, and OpenCode isolate their child environments. Codex may copy a host authentication file only when there are no explicit credential references. The other native adapters use selected references and do not copy host login files into their temporary homes.
+
+Agent and judge mappings reject the exact name `M3_ACCESS_TOKEN` as a target or environment source. This validation does not detect the same token copied into another variable.
 
 ## ACP environment
 

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
-import shlex
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -144,23 +142,26 @@ def test_test_and_ci_reject_upload_token_mapping_before_runner(
     assert "nonsecret-test-value" not in error
 
 
-def test_github_workflow_cli_invocation_accepts_mapping_and_rejects_reserved_name(
-    monkeypatch, capsys
-):
+def test_ci_forwards_agent_and_judge_mappings_without_upload_token(monkeypatch):
     from m3_cli import supervisor
     from m3_cli.main import main
 
-    page = Path(__file__).parents[2] / "docs/site/guides/ci/github-actions.md"
-    text = page.read_text(encoding="utf-8")
-    match = re.search(
-        r"(?m)^        run: >-\n((?:          .*\n)+)",
-        text[text.index("## Optional trusted upload workflow") :],
-    )
-    assert match is not None
-    command = " ".join(line.strip() for line in match.group(1).splitlines())
-    tokens = shlex.split(command)
-    assert tokens[:3] == ["m3", "ci", "test"]
-    argv = tokens[1:]
+    argv = [
+        "ci",
+        "test",
+        "--python",
+        ".venv/bin/python",
+        "--upload",
+        "--harness",
+        "codex=fixture-model",
+        "--credential-env",
+        "codex:OPENAI_API_KEY=MY_AGENT_KEY",
+        "--credential-env",
+        "judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY",
+        "--",
+        "tests/",
+        "-q",
+    ]
 
     monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
     captured = {}
@@ -171,29 +172,13 @@ def test_github_workflow_cli_invocation_accepts_mapping_and_rejects_reserved_nam
 
     monkeypatch.setattr(supervisor, "run_ci_test", fake_runner)
     assert main(argv) == 2
-    assert captured["harnesses"] == ["codex=$M3_AGENT_MODEL"]
+    assert captured["harnesses"] == ["codex=fixture-model"]
     assert captured["python"] == Path(".venv/bin/python")
     assert captured["credential_env"] == [
         "codex:OPENAI_API_KEY=MY_AGENT_KEY",
         "judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY",
     ]
     assert "M3_ACCESS_TOKEN" not in captured["environment"]
-
-    called = []
-    monkeypatch.setattr(supervisor, "run_ci_test", lambda **_: called.append("runner"))
-    assert (
-        main(
-            [
-                "ci",
-                "test",
-                "--credential-env",
-                "codex:OPENAI_API_KEY=M3_ACCESS_TOKEN",
-            ]
-        )
-        == 2
-    )
-    assert called == []
-    assert "M3_ACCESS_TOKEN cannot be mapped" in capsys.readouterr().err
 
 
 def test_cached_upload_cannot_be_retargeted(tmp_path, monkeypatch):
