@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sys
 import threading
@@ -27,6 +28,7 @@ from .ci_credentials import (
 from .errors import CLIError
 
 _SERVICE = "sf-m3"
+_PENDING_REVOKE_SERVICE = "sf-m3-pending-revoke"
 _MAX_RESPONSE = 64 * 1024
 _AUTH_DEFAULT = "https://auth.sineframe.com"
 _REQUEST_TIMEOUT = 20
@@ -176,9 +178,25 @@ def _account(base: str) -> str:
     return "m3_" + hashlib.sha256(base.encode()).hexdigest()[:32]
 
 
+def _legacy_account(base: str) -> str:
+    parsed = urlparse(base)
+    origin = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    slug = re.sub(r"[^A-Za-z0-9._-]", "_", parsed.netloc.lower())
+    digest = hashlib.sha256(origin.encode()).hexdigest()[:32]
+    return f"m3_{slug[:20]}_{digest}"
+
+
 def load_saved_token(base_url: str) -> str | None:
     try:
-        token = _keyring().get_password(_SERVICE, _account(base_url))
+        keyring = _keyring()
+        account = _account(base_url)
+        token = keyring.get_password(_SERVICE, account)
+        legacy = _legacy_account(base_url)
+        if token is None and legacy != account:
+            token = keyring.get_password(_SERVICE, legacy)
+            if isinstance(token, str):
+                keyring.set_password(_SERVICE, account, token)
+                keyring.delete_password(_SERVICE, legacy)
         if token is not None and not isinstance(token, str):
             raise RuntimeError("OS credential store returned invalid data")
         return token
@@ -222,10 +240,10 @@ def _save_token(base: str, token: str, metadata: dict[str, Any]) -> None:
 
 def _remove_saved_token(base: str) -> bool:
     keyring = _keyring()
-    account = _account(base)
     try:
-        if keyring.get_password(_SERVICE, account) is not None:
-            keyring.delete_password(_SERVICE, account)
+        for account in {_account(base), _legacy_account(base)}:
+            if keyring.get_password(_SERVICE, account) is not None:
+                keyring.delete_password(_SERVICE, account)
     except Exception:
         return False
     try:
@@ -233,6 +251,35 @@ def _remove_saved_token(base: str) -> bool:
     except Exception:
         pass
     return True
+
+
+def _pending_revoke_token(base: str) -> str | None:
+    try:
+        token = _keyring().get_password(_PENDING_REVOKE_SERVICE, _account(base))
+    except Exception:
+        raise RuntimeError("could not read pending credential cleanup") from None
+    if token is not None and not isinstance(token, str):
+        raise RuntimeError("OS credential store returned invalid cleanup data")
+    return token
+
+
+def _remember_pending_revoke(base: str, token: str) -> None:
+    try:
+        _keyring().set_password(_PENDING_REVOKE_SERVICE, _account(base), token)
+    except Exception:
+        raise RuntimeError(
+            "could not preserve the previous credential for revocation"
+        ) from None
+
+
+def _clear_pending_revoke(base: str) -> None:
+    keyring = _keyring()
+    account = _account(base)
+    try:
+        if keyring.get_password(_PENDING_REVOKE_SERVICE, account) is not None:
+            keyring.delete_password(_PENDING_REVOKE_SERVICE, account)
+    except Exception:
+        raise RuntimeError("could not clear completed credential cleanup") from None
 
 
 class _NoRedirect(request.HTTPRedirectHandler):
@@ -302,25 +349,38 @@ def _json_request(
     return result
 
 
-def _is_ci() -> bool:
-    return any(os.environ.get(name) for name in ("CI", "GITHUB_ACTIONS", "GITLAB_CI"))
-
-
-def _credential(base: str) -> str | None:
-    env = os.environ.get("M3_ACCESS_TOKEN")
-    if env is not None:
-        return validate_access_token(env)
-    if _is_ci():
-        raise RuntimeError("M3_ACCESS_TOKEN is required in CI")
-    return load_saved_token(base)
+def _revoke_token(base: str, token: str) -> None:
+    _json_request(
+        base + "/v1/cli/session",
+        "DELETE",
+        token=token,
+        expect_no_content=True,
+    )
 
 
 def status() -> int:
     try:
         base = control_plane_url()
-        token = _credential(base)
+        env_token = os.environ.get("M3_ACCESS_TOKEN")
+        if env_token is not None:
+            validate_access_token(env_token)
+            print(
+                "M3_ACCESS_TOKEN is set in the current environment "
+                "(CI token validity is not checked by auth status)."
+            )
+        pending = _pending_revoke_token(base)
+        if pending is not None:
+            try:
+                _revoke_token(base, pending)
+                _clear_pending_revoke(base)
+            except RuntimeError:
+                print(
+                    "Warning: the previous CLI credential still needs server revocation.",
+                    file=sys.stderr,
+                )
+        token = load_saved_token(base)
         if not token:
-            print("No M3 CLI credential is configured.")
+            print("No local M3 CLI credential is configured.")
             return 0
         result = _json_request(base + "/v1/cli/session", "GET", token=token)
         metadata = result.get("metadata")
@@ -352,16 +412,19 @@ def logout() -> int:
         # Logout is deliberately local-only: an explicit environment token is
         # not the CLI credential that this command owns.
         token = load_saved_token(base)
-        if not token:
+        pending = _pending_revoke_token(base)
+        if not token and not pending:
             print("No local M3 CLI credential is configured.")
             return 0
-        _json_request(
-            base + "/v1/cli/session", "DELETE", token=token, expect_no_content=True
-        )
-        if not _remove_saved_token(base):
-            raise RuntimeError(
-                "remote credential revoked, but local credential could not be removed"
-            )
+        if token:
+            _revoke_token(base, token)
+            if not _remove_saved_token(base):
+                raise RuntimeError(
+                    "remote credential revoked, but local credential could not be removed"
+                )
+        if pending is not None:
+            _revoke_token(base, pending)
+            _clear_pending_revoke(base)
         print("M3 CLI credential revoked and removed.")
         return 0
     except (RuntimeError, ValueError, CLIError) as exc:
@@ -422,6 +485,11 @@ def login() -> int:
             os.environ.get("M3_AUTH_URL", _AUTH_DEFAULT), "M3_AUTH_URL"
         )
         _probe_keyring()
+        pending = _pending_revoke_token(base)
+        if pending is not None:
+            _revoke_token(base, pending)
+            _clear_pending_revoke(base)
+        previous_token = load_saved_token(base)
         authorization = _json_request(
             base + "/v1/cli/device/authorization",
             "POST",
@@ -455,7 +523,7 @@ def login() -> int:
             or user_code.endswith("-")
         ):
             raise RuntimeError("server returned invalid device authorization")
-        uri = _validate_verification_url(
+        _validate_verification_url(
             authorization["verification_uri"], auth_origin, complete=False
         )
         complete = _validate_verification_url(
@@ -477,7 +545,8 @@ def login() -> int:
         except Exception:
             opened = False
         if not opened:
-            print(f"Open {uri} and enter code: {user_code}", flush=True)
+            print(f"Open this sign-in page: {complete}", flush=True)
+            print(f"Confirm the code shown in the browser: {user_code}", flush=True)
         else:
             print(f"Complete sign-in with code: {user_code}", flush=True)
         deadline = time.monotonic() + expires
@@ -514,10 +583,16 @@ def login() -> int:
             except CLIError:
                 raise RuntimeError("server returned an invalid CLI token") from None
             try:
+                if previous_token is not None and previous_token != token:
+                    _remember_pending_revoke(base, previous_token)
                 _save_token(base, token, {key: metadata[key] for key in fields})
             except Exception:
                 try:
-                    _json_request(base + "/v1/cli/session", "DELETE", token=token)
+                    _clear_pending_revoke(base)
+                except Exception:
+                    pass
+                try:
+                    _revoke_token(base, token)
                 except Exception:
                     raise RuntimeError(
                         "token was issued but could not be saved; remote revocation also failed"
@@ -525,6 +600,17 @@ def login() -> int:
                 raise RuntimeError(
                     "token was issued but could not be saved; remote token revoked"
                 ) from None
+            if previous_token is not None and previous_token != token:
+                try:
+                    _revoke_token(base, previous_token)
+                    _clear_pending_revoke(base)
+                except RuntimeError:
+                    print(
+                        "m3 auth login: new credential saved, but the previous "
+                        "credential still needs server revocation",
+                        file=sys.stderr,
+                    )
+                    return 2
             print("M3 CLI credential saved in OS credential store.")
             return 0
         raise RuntimeError("device authorization expired")

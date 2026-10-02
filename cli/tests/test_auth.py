@@ -11,9 +11,9 @@ import pytest
 from m3_cli import auth
 
 
-def token() -> str:
+def token(fill: bytes = b"s") -> str:
     enc = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
-    return f"m3pat_{enc(b'i' * 16)}.{enc(b's' * 32)}"
+    return f"m3pat_{enc(fill * 16)}.{enc(fill * 32)}"
 
 
 class Keyring:
@@ -50,6 +50,17 @@ def test_metadata_and_installation_are_preserved(store: Keyring) -> None:
         json.loads(auth._metadata_path().read_text())["_installation_id"]
         == installation
     )
+
+
+def test_legacy_keyring_account_migrates_on_read(store: Keyring) -> None:
+    base = "https://control.example"
+    legacy = auth._legacy_account(base)
+    current = auth._account(base)
+    store.set_password(auth._SERVICE, legacy, token())
+    assert legacy != current
+    assert auth.load_saved_token(base) == token()
+    assert store.get_password(auth._SERVICE, legacy) is None
+    assert store.get_password(auth._SERVICE, current) == token()
 
 
 def test_installation_id_does_not_replace_corrupt_metadata(store: Keyring) -> None:
@@ -198,6 +209,7 @@ def test_login_reports_poll_error_without_secret(
     assert auth.login() == 2
     output = capsys.readouterr()
     assert "access_denied" in output.err
+    assert start["verification_uri_complete"] in output.out
     assert "device-secret" not in output.err
 
 
@@ -249,7 +261,7 @@ def test_save_failure_restores_old_credential_and_reports_revoke_failure(
     monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
 ) -> None:
     base = "https://control.example"
-    old = token()
+    old = token(b"o")
     auth._save_token(base, old, {"id": "old"})
     monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
     monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
@@ -263,7 +275,7 @@ def test_save_failure_restores_old_credential_and_reports_revoke_failure(
         "interval": 1,
     }
     new = {
-        "access_token": token(),
+        "access_token": token(b"n"),
         "token_type": "Bearer",
         "metadata": {
             "id": "new",
@@ -294,6 +306,55 @@ def test_save_failure_restores_old_credential_and_reports_revoke_failure(
     assert auth.login() == 2
     assert auth.load_saved_token(base) == old
     assert "revocation also failed" in capsys.readouterr().err
+
+
+def test_relogin_revokes_previous_cli_credential(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring
+) -> None:
+    base = "https://control.example"
+    old = token(b"o")
+    new = token(b"n")
+    auth._save_token(base, old, {"id": "old", "kind": "cli"})
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
+    monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *a, **k: True)
+    start = {
+        "device_code": "device-secret",
+        "user_code": "ABCD-EFGH",
+        "verification_uri": "https://auth.sineframe.com/sign-in",
+        "verification_uri_complete": "https://auth.sineframe.com/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DABCD-EFGH",
+        "expires_in": 30,
+        "interval": 1,
+    }
+    issued = {
+        "access_token": new,
+        "token_type": "Bearer",
+        "metadata": {
+            "id": "new",
+            "kind": "cli",
+            "org_id": "org",
+            "name": "M3 CLI",
+            "created_at": "a",
+            "expires_at": "b",
+        },
+    }
+    revoked: list[tuple[str, bool]] = []
+
+    def fake(url: str, method: str, body=None, token=None, **kwargs):
+        if url.endswith("/authorization"):
+            return start
+        if url.endswith("/token"):
+            return issued
+        revoked.append((token, kwargs.get("expect_no_content", False)))
+        return {}
+
+    monkeypatch.setattr(auth, "_json_request", fake)
+    monkeypatch.setattr(auth.time, "sleep", lambda _: None)
+    monkeypatch.setattr(auth.time, "monotonic", lambda: 0.0)
+    assert auth.login() == 0
+    assert auth.load_saved_token(base) == new
+    assert auth._pending_revoke_token(base) is None
+    assert revoked == [(old, True)]
 
 
 def test_logout_remote_failure_retains_local_and_no_local_does_not_delete(
@@ -396,6 +457,7 @@ def test_status_reports_online_session_and_rejects_malformed_without_secret(
     secret = token()
     monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
     monkeypatch.setenv("M3_ACCESS_TOKEN", secret)
+    auth._save_token(base, token(b"l"), {"id": "local", "kind": "cli"})
     session = {
         "metadata": {
             "id": "id",
@@ -408,7 +470,9 @@ def test_status_reports_online_session_and_rejects_malformed_without_secret(
     }
     monkeypatch.setattr(auth, "_json_request", lambda *a, **k: session)
     assert auth.status() == 0
-    assert "valid" in capsys.readouterr().out
+    first = capsys.readouterr()
+    assert "M3_ACCESS_TOKEN is set" in first.out
+    assert "credential is valid" in first.out
     monkeypatch.setattr(auth, "_json_request", lambda *a, **k: {"metadata": {}})
     assert auth.status() == 2
     output = capsys.readouterr()
