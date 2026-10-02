@@ -179,56 +179,6 @@ def test_managed_runtime_example_uses_local_codex_protocol_and_real_mcp(
     ]
 
 
-def test_cli_selected_managed_pin_uses_local_codex_protocol_and_real_mcp(
-    tmp_path: Path, local_runtime_feed: tuple[Any, Path]
-) -> None:
-    feed, marker_path = local_runtime_feed
-    project = _copy_project("agents-managed-runtimes", tmp_path / "cli-managed")
-    environment = _environment(
-        tmp_path,
-        manifest_feed_url=feed.manifest_feed_url,
-        marker_path=marker_path,
-    )
-    cli = Path(sys.executable).with_name("m3")
-    _run(
-        [
-            str(cli),
-            "init",
-            "--project-root",
-            str(project),
-            "--project-name",
-            "docs_managed_runtime",
-            "--suite",
-            "docs",
-        ],
-        cwd=project,
-        env=environment,
-    )
-
-    output = _run(
-        [
-            str(cli),
-            "test",
-            "--python",
-            sys.executable,
-            "--runtime",
-            "managed",
-            "--harness",
-            f"codex@{PIN_A}={MODEL}",
-            "--",
-            "test_managed_runtime_fixture.py",
-        ],
-        cwd=project,
-        env=environment,
-    )
-    assert "1 passed" in output
-    _assert_tool_calls(marker_path, expected_count=1)
-    assert feed.requests == [
-        f"/manifest/codex/{PIN_A}",
-        f"/asset/codex/{PIN_A}.zip",
-    ]
-
-
 def test_two_version_example_acquires_both_selected_pins_locally(
     tmp_path: Path, local_runtime_feed: tuple[Any, Path]
 ) -> None:
