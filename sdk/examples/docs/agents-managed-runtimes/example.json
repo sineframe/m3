@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "id": "agents-managed-runtimes",
+  "owning_pages": ["guides-agents-managed-runtimes"],
+  "target_release": "resolved from the published release pin",
+  "python": ">=3.10",
+  "files": ["shipping_server.py", "test_managed_runtime.py"],
+  "displayed_blocks": [
+    {"page": "guides-agents-managed-runtimes", "label": "shipping MCP server", "source": "shipping_server.py", "kind": "file"},
+    {"page": "guides-agents-managed-runtimes", "label": "CLI-selected pinned Codex runtime test", "source": "test_managed_runtime.py", "kind": "file"}
+  ],
+  "dependencies": ["sf-m3[pytest]", "sf-m3-cli", "Codex login and model access"],
+  "working_directory": "directory containing test_managed_runtime.py and shipping_server.py",
+  "scenarios": [
+    {
+      "id": "pinned-codex-runtime",
+      "command": "m3 test --python \"$M3_DOCS_PYTHON\" --runtime managed --harness \"codex@${M3_DOCS_CODEX_VERSION}=${M3_DOCS_CODEX_MODEL}\" -- -v test_managed_runtime.py",
+      "working_directory": "directory containing test_managed_runtime.py and shipping_server.py",
+      "expected_exit_code": 0,
+      "assertions": ["execution completes", "one successful shipping_quote call returns structured amount 9 USD", "requested selector and resolved version equal the explicit pin", "runtime identity records a target and 64-character digest"],
+      "compatibility": {
+        "harness": "Codex CLI managed runtime",
+        "version": "M3_DOCS_CODEX_VERSION",
+        "model": "M3_DOCS_CODEX_MODEL",
+        "mode": "native live provider",
+        "status": "requires live verification and provider access"
+      },
+      "verification": "live-provider"
+    },
+    {
+      "id": "repeat-cached-codex-pin",
+      "command": "m3 test --python \"$M3_DOCS_PYTHON\" --runtime managed --harness \"codex@${M3_DOCS_CODEX_VERSION}=${M3_DOCS_CODEX_MODEL}\" -- -v test_managed_runtime.py",
+      "working_directory": "directory containing test_managed_runtime.py and shipping_server.py",
+      "expected_exit_code": 0,
+      "assertions": ["repeat the same command after the selected asset is cached", "runtime progress reports loaded from cache without another asset download", "a new execution records one successful shipping_quote call and the selected pin"],
+      "compatibility": {
+        "harness": "Codex CLI managed runtime selected by M3 CLI",
+        "version": "M3_DOCS_CODEX_VERSION",
+        "model": "M3_DOCS_CODEX_MODEL",
+        "mode": "native live provider",
+        "status": "requires live verification and provider access"
+      },
+      "verification": "live-provider"
+    }
+  ],
+  "network": "The server is local stdio. Runtime release metadata and archive acquisition require network access unless the exact pin already has a valid cache entry. Model access uses the native Codex login.",
+  "credentials": "Use the existing Codex login and select a model available to that account. Runtime download does not create provider credentials.",
+  "cleanup": "M3 closes the harness and server process. Managed binaries remain in the user cache for later runs; --harness-cache-dir selects another external cache.",
+  "verification_mode": "live-provider"
+}

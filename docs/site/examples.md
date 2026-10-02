@@ -15,6 +15,8 @@ Examples are explained and run from their owning guides:
 - [Expose a custom agent through ACP](guides/agents/acp-wrapper.md)
 - [Continuing agent session](guides/agents/sessions.md)
 - [Configure credentials](guides/credentials.md)
+- [Pin a native harness runtime](guides/agents/managed-runtimes.md)
+- [Compare agent harnesses and versions](guides/agents/versions.md)
 - [Saved history and baselines](guides/results/baselines.md)
 - [Custom evaluator](guides/evaluations/custom.md)
 - [Elicitation plan](guides/elicitation/plans.md)

@@ -32,3 +32,6 @@ Ordinary `m3 test` still includes the marked test. Paths, `-k`, `-m`, and
 only when `--upload` is present.
 
 Continue to [GitHub Actions](github-actions.md).
+
+See [managed runtime selection](../agents/managed-runtimes.md) when a CI test
+must use a pinned native harness version.

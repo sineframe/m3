@@ -61,6 +61,8 @@ and the saved evidence behind both results.
 | Verify how an agent uses tools | [Write an agent test](guides/agents/first-test.md) |
 | Configure credentials | [Configure credentials](guides/credentials.md) |
 | Connect an existing ACP agent | [Connect an ACP-compatible agent](guides/agents/acp-connect.md) |
+| Compare agent harnesses and their versions | [Compare agent harnesses and versions](guides/agents/versions.md) |
+| Pin a native harness version | [Run a pinned agent harness](guides/agents/managed-runtimes.md) |
 | Inspect a failed run | [Read traces](guides/results/traces.md) |
 | Compare a change with an earlier run | [Compare with a baseline](guides/results/baselines.md) |
 | Run tests in automation | [Run M3 in CI](guides/ci/run.md) |
