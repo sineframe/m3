@@ -1,10 +1,11 @@
-"""Run managed Codex examples with real runtime code and a local release feed."""
+"""Run managed Codex/Pi examples with real runtime code and a local release feed."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -192,7 +193,7 @@ def test_two_version_example_acquires_both_selected_pins_locally(
     )
 
     output = _run(
-        [sys.executable, "-m", "pytest", "-q", "test_versions.py"],
+        [sys.executable, "-m", "pytest", "-q", "test_sdk_versions.py"],
         cwd=project,
         env=environment,
     )
@@ -204,6 +205,96 @@ def test_two_version_example_acquires_both_selected_pins_locally(
         f"/manifest/codex/{PIN_B}",
         f"/asset/codex/{PIN_B}.zip",
     ]
+
+
+def test_cli_version_comparison_reports_each_pin_and_reuses_cache(
+    tmp_path: Path, local_runtime_feed: tuple[Any, Path]
+) -> None:
+    feed, marker_path = local_runtime_feed
+    project = _copy_project("agents-runtime-versions", tmp_path / "cli-versions")
+    environment = _environment(
+        tmp_path,
+        manifest_feed_url=feed.manifest_feed_url,
+        marker_path=marker_path,
+        versions=(PIN_A, PIN_B),
+    )
+    cli = Path(sys.executable).with_name("m3")
+    command = [
+        str(cli),
+        "test",
+        "--python",
+        sys.executable,
+        "--runtime",
+        "managed",
+        "--harness",
+        f"codex@{PIN_A}={MODEL}",
+        "--harness",
+        f"codex@{PIN_B}={MODEL}",
+        "--",
+        "-v",
+        "-s",
+        "test_versions.py",
+    ]
+    first = _run(command, cwd=project, env=environment)
+    assert "2 passed" in first
+    for version in (PIN_A, PIN_B):
+        assert f"requested={version} resolved={version}" in first
+        assert f"managed-{version}-trial-1" in first
+    assert 'quote={"amount": 9.0, "currency": "USD"}' in first
+    assert len(set(re.findall(r"execution=(\S+)", first))) == 2
+    requests_after_first = tuple(feed.requests)
+    second = _run(command, cwd=project, env=environment)
+    assert "2 passed" in second
+    for version in (PIN_A, PIN_B):
+        assert f"Codex {version}: loaded from cache" in second
+    assert tuple(feed.requests) == requests_after_first
+    first_ids = set(re.findall(r"execution=(\S+)", first))
+    second_ids = set(re.findall(r"execution=(\S+)", second))
+    assert len(second_ids) == 2
+    assert first_ids.isdisjoint(second_ids)
+    _assert_tool_calls(marker_path, expected_count=4)
+
+
+def test_cli_comparison_uses_two_codex_and_two_pi_versions(tmp_path: Path) -> None:
+    pi_versions = ("0.85.0", "0.85.1")
+    marker_path = tmp_path / "comparison-wire.jsonl"
+    with LocalRuntimeFeed(
+        marker_path=marker_path,
+        kind_versions={"codex": (PIN_A, PIN_B), "pi": pi_versions},
+    ) as feed:
+        project = _copy_project("agents-runtime-versions", tmp_path / "cross-harness")
+        environment = _environment(
+            tmp_path,
+            manifest_feed_url=feed.manifest_feed_url,
+            marker_path=marker_path,
+        )
+        environment["M3_DOCS_PI_API_KEY"] = "dummy-local-provider-key"
+        cli = Path(sys.executable).with_name("m3")
+        command = [str(cli), "test", "--python", sys.executable, "--runtime", "managed"]
+        for kind, versions, model in (
+            ("codex", (PIN_A, PIN_B), MODEL),
+            ("pi", pi_versions, "openai/fixture-pi"),
+        ):
+            for version in versions:
+                command.extend(("--harness", f"{kind}@{version}={model}"))
+        command.extend(
+            (
+                "--credential-env",
+                "pi:OPENAI_API_KEY=M3_DOCS_PI_API_KEY",
+                "--",
+                "-v",
+                "-s",
+                "test_versions.py",
+            )
+        )
+        output = _run(command, cwd=project, env=environment)
+        assert "4 passed" in output
+        assert len(set(re.findall(r"execution=(\S+)", output))) == 4
+        for kind, versions in (("codex", (PIN_A, PIN_B)), ("pi", pi_versions)):
+            for version in versions:
+                assert f"{kind}: requested={version} resolved={version}" in output
+        _assert_tool_calls(marker_path, expected_count=4)
+        assert len(feed.requests) == 8
 
 
 def test_cli_selected_pin_fixture_runs_from_manifest_copy(

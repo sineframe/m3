@@ -4,20 +4,21 @@
   "owning_pages": ["guides-agents-versions"],
   "target_release": "resolved from the published release pin",
   "python": ">=3.10",
-  "files": ["shipping_server.py", "test_versions.py"],
+  "files": ["shipping_server.py", "test_versions.py", "test_sdk_versions.py"],
   "displayed_blocks": [
     {"page": "guides-agents-versions", "label": "shipping MCP server", "source": "shipping_server.py", "kind": "file"},
-    {"page": "guides-agents-versions", "label": "two pinned versions test", "source": "test_versions.py", "kind": "file"}
+    {"page": "guides-agents-versions", "label": "shared managed runtime comparison test", "source": "test_versions.py", "kind": "file"},
+    {"page": "guides-agents-versions", "label": "SDK two-version selection", "source": "test_sdk_versions.py", "kind": "file"}
   ],
-  "dependencies": ["sf-m3[pytest]", "Codex login", "model available to the configured Codex account"],
+  "dependencies": ["sf-m3[pytest]", "sf-m3-cli for CLI selections", "Codex login and model access", "OpenAI API key and Pi provider/model access for the Pi variation"],
   "working_directory": "compare-versions project directory",
   "scenarios": [
     {
       "id": "compare-two-codex-versions",
-      "command": "python -m pytest -q test_versions.py",
+      "command": "m3 test --python \"$M3_DOCS_PYTHON\" --runtime managed --harness \"codex@${M3_DOCS_CODEX_VERSION_A}=${M3_DOCS_CODEX_MODEL}\" --harness \"codex@${M3_DOCS_CODEX_VERSION_B}=${M3_DOCS_CODEX_MODEL}\" -- -v -s test_versions.py",
       "working_directory": "compare-versions project directory",
       "expected_exit_code": 0,
-      "assertions": ["two different execution IDs", "each execution records its requested and resolved version", "each execution records exactly one successful shipping_quote call and the structured quote"],
+      "assertions": ["two separately reported pytest cases under one M3 run", "two different execution IDs", "each execution records and prints its requested and resolved version and quote", "each execution records exactly one successful shipping_quote call and the structured quote"],
       "compatibility": {
         "harness": "Codex CLI managed runtime",
         "versions": ["M3_DOCS_CODEX_VERSION_A", "M3_DOCS_CODEX_VERSION_B"],
@@ -26,10 +27,37 @@
         "status": "requires live verification and provider access"
       },
       "verification": "live-provider"
+    },
+    {
+      "id": "compare-codex-and-pi-versions",
+      "command": "m3 test --python \"$M3_DOCS_PYTHON\" --runtime managed --harness \"codex@${M3_DOCS_CODEX_VERSION_A}=${M3_DOCS_CODEX_MODEL}\" --harness \"codex@${M3_DOCS_CODEX_VERSION_B}=${M3_DOCS_CODEX_MODEL}\" --harness \"pi@${M3_DOCS_PI_VERSION_A}=${M3_DOCS_PI_MODEL}\" --harness \"pi@${M3_DOCS_PI_VERSION_B}=${M3_DOCS_PI_MODEL}\" --credential-env pi:OPENAI_API_KEY=M3_DOCS_PI_API_KEY -- -v -s test_versions.py",
+      "working_directory": "compare-versions project directory",
+      "expected_exit_code": 0,
+      "assertions": ["two Codex and two Pi versions produce four separately reported cases", "each case prints its resolved runtime and recorded quote", "all four executions use the same prompt and tool-call matcher"],
+      "compatibility": {"harness": "Codex CLI and Pi managed runtimes", "mode": "native live provider", "status": "requires live verification and provider access"},
+      "verification": "live-provider"
+    },
+    {
+      "id": "repeat-cached-codex-versions",
+      "command": "m3 test --python \"$M3_DOCS_PYTHON\" --runtime managed --harness \"codex@${M3_DOCS_CODEX_VERSION_A}=${M3_DOCS_CODEX_MODEL}\" --harness \"codex@${M3_DOCS_CODEX_VERSION_B}=${M3_DOCS_CODEX_MODEL}\" -- -v -s test_versions.py",
+      "working_directory": "compare-versions project directory",
+      "expected_exit_code": 0,
+      "assertions": ["repeat the first comparison after both assets are cached", "runtime progress reports loaded from cache for both pins", "two new executions rerun the same tool-use contract"],
+      "compatibility": {"harness": "Codex CLI managed runtime", "mode": "native live provider", "status": "requires live verification and provider access"},
+      "verification": "live-provider"
+    },
+    {
+      "id": "sdk-two-codex-versions",
+      "command": "python -m pytest -v -s test_sdk_versions.py",
+      "working_directory": "compare-versions project directory",
+      "expected_exit_code": 0,
+      "assertions": ["two distinct execution IDs", "both requested and resolved versions equal the explicit pins", "both tool-call assertions pass"],
+      "compatibility": {"harness": "Codex CLI managed runtime", "mode": "native live provider", "status": "requires live verification and provider access"},
+      "verification": "live-provider"
     }
   ],
-  "network": "The server is local stdio. Each pinned runtime requires release metadata and archive access unless it already has a valid cache entry. Both runs require model provider access through the configured Codex login.",
-  "credentials": "Use the existing Codex login and select a model available to that account. Runtime download does not create provider credentials.",
+  "network": "The server is local stdio. Each pinned runtime requires release metadata and archive access unless it already has a valid cache entry. Every execution, including cache-hit repeats, needs model provider access.",
+  "credentials": "Codex uses its eligible existing login. The Pi variation maps M3_DOCS_PI_API_KEY to the child OPENAI_API_KEY and selects an OpenAI provider/model. Each execution has separate writable harness state; runtime acquisition does not authenticate a provider.",
   "cleanup": "MCPTestKit closes each harness and server process; managed binaries remain in the user cache unless an explicit temporary cache is supplied.",
   "verification_mode": "live-provider"
 }

@@ -1,20 +1,25 @@
 ---
-title: "Compare harness versions"
-description: "Run one unchanged agent test with two pinned native harness versions and compare runtime identities and tool-call results."
+title: "Compare agent harnesses and versions"
+description: "Run the same test across pinned agent harnesses in isolated runtimes and compare each execution's recorded tool-call result."
 ---
 
-# Compare harness versions
+# Compare agent harnesses and versions
 
-Run the same prompt, server, and assertions twice with explicit runtime pins
-when you need to compare harness releases. Each run gets a separate execution
-identity. This example uses one Codex model and two versions so the harness
-version is the only changed selection.
+Run one test across agent harnesses and their versions, with a separate runtime
+identity and tool-call result for each selection. Managed mode acquires each
+pinned executable and M3 gives every execution its own temporary home and
+harness configuration. Downloaded binaries are shared through the runtime cache.
+
+Start with two Codex versions and one model to compare a change in harness
+version. Then add two Pi versions to the same command without changing the
+test. Your installed command-line clients are left in place.
 
 ## Requirements
 
-Install `sf-m3[pytest]`, sign in to Codex, and choose a model available to that
-login. Select two distinct version strings that have a release asset for your
-OS and CPU. M3 downloads the executable independently of provider login.
+Install `sf-m3[pytest]` and the standalone M3 CLI on matching releases. Sign in
+to Codex and choose a model available to that login. Select two distinct
+explicit versions with release assets for your OS and CPU. Each pin needs
+network access for acquisition or a valid cache entry; model access is separate.
 
 Install the SDK in the Python environment used to run the test:
 
@@ -22,17 +27,22 @@ Install the SDK in the Python environment used to run the test:
 python -m pip install 'sf-m3[pytest]'
 ```
 
+See [Install and update M3](../../start/install.md) for the standalone CLI.
+Set these values in Bash or zsh before running the project:
+
 ```sh
 export M3_DOCS_CODEX_MODEL='<model available to your Codex login>'
 export M3_DOCS_CODEX_VERSION_A='<first explicit version>'
 export M3_DOCS_CODEX_VERSION_B='<second explicit version>'
+export M3_DOCS_PYTHON="$(command -v python)"
 ```
 
 ## Complete project
 
-Create a directory named `compare-versions`. Add this deterministic shipping
-server and one test that applies the same prompt and call/result assertions to
-both pins.
+Create a directory named `compare-versions` and add both files. The server
+returns a deterministic shipping quote. M3's `agent` fixture supplies each
+selected harness/version independently, so pytest reports a separate result
+for each selection.
 
 `shipping_server.py`:
 
@@ -114,6 +124,148 @@ if __name__ == "__main__":
 `test_versions.py`:
 
 ```python
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+from m3 import ExecutionOutcome, expect
+from m3.types import StdioServer
+
+HERE = Path(__file__).resolve().parent
+PROMPT = "Use shipping:shipping_quote once with weight_kg 2 and zone local."
+EXPECTED_QUOTE = {"amount": 9.0, "currency": "USD"}
+
+pytestmark = pytest.mark.m3(suite_name="runtime-comparison")
+
+
+def test_shipping_quote_across_runtimes(agent) -> None:
+    server = StdioServer(
+        name="shipping",
+        command=sys.executable,
+        args=(str(HERE / "shipping_server.py"),),
+        cwd=str(HERE),
+    )
+    result = agent.run(PROMPT, server=server, timeout=180)
+    assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
+    identity = result.snapshot.agent
+    assert identity is not None
+    runtime = identity.harness
+    assert runtime.runtime == "managed"
+    assert runtime.requested_selector != "latest"
+    assert runtime.requested_selector == runtime.resolved_version
+    expect(result).to_have_tool_call(
+        "shipping_quote",
+        server="shipping",
+        arguments={"weight_kg": 2, "zone": "local"},
+        status="success",
+        count=1,
+        result={"structured_content": EXPECTED_QUOTE},
+        result_partial=True,
+    )
+    quote = result.trace_view.tool_calls[0].result.value.structured_content.value
+    print(
+        f"\n{runtime.kind}: requested={runtime.requested_selector} "
+        f"resolved={runtime.resolved_version} quote={json.dumps(dict(quote), sort_keys=True)}"
+    )
+    print(f"execution={result.snapshot.execution_id}")
+```
+
+## Compare two versions
+
+Run from the `compare-versions` directory. `-v` shows the version in each test
+case name; `-s` shows the resolved identity and returned quote printed by the
+test:
+
+```sh
+m3 test --python "$M3_DOCS_PYTHON" --runtime managed \
+  --harness "codex@${M3_DOCS_CODEX_VERSION_A}=${M3_DOCS_CODEX_MODEL}" \
+  --harness "codex@${M3_DOCS_CODEX_VERSION_B}=${M3_DOCS_CODEX_MODEL}" \
+  -- -v -s test_versions.py
+```
+
+One test expands to two cases under one M3 run. Compare the requested and
+resolved versions, the quote, and each case's `PASSED` or `FAILED` result.
+The two execution IDs identify the separate recorded interactions. A passing
+case returned the expected 9 USD quote through one successful shipping-tool
+call. A failing case retains its harness/version label and assertion details,
+so the other selection's result remains visible.
+
+The server, model, prompt, and assertions stay fixed. Provider responses can
+still vary, so one passing case establishes this tool-use contract for that
+execution.
+
+To inspect why a selection failed, run `m3 ui` from the same directory and
+open the saved run printed by `m3 test`. Each execution records its harness,
+resolved version, model, and observed interactions. See
+[open the saved run](../results/viewer.md).
+
+## Add another harness
+
+For Pi, select a provider/model available to your account and configure its
+credential. This variation uses Pi's OpenAI provider: set `M3_DOCS_PI_MODEL` to
+`openai/<model>` and set `M3_DOCS_PI_API_KEY` to your existing OpenAI API key.
+Pi's isolated home does not inherit a host login. No preinstalled Pi executable
+is needed for managed selection.
+
+```sh
+export M3_DOCS_PI_MODEL='openai/<model available to your account>'
+export M3_DOCS_PI_VERSION_A='<first explicit Pi version>'
+export M3_DOCS_PI_VERSION_B='<second explicit Pi version>'
+```
+
+Run from the same `compare-versions` directory:
+
+```sh
+m3 test --python "$M3_DOCS_PYTHON" --runtime managed \
+  --harness "codex@${M3_DOCS_CODEX_VERSION_A}=${M3_DOCS_CODEX_MODEL}" \
+  --harness "codex@${M3_DOCS_CODEX_VERSION_B}=${M3_DOCS_CODEX_MODEL}" \
+  --harness "pi@${M3_DOCS_PI_VERSION_A}=${M3_DOCS_PI_MODEL}" \
+  --harness "pi@${M3_DOCS_PI_VERSION_B}=${M3_DOCS_PI_MODEL}" \
+  --credential-env pi:OPENAI_API_KEY=M3_DOCS_PI_API_KEY \
+  -- -v -s test_versions.py
+```
+
+The unchanged test now produces four cases:
+
+| Harness | Pins | Model | Assertion in each case |
+| --- | --- | --- | --- |
+| Codex | `M3_DOCS_CODEX_VERSION_A`, `M3_DOCS_CODEX_VERSION_B` | `M3_DOCS_CODEX_MODEL` | One successful shipping call returning 9 USD |
+| Pi | `M3_DOCS_PI_VERSION_A`, `M3_DOCS_PI_VERSION_B` | `M3_DOCS_PI_MODEL` | One successful shipping call returning 9 USD |
+
+Each execution has separate writable home/configuration state and reports its
+own runtime identity and quote. Compare versions within each harness with the
+same model. Across harnesses, account for differences in the model/provider
+selection as well as the harness.
+
+The same selector syntax supports `claude_code` and `opencode`; their provider
+credentials and model identifiers are described in
+[Choose an agent harness](harnesses.md) and the
+[credential reference](../../reference/credentials.md). ACP agents supply
+their own executable and cannot join a command with global `--runtime managed`.
+
+## Repeat with cached runtimes
+
+Run either comparison command again. Explicit pins reuse verified cache entries
+and the CLI reports `loaded from cache` for those assets. The test still
+creates fresh executions with separate writable state and makes new provider
+requests. A cached executable makes repeated version comparisons faster; it
+does not cache model responses.
+
+By default, assets remain in M3's external user cache. To choose another
+external cache, add `--harness-cache-dir PATH` to both commands; see
+[runtime cache management](runtime-cache.md). M3's runtime isolation concerns
+executable selection and per-execution state. It is not an operating-system
+filesystem or network sandbox.
+
+## Select versions through the SDK
+
+For programmatic selection, add `test_sdk_versions.py` beside the server.
+This variant keeps both executions in one Python test and checks their distinct
+identities explicitly:
+
+```python
 import os
 import sys
 from pathlib import Path
@@ -150,17 +302,10 @@ def test_two_codex_versions_have_distinct_recorded_identity() -> None:
         }
         for version in versions
     ]
-
     with MCPTestKit(env={}) as kit:
         results = []
-        for selection in selections:
-            agent = kit.agents([selection])[0]
-            result = agent.run(
-                PROMPT,
-                server=server,
-                tools=["shipping:shipping_quote"],
-                timeout=180,
-            )
+        for agent in kit.agents(selections):
+            result = agent.run(PROMPT, server=server, timeout=180)
             assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
             results.append(result)
             expect(result).to_have_tool_call(
@@ -172,26 +317,29 @@ def test_two_codex_versions_have_distinct_recorded_identity() -> None:
                 result={"structured_content": EXPECTED_QUOTE},
                 result_partial=True,
             )
+            identity = result.snapshot.agent
+            assert identity is not None
+            runtime = identity.harness
+            print(
+                f"\n{runtime.kind}: requested={runtime.requested_selector} "
+                f"resolved={runtime.resolved_version} execution={result.snapshot.execution_id}"
+            )
 
     assert len({result.snapshot.execution_id for result in results}) == 2
     for version, result in zip(versions, results, strict=True):
-        identity = result.snapshot.agent
-        assert identity is not None
-        assert identity.harness.requested_selector == version
-        assert identity.harness.resolved_version == version
+        assert result.snapshot.agent is not None
+        assert result.snapshot.agent.harness.requested_selector == version
+        assert result.snapshot.agent.harness.resolved_version == version
 ```
 
 Run from the `compare-versions` directory:
 
 ```sh
-python -m pytest -q test_versions.py
+python -m pytest -v -s test_sdk_versions.py
 ```
 
-Each execution records its requested and resolved version. Distinct execution
-IDs identify the two runs, and the tool-call matcher requires one successful
-shipping call with the same arguments and quote in each. The server, model,
-prompt, and assertions stay the same, though provider responses can vary
-between runs.
+The CLI workflow gives each selection a separate pytest result; the SDK variant
+prints each identity from its loop and reports one combined pytest result.
 
 See [pinned runtime selection](managed-runtimes.md) and
 [runtime cache management](runtime-cache.md).

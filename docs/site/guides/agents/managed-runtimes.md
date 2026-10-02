@@ -34,8 +34,8 @@ export M3_DOCS_PYTHON="$(command -v python)"
 Use a semantic version such as `0.155.1`; `latest` is not a pin. The native
 adapter name is `codex`. The same selection field names apply to `pi`,
 `claude_code`, and `opencode`; see [the compatibility reference](../../reference/compatibility.md)
-for native support and [compare harness versions](versions.md) for a two-pin
-run.
+for native support. To run one test across several pins or harnesses, see
+[Compare agent harnesses and versions](versions.md).
 
 ## Complete project
 

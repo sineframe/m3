@@ -16,7 +16,7 @@ Examples are explained and run from their owning guides:
 - [Continuing agent session](guides/agents/sessions.md)
 - [Configure credentials](guides/credentials.md)
 - [Pin a native harness runtime](guides/agents/managed-runtimes.md)
-- [Compare runtime versions](guides/agents/versions.md)
+- [Compare agent harnesses and versions](guides/agents/versions.md)
 - [Inspect and maintain the runtime cache](guides/agents/runtime-cache.md)
 - [Saved history and baselines](guides/results/baselines.md)
 - [Custom evaluator](guides/evaluations/custom.md)

@@ -9,6 +9,13 @@ import socket
 import sys
 import time
 
+if os.environ.get("M3_DOCS_LOCAL_PROVIDER") == "1":
+    from docs_live_mcp_client import call_server
+
+    from m3.harness.pi_extension.bridge import qualified_tool_name
+else:
+    call_server = None
+
 control_socket: socket.socket | None = None
 control_host = os.environ.get("M3_PI_CONTROL_HOST")
 control_port = os.environ.get("M3_PI_CONTROL_PORT")
@@ -127,6 +134,29 @@ for line in sys.stdin:
             ),
             flush=True,
         )
+        if call_server is not None:
+            servers = json.loads(os.environ["M3_MCP_CONFIG"])
+            name, server = next(iter(servers.items()))
+            tool, arguments, result = call_server(
+                {"name": name, **server}, str(frame.get("message", ""))
+            )
+            qualified = qualified_tool_name(name, tool)
+            for event in (
+                {
+                    "type": "tool_execution_start",
+                    "toolCallId": "docs-pi-call",
+                    "toolName": qualified,
+                    "args": arguments,
+                },
+                {
+                    "type": "tool_execution_end",
+                    "toolCallId": "docs-pi-call",
+                    "toolName": qualified,
+                    "result": result,
+                    "isError": False,
+                },
+            ):
+                print(json.dumps(event), flush=True)
         print(
             json.dumps({"type": "message_end", "message": {"stopReason": "stop"}}),
             flush=True,
