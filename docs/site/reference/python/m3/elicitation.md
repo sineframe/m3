@@ -5,10 +5,10 @@ description: "Reference for immutable elicitation plans, matching, response acti
 
 # Elicitation plans and direct request handling
 
-M3 provides immutable expectations for MCP form and URL elicitation. A plan
-describes what one action may ask and what M3 should return. Attach a complete
-plan to each action that can trigger elicitation. Each action starts fresh
-matcher state; reusing an immutable plan does not share progress.
+An elicitation plan is an immutable description of the form or URL requests an
+MCP action may make and the responses M3 should return. Attach a complete plan
+to each action that can request input. M3 starts new matcher state for every
+action, so reusing a plan does not share progress.
 
 ## Plan helpers
 
@@ -54,13 +54,13 @@ ElicitationPlan`; `maybe_url(...)` has the same signature.
 `optional(child: ElicitationPlan) -> ElicitationPlan` compose completed
 expectations.
 
-`server` may be a non-empty server name or a server definition with a non-empty
-`name`, `key`, or `server_name` attribute. `operation_kind`, `operation_name`,
-`message`, `schema`, `url`, and `elicitation_id` are optional qualifiers. An
-omitted qualifier accepts any observed value; a supplied qualifier must match
-exactly. `request_key` is always required and must be non-empty. A form `schema`
-is compared structurally with the observed request schema. Object key order is
-ignored, while array order and JSON value types matter.
+Pass `server` as a non-empty server name or as a server definition whose
+`name`, `key`, or `server_name` attribute is non-empty. `request_key` is also
+required and must be non-empty. The remaining qualifiers are optional:
+`operation_kind`, `operation_name`, `message`, `schema`, `url`, and
+`elicitation_id`. Omit a qualifier to accept any observed value, or supply one
+to require an exact match. M3 compares a form `schema` structurally. Object key
+order does not matter; array order and JSON value types do.
 
 Each builder returns an unbound leaf. Bind its response with one of these
 methods:
@@ -74,24 +74,23 @@ ElicitationPlan.cancel(self) -> ElicitationPlan
 ```
 
 Form acceptance requires a mapping, including `{}` when the schema permits an
-empty object. URL acceptance takes no content. Decline and cancel have no
-content. Bound responses are immutable and cannot be rebound. To include
-response metadata, validate a complete serialized plan containing the
-`ElicitationResponse` through `ElicitationPlan.model_validate(...)`; this
-rechecks plan invariants rather than mutating a bound response unchecked.
+empty object. URL acceptance, decline, and cancel take no content. Bound
+responses are immutable. To include response metadata, put the
+`ElicitationResponse` in a complete serialized plan and pass it to
+`ElicitationPlan.model_validate(...)`. Validation rechecks the plan invariants
+without mutating an existing bound response.
 
 ## Composition and ordering
 
-All combinators require complete children. A complete leaf has a response
-bound. `sequence(a, b)` consumes `a` in one protocol round and then `b` in a
-later round. It does not make the server issue requests or alter server order.
-`round_of(a, b)` expects exactly the two required direct leaf requests together
-in one round. Its request keys must be unique. `one_of(a, b)` selects one
-distinct non-empty alternative. If an observed round can select paths that
-produce different responses, matching raises `ElicitationExpectationError`
-for ambiguity. `optional(a)` allows the entire child to be skipped.
-`maybe_form` and `maybe_url` mark a leaf occurrence optional; the request may
-also be consumed if it appears.
+Every combinator requires complete children, and a complete leaf has a bound
+response. `sequence(a, b)` consumes `a` in one protocol round and `b` in a
+later round. It matches server order without issuing requests or changing that
+order. `round_of(a, b)` requires both direct leaf requests in one round, with
+unique request keys. `one_of(a, b)` selects one distinct, non-empty
+alternative. When an observed round can select paths with different responses,
+matching raises `ElicitationExpectationError` for ambiguity. `optional(a)`
+allows its whole child to be skipped. `maybe_form` and `maybe_url` make one
+leaf occurrence optional while still consuming it if it appears.
 
 An optional leaf may be followed by a required leaf. The matcher considers
 both choices and resolves from the observed request. A single non-empty round
@@ -128,7 +127,6 @@ read-only properties are `is_complete`, `mode`, `requested_schema`, and
 compared by `canonical_identity()` or `canonical_json()`. Both canonical
 identity methods return a stable JSON string; equivalent JSON numbers such as
 `1` and `1.0` compare equally, while booleans and array order remain distinct.
-The SDK creates fresh matching state for every action that receives a plan.
 
 `PendingElicitationRound` is an immutable managed-input view. Its fields are
 `round_id`, `execution_id`, `logical_operation_id`, `server`,
@@ -139,30 +137,29 @@ and each mapping key must equal the contained request's `request_key`.
 
 ## Binding a plan to an action
 
-Direct client methods accept `elicitation: ElicitationPlan | None = None` and
-`elicitation_round_limit: int = 10` on `call_tool`, `get_prompt`, and
-`read_resource`. The same plan cannot be combined with `input_responses`,
-`request_state`, or `allow_input_required`. M3 replays the same operation
-arguments with the opaque `request_state` and only the current round's keyed
-responses. The response schema is validated before retry. Direct sync and async
-SDK use needs no agent harness.
+The direct client methods `call_tool`, `get_prompt`, and `read_resource` accept
+`elicitation: ElicitationPlan | None = None` and
+`elicitation_round_limit: int = 10`. An operation cannot combine a plan with
+`input_responses`, `request_state`, or `allow_input_required`. M3 replays the
+same operation arguments with the opaque `request_state` and only the current
+round's keyed responses, validating the response schema before retry. Neither
+synchronous nor asynchronous direct SDK use needs an agent harness.
 
-Agent action methods accept the same plan and default round limit on
-`agent.run(...)`, `agent.submit(...)` (the submitted execution's `elicitation`
-field is a related initial-action boundary), and `session.send(...)`. A
+Agent methods `agent.run(...)`, `agent.submit(...)`, and `session.send(...)`
+accept the same plan and default round limit. The `elicitation` field on a
+submitted execution applies to its initial action. A
 `session.send` plan applies to that turn only; create a fresh complete plan for
 each later turn that can elicit. Do not attach a plan to long-lived session
-creation. Current agent support is tested for Codex CLI `0.156.1` and Pi
-`0.85.1`. Support boundaries differ: action-bound elicitation is available on
-the Codex and Pi paths tested. Managed-input `elicitation_round_limit` on Pi
-must be from 1 through 1024; values above 1024 raise `ModelValidationError`.
-Codex has no equivalent adapter-specific maximum in this path. Other agent
-harness paths are unverified. See
+creation. M3 tests action-bound elicitation with Codex CLI `0.156.1` and Pi
+`0.85.1`; other agent harness paths are unverified. Managed-input
+`elicitation_round_limit` on Pi must be from 1 through 1024; values above 1024
+raise `ModelValidationError`.
+Codex has no equivalent adapter-specific maximum in this path. See
 [compatibility](../../compatibility.md).
 
-An accepted URL response means M3 returns the configured `accept` action for
-that request. M3 does not visit the URL, perform authentication, or assert that
-an external checkout or consent flow completed.
+For an accepted URL response, M3 returns the configured `accept` action. It
+does not visit the URL, authenticate, or assert that an external checkout or
+consent flow completed.
 
 ## Direct request and response models
 
@@ -178,18 +175,14 @@ round-trip: [Handle elicitation directly with the SDK](../../../guides/elicitati
 
 ## Validation and limits
 
-Accepted form content is validated against the server's requested JSON Schema
-using Draft 2020-12. Local references such as `#/$defs/address` work. Remote
-references are not fetched; an unresolved remote `$ref` fails validation.
-M3 validates responses before sending them, but a server still decides whether
-the returned content meets its own application rules. Request matching does
-not fetch or visit URLs.
-
-The direct and managed request paths reject non-empty remote schema references
-without network retrieval. In the managed path, response maps must contain
-exactly the pending keys and schema validation plus persistence happen in one
-store transaction. The managed-input reference documents the persistent
-contract: [Managed-input API](managed-input.md).
+M3 validates accepted form content against the server's requested JSON Schema
+using Draft 2020-12. Local references such as `#/$defs/address` work. M3 does
+not fetch remote references, so an unresolved remote `$ref` fails validation.
+The server still decides whether the returned content meets its application
+rules. In the managed path, response maps must contain exactly the pending
+keys, and schema validation and persistence happen in one store transaction.
+The managed-input reference documents the persistent contract:
+[Managed-input API](managed-input.md).
 
 ## Typed errors
 

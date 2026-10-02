@@ -5,19 +5,20 @@ description: "Combine address alternatives, optional requests, same-round forms,
 
 # Compose elicitation workflows
 
-Use plan combinators when one operation can ask for one of several forms,
-skip an optional form, request multiple forms together, and then ask a URL
-question in a later round. The test below checks the server's observed retry
-attempts and keyed responses.
+Plan combinators describe alternatives, optional requests, requests that share
+a round, and requests that arrive in later rounds. The server in this example
+records every retry so the tests can inspect each retry's state and response
+keys.
 
 ## Requirements
 
-From the repository root, install the candidate
-package and pytest with `python -m pip install -e 'sdk[pytest]'`. An index
-install of `sf-m3[pytest]` selects a published release. Works with Python
-3.10 or newer and MCP protocol revision `2026-07-28` through direct SDK
-operations. The tests use a local in-process server and need no agent harness,
-network service, or credentials.
+Works with Python 3.10 or newer and MCP protocol revision `2026-07-28` through
+direct SDK operations. The tests use a local in-process server and need no
+agent harness, network service, or credentials.
+
+From the repository root, install the candidate package and pytest with
+`python -m pip install -e 'sdk[pytest]'`. Installing `sf-m3[pytest]` from the
+package index selects a published release.
 
 ## Complete server and tests
 
@@ -271,13 +272,12 @@ Captured output:
 3 passed
 ```
 
-The first case sends the business address in its own round, then sends the
-URL acceptance in the next request. Its three recorded attempts are initial
-request, address retry, and verification retry; each retry includes only its
-current response key and carries the server's current `request_state`. The
-optional case skips both address branches and sends only verification. The
-same-round case sends both address keys together, followed by verification.
-An accepted URL response does not visit or complete the URL.
+`test_address_alternative_then_url_uses_later_round` records an initial
+request, an address retry, and a verification retry. Each retry contains only
+the response for that round and carries the current `request_state`. The
+optional plan skips both address branches and sends only verification. With
+`round_of`, both address responses travel together before verification. URL
+acceptance sends the configured action without visiting the URL.
 
 The source project is available at
 [`sdk/examples/docs/elicitation-composed`](../../../../sdk/examples/docs/elicitation-composed).

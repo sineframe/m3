@@ -1,16 +1,14 @@
 ---
 title: "Managed elicitation input API"
-description: "Reference for persistent execution handles, typed pending rounds, keyed response submission, validation, and recovery limits."
+description: "Reference for persisted elicitation rounds, response submission, and recovery."
 ---
 
 # Managed elicitation input API
 
-Managed input pauses an agent action at an MCP elicitation request and stores
-the request until a caller submits a response. Enable it on an agent execution
-with `human_input="managed"`. The execution store must provide persistent
-managed-input storage. An in-memory store is not sufficient, and managed input
-cannot be combined with an `AgentSpec` that already contains a predefined
-elicitation plan.
+With `human_input="managed"`, an agent action pauses at an MCP elicitation
+request while M3 stores the pending round. The caller can then read the request
+and submit a response. This mode requires persistent managed-input storage and
+cannot be combined with an `AgentSpec` that already has an elicitation plan.
 
 ```python
 import os
@@ -70,11 +68,12 @@ finally:
     store.close()
 ```
 
-This fragment assumes the surrounding application has defined
-`shipping_server` as a configured `StdioServer` binding. The model must be
-available to the signed-in Codex account. `permission_policy="allow"` lets this
-non-destructive teaching tool run without a separate approval handler; choose a
-policy appropriate for the tools in your application. For a complete agent workflow, see
+The surrounding application must define `shipping_server` as a configured
+`StdioServer` binding, and the signed-in Codex account must have access to the
+selected model. Because the shipping tool is non-destructive, the fragment
+uses `permission_policy="allow"` instead of a separate approval handler. Choose
+a policy that fits the tools in your application. For a complete agent
+workflow, see
 [Submit input to a paused execution](../../../guides/elicitation/managed-input.md).
 
 ## Public execution API
@@ -102,13 +101,13 @@ handle.result(timeout: float | None = None) -> ExecutionResult
 handle.cancel() -> None
 ```
 
-The async handle methods are awaitable. `pending_elicitation()` returns the
-single pending round for that execution or `None`. It raises
+The asynchronous handle methods are awaitable. `pending_elicitation()` returns
+the single pending round for that execution or `None`. It raises
 `ManagedInputStateError` if storage contains more than one pending round.
 `respond_elicitation` requires a non-empty round ID and idempotency key.
 `snapshot()` reports the execution lifecycle. `result()` waits for the terminal
-execution result. `cancel()` cancels execution and is separate from an MCP
-elicitation response with `action="cancel"`.
+execution result. `cancel()` cancels the execution; `action="cancel"` is an MCP
+elicitation response to one request.
 
 ## Pending request fields
 
@@ -126,7 +125,7 @@ elicitation response with `action="cancel"`.
 | `created_at` | `datetime` | Round creation time. |
 
 `request_state: str | None = None` and `deadline: datetime | None = None` are
-optional. `request_state` is opaque and is retained for the server retry.
+optional. M3 retains the opaque `request_state` for the server retry.
 Request objects include their mode-specific fields plus optional `meta`,
 `task`, `server`, `operation_kind`, and `operation_name` context.
 When a managed runtime waits on a round with a deadline, expiry raises
@@ -134,10 +133,10 @@ When a managed runtime waits on a round with a deadline, expiry raises
 method enforces the worker lease and response state; it records `deadline`,
 while the managed runtime owns deadline enforcement.
 
-The pending view deliberately excludes internal worker lease tokens. A caller
-uses only the `round_id`, exact keys in `requests`, and an
-`idempotency_key` it creates and persists with the response. Never use the
-author's sample IDs in an application.
+`PendingElicitationRound` excludes internal worker lease tokens. Callers use
+the `round_id`, the exact keys in `requests`, and an `idempotency_key` created
+and persisted with the response. Application code must use IDs from its own
+pending round, not the sample IDs shown here.
 
 ## Response validation and idempotency
 
@@ -147,12 +146,12 @@ content that validates against the request schema. A URL response rejects
 form content; an accepted URL action only records consent and does not browse
 to the URL. `decline` and `cancel` responses carry no content.
 
-Response validation and the transition from `pending` to
-`response_validated` commit atomically. Invalid keys or schema content leave
-the round pending. Repeating a successful submission with the same
-idempotency key and identical response returns the existing record. Reusing
-that key with a different response raises `ManagedInputConflict`. Keep and
-reuse the same key if a submission retry may follow a lost acknowledgement.
+The store validates the response and changes `pending` to
+`response_validated` in one transaction. Invalid keys or schema content leave
+the round pending. Repeating a successful submission with the same idempotency
+key and response returns the existing record; using that key for a different
+response raises `ManagedInputConflict`. Persist the key with the response so a
+retry after a lost acknowledgement reuses both.
 Expired leases, a replaced worker owner, a nonexistent round, and terminal
 rounds reject stale writes with typed managed-input errors.
 
@@ -180,34 +179,31 @@ The store protocol methods are `create_round`, `get_round`, `list_rounds`,
 and worker coordination APIs; application code should submit through the
 execution handle so the worker is notified after a response commit.
 
-`round_index` is zero-based and must be less than `round_limit`. Response maps
-are stored with an atomic keyed validation transaction. Persistence uses
-SQLite transactions and compare-and-set owner and lease tokens to prevent a
-stale worker from overwriting a replacement worker's state. `redacted_responses`
-returns a diagnostic projection, not the operational response payload.
+`round_index` is zero-based and must be less than `round_limit`. The store
+uses SQLite transactions and compare-and-set owner and lease tokens to stop a
+stale worker from overwriting a replacement worker's state.
+`redacted_responses` returns a diagnostic projection instead of the operational
+response payload.
 
 ## Reopening a store and recovery boundary
 
-Discard the store object and construct a new one on the same database path to
-read its managed-input records.
-`SQLiteExecutionStore` resolves `managed_input_store` lazily; the corresponding
-`SQLiteManagedInputStore` constructed on the same database can read the round
-and its response status. This store uses per-operation connections and has no
-`close()` method. This storage read does not restart an execution worker or
-reopen the native harness action. The managed-input guide demonstrates the
-supported store-level check by creating its own execution and round, closing
-and reopening SQLite, repeating an identical response with the same key, and
+To read managed-input records after reopening a database, discard the store
+object and construct another one with the same path. `SQLiteExecutionStore`
+resolves `managed_input_store` lazily, and a `SQLiteManagedInputStore` on the
+same database can read the round and its response status. The managed-input
+store uses one connection per operation and has no `close()` method. Reading
+the stored round does not restart a worker or reopen the native harness action.
+The [managed-input guide](../../../guides/elicitation/managed-input.md) tests
+reopening SQLite, retrying an identical response with the same key, and
 rejecting an expired lease.
 
-Persistence of a round does not prove that a native harness process or its
-interactive operation can resume. If a worker disappears while it owns an
-unresolved native elicitation, worker recovery marks the managed round `failed`
-with `recovery_unavailable` and terminalizes the execution as failed.
-The round does not become pending again, and a late response cannot make it
-resumable. A lease token, persisted native resume token, or delivery
-idempotency key alone is not proof that retrying the native action is safe.
-Persistent worker tests verify the reopened terminal result and prevent a
-replacement worker from claiming it. See
+Persisting a round does not make a native harness process resumable. If a
+worker disappears while it owns an unresolved native elicitation, recovery
+marks the round `failed` with `recovery_unavailable` and finishes the execution
+as failed. The round does not become pending again, and a late response cannot
+resume it. A lease token, native resume token, or delivery idempotency key is
+not enough to make a retry safe. The reopened execution keeps its terminal
+result, and a replacement worker cannot claim the round. See
 [execution lifecycle](../../../concepts/lifecycle.md) for terminal outcomes.
 
 ## Typed errors

@@ -5,18 +5,19 @@ description: "Read an InputRequiredResult, preserve its request state, and submi
 
 # Handle elicitation directly with the SDK
 
-Use manual handling when application code must inspect a server's
-`InputRequiredResult` and decide how to answer. Pass the returned opaque
-`request_state` and a response mapping under the returned request key on the
-next call.
+Manual handling exposes a server's `InputRequiredResult` to application code.
+Retry the operation with the returned opaque `request_state` and a response
+mapping keyed by the server's request name.
 
 ## Requirements
 
 Works with Python 3.10 or newer and MCP protocol revision `2026-07-28` through
-direct SDK operations. Install the candidate from this checkout with
+direct SDK operations. The example uses a local MCP transport and needs no
+model, credentials, or network service.
+
+Install the candidate from this checkout with
 `python -m pip install -e 'sdk[pytest]'`. An index install of
-`sf-m3[pytest]` selects a published release. This example uses MCP protocol
-local transports; it needs no model, credentials, or network service.
+`sf-m3[pytest]` selects a published release.
 
 ## Complete server and test
 
@@ -141,11 +142,10 @@ Captured output:
 1 passed
 ```
 
-The assertions show that the first call returns a typed pending result, the
-second call reuses its state verbatim and responds under `shipping_address`,
-and the server returns a successful booking result. The server owns the
-meaning of `request_state`; application code should preserve the returned
-value rather than construct it.
+The first call returns a typed pending result. The retry reuses its state
+verbatim, responds under `shipping_address`, and receives a successful booking
+result. Because the server owns the meaning of `request_state`, application
+code must preserve the returned value instead of constructing one.
 
 Manual handling is mutually exclusive with a predefined `elicitation` plan
 on the same direct operation. Combining them raises `ModelValidationError`.

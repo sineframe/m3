@@ -241,7 +241,7 @@
       "id": "guides-elicitation-managed-input",
       "title": "Submit input to a paused execution",
       "source": "guides/elicitation/managed-input.md",
-      "description": "Managed input lets an agent execution pause while it waits for a person’s response. The caller reads the persisted request, submits a response keyed by the request name, then waits for the worker to finish.",
+      "description": "Pause an agent execution for MCP elicitation, submit a keyed response, and wait for the worker to finish.",
       "kind": "guides"
     },
     {
@@ -255,7 +255,7 @@
       "id": "guides-elicitation-plans",
       "title": "Plan answers to elicitation requests",
       "source": "guides/elicitation/plans.md",
-      "description": "An elicitation plan describes the requests an operation may make and the response M3 should submit. Attach the plan to the action that can trigger those requests, then assert the action’s result.",
+      "description": "Build an elicitation plan, attach it to one action, and assert the result.",
       "kind": "guides"
     },
     {
@@ -491,7 +491,7 @@
       "id": "reference-python-m3-managed-input",
       "title": "Managed elicitation input API",
       "source": "reference/python/m3/managed-input.md",
-      "description": "Reference for persistent execution handles, typed pending rounds, keyed response submission, validation, and recovery limits.",
+      "description": "Reference for persisted elicitation rounds, response submission, and recovery.",
       "kind": "reference"
     },
     {
