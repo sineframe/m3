@@ -101,7 +101,7 @@ def test_ci_upload_publishes_exact_run_and_strips_access_token(monkeypatch, tmp_
     assert "credential_env" not in captured["upload"][1]
 
 
-def test_ci_without_upload_never_calls_publisher(monkeypatch, tmp_path):
+def test_ci_without_upload_never_inspects_or_publishes(monkeypatch, tmp_path):
     import m3_cli.ci_upload as ci_upload
     import m3_cli.supervisor as supervisor
 
@@ -109,7 +109,17 @@ def test_ci_without_upload_never_calls_publisher(monkeypatch, tmp_path):
     monkeypatch.setattr(
         supervisor,
         "run_ci_test",
-        lambda **_kwargs: RunResult(0, run_id="run-local", project_root=tmp_path),
+        lambda **_kwargs: RunResult(
+            0,
+            run_id="run-local",
+            database_path=tmp_path / "results.sqlite",
+            project_root=tmp_path,
+        ),
+    )
+    monkeypatch.setattr(
+        ci_upload,
+        "record_upload_inspection",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("inspected")),
     )
     monkeypatch.setattr(
         ci_upload,
@@ -226,15 +236,6 @@ def _inspection_fails(monkeypatch, tmp_path):
     )
 
 
-def test_ci_inspection_failure_keeps_local_test_outcome(monkeypatch, tmp_path, capsys):
-    _inspection_fails(monkeypatch, tmp_path)
-    assert main(["ci", "test", "--project-root", str(tmp_path)]) == 0
-    assert capsys.readouterr().err == (
-        "m3 ci: upload inspection failed: execution exec-1 report is 20 bytes; "
-        "limit is 10; local test result is unchanged\n"
-    )
-
-
 def test_ci_requested_upload_stops_when_inspection_fails(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
     _inspection_fails(monkeypatch, tmp_path)
@@ -245,11 +246,12 @@ def test_ci_requested_upload_stops_when_inspection_fails(monkeypatch, tmp_path, 
     )
 
 
-def test_ci_without_upload_persists_mapped_source_names(monkeypatch, tmp_path):
+def test_ci_upload_inspects_with_mapped_source_names(monkeypatch, tmp_path):
     import m3_cli.ci_upload as ci_upload
     import m3_cli.supervisor as supervisor
 
     captured = []
+    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
     monkeypatch.setenv("DEPLOY_CRED", "opaque-deployment-credential")
     monkeypatch.setattr(
         supervisor,
@@ -266,11 +268,13 @@ def test_ci_without_upload_persists_mapped_source_names(monkeypatch, tmp_path):
         "record_upload_inspection",
         lambda *args: captured.append(args),
     )
+    monkeypatch.setattr(ci_upload, "publish_run", lambda *_args, **_kwargs: None)
     assert (
         main(
             [
                 "ci",
                 "test",
+                "--upload",
                 "--credential-env",
                 "codex:VENDOR_API_KEY=DEPLOY_CRED",
                 "--project-root",
@@ -394,3 +398,185 @@ def test_upload_command_reports_trusted_reason_once(
     )
     assert main(["upload", "run-1", "--project-root", str(tmp_path)]) == 2
     assert capsys.readouterr().err == message + "\n"
+
+
+def test_test_upload_requires_login_before_starting_pytest(
+    monkeypatch, tmp_path, capsys
+):
+    import m3_cli.auth as auth
+    import m3_cli.supervisor as supervisor
+
+    for name in ("M3_ACCESS_TOKEN", "CI", "GITHUB_ACTIONS", "GITLAB_CI"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(auth, "load_saved_token", lambda _url: None)
+    monkeypatch.setattr(
+        supervisor,
+        "run_test_with_runs",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("pytest started")),
+    )
+    assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 2
+    assert "m3 test: M3 access is required" in capsys.readouterr().err
+
+
+def test_test_upload_records_inspection_and_publishes_run(monkeypatch, tmp_path):
+    import m3_cli.ci_upload as ci_upload
+    import m3_cli.supervisor as supervisor
+    from m3.feedback import build_feedback, export_feedback
+    from m3.storage import SQLiteExecutionStore
+
+    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
+    database = tmp_path / "results.sqlite"
+
+    def run_test(**kwargs):
+        assert "M3_ACCESS_TOKEN" not in kwargs["environment"]
+        store = SQLiteExecutionStore(database)
+        try:
+            store.ensure_project("2a75f9d8-7dfa-4a30-b594-7526448d19bb", "Example")
+            store.save_test_run(
+                "run-test",
+                {
+                    "run_id": "run-test",
+                    "status": "finished",
+                    "project_id": "2a75f9d8-7dfa-4a30-b594-7526448d19bb",
+                },
+            )
+            feedback = build_feedback(store, "run-test")
+            export_feedback(feedback, store, tmp_path / ".m3" / "reports" / "run-test")
+        finally:
+            store.close()
+        return RunResult(
+            0,
+            run_id="run-test",
+            database_path=database,
+            project_root=tmp_path,
+        )
+
+    uploaded = []
+    monkeypatch.setattr(supervisor, "run_test_with_runs", run_test)
+    monkeypatch.setattr(
+        ci_upload,
+        "upload_current_run",
+        lambda *args, **kwargs: uploaded.append((args, kwargs)),
+    )
+    assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 0
+    store = SQLiteExecutionStore(database)
+    try:
+        manifest = store.get_test_run("run-test")
+        assert manifest["upload_scan_clean"] is True
+        assert len(manifest["upload_scan_digest"]) == 64
+    finally:
+        store.close()
+    assert len(uploaded) == 1
+    assert uploaded[0][0][0].run_id == "run-test"
+
+
+def test_test_upload_inspection_failure_keeps_pytest_status_and_skips_upload(
+    monkeypatch, tmp_path, capsys
+):
+    import m3_cli.ci_upload as ci_upload
+    import m3_cli.supervisor as supervisor
+
+    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
+    monkeypatch.setattr(
+        supervisor,
+        "run_test_with_runs",
+        lambda **_kwargs: RunResult(
+            1,
+            run_id="run-inspection-failure",
+            database_path=tmp_path / "results.sqlite",
+            project_root=tmp_path,
+        ),
+    )
+    monkeypatch.setattr(
+        ci_upload,
+        "record_upload_inspection",
+        lambda *_args: (_ for _ in ()).throw(CLIError("inspection failed")),
+    )
+    monkeypatch.setattr(
+        ci_upload,
+        "publish_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("uploaded")),
+    )
+    assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 1
+    assert capsys.readouterr().err == (
+        "m3 test: publishing failed: inspection failed; fix the cause and rerun tests\n"
+    )
+
+
+def test_test_upload_skips_inspection_and_upload_for_other_pytest_status(
+    monkeypatch, tmp_path
+):
+    import m3_cli.ci_upload as ci_upload
+    import m3_cli.supervisor as supervisor
+
+    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
+    monkeypatch.setattr(
+        supervisor,
+        "run_test_with_runs",
+        lambda **_kwargs: RunResult(
+            3,
+            run_id="run-early-failure",
+            database_path=tmp_path / "results.sqlite",
+            project_root=tmp_path,
+        ),
+    )
+    monkeypatch.setattr(
+        ci_upload,
+        "record_upload_inspection",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("inspected")),
+    )
+    monkeypatch.setattr(
+        ci_upload,
+        "publish_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("uploaded")),
+    )
+    assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 3
+
+
+def test_test_upload_rejects_ui_combination(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
+    assert main(["test", "--upload", "--ui", "--project-root", str(tmp_path)]) == 2
+    assert "--upload cannot be combined with --ui" in capsys.readouterr().err
+
+
+def test_upload_refuses_run_without_inspection(monkeypatch, tmp_path, capsys):
+    from m3.feedback import build_feedback, export_feedback
+    from m3.storage import SQLiteExecutionStore
+
+    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
+    database = tmp_path / "results.sqlite"
+    store = SQLiteExecutionStore(database)
+    try:
+        store.ensure_project("2a75f9d8-7dfa-4a30-b594-7526448d19bb", "Example")
+        store.save_test_run(
+            "run-uninspected",
+            {
+                "run_id": "run-uninspected",
+                "status": "finished",
+                "project_id": "2a75f9d8-7dfa-4a30-b594-7526448d19bb",
+            },
+        )
+        feedback = build_feedback(store, "run-uninspected")
+        export_feedback(
+            feedback, store, tmp_path / ".m3" / "reports" / "run-uninspected"
+        )
+    finally:
+        store.close()
+    assert (
+        main(
+            [
+                "upload",
+                "run-uninspected",
+                "--project-root",
+                str(tmp_path),
+                "--results-db",
+                str(database),
+            ]
+        )
+        == 2
+    )
+    assert capsys.readouterr().err == (
+        "m3 upload: run run-uninspected cannot be uploaded: it was not started with "
+        "--upload, pytest did not exit 0 or 1, or its credential scan failed; rerun "
+        "the tests with --upload\n"
+    )

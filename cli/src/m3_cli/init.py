@@ -31,7 +31,7 @@ ANTHROPIC_API_KEY=
 # LLMJudge(model=...) reads this key by default.
 M3_JUDGE_API_KEY=
 
-# Only needed for m3 ci test --upload or m3 upload.
+# Used by --upload and m3 upload. Locally, m3 auth login can be used instead.
 M3_ACCESS_TOKEN=
 """
 

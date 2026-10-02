@@ -20,11 +20,17 @@ The failure line names the cause and says what to do next:
 - `fix the cause and rerun tests`: retrying the same run cannot succeed. For
   example, the server rejected the report, a report exceeded its size limit, or
   the run output contains a credential from the test environment. Fix the
-  cause, then rerun the tests to create a new run.
+  cause, then rerun the tests with `--upload` to create a new run.
 
-`m3 ci test` checks the run for these local problems right after pytest
-finishes. Without `--upload`, it prints `upload inspection failed: …` and keeps
-the test result.
+`m3 upload` refuses runs started without `--upload`, runs where pytest did not
+exit 0 or 1, and runs whose credential scan did not complete:
+
+```text
+m3 upload: run RUN_ID cannot be uploaded: it was not started with --upload, pytest did not exit 0 or 1, or its credential scan failed; rerun the tests with --upload
+```
+
+See the [`m3 upload` reference](../reference/cli/index.md#m3-upload-run-id) for
+every condition.
 
 ## Token no longer works
 

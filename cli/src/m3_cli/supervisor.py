@@ -30,7 +30,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from .branding import M3_ASCII_ART
-from .ci_credentials import parse_credential_mapping
+from .ci_credentials import ACCESS_TOKEN_ENV, parse_credential_mapping
 
 if typing.TYPE_CHECKING:
     import tomli as _tomllib
@@ -440,23 +440,25 @@ def discover_env_file(
 
 def _test_environment(
     env_file: str | os.PathLike[str] | None, project_root: Path
-) -> dict[str, str] | None:
+) -> dict[str, str]:
     """Return a child environment with explicit or discovered dotenv values."""
     path = discover_env_file(env_file, project_root)
     if path is None:
-        return None
-    if not path.is_file():
-        raise ProjectPythonError(f"env file was not found: {path}")
-    try:
-        from dotenv import dotenv_values
+        child = dict(os.environ)
+    else:
+        if not path.is_file():
+            raise ProjectPythonError(f"env file was not found: {path}")
+        try:
+            from dotenv import dotenv_values
 
-        values = dotenv_values(str(path), interpolate=False)
-    except Exception as exc:
-        raise ProjectPythonError(f"could not read env file: {path}") from exc
-    child = dict(os.environ)
-    for key, value in values.items():
-        if key and value is not None and key not in child:
-            child[key] = value
+            values = dotenv_values(str(path), interpolate=False)
+        except Exception as exc:
+            raise ProjectPythonError(f"could not read env file: {path}") from exc
+        child = dict(os.environ)
+        for key, value in values.items():
+            if key and value is not None and key not in child:
+                child[key] = value
+    child.pop(ACCESS_TOKEN_ENV, None)
     return child
 
 

@@ -6,7 +6,7 @@
 
 | Line | Meaning | What to do |
 |---|---|---|
-| `M3 run` | The run ID created by this invocation. | Use it with `--baseline` and `m3 upload`. |
+| `M3 run` | The run ID created by this invocation. | Use it with `--baseline`. If a run started with `--upload` was not published, use it with `m3 upload`. |
 | `M3 feedback` | Path of this run's `feedback.json`. | Read selected fields from this path. |
 | `M3 verdicts` | Count of test cases per verdict. | Informational. |
 | `M3 observations` | Tool-error results and completed executions in this run. | A tool error is a server result with `is_error=True`, not a test failure by itself. |

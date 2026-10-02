@@ -100,7 +100,11 @@ def publish_run(
         feedback = _load_feedback(directory, run_id, manifest)
         digest = manifest.get("upload_scan_digest")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise CLIError(f"run {run_id} was not scanned for credentials")
+            raise CLIError(
+                f"run {run_id} cannot be uploaded: it was not started with --upload, "
+                "pytest did not exit 0 or 1, or its credential scan failed; "
+                "rerun the tests with --upload"
+            )
         # Runs scanned before inspection raised on a match recorded ``False``.
         if manifest.get("upload_scan_clean") is not True:
             raise CLIError(

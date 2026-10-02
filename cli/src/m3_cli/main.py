@@ -7,12 +7,15 @@ import importlib.metadata
 import json
 import sys
 from pathlib import Path
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from . import doctor, init, runtime, setup
 from .branding import M3_ASCII_ART
 from .errors import CLIError, UploadError
 from .server_options import add_server_arguments, normalize_server_groups
+
+if TYPE_CHECKING:
+    from .supervisor import TestRunResult
 
 
 class _RedactingArgumentParser(argparse.ArgumentParser):
@@ -129,7 +132,9 @@ def _parser() -> argparse.ArgumentParser:
     for command in (test, ci_test):
         _add_test_arguments(command, include_ui=command is test)
 
-    upload = subparsers.add_parser("upload", help="publish one saved run")
+    upload = subparsers.add_parser(
+        "upload", help="publish a run started with --upload that was not published"
+    )
     upload.add_argument("run_id", metavar="RUN_ID")
     upload.add_argument("--project-root", type=Path, default=None)
     upload.add_argument("--results-db", type=Path, default=None)
@@ -223,6 +228,9 @@ def _add_test_arguments(test: argparse.ArgumentParser, *, include_ui: bool) -> N
     )
     if include_ui:
         test.add_argument(
+            "--upload", action="store_true", help="publish this completed run"
+        )
+        test.add_argument(
             "--ui", action="store_true", help="serve the bundled UI after pytest"
         )
         test.add_argument(
@@ -230,14 +238,56 @@ def _add_test_arguments(test: argparse.ArgumentParser, *, include_ui: bool) -> N
         )
 
 
+def _finish_upload_run(
+    result: TestRunResult,
+    *,
+    resolved: dict[str, str],
+    credential_env: list[str],
+    upload: bool,
+    command_name: str,
+) -> int:
+    run_id = result.run_id
+    database = result.database_path
+    root = result.project_root
+    if run_id and database and root:
+        report_path = root / ".m3" / "reports" / run_id / "feedback.json"
+        if (
+            any(run.run_id == run_id for run in result.new_runs)
+            and report_path.is_file()
+            and not report_path.is_symlink()
+        ):
+            print(f"Run ID: {run_id}")
+            print(f"Local report: {report_path}")
+    if not upload or result.exit_code not in (0, 1):
+        return result.exit_code
+    if not run_id or not database or not root:
+        raise CLIError("the selected run has no saved results to publish")
+    from .ci_upload import publish_run, record_upload_inspection
+
+    try:
+        record_upload_inspection(database, run_id, root, credential_env, resolved)
+    except Exception as exc:
+        print(_inspection_failure(command_name, exc), file=sys.stderr)
+        return result.exit_code or 2
+    try:
+        publish_run(run_id, project_root=root, database=database, environment=resolved)
+    except Exception as exc:
+        print(
+            _publish_failure(
+                command_name,
+                run_id,
+                exc,
+                f"m3 {command_name}: publishing failed; retry with m3 upload {run_id}",
+            ),
+            file=sys.stderr,
+        )
+        return result.exit_code or 2
+    print("Published: yes")
+    return result.exit_code
+
+
 def _command_error_message(command: str) -> str:
     return f"m3 {command}: invalid command or configuration"
-
-
-_INSPECTION_UNAVAILABLE = (
-    "m3 ci: upload inspection unavailable; local test result is unchanged. "
-    "Rerun tests before uploading"
-)
 
 
 def _failure_reason(exc: Exception) -> str | None:
@@ -265,14 +315,15 @@ def _publish_failure(command: str, run_id: str, exc: Exception, fallback: str) -
     return f"m3 {command}: publishing failed: {reason}; fix the cause and rerun tests"
 
 
-def _inspection_failure(exc: Exception, *, upload: bool) -> str:
+def _inspection_failure(command: str, exc: Exception) -> str:
     """Describe a failed upload inspection; it never succeeds on a plain retry."""
     reason = _failure_reason(exc)
     if reason is None:
-        return _INSPECTION_UNAVAILABLE
-    if upload:
-        return f"m3 ci: publishing failed: {reason}; fix the cause and rerun tests"
-    return f"m3 ci: upload inspection failed: {reason}; local test result is unchanged"
+        return (
+            f"m3 {command}: upload inspection unavailable; the run was not "
+            "published. Rerun the tests with --upload"
+        )
+    return f"m3 {command}: publishing failed: {reason}; fix the cause and rerun tests"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -311,6 +362,10 @@ def main(argv: list[str] | None = None) -> int:
 
             is_ci = args.command == "ci"
 
+            if args.command == "test" and args.upload and args.ui:
+                print("m3 test: --upload cannot be combined with --ui", file=sys.stderr)
+                return 2
+
             server_selections = normalize_server_groups(
                 getattr(args, "_server_groups", None)
             )
@@ -333,16 +388,15 @@ def main(argv: list[str] | None = None) -> int:
                 runtime=args.runtime,
                 harness_cache_dir=args.harness_cache_dir,
             )
-            if is_ci:
+            if is_ci or args.upload:
                 from .ci_credentials import (
                     ACCESS_TOKEN_ENV,
                     access_token,
                     resolved_environment,
                     test_environment,
                 )
-                from .ci_metadata import resolve_ci_metadata
-                from .ci_upload import control_plane_url, publish_run
-                from .supervisor import discover_env_file, run_ci_test
+                from .ci_upload import control_plane_url
+                from .supervisor import discover_env_file, run_test_with_runs
 
                 resolved = resolved_environment(
                     discover_env_file(args.env_file, args.project_root)
@@ -353,79 +407,23 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 test_kwargs["env_file"] = None
                 test_kwargs["environment"] = test_environment(resolved)
-                test_kwargs["ci_metadata"] = resolve_ci_metadata(
-                    resolved, args.ci_metadata
-                )
-                result = run_ci_test(**test_kwargs)
-                inspection_failed = False
-                if (
-                    result.exit_code in (0, 1)
-                    and result.run_id
-                    and result.database_path
-                    and result.project_root
-                ):
-                    from .ci_upload import record_upload_inspection
+                if is_ci:
+                    from .ci_metadata import resolve_ci_metadata
+                    from .supervisor import run_ci_test
 
-                    try:
-                        record_upload_inspection(
-                            result.database_path,
-                            result.run_id,
-                            result.project_root,
-                            args.credential_env,
-                            resolved,
-                        )
-                    except Exception as exc:
-                        inspection_failed = True
-                        print(
-                            _inspection_failure(exc, upload=args.upload),
-                            file=sys.stderr,
-                        )
-                if result.run_id and result.project_root and result.database_path:
-                    report_path = (
-                        result.project_root
-                        / ".m3"
-                        / "reports"
-                        / result.run_id
-                        / "feedback.json"
+                    test_kwargs["ci_metadata"] = resolve_ci_metadata(
+                        resolved, args.ci_metadata
                     )
-                    if (
-                        any(run.run_id == result.run_id for run in result.new_runs)
-                        and report_path.is_file()
-                        and not report_path.is_symlink()
-                    ):
-                        print(f"Run ID: {result.run_id}")
-                        print(f"Local report: {report_path}")
-                if not args.upload or result.exit_code not in (0, 1):
-                    return result.exit_code
-                if inspection_failed:
-                    return result.exit_code or 2
-                if (
-                    not result.run_id
-                    or not result.database_path
-                    or not result.project_root
-                ):
-                    raise CLIError("the selected run has no saved results to publish")
-                try:
-                    publish_run(
-                        result.run_id,
-                        project_root=result.project_root,
-                        database=result.database_path,
-                        environment=resolved,
-                    )
-                except Exception as exc:
-                    print(
-                        _publish_failure(
-                            "ci",
-                            result.run_id,
-                            exc,
-                            "m3 ci: publishing failed; "
-                            f"retry with m3 upload {result.run_id}",
-                        ),
-                        file=sys.stderr,
-                    )
-                    return result.exit_code or 2
-                print("Published: yes")
-                return result.exit_code
+                    result = run_ci_test(**test_kwargs)
+                else:
+                    result = run_test_with_runs(**test_kwargs)
+                return _finish_upload_run(
+                    result,
+                    resolved=resolved,
+                    credential_env=args.credential_env,
+                    upload=args.upload,
+                    command_name="ci" if is_ci else "test",
+                )
             return run_test(**test_kwargs)
         if args.command == "upload":
             from .ci_upload import publish_run
