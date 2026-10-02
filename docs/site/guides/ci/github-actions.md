@@ -92,4 +92,57 @@ jobs:
 
 `uv sync --locked` installs the consumer project's locked dependencies without synchronizing unrelated workspace packages. The CLI version matches the locked SDK metadata. `m3 setup` and all installation steps run before the final step supplies credentials. The final command uses the project's `.venv` explicitly and passes only variable names in the credential mappings.
 
+## Keep reports, bound runtime, and build servers
+
+Four changes to the credential-free workflow make a CI run easier to inspect and harder to hang. They apply equally to the upload workflow. This version of `.github/workflows/m3.yml` assumes a repository whose MCP server is a Node project in `server/`; replace the Node and build steps with whatever builds your server, or delete them when the server needs no build:
+
+```yaml
+name: M3 tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  m3-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          python-version-file: .python-version
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: uv sync --locked
+      - run: uv tool install "sf-m3-cli==$(uv run --locked --no-sync python -c 'from importlib.metadata import version; print(version("sf-m3"))')"
+      - run: m3 setup --python .venv/bin/python
+      - name: Build the MCP server
+        working-directory: server
+        run: |
+          npm ci
+          npm run build
+      - run: m3 ci test --python .venv/bin/python -- tests m3_tests -q
+      - name: Upload M3 reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m3-reports
+          path: .m3/reports/
+          if-no-files-found: warn
+          retention-days: 7
+```
+
+- **Reports.** `m3 ci test` writes each run to `.m3/reports/<run-id>/feedback.json` under the project root, next to the run's traces, artifacts, and evidence, and prints `Run ID:` and `Local report:` lines with the path. The report is written when tests fail too (exit code 1), so the artifact step uses `if: always()`; without it, a failing test step skips the upload of exactly the report you need. `retention-days` limits how long GitHub keeps the artifact.
+- **Timeout.** `timeout-minutes` on the job stops a run that hangs, for example on a model call or a server that never starts. GitHub's default is 360 minutes. Pick a limit comfortably above your normal run time.
+- **Server build.** A server that needs compiling, such as a Node project, has no build output on a fresh runner. Set up its toolchain with a pinned action and run its build in its own step before `m3 ci test`, so a build failure appears as a build failure and not as a test failure.
+- **Test directories.** pytest reads `testpaths` only when no path is given. Paths after `--` replace it, so list every directory that holds M3 tests: `m3 ci test -- tests m3_tests` collects both, even when `testpaths = ["tests"]` in `pyproject.toml`. Replace `tests` and `m3_tests` with your own directories.
+
 See [Configure credentials](../credentials.md) for other credential paths.
