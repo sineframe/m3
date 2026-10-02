@@ -44,8 +44,11 @@ reference before writing code instead of relying on memory, and use
 - An agent saying that it used a tool is not evidence. Use the recorded tool
   calls.
 - Keep secrets out of tests, commands, and reports. Refer to keys by variable
-  name, and keep `.env` out of Git. `m3 test` loads the project root `.env`
-  automatically; pass `--env-file PATH` only for a custom file.
+  name and keep `.env` out of Git. `m3 test` loads the project root `.env`
+  automatically; pass `--env-file PATH` only for a custom file. That only
+  fills the pytest process, so map each key to the harness or server that
+  uses it. See
+  [Give tests the credentials they need](#give-tests-the-credentials-they-need).
 - Upload results only when the user asks.
 - If `m3 doctor` reports that the command and the project SDK do not match,
   run `m3 setup`. Do not work around the mismatch.
@@ -139,9 +142,17 @@ What each part does:
 - `pytestmark = pytest.mark.m3(suite_name=...)` names the suite. `m3 test`
   rejects selected tests that have no suite name.
 - `StdioServer(...)` tells M3 how to start the server process. Replace the
-  command and arguments with the project's own. For a server that is already
-  running at a URL, use `HTTPServer`; see
-  [HTTP servers](references/guides-servers-http.md).
+  command and arguments with the project's own.
+- For a server that is already running at a URL, use
+  `HTTPServer(name=..., url=..., trust=...)` with
+  `from m3.types import HTTPServer, TrustLevel`. `trust` defaults to
+  untrusted, and a direct connection to a loopback or private address (such
+  as `http://127.0.0.1:8765/mcp/`) then fails with `EndpointTrustError`. Set
+  `trust=TrustLevel.TRUSTED_PRIVATE` for a local or private address. For a
+  public address, a direct test may keep the default. An agent test never
+  accepts the default: use `TrustLevel.PUBLIC` for a public address and
+  `TRUSTED_PRIVATE` for a local or private one. Put endpoint credentials in `headers=`, never in the
+  URL. See [HTTP servers](references/guides-servers-http.md).
 - `MCPTestKit(...)` and `kit.direct(server)` open one MCP connection. Leaving
   the `with` block closes it and stops the server process.
 - The assertions check the advertised tool list and the structured result. A
@@ -158,6 +169,47 @@ M3 shows it in the results viewer. Then run:
 ```sh
 m3 test -- tests/test_m3_starter.py
 ```
+
+## Give tests the credentials they need
+
+Direct tests against a server that needs no key need none of this. Agent
+tests, LLM judges, and servers that read keys from their environment do.
+
+1. Copy `.env.example` to `.env` in the project root (`m3 init` creates
+   `.env.example`), fill in only the keys the tests use, and keep `.env` out
+   of Git.
+2. Run `m3 test`. It loads `PROJECT_ROOT/.env` automatically when the file
+   exists, where the project root is `--project-root` or the current
+   directory. Pass `--env-file PATH` to load a different file instead; a
+   missing explicit file is an error. The values only reach the process that
+   runs pytest. Values already set in the environment win over the file,
+   even when empty. The SDK itself never reads `.env`.
+3. Map each key to the process that needs it. A harness or server does not
+   inherit the pytest environment.
+   - **Agent harness.** Standard variables are selected automatically when
+     they are set and non-empty: `OPENAI_API_KEY` for Codex,
+     `ANTHROPIC_API_KEY` for Claude Code, and for OpenCode and Pi the key
+     that matches the model prefix (`opencode/`, `openai/`, `anthropic/`).
+     For any other variable name, map it with
+     `--credential-env [KIND:]TARGET=SOURCE`, for example
+     `--credential-env codex:OPENAI_API_KEY=MY_OPENAI_KEY`, or with
+     `credential_env={"OPENAI_API_KEY": "MY_OPENAI_KEY"}` in `kit.agents(...)`.
+     `TARGET` is the name the harness reads and `SOURCE` is the name in the
+     pytest environment.
+   - **stdio server.** Only variables set on the server definition reach it:
+     `StdioServer(..., environment={"SERVICE_TOKEN": SecretReference(source="environment", name="SERVICE_TOKEN")})`
+     with `from m3.types import SecretReference`. The source variable must be
+     set (for example in the project root `.env`) or the server fails to start.
+   - **HTTP server.** Use `headers=` on `HTTPServer`, with a
+     `SecretReference` for the value.
+   - **LLM judge.** The default key is `M3_JUDGE_API_KEY`. A judge never
+     borrows an agent key.
+4. Never print, assert on, or commit a key's value. Report which variable
+   name was missing instead.
+
+Credential mapping for ACP agents and the full resolution rules are in
+[Credentials](references/guides-credentials.md) and the
+[Credential reference](references/reference-credentials.md).
 
 ## Confirm the run recorded evidence
 
@@ -200,7 +252,7 @@ writing it.
 | The server advertises the right tools, schemas, resources, or prompts | Direct | [Tools](references/guides-servers-tools.md), [Resources and prompts](references/guides-servers-resources-prompts.md) |
 | A tool handles valid, boundary, and invalid input | Direct, one case per test or a `ToolMatrix` | [Errors and schemas](references/guides-servers-errors-schemas.md), [ToolMatrix](references/reference-python-m3-matrix.md) |
 | Calls share state | Direct, one client for the whole sequence | [Stateful tests](references/guides-servers-stateful-tests.md) |
-| An agent picks the right tool | Agent | [First agent test](references/guides-agents-first-test.md), [Assertions](references/guides-evaluations-assertions.md) |
+| An agent picks the right tool | Agent; needs harness credentials | [First agent test](references/guides-agents-first-test.md), [Assertions](references/guides-evaluations-assertions.md), [Credentials](references/guides-credentials.md) |
 | An agent handles a conversation | Agent session | [Sessions](references/guides-agents-sessions.md) |
 | An answer meets a quality rule | Evaluator or LLM judge | [Custom evaluators](references/guides-evaluations-custom.md), [LLM judges](references/guides-evaluations-judges.md) |
 | A change helps across agents or models | Matrix with trials, compared with a baseline | [Matrices](references/guides-agents-matrices.md), [Baselines](references/guides-results-baselines.md) |
