@@ -14,7 +14,12 @@ from mcp import types as mcp_types
 
 from m3.errors import TraceUnavailable
 from m3.events import EventFactory, EventSequence
-from m3.feedback import build_feedback, export_feedback, project_test_attempts
+from m3.feedback import (
+    build_feedback,
+    export_feedback,
+    load_run_entries,
+    project_test_attempts,
+)
 from m3.storage import SQLiteExecutionStore
 from m3.types import (
     CallToolResult,
@@ -1170,6 +1175,50 @@ def test_feedback_projects_case_tool_call_counts_from_linked_trace():
     )
 
     feedback = build_feedback(store, "run")
+
+    assert feedback.tests[0]["tool_calls"] == {
+        "total": 2,
+        "successful": 1,
+        "failed": 1,
+    }
+
+
+def test_preloaded_entries_retry_trace_that_failed_during_load():
+    report = _report("execution", "run", "tool calls")
+    trace = SimpleNamespace(
+        summary=SimpleNamespace(
+            tool_call_count=2,
+            successful_tool_call_count=1,
+            failed_tool_call_count=1,
+        )
+    )
+
+    class FlakyStore(_Store):
+        calls = 0
+
+        def get_trace_view(self, execution_id):
+            self.calls += 1
+            if self.calls == 1:
+                raise TraceUnavailable("transient")
+            return super().get_trace_view(execution_id)
+
+    store = FlakyStore(
+        (report,),
+        traces={"execution": trace},
+        tests={
+            "run": (
+                {
+                    "attempt_id": "tool-call-attempt",
+                    "node_id": "test.py::test_tool_calls",
+                    "outcome": "passed",
+                    "execution_ids": ["execution", "execution"],
+                },
+            )
+        },
+    )
+
+    entries = load_run_entries(store, "run")
+    feedback = build_feedback(store, "run", entries=entries)
 
     assert feedback.tests[0]["tool_calls"] == {
         "total": 2,
