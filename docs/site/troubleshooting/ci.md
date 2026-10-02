@@ -17,5 +17,7 @@ that invocation and use `m3 upload RUN_ID` with the same project/database.
 
 ## Token no longer works
 
-Create a replacement token, update the CI secret, verify a run, and revoke the
-old token. `m3 auth logout` removes only the local copy.
+Create a replacement CI token in the hosted token-management page and update
+the `M3_ACCESS_TOKEN` secret in the CI provider. Verify an upload with the
+replacement, then revoke the old CI token in the hosted page. `m3 auth logout`
+acts only on the saved CLI credential; it does not rotate or revoke a CI token.

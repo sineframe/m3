@@ -79,9 +79,13 @@ database path.
 
 ## `m3 auth`
 
-`login` manages access and may save a developer token. `status` reports
-the local credential. `logout` removes that local copy; it does not revoke the
-token.
+`login` starts hosted device authorization and saves the issued 30-day CLI
+credential in a supported operating-system credential store. `status` checks
+the saved CLI credential with the control plane and reports its organization
+and expiry. It validates the format of a CI token supplied as
+`M3_ACCESS_TOKEN`, but it does not check that CI token with the control plane.
+`logout` revokes the saved CLI credential with the control plane and then
+removes it locally. It does not revoke or remove `M3_ACCESS_TOKEN`.
 
 ## `m3 runtime cache`
 

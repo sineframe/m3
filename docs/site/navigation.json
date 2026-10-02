@@ -172,9 +172,9 @@
     },
     {
       "id": "guides-ci-access",
-      "title": "Manage access tokens",
+      "title": "Manage M3 access",
       "source": "guides/ci/access.md",
-      "description": "Run m3 auth login on a computer with a browser. The login page lets you manage organization access and tokens; the CLI receives a one-use authorization result and can save a developer token in the operating-system credential store.",
+      "description": "Authorize the local M3 CLI and save its credential, then create and store a separate CI token for automated uploads.",
       "kind": "guides"
     },
     {

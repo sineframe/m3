@@ -1,54 +1,54 @@
-# CI and browser authentication security review
+# CI and device authentication security review
 
-This review covers the control-plane sign-in page, CLI handoff, credential handling, and
-report upload. It was performed against the implementation in this branch.
+This review is for maintainers checking the boundary between the M3 CLI, the
+hosted account console, the control plane, the operating-system credential
+store, and CI. It covers the implementation in M3 commit `54e698d`, the merged
+control-plane PR
+[`sineframe/control-plane#15`](https://github.com/sineframe/control-plane/pull/15),
+and the merged console PR
+[`rishhavv/m3-ui#62`](https://github.com/rishhavv/m3-ui/pull/62).
 
-| Boundary | Finding | Resolution and verification |
+The reported executed evidence covers CLI request and response validation,
+credential storage behavior, console state handling, and non-database
+control-plane checks. Supabase-backed authorization test code exists, but
+control-plane PR #15 records that its database-backed execution was unavailable
+in that review environment. A live hosted device authorization was not run for
+this review.
+
+## Authentication boundaries
+
+| Boundary | Implemented behavior | Evidence and limit |
 | --- | --- | --- |
-| Browser sign-in | Provider-specific credentials or SDKs in the CLI would couple it to one identity provider and expose tokens to a second client. | Serve the temporary page from the control plane's HTTPS origin. The page uses the Supabase browser SDK and existing M3 organization/token APIs. The CLI contains no Supabase or Firebase SDK, project URL/key, browser session, ID token, or refresh token. |
-| Browser to CLI callback | A redirect can be intercepted or forged locally. | Bind only `127.0.0.1` on an ephemeral port, validate callback path and random state, accept only a short-lived one-time code, and bind its HTTPS exchange with PKCE S256. No PAT appears in the URL. |
-| Code redemption | Concurrent or replayed exchanges could mint extra PATs. | Persist grants with expiry and atomically consume a grant with any optional developer-token issuance; reject a second exchange. Signing in to manage CI tokens need not mint a developer token. |
-| Public exchange endpoint | Random, well-formed codes could otherwise trigger billable database reads; replay or forged codes could create PATs. | Verify the truncated HMAC before database lookup; CLI routes require the existing shared signing secret. Store only a hash of a random one-use code in Supabase Postgres, bind it to the exact redirect URI and PKCE challenge, check expiry and the current Auth session, and consume it in the same transaction as optional PAT issuance. |
-| Abandoned grants | The browser or CLI may close after authorization but before code exchange, leaving an unused grant. | Check expiry on every exchange. Expired grants are invalid regardless of when database cleanup removes them. |
-| Token issuance | CI tokens are visible once in the browser for copying into the CI provider; developer PATs are not. | Keep CI token creation explicit and return developer PATs only to the CLI over the HTTPS exchange. Token names distinguish use, but the current control plane does not enforce different privileges for developer and CI PATs. |
-| Developer credential storage | A positive keyring priority alone does not prove secure OS storage. | Accept only supported OS credential backends; refuse developer-token issuance when secure storage is unavailable. Keep only token metadata in an owner-only local file. |
-| CI secret scope | Test code can access inherited environment and same-user resources. | Remove `M3_ACCESS_TOKEN` from the pytest environment and reject mappings into harness/judge credentials. Keep the CI job restricted to trusted code. This is a reduction in accidental exposure, not a sandbox. |
-| Report contents | Traces and pytest output may contain credentials. | Retain capture redaction, reject known resolved credential values in serialized summaries and execution bodies before network writes, and keep cache files owner-only. Unknown or transformed secrets remain a user responsibility. |
-| Upload destination | A cached request could be reused for the wrong run or origin. | Validate run IDs before path construction, bind cache metadata to destination/run ID, validate cached identities, and reject redirects. Publish only finalized runs. |
+| Hosted sign-in | `m3 auth login` asks the control plane to start device authorization, then opens the separately deployed account console. The console owns password and Google sign-in through the Supabase browser SDK. Provider access tokens, refresh tokens, project configuration, and SDK code do not enter the CLI. | The CLI calls the device endpoints in `cli/src/m3_cli/auth.py`. Console PR #62 adds `/cli/authorize` and its sign-in continuations. The control plane does not serve embedded console assets. |
+| Device and user codes | The control plane returns a random bearer `device_code`, a short human `user_code`, a sign-in URL, a complete sign-in URL, a 600-second lifetime, and a five-second polling interval. PostgreSQL stores only the SHA-256 hash of the device code. The browser receives the user code and safe device metadata, never the device code or a PAT. | Control-plane PR #15 tests the stored hash, browser response fields, expiry, denial, polling interval, and replay. Console PR #62 tests password sign-in continuation, approval, denial, and expiry with mocked APIs. Those browser tests are not live hosted evidence. |
+| Approval binding | Approval requires a current Supabase bearer, authentication within five minutes, and an active membership in the selected organization. The control plane binds the approval to the verified Supabase UID, normalized email, session ID, organization ID, and membership grant. | The control-plane service owns these checks. Its Supabase-backed tests inspect the persisted binding. The CLI does not implement or bypass browser-session, account, or membership policy. |
+| Poll-time authorization | The unauthenticated polling endpoint accepts the device code, looks up its hash, applies the polling interval, and returns the defined pending, slowdown, denial, expiry, or invalid-authorization errors. Before issuance, the control plane rechecks the bound account, Supabase session, organization membership, and exact membership grant. It consumes the authorization and creates one audited PAT in one transaction. | Control-plane PR #15 exercises concurrent polling, replay, revoked browser session, changed membership grant, and removed membership. These are backend guarantees, not CLI-side checks. |
+| PAT kinds | A successful device authorization returns one 30-day PAT named `M3 CLI` with `kind=cli`. Organization token management creates copy-once `kind=ci` PATs with a 7-day, 30-day, or 90-day lifetime. Both kinds authorize uploads, but only a CLI PAT can inspect or revoke itself through the CLI session endpoint. Neither kind authorizes browser reads, device approval, token management, or organization administration. | The control-plane integration tests check token kind, name, lifetime, single issuance, upload scope, and rejection of a CI PAT by the CLI session endpoint. The console lists and creates only CI tokens. |
+| Local CLI credential | Login probes for a supported OS credential backend before starting authorization. The CLI stores the CLI PAT in that backend under an account derived from the strict control-plane origin. Its owner-only metadata file contains the installation ID and non-secret token metadata, not the PAT. | Implementation inspection shows the explicit backend-type allowlist, write probe, and `0700` directory and `0600` file modes. `cli/tests/test_auth.py` covers metadata preservation, legacy keyring-account migration, concurrent installation-ID creation, corrupt metadata, a mocked preflight failure, and save-failure rollback. It does not exercise the real backend allowlist or file modes. |
+| CI credential | `M3_ACCESS_TOKEN` is an environment-provided CI PAT. When `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` has a truthy value, an absent environment token is an error and the CLI does not fall back to the interactive keyring. Outside that condition, the environment token takes precedence over a saved CLI PAT. M3 removes it from the pytest child environment and rejects mappings into harness or judge credentials. | Implementation inspection establishes the three truthy marker checks. `cli/tests/test_ci_credentials.py` covers environment precedence, the truthy `CI` case, child-environment removal, and mapping rejection. `m3 auth logout` does not inspect, revoke, or remove `M3_ACCESS_TOKEN`. |
+| Online status | `m3 auth status` validates the local format of `M3_ACCESS_TOKEN` when it is present, but does not check that CI PAT online. Separately, it reads the saved CLI PAT and calls the CLI session endpoint. It accepts only a response whose metadata says `kind=cli`, then reports safe token and organization metadata. | CLI tests cover a valid environment token, valid saved-CLI session metadata, malformed session metadata, and absence of either bearer from output. Implementation inspection establishes the environment token's strict local PAT-format check. The control plane returns metadata without the token or its stored hash. |
+| Self-revocation and logout | `m3 auth logout` sends the saved CLI PAT to the control plane for self-revocation, then removes it from the OS credential store. A remote failure leaves the local credential in place so the command can be retried. Self-revocation is idempotent for an expired or already revoked CLI PAT. | CLI tests cover remote failure, successful local removal, and ignoring `M3_ACCESS_TOKEN`. Control-plane tests verify that the revoked PAT no longer authenticates. Browser sign-out and CI-token revocation are separate operations. |
+| Re-login and an older credential | After a re-login issues a replacement, the CLI records the previous CLI PAT in a separate pending-revocation keyring entry before saving the new PAT. It then revokes the previous PAT. If that revocation fails, the new PAT remains saved, the command reports failure, and later login, status, or logout attempts the pending revocation again. If saving the replacement fails, the CLI keeps the previous PAT and attempts to revoke the newly issued PAT. | Implementation inspection establishes the pending-revocation failure and retry paths. `cli/tests/test_auth.py` covers successful replacement and the save-failure path that preserves the old PAT and attempts to revoke the new PAT; it does not exercise a pending-revocation failure or retry. The recovery record is secret keyring state, not local metadata. |
+| URL and response validation | Both `M3_CONTROL_PLANE_URL` and `M3_AUTH_URL` must be HTTPS origins without credentials, paths, queries, fragments, ambiguous host syntax, or unsupported IPv6 literals. The CLI accepts returned verification URLs only on the configured auth origin and exact `/sign-in` route; the complete URL must contain exactly the expected encoded `/cli/authorize?code=USER_CODE` continuation. HTTP redirects are rejected and response bodies are capped at 64 KiB. Device responses must contain the required fields with the expected types. Issued-token metadata fields must be nonempty strings with `kind=cli`, and the bearer must match the strict M3 PAT format before storage. | `cli/tests/test_ci_credentials.py` covers strict origin normalization. `cli/tests/test_auth.py` covers exact continuation matching, redirect rejection, body limits, one valid device/token response, malformed status metadata, and suppression of device and PAT values in errors. The remaining response checks are established by implementation inspection. TLS and hosted routing still depend on the deployed origins. |
+| Public endpoint rate limits | The control plane, not the CLI, limits device-authorization creation to 20 requests per minute per client IP and applies a 500 requests-per-minute per-instance ceiling. With no trusted header configured, it uses the socket address and ignores forwarding headers. A deployment may name one trusted client-IP header only when every request passes through a proxy that overwrites it; missing, duplicate, comma-separated, malformed, or non-IP values are rejected. | Control-plane PR #15 owns and tests client-IP extraction and both limits. Its Fly configuration trusts `Fly-Client-IP`. Operators own the proxy topology and must not configure a caller-controlled header. |
+| Upload secret handling | The upload credential stays outside the test process. Before network writes, M3 checks the exact serialized summary and execution payloads against recognized test-time credential values. It binds cached upload data to the destination and run ID, rejects redirects, and keeps cache files owner-only. | CLI tests cover known-secret rejection, destination binding, finalized-run enforcement, and redirect rejection. Unknown or transformed secrets remain the test author's responsibility; this is not a process sandbox. |
 
-For a later `m3 upload RUN_ID`, M3 inspects the exact serialized summary and
-execution payloads against all recognized test-time credentials, including
-mapped harness/judge sources. It stores only a payload digest, source names,
-and a clean/unsafe result in the local run manifest. Publication refuses an
-unsafe or changed payload and scans current credentials again before network
-writes. Rotating an unrelated CI secret therefore does not prevent a safe
-retry. The upload PAT remains separate from the test process and is checked
-again at publication. Unknown or transformed secrets still require care from
-the test author.
+## Release evidence
 
-Control-plane already checks PAT hashes, expiry, revocation, current membership
-grant, and account state on each upload. Browser API calls use bearer access
-tokens; the server verifies the current account and session state. Recent
-password authentication is required for CLI authorization grants and
-destructive actions. The browser page uses the control-plane origin, so
-production CORS need not allow localhost.
+Release artifact checks scan every member of the SDK, application, and CLI
+wheels for Firebase or Supabase code and configuration markers, recognizable
+provider credentials, and PEM private keys. The wheel metadata also rejects
+direct Firebase and Supabase requirements. These static checks do not resolve
+arbitrary transitive packages and do not prove that an opaque or transformed
+secret is absent.
 
-The CLI sign-in page requires password authentication within five minutes
-before issuing a short-lived authorization grant. Selecting Done or Cancel ends the token
-management flow but does not sign out the browser. Browser sign-out is a
-separate action and does not delete the PAT saved in the CLI's OS credential
-store; `m3 auth logout` removes only that local copy.
-
-Release validation scans every archive member in all three release wheels for
-Firebase/Supabase code and configuration markers, Google/Firebase API keys,
-Supabase key prefixes, PEM private keys (including service-account JSON), and
-recognizable Firebase/Supabase JWT claims. No wheel, directory, filename
-extension, or metadata member is exempt. Each wheel's dependency list
-rejects Firebase/Supabase requirements, including extra- and platform-marked
-requirements, to cover the CLI's SDK/application dependency chain. These are
-static artifact checks, not arbitrary third-party dependency resolution or a
-guarantee against obfuscated secrets. Production login and grant-exchange
-smoke tests require an authorized test account. The local
-SQL integration tests validate grant redemption and token persistence against
-the Supabase schema; they do not replace a production smoke test or review of
-hosted Auth redirect settings and email delivery.
+The coordinated repositories report passing CLI unit tests, control-plane Go
+tests, console unit tests, and a focused mocked-browser suite. The
+control-plane PR records that its database-backed tests were not run in that
+review environment, while its Supabase-backed test code remains present. The
+console PR records that its broad end-to-end suite could not run without the
+report backend. None of those automated results proves that the deployed
+control plane, console routing, Supabase session policy, trusted proxy header,
+OS keyring, upload service, or server-side revocation work together. Complete
+the live smoke checklist in [Releasing M3](releasing.md) before claiming hosted
+acceptance.
