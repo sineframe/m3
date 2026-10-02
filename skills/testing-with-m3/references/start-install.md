@@ -52,7 +52,7 @@ m3 doctor
 `m3 init` creates the project identity and a skipped pytest starter. Replace
 that starter with a real assertion before relying on test results. `m3 setup`
 installs the SDK release matching the CLI, with pytest, storage, and judge
-support, into the selected project environment. It does not install the CLI in
+support, into the [selected project environment](#choose-the-project-environment). It does not install the CLI in
 that environment or edit dependency manifests and lockfiles. `m3 doctor` checks
 the CLI and project environment separately.
 
@@ -73,5 +73,55 @@ uv add "sf-m3[pytest,storage,judge]"
 
 This declares the SDK in the project manifest. The standalone CLI remains a
 separate user-level installation.
+
+## Choose the project environment
+
+The CLI is separate from the project environment, so `m3 setup`, `m3 doctor`,
+and `m3 test` each pick a Python interpreter for the project. They check the
+same sources in this order and use the first one that applies:
+
+1. `--python PATH`, accepted by all three commands. A bare name such as
+   `python3.12` is looked up on `PATH`.
+2. The active `VIRTUAL_ENV`.
+3. The active `CONDA_PREFIX`.
+4. `.venv` in the project root.
+5. Last resort, when nothing above applies:
+   - `m3 setup` creates `.venv` in the project root, with uv when available
+     and `python -m venv` otherwise.
+   - `m3 test` falls back to `python3`, then `python`, on `PATH`.
+   - `m3 doctor` has no fallback and reports `no project environment is
+     configured; run m3 setup`.
+
+Run `m3 doctor` to see the choice: it prints `project environment source` and
+`project Python` for the interpreter it selected. To work in another
+environment, activate it or pass `--python PATH` to each command:
+
+```sh
+m3 setup --python /path/to/env/bin/python
+m3 doctor --python /path/to/env/bin/python
+m3 test --python /path/to/env/bin/python
+```
+
+A few differences between the commands matter when the choice is not what you
+expected:
+
+- `m3 setup` installs only into an isolated environment. It refuses a system
+  or global Python, Python older than 3.10, and an active Conda `base`
+  environment (`CONDA_DEFAULT_ENV=base`). `m3 test` and `m3 doctor` do not
+  apply those checks; they only verify that the interpreter can import M3, so
+  they accept any interpreter that has the matching SDK installed.
+- If `VIRTUAL_ENV` or `CONDA_PREFIX` points at an environment with no Python
+  executable, `m3 setup` stops with `active VIRTUAL_ENV environment is
+  unavailable`. `m3 test` and `m3 doctor` skip that variable and continue
+  with the project `.venv`. When there is no `.venv`, `m3 test` continues to
+  the system fallback above, and `m3 doctor` stops with `the active project
+  environment is unavailable`.
+- Because `m3 test` can fall back to the system Python on a project without
+  `.venv`, it can report missing M3 packages for an interpreter you never
+  chose, while `m3 doctor` reports that no environment is configured. Run
+  `m3 setup` in both cases.
+
+For the exact messages these checks produce, see
+[Installation and project Python](troubleshooting-install.md).
 
 Continue to [your first MCP test](getting-started.md), or [test your own server](start-your-server.md).
