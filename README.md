@@ -100,6 +100,7 @@ its supporting references are explained in the
 - [Test a local server](https://m3.sineframe.com/docs/guides/servers/stdio)
 - [Test agent behavior](https://m3.sineframe.com/docs/guides/agents/first-test)
 - [Configure credentials](https://m3.sineframe.com/docs/guides/credentials)
+- [Connect an ACP-compatible agent](https://m3.sineframe.com/docs/guides/agents/acp-connect)
 - [CLI reference](https://m3.sineframe.com/docs/reference/cli/)
 - [Python reference](https://m3.sineframe.com/docs/reference/python/)
 - [Contributing](https://github.com/sineframe/m3/blob/main/docs/contributing.md)

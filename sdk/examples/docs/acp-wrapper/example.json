@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "acp-wrapper",
+  "owning_pages": ["guides-agents-acp-wrapper"],
+  "target_release": "development candidate from the source checkout; not a published release",
+  "python": ">=3.10",
+  "dependencies": ["sf-m3[pytest] from the candidate checkout", "agent-client-protocol==0.12.1"],
+  "files": ["echo_server.py", "wrapped_agent.py", "test_wrapper.py"],
+  "displayed_blocks": [
+    {"page": "guides-agents-acp-wrapper", "label": "wrapper test", "source": "test_wrapper.py", "kind": "file"},
+    {"page": "guides-agents-acp-wrapper", "label": "custom ACP wrapper", "source": "wrapped_agent.py", "kind": "file"},
+    {"page": "guides-agents-acp-wrapper", "label": "echo MCP server", "source": "echo_server.py", "kind": "file"}
+  ],
+  "working_directory": "project directory",
+  "scenarios": [
+    {
+      "id": "local-custom-acp-wrapper",
+      "command": "python -m pytest -q test_wrapper.py",
+      "working_directory": "project directory",
+      "expected_exit_code": 0,
+      "assertions": ["execution completes", "one successful echo tool call is recorded with its arguments", "captured MCP result content and structured content contain the server response", "agent message contains the response"],
+      "compatibility": {"harness": "custom local ACP wrapper", "mode": "local process and stdio MCP", "status": "verified for the documented ACP lifecycle subset"},
+      "verification": "deterministic"
+    }
+  ],
+  "network": "none",
+  "credentials": "none",
+  "external_requirements": "The documented wrapper accepts one stdio MCP server and does not include a model/provider integration.",
+  "cleanup": "MCPTestKit closes the ACP process; the wrapper cancels its active prompt and terminates/reaps its MCP subprocess on session shutdown."
+}

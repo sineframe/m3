@@ -97,10 +97,24 @@
       "kind": "guides"
     },
     {
+      "id": "guides-agents-acp-connect",
+      "title": "Connect an ACP-compatible agent",
+      "source": "guides/agents/acp-connect.md",
+      "description": "Launch your existing ACP agent with M3 and check the MCP server result.",
+      "kind": "guides"
+    },
+    {
+      "id": "guides-agents-acp-wrapper",
+      "title": "Expose your custom agent through ACP",
+      "source": "guides/agents/acp-wrapper.md",
+      "description": "Use the ACP SDK to wrap agent logic and check its captured MCP response.",
+      "kind": "guides"
+    },
+    {
       "id": "guides-agents-acp",
-      "title": "Run an ACP agent",
+      "title": "Bring your own agent",
       "source": "guides/agents/acp.md",
-      "description": "Use ACP when the agent implements the Agent Client Protocol and you want M3 to launch it from a manifest. ACP launch configuration is distinct from M3’s native CLI adapters.",
+      "description": "Connect an existing ACP-compatible agent or expose a custom agent through ACP.",
       "kind": "guides"
     },
     {
@@ -327,6 +341,13 @@
       "kind": "home"
     },
     {
+      "id": "reference-acp",
+      "title": "ACP reference",
+      "source": "reference/acp.md",
+      "description": "Manifest, launch, session, policy, evidence, and failure behavior for ACP agents.",
+      "kind": "reference"
+    },
+    {
       "id": "reference-cli",
       "title": "CLI reference",
       "source": "reference/cli/index.md",
@@ -551,6 +572,8 @@
             "guides-agents-harnesses",
             "guides-agents-managed-runtimes",
             "guides-agents-acp",
+            "guides-agents-acp-connect",
+            "guides-agents-acp-wrapper",
             "guides-agents-sessions",
             "guides-agents-matrices"
           ]
@@ -620,6 +643,7 @@
         "reference",
         "reference-cli",
         "reference-credentials",
+        "reference-acp",
         {
           "title": "Python SDK",
           "items": [

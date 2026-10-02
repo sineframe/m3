@@ -44,6 +44,8 @@ NAVIGATION = [
                     "guides-agents-harnesses",
                     "guides-agents-managed-runtimes",
                     "guides-agents-acp",
+                    "guides-agents-acp-connect",
+                    "guides-agents-acp-wrapper",
                     "guides-agents-sessions",
                     "guides-agents-matrices",
                 ],
@@ -113,6 +115,7 @@ NAVIGATION = [
             "reference",
             "reference-cli",
             "reference-credentials",
+            "reference-acp",
             {
                 "title": "Python SDK",
                 "items": [
