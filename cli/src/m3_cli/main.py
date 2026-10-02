@@ -11,7 +11,7 @@ from typing import NoReturn
 
 from . import doctor, init, runtime, setup
 from .branding import M3_ASCII_ART
-from .errors import CLIError
+from .errors import CLIError, UploadError
 from .server_options import add_server_arguments, normalize_server_groups
 
 
@@ -234,6 +234,47 @@ def _command_error_message(command: str) -> str:
     return f"m3 {command}: invalid command or configuration"
 
 
+_INSPECTION_UNAVAILABLE = (
+    "m3 ci: upload inspection unavailable; local test result is unchanged. "
+    "Rerun tests before uploading"
+)
+
+
+def _failure_reason(exc: Exception) -> str | None:
+    """Return a printable failure reason, or ``None`` if none is safe to print.
+
+    CLIError and UploadError messages are built only from trusted parts. For
+    any other OSError only the OS description is used; its filename may not be
+    trusted. Every other message may carry untrusted values.
+    """
+    if isinstance(exc, (CLIError, UploadError)):
+        return str(exc)
+    if isinstance(exc, OSError) and isinstance(exc.strerror, str) and exc.strerror:
+        return exc.strerror
+    return None
+
+
+def _publish_failure(command: str, run_id: str, exc: Exception, fallback: str) -> str:
+    reason = _failure_reason(exc)
+    if reason is None:
+        return fallback
+    if isinstance(exc, UploadError) and exc.retryable:
+        return (
+            f"m3 {command}: publishing failed: {reason}; retry with m3 upload {run_id}"
+        )
+    return f"m3 {command}: publishing failed: {reason}; fix the cause and rerun tests"
+
+
+def _inspection_failure(exc: Exception, *, upload: bool) -> str:
+    """Describe a failed upload inspection; it never succeeds on a plain retry."""
+    reason = _failure_reason(exc)
+    if reason is None:
+        return _INSPECTION_UNAVAILABLE
+    if upload:
+        return f"m3 ci: publishing failed: {reason}; fix the cause and rerun tests"
+    return f"m3 ci: upload inspection failed: {reason}; local test result is unchanged"
+
+
 def main(argv: list[str] | None = None) -> int:
     effective_argv = list(sys.argv[1:] if argv is None else argv)
     command_name = (
@@ -333,11 +374,10 @@ def main(argv: list[str] | None = None) -> int:
                             args.credential_env,
                             resolved,
                         )
-                    except (CLIError, RuntimeError, OSError, ValueError, TypeError):
+                    except Exception as exc:
                         inspection_failed = True
                         print(
-                            "m3 ci: upload inspection unavailable; local test result "
-                            "is unchanged. Rerun tests before uploading",
+                            _inspection_failure(exc, upload=args.upload),
                             file=sys.stderr,
                         )
                 if result.run_id and result.project_root and result.database_path:
@@ -372,9 +412,15 @@ def main(argv: list[str] | None = None) -> int:
                         database=result.database_path,
                         environment=resolved,
                     )
-                except (CLIError, RuntimeError, OSError):
+                except Exception as exc:
                     print(
-                        f"m3 ci: publishing failed; retry with m3 upload {result.run_id}",
+                        _publish_failure(
+                            "ci",
+                            result.run_id,
+                            exc,
+                            "m3 ci: publishing failed; "
+                            f"retry with m3 upload {result.run_id}",
+                        ),
                         file=sys.stderr,
                     )
                     return result.exit_code or 2
@@ -394,9 +440,14 @@ def main(argv: list[str] | None = None) -> int:
                     database=database,
                     env_file=discover_env_file(args.env_file, root),
                 )
-            except (RuntimeError, OSError):
+            except (RuntimeError, OSError) as exc:
                 print(
-                    "m3 upload: publication failed; local results are unchanged",
+                    _publish_failure(
+                        "upload",
+                        args.run_id,
+                        exc,
+                        "m3 upload: publication failed; local results are unchanged",
+                    ),
                     file=sys.stderr,
                 )
                 return 2

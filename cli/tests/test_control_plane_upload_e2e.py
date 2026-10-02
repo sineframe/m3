@@ -58,16 +58,19 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
         feedback = build_feedback(store, "run-upload")
         directory = root / "reports" / "run-upload"
         export_feedback(feedback, store, directory)
-        digest, contains_secret = inspect_current_run(
-            feedback, store, directory, sensitive_values=("unused-test-credential",)
+        digest = inspect_current_run(
+            feedback,
+            store,
+            directory,
+            token="m3pat_test",
+            sensitive_values=("unused-test-credential",),
         )
-        assert contains_secret is False
 
         sent: list[tuple[str, bytes]] = []
         monkeypatch.setattr(
             control_plane,
             "_post",
-            lambda url, _token, body: sent.append((url, body)),
+            lambda url, _token, body, _subject: sent.append((url, body)),
         )
         upload_current_run(
             feedback,

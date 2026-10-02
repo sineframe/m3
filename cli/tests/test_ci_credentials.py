@@ -14,7 +14,7 @@ from m3_cli.ci_credentials import (
 )
 from m3_cli.ci_credentials import test_environment as child_environment
 from m3_cli.ci_metadata import resolve_ci_metadata
-from m3_cli.errors import CLIError
+from m3_cli.errors import CLIError, UploadError
 
 TOKEN = "m3pat_" + "A" * 22 + "." + "A" * 43
 
@@ -109,7 +109,7 @@ def test_control_plane_origin_rejects_ambiguous_or_invalid_hosts(raw):
 
 def test_mapped_credential_source_values_are_scanned_for_upload():
     from m3_cli.ci_upload import _credential_source_names, _sensitive_values
-    from m3_cli.control_plane import _reject_known_secrets
+    from m3_cli.control_plane import _check_body
 
     value = "opaque-value-without-secret-name"
     sensitive = _sensitive_values(
@@ -117,8 +117,12 @@ def test_mapped_credential_source_values_are_scanned_for_upload():
         source_names=("DEPLOYMENT_CRED",),
     )
     assert sensitive == (value,)
-    with pytest.raises(RuntimeError, match="credential material"):
-        _reject_known_secrets(value.encode(), sensitive)
+    with pytest.raises(UploadError) as raised:
+        _check_body("run-test", "exec-1", value.encode(), "", sensitive)
+    assert str(raised.value) == (
+        "execution exec-1 report contains a credential from the test environment"
+    )
+    assert raised.value.retryable is False
     short_value = "x"
     assert _sensitive_values(
         {"SHORT_CRED": short_value}, source_names=("SHORT_CRED",)
@@ -127,8 +131,8 @@ def test_mapped_credential_source_values_are_scanned_for_upload():
     sources = _credential_source_names((mapping,))
     assert sources == ("DEPLOY_CRED",)
     sensitive = _sensitive_values({"DEPLOY_CRED": value}, source_names=sources)
-    with pytest.raises(RuntimeError, match="credential material"):
-        _reject_known_secrets(value.encode(), sensitive)
+    with pytest.raises(UploadError, match="credential from the test environment"):
+        _check_body("run-test", "", value.encode(), "", sensitive)
 
 
 def test_upload_token_cannot_be_mapped_to_test_credentials():
@@ -240,7 +244,7 @@ def test_cached_upload_cannot_be_retargeted(tmp_path, monkeypatch):
             ]
             == "https://one.example"
         )
-        with pytest.raises(RuntimeError, match="another destination"):
+        with pytest.raises(UploadError, match="different M3 server"):
             upload_current_run(
                 feedback,
                 store,
@@ -264,17 +268,20 @@ def test_upload_rejects_payload_changed_after_credential_inspection(
         feedback = build_feedback(store, "run-test")
         directory = tmp_path / "reports" / "run-test"
         export_feedback(feedback, store, directory)
-        digest, contains_secret = control_plane.inspect_current_run(
-            feedback, store, directory, sensitive_values=("old-secret",)
+        digest = control_plane.inspect_current_run(
+            feedback,
+            store,
+            directory,
+            token="m3pat_old",
+            sensitive_values=("old-secret",),
         )
-        assert contains_secret is False
         exported_path = directory / "feedback.json"
         exported = json.loads(exported_path.read_text())
         exported["summary"]["changed"] = "later-value"
         exported_path.write_text(json.dumps(exported))
         sent = []
         monkeypatch.setattr(control_plane, "_post", lambda *args: sent.append(args))
-        with pytest.raises(RuntimeError, match="payloads changed"):
+        with pytest.raises(UploadError, match="results changed after the credential"):
             control_plane.upload_current_run(
                 feedback,
                 store,
@@ -285,6 +292,37 @@ def test_upload_rejects_payload_changed_after_credential_inspection(
             )
         assert sent == []
         assert not (directory / "control-plane" / "summary.json").exists()
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("limit", "token", "message"),
+    [
+        (10, "", "run run-test summary is {size} bytes; limit is 10"),
+        (1 << 20, "run-test", "run run-test summary contains the M3 access token"),
+    ],
+)
+def test_inspection_applies_upload_body_checks(
+    tmp_path, monkeypatch, limit, token, message
+):
+    from m3.feedback import build_feedback, export_feedback
+    from m3.storage import SQLiteExecutionStore
+    from m3_cli import control_plane
+
+    monkeypatch.setattr(control_plane, "_MAX_SUMMARY_BYTES", limit)
+    store = SQLiteExecutionStore(tmp_path / "results.sqlite")
+    try:
+        feedback = build_feedback(store, "run-test")
+        directory = tmp_path / "reports" / "run-test"
+        export_feedback(feedback, store, directory)
+        summary = control_plane._current_run_summary(feedback, store, directory)[2]
+        with pytest.raises(UploadError) as raised:
+            control_plane.inspect_current_run(
+                feedback, store, directory, token=token, sensitive_values=()
+            )
+        assert str(raised.value) == message.format(size=len(summary))
+        assert raised.value.retryable is False
     finally:
         store.close()
 
@@ -399,15 +437,24 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
         exported = json.loads(exported_path.read_text())
         exported["summary"]["credential_echo"] = "opaque-deployment-credential"
         exported_path.write_text(json.dumps(exported))
-        ci_upload.record_upload_inspection(
-            database,
-            "run-test",
-            root,
-            ["codex:VENDOR_API_KEY=DEPLOY_CRED"],
-            kwargs["environment"],
+        with pytest.raises(UploadError) as raised:
+            ci_upload.record_upload_inspection(
+                database,
+                "run-test",
+                root,
+                ["codex:VENDOR_API_KEY=DEPLOY_CRED"],
+                kwargs["environment"],
+            )
+        assert str(raised.value) == (
+            "run run-test summary contains a credential from the test environment"
         )
-        assert store.get_test_run("run-test")["upload_scan_clean"] is False
-        with pytest.raises(CLIError, match="test-time credential material"):
+        manifest = store.get_test_run("run-test")
+        assert not {
+            "upload_scan_digest",
+            "upload_scan_clean",
+            "upload_scan_sources",
+        } & set(manifest)
+        with pytest.raises(CLIError, match="run-test was not scanned"):
             ci_upload.publish_run("run-test", **kwargs)
     finally:
         store.close()

@@ -12,8 +12,19 @@ the file should supply the value. M3 does not interpolate dotenv values.
 
 ## Upload failed after tests completed
 
-Keep the local database and feedback directory. Capture the run ID printed by
-that invocation and use `m3 upload RUN_ID` with the same project/database.
+The failure line names the cause and says what to do next:
+
+- `retry with m3 upload RUN_ID`: the M3 server was unreachable or temporarily
+  unavailable. Keep the local database and feedback directory and run that
+  command with the same project/database.
+- `fix the cause and rerun tests`: retrying the same run cannot succeed. For
+  example, the server rejected the report, a report exceeded its size limit, or
+  the run output contains a credential from the test environment. Fix the
+  cause, then rerun the tests to create a new run.
+
+`m3 ci test` checks the run for these local problems right after pytest
+finishes. Without `--upload`, it prints `upload inspection failed: …` and keeps
+the test result.
 
 ## Token no longer works
 
