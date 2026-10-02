@@ -6923,15 +6923,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -7553,15 +7551,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -8026,15 +8022,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -8499,15 +8493,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -9129,15 +9121,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -10482,15 +10472,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -10653,15 +10641,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -11421,15 +11407,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -11592,15 +11576,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -12588,15 +12570,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "tool_error",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -15337,15 +15317,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },
@@ -16135,15 +16113,13 @@
               },
               "evidence": "wire",
               "latency_ms": 7.5,
-              "result": {
-                "content": []
-              },
+              "result": "<unavailable>",
               "server": "fixture",
               "status": "incomplete",
               "tool": "book_shipment",
               "turn": null
             },
-            "result_match": true,
+            "result_match": null,
             "status_match": true
           }
         },

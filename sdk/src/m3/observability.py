@@ -360,15 +360,6 @@ class ReportedToolCall(_FrozenModel):
     status: Observation[str] = _Field(default_factory=_not_emitted)
 
 
-class WireToolCall(_FrozenModel):
-    jsonrpc_id: Observation[_JsonRpcId] = _Field(default_factory=_not_emitted)
-    server: Observation[str] = _Field(default_factory=_not_emitted)
-    tool: Observation[str] = _Field(default_factory=_not_emitted)
-    arguments: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    result: Observation[ToolResult] = _Field(default_factory=_not_emitted)
-    latency_ms: Observation[float] = _Field(default_factory=_not_emitted)
-
-
 class EvidenceConflict(_FrozenModel):
     field: _Literal["server", "tool", "arguments", "result", "status"]
     reported: Observation[_JsonValue]
@@ -383,11 +374,9 @@ class ToolCallAttempt(_FrozenModel):
     request_state: Observation[str] = _Field(default_factory=_not_emitted)
     continuation_state: Observation[str] = _Field(default_factory=_not_emitted)
     input_responses: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    operation_params: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     input_required: bool = False
-    result: Observation[ToolResult] = _Field(default_factory=_not_emitted)
-    raw_result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     status: ToolCallStatus = ToolCallStatus.INCOMPLETE
+    latency_ms: Observation[float] = _Field(default_factory=_not_emitted)
     sequence_start: int = _Field(ge=0)
     sequence_end: int = _Field(ge=0)
     timing: TraceTiming = _Field(default_factory=TraceTiming)
@@ -407,10 +396,7 @@ class ProtocolCallAttempt(_FrozenModel):
     request_state: Observation[str] = _Field(default_factory=_not_emitted)
     continuation_state: Observation[str] = _Field(default_factory=_not_emitted)
     input_responses: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    operation_params: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     input_required: bool = False
-    result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    raw_result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     status: TraceStatus = TraceStatus.INCOMPLETE
     sequence_start: int = _Field(ge=0)
     sequence_end: int = _Field(ge=0)
@@ -437,7 +423,6 @@ class ToolCallEntry(TraceEntryBase):
     server_latency_ms: Observation[float] = _Field(default_factory=_not_emitted)
     policy: Observation[_ToolPolicyDecision] = _Field(default_factory=_not_emitted)
     reported: Observation[ReportedToolCall] = _Field(default_factory=_not_emitted)
-    wire: Observation[WireToolCall] = _Field(default_factory=_not_emitted)
     conflicts: tuple[EvidenceConflict, ...] = ()
     attempts: tuple[ToolCallAttempt, ...] = ()
 
@@ -819,10 +804,7 @@ class TraceSummary(_FrozenModel):
 
 class TraceView(_FrozenModel):
     schema_id: _Literal["m3.trace_view"] = "m3.trace_view"
-    # Diagnostic fields are optional additions within the existing trace
-    # contract. Keep emitting 1.1 so deployed report readers remain compatible;
-    # 1.2 is accepted for forward compatibility with newer producers.
-    schema_version: _Literal["1.1", "1.2"] = "1.1"
+    schema_version: _Literal["2.0"] = "2.0"
     trace_id: _TraceId
     execution_id: _ExecutionId
     outcome: _ExecutionOutcome = _ExecutionOutcome.COMPLETED
@@ -967,7 +949,6 @@ for _model in (
     Observation,
     ToolResult,
     ReportedToolCall,
-    WireToolCall,
     ProtocolCallAttempt,
     ToolCallAttempt,
     EvidenceConflict,
@@ -1054,6 +1035,5 @@ __all__ = [
     "TransportEntry",
     "UsageEntry",
     "UsageValue",
-    "WireToolCall",
     "WorkspaceEntry",
 ]

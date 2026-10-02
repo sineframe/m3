@@ -4,6 +4,7 @@ import pytest
 from test_trace_projector import _trace
 
 from m3.observability import (
+    CorrelationState,
     ElicitationEntry,
     ObservationState,
     ProtocolEntry,
@@ -20,6 +21,10 @@ from m3.types import (
     EventSource,
     RequestLink,
 )
+
+
+def _event_at(trace, sequence: int):
+    return next(event for event in trace.events if event.sequence == sequence)
 
 
 def _mrtr_trace(
@@ -194,7 +199,8 @@ def _mrtr_trace(
 
 
 def test_mrtr_attempts_are_one_logical_tool_call() -> None:
-    view = _mrtr_trace().view()
+    trace = _mrtr_trace()
+    view = trace.view()
 
     assert len(view.tool_calls) == 1
     assert view.summary.tool_call_count == 1
@@ -208,7 +214,12 @@ def test_mrtr_attempts_are_one_logical_tool_call() -> None:
     assert call.attempts[0].input_required is True
     assert call.attempts[0].request_state.state is ObservationState.NOT_EMITTED
     assert call.attempts[0].continuation_state.value == "opaque-state"
-    assert call.attempts[0].raw_result.value["requestState"] == "opaque-state"
+    assert (
+        _event_at(trace, call.attempts[0].sequence_end).payload["result"][
+            "requestState"
+        ]
+        == "opaque-state"
+    )
     assert call.attempts[1].request_state.value == "opaque-state"
     assert call.attempts[1].input_responses.value == {
         "shipping_address": {
@@ -220,15 +231,19 @@ def test_mrtr_attempts_are_one_logical_tool_call() -> None:
 
 
 def test_codex_progress_tokens_do_not_split_one_mrtr_tool_call() -> None:
-    view = _mrtr_trace(codex_progress_tokens=True).view()
+    trace = _mrtr_trace(codex_progress_tokens=True)
+    view = trace.view()
 
     assert len(view.tool_calls) == 1
     assert view.summary.tool_call_count == 1
     call = view.tool_calls[0]
     assert isinstance(call, ToolCallEntry)
     assert len(call.attempts) == 2
-    assert call.attempts[0].operation_params.value["_meta"]["progressToken"] == 1
-    assert call.attempts[1].operation_params.value["_meta"]["progressToken"] == 2
+    first, retry = (
+        _event_at(trace, attempt.sequence_start) for attempt in call.attempts
+    )
+    assert first.payload["params"]["_meta"]["progressToken"] == 1
+    assert retry.payload["params"]["_meta"]["progressToken"] == 2
 
 
 def test_codex_progress_token_is_the_only_ignored_metadata_for_mrtr_matching() -> None:
@@ -399,7 +414,7 @@ def test_codex_reported_tool_item_joins_coalesced_wire_attempts() -> None:
     assert isinstance(call, ToolCallEntry)
     assert len(call.attempts) == 2
     assert call.reported.state is ObservationState.OBSERVED
-    assert call.wire.state is ObservationState.OBSERVED
+    assert call.correlation is CorrelationState.CORRELATED
     assert len(view.elicitations) == 1
 
 
@@ -1363,9 +1378,10 @@ def _mrtr_protocol_trace(
                 }
             )
         )
-    values.append(terminal.model_copy(update={"sequence": len(values)}))
+    terminal_sequence = max(event.sequence for event in values) + 1
+    values.append(terminal.model_copy(update={"sequence": terminal_sequence}))
     return base.model_copy(
-        update={"events": tuple(values), "highest_sequence": len(values) - 1}
+        update={"events": tuple(values), "highest_sequence": terminal_sequence}
     )
 
 
@@ -1383,7 +1399,8 @@ def _mrtr_protocol_trace(
 def test_prompt_and_resource_mrtr_attempts_are_one_logical_protocol_call(
     method: str, params: dict[str, object], operation_name: str
 ) -> None:
-    view = _mrtr_protocol_trace(method, params).view()
+    trace = _mrtr_protocol_trace(method, params)
+    view = trace.view()
 
     calls = [
         entry
@@ -1402,10 +1419,20 @@ def test_prompt_and_resource_mrtr_attempts_are_one_logical_protocol_call(
     assert call.attempts[0].input_required is True
     assert call.attempts[0].status is TraceStatus.INCOMPLETE
     assert call.attempts[0].continuation_state.value == "opaque-protocol-state"
-    assert call.attempts[0].raw_result.value["requestState"] == "opaque-protocol-state"
+    assert (
+        _event_at(trace, call.attempts[0].sequence_end).payload["result"][
+            "requestState"
+        ]
+        == "opaque-protocol-state"
+    )
     assert call.attempts[1].request_state.value == "opaque-protocol-state"
     assert call.attempts[1].status is TraceStatus.COMPLETED
-    assert call.attempts[1].result.value["content"][0]["text"] == "done"
+    assert (
+        _event_at(trace, call.attempts[1].sequence_end).payload["result"]["content"][0][
+            "text"
+        ]
+        == "done"
+    )
     assert call.attempts[0].sequence_start < call.attempts[1].sequence_start
     assert (
         call.attempts[1].timing.end_offset_ms >= call.attempts[1].timing.start_offset_ms

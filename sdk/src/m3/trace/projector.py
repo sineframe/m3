@@ -58,7 +58,6 @@ from ..observability import (
     TransportEntry,
     UsageEntry,
     UsageValue,
-    WireToolCall,
     WorkspaceEntry,
 )
 from ..types import (
@@ -330,7 +329,6 @@ def _merge_tool_evidence(reported: ToolCallEntry, wire: ToolCallEntry) -> ToolCa
             "timing": timing,
             "provenance": reported.provenance + wire.provenance,
             "reported": reported.reported,
-            "wire": wire.wire,
             **(
                 {
                     "status": reported.status,
@@ -354,12 +352,7 @@ def _tool_evidence_conflicts(
     reported_value = reported.reported.value
     if reported_value is None:
         return ()
-    wire_value = (
-        wire.wire.value if wire.wire.state is ObservationState.OBSERVED else None
-    )
-    if wire_value is None:
-        return ()
-    wire_result = wire_value.result
+    wire_result = wire.result
     if wire_result.state is ObservationState.OBSERVED and wire_result.value is not None:
         wire_result_observation = _observed(_tool_result_projection(wire_result.value))
     else:
@@ -386,9 +379,9 @@ def _tool_evidence_conflicts(
             Observation[Any],
         ]
     ] = [
-        ("server", reported_value.server, wire_value.server),
-        ("tool", reported_value.tool, wire_value.tool),
-        ("arguments", reported_value.arguments, wire_value.arguments),
+        ("server", reported_value.server, wire.server),
+        ("tool", reported_value.tool, wire.tool),
+        ("arguments", reported_value.arguments, wire.arguments),
     ]
     if not native_terminal_after_input_required:
         pairs.extend(
@@ -904,17 +897,6 @@ def _protocol_entry(events: Sequence[Event]) -> ProtocolEntry:
             else None
         )
         input_responses = params.get("inputResponses", params.get("input_responses"))
-        operation_params = {
-            key: value
-            for key, value in params.items()
-            if key
-            not in {
-                "requestState",
-                "request_state",
-                "inputResponses",
-                "input_responses",
-            }
-        }
         if input_required:
             status = TraceStatus.INCOMPLETE
         attempts = (
@@ -941,16 +923,7 @@ def _protocol_entry(events: Sequence[Event]) -> ProtocolEntry:
                     input_responses,
                     present=("inputResponses" in params or "input_responses" in params),
                 ),
-                operation_params=_json_observation(operation_params, present=True),
                 input_required=input_required,
-                result=_json_observation(
-                    raw_result,
-                    present="result" in last.payload,
-                ),
-                raw_result=_json_observation(
-                    raw_result,
-                    present="result" in last.payload,
-                ),
                 status=status,
                 sequence_start=first.sequence,
                 sequence_end=last.sequence,
@@ -1049,27 +1022,11 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
         else None
     )
     input_responses = params.get("inputResponses", params.get("input_responses"))
-    operation_params = {
-        key: value
-        for key, value in params.items()
-        if key
-        not in {
-            "requestState",
-            "request_state",
-            "inputResponses",
-            "input_responses",
-        }
-    }
     result = (
         _tool_result(last)
         if last.kind
         in {EventKind.TOOL_RESULT_RECEIVED, EventKind.MCP_RESPONSE, EventKind.MCP_ERROR}
         else None
-    )
-    wire_result = (
-        _observed(result)
-        if result is not None and not reported_evidence
-        else _not_emitted()
     )
     reported_status = last.payload.get("tool_status", last.payload.get("status"))
     try:
@@ -1176,19 +1133,7 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
     latency = None
     if len(events) > 1:
         latency = max(0.0, (last.monotonic_offset_ms - first.monotonic_offset_ms))
-    wire = WireToolCall(
-        jsonrpc_id=_id_observation(first),
-        server=(
-            _observed(first.server_binding) if first.server_binding else _not_emitted()
-        ),
-        tool=_observed(name),
-        arguments=_json_observation(
-            arguments,
-            present=("arguments" in params or "arguments" in first.payload),
-        ),
-        result=wire_result,
-        latency_ms=(_observed(latency) if latency is not None else _not_emitted()),
-    )
+    server_latency = _observed(latency) if latency is not None else _not_emitted()
     if result is not None:
         result_observation = _observed(result)
     else:
@@ -1225,14 +1170,9 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
             input_responses,
             present=("inputResponses" in params or "input_responses" in params),
         ),
-        operation_params=_json_observation(operation_params, present=True),
         input_required=is_input_required,
-        result=result_observation,
-        raw_result=_json_observation(
-            raw_last_result,
-            present="result" in last.payload,
-        ),
         status=status,
+        latency_ms=server_latency,
         sequence_start=first.sequence,
         sequence_end=last.sequence,
         timing=_timing(events),
@@ -1287,18 +1227,81 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
             else CorrelationState.WIRE_ONLY
         ),
         jsonrpc_id=_id_observation(first),
-        server_latency_ms=(
-            _observed(latency) if latency is not None else _not_emitted()
-        ),
+        server_latency_ms=server_latency,
         reported=(_observed(reported_call) if reported_evidence else _not_emitted()),
-        wire=(_not_emitted() if reported_evidence else _observed(wire)),
         attempts=(attempt,),
+    )
+
+
+_EventsBySequence = Mapping[int, Event]
+
+
+def _mrtr_operation_params(event: Event) -> Observation[Any]:
+    """Request params of an attempt without its per-round continuation fields."""
+
+    raw_params = event.payload.get("params")
+    params = raw_params if isinstance(raw_params, Mapping) else {}
+    return _json_observation(
+        {
+            key: value
+            for key, value in params.items()
+            if key
+            not in {
+                "requestState",
+                "request_state",
+                "inputResponses",
+                "input_responses",
+            }
+        },
+        present=True,
+    )
+
+
+def _mrtr_input_requests(response: Event) -> Mapping[Any, Any] | None:
+    """Return the ``inputRequests`` an attempt's response event asked for."""
+
+    result = _json_observation(
+        response.payload.get("result"), present="result" in response.payload
+    )
+    if result.state is not ObservationState.OBSERVED or not isinstance(
+        result.value, Mapping
+    ):
+        return None
+    requests = result.value.get("inputRequests", result.value.get("input_requests"))
+    return requests if isinstance(requests, Mapping) else None
+
+
+def _same_mrtr_operation_params(
+    left: ToolCallEntry | ProtocolEntry,
+    right: ToolCallEntry | ProtocolEntry,
+    events_by_sequence: _EventsBySequence,
+    *,
+    codex_progress_token: bool,
+) -> bool:
+    left_params = _mrtr_operation_params(
+        events_by_sequence[left.attempts[0].sequence_start]
+    )
+    right_params = _mrtr_operation_params(
+        events_by_sequence[right.attempts[0].sequence_start]
+    )
+    return (
+        left_params.state is ObservationState.OBSERVED
+        and right_params.state is ObservationState.OBSERVED
+        and _json_equal(
+            _stable_mrtr_operation_params(
+                left_params.value, codex_progress_token=codex_progress_token
+            ),
+            _stable_mrtr_operation_params(
+                right_params.value, codex_progress_token=codex_progress_token
+            ),
+        )
     )
 
 
 def _same_mrtr_operation(
     left: ToolCallEntry,
     right: ToolCallEntry,
+    events_by_sequence: _EventsBySequence,
     *,
     codex_progress_token: bool = False,
 ) -> bool:
@@ -1317,24 +1320,9 @@ def _same_mrtr_operation(
         return False
     if not left.attempts or not right.attempts:
         return False
-    left_params = left.attempts[0].operation_params
-    right_params = right.attempts[0].operation_params
-    return (
-        left_params.state is ObservationState.OBSERVED
-        and right_params.state is ObservationState.OBSERVED
-        and _json_equal(
-            _stable_mrtr_operation_params(
-                left_params.value, codex_progress_token=codex_progress_token
-            ),
-            _stable_mrtr_operation_params(
-                right_params.value, codex_progress_token=codex_progress_token
-            ),
-        )
+    return _same_mrtr_operation_params(
+        left, right, events_by_sequence, codex_progress_token=codex_progress_token
     )
-
-
-def _same_codex_mrtr_operation(left: ToolCallEntry, right: ToolCallEntry) -> bool:
-    return _same_mrtr_operation(left, right, codex_progress_token=True)
 
 
 def _stable_mrtr_operation_params(value: Any, *, codex_progress_token: bool) -> Any:
@@ -1384,7 +1372,6 @@ def _merge_mrtr_tool_calls(
                     second.timing.end_offset_ms - first.timing.start_offset_ms,
                 )
             ),
-            "wire": second.wire,
             "attempts": attempts,
         }
     )
@@ -1393,6 +1380,7 @@ def _merge_mrtr_tool_calls(
 def _mrtr_attempts_match_retry(
     source: ToolCallAttempt | ProtocolCallAttempt,
     candidate: ToolCallAttempt | ProtocolCallAttempt,
+    events_by_sequence: _EventsBySequence,
 ) -> bool:
     continuation = source.continuation_state
     if continuation.state is ObservationState.OBSERVED:
@@ -1405,16 +1393,13 @@ def _mrtr_attempts_match_retry(
     if candidate.request_state.state is not ObservationState.NOT_EMITTED:
         return False
 
-    raw_result = source.raw_result.value
     responses = candidate.input_responses
-    if (
-        not isinstance(raw_result, Mapping)
-        or responses.state is not ObservationState.OBSERVED
-        or not isinstance(responses.value, Mapping)
+    if responses.state is not ObservationState.OBSERVED or not isinstance(
+        responses.value, Mapping
     ):
         return False
-    requests = raw_result.get("inputRequests", raw_result.get("input_requests"))
-    if not isinstance(requests, Mapping):
+    requests = _mrtr_input_requests(events_by_sequence[source.sequence_end])
+    if requests is None:
         return False
     request_keys = set(requests)
     response_keys = set(responses.value)
@@ -1459,6 +1444,7 @@ def _has_unresolved_prior_mrtr_source(
     source: ToolCallEntry | ProtocolEntry,
     candidate: ToolCallEntry | ProtocolEntry,
     same_operation: Callable[[Any, Any], bool],
+    events_by_sequence: _EventsBySequence,
 ) -> bool:
     assert source.attempts and candidate.attempts
     source_end = source.attempts[-1].sequence_end
@@ -1471,21 +1457,27 @@ def _has_unresolved_prior_mrtr_source(
             or not same_operation(prior, source)
             or prior.attempts[-1].input_required is not True
             or prior.attempts[-1].sequence_end >= source_end
-            or not _mrtr_attempts_match_retry(prior.attempts[-1], candidate_attempt)
+            or not _mrtr_attempts_match_retry(
+                prior.attempts[-1], candidate_attempt, events_by_sequence
+            )
         ):
             continue
 
         prior_end = prior.attempts[-1].sequence_end
         resolved_before_source = (
             source.attempts[0].sequence_start > prior_end
-            and _mrtr_attempts_match_retry(prior.attempts[-1], source.attempts[0])
+            and _mrtr_attempts_match_retry(
+                prior.attempts[-1], source.attempts[0], events_by_sequence
+            )
         ) or any(
             isinstance(possible, type(source))
             and possible.attempts
             and same_operation(prior, possible)
             and possible.attempts[0].sequence_start > prior_end
             and possible.attempts[-1].sequence_end <= source_end
-            and _mrtr_attempts_match_retry(prior.attempts[-1], possible.attempts[0])
+            and _mrtr_attempts_match_retry(
+                prior.attempts[-1], possible.attempts[0], events_by_sequence
+            )
             for possible in entries[prior_index + 1 : source_index]
         )
         if not resolved_before_source:
@@ -1494,13 +1486,20 @@ def _has_unresolved_prior_mrtr_source(
 
 
 def _coalesce_mrtr_tool_calls(
-    entries: tuple[TraceEntry, ...], *, codex_progress_token: bool = False
+    entries: tuple[TraceEntry, ...],
+    events_by_sequence: _EventsBySequence,
+    *,
+    codex_progress_token: bool = False,
 ) -> tuple[TraceEntry, ...]:
     """Follow evidenced MRTR retries without guessing concurrent calls."""
 
-    same_operation = (
-        _same_codex_mrtr_operation if codex_progress_token else _same_mrtr_operation
-    )
+    def same_operation(left: ToolCallEntry, right: ToolCallEntry) -> bool:
+        return _same_mrtr_operation(
+            left,
+            right,
+            events_by_sequence,
+            codex_progress_token=codex_progress_token,
+        )
 
     result: list[TraceEntry] = []
     consumed: set[int] = set()
@@ -1534,7 +1533,9 @@ def _coalesce_mrtr_tool_calls(
                 and (
                     boundary is None or candidate.attempts[-1].sequence_end <= boundary
                 )
-                and _mrtr_attempts_match_retry(previous, candidate.attempts[0])
+                and _mrtr_attempts_match_retry(
+                    previous, candidate.attempts[0], events_by_sequence
+                )
                 and same_operation(source, candidate)
                 and not _has_unresolved_prior_mrtr_source(
                     entries,
@@ -1542,6 +1543,7 @@ def _coalesce_mrtr_tool_calls(
                     source,
                     candidate,
                     same_operation,
+                    events_by_sequence,
                 )
             ):
                 edges[index].append((candidate_index, candidate))
@@ -1578,6 +1580,7 @@ def _coalesce_mrtr_tool_calls(
 def _same_mrtr_protocol_operation(
     left: ProtocolEntry,
     right: ProtocolEntry,
+    events_by_sequence: _EventsBySequence,
     *,
     codex_progress_token: bool = False,
 ) -> bool:
@@ -1598,26 +1601,9 @@ def _same_mrtr_protocol_operation(
         or not right.attempts
     ):
         return False
-    left_params = left.attempts[0].operation_params
-    right_params = right.attempts[0].operation_params
-    return (
-        left_params.state is ObservationState.OBSERVED
-        and right_params.state is ObservationState.OBSERVED
-        and _json_equal(
-            _stable_mrtr_operation_params(
-                left_params.value, codex_progress_token=codex_progress_token
-            ),
-            _stable_mrtr_operation_params(
-                right_params.value, codex_progress_token=codex_progress_token
-            ),
-        )
+    return _same_mrtr_operation_params(
+        left, right, events_by_sequence, codex_progress_token=codex_progress_token
     )
-
-
-def _same_codex_mrtr_protocol_operation(
-    left: ProtocolEntry, right: ProtocolEntry
-) -> bool:
-    return _same_mrtr_protocol_operation(left, right, codex_progress_token=True)
 
 
 def _merge_mrtr_protocol_calls(
@@ -1649,15 +1635,20 @@ def _merge_mrtr_protocol_calls(
 
 
 def _coalesce_mrtr_protocol_calls(
-    entries: tuple[TraceEntry, ...], *, codex_progress_token: bool = False
+    entries: tuple[TraceEntry, ...],
+    events_by_sequence: _EventsBySequence,
+    *,
+    codex_progress_token: bool = False,
 ) -> tuple[TraceEntry, ...]:
     """Follow evidenced prompt/resource retries conservatively."""
 
-    same_operation = (
-        _same_codex_mrtr_protocol_operation
-        if codex_progress_token
-        else _same_mrtr_protocol_operation
-    )
+    def same_operation(left: ProtocolEntry, right: ProtocolEntry) -> bool:
+        return _same_mrtr_protocol_operation(
+            left,
+            right,
+            events_by_sequence,
+            codex_progress_token=codex_progress_token,
+        )
 
     candidates = {
         index: entry
@@ -1690,7 +1681,9 @@ def _coalesce_mrtr_protocol_calls(
                 and (
                     boundary is None or candidate.attempts[-1].sequence_end <= boundary
                 )
-                and _mrtr_attempts_match_retry(previous, candidate.attempts[0])
+                and _mrtr_attempts_match_retry(
+                    previous, candidate.attempts[0], events_by_sequence
+                )
                 and same_operation(source, candidate)
                 and not _has_unresolved_prior_mrtr_source(
                     entries,
@@ -1698,6 +1691,7 @@ def _coalesce_mrtr_protocol_calls(
                     source,
                     candidate,
                     same_operation,
+                    events_by_sequence,
                 )
             ):
                 edges[index].append((candidate_index, candidate))
@@ -1738,7 +1732,7 @@ def _coalesce_mrtr_protocol_calls(
 
 
 def _elicitation_entries(
-    entries: tuple[TraceEntry, ...],
+    entries: tuple[TraceEntry, ...], events_by_sequence: _EventsBySequence
 ) -> tuple[TraceEntry, ...]:
     """Project keyed elicitation requests from MRTR attempts only."""
 
@@ -1773,17 +1767,14 @@ def _elicitation_entries(
         for round_index, attempt in enumerate(attempts, start=1):
             if not attempt.input_required:
                 continue
-            raw = attempt.raw_result.value
             retry = attempts[round_index] if round_index < len(attempts) else None
             response_observation = (
                 retry.input_responses if retry is not None else _not_emitted()
             )
             response_value = response_observation.value
             responses = response_value if isinstance(response_value, Mapping) else {}
-            if not isinstance(raw, Mapping):
-                continue
-            requests = raw.get("inputRequests", raw.get("input_requests"))
-            if not isinstance(requests, Mapping):
+            requests = _mrtr_input_requests(events_by_sequence[attempt.sequence_end])
+            if requests is None:
                 continue
             for request_key, request in requests.items():
                 if not isinstance(request_key, str) or not isinstance(request, Mapping):
@@ -2556,14 +2547,15 @@ class TraceProjector:
             for event in events
         )
         projected = TraceProjector._coalesce_harness_chunks(projected)
+        events_by_sequence = {event.sequence: event for event in events}
         projected = _coalesce_mrtr_tool_calls(
-            projected, codex_progress_token=codex_progress_token
+            projected, events_by_sequence, codex_progress_token=codex_progress_token
         )
         projected = _coalesce_mrtr_protocol_calls(
-            projected, codex_progress_token=codex_progress_token
+            projected, events_by_sequence, codex_progress_token=codex_progress_token
         )
         projected = TraceProjector._correlate_reported_wire(projected)
-        projected = _elicitation_entries(projected)
+        projected = _elicitation_entries(projected, events_by_sequence)
         return tuple(
             sorted(
                 projected,

@@ -716,23 +716,6 @@ def test_observed_null_selector_is_distinct_from_omitted_and_unavailable() -> No
             }
         )
     )
-    unavailable_wire = unavailable_arguments.wire.value
-    assert unavailable_wire is not None
-    unavailable_arguments = unavailable_arguments.model_copy(
-        update={
-            "wire": Observation(
-                state=ObservationState.OBSERVED,
-                value=unavailable_wire.model_copy(
-                    update={
-                        "arguments": Observation(
-                            state=ObservationState.UNAVAILABLE,
-                            reason="malformed_source",
-                        )
-                    }
-                ),
-            )
-        }
-    )
     unavailable_view = null_trace.view().model_copy(
         update={
             "timeline": tuple(
@@ -756,22 +739,6 @@ def test_observed_null_selector_is_distinct_from_omitted_and_unavailable() -> No
                 "result": Observation(state=ObservationState.OBSERVED, value=None),
             }
         )
-    )
-    null_result_wire = null_result_entry.wire.value
-    assert null_result_wire is not None
-    null_result_entry = null_result_entry.model_copy(
-        update={
-            "wire": Observation(
-                state=ObservationState.OBSERVED,
-                value=null_result_wire.model_copy(
-                    update={
-                        "result": Observation(
-                            state=ObservationState.OBSERVED, value=None
-                        )
-                    }
-                ),
-            )
-        }
     )
     null_result_view = trace.view().model_copy(
         update={
@@ -920,23 +887,15 @@ def test_tool_call_predicate_receives_bounded_typed_projection() -> None:
 def test_unavailable_wire_observations_do_not_satisfy_latency() -> None:
     view = _trace().view()
     entry = view.tool_calls[0]
-    wire = entry.wire.value
-    assert wire is not None
-    unavailable = entry.model_copy(
+    attempt = entry.attempts[-1].model_copy(
         update={
-            "wire": Observation(
-                state=ObservationState.OBSERVED,
-                value=wire.model_copy(
-                    update={
-                        "latency_ms": Observation(
-                            state=ObservationState.UNAVAILABLE,
-                            reason="capture_failed",
-                        )
-                    }
-                ),
+            "latency_ms": Observation(
+                state=ObservationState.UNAVAILABLE,
+                reason="capture_failed",
             )
         }
     )
+    unavailable = entry.model_copy(update={"attempts": (attempt,)})
     unavailable_view = view.model_copy(
         update={
             "timeline": tuple(

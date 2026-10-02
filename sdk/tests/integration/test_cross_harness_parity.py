@@ -23,7 +23,12 @@ from m3.harness.contracts import (
 )
 from m3.harness.observation_sink import HarnessObservationSink
 from m3.harness.opencode import OpenCodeHarnessAdapter
-from m3.observability import DirectTrace, ObservationState, TraceView
+from m3.observability import (
+    CorrelationState,
+    DirectTrace,
+    ObservationState,
+    TraceView,
+)
 from m3.server_group import HarnessServerConfig, ServerGroupSnapshot
 from m3.storage import InMemoryExecutionStore, SQLiteExecutionStore
 from m3.sync_api import MCPTestKit
@@ -257,8 +262,8 @@ async def test_common_finalized_view_covers_all_local_harnesses() -> None:
         )
         assert direct_result.trace_view.tool_calls
         assert (
-            direct_result.trace_view.tool_calls[0].wire.state
-            is ObservationState.OBSERVED
+            direct_result.trace_view.tool_calls[0].correlation
+            is CorrelationState.WIRE_ONLY
         )
 
         for spec, runtime, adapter in (
@@ -350,7 +355,7 @@ async def test_tool_source_parity_keeps_wire_reported_and_builtin_identity() -> 
         direct_result = await kit.run(direct)
     assert direct_result.trace_view is not None
     direct_call = direct_result.trace_view.tool_calls[0]
-    assert direct_call.wire.state is ObservationState.OBSERVED
+    assert direct_call.correlation is CorrelationState.WIRE_ONLY
     assert direct_call.reported.state is ObservationState.NOT_EMITTED
 
     builtin_spec = _claude_spec().model_copy(

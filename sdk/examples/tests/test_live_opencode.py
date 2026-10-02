@@ -84,7 +84,7 @@ def test_live_opencode_uses_shipping_quote_and_captures_wire_evidence(
         assert len(calls) == 1
         call = calls[0]
         assert call.arguments.value == {"zone": "local", "weight_kg": 2}
-        assert call.wire.state.value == "observed"
+        assert call.correlation.value == "correlated"
         assert call.result.value is not None
         assert call.result.value.structured_content.value["currency"] == "USD"
 

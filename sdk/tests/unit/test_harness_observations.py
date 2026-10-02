@@ -1092,7 +1092,6 @@ def test_reported_and_wire_calls_correlate_once_with_wire_authority() -> None:
     calls = trace.view().tool_calls
     assert len(calls) == 1
     assert calls[0].correlation.value == "correlated"
-    assert calls[0].wire.state.value == "observed"
     assert calls[0].reported.state.value == "observed"
     assert calls[0].conflicts == ()
     assert calls[0].result.value.content[0].text == "wire"  # type: ignore[union-attr]

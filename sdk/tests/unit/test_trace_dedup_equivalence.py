@@ -6,6 +6,12 @@ evidence mode) are compared with literal data in
 ``fixtures/trace_dedup_equivalence.json``.  The expectations were generated from
 the projector before tool values stopped being stored several times in the
 trace, so they prove that removing the duplicates changed no behaviour.
+
+The one deliberate difference from the pre-change projector: ``evidence="wire"``
+no longer reports a result for a call whose last wire attempt is
+``input_required`` (the wire never carried a terminal result), so those frozen
+wire result expectations are ``"<unavailable>"`` instead of the typed
+``input_required`` result the old duplicate carried.
 """
 
 import json
@@ -28,7 +34,6 @@ from test_trace_projector import _trace
 from m3.matchers import _UNAVAILABLE, expect
 from m3.observability import (
     CorrelationState,
-    Observation,
     ProtocolEntry,
     ToolCallEntry,
 )
@@ -95,7 +100,7 @@ def _normalized(trace: TraceResult) -> TraceResult:
 
 def _two_rounds(trace: TraceResult, method: str, retry_id: int) -> TraceResult:
     """Chain a second input_required round (URL elicitation) before completion."""
-    retry, completion, terminal = trace.events[9:12]
+    retry, completion = trace.events[9:11]
     second_input = completion.model_copy(
         update={
             "payload": {
@@ -140,7 +145,13 @@ def _two_rounds(trace: TraceResult, method: str, retry_id: int) -> TraceResult:
     )
     return _resequence(
         trace,
-        (*trace.events[:10], second_input, third_request, third_result, terminal),
+        (
+            *trace.events[:10],
+            second_input,
+            third_request,
+            third_result,
+            *trace.events[11:],
+        ),
     )
 
 
@@ -537,7 +548,7 @@ def _bool_prompt() -> TraceResult:
     )
 
 
-def _dump(observation: Observation[Any]) -> Any:
+def _dump(observation: Any) -> Any:
     return observation.model_dump(mode="json")
 
 
@@ -568,11 +579,14 @@ def _attempt(attempt: Any) -> dict[str, Any]:
 
 
 def _wire_observed(call: ToolCallEntry) -> bool:
-    return call.wire.state.value == "observed"
+    return call.correlation in {
+        CorrelationState.WIRE_ONLY,
+        CorrelationState.CORRELATED,
+    }
 
 
 def _wire_latency(call: ToolCallEntry) -> Any:
-    return _dump(call.wire.value.latency_ms) if _wire_observed(call) else None
+    return _dump(call.attempts[-1].latency_ms) if _wire_observed(call) else None
 
 
 def _projections(view: Any, call_index: int, evidence: str) -> dict[str, Any]:
