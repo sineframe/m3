@@ -22,9 +22,15 @@ prompt and permission policy separately.
 
 ## Execution timed out
 
-Use `--execution-timeout SECONDS` to set an intentional deadline. Inspect the
-trace and harness diagnostics before increasing it; a server waiting for input
-or approval will not be fixed by an arbitrary larger value.
+Each agent execution gets 180 seconds unless you change it. `--execution-timeout
+SECONDS` changes the deadline for every selected agent, but only where the test
+doesn't pass its own `timeout=`. A `timeout=` in `agent.run()`, `agent.submit()`,
+or `agent.session()` always wins, so raising the flag does nothing for those
+calls. Change the value in the test instead.
+
+Inspect the trace and harness diagnostics before increasing either value; a
+server waiting for input or approval will not be fixed by an arbitrary larger
+value.
 
 An explicit tool request that times out while waiting for a harness response
 may be an unanswered Codex MCP approval request. `agent.run(..., timeout=...)`
