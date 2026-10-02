@@ -9,7 +9,7 @@
     {"page": "guides-agents-versions", "label": "shipping MCP server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-agents-versions", "label": "two pinned versions test", "source": "test_versions.py", "kind": "file"}
   ],
-  "dependencies": ["sf-m3[pytest]", "Codex CLI native executable"],
+  "dependencies": ["sf-m3[pytest]", "Codex login", "model available to the configured Codex account"],
   "working_directory": "compare-versions project directory",
   "scenarios": [
     {
@@ -28,7 +28,7 @@
       "verification": "live-provider"
     }
   ],
-  "network": "The server is local stdio. Each runtime may require release metadata and archive access. Both runs use the configured Codex login and model provider.",
+  "network": "The server is local stdio. Each pinned runtime requires release metadata and archive access unless it already has a valid cache entry. Both runs require model provider access through the configured Codex login.",
   "credentials": "Use the existing Codex login and select a model available to that account. Runtime download does not create provider credentials.",
   "cleanup": "MCPTestKit closes each harness and server process; managed binaries remain in the user cache unless an explicit temporary cache is supplied.",
   "verification_mode": "live-provider"
