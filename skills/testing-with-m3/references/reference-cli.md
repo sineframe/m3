@@ -50,8 +50,8 @@ On success, it installs or updates the `testing-with-m3` agent skill; see
 
 Check requested project capabilities. Repeat `--require KIND:TARGET` for
 configuration, binaries, harnesses, protocol, transport, or storage. Use
-`--json` for machine-readable output. `--env-file PATH` is explicit; M3 never
-searches for a current-directory `.env`.
+`--json` for machine-readable output. Configuration checks load the project
+root `.env` automatically; `--env-file PATH` selects a custom file instead.
 
 ## `m3 test`
 
@@ -72,7 +72,7 @@ Run pytest in the project environment and save M3 history.
 | `--execution-timeout SECONDS` | Deadline for each selected agent execution. |
 | `--judge-max-requests N` | Judge request budget for the run. |
 | `--credential-env [KIND:]TARGET=SOURCE` | Map a credential variable. Repeatable. |
-| `--env-file PATH` | Load one explicit dotenv file. |
+| `--env-file PATH` | Project root `.env` when present; otherwise none. Pass a path to load a custom dotenv file instead. |
 | `--ui` | Open the bundled viewer after pytest. |
 | `--port PORT` | Viewer port; `8000` by default. |
 
@@ -91,7 +91,8 @@ Accepts the test options except viewer options. It applies CI marker selection.
 ## `m3 upload RUN_ID`
 
 Retry publication of a saved run without rerunning tests. Options:
-`--project-root`, `--results-db`, and `--env-file`.
+`--project-root`, `--results-db`, and `--env-file`. The project root `.env` is
+loaded automatically when `--env-file` is omitted.
 
 ## `m3 ui`
 

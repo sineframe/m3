@@ -27,5 +27,6 @@ m3 upload $RUN_ID
 ```
 
 Do not copy an ID from documentation; it must identify a run in your database.
-If credentials came from a file, pass `--env-file` again. M3 refuses unsafe or
-changed payloads according to its upload inspection rules.
+If credentials came from a custom file, pass the same `--env-file` again; a
+project root `.env` is loaded automatically. M3 refuses unsafe or changed
+payloads according to its upload inspection rules.

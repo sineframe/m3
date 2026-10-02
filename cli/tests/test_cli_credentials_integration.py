@@ -12,7 +12,7 @@ SECRET = "sf-m3-cli-secret-sentinel-7f2c"
 def _cli_case(
     tmp_path: Path,
     source: str,
-    env_text: str,
+    env_text: str | None,
     *options: str,
     ambient: dict[str, str] | None = None,
 ):
@@ -22,8 +22,11 @@ def _cli_case(
         + source,
         encoding="utf-8",
     )
-    env_file = tmp_path / "provider.env"
-    env_file.write_text(env_text, encoding="utf-8")
+    env_options: tuple[str, ...] = ()
+    if env_text is not None:
+        env_file = tmp_path / "provider.env"
+        env_file.write_text(env_text, encoding="utf-8")
+        env_options = ("--env-file", str(env_file))
     database = tmp_path / "results.sqlite"
     environment = os.environ.copy()
     for key in (
@@ -52,8 +55,7 @@ def _cli_case(
         sys.executable,
         "--results-db",
         str(database),
-        "--env-file",
-        str(env_file),
+        *env_options,
         *options,
         "--",
         str(test_file),
@@ -119,6 +121,34 @@ def test_child(agent):
     assert result.returncode == 0, result.stdout + result.stderr
     assert os.environ.get("PAL_FILE_ONLY") is None
     _assert_no_secret(result, database, tmp_path)
+
+
+def test_project_root_env_is_discovered_without_flag(tmp_path: Path) -> None:
+    source = """
+import os
+def test_child():
+    assert os.environ["PAL_FILE_ONLY"] == "project-value"
+    assert os.environ["PAL_AMBIENT"] == "ambient-value"
+    assert "PAL_OTHER" not in os.environ
+"""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".env").write_text(
+        f"PAL_FILE_ONLY=project-value\nPAL_AMBIENT=file-value\nPAL_SECRET={SECRET}\n",
+        encoding="utf-8",
+    )
+    # The invocation directory is not the project root, so its .env is ignored.
+    (tmp_path / ".env").write_text("PAL_OTHER=cwd-value\n", encoding="utf-8")
+    result, database = _cli_case(
+        tmp_path,
+        source,
+        None,
+        "--project-root",
+        str(project),
+        ambient={"PAL_AMBIENT": "ambient-value"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    _assert_no_secret(result, database, project)
 
 
 def test_env_file_passes_unknown_prefixed_variable_through_fixture_setup(

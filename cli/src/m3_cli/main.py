@@ -71,7 +71,9 @@ def _parser() -> argparse.ArgumentParser:
         "--python", type=Path, metavar="PATH", help="Python used for project checks"
     )
     doctor_parser.add_argument(
-        "--env-file", type=Path, help="explicit dotenv file; cwd .env is never searched"
+        "--env-file",
+        type=Path,
+        help="dotenv file; defaults to PROJECT_ROOT/.env when present",
     )
     doctor_parser.add_argument(
         "--json", action="store_true", help="emit a machine-readable report"
@@ -131,7 +133,12 @@ def _parser() -> argparse.ArgumentParser:
     upload.add_argument("run_id", metavar="RUN_ID")
     upload.add_argument("--project-root", type=Path, default=None)
     upload.add_argument("--results-db", type=Path, default=None)
-    upload.add_argument("--env-file", type=Path, default=None)
+    upload.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="dotenv file; defaults to PROJECT_ROOT/.env when present",
+    )
 
     auth = subparsers.add_parser("auth", help="manage M3 access")
     auth_sub = auth.add_subparsers(dest="auth_command", required=True)
@@ -207,7 +214,13 @@ def _add_test_arguments(test: argparse.ArgumentParser, *, include_ui: bool) -> N
         default=[],
         metavar="[KIND:]TARGET=SOURCE",
     )
-    test.add_argument("--env-file", type=Path, default=None, metavar="PATH")
+    test.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="dotenv file; defaults to PROJECT_ROOT/.env when present",
+    )
     if include_ui:
         test.add_argument(
             "--ui", action="store_true", help="serve the bundled UI after pytest"
@@ -288,9 +301,11 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 from .ci_metadata import resolve_ci_metadata
                 from .ci_upload import control_plane_url, publish_run
-                from .supervisor import run_ci_test
+                from .supervisor import discover_env_file, run_ci_test
 
-                resolved = resolved_environment(args.env_file)
+                resolved = resolved_environment(
+                    discover_env_file(args.env_file, args.project_root)
+                )
                 if args.upload:
                     resolved[ACCESS_TOKEN_ENV] = access_token(
                         resolved, base_url=control_plane_url(resolved)
@@ -368,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
             return run_test(**test_kwargs)
         if args.command == "upload":
             from .ci_upload import publish_run
-            from .supervisor import _absolute_database
+            from .supervisor import _absolute_database, discover_env_file
 
             root = (args.project_root or Path.cwd()).resolve()
             database = _absolute_database(args.results_db, project_root=root)
@@ -377,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.run_id,
                     project_root=root,
                     database=database,
-                    env_file=args.env_file,
+                    env_file=discover_env_file(args.env_file, root),
                 )
             except (RuntimeError, OSError):
                 print(

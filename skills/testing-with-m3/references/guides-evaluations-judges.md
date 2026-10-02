@@ -9,8 +9,9 @@ sending private data unless that transfer is intended.
 ## Requirements
 
 `m3 setup` installs judge support. Direct SDK installations need the `judge`
-extra. Set `M3_JUDGE_API_KEY` in the process environment or an explicitly
-selected environment file. M3 does not discover `.env` automatically.
+extra. Set `M3_JUDGE_API_KEY` in the process environment or in `.env` at the
+project root, which M3 loads automatically. Use `--env-file PATH` to load a
+custom file instead.
 
 Register a judge with `kit.register_evaluator(name, judge)` and use the subject
 `{"input", "expected", "actual"}`.
@@ -39,15 +40,15 @@ def test_answer(m3_kit):
 Replace `YOUR_JUDGE_MODEL`, then run with a request cap:
 
 ```sh
-m3 test --env-file .env --judge-max-requests 1 -- tests/test_answer.py
+m3 test --judge-max-requests 1 -- tests/test_answer.py
 ```
 
 ## Map a differently named judge key
 
-If your environment or explicitly selected `.env` file stores the judge key as `MY_JUDGE_KEY`, keep `tests/test_answer.py` unchanged and replace the command above with:
+If your environment or project root `.env` file stores the judge key as `MY_JUDGE_KEY`, keep `tests/test_answer.py` unchanged and replace the command above with:
 
 ```sh
-m3 test --env-file .env \
+m3 test \
   --credential-env judge:M3_JUDGE_API_KEY=MY_JUDGE_KEY \
   --judge-max-requests 1 -- tests/test_answer.py
 ```

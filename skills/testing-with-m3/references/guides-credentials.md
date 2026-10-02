@@ -19,16 +19,16 @@ Credentials enter M3 under a source name and reach a child process under the nam
 
 ## Credential sources
 
-The SDK reads the process environment and does not load dotenv files. The CLI also reads the process environment. It loads a dotenv file only when the command includes `--env-file PATH`; it never searches for `.env`.
+The SDK reads the process environment and does not load dotenv files. The CLI also reads the process environment and automatically loads `.env` from the project root (`--project-root`, or the current directory) when that file exists. Pass `--env-file PATH` to load a custom file instead.
 
-When an explicit environment file is selected, values already present in the process environment take precedence, including empty values. File values fill names absent from the process environment. Values in the file are not interpolated. If an ambient variable is set but empty, M3 will not replace it with the non-empty value from the file.
+When an environment file is loaded, values already present in the process environment take precedence, including empty values. File values fill names absent from the process environment. Values in the file are not interpolated. If an ambient variable is set but empty, M3 will not replace it with the non-empty value from the file.
 
 For local uploads, `m3 auth login` uses device authorization in the M3 account console and saves a 30-day CLI credential in a supported operating-system credential store. An environment-provided `M3_ACCESS_TOKEN` always takes precedence. If `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` has a non-empty value, M3 requires `M3_ACCESS_TOKEN` and never reads the interactive credential store. Without one of those markers, commands can use the saved CLI credential when `M3_ACCESS_TOKEN` is absent, including `m3 ci test`. A selected `--env-file` can provide values to CLI test commands. Do not commit files containing live credentials.
 
 ## Common configuration mistakes
 
 - In `TARGET=SOURCE`, the child reads the target name and M3 reads the source name from its environment.
-- M3 does not discover `.env`. Pass `--env-file PATH` to the CLI command or export the values into the process environment.
+- M3 loads `.env` only from the project root, not from parent directories or the test directory. Pass `--env-file PATH` for a file elsewhere, or export the values into the process environment.
 - An empty ambient variable still overrides a non-empty value from the environment file.
 - Configure a key on the process that uses it: the MCP server, agent harness, or judge.
 - Host login behavior differs between native harnesses. Use an explicit mapping when an isolated child process needs a provider key.

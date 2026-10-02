@@ -428,11 +428,23 @@ def _absolute_database(
     ).resolve()
 
 
-def _test_environment(env_file: str | os.PathLike[str] | None) -> dict[str, str] | None:
-    """Return a child environment with explicitly requested dotenv values."""
-    if env_file is None:
+def discover_env_file(
+    env_file: str | os.PathLike[str] | None, project_root: Path | None
+) -> Path | None:
+    """Return the selected dotenv file: explicit, else ``PROJECT_ROOT/.env``."""
+    if env_file is not None:
+        return Path(env_file).expanduser()
+    candidate = (project_root or Path.cwd()).resolve() / ".env"
+    return candidate if candidate.is_file() else None
+
+
+def _test_environment(
+    env_file: str | os.PathLike[str] | None, project_root: Path
+) -> dict[str, str] | None:
+    """Return a child environment with explicit or discovered dotenv values."""
+    path = discover_env_file(env_file, project_root)
+    if path is None:
         return None
-    path = Path(env_file).expanduser()
     if not path.is_file():
         raise ProjectPythonError(f"env file was not found: {path}")
     try:
@@ -1370,7 +1382,7 @@ def run_test_with_runs(
         child_environment = (
             dict(environment)
             if environment is not None
-            else _test_environment(env_file)
+            else _test_environment(env_file, root)
         )
     except ProjectPythonError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
@@ -1501,7 +1513,7 @@ def run_test(
         print(f"m3 test: baseline run was not found: {baseline}", file=sys.stderr)
         return OPERATIONAL_ERROR
     try:
-        child_environment = _test_environment(env_file)
+        child_environment = _test_environment(env_file, root)
     except ProjectPythonError as exc:
         print(f"m3 test: {exc}", file=sys.stderr)
         return OPERATIONAL_ERROR

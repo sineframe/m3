@@ -141,9 +141,10 @@ are test outcomes; they are not automatically saved as evaluation decisions.
 1. Run `kit.agents([...])` with `SQLiteExecutionStore(path)`, or run a marked
    test with `m3 test --harness KIND=MODEL`, using the CLI's default
    database or `--results-db path`. Set provider credentials in the process
-   environment or pass `--env-file .env` explicitly; a custom variable source
-   uses `--credential-env TARGET=SOURCE`. The API reads saved references and
-   evidence, not provider key values.
+   environment or the project root `.env`, which `m3 test` loads
+   automatically; `--env-file PATH` selects a custom file, and a custom
+   variable source uses `--credential-env TARGET=SOURCE`. The API reads saved
+   references and evidence, not provider key values.
 2. Start the API/UI with that exact SQLite path.
 3. List or report the saved M3 executions through API v2.
 4. Run `kit.evaluate(...)` or an `EvaluationRunner` against the execution
@@ -820,6 +821,7 @@ legacy unassigned executions have null project labels.
 The supported authoring paths are a marked pytest test selected with
 `m3 test --harness ... --trials N`, or a Python loop over
 `kit.agents(...)`. Provider keys are supplied through the process environment
-or an explicit `--env-file`; MCP endpoint keys remain server header
-references. These paths write the execution records consumed by the report,
-evaluation aggregate, and feedback routes.
+or, for `m3 test`, the project root `.env` (or a custom `--env-file`); MCP
+endpoint keys remain server header references. These paths write the
+execution records consumed by the report, evaluation aggregate, and feedback
+routes.
