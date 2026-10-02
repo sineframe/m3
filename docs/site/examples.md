@@ -20,6 +20,11 @@ Examples are explained and run from their owning guides:
 - [Saved history and baselines](guides/results/baselines.md)
 - [Custom evaluator](guides/evaluations/custom.md)
 - [Elicitation plan](guides/elicitation/plans.md)
+- [Compose form and URL requests](guides/elicitation/composed.md)
+- [Test declined and cancelled input](guides/elicitation/responses.md)
+- [Test agent elicitation with Codex or Pi](guides/elicitation/agents.md)
+- [Handle elicitation manually](guides/elicitation/manual.md)
+- [Submit input to a paused execution](guides/elicitation/managed-input.md)
 
 Each guide shows its task-bearing code, command, and result. Source downloads
 are provided alongside examples that need more than one file.

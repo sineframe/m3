@@ -6,6 +6,7 @@
   "python": ">=3.10",
   "files": ["elicitation_server.py", "test_plan.py"],
   "displayed_blocks": [
+    {"page": "guides-elicitation-plans", "label": "local elicitation server", "source": "elicitation_server.py", "kind": "file"},
     {"page": "guides-elicitation-plans", "label": "direct elicitation plan", "source": "test_plan.py", "kind": "file"}
   ],
   "dependencies": ["sf-m3[pytest]"],
@@ -16,7 +17,7 @@
       "command": "python -m pytest -q test_plan.py",
       "working_directory": "project directory",
       "expected_exit_code": 0,
-      "assertions": ["server requests shipping_address", "plan submits keyed form response", "tool returns booked result"],
+      "assertions": ["server requests shipping_address", "plan submits keyed form response", "tool returns booked result", "request-key mismatch raises ElicitationExpectationError", "schema-invalid form content fails before retry"],
       "compatibility": {
         "harness": "none; direct SDK operation",
         "mcp_protocol_revision": "2026-07-28",

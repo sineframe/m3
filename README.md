@@ -103,6 +103,7 @@ its supporting references are explained in the
 - [Connect an ACP-compatible agent](https://m3.sineframe.com/docs/guides/agents/acp-connect)
 - [Compare agent harnesses and versions](https://m3.sineframe.com/docs/guides/agents/versions)
 - [Pin and inspect harness runtimes](https://m3.sineframe.com/docs/guides/agents/managed-runtimes)
+- [Handle MCP elicitation](https://m3.sineframe.com/docs/guides/elicitation/plans)
 - [CLI reference](https://m3.sineframe.com/docs/reference/cli/)
 - [Python reference](https://m3.sineframe.com/docs/reference/python/)
 - [Contributing](https://github.com/sineframe/m3/blob/main/docs/contributing.md)

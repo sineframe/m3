@@ -39,6 +39,7 @@ def test_managed_form_input_resumes_codex_execution(tmp_path: Path) -> None:
                 tools=["shipping:book_shipment"],
                 timeout=120,
                 human_input="managed",
+                permission_policy="allow",
             )
 
             deadline = time.monotonic() + 120
