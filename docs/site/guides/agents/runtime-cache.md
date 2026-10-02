@@ -12,19 +12,18 @@ not touch your normal M3 cache.
 
 ## Requirements
 
-Use Python 3.10 or newer. This verified run uses the M3 development candidate,
-macOS arm64, and the pinned Codex runtime `0.156.1`. M3 fetches release
+Use Python 3.10 or newer and install `sf-m3`. The example uses the pinned
+Codex runtime `0.156.1`. M3 fetches release
 metadata and the runtime asset from GitHub. No Codex login, model, provider
 credential, CLI installation, or test harness session is needed.
 
-From the M3 repository root, install the candidate SDK package:
+Install the SDK in the Python environment used to run the script:
 
 ```sh
-python -m pip install -e sdk
+python -m pip install sf-m3
 ```
 
-The target platform must have a matching Codex `0.156.1` release asset. Other
-OS and architecture combinations were not verified by this run. See the
+The target platform must have a matching Codex `0.156.1` release asset. See the
 [managed runtime reference](../../reference/managed-runtimes.md) for the
 supported target lookup and the [pinned runtime guide](managed-runtimes.md)
 for running an agent with a managed binary.

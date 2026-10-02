@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "agents-managed-runtimes",
   "owning_pages": ["guides-agents-managed-runtimes"],
-  "target_release": "development preview from untagged candidate 25738ca",
+  "target_release": "resolved from the published release pin",
   "python": ">=3.10",
   "files": ["shipping_server.py", "test_managed_runtime.py", "test_managed_runtime_fixture.py", "test_local_contract.py"],
   "displayed_blocks": [
@@ -11,7 +11,7 @@
     {"page": "guides-agents-managed-runtimes", "label": "local matcher and evaluator contract test", "source": "test_local_contract.py", "kind": "file"},
     {"page": "guides-agents-managed-runtimes", "label": "CLI-selected pinned runtime test", "source": "test_managed_runtime_fixture.py", "kind": "file"}
   ],
-  "dependencies": ["workspace candidate: sdk[pytest], app, and cli editable installs", "Codex CLI native executable"],
+  "dependencies": ["sf-m3[pytest]", "sf-m3-cli for the CLI variation", "Codex login"],
   "working_directory": "pinned-agent project directory",
   "scenarios": [
     {
@@ -25,7 +25,7 @@
         "version": "M3_DOCS_CODEX_VERSION",
         "model": "M3_DOCS_CODEX_MODEL",
         "mode": "native live provider",
-        "status": "requires live verification; not run in this preview because model selection, provider login confirmation, and runtime acquisition are outstanding"
+        "status": "requires live verification and provider access"
       },
       "verification": "live-provider"
     },
@@ -53,7 +53,7 @@
         "version": "M3_DOCS_CODEX_VERSION",
         "model": "M3_DOCS_CODEX_MODEL",
         "mode": "native live provider",
-        "status": "requires live verification; model selection and provider login status are not verified in this preview"
+        "status": "requires live verification and provider access"
       },
       "verification": "live-provider"
     }
@@ -61,5 +61,5 @@
   "network": "The server is local stdio. Runtime release metadata and archive acquisition require network access unless the exact pin already has a valid cache entry. Model access uses the native Codex login.",
   "credentials": "Use the existing Codex login and select a model available to that account. Runtime download does not create provider credentials.",
   "cleanup": "The kit closes the harness and server process. The per-test cache is created under pytest's temporary directory.",
-  "verification_mode": "live-provider; not run in this development preview"
+  "verification_mode": "live-provider"
 }

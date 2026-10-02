@@ -16,11 +16,10 @@ Install `sf-m3[pytest]`, sign in to Codex, and choose a model available to that
 login. Select two distinct version strings that have a release asset for your
 OS and CPU. M3 downloads the executable independently of provider login.
 
-For this development preview, install the candidate from the M3 repository
-root before running the standalone project:
+Install the SDK in the Python environment used to run the test:
 
 ```sh
-python -m pip install -e 'sdk[pytest]'
+python -m pip install 'sf-m3[pytest]'
 ```
 
 ```sh
@@ -223,9 +222,7 @@ successful structured result, and a passing deterministic evaluation for each
 execution. A provider can still behave differently across runs; matching the
 local evaluation does not establish general model quality.
 
-This live-provider example is not verified in the current development preview.
-The four installed native CLI versions are listed in the development
-verification record, but model variables are unset. See [pinned runtime
-selection](managed-runtimes.md) and [runtime cache management](runtime-cache.md).
+See [pinned runtime selection](managed-runtimes.md) and
+[runtime cache management](runtime-cache.md).
 
 Complete source project: [`sdk/examples/docs/agents-runtime-versions`](../../../../sdk/examples/docs/agents-runtime-versions).

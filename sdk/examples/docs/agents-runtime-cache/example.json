@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "agents-runtime-cache",
   "owning_pages": ["guides-agents-runtime-cache"],
-  "target_release": "development preview from untagged candidate 25738ca",
+  "target_release": "resolved from the published release pin",
   "python": ">=3.10",
   "files": ["cache_workflow.py"],
   "displayed_blocks": [

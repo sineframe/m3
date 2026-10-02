@@ -217,24 +217,3 @@ staging cleanup; if acquisition completes after its caller is cancelled, M3
 releases the resulting lease. Pruning skips an entry with an active lease.
 A runtime cache controls where M3 stores vendor executables. It does not
 restrict the harness process to a filesystem, network, or CPU sandbox.
-
-## Evidence for this preview
-
-The audit baseline is release `0.2.18`. This untagged development preview
-starts at commit `25738ca`; it is not a published package claim. The runtime
-contract is implemented in `m3.runtime.core.RuntimeManager`,
-`m3.runtime.resolve_cache_root`, and `m3.agent_session.AgentSession`.
-Vendor URL and asset selection lives in `m3.runtime.recipes` and
-`RuntimeManager._select_manifest_asset`.
-
-Relevant local tests include `test_managed_runtime_core.py` for selector,
-digest, archive, target, cache receipt, and latest resolution behavior;
-`test_managed_runtime_security_boundaries.py` for corrupt entries, path safety,
-leases, and archive rejection; `test_managed_runtime_session.py` for latest
-pin sharing, cancellation, and lease cleanup; `test_managed_runtime_identity.py`
-for requested/resolved identity persistence; and
-`test_managed_runtime_cli.py` for CLI selection and cache behavior. These tests
-do not establish a live provider success across all OS and harness versions.
-The current preview has local Codex `0.159.3`, Pi `0.85.1`, Claude Code
-`2.1.278`, and OpenCode `1.18.31` executables. Model variables are unset, so
-the live provider matrix remains unverified.

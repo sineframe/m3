@@ -18,12 +18,14 @@ set both variables before running the test. Runtime download and provider
 authentication are separate: the managed executable does not create a Codex
 login or provide model access.
 
-To install the untagged development candidate used by this preview, run this
-from the M3 repository root before entering the example directory:
+Install the SDK in the Python environment used to run the test:
 
 ```sh
-python -m pip install -e 'sdk[pytest]' -e app -e cli
+python -m pip install 'sf-m3[pytest]'
 ```
+
+For the CLI variation, install the standalone CLI on the same M3 release as
+the SDK. See [Install and update M3](../../start/install.md).
 
 ```sh
 export M3_DOCS_CODEX_MODEL='<model available to your Codex login>'
@@ -194,12 +196,6 @@ checks one successful call, its server, arguments, and structured quote. The
 identity assertions compare the requested pin with M3's resolved version and
 require a target and SHA-256 digest. They do not prove that every harness or
 operating system has an asset for every version.
-
-This live-provider scenario is not verified in the current development
-preview. Native CLI binaries are installed, but no model was selected in the
-environment. Provider login status was not determined. Set a model, confirm
-the native CLI login, then run the command to capture the result for your
-environment.
 
 ## Verify local result and evaluation mechanics
 

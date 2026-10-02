@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "agents-runtime-versions",
   "owning_pages": ["guides-agents-versions"],
-  "target_release": "development preview from untagged candidate 25738ca",
+  "target_release": "resolved from the published release pin",
   "python": ">=3.10",
   "files": ["shipping_server.py", "test_versions.py"],
   "displayed_blocks": [
@@ -23,7 +23,7 @@
         "versions": ["M3_DOCS_CODEX_VERSION_A", "M3_DOCS_CODEX_VERSION_B"],
         "model": "M3_DOCS_CODEX_MODEL",
         "mode": "native live provider",
-        "status": "requires live verification; not run in this preview because model selection, provider login confirmation, and both runtime releases are outstanding"
+        "status": "requires live verification and provider access"
       },
       "verification": "live-provider"
     }
@@ -31,5 +31,5 @@
   "network": "The server is local stdio. Each runtime may require release metadata and archive access. Both runs use the configured Codex login and model provider.",
   "credentials": "Use the existing Codex login and select a model available to that account. Runtime download does not create provider credentials.",
   "cleanup": "MCPTestKit closes each harness and server process; managed binaries remain in the user cache unless an explicit temporary cache is supplied.",
-  "verification_mode": "live-provider; not run in this development preview"
+  "verification_mode": "live-provider"
 }
