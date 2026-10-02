@@ -3,7 +3,6 @@
   <img src="docs/assets/banners/m3-protocol-light.svg" alt="M3 — Tests for MCP servers and the agents that use them." width="1200" height="360">
 </picture>
 
-# M3
 
 [![CI](https://github.com/sineframe/m3/actions/workflows/ci.yml/badge.svg)](https://github.com/sineframe/m3/actions/workflows/ci.yml)
 
