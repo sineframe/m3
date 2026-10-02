@@ -72,7 +72,7 @@ Run pytest in the project environment and save M3 history.
 | `--server …` | Add an HTTP or stdio server selection. Repeatable groups. |
 | `--trials N` | Independent executions per selected combination. |
 | `--suite NAME` | Select tests already carrying this suite name. |
-| `--execution-timeout SECONDS` | Deadline for each selected agent execution. |
+| `--execution-timeout SECONDS` | Deadline for each selected agent execution. Defaults to 180. A `timeout=` passed to `agent.run()`, `agent.submit()`, or `agent.session()` takes precedence over this flag. |
 | `--judge-max-requests N` | Judge request budget for the run. |
 | `--credential-env [KIND:]TARGET=SOURCE` | Map a credential variable. Repeatable. |
 | `--env-file PATH` | Project root `.env` when present; otherwise none. Pass a path to load a custom dotenv file instead. |
