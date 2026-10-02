@@ -12,6 +12,7 @@ from typing import ClassVar
 import pytest
 from mcp import types as mcp_types
 
+from m3.errors import TraceUnavailable
 from m3.events import EventFactory, EventSequence
 from m3.feedback import build_feedback, export_feedback, project_test_attempts
 from m3.storage import SQLiteExecutionStore
@@ -77,6 +78,11 @@ class _Store:
 
     def list_test_results(self, run_id):
         return tuple(self.tests.get(str(run_id), ()))
+
+
+class _TraceStub:
+    def model_dump(self, mode):
+        return {"marker": "trace"}
 
 
 class _Spec:
@@ -299,6 +305,54 @@ def test_export_keeps_current_and_baseline_supporting_reports(tmp_path):
     assert set(payload["execution_files"]) == {"old", "new"}
     for ref in payload["execution_files"].values():
         assert (tmp_path / ref).is_file()
+
+
+def test_export_retries_trace_that_failed_during_entry_load(tmp_path):
+    report = _report("new", "current", "new")
+    feedback = build_feedback(
+        _Store((report,), traces={"new": _TraceStub()}), "current"
+    )
+
+    class _FlakyStore(_Store):
+        def __init__(self, reports):
+            super().__init__(reports)
+            self.trace_calls = 0
+
+        def get_trace_view(self, execution_id):
+            self.trace_calls += 1
+            if self.trace_calls == 1:
+                raise TraceUnavailable("transient")
+            return _TraceStub()
+
+    flaky = _FlakyStore((report,))
+    export_feedback(feedback, flaky, tmp_path)
+    payload = json.loads((tmp_path / "feedback.json").read_text())
+    assert json.loads((tmp_path / payload["trace_files"]["new"]).read_text()) == {
+        "marker": "trace"
+    }
+    assert not any(
+        item.get("kind") == "trace" for item in payload["unavailable_references"]
+    )
+
+
+def test_export_reports_trace_that_stays_unavailable(tmp_path):
+    report = _report("new", "current", "new")
+    feedback = build_feedback(
+        _Store((report,), traces={"new": _TraceStub()}), "current"
+    )
+
+    class _UnavailableStore(_Store):
+        def get_trace_view(self, _execution_id):
+            raise TraceUnavailable("missing")
+
+    payload = json.loads(
+        export_feedback(feedback, _UnavailableStore((report,)), tmp_path).read_text()
+    )
+    assert {
+        "execution_id": "new",
+        "kind": "trace",
+        "reason": "trace view unavailable",
+    } in payload["unavailable_references"]
 
 
 def test_feedback_and_export_include_stored_run_labels(tmp_path):

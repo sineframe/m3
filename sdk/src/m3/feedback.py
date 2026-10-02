@@ -2202,22 +2202,33 @@ def export_feedback(
                 encoding="utf-8",
             )
             catalog_files[execution_id] = f"catalogs/{catalog_name}"
-        get_trace_view = getattr(store, "get_trace_view", None)
-        if callable(get_trace_view):
-            try:
-                trace = get_trace_view(entry.report.snapshot.execution_id)
-                if trace is not None:
-                    trace_name = _safe_filename(execution_id, ".json")
-                    (root / "traces" / trace_name).write_text(
-                        json.dumps(
-                            _jsonable(trace.model_dump(mode="json")),
-                            sort_keys=True,
-                            indent=2,
-                        )
-                        + "\n",
-                        encoding="utf-8",
+        trace = entry.trace
+        if trace is None:
+            get_trace_view = getattr(store, "get_trace_view", None)
+            if callable(get_trace_view):
+                try:
+                    trace = get_trace_view(entry.report.snapshot.execution_id)
+                except Exception:
+                    unavailable.append(
+                        {
+                            "execution_id": execution_id,
+                            "kind": "trace",
+                            "reason": "trace view unavailable",
+                        }
                     )
-                    trace_files[execution_id] = f"traces/{trace_name}"
+        if trace is not None:
+            try:
+                trace_name = _safe_filename(execution_id, ".json")
+                (root / "traces" / trace_name).write_text(
+                    json.dumps(
+                        _jsonable(trace.model_dump(mode="json")),
+                        sort_keys=True,
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                trace_files[execution_id] = f"traces/{trace_name}"
             except Exception:
                 unavailable.append(
                     {
