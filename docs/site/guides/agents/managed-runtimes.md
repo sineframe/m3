@@ -18,20 +18,21 @@ selected version needs a release asset for your OS and CPU, with network
 access for acquisition or a valid cache entry. Runtime acquisition does not
 provide model credentials.
 
-Install the SDK in the Python environment used to run the test:
+Add the SDK to your uv project:
 
 ```sh
-python -m pip install 'sf-m3[pytest]'
+uv add 'sf-m3[pytest]'
 ```
 
 See [Install and update M3](../../start/install.md) for the standalone CLI.
-Set the following values in Bash or zsh. `M3_DOCS_PYTHON` selects the project
-interpreter that has the SDK installed:
+Set the following values in Bash or zsh from the project root.
+`M3_DOCS_PYTHON` selects uv's project interpreter without requiring environment
+activation:
 
 ```sh
 export M3_DOCS_CODEX_MODEL='<model available to your Codex login>'
 export M3_DOCS_CODEX_VERSION='<explicit Codex CLI version>'
-export M3_DOCS_PYTHON="$(command -v python)"
+export M3_DOCS_PYTHON="$(uv run python -c 'import sys; print(sys.executable)')"
 ```
 
 Use a semantic version such as `0.155.1`; `latest` is not a pin. The native

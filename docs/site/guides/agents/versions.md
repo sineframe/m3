@@ -22,21 +22,21 @@ to Codex and choose a model available to that login. Select two distinct
 explicit versions with release assets for your OS and CPU. Each pin needs
 network access for acquisition or a valid cache entry; model access is separate.
 
-Install the SDK in the Python environment used to run the test:
+Add the SDK to your uv project:
 
 ```sh
-python -m pip install 'sf-m3[pytest]'
+uv add 'sf-m3[pytest]'
 ```
 
 See [Install and update M3](../../start/install.md) for the standalone CLI.
-Set these values in Bash or zsh. `M3_DOCS_PYTHON` selects the project interpreter
-that has the SDK installed:
+Set these values in Bash or zsh from the project root. `M3_DOCS_PYTHON`
+selects uv's project interpreter without requiring environment activation:
 
 ```sh
 export M3_DOCS_CODEX_MODEL='<model available to your Codex login>'
 export M3_DOCS_CODEX_VERSION_A='<first explicit version>'
 export M3_DOCS_CODEX_VERSION_B='<second explicit version>'
-export M3_DOCS_PYTHON="$(command -v python)"
+export M3_DOCS_PYTHON="$(uv run python -c 'import sys; print(sys.executable)')"
 ```
 
 ## Shared tool-use test
