@@ -118,6 +118,7 @@ pytestmark = pytest.mark.m3(suite_name="shipping")
 
 
 def test_shipping_quote() -> None:
+    """shipping_quote prices a 2 kg local parcel at 9.00 USD."""
     project_root = Path(__file__).parents[1]
     server = StdioServer(
         name="shipping",
