@@ -19,6 +19,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Require a branch
+        if: github.ref_type != 'branch'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "Run this workflow on a branch; $REF is not a branch." >&2
+          exit 1
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Python

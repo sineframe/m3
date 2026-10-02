@@ -89,3 +89,63 @@ def test_link_with_multiline_label_is_rewritten() -> None:
     )
 
     assert result == "See [test\ntools](guides-results-traces.md).\n"
+
+
+def test_link_title_is_preserved_when_target_is_rewritten() -> None:
+    result = _RENDERER.rewrite_links(
+        '[Guide](../guides/guide.md "Reference")',
+        "reference/index.md",
+        {"guides/guide.md": "guide"},
+    )
+
+    assert result == '[Guide](guide.md "Reference")'
+
+
+def test_angle_bracket_target_is_rewritten() -> None:
+    result = _RENDERER.rewrite_links(
+        "[Guide](<../guides/guide page.md>)",
+        "reference/index.md",
+        {"guides/guide page.md": "guide"},
+    )
+
+    assert result == "[Guide](<guide.md>)"
+
+
+def test_bundled_query_is_dropped_and_fragment_is_kept() -> None:
+    result = _RENDERER.rewrite_links(
+        "[Guide](../guides/guide.md?x=1#frag)",
+        "reference/index.md",
+        {"guides/guide.md": "guide"},
+    )
+
+    assert result == "[Guide](guide.md#frag)"
+
+
+def test_hosted_query_and_fragment_are_kept() -> None:
+    result = _RENDERER.rewrite_links(
+        "[API](python/api/symbol.md?x=1#usage)",
+        "reference/index.md",
+        {},
+    )
+
+    assert (
+        result
+        == "[API](https://m3.sineframe.com/docs/reference/python/api/symbol?x=1#usage)"
+    )
+
+
+def test_reference_definition_target_is_rewritten_and_title_kept() -> None:
+    result = _RENDERER.rewrite_links(
+        '[Guide]: ../guides/guide.md "Reference"\n[Text][Guide]\n',
+        "reference/index.md",
+        {"guides/guide.md": "guide"},
+    )
+
+    assert result == '[Guide]: guide.md "Reference"\n[Text][Guide]\n'
+
+
+def test_cli_flag_extraction_matches_exact_tokens() -> None:
+    available = _RENDERER.cli_flags("Options: --project-name NAME")
+
+    assert "--project-name" in available
+    assert "--project" not in available

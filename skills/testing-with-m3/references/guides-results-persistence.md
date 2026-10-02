@@ -23,9 +23,22 @@ Each `tests[]` entry has `node_id`, `outcome`, `verdict`,
 `effective_verdict`, `tool_result`, and `execution_ids`. `outcome` is the
 pytest case outcome. `verdict` distinguishes assertion, protocol, setup,
 teardown, and other results. `effective_verdict` applies the required-
-evaluation policy without relabeling `outcome`. Each `failures[]` entry has
-`kind`, `node_id`, `verdict`, `evaluator`, `status`, and `execution_id`.
-An `executions[].outcome` value of `completed` describes lifecycle only.
+evaluation policy without relabeling `outcome`.
+
+The `failures[]` array includes failed pytest cases copied from `tests[]`.
+Those entries include `node_id`, `outcome`, `verdict`, `effective_verdict`,
+and `execution_ids`; they do not have `kind` or `execution_id`. Required
+evaluation failures may be attached to a failed case under `evaluations[]`.
+When they appear as separate entries, they have `kind: "evaluation"`,
+`evaluation_id`, `execution_id`, `evaluator`, `case_id`, and `status`, plus
+evaluation details such as `required`, `score`, `rationale`, and `message`.
+Detached evaluation entries have `execution_id: null`. Collection and worker
+failures have `kind: "collection"` or `kind: "worker"` plus fields from their
+manifest reports; persistence failures have `kind: "persistence"` and
+`message`. These sources do not necessarily have `node_id`, `verdict`, or
+`execution_ids`, so inspect each entry's source-specific fields rather than
+filtering on one set of fields. An `executions[].outcome` value of `completed`
+describes lifecycle only.
 
 File maps are relative to the report directory: `trace_files`,
 `execution_files`, `spec_files`, `catalog_files`, `diagnostic_files`,

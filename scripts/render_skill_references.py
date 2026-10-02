@@ -36,9 +36,21 @@ KIND_ORDER = (
     "cli",
 )
 GENERATED_NOTE = "<!-- Generated from docs/site/{source} by scripts/render_skill_references.py. Edit the source page, then rerun the script. -->"
-MARKDOWN_LINK = re.compile(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)")
+MARKDOWN_LINK = re.compile(
+    r'(!?)\[([^\]]*)\]\(\s*(<[^>\n]*>|(?:\\.|[^)\s])+)(?:[ \t]+("[^"\n]*"|\'[^\'\n]*\'|\([^)\n]*\)))?[ \t]*\)'
+)
+REFERENCE_DEFINITION = re.compile(
+    r'(?m)^ {0,3}(\[[^\]\n]+\]:[ \t]*)(<[^>\n]*>|(?:\\.|[^\s])+)([ \t]+(?:"[^"\n]*"|\'[^\'\n]*\'|\([^)\n]*\)))?'
+)
 INLINE_CODE = re.compile(r"(`+)(.+?)\1")
 FLAG = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
+NON_M3_FLAGS = frozenset({"--arg"})
+
+
+def cli_flags(text: str) -> frozenset[str]:
+    """Return the exact CLI flag tokens in text."""
+    return frozenset(FLAG.findall(text))
+
 
 _VALIDATOR_PATH = ROOT / "scripts" / "validate_docs_site.py"
 _VALIDATOR_SPEC = importlib.util.spec_from_file_location(
@@ -88,65 +100,104 @@ def _non_fence_blocks(
 
 def _links_outside_code(
     text: str,
-) -> list[tuple[re.Match[str], list[re.Match[str]]]]:
-    """Find markdown links outside fences and inline-code spans."""
-    matches = []
+) -> list[tuple[re.Match[str], list[re.Match[str]], bool]]:
+    """Find inline links and reference definitions outside fences and code."""
+    matches: list[tuple[re.Match[str], list[re.Match[str]], bool]] = []
     for block, in_fence, spans in _non_fence_blocks(text):
         if in_fence:
             continue
-        matches.extend(
-            (match, spans)
-            for match in MARKDOWN_LINK.finditer(block)
-            if not any(
-                span.start() <= match.start() and match.end() <= span.end()
-                for span in spans
+        for pattern, definition in (
+            (MARKDOWN_LINK, False),
+            (REFERENCE_DEFINITION, True),
+        ):
+            matches.extend(
+                (match, spans, definition)
+                for match in pattern.finditer(block)
+                if not any(
+                    span.start() <= match.start() and match.end() <= span.end()
+                    for span in spans
+                )
             )
-        )
     return matches
+
+
+def _bare_target(target: str) -> tuple[str, bool]:
+    angle = target.startswith("<") and target.endswith(">")
+    return (target[1:-1] if angle else target), angle
+
+
+def _rewrite_target(
+    target: str, source: str, selected: dict[str, str]
+) -> tuple[str, str | None]:
+    """Return target, or a repository path for the caller to explain."""
+    raw_target, angle = _bare_target(target)
+    split = urlsplit(raw_target)
+    if raw_target.startswith("#") or split.scheme:
+        return target, None
+    resolved = Path(os.path.normpath((SITE / source).parent / split.path))
+    suffix = f"#{split.fragment}" if split.fragment else ""
+    if _inside(resolved, SITE):
+        relative = resolved.relative_to(SITE).as_posix()
+        page_id = selected.get(relative)
+        if page_id is not None:
+            # Bundled copies are release-pinned; query parameters do not apply.
+            rewritten = f"{page_id}.md{suffix}"
+        elif resolved.suffix == ".md":
+            query = f"?{split.query}" if split.query else ""
+            rewritten = f"{HOSTED_DOCS}{expected_route(relative)}{query}{suffix}"
+        else:
+            return "", None
+    elif _inside(resolved, ROOT):
+        return "", resolved.relative_to(ROOT).as_posix()
+    else:
+        return "", None
+    return (f"<{rewritten}>" if angle else rewritten), None
 
 
 def rewrite_links(text: str, source: str, selected: dict[str, str]) -> str:
     """Rewrite links in one documentation page for the bundled references."""
-    source_dir = (SITE / source).parent
-
-    def replace(match: re.Match[str], code_spans: list[re.Match[str]]) -> str:
-        if any(
-            span.start() <= match.start() and match.end() <= span.end()
-            for span in code_spans
-        ):
-            return match.group(0)
-        image, label, target = match.groups()
-        if image:
-            return label
-        split = urlsplit(target)
-        if target.startswith("#") or split.scheme:
-            return match.group(0)
-        path_text, separator, fragment = target.partition("#")
-        resolved = Path(os.path.normpath(source_dir / path_text))
-        if _inside(resolved, SITE):
-            relative = resolved.relative_to(SITE).as_posix()
-            page_id = selected.get(relative)
-            suffix = f"#{fragment}" if separator else ""
-            if page_id is not None:
-                return f"[{label}]({page_id}.md{suffix})"
-            if resolved.suffix == ".md":
-                return f"[{label}]({HOSTED_DOCS}{expected_route(relative)}{suffix})"
-            return label
-        if _inside(resolved, ROOT):
-            relative = resolved.relative_to(ROOT).as_posix()
-            return f"{label} (M3 repository: `{relative}`)"
-        return label
-
     rendered: list[str] = []
-    for block, in_fence, spans in _non_fence_blocks(text):
+    for block, in_fence, _ in _non_fence_blocks(text):
         if in_fence:
             rendered.append(block)
-        else:
-            rendered.append(
-                MARKDOWN_LINK.sub(
-                    lambda match, spans=spans: replace(match, spans), block
-                )
-            )
+            continue
+        matches = sorted(
+            (
+                (match, definition)
+                for match, _, definition in _links_outside_code(block)
+            ),
+            key=lambda item: item[0].start(),
+        )
+        pieces: list[str] = []
+        cursor = 0
+        for match, definition in matches:
+            pieces.append(block[cursor : match.start()])
+            group = 2 if definition else 3
+            target = match.group(group)
+            rewritten, repository_path = _rewrite_target(target, source, selected)
+            if repository_path is not None:
+                if definition:
+                    replacement = (
+                        match.group(1) + f"(M3 repository: `{repository_path}`)"
+                    )
+                else:
+                    replacement = (
+                        f"{match.group(2)} (M3 repository: `{repository_path}`)"
+                    )
+            elif not rewritten:
+                replacement = "" if definition else match.group(2)
+            elif definition:
+                replacement = match.group(1) + rewritten + (match.group(3) or "")
+            elif match.group(1):
+                replacement = match.group(2)
+            else:
+                title = match.group(4)
+                title_suffix = f" {title}" if title else ""
+                replacement = f"[{match.group(2)}]({rewritten}{title_suffix})"
+            pieces.append(replacement)
+            cursor = match.end()
+        pieces.append(block[cursor:])
+        rendered.append("".join(pieces))
     return "".join(rendered)
 
 
@@ -245,6 +296,15 @@ def _frontmatter(text: str) -> dict[str, str]:
     return values
 
 
+def _moving_branch_errors(content: str, filename: str) -> list[str]:
+    errors = []
+    for match in re.finditer(r"https?://[^\s]+", content):
+        url = match.group(0).rstrip(".,;:!?)]}>\"'")
+        if "/blob/main/" in url or "/tree/main/" in url:
+            errors.append(f"{filename} links to a moving branch: {url}")
+    return errors
+
+
 def _lint(
     skill_text: str, expected_paths: set[Path], fence_errors: list[str]
 ) -> list[str]:
@@ -259,27 +319,21 @@ def _lint(
         errors.append("SKILL.md must contain at most 500 lines")
 
     available = {path.resolve() for path in expected_paths}
-    for match in MARKDOWN_LINK.finditer(skill_text):
-        target = match.group(3)
-        if "/blob/main/" in target or "/tree/main/" in target:
-            errors.append(f"SKILL.md link must not target main: {target}")
-        split = urlsplit(target)
-        if target.startswith("#") or split.scheme:
+    for match, _, definition in _links_outside_code(skill_text):
+        target = match.group(2 if definition else 3)
+        raw_target, _ = _bare_target(target)
+        split = urlsplit(raw_target)
+        if raw_target.startswith("#") or split.scheme:
             continue
-        path_text = target.partition("#")[0]
-        resolved = Path(os.path.normpath(SKILL_DIR / path_text)).resolve()
+        resolved = Path(os.path.normpath(SKILL_DIR / split.path)).resolve()
         if resolved not in available:
             errors.append(f"SKILL.md relative link does not resolve: {target}")
 
-    cli_text = CLI_REFERENCE.read_text(encoding="utf-8")
-    for line in skill_text.splitlines():
-        if "m3 " not in line:
-            continue
-        for flag in FLAG.findall(line):
-            if flag not in cli_text:
-                errors.append(
-                    f"SKILL.md CLI flag is absent from the CLI reference: {flag}"
-                )
+    cli_flags_available = cli_flags(CLI_REFERENCE.read_text(encoding="utf-8"))
+    for flag in cli_flags(skill_text) - NON_M3_FLAGS:
+        if flag not in cli_flags_available:
+            errors.append(f"SKILL.md CLI flag is absent from the CLI reference: {flag}")
+    errors.extend(_moving_branch_errors(skill_text, "SKILL.md"))
     return errors
 
 
@@ -290,16 +344,17 @@ def _reference_link_errors(expected: dict[Path, str]) -> list[str]:
     for path, content in expected.items():
         if path.parent != REFERENCES:
             continue
-        for match, _ in _links_outside_code(content):
-            target = match.group(3)
-            if target.startswith("#") or urlsplit(target).scheme:
+        filename = path.relative_to(SKILL_DIR).as_posix()
+        for match, _, definition in _links_outside_code(content):
+            target = match.group(2 if definition else 3)
+            raw_target, _ = _bare_target(target)
+            split = urlsplit(raw_target)
+            if raw_target.startswith("#") or split.scheme:
                 continue
-            path_text = target.partition("#")[0]
-            resolved = Path(os.path.normpath(path.parent / path_text)).resolve()
+            resolved = Path(os.path.normpath(path.parent / split.path)).resolve()
             if resolved not in available:
-                errors.append(
-                    f"{path.relative_to(SKILL_DIR).as_posix()} link does not resolve: {target}"
-                )
+                errors.append(f"{filename} link does not resolve: {target}")
+        errors.extend(_moving_branch_errors(content, filename))
     return errors
 
 

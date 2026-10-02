@@ -55,11 +55,17 @@ The `comparison` object has `baseline_run_id`, `current_run_id`, `coverage`,
 `evaluation_changes[]` entry has `case_id`, `evaluator`, `configuration`,
 `comparable`, `changed_fields`, `before`, `after`, and `delta`.
 
-Each `interface_changes[]` entry carries `complete=true`. An empty list proves
-no interface change only when both runs observed complete catalogs with
-matched identity. A changed judge model, rubric, prompt version, or
-configuration digest makes `evaluation_changes` unlike-for-like, as shown by
-`comparable` and `changed_fields`.
+An entry describes an observed tool interface change only when it has
+`complete: true`. A `catalog_coverage` entry reports matched, baseline-only,
+and current-only catalog coverage; it is incomplete evidence and does not
+describe an interface change. `catalog_completeness` entries report a
+catalog's completeness changing, while `catalog_distribution` entries report
+unpaired distributions of observed catalog versions. These catalog entries
+report coverage, completeness, or catalog distributions, not tool interface
+changes. An empty list proves no interface change only when both runs observed
+complete catalogs with matched identity. A changed judge model, rubric,
+prompt version, or configuration digest makes `evaluation_changes`
+unlike-for-like, as shown by `comparable` and `changed_fields`.
 
 `--baseline` needs a matching project identity. A fresh worktree or CI job
 has no history because `.m3/` is ignored, so preserve a database and pass it

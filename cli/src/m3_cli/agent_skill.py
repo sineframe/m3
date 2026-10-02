@@ -2,16 +2,31 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
+import re
 import shutil
+import signal
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 SKILL_NAME = "testing-with-m3"
 SKILL_REPOSITORY = "sineframe/m3"
-_CI_MARKERS = ("CI", "GITHUB_ACTIONS", "GITLAB_CI")
+_CI_MARKERS = (
+    "CI",
+    "GITHUB_ACTIONS",
+    "GITLAB_CI",
+    "BUILDKITE",
+    "CIRCLECI",
+    "JENKINS_URL",
+    "TF_BUILD",
+    "TEAMCITY_VERSION",
+    "BITBUCKET_BUILD_NUMBER",
+    "CODEBUILD_BUILD_ID",
+)
 _TIMEOUT_SECONDS = 180
 
 
@@ -19,11 +34,14 @@ def install_command(cli_version: str) -> list[str]:
     return [
         "npx",
         "--yes",
-        "skills",
+        "skills@1.7.0",
         "add",
         f"{SKILL_REPOSITORY}#v{cli_version}",
         "--skill",
         SKILL_NAME,
+        "--agent",
+        "universal",
+        "claude-code",
         "-y",
     ]
 
@@ -36,6 +54,62 @@ def _lock_entry(project_root: Path) -> dict[str, Any] | None:
         return entry if isinstance(entry, dict) else None
     except (OSError, json.JSONDecodeError, UnicodeError):
         return None
+
+
+def _is_development_install() -> bool:
+    try:
+        direct_url = importlib.metadata.distribution("sf-m3-cli").read_text(
+            "direct_url.json"
+        )
+        if direct_url is None:
+            return False
+        payload = json.loads(direct_url)
+        directory = payload.get("dir_info") if isinstance(payload, dict) else None
+        return isinstance(directory, dict) and directory.get("editable") is True
+    except (
+        importlib.metadata.PackageNotFoundError,
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+    ):
+        return False
+
+
+def _output_text(value: str | bytes | None) -> str:
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value or ""
+
+
+def _failure_hint(output: str) -> str | None:
+    output = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output)
+    decorations = "│■◇◆●└┌├─◒◐◓◑"
+    lines = [
+        line
+        for raw_line in output.splitlines()
+        if (line := raw_line.strip().lstrip(decorations).strip())
+        and re.search(r"[A-Za-z]", line)
+    ]
+    if not lines:
+        return None
+    failures = [
+        line for line in lines if re.search(r"(fatal:|error)", line, re.IGNORECASE)
+    ]
+    return failures[-1] if failures else lines[-1]
+
+
+def _kill_process(process: subprocess.Popen[str]) -> None:
+    try:
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                capture_output=True,
+                check=False,
+            )
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass
 
 
 def _exists(path: Path) -> bool:
@@ -56,15 +130,15 @@ def ensure_agent_skill(project_root: Path, cli_version: str, *, enabled: bool) -
     if any(os.environ.get(name) for name in _CI_MARKERS):
         print("Agent skill: skipped in CI")
         return
+    if _is_development_install():
+        print(
+            "Agent skill: skipped for a development install of M3. To install it, run:"
+        )
+        print(f"  {cmd}")
+        return
 
     entry = _lock_entry(project_root)
-    source = ""
-    if entry is not None:
-        for key in ("source", "sourceUrl"):
-            value = entry.get(key, "")
-            if isinstance(value, str):
-                source += f" {value}"
-    managed = entry is not None and SKILL_REPOSITORY in source
+    managed = entry is not None and entry.get("source") == SKILL_REPOSITORY
     relative_paths = (
         Path(".agents") / "skills" / SKILL_NAME / "SKILL.md",
         Path(".claude") / "skills" / SKILL_NAME / "SKILL.md",
@@ -98,26 +172,51 @@ def ensure_agent_skill(project_root: Path, cli_version: str, *, enabled: bool) -
         print(f"  {cmd}")
         return
 
+    env = os.environ.copy()
+    env["DISABLE_TELEMETRY"] = "1"
+    env["DO_NOT_TRACK"] = "1"
+    stdout = ""
     stderr = ""
+    succeeded = False
     try:
-        result = subprocess.run(
-            [npx, *command[1:]],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=_TIMEOUT_SECONDS,
-        )
-        stderr = result.stderr
-        if result.returncode == 0:
-            print(f"Agent skill: {action} {SKILL_NAME} for M3 {cli_version}")
-            return
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        if isinstance(exc, subprocess.TimeoutExpired) and isinstance(exc.stderr, str):
-            stderr = exc.stderr
+        if sys.platform == "win32":
+            process = subprocess.Popen(
+                [npx, *command[1:]],
+                cwd=project_root,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            process = subprocess.Popen(
+                [npx, *command[1:]],
+                cwd=project_root,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+        try:
+            stdout, stderr = process.communicate(timeout=_TIMEOUT_SECONDS)
+            succeeded = process.returncode == 0
+        except subprocess.TimeoutExpired:
+            _kill_process(process)
+            stdout, stderr = process.communicate()
+    except OSError:
+        pass
+
+    if succeeded:
+        print(f"Agent skill: {action} {SKILL_NAME} for M3 {cli_version}")
+        return
 
     print(f"Agent skill: could not install {SKILL_NAME}. Run:")
     print(f"  {cmd}")
-    lines = [line for line in stderr.splitlines() if line.strip()]
-    if lines:
-        print(f"  npx: {lines[-1]}")
+    output = _output_text(stdout) + "\n" + _output_text(stderr)
+    hint = _failure_hint(output)
+    if hint is not None:
+        print(f"  npx: {hint}")

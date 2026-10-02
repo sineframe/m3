@@ -84,10 +84,10 @@ It uses a local server and needs no model credentials.
 ## Agent skill
 
 `m3 init` and `m3 setup` install the `testing-with-m3` agent skill for the
-installed M3 release with `npx skills`. To install it yourself:
+installed M3 release. To install it yourself:
 
 ```sh
-npx skills add sineframe/m3#vVERSION --skill testing-with-m3
+npx --yes skills@1.7.0 add sineframe/m3#vVERSION --skill testing-with-m3 --agent universal claude-code -y
 ```
 
 `VERSION` is the output of `m3 --version`. See the

@@ -27,7 +27,7 @@ A trace's `limitations` list says which evidence M3 could not fully observe or s
 | Code | Where it appears | Routine? |
 |---|---|---|
 | `capture_incomplete` | Direct traces: always present. Every finalized direct trace records it, with `completeness` `partial` (`sdk/src/m3/direct_trace.py:604-605`). Agent traces: added when harness output was invalid, truncated, timed out, or duplicated. | Routine on direct traces. On agent traces, read the trace diagnostics before concluding that a call did not happen. |
-| `capture_disabled` | Raw harness evidence was not stored because capture is disabled (`harness/observation_sink.py:88,126`). | Routine when raw capture is off. Normalized observations are still recorded. |
+| `capture_disabled` | Provider message and reasoning observations are dropped when provider-message capture is disabled (`harness/observation_sink.py:85-89`). Raw evidence is also not stored when raw capture is disabled (`:123-126`). | Routine when the corresponding capture is off. Other normalized harness observations are still recorded. |
 | `partial_trace` | An ACP turn failed after recording only part of its evidence (`harness/acp.py:1730`). | No. The turn's evidence is incomplete. |
 | `cleanup_failed` | A server process or harness could not be shut down cleanly. | No. Results stand, but check for leftover processes. |
 | `persistence_failed` | Some observations could not be saved (`harness/observation_sink.py:120,403`). | No. The saved trace lacks evidence; do not treat a missing value as absence. |

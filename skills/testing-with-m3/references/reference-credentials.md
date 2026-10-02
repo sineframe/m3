@@ -28,7 +28,10 @@ When constructing `Codex`, `Pi`, `ClaudeCode`, or `OpenCode` directly, use `cred
 
 M3 also selects non-empty standard credential variables for the chosen harness and provider, such as `OPENAI_API_KEY` for Codex and `ANTHROPIC_API_KEY` for Claude Code. An explicit `credential_env` entry overrides the default for that target variable.
 
-OpenCode reads `OPENCODE_API_KEY`.
+For OpenCode and Pi, M3 selects a credential based on the model prefix:
+`opencode/` uses `OPENCODE_API_KEY`, `openai/` uses `OPENAI_API_KEY`, and
+`anthropic/` uses `ANTHROPIC_API_KEY`. Pi's `openai-codex/` prefix instead
+uses `PI_CODING_AGENT_DIR`.
 
 With `kit.agents(...)`, a missing mapped source raises `ValueError` when you start the run, before launching the agent. A present empty source passes that check, but launch requires a non-empty value and otherwise raises `HarnessStartupError`.
 

@@ -11,8 +11,10 @@ Run `m3 setup` from the project root. It installs the SDK version matching the
 standalone CLI into the selected isolated environment. If M3 selected the wrong
 environment, pass `--python PATH` to `setup` and `doctor`.
 
-Setup selects an active `VIRTUAL_ENV` or `CONDA_PREFIX` (skipping conda
-`base`) before a project `.venv`.
+Setup selects an active `VIRTUAL_ENV` or `CONDA_PREFIX` before a project
+`.venv`. An active conda `base` is rejected with `active Conda base is not a
+project environment; create or activate a project environment`. Activate a
+project environment, deactivate `base`, or pass `--python PATH`.
 
 ## Missing pytest, SQLite, or judge support
 
