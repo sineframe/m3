@@ -16,7 +16,7 @@ Credentials enter M3 under a source name and reach a child process under the nam
 | Native agent harness | A provider variable, such as `OPENAI_API_KEY` | Set `credential_env` on the `kit.agents(...)` selection. Each native adapter isolates its child environment. Codex may reuse eligible host authentication when no explicit mapping is set; Pi, Claude Code, and OpenCode do not copy host login files into their temporary homes. |
 | ACP agent | A variable the ACP process expects | Add an exact `${SOURCE_NAME}` reference to the ACP manifest's `env` mapping. M3 starts ACP with an isolated environment containing its configured entries. |
 | LLM judge | `M3_JUDGE_API_KEY` by default, or the key variable configured for a custom endpoint | Set the key in the M3 process environment or map a source with the `judge:` scope. A judge does not borrow an agent key. |
-| M3 run upload | Saved CLI credential or `M3_ACCESS_TOKEN` | For local uploads, run `m3 auth login` to save a CLI credential in the operating-system credential store. For CI, create a CI token and store it as `M3_ACCESS_TOKEN` in the CI secret store. |
+| M3 run upload | Saved CLI credential or `M3_ACCESS_TOKEN` | For local uploads, run `m3 auth login` to save a CLI credential in the operating-system credential store. For CI, create a CI token on your organization's **CI tokens** page in the [M3 account console](https://auth.sineframe.com/account) and store it as `M3_ACCESS_TOKEN` in the CI secret store. See [Manage M3 access](ci/access.md#create-a-ci-token). |
 
 `M3_ACCESS_TOKEN` authenticates M3 uploads. M3 removes it from the pytest child environment and rejects that exact variable name in agent and judge mappings or ACP manifests. Agent providers and judges need their own credentials.
 
@@ -26,7 +26,7 @@ The SDK reads the process environment and does not load dotenv files. The CLI al
 
 When an explicit environment file is selected, values already present in the process environment take precedence, including empty values. File values fill names absent from the process environment. Values in the file are not interpolated. If an ambient variable is set but empty, M3 will not replace it with the non-empty value from the file.
 
-For local uploads, `m3 auth login` uses hosted device authorization and saves a 30-day `kind=cli` credential in a supported operating-system credential store. An environment-provided `M3_ACCESS_TOKEN` always takes precedence. If `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` has a non-empty value, M3 requires `M3_ACCESS_TOKEN` and never reads the interactive credential store. Without one of those markers, commands can use the saved CLI credential when `M3_ACCESS_TOKEN` is absent, including `m3 ci test`. A selected `--env-file` can provide values to CLI test commands. Do not commit files containing live credentials.
+For local uploads, `m3 auth login` uses device authorization in the M3 account console and saves a 30-day `kind=cli` credential in a supported operating-system credential store. An environment-provided `M3_ACCESS_TOKEN` always takes precedence. If `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` has a non-empty value, M3 requires `M3_ACCESS_TOKEN` and never reads the interactive credential store. Without one of those markers, commands can use the saved CLI credential when `M3_ACCESS_TOKEN` is absent, including `m3 ci test`. A selected `--env-file` can provide values to CLI test commands. Do not commit files containing live credentials.
 
 ## Common configuration mistakes
 

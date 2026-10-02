@@ -1,7 +1,7 @@
 # CI and device authentication security review
 
 This review is for maintainers checking the boundary between the M3 CLI, the
-hosted account console, the control plane, the operating-system credential
+M3 account console, the control plane, the operating-system credential
 store, and CI. It covers the implementation in M3 commit `54e698d`, the merged
 control-plane PR
 [`sineframe/control-plane#15`](https://github.com/sineframe/control-plane/pull/15),
@@ -19,7 +19,7 @@ this review.
 
 | Boundary | Implemented behavior | Evidence and limit |
 | --- | --- | --- |
-| Hosted sign-in | `m3 auth login` asks the control plane to start device authorization, then opens the separately deployed account console. The console owns password and Google sign-in through the Supabase browser SDK. Provider access tokens, refresh tokens, project configuration, and SDK code do not enter the CLI. | The CLI calls the device endpoints in `cli/src/m3_cli/auth.py`. Console PR #62 adds `/cli/authorize` and its sign-in continuations. The control plane does not serve embedded console assets. |
+| Browser sign-in | `m3 auth login` asks the control plane to start device authorization, then opens the M3 account console, which is deployed separately from the control plane. The console owns password and Google sign-in through the Supabase browser SDK. Provider access tokens, refresh tokens, project configuration, and SDK code do not enter the CLI. | The CLI calls the device endpoints in `cli/src/m3_cli/auth.py`. Console PR #62 adds `/cli/authorize` and its sign-in continuations. The control plane does not serve embedded console assets. |
 | Device and user codes | The control plane returns a random bearer `device_code`, a short human `user_code`, a sign-in URL, a complete sign-in URL, a 600-second lifetime, and a five-second polling interval. PostgreSQL stores only the SHA-256 hash of the device code. The browser receives the user code and safe device metadata, never the device code or a PAT. | Control-plane PR #15 tests the stored hash, browser response fields, expiry, denial, polling interval, and replay. Console PR #62 tests password sign-in continuation, approval, denial, and expiry with mocked APIs. Those browser tests are not live hosted evidence. |
 | Approval binding | Approval requires a current Supabase bearer, authentication within five minutes, and an active membership in the selected organization. The control plane binds the approval to the verified Supabase UID, normalized email, session ID, organization ID, and membership grant. | The control-plane service owns these checks. Its Supabase-backed tests inspect the persisted binding. The CLI does not implement or bypass browser-session, account, or membership policy. |
 | Poll-time authorization | The unauthenticated polling endpoint accepts the device code, looks up its hash, applies the polling interval, and returns the defined pending, slowdown, denial, expiry, or invalid-authorization errors. Before issuance, the control plane rechecks the bound account, Supabase session, organization membership, and exact membership grant. It consumes the authorization and creates one audited PAT in one transaction. | Control-plane PR #15 exercises concurrent polling, replay, revoked browser session, changed membership grant, and removed membership. These are backend guarantees, not CLI-side checks. |

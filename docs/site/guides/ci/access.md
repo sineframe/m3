@@ -17,17 +17,18 @@ If `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` has a non-empty value, M3 requires
 
 For local CLI authorization:
 
-- Install the M3 CLI on a computer where you can complete sign-in on the hosted
-  authorization page.
+- Install the M3 CLI on a computer with a browser so that you can complete
+  sign-in in the M3 account console.
 - Use macOS Keychain, Windows Credential Manager, or a supported Linux Secret
   Service or KWallet credential store. `m3 auth login` stops before
   authorization when supported storage is unavailable.
 
-For CI token creation, sign in to the hosted account console and choose a CI
-secret store that can expose the token to the M3 process as
-`M3_ACCESS_TOKEN`. Both paths require active membership in the target M3
-organization. The hosted console provides organization creation and join paths
-when you need membership.
+For CI token creation, you need a CI secret store that can expose the token to
+the M3 process as `M3_ACCESS_TOKEN`.
+
+Both paths require active membership in the M3 organization that will receive
+uploads. If you have none, the M3 account console offers organization creation
+and join paths after sign-in.
 
 ## Authorize the local CLI
 
@@ -37,10 +38,11 @@ From any working directory, run:
 m3 auth login
 ```
 
-The CLI opens the hosted sign-in page. If it cannot open a browser, it prints a
-page URL and code instead. Sign in, choose the organization, confirm the code,
-and approve the authorization. The CLI receives a 30-day credential with
-`kind=cli` and saves it in the operating-system credential store.
+The CLI opens sign-in in the M3 account console. If it cannot open a browser,
+it prints a page URL and code instead. Sign in, choose the organization,
+confirm the code, and approve the authorization. The CLI receives a 30-day
+credential with `kind=cli` and saves it in the operating-system credential
+store.
 
 A completed authorization prints `M3 CLI credential saved in OS credential
 store.` This message confirms that the CLI saved the credential. It does not
@@ -72,10 +74,21 @@ reports its presence, but does not check that CI token with the control plane.
 
 ## Create a CI token
 
-In the hosted token-management page, create a dedicated token with `kind=ci`
-for the organization that will receive uploads. Copy the token when the page
-shows it, then save it in your CI provider's secret store under the exact name
-`M3_ACCESS_TOKEN`.
+You do not need to run `m3 auth login` first.
+
+1. Open the M3 account console at
+   [https://auth.sineframe.com/account](https://auth.sineframe.com/account)
+   and sign in.
+2. Select the organization that will receive the CI uploads.
+3. In that organization's navigation, open **CI tokens**. Its address has the
+   form `https://auth.sineframe.com/orgs/<organization-id>/tokens`; the
+   console fills in the organization ID.
+4. Select **Create CI token**, choose an expiry of 7, 30, or 90 days, and
+   create the token.
+5. Copy the token immediately. The console shows the secret only once.
+6. In your CI provider, save it as a secret named exactly `M3_ACCESS_TOKEN`.
+   For GitHub Actions, add a repository secret under **Settings** >
+   **Secrets and variables** > **Actions**.
 
 Configure the CI job so that the secret is present in the environment of the
 `m3 ci test --upload` or `m3 upload` process. Keep model-provider credentials
@@ -104,9 +117,9 @@ removes it from the operating-system credential store. If server revocation
 fails, the command retains the local credential so you can retry. Logout does
 not revoke, unset, or remove `M3_ACCESS_TOKEN`.
 
-To rotate or remove CI access, create a replacement CI token, update the CI
-secret, verify an upload, and revoke the old CI token in the hosted
-token-management page.
+To rotate or remove CI access, create a replacement on the organization's
+**CI tokens** page, update the `M3_ACCESS_TOKEN` secret, verify an upload, and
+revoke the old CI token on that page.
 
 Next, [run M3 in GitHub Actions](github-actions.md), or review the exact
 [credential resolution rules](../../reference/credentials.md).

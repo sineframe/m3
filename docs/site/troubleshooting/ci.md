@@ -17,7 +17,8 @@ that invocation and use `m3 upload RUN_ID` with the same project/database.
 
 ## Token no longer works
 
-Create a replacement CI token in the hosted token-management page and update
-the `M3_ACCESS_TOKEN` secret in the CI provider. Verify an upload with the
-replacement, then revoke the old CI token in the hosted page. `m3 auth logout`
+Create a replacement on your organization's **CI tokens** page in the
+[M3 account console](https://auth.sineframe.com/account) and update the
+`M3_ACCESS_TOKEN` secret in the CI provider. Verify an upload with the
+replacement, then revoke the old CI token on the same page. `m3 auth logout`
 acts only on the saved CLI credential; it does not rotate or revoke a CI token.
