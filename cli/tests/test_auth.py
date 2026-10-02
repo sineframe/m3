@@ -181,7 +181,9 @@ def test_login_posts_device_body_and_saves_token(
 
 
 def test_login_reports_poll_error_without_secret(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    store: Keyring,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("M3_CONTROL_PLANE_URL", "https://control.example")
     monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
@@ -218,7 +220,7 @@ def test_login_reports_poll_error_without_secret(
     ["authorization_pending", "slow_down", "expired_token", "invalid_grant"],
 )
 def test_login_poll_error_codes_are_handled(
-    monkeypatch: pytest.MonkeyPatch, error_code: str
+    monkeypatch: pytest.MonkeyPatch, store: Keyring, error_code: str
 ) -> None:
     monkeypatch.setenv("M3_CONTROL_PLANE_URL", "https://control.example")
     monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
