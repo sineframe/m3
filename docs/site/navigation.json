@@ -213,8 +213,15 @@
       "id": "guides-credentials",
       "title": "Configure credentials",
       "source": "guides/credentials.md",
-      "description": "Choose the credential path for an MCP endpoint, agent, judge, or uploaded run.",
-      "kind": "guides"
+      "description": "Choose a credential source and pass it only to the M3 process that needs it.",
+      "kind": "guides",
+      "searchAliases": [
+        "agent credentials",
+        "judge key",
+        "MCP authentication",
+        "upload token",
+        "M3_ACCESS_TOKEN"
+      ]
     },
     {
       "id": "guides-elicitation-managed-input",
@@ -258,7 +265,6 @@
       "description": "An LLM judge sends the selected subject text to its configured endpoint. Use it for criteria that cannot be expressed as deterministic assertions, and avoid sending private data unless that transfer is intended.",
       "kind": "guides",
       "searchAliases": [
-        "judge key",
         "M3_JUDGE_API_KEY"
       ]
     },
@@ -375,8 +381,7 @@
       "description": "Project identity and environment-file loading behavior.",
       "kind": "reference",
       "searchAliases": [
-        "env file",
-        "credentials"
+        "env file"
       ]
     },
     {
@@ -611,8 +616,13 @@
             "guides-evaluations-aggregate"
           ]
         },
-        "guides-credentials",
-        "guides-credentials-endpoints",
+        {
+          "title": "Credentials",
+          "items": [
+            "guides-credentials",
+            "guides-credentials-endpoints"
+          ]
+        },
         {
           "title": "Handle interaction",
           "items": [

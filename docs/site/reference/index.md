@@ -11,7 +11,8 @@ working sequence, start with a guide instead.
 - [CLI commands and options](cli/index.md)
 - [Python SDK](python/index.md)
 - [pytest integration](pytest.md)
-- [Configuration and credentials](configuration.md)
+- [Credential reference](credentials.md)
+- [Configuration](configuration.md)
 - [Compatibility and limitations](compatibility.md)
 
 The capability pages provide the canonical explanations. The generated

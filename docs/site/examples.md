@@ -14,7 +14,7 @@ Examples are explained and run from their owning guides:
 - [Connect an ACP-compatible agent](guides/agents/acp-connect.md)
 - [Expose a custom agent through ACP](guides/agents/acp-wrapper.md)
 - [Continuing agent session](guides/agents/sessions.md)
-- [Configure credentials](guides/credentials.md)
+- [Pass a credential to a stdio MCP server](guides/credentials/endpoints.md)
 - [Pin a native harness runtime](guides/agents/managed-runtimes.md)
 - [Compare agent harnesses and versions](guides/agents/versions.md)
 - [Saved history and baselines](guides/results/baselines.md)
