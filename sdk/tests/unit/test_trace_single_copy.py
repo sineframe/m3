@@ -20,8 +20,10 @@ from test_trace_dedup_equivalence import (
 from m3.matchers import expect
 from m3.observability import (
     CorrelationState,
+    Observation,
     ObservationState,
     ProtocolEntry,
+    ReportedToolCall,
     ToolCallEntry,
     TraceView,
 )
@@ -36,6 +38,9 @@ from m3.types import (
 _ARGUMENT = "argument-marker-0b7e91"
 _RESULT = "result-marker-5d1c42"
 _MESSAGE = "message-marker-93a6f0"
+_HARNESS_ARGUMENT = "harness-argument-marker-2e8f13"
+_HARNESS_RESULT = "harness-result-marker-7a40cd"
+_MCP_RESULT = {"content": [{"kind": "text", "text": _RESULT}]}
 
 
 def _count(view: TraceView, marker: str) -> int:
@@ -64,6 +69,55 @@ def _marked_plain_trace() -> TraceResult:
         }
     )
     return _rebuild(trace, (*trace.events[:8], response, *trace.events[9:]))
+
+
+def _correlated(
+    *,
+    wire_argument: str = _ARGUMENT,
+    reported_argument: str | dict[str, Any] | None = None,
+    reported_result: Any = None,
+    wire_result: str = _RESULT,
+) -> TraceResult:
+    """Correlate a harness report with a wire echo call carrying marker values."""
+    reported_arguments = (
+        {"text": wire_argument} if reported_argument is None else reported_argument
+    )
+    trace = _plain_reported(
+        arguments=reported_arguments,
+        result={"content": []},
+    )
+    events = list(trace.events)
+    request, response = events[7], events[8]
+    events[7] = request.model_copy(
+        update={
+            "payload": {
+                **request.model_dump(mode="json")["payload"],
+                "params": {"name": "echo", "arguments": {"text": wire_argument}},
+            }
+        }
+    )
+    events[8] = response.model_copy(
+        update={
+            "payload": {
+                "method": "tools/call",
+                "result": {"content": [{"type": "text", "text": wire_result}]},
+            }
+        }
+    )
+    harness_response = events[10]
+    events[10] = harness_response.model_copy(
+        update={
+            "payload": {
+                **harness_response.payload,
+                "result": (
+                    {"content": [{"type": "text", "text": wire_result}]}
+                    if reported_result is None
+                    else reported_result
+                ),
+            }
+        }
+    )
+    return _rebuild(trace, tuple(events))
 
 
 def _marked_tool_chain() -> TraceResult:
@@ -310,3 +364,143 @@ def test_wire_evidence_requires_wire_or_correlated_calls() -> None:
     expect(view).to_have_tool_call("other", evidence="reported", count=1)
     with pytest.raises(AssertionError):
         expect(view).to_have_tool_call("other", evidence="wire")
+
+
+def _call(trace: TraceResult) -> tuple[TraceView, ToolCallEntry]:
+    view = _normalized(trace).view()
+    (call,) = (c for c in view.tool_calls if c.reported.state.value == "observed")
+    return view, call
+
+
+def _expect_reported_matches(view: TraceView, call: ToolCallEntry) -> None:
+    """The reported-evidence matcher sees the full harness values."""
+    arguments = call.reported_field("arguments").value
+    result = call.reported_field("result").value
+    expect(view).to_have_tool_call(
+        "echo", evidence="reported", arguments=arguments, count=1
+    )
+    expect(view).to_have_tool_call("echo", evidence="reported", result=result, count=1)
+
+
+def test_equal_correlated_values_are_stored_once_and_reconstructed() -> None:
+    view, call = _call(_correlated(reported_result=_MCP_RESULT))
+
+    assert call.correlation is CorrelationState.CORRELATED
+    assert call.conflicts == ()
+    assert call.reported.value is not None
+    assert call.reported.value.same_as_call == ("arguments", "result")
+    assert call.reported.value.arguments.state is ObservationState.NOT_EMITTED
+    assert call.reported.value.result.state is ObservationState.NOT_EMITTED
+    assert _count(view, _ARGUMENT) == 1
+    assert _count(view, _RESULT) == 1
+    assert call.reported_field("arguments").value == {"text": _ARGUMENT}
+    assert call.reported_field("result").model_dump(mode="json")["value"] == _MCP_RESULT
+    _expect_reported_matches(view, call)
+
+
+def test_correlated_result_in_a_different_shape_is_kept() -> None:
+    view, call = _call(_correlated())
+
+    assert call.conflicts == ()
+    assert call.reported.value is not None
+    # The harness spelled the content block ``type``; the entry says ``kind``.
+    assert call.reported.value.same_as_call == ("arguments",)
+    assert call.reported.value.result.state is ObservationState.OBSERVED
+    assert _count(view, _ARGUMENT) == 1
+    assert _count(view, _RESULT) == 2
+    _expect_reported_matches(view, call)
+
+
+def test_conflicting_correlated_values_are_each_stored_once() -> None:
+    view, call = _call(
+        _correlated(
+            reported_argument={"text": _HARNESS_ARGUMENT},
+            reported_result={"content": [{"type": "text", "text": _HARNESS_RESULT}]},
+        )
+    )
+
+    assert call.conflicts == ("arguments", "result")
+    assert call.reported.value is not None
+    assert call.reported.value.same_as_call == ()
+    assert _count(view, _ARGUMENT) == 1
+    assert _count(view, _HARNESS_ARGUMENT) == 1
+    assert _count(view, _RESULT) == 1
+    assert _count(view, _HARNESS_RESULT) == 1
+    assert call.arguments.value == {"text": _ARGUMENT}
+    assert call.reported.value.arguments.value == {"text": _HARNESS_ARGUMENT}
+    _expect_reported_matches(view, call)
+
+
+def test_conflicting_arguments_keep_an_equal_result_elided() -> None:
+    view, call = _call(
+        _correlated(
+            reported_argument={"text": _HARNESS_ARGUMENT}, reported_result=_MCP_RESULT
+        )
+    )
+
+    assert call.conflicts == ("arguments",)
+    assert call.reported.value is not None
+    assert call.reported.value.same_as_call == ("result",)
+    assert _count(view, _ARGUMENT) == 1
+    assert _count(view, _HARNESS_ARGUMENT) == 1
+    assert _count(view, _RESULT) == 1
+    _expect_reported_matches(view, call)
+
+
+def test_string_harness_result_is_not_reconstructible_and_is_kept() -> None:
+    view, call = _call(_correlated(reported_result=_HARNESS_RESULT))
+
+    assert call.conflicts == ("result",)
+    assert call.reported.value is not None
+    assert call.reported.value.same_as_call == ("arguments",)
+    assert call.reported_field("result").value == _HARNESS_RESULT
+    assert _count(view, _HARNESS_RESULT) == 1
+    assert _count(view, _RESULT) == 1
+    _expect_reported_matches(view, call)
+
+
+def test_number_spellings_are_not_elided() -> None:
+    _view, call = _call(
+        _correlated(
+            wire_argument=_ARGUMENT, reported_argument={"text": _ARGUMENT, "n": 1.0}
+        )
+    )
+    assert call.reported.value is not None
+    assert call.reported.value.same_as_call == ()
+    assert call.reported_field("arguments").value == {"text": _ARGUMENT, "n": 1.0}
+
+
+def test_reported_only_call_stores_equal_values_once() -> None:
+    trace = _plain_reported(
+        tool="other",
+        call_id="solo",
+        arguments={"text": _ARGUMENT},
+        result={"content": [{"kind": "text", "text": _RESULT}]},
+    )
+    view = _normalized(trace).view()
+    (call,) = (
+        c for c in view.tool_calls if c.correlation is CorrelationState.REPORTED_ONLY
+    )
+
+    assert call.reported.value is not None
+    assert call.reported.value.same_as_call == ("arguments", "result")
+    assert _count(view, _ARGUMENT) == 1
+    assert _count(view, _RESULT) == 1
+    expect(view).to_have_tool_call(
+        "other",
+        evidence="reported",
+        arguments={"text": _ARGUMENT},
+        result={"content": [{"kind": "text", "text": _RESULT}]},
+    )
+
+
+def test_same_as_call_must_name_unstored_fields_once() -> None:
+    with pytest.raises(ValueError, match="must not be stored"):
+        ReportedToolCall(
+            arguments=Observation(state=ObservationState.OBSERVED, value={"a": 1}),
+            same_as_call=("arguments",),
+        )
+    with pytest.raises(ValueError, match="sorted and unique"):
+        ReportedToolCall(same_as_call=("arguments", "arguments"))
+    with pytest.raises(ValueError, match="sorted and unique"):
+        ReportedToolCall(same_as_call=("result", "arguments"))

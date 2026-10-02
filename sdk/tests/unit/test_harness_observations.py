@@ -1199,7 +1199,7 @@ def test_correlated_sources_retain_field_conflicts_with_wire_authority() -> None
         )
     )
     call = recorder.finalize(ExecutionOutcome.FAILED).view().tool_calls[0]
-    assert {conflict.field for conflict in call.conflicts} == {
+    assert set(call.conflicts) == {
         "server",
         "tool",
         "arguments",

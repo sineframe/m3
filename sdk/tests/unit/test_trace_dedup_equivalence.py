@@ -34,6 +34,8 @@ from test_trace_projector import _trace
 from m3.matchers import _UNAVAILABLE, expect
 from m3.observability import (
     CorrelationState,
+    Observation,
+    ObservationState,
     ProtocolEntry,
     ToolCallEntry,
 )
@@ -633,6 +635,52 @@ def _projections(view: Any, call_index: int, evidence: str) -> dict[str, Any]:
     return outcome
 
 
+def _full_reported(call: ToolCallEntry) -> dict[str, Any]:
+    """Rebuild the full harness-reported evidence from the deduplicated entry."""
+    dumped = _dump(call.reported)
+    reported = call.reported.value
+    if reported is None:
+        return dumped
+    del dumped["value"]["same_as_call"]
+    for field in reported.same_as_call:
+        dumped["value"][field] = _dump(call.reported_field(field))
+    return dumped
+
+
+def _conflicts(call: ToolCallEntry) -> list[dict[str, Any]]:
+    """Rebuild each conflict's reported and wire values from the entry."""
+    reported = call.reported.value
+    assert reported is not None or not call.conflicts
+    wire_values: dict[str, Observation[Any]] = {
+        "server": call.server,
+        "tool": call.tool,
+        "arguments": call.arguments,
+        "result": Observation(
+            state=ObservationState.OBSERVED,
+            value=call.result.value.to_mcp_json() if call.result.value else None,
+        ),
+        "status": Observation(
+            state=ObservationState.OBSERVED, value=call.tool_status.value
+        ),
+    }
+    conflicts = []
+    for field in call.conflicts:
+        assert reported is not None
+        harness = (
+            call.reported_field(field)
+            if field in ("arguments", "result")
+            else getattr(reported, field)
+        )
+        conflicts.append(
+            {
+                "field": field,
+                "reported": _dump(harness),
+                "wire": _dump(wire_values[field]),
+            }
+        )
+    return conflicts
+
+
 def _snapshot(trace: TraceResult) -> dict[str, Any]:
     view = _normalized(trace).view()
     tool_calls = []
@@ -647,12 +695,12 @@ def _snapshot(trace: TraceResult) -> dict[str, Any]:
                 "server_latency_ms": _dump(call.server_latency_ms),
                 "jsonrpc_id": _dump(call.jsonrpc_id),
                 "correlation": call.correlation.value,
-                "conflicts": [c.model_dump(mode="json") for c in call.conflicts],
+                "conflicts": _conflicts(call),
                 "tool_status": call.tool_status.value,
                 "status": call.status.value,
                 "sequence_start": call.sequence_start,
                 "sequence_end": call.sequence_end,
-                "reported": _dump(call.reported),
+                "reported": _full_reported(call),
                 "wire_observed": _wire_observed(call),
                 "wire_latency_ms": _wire_latency(call),
                 "attempts": [_attempt(a) for a in call.attempts],

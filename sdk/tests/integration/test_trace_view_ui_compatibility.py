@@ -17,7 +17,6 @@ from m3.observability import (
     ClaudeCodeTrace,
     CorrelationState,
     DirectTrace,
-    EvidenceConflict,
     HttpExchange,
     InitializationEntry,
     InitializationValue,
@@ -129,14 +128,9 @@ def _timeline() -> tuple[TraceEntry, ...]:
         provider_call_id=_observed("provider-call-1"),
         server=_observed("example-mcp"),
         tool=_observed("shipping_quote"),
-        arguments=_observed({"zone": "local"}),
+        arguments=_observed({"zone": "remote"}),
         result=_observed({"currency": "USD"}),
         status=_observed("success"),
-    )
-    conflict = EvidenceConflict(
-        field="arguments",
-        reported=_observed({"zone": "remote"}),
-        wire=_observed({"zone": "local"}),
     )
     tool = ToolCallEntry(
         **_entry("tool_call", 5),
@@ -151,7 +145,7 @@ def _timeline() -> tuple[TraceEntry, ...]:
         jsonrpc_id=_observed(7),
         server_latency_ms=_observed(3.0),
         reported=_observed(reported),
-        conflicts=(conflict,),
+        conflicts=("arguments",),
         attempts=(
             ToolCallAttempt(
                 attempt_index=0,
@@ -450,7 +444,7 @@ def test_public_trace_view_is_a_stable_ui_compatibility_surface(
     assert restored.reasoning[2].content.state is ObservationState.PROVIDER_HIDDEN
     assert restored.tool_calls[0].correlation is CorrelationState.CORRELATED
     assert restored.tool_calls[0].reported.state is ObservationState.OBSERVED
-    assert restored.tool_calls[0].conflicts[0].field == "arguments"
+    assert restored.tool_calls[0].conflicts == ("arguments",)
     assert restored.tool_calls[0].arguments.value == {"zone": "local"}
     assert restored.tool_calls[0].attempts[-1].latency_ms.value == 3.0
     assert restored.tool_calls[0].result.value is not None
