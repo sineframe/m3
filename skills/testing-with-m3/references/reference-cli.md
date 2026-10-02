@@ -91,7 +91,9 @@ creates 8 cases. Blank `--suite` input exits with status 2.
 ## `m3 ci test`
 
 Accepts the test options except viewer options. It applies CI marker selection.
-`--ci-metadata PATH` supplies supported CI metadata overrides.
+`--ci-metadata PATH` supplies supported CI metadata overrides. See
+[Publishing](#publishing) for `--upload` and [exit codes](#exit-codes) for the
+result of a failed or skipped upload.
 
 ## Publishing
 
@@ -172,6 +174,91 @@ See [cache configuration and reuse](reference-managed-runtimes.md#cache-location
 and [inspection and pruning](reference-managed-runtimes.md#inspect-and-prune-cached-runtimes)
 for details.
 
-Invalid command/configuration is an operational error. Pytest failures retain
-pytest's failure exit behavior; requested upload failures can turn an otherwise
-passing CI invocation into an operational failure.
+## Exit codes
+
+`m3` exits with 0 on success. Code 2 is M3's operational error for every
+command: an invalid option or configuration, an unavailable project Python, or
+a failed operation. Argument errors print `m3 COMMAND: invalid command or
+configuration` and do not repeat the rejected value.
+
+| Command | Code | Meaning |
+| --- | --- | --- |
+| `m3 test`, `m3 ci test` | 0 | pytest passed and M3 saved the run. With `--upload`, publishing must also succeed; if it fails, the exit code is 2 (see [Exit codes with `--upload`](#exit-codes-with---upload)). |
+| | 1 | A test failed, or pytest would have exited 0 but M3 fails the run: every selected test was skipped, M3 could not save run records or export `feedback.json`, a pytest-xdist worker failed, or a `required=True` evaluation did not pass. |
+| | 2 | pytest was interrupted, for example by a collection error, or M3 hit an operational error, such as a missing `--env-file`, a missing or malformed upload credential, or, with `--upload`, a failed upload inspection or publish after tests passed. Most of these errors stop M3 before pytest starts; see [below](#telling-an-m3-error-from-a-pytest-interruption). |
+| | 3 | pytest internal error. |
+| | 4 | pytest usage error: an unknown pytest option, a test without a suite name, a negative `--judge-max-requests`, or a `judge:` credential source that is unset or empty. |
+| | 5 | pytest collected no tests. |
+| | 128 + N | Signal N stopped the run: 130 for Ctrl-C, 143 for SIGTERM. |
+| `m3 test --ui` | pytest's code, or 2 | After pytest exits with a code below 128 other than 2, the viewer opens. Ctrl-C stops it and returns pytest's code. 2 means the viewer could not start or stopped unexpectedly. |
+| `m3 test --upload --ui` | 2 | The options cannot be combined. M3 prints `m3 test: --upload cannot be combined with --ui` and runs no tests. |
+| `m3 doctor` | 0 | Every requested capability is ready. |
+| | 1 | At least one requested capability, or the project environment, is not ready. |
+| | 2 | Invalid `--require` value or other option, a missing `--env-file`, invalid configuration, or a project Python that cannot be started. |
+| `m3 init` | 0 | Project initialized, or already initialized. |
+| | 2 | Invalid or unwritable project files, or `--project-name` or `--suite` missing without an interactive terminal. |
+| | 130 | Ctrl-C or end of input at a prompt. |
+| `m3 setup` | 0 | The project environment is ready. |
+| | 2 | The environment could not be created, installed, or verified. |
+| `m3 upload` | 0 | The run was published. |
+| | 2 | Missing or malformed credential, or publication failed. Local results are unchanged. |
+| `m3 ui` | 0 | You stopped the viewer with Ctrl-C. |
+| | 2 | No valid history in `.m3/executions.sqlite`, an invalid port, or the viewer could not start or stopped unexpectedly. |
+| `m3 auth login` | 0 | The CLI credential is saved. |
+| | 2 | Authorization was denied or expired, M3 or the credential store failed, or revoking the replaced credential failed after the new one was saved. |
+| | 130 | Ctrl-C. |
+| `m3 auth status`, `m3 auth logout` | 0 | The command finished, including when no CLI credential is saved. |
+| | 2 | A malformed `M3_ACCESS_TOKEN` (`status`), a failed M3 request, or a credential store error. |
+| `m3 runtime cache list`, `m3 runtime cache prune` | 0 | The command finished. |
+| | 2 | The cache could not be read or pruned, including entries still in use after `prune` waits 10 seconds. |
+
+### Telling an M3 error from a pytest interruption
+
+Both produce 2. M3 writes its own errors to stderr as a line that starts with
+`m3 test:`, `m3 ci:`, or `m3:`. When pytest is interrupted, it writes a line
+such as `Interrupted: 1 error during collection` to stdout.
+
+Most M3 errors stop the command before pytest starts, so no tests run. Two kinds
+of M3 error come after pytest has run, with M3's own line on stderr:
+
+- With `--upload`, publishing fails or the run cannot be inspected for
+  publishing after the tests pass (`m3 test:` or `m3 ci:`, see
+  [Exit codes with `--upload`](#exit-codes-with---upload)).
+- With `m3 test --ui`, the viewer server could not be started, did not become
+  ready, or stopped unexpectedly (`m3: UI server readiness failed`,
+  `m3: UI server stopped unexpectedly`, `m3: UI server could not be started`).
+
+The prefix is not always the command you typed. Errors from the test run itself,
+such as an invalid option, a missing `--baseline` run, or a project Python that
+cannot be started, always start with `m3 test:`, including under `m3 ci test`.
+Under `m3 ci test`, errors from the credential check, `--env-file`, and
+`--ci-metadata` start with `m3 ci:`. To find an M3 error in stderr, match all
+three prefixes.
+
+### Exit codes with `--upload`
+
+`m3 test --upload` and `m3 ci test --upload` run these steps; see
+[Publishing](#publishing) for what each one does.
+
+- **Credential check, before pytest.** M3 loads `M3_ACCESS_TOKEN`. Outside CI,
+  it falls back to the credential saved by `m3 auth login`. A missing or
+  malformed credential, or an invalid `M3_CONTROL_PLANE_URL`, exits 2 and no
+  tests run. When `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` is set, only
+  `M3_ACCESS_TOKEN` is used.
+- **After pytest.** M3 publishes only when pytest exited 0 or 1. For 2, 3, 4, 5,
+  and signal exits, it skips publishing without a message and returns pytest's
+  code.
+- **Publish failure.** M3 prints `PREFIX: publishing failed: REASON; retry with
+  m3 upload RUN_ID` when a retry can succeed, or `PREFIX: publishing failed:
+  REASON; fix the cause and rerun tests` when it cannot. `PREFIX` is `m3 test`
+  under `m3 test --upload` and `m3 ci` under `m3 ci test --upload`. If no
+  reason is safe to print, the message is `PREFIX: publishing failed; retry with
+  m3 upload RUN_ID`.
+- **Inspection failure.** Before publishing, M3 inspects the run for credential
+  values from the test environment. If that fails, M3 prints `PREFIX: upload
+  inspection unavailable; the run was not published. Rerun the tests with
+  --upload`, or the `fix the cause and rerun tests` form above when it has a
+  reason to give. A retry with `m3 upload` is not offered.
+
+After a publish or inspection failure, M3 returns the test exit code if the
+tests failed (1), or 2 if they passed.
