@@ -10,10 +10,10 @@ known arguments and check the result that matters to your application.
 
 ## Requirements
 
-Prepare a Python 3.10+ project with `m3 setup`. Download the example
-[`shipping_server.py`](../../../../sdk/examples/docs/servers-stdio/shipping_server.py)
-and save it as `shipping_server.py` in the project root. It starts without
-external services or credentials.
+Prepare a Python 3.10+ project with `m3 setup`. Save the
+`shipping_server.py` shown in [Test a stdio
+server](stdio.md#add-the-shipping-server) as `shipping_server.py` in the project
+root. It starts without external services or credentials.
 
 ## Discover and call the shipping tool
 

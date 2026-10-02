@@ -6,6 +6,7 @@
   "python": ">=3.10",
   "files": ["shipping_server.py", "test_managed_input.py"],
   "displayed_blocks": [
+    {"page": "guides-elicitation-managed-input", "label": "shipping server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-elicitation-managed-input", "label": "managed input flow", "source": "test_managed_input.py", "kind": "file"}
   ],
   "dependencies": ["sf-m3[pytest]", "Codex CLI managed runtime"],

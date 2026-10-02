@@ -270,5 +270,3 @@ It is not an operating-system filesystem or network sandbox.
 See [pinned runtime selection](managed-runtimes.md) and
 [SDK runtime selection](../../reference/managed-runtimes.md#runtime-and-version-selection)
 for configuration outside this CLI workflow.
-
-Example source: [`sdk/examples/docs/agents-runtime-versions`](../../../../sdk/examples/docs/agents-runtime-versions).

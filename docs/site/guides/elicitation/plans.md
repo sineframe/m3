@@ -11,10 +11,88 @@ An elicitation plan describes the requests an operation may make and the respons
 
 Direct SDK operations can use elicitation without an agent harness. M3 tests agent-driven elicitation with Codex CLI `0.156.1` and Pi `0.85.1`; other harnesses have not been verified for this action. This limit does not apply to direct SDK elicitation. See [compatibility details](../../reference/compatibility.md).
 
-This example uses a local MCP server that returns `InputRequiredResult` for `book_shipment`, asks for the `shipping_address` form, and completes only when it receives the keyed response. The [runnable project](../../../../sdk/examples/docs/elicitation-plans) contains that server as `elicitation_server.py` and the test as `test_plan.py`.
+This example uses a local MCP server that returns `InputRequiredResult` for `book_shipment`, asks for the `shipping_address` form, and completes only when it receives the keyed response. The server and the test are shown below as `elicitation_server.py` and `test_plan.py`.
 
-The server fixture emits keyed `InputRequiredResult` and validates the next
+## Add the elicitation server
+
+Save this complete file as `elicitation_server.py`. The server fixture emits keyed `InputRequiredResult` and validates the next
 call's `requestState` and `inputResponses`.
+
+```python
+from __future__ import annotations
+
+from mcp import types
+from mcp.server.lowlevel import Server
+
+ADDRESS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "street": {"type": "string"},
+        "city": {"type": "string"},
+    },
+    "required": ["street", "city"],
+}
+
+
+async def list_tools(_context: object, _params: object) -> types.ListToolsResult:
+    return types.ListToolsResult(
+        tools=[
+            types.Tool(
+                name="book_shipment",
+                description="Book a shipment after confirming a delivery address",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "weight_kg": {"type": "number"},
+                        "zone": {"type": "string"},
+                    },
+                    "required": ["weight_kg", "zone"],
+                },
+            )
+        ]
+    )
+
+
+async def call_tool(
+    _context: object, params: types.CallToolRequestParams
+) -> types.CallToolResult | types.InputRequiredResult:
+    responses = params.input_responses or {}
+    if not responses:
+        return types.InputRequiredResult(
+            input_requests={
+                "shipping_address": types.ElicitRequest(
+                    params=types.ElicitRequestFormParams(
+                        message="Enter the delivery address.",
+                        requested_schema=ADDRESS_SCHEMA,
+                    )
+                )
+            },
+            request_state="shipping-address",
+        )
+
+    response = responses.get("shipping_address")
+    if (
+        not isinstance(response, types.ElicitResult)
+        or response.action != "accept"
+        or response.content != {"street": "1 Main Street", "city": "Pune"}
+    ):
+        return types.CallToolResult(
+            content=[types.TextContent(text="address response did not match")],
+            is_error=True,
+        )
+    return types.CallToolResult(
+        content=[types.TextContent(text="Shipment booked.")],
+        structured_content={"status": "booked", "city": "Pune"},
+    )
+
+
+def build_server() -> Server:
+    return Server(
+        "shipping-elicitation",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
+```
 
 ## Bind a form answer to a direct operation
 

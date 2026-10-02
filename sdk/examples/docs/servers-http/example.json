@@ -7,6 +7,7 @@
   "dependencies": ["sf-m3-cli", "sf-m3[pytest]", "mcp (installed with sf-m3)"],
   "files": ["shipping_http_server.py", "tests/test_shipping_http.py"],
   "displayed_blocks": [
+    {"page": "guides-servers-http", "label": "shipping HTTP server", "source": "shipping_http_server.py", "kind": "file"},
     {"page": "guides-servers-http", "label": "HTTP direct test", "source": "tests/test_shipping_http.py", "kind": "file"},
     {"page": "start-your-server", "label": "HTTP direct test", "source": "tests/test_shipping_http.py", "kind": "file"}
   ],

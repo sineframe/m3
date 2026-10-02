@@ -12,10 +12,10 @@ calls.
 
 ## Requirements
 
-Use Python 3.10 or newer with a project prepared by `m3 setup`. Download the
-example [`shipping_server.py`](../../../../sdk/examples/docs/servers-stdio/shipping_server.py)
-and save it as `shipping_server.py` in the project root. It holds orders in
-process memory for the lifetime of its subprocess.
+Use Python 3.10 or newer with a project prepared by `m3 setup`. Save the
+`shipping_server.py` shown in [Test a stdio
+server](stdio.md#add-the-shipping-server) as `shipping_server.py` in the project
+root. It holds orders in process memory for the lifetime of its subprocess.
 
 ## Create and retrieve an order
 

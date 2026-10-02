@@ -11,10 +11,11 @@ not match the tool's advertised input schema before sending the call.
 
 ## Requirements
 
-Use a Python 3.10+ project prepared with `m3 setup`. Download the example
-[`shipping_server.py`](../../../../sdk/examples/docs/servers-stdio/shipping_server.py)
-and save it as `shipping_server.py` in the project root. It includes the
-shipping schema and a tool that returns an MCP error result.
+Use a Python 3.10+ project prepared with `m3 setup`. Save the
+`shipping_server.py` shown in [Test a stdio
+server](stdio.md#add-the-shipping-server) as `shipping_server.py` in the project
+root. It includes the shipping schema and a tool that returns an MCP error
+result.
 
 ## Check a tool result and reject invalid input
 

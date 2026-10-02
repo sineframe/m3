@@ -39,10 +39,7 @@ def test_examples_docs_are_goal_oriented_and_not_a_synthetic_catalog() -> None:
         assert f"]({page})" in text
         assert (_SITE / page).is_file(), page
 
-    # The documentation links to executable projects maintained in the SDK.
-    assert "sdk/examples/docs/elicitation-plans" in (
-        _SITE / "guides" / "elicitation" / "plans.md"
-    ).read_text(encoding="utf-8")
+    # The executable project behind the plans guide is maintained in the SDK.
     project = _EXAMPLES / "docs" / "elicitation-plans"
     assert (project / "test_plan.py").is_file()
     assert (project / "elicitation_server.py").is_file()
@@ -186,7 +183,6 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     assert "sequence(...)" in elicitation
     assert "one_of(...)" in elicitation
     assert "round_of(...)" in elicitation
-    assert "sdk/examples/docs/elicitation-plans" in elicitation
     assert elicitation_api.startswith(
         '---\ntitle: "Elicitation and managed-input API"\n'
     )

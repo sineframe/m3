@@ -14,6 +14,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "docs" / "site"
 MANIFEST = SITE / "navigation.json"
+EXAMPLES = ROOT / "sdk" / "examples" / "docs"
 PLUGIN_SOURCE = ROOT / "sdk" / "src" / "m3" / "pytest_plugin.py"
 LIMITATIONS_SOURCE = ROOT / "sdk" / "src" / "m3" / "harness" / "observations.py"
 OUTPUT_PAGE = SITE / "reference" / "output.md"
@@ -511,6 +512,15 @@ def main() -> int:
             elif not resolved.exists():
                 errors.append(
                     f"{source}: unresolved local link in M3 repository: {target}"
+                )
+            elif EXAMPLES.resolve() in {resolved, *resolved.parents}:
+                errors.append(
+                    f"{source}: links to example project path {target}; the "
+                    "agent skill bundle cannot ship repository files, so a "
+                    "reader of the bundle would see only a path. Show the "
+                    "file as a displayed block in its page (example.json "
+                    "displayed_blocks, then render_docs_examples.py) and link "
+                    "to that page section instead"
                 )
             elif (
                 SITE.resolve() in resolved.parents and resolved.suffix.lower() != ".md"

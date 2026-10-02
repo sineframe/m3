@@ -15,10 +15,9 @@ HTTP service.
 
 ## Stdio: start a local process
 
-The first-test project contains the server used below. Put its
-`shipping_server.py` source (M3 repository: `sdk/examples/docs/first-test/shipping_server.py`)
-beside your `tests` directory, then use this complete test as
-`tests/test_m3_starter.py`:
+The server used below is the `shipping_server.py` from [your first
+test](getting-started.md#add-the-server-and-test). Put it beside your `tests`
+directory, then use this complete test as `tests/test_m3_starter.py`:
 
 ```python
 import sys
@@ -50,9 +49,7 @@ def test_shipping_quote() -> None:
 
 The `StdioServer` command uses the test's Python environment and resolves the
 server file relative to the test. The M3 context closes the client and owned
-subprocess even when an assertion fails. The first-test project
-source files (M3 repository: `sdk/examples/docs/first-test`)
-include this server and test.
+subprocess even when an assertion fails.
 
 Run from the project root:
 

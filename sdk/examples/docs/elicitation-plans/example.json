@@ -6,6 +6,7 @@
   "python": ">=3.10",
   "files": ["elicitation_server.py", "test_plan.py"],
   "displayed_blocks": [
+    {"page": "guides-elicitation-plans", "label": "elicitation server", "source": "elicitation_server.py", "kind": "file"},
     {"page": "guides-elicitation-plans", "label": "direct elicitation plan", "source": "test_plan.py", "kind": "file"}
   ],
   "dependencies": ["sf-m3[pytest]"],

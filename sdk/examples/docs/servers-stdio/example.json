@@ -19,6 +19,7 @@
     "tests/test_stateful.py"
   ],
   "displayed_blocks": [
+    {"page": "guides-servers-stdio", "label": "shipping server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-servers-stdio", "label": "stdio tool test", "source": "tests/test_tools.py", "kind": "file"},
     {"page": "guides-servers-tools", "label": "shipping tool test", "source": "tests/test_tools.py", "kind": "file"},
     {"page": "guides-servers-resources-prompts", "label": "resource and prompt tests", "source": "tests/test_resources_prompts.py", "kind": "file"},

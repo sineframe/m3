@@ -9,10 +9,10 @@ do not require an agent harness.
 ## Requirements
 
 Use Python 3.10 or newer and initialize the project with `m3 init` and
-`m3 setup`. Download the example
-`shipping_server.py` (M3 repository: `sdk/examples/docs/servers-stdio/shipping_server.py`)
-and save it as `shipping_server.py` in the project root. It implements the
-resource and prompt used below.
+`m3 setup`. Save the
+`shipping_server.py` shown in [Test a stdio
+server](guides-servers-stdio.md#add-the-shipping-server) as `shipping_server.py` in the project
+root. It implements the resource and prompt used below.
 
 ## Read a resource and render a prompt
 

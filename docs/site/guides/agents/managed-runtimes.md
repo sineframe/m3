@@ -211,8 +211,6 @@ Direct pytest can also run managed runtimes selected through the M3 plugin or
 SDK, but it does not accept `--harness-cache-dir`. Those paths use
 `M3_HARNESS_CACHE_DIR` or the SDK's `harness_cache_dir` argument.
 
-Example source: [`sdk/examples/docs/agents-managed-runtimes`](../../../../sdk/examples/docs/agents-managed-runtimes).
-
 For selection, cache locations, and recorded identity fields, see the [managed
 runtime reference](../../reference/managed-runtimes.md). For auth setup, see
 [environment configuration](../../reference/configuration.md).
