@@ -2721,10 +2721,7 @@ m3.async_api.ProtocolCallAttempt(
     request_state: m3.observability.Observation[str] = ...,
     continuation_state: m3.observability.Observation[str] = ...,
     input_responses: m3.observability.Observation[JsonValue] = ...,
-    operation_params: m3.observability.Observation[JsonValue] = ...,
     input_required: bool = False,
-    result: m3.observability.Observation[JsonValue] = ...,
-    raw_result: m3.observability.Observation[JsonValue] = ...,
     status: m3.observability.TraceStatus = TraceStatus.INCOMPLETE,
     sequence_start: int,
     sequence_end: int,
@@ -2743,10 +2740,7 @@ Model fields:
 | `request_state` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `continuation_state` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `input_responses` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
-| `operation_params` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `input_required` | `bool` | No | `False` | — | — |
-| `result` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
-| `raw_result` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `status` | `m3.observability.TraceStatus` | No | `TraceStatus.INCOMPLETE ('incomplete')` | — | — |
 | `sequence_start` | `int` | Yes | — | `ge=0` | — |
 | `sequence_end` | `int` | Yes | — | `ge=0` | — |
@@ -3096,11 +3090,9 @@ m3.async_api.ToolCallAttempt(
     request_state: m3.observability.Observation[str] = ...,
     continuation_state: m3.observability.Observation[str] = ...,
     input_responses: m3.observability.Observation[JsonValue] = ...,
-    operation_params: m3.observability.Observation[JsonValue] = ...,
     input_required: bool = False,
-    result: m3.observability.Observation[m3.observability.ToolResult] = ...,
-    raw_result: m3.observability.Observation[JsonValue] = ...,
     status: m3.observability.ToolCallStatus = ToolCallStatus.INCOMPLETE,
+    latency_ms: m3.observability.Observation[float] = ...,
     sequence_start: int,
     sequence_end: int,
     timing: m3.observability.TraceTiming = ...,
@@ -3118,11 +3110,9 @@ Model fields:
 | `request_state` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `continuation_state` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `input_responses` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
-| `operation_params` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `input_required` | `bool` | No | `False` | — | — |
-| `result` | `m3.observability.Observation[m3.observability.ToolResult]` | No | `factory m3.observability._not_emitted()` | — | — |
-| `raw_result` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `status` | `m3.observability.ToolCallStatus` | No | `ToolCallStatus.INCOMPLETE ('incomplete')` | — | — |
+| `latency_ms` | `m3.observability.Observation[float]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `sequence_start` | `int` | Yes | — | `ge=0` | — |
 | `sequence_end` | `int` | Yes | — | `ge=0` | — |
 | `timing` | `m3.observability.TraceTiming` | No | `factory m3.observability.TraceTiming()` | — | — |
@@ -3158,7 +3148,6 @@ m3.async_api.ToolCallEntry(
     server_latency_ms: m3.observability.Observation[float] = ...,
     policy: m3.observability.Observation[m3.policy.ToolPolicyDecision] = ...,
     reported: m3.observability.Observation[m3.observability.ReportedToolCall] = ...,
-    wire: m3.observability.Observation[m3.observability.WireToolCall] = ...,
     conflicts: tuple[m3.observability.EvidenceConflict, ...] = (),
     attempts: tuple[m3.observability.ToolCallAttempt, ...] = (),
 ) -> None
@@ -3194,7 +3183,6 @@ Model fields:
 | `server_latency_ms` | `m3.observability.Observation[float]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `policy` | `m3.observability.Observation[m3.policy.ToolPolicyDecision]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `reported` | `m3.observability.Observation[m3.observability.ReportedToolCall]` | No | `factory m3.observability._not_emitted()` | — | — |
-| `wire` | `m3.observability.Observation[m3.observability.WireToolCall]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `conflicts` | `tuple[m3.observability.EvidenceConflict, ...]` | No | `()` | — | — |
 | `attempts` | `tuple[m3.observability.ToolCallAttempt, ...]` | No | `()` | — | — |
 
@@ -3368,7 +3356,7 @@ Model fields:
 m3.async_api.TraceView(
     *,
     schema_id: Literal['m3.trace_view'] = 'm3.trace_view',
-    schema_version: Literal['1.1', '1.2'] = '1.1',
+    schema_version: Literal['2.0'] = '2.0',
     trace_id: m3.types.TraceId,
     execution_id: m3.types.ExecutionId,
     outcome: m3.types.ExecutionOutcome = ExecutionOutcome.COMPLETED,
@@ -3386,7 +3374,7 @@ Model fields:
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
 | `schema_id` | `Literal['m3.trace_view']` | No | `'m3.trace_view'` | — | — |
-| `schema_version` | `Literal['1.1', '1.2']` | No | `'1.1'` | — | — |
+| `schema_version` | `Literal['2.0']` | No | `'2.0'` | — | — |
 | `trace_id` | `m3.types.TraceId` | Yes | — | — | — |
 | `execution_id` | `m3.types.ExecutionId` | Yes | — | — | — |
 | `outcome` | `m3.types.ExecutionOutcome` | No | `ExecutionOutcome.COMPLETED ('completed')` | — | — |
@@ -3577,31 +3565,6 @@ Model fields:
 | `total_tokens` | `m3.observability.Observation[int]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `cost` | `m3.observability.Observation[float]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `currency` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
-
-## `WireToolCall`
-
-```python
-m3.async_api.WireToolCall(
-    *,
-    jsonrpc_id: m3.observability.Observation[int | str] = ...,
-    server: m3.observability.Observation[str] = ...,
-    tool: m3.observability.Observation[str] = ...,
-    arguments: m3.observability.Observation[JsonValue] = ...,
-    result: m3.observability.Observation[m3.observability.ToolResult] = ...,
-    latency_ms: m3.observability.Observation[float] = ...,
-) -> None
-```
-
-Model fields:
-
-| Field | Type | Required | Default | Constraints | Description |
-| --- | --- | --- | --- | --- | --- |
-| `jsonrpc_id` | `m3.observability.Observation[int \| str]` | No | `factory m3.observability._not_emitted()` | `variant 1: strict=True, variant 2: strict=True` | — |
-| `server` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
-| `tool` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
-| `arguments` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
-| `result` | `m3.observability.Observation[m3.observability.ToolResult]` | No | `factory m3.observability._not_emitted()` | — | — |
-| `latency_ms` | `m3.observability.Observation[float]` | No | `factory m3.observability._not_emitted()` | — | — |
 
 ## `WorkspaceEntry`
 

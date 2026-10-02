@@ -1001,8 +1001,7 @@ def assert_report(
     )
     if not isinstance(structured, dict) or structured.get("currency") != "USD":
         raise GateFailure("shipping_quote result is not structured as USD")
-    wire = call.get("wire")
-    if not isinstance(wire, dict) or wire.get("state") != "observed":
+    if call.get("correlation") not in {"wire_only", "correlated"}:
         raise GateFailure("correlated wire evidence was not observed")
 
 

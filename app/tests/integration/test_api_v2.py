@@ -194,7 +194,7 @@ def test_v2_execution_lifecycle_and_reopen(tmp_path):
         )
         assert report.json()["report"]["direct_result"]["kind"] == "call_tool"
         assert report.json()["report"]["evidence"]["completeness"] == "partial"
-        assert report.json()["trace"]["schema_version"] == "1.1"
+        assert report.json()["trace"]["schema_version"] == "2.0"
         bounded = client.get(
             f"/api/v2/executions/{execution_id}/report", params={"event_limit": 2}
         )

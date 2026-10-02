@@ -23,6 +23,15 @@ describe whether a value can be read; check `state` and `reason` before
 reading `value`. Call `read_raw_evidence(reference, max_bytes=...)` while the
 kit or store is open.
 
+The current `schema_version` is `"2.0"`, and a view with any other version is
+rejected. Each tool argument and result is stored once, on its `ToolCallEntry`.
+`correlation` records which evidence saw the call: `wire_only` and `correlated`
+calls were observed on the wire, `reported_only` calls were only reported by
+the harness. `ToolCallAttempt` and `ProtocolCallAttempt` keep per-round MRTR
+state, and `ToolCallAttempt.latency_ms` is the latency of that round. The raw
+request and response of each attempt are in the event log, at the attempt's
+`sequence_start` and `sequence_end`.
+
 `summary.usage` is the latest usage entry, not a sum. `usage.cost.value` and
 `usage.currency.value` may be absent.
 
@@ -31,7 +40,7 @@ kit or store is open.
 - Protocol and transport: `ProtocolEntry`, `ProtocolCallAttempt`,
   `ProtocolErrorInfo`, `ProtocolKind`, `TransportEntry`, `HttpExchange`.
 - Tools: `ToolCallEntry`, `ToolCallAttempt`, `ToolCallStatus`, `ToolResult`,
-  `ReportedToolCall`, `WireToolCall`.
+  `ReportedToolCall`.
 - Messages and model activity: `MessageEntry`, `MessageRole`, `ReasoningEntry`,
   `ProviderEntry`, `UsageEntry`, `UsageValue`.
 - Interactions: `InteractionEntry`, `ElicitationEntry`, `WorkspaceEntry`.

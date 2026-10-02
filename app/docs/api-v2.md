@@ -499,7 +499,7 @@ client-useful fields:
 | `lifecycle` | `phase`. |
 | `message` | `message_id`, `role`, `content`, `stop_reason`. |
 | `reasoning` | `block_id`, `content`. |
-| `tool_call` | `call_id`, provider/server/tool IDs, arguments, result, `tool_status`, correlation, JSON-RPC ID, server latency, policy evidence, reported/wire evidence, and conflicts. |
+| `tool_call` | `call_id`, provider/server/tool IDs, arguments, result, `tool_status`, correlation, JSON-RPC ID, server latency, policy evidence, reported evidence, and conflicts. |
 | `protocol` | `protocol`, method, direction, JSON-RPC ID, request/response, protocol error, and HTTP exchange metadata. |
 | `transport` | `phase` (`connected` or `disconnected`), configured transport, and instrumented transport. |
 | `initialization` | Protocol/server versions, instructions, capabilities, and advertised tools/resources/resource templates/prompts. |

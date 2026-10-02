@@ -217,7 +217,6 @@ this release. Use the capability pages to see how the objects work together.
 - <a id="m3.sync_api.TransportEntry"></a><a id="transportentry"></a>[`TransportEntry`](api/sync-api.md#transportentry)
 - <a id="m3.sync_api.UsageEntry"></a><a id="usageentry"></a>[`UsageEntry`](api/sync-api.md#usageentry)
 - <a id="m3.sync_api.UsageValue"></a><a id="usagevalue"></a>[`UsageValue`](api/sync-api.md#usagevalue)
-- <a id="m3.sync_api.WireToolCall"></a><a id="wiretoolcall"></a>[`WireToolCall`](api/sync-api.md#wiretoolcall)
 - <a id="m3.sync_api.WorkspaceEntry"></a><a id="workspaceentry"></a>[`WorkspaceEntry`](api/sync-api.md#workspaceentry)
 
 ## `m3.async_api`
@@ -350,7 +349,6 @@ this release. Use the capability pages to see how the objects work together.
 - <a id="m3.async_api.TransportEntry"></a><a id="transportentry-1"></a>[`TransportEntry`](api/async-api.md#transportentry)
 - <a id="m3.async_api.UsageEntry"></a><a id="usageentry-1"></a>[`UsageEntry`](api/async-api.md#usageentry)
 - <a id="m3.async_api.UsageValue"></a><a id="usagevalue-1"></a>[`UsageValue`](api/async-api.md#usagevalue)
-- <a id="m3.async_api.WireToolCall"></a><a id="wiretoolcall-1"></a>[`WireToolCall`](api/async-api.md#wiretoolcall)
 - <a id="m3.async_api.WorkspaceEntry"></a><a id="workspaceentry-1"></a>[`WorkspaceEntry`](api/async-api.md#workspaceentry)
 
 ## `m3.matchers`
@@ -492,7 +490,6 @@ this release. Use the capability pages to see how the objects work together.
 - <a id="m3.observability.TransportEntry"></a><a id="transportentry-2"></a>[`TransportEntry`](api/observability.md#transportentry)
 - <a id="m3.observability.UsageEntry"></a><a id="usageentry-2"></a>[`UsageEntry`](api/observability.md#usageentry)
 - <a id="m3.observability.UsageValue"></a><a id="usagevalue-2"></a>[`UsageValue`](api/observability.md#usagevalue)
-- <a id="m3.observability.WireToolCall"></a><a id="wiretoolcall-2"></a>[`WireToolCall`](api/observability.md#wiretoolcall)
 - <a id="m3.observability.WorkspaceEntry"></a><a id="workspaceentry-2"></a>[`WorkspaceEntry`](api/observability.md#workspaceentry)
 
 ## `m3.aggregations`

@@ -112,7 +112,7 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
                 "duration_seconds": None,
             }
         ]
-        assert execution["report"]["trace"]["schema_version"] == "1.1"
+        assert execution["report"]["trace"]["schema_version"] == "2.0"
         assert execution["report"]["report"]["events_truncated"] is False
         assert json.loads(sent[2][1]) == {"transport_version": 1}
     finally:
