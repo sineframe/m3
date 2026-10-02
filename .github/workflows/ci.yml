@@ -208,10 +208,29 @@ jobs:
           sdk/tests
 
   main-sdk-lifecycle:
-    name: Main SDK processes (3.10)
+    name: Main SDK processes (3.10, ${{ matrix.shard }})
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: pi
+            paths: >-
+              sdk/tests/e2e/test_real_pi_mrtr_gate.py
+              sdk/tests/e2e/test_pi_control_real.py
+          - shard: codex
+            paths: >-
+              sdk/tests/e2e/test_real_codex_native_mrtr.py
+              sdk/tests/e2e/test_real_codex_managed_mrtr.py
+          - shard: other
+            paths: >-
+              sdk/tests
+              --ignore=sdk/tests/e2e/test_real_pi_mrtr_gate.py
+              --ignore=sdk/tests/e2e/test_pi_control_real.py
+              --ignore=sdk/tests/e2e/test_real_codex_native_mrtr.py
+              --ignore=sdk/tests/e2e/test_real_codex_managed_mrtr.py
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -243,7 +262,7 @@ jobs:
           M3_REQUIRE_PI_MRTR: "1"
         run: >-
           uv run --locked --no-sync --project sdk --extra judge
-          pytest -q -m "not live and process_lifecycle" sdk/tests
+          pytest -q -m "not live and process_lifecycle" ${{ matrix.paths }}
 
   main-sdk-examples:
     name: Main SDK examples (3.10)
@@ -316,10 +335,26 @@ jobs:
           -m "not live and process_lifecycle" app/tests
 
   main-cli-tests:
-    name: Main CLI tests (3.10)
+    name: Main CLI tests (3.10, ${{ matrix.shard }})
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: suite-selection
+            paths: cli/tests/test_suite_selection.py
+          - shard: credentials-doctor
+            paths: >-
+              cli/tests/test_cli_credentials_integration.py
+              cli/tests/test_doctor.py
+          - shard: other
+            paths: >-
+              cli/tests
+              --ignore=cli/tests/test_suite_selection.py
+              --ignore=cli/tests/test_cli_credentials_integration.py
+              --ignore=cli/tests/test_doctor.py
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -336,8 +371,8 @@ jobs:
           uv sync --locked --all-packages
           --extra pytest --extra judge --extra storage --extra property
           --group test --group typecheck
-      - name: Run complete CLI suite
-        run: uv run --locked --no-sync --project cli pytest -q cli/tests
+      - name: Run CLI suite shard
+        run: uv run --locked --no-sync --project cli pytest -q ${{ matrix.paths }}
 
   main-python-compatibility:
     name: Main compatibility (3.13)
