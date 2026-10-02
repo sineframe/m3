@@ -49,6 +49,7 @@ Run pytest in the project environment and save M3 history.
 | `--baseline RUN_ID` | Read an earlier run from the same database for comparison. |
 | `--harness KIND[@VERSION]=MODEL[,MODEL...]` | Add a harness/model selection. Repeatable. |
 | `--runtime system\|managed` | `system`. |
+| `--harness-cache-dir PATH` | Managed harness cache root; otherwise use `M3_HARNESS_CACHE_DIR` or the OS default. |
 | `--server …` | Add an HTTP or stdio server selection. Repeatable groups. |
 | `--trials N` | Independent executions per selected combination. |
 | `--suite NAME` | Select tests already carrying this suite name. |
