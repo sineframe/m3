@@ -16,6 +16,7 @@ from m3.harness import (
 )
 from m3.observability import (
     ACPTrace,
+    CorrelationState,
     Observation,
     ObservationReason,
     ObservationState,
@@ -62,7 +63,7 @@ def test_finalized_view_exposes_typed_runtime_and_tool(
     }
     assert view.runtime.initialization.state is ObservationState.OBSERVED
     assert view.tool_calls[0].tool.value == "shipping_quote"
-    assert view.tool_calls[0].wire.state is ObservationState.OBSERVED
+    assert view.tool_calls[0].correlation is CorrelationState.WIRE_ONLY
     assert view.summary.timing.duration_ms >= 0
 
 

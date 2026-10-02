@@ -1255,7 +1255,6 @@ async def test_opencode_server_tool_projects_as_one_correlated_public_call() -> 
     call = calls[0]
     assert call.turn_id == TurnId("actual-turn")
     assert call.correlation.value == "correlated"
-    assert call.wire.state.value == "observed"
     assert call.reported.state.value == "observed"
     assert call.tool.value == "echo"
     assert call.result.value.content[0].text == "deterministic"  # type: ignore[union-attr]

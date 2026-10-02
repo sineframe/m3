@@ -96,7 +96,7 @@ def test_v2_direct_real_stdio_and_sqlite_reopen(tmp_path: Path) -> None:
             report.direct_result is not None
             and report.direct_result.kind == "call_tool"
         )
-        assert trace.schema_version == "1.1"
+        assert trace.schema_version == "2.0"
         assert trace.tool_calls and trace.transports and trace.protocol
         assert trace.summary.timing.duration_ms >= 0
         assert trace.tool_calls[0].arguments.value == {"text": "api-e2e"}

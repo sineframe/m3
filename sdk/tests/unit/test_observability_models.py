@@ -222,7 +222,7 @@ def test_transport_entries_round_trip_and_are_indexed() -> None:
         view = TraceView(
             trace_id="trace-1", execution_id="execution-1", timeline=(entry,)
         )
-        assert view.schema_version == "1.1"
+        assert view.schema_version == "2.0"
         assert view.transports == (entry,)
 
 
@@ -588,12 +588,20 @@ def test_diagnostic_fields_are_additive_and_schema_compatible() -> None:
     assert old.stage is None
     assert current.operation == "harness.response"
     assert current.model_dump(mode="json")["timeout_seconds"] == 0.5
-    legacy_view = TraceView.model_validate(
+    default_view = TraceView.model_validate(
         {
             "trace_id": "trace-legacy",
             "execution_id": "execution-compat",
-            "schema_version": "1.1",
             "timeline": [base],
         }
     )
-    assert legacy_view.schema_version == "1.1"
+    assert default_view.schema_version == "2.0"
+    with pytest.raises(ValidationError):
+        TraceView.model_validate(
+            {
+                "trace_id": "trace-legacy",
+                "execution_id": "execution-compat",
+                "schema_version": "1.1",
+                "timeline": [base],
+            }
+        )

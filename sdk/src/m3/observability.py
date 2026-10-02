@@ -344,11 +344,55 @@ class CorrelationState(str, _Enum):
     UNAVAILABLE = "unavailable"
 
 
+def _mcp_content_block(block: _ContentBlock) -> _JsonValue:
+    """Spell one content block as MCP does; opaque blocks are their original JSON."""
+    dumped = block.model_dump(mode="json")
+    kind = dumped.pop("kind")
+    if kind == "opaque":
+        return _cast(_JsonValue, dumped["payload"])
+    media_type_key = "mediaType" if kind == "file" else "mimeType"
+    wire: dict[str, _JsonValue] = {"type": kind}
+    for key, item in dumped.items():
+        if item is not None:
+            wire[media_type_key if key == "media_type" else key] = item
+    return wire
+
+
 class ToolResult(_FrozenModel):
     content: tuple[_ContentBlock, ...] = ()
     structured_content: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     is_error: bool = False
     error: Observation[_ErrorInfo] = _Field(default_factory=_not_emitted)
+
+    def to_mcp_json(self) -> _JsonValue:
+        """Return this result as MCP ``CallToolResult`` wire JSON.
+
+        This is the inverse of how the projector reads a wire result, for the
+        fields m3 keeps: content blocks use MCP spellings (``type``,
+        ``mimeType``), ``structuredContent`` appears only when observed, and
+        ``isError`` only when true. Fields m3 does not model (annotations,
+        ``_meta``, embedded resources) are absent, so a harness copy carrying
+        them is never byte-identical to this form and is stored in full.
+        ``error`` has no MCP wire form; it keeps m3's own ``ErrorInfo`` shape,
+        so a harness copy matches it only if it spells the error identically.
+        """
+        value: dict[str, _JsonValue] = {
+            "content": [_mcp_content_block(block) for block in self.content]
+        }
+        if self.structured_content.state is ObservationState.OBSERVED:
+            value["structuredContent"] = self.structured_content.value
+        if self.is_error:
+            value["isError"] = True
+        if (
+            self.error.state is ObservationState.OBSERVED
+            and self.error.value is not None
+        ):
+            value["error"] = _cast(_JsonValue, self.error.value.model_dump(mode="json"))
+        return value
+
+
+_ReportedSameField: _TypeAlias = _Literal["arguments", "result"]
+ConflictField: _TypeAlias = _Literal["server", "tool", "arguments", "result", "status"]
 
 
 class ReportedToolCall(_FrozenModel):
@@ -358,21 +402,18 @@ class ReportedToolCall(_FrozenModel):
     arguments: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     status: Observation[str] = _Field(default_factory=_not_emitted)
+    # Fields whose harness value is byte-identical to the value reconstructible
+    # from the enclosing ToolCallEntry; they are not stored here.
+    same_as_call: tuple[_ReportedSameField, ...] = ()
 
-
-class WireToolCall(_FrozenModel):
-    jsonrpc_id: Observation[_JsonRpcId] = _Field(default_factory=_not_emitted)
-    server: Observation[str] = _Field(default_factory=_not_emitted)
-    tool: Observation[str] = _Field(default_factory=_not_emitted)
-    arguments: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    result: Observation[ToolResult] = _Field(default_factory=_not_emitted)
-    latency_ms: Observation[float] = _Field(default_factory=_not_emitted)
-
-
-class EvidenceConflict(_FrozenModel):
-    field: _Literal["server", "tool", "arguments", "result", "status"]
-    reported: Observation[_JsonValue]
-    wire: Observation[_JsonValue]
+    @_model_validator(mode="after")
+    def _same_as_call_fields_are_elided(self) -> ReportedToolCall:
+        if list(self.same_as_call) != sorted(set(self.same_as_call)):
+            raise ValueError("same_as_call must be sorted and unique")
+        for field in self.same_as_call:
+            if getattr(self, field).state is not ObservationState.NOT_EMITTED:
+                raise ValueError(f"same_as_call field {field} must not be stored")
+        return self
 
 
 class ToolCallAttempt(_FrozenModel):
@@ -383,11 +424,9 @@ class ToolCallAttempt(_FrozenModel):
     request_state: Observation[str] = _Field(default_factory=_not_emitted)
     continuation_state: Observation[str] = _Field(default_factory=_not_emitted)
     input_responses: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    operation_params: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     input_required: bool = False
-    result: Observation[ToolResult] = _Field(default_factory=_not_emitted)
-    raw_result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     status: ToolCallStatus = ToolCallStatus.INCOMPLETE
+    latency_ms: Observation[float] = _Field(default_factory=_not_emitted)
     sequence_start: int = _Field(ge=0)
     sequence_end: int = _Field(ge=0)
     timing: TraceTiming = _Field(default_factory=TraceTiming)
@@ -407,10 +446,7 @@ class ProtocolCallAttempt(_FrozenModel):
     request_state: Observation[str] = _Field(default_factory=_not_emitted)
     continuation_state: Observation[str] = _Field(default_factory=_not_emitted)
     input_responses: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    operation_params: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     input_required: bool = False
-    result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
-    raw_result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     status: TraceStatus = TraceStatus.INCOMPLETE
     sequence_start: int = _Field(ge=0)
     sequence_end: int = _Field(ge=0)
@@ -437,9 +473,23 @@ class ToolCallEntry(TraceEntryBase):
     server_latency_ms: Observation[float] = _Field(default_factory=_not_emitted)
     policy: Observation[_ToolPolicyDecision] = _Field(default_factory=_not_emitted)
     reported: Observation[ReportedToolCall] = _Field(default_factory=_not_emitted)
-    wire: Observation[WireToolCall] = _Field(default_factory=_not_emitted)
-    conflicts: tuple[EvidenceConflict, ...] = ()
+    # Fields where harness and wire evidence disagree; values are not copied.
+    conflicts: tuple[ConflictField, ...] = ()
     attempts: tuple[ToolCallAttempt, ...] = ()
+
+    def reported_field(self, field: _ReportedSameField) -> Observation[_JsonValue]:
+        """Return the harness value of a field, reconstructing elided ones."""
+        reported = self.reported.value
+        if reported is None:
+            return _not_emitted()
+        observation: Observation[_JsonValue] = getattr(reported, field)
+        if field not in reported.same_as_call:
+            return observation
+        if field == "arguments":
+            return self.arguments
+        result = self.result.value
+        assert result is not None
+        return Observation(state=ObservationState.OBSERVED, value=result.to_mcp_json())
 
 
 class ProtocolKind(str, _Enum):
@@ -819,10 +869,7 @@ class TraceSummary(_FrozenModel):
 
 class TraceView(_FrozenModel):
     schema_id: _Literal["m3.trace_view"] = "m3.trace_view"
-    # Diagnostic fields are optional additions within the existing trace
-    # contract. Keep emitting 1.1 so deployed report readers remain compatible;
-    # 1.2 is accepted for forward compatibility with newer producers.
-    schema_version: _Literal["1.1", "1.2"] = "1.1"
+    schema_version: _Literal["2.0"] = "2.0"
     trace_id: _TraceId
     execution_id: _ExecutionId
     outcome: _ExecutionOutcome = _ExecutionOutcome.COMPLETED
@@ -967,10 +1014,8 @@ for _model in (
     Observation,
     ToolResult,
     ReportedToolCall,
-    WireToolCall,
     ProtocolCallAttempt,
     ToolCallAttempt,
-    EvidenceConflict,
     ToolCallEntry,
     ProtocolErrorInfo,
     ProtocolEntry,
@@ -1009,13 +1054,13 @@ __all__ = [
     "CaptureOptions",
     "ClaudeCodeTrace",
     "CodexTrace",
+    "ConflictField",
     "CorrelationState",
     "DiagnosticEntry",
     "DirectTrace",
     "ElicitationEntry",
     "EvaluationEntry",
     "EvidenceCapture",
-    "EvidenceConflict",
     "HttpExchange",
     "InitializationEntry",
     "InitializationValue",
@@ -1054,6 +1099,5 @@ __all__ = [
     "TransportEntry",
     "UsageEntry",
     "UsageValue",
-    "WireToolCall",
     "WorkspaceEntry",
 ]

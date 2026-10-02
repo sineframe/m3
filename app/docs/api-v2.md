@@ -482,7 +482,8 @@ report route cannot return a finalized trace and therefore returns
 
 ### Trace fields and observation availability
 
-`trace` is a `TraceView` with `schema_id`, `schema_version`, `trace_id`,
+`trace` is a `TraceView` with `schema_id` (`trace_view`), `schema_version`
+(`2.0`; other versions are rejected), `trace_id`,
 `execution_id`, `outcome`, `completeness`, `limitations`, `runtime`,
 `summary`, and ordered `timeline`. `runtime.kind` distinguishes direct,
 OpenCode, Claude Code, and ACP runtime shapes. `summary` includes timing,
@@ -499,7 +500,7 @@ client-useful fields:
 | `lifecycle` | `phase`. |
 | `message` | `message_id`, `role`, `content`, `stop_reason`. |
 | `reasoning` | `block_id`, `content`. |
-| `tool_call` | `call_id`, provider/server/tool IDs, arguments, result, `tool_status`, correlation, JSON-RPC ID, server latency, policy evidence, reported/wire evidence, and conflicts. |
+| `tool_call` | `call_id`, provider/server/tool IDs, arguments, result, `tool_status`, correlation, JSON-RPC ID, server latency, policy evidence, reported evidence, conflicts, and MRTR `attempts`. See [Tool-call evidence](#tool-call-evidence). |
 | `protocol` | `protocol`, method, direction, JSON-RPC ID, request/response, protocol error, and HTTP exchange metadata. |
 | `transport` | `phase` (`connected` or `disconnected`), configured transport, and instrumented transport. |
 | `initialization` | Protocol/server versions, instructions, capabilities, and advertised tools/resources/resource templates/prompts. |
@@ -524,6 +525,33 @@ Only `state: "observed"` means a value was observed. States such as
 `redacted`, and `truncated` are meaningful results, not missing JSON fields.
 `completeness: "partial"` always includes `limitations`; consumers must not
 infer absent events or values from a partial trace.
+
+### Tool-call evidence
+
+Each tool argument and result is stored once. A `tool_call` entry's
+`arguments`, `result`, and `tool_status` are the resolved values: wire evidence
+wins when the MCP wire carried the call, otherwise the harness report is used.
+The exception is a call whose last wire round still required input: a
+terminal error the harness reported for it supplies `result` and `tool_status`.
+`correlation` says which evidence saw the call: `wire_only` and `correlated`
+calls were observed on the wire, and `reported_only` calls were only reported
+by the harness.
+
+- `reported` holds the harness's own report (`provider_call_id`, `server`,
+  `tool`, `arguments`, `result`, `status`). A harness `arguments` or `result`
+  that is exactly reconstructible from the entry is not stored; its name is
+  listed in `reported.same_as_call` and its observation is `not_emitted`. To
+  read the harness value, use the entry's `arguments`, or the entry's `result`
+  in MCP `CallToolResult` form (`content` blocks with `type`, plus
+  `structuredContent` and `isError` when present).
+- `conflicts` lists the field names (`server`, `tool`, `arguments`, `result`,
+  `status`) where the harness and the wire disagree. The wire value is the
+  entry's own field and the harness value is in `reported`.
+- `attempts` has one item per MRTR round with its JSON-RPC ID, request and
+  continuation state, input responses, `input_required`, status, sequence
+  range, timing, and, for tool calls, that round's `latency_ms`. Each round's
+  raw request and response are events at its `sequence_start` and
+  `sequence_end`; the final result is the entry's `result`.
 
 ## Read evidence
 

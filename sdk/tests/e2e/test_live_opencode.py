@@ -146,7 +146,6 @@ def test_live_opencode_calls_the_mcp_across_two_turns() -> None:
         assert len(calls) == 2, "OpenCode did not report exactly two MCP echo calls"
         for nonce, call in zip((nonce_one, nonce_two), calls, strict=False):
             assert call.correlation.value == "correlated"
-            assert call.wire.state.value == "observed"
             assert call.reported.state.value == "observed"
             assert call.arguments.state.value == "observed"
             assert _contains_text(call.arguments.value, nonce)

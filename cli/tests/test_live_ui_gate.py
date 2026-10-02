@@ -60,7 +60,7 @@ def _report() -> dict[str, Any]:
                         },
                     },
                     "tool_status": "success",
-                    "wire": {"state": "observed", "value": {"request_id": "wire-1"}},
+                    "correlation": "correlated",
                 }
             ],
         },
@@ -508,8 +508,8 @@ def test_assert_sqlite_persistence_rejects_incomplete_execution_graph(
             "USD",
         ),
         (
-            lambda report: report["trace"]["timeline"][0]["wire"].update(
-                state="missing"
+            lambda report: report["trace"]["timeline"][0].update(
+                correlation="reported_only"
             ),
             "wire",
         ),

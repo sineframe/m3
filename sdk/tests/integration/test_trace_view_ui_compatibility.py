@@ -17,7 +17,6 @@ from m3.observability import (
     ClaudeCodeTrace,
     CorrelationState,
     DirectTrace,
-    EvidenceConflict,
     HttpExchange,
     InitializationEntry,
     InitializationValue,
@@ -37,6 +36,7 @@ from m3.observability import (
     ReasoningEntry,
     ReportedToolCall,
     SafeHttpHeader,
+    ToolCallAttempt,
     ToolCallEntry,
     ToolCallStatus,
     ToolResult,
@@ -47,7 +47,6 @@ from m3.observability import (
     TransportEntry,
     UsageEntry,
     UsageValue,
-    WireToolCall,
 )
 from m3.types import (
     ErrorCode,
@@ -125,26 +124,13 @@ def _timeline() -> tuple[TraceEntry, ...]:
         structured_content=_observed({"currency": "USD"}),
         is_error=False,
     )
-    wire = WireToolCall(
-        jsonrpc_id=_observed(7),
-        server=_observed("example-mcp"),
-        tool=_observed("shipping_quote"),
-        arguments=_observed({"zone": "local"}),
-        result=_observed(result),
-        latency_ms=_observed(3.0),
-    )
     reported = ReportedToolCall(
         provider_call_id=_observed("provider-call-1"),
         server=_observed("example-mcp"),
         tool=_observed("shipping_quote"),
-        arguments=_observed({"zone": "local"}),
+        arguments=_observed({"zone": "remote"}),
         result=_observed({"currency": "USD"}),
         status=_observed("success"),
-    )
-    conflict = EvidenceConflict(
-        field="arguments",
-        reported=_observed({"zone": "remote"}),
-        wire=_observed({"zone": "local"}),
     )
     tool = ToolCallEntry(
         **_entry("tool_call", 5),
@@ -159,8 +145,17 @@ def _timeline() -> tuple[TraceEntry, ...]:
         jsonrpc_id=_observed(7),
         server_latency_ms=_observed(3.0),
         reported=_observed(reported),
-        wire=_observed(wire),
-        conflicts=(conflict,),
+        conflicts=("arguments",),
+        attempts=(
+            ToolCallAttempt(
+                attempt_index=0,
+                jsonrpc_id=_observed(7),
+                status=ToolCallStatus.SUCCESS,
+                latency_ms=_observed(3.0),
+                sequence_start=5,
+                sequence_end=5,
+            ),
+        ),
     )
     failed_result = ToolResult(
         is_error=True,
@@ -419,7 +414,7 @@ def test_public_trace_view_is_a_stable_ui_compatibility_surface(
     restored = TraceView.model_validate(view.model_dump(mode="json"))
     assert restored == view
     assert restored.runtime.kind == runtime_kind
-    assert restored.schema_version == "1.1"
+    assert restored.schema_version == "2.0"
     assert len(restored.transports) == 1
     assert restored.transports[0].configured.value is TransportKind.STDIO
     assert restored.transports[0].instrumented.value is TransportKind.STDIO
@@ -447,11 +442,11 @@ def test_public_trace_view_is_a_stable_ui_compatibility_surface(
     assert restored.reasoning[0].content.state is ObservationState.OBSERVED
     assert restored.reasoning[1].content.state is ObservationState.ENCRYPTED
     assert restored.reasoning[2].content.state is ObservationState.PROVIDER_HIDDEN
-    assert restored.tool_calls[0].wire.state is ObservationState.OBSERVED
+    assert restored.tool_calls[0].correlation is CorrelationState.CORRELATED
     assert restored.tool_calls[0].reported.state is ObservationState.OBSERVED
-    assert restored.tool_calls[0].conflicts[0].field == "arguments"
-    assert restored.tool_calls[0].wire.value is not None
-    assert restored.tool_calls[0].wire.value.arguments.value == {"zone": "local"}
+    assert restored.tool_calls[0].conflicts == ("arguments",)
+    assert restored.tool_calls[0].arguments.value == {"zone": "local"}
+    assert restored.tool_calls[0].attempts[-1].latency_ms.value == 3.0
     assert restored.tool_calls[0].result.value is not None
     assert restored.tool_calls[0].result.value.structured_content.value == {
         "currency": "USD"

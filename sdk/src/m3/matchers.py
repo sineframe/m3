@@ -52,6 +52,9 @@ from .observability import (
     ArtifactEntry as _ArtifactEntry,
 )
 from .observability import (
+    CorrelationState as _CorrelationState,
+)
+from .observability import (
     InitializationEntry as _InitializationEntry,
 )
 from .observability import (
@@ -126,6 +129,7 @@ _TurnSelector = _TurnResult | _TurnState | _TurnId | str
 _SubjectT = _TypeVar("_SubjectT")
 _FailureSink = _Callable[[AssertionError], None]
 _UNAVAILABLE = object()
+_WIRE_OBSERVED = frozenset({_CorrelationState.WIRE_ONLY, _CorrelationState.CORRELATED})
 _MATCHER_DEPTH = _ContextVar("m3_matcher_depth", default=0)
 _MATCHER_OCCURRENCES: _ContextVar[dict[tuple[str, str, str, int, str], int] | None] = (
     _ContextVar("m3_matcher_occurrences", default=None)
@@ -397,17 +401,26 @@ def _result_expected_projection(value: _Any) -> _Any:
 
 def _source_projection(entry: _ToolCallEntry, evidence: str) -> dict[str, _Any] | None:
     if evidence == "wire":
-        source = _observation_value(entry.wire)
-        if source is _UNAVAILABLE:
+        if entry.correlation not in _WIRE_OBSERVED:
             return None
-        assert source is not None
+        last_attempt = entry.attempts[-1] if entry.attempts else None
+        # An unfinished MRTR chain never put a terminal result on the wire.
+        result = (
+            _UNAVAILABLE
+            if last_attempt is not None and last_attempt.input_required
+            else _result_projection(entry.result)
+        )
         return {
-            "server": _observation_value(source.server),
-            "tool": _observation_value(source.tool),
-            "arguments": _observation_value(source.arguments),
-            "result": _result_projection(source.result),
+            "server": _observation_value(entry.server),
+            "tool": _observation_value(entry.tool),
+            "arguments": _observation_value(entry.arguments),
+            "result": result,
             "status": entry.tool_status.value,
-            "latency_ms": _observation_value(source.latency_ms),
+            "latency_ms": (
+                _observation_value(last_attempt.latency_ms)
+                if last_attempt is not None
+                else _UNAVAILABLE
+            ),
             "turn": entry.turn_id,
             "entry": entry,
             "evidence": evidence,
@@ -417,11 +430,11 @@ def _source_projection(entry: _ToolCallEntry, evidence: str) -> dict[str, _Any] 
         return None
     assert source is not None
     status = _observation_value(source.status)
-    result = _observation_value(source.result)
+    result = _observation_value(entry.reported_field("result"))
     return {
         "server": _observation_value(source.server),
         "tool": _observation_value(source.tool),
-        "arguments": _observation_value(source.arguments),
+        "arguments": _observation_value(entry.reported_field("arguments")),
         "result": _reported_result_projection(result),
         "status": getattr(status, "value", status),
         "latency_ms": _UNAVAILABLE,

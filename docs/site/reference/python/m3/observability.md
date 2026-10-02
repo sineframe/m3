@@ -26,6 +26,29 @@ describe whether a value can be read; check `state` and `reason` before
 reading `value`. Call `read_raw_evidence(reference, max_bytes=...)` while the
 kit or store is open.
 
+The current `schema_version` is `"2.0"`, and a view with any other version is
+rejected. Each tool argument and result is stored once, on its `ToolCallEntry`:
+`arguments` and `result` are the resolved values, and the wire value wins for
+correlated calls. `correlation` records which evidence saw the call:
+`wire_only` and `correlated` calls were observed on the wire, `reported_only`
+calls were only reported by the harness. `reported` holds the harness's own
+values only where they differ from, or cannot be reconstructed from, the
+entry. `ReportedToolCall.same_as_call` names the elided fields (`"arguments"`
+and/or `"result"`): their stored observation is `not_emitted`, and
+`ToolCallEntry.reported_field(field)` returns the harness value, reconstructed
+from the entry when elided. A harness argument is elided when its canonical
+JSON is byte-identical to the entry's argument; a harness result is elided
+when it is byte-identical to the MCP `CallToolResult` JSON of the entry's
+`ToolResult` (`ToolResult.to_mcp_json()`: `type`/`mimeType` content blocks,
+`structuredContent` when observed, `isError` when true). A harness result that
+carries fields m3 does not model, such as annotations, is kept in full. `conflicts` is a tuple of field names
+(`"server"`, `"tool"`, `"arguments"`, `"result"`, `"status"`) where harness and
+wire evidence disagree; it holds no values, which are the entry's value (wire)
+and `reported_field` or `reported` (harness). `ToolCallAttempt` and `ProtocolCallAttempt` keep per-round MRTR
+state, and `ToolCallAttempt.latency_ms` is the latency of that round. The raw
+request and response of each attempt are in the event log, at the attempt's
+`sequence_start` and `sequence_end`.
+
 `summary.usage` is the latest usage entry, not a sum. `usage.cost.value` and
 `usage.currency.value` may be absent.
 
@@ -34,12 +57,12 @@ kit or store is open.
 - Protocol and transport: `ProtocolEntry`, `ProtocolCallAttempt`,
   `ProtocolErrorInfo`, `ProtocolKind`, `TransportEntry`, `HttpExchange`.
 - Tools: `ToolCallEntry`, `ToolCallAttempt`, `ToolCallStatus`, `ToolResult`,
-  `ReportedToolCall`, `WireToolCall`.
+  `ReportedToolCall`.
 - Messages and model activity: `MessageEntry`, `MessageRole`, `ReasoningEntry`,
   `ProviderEntry`, `UsageEntry`, `UsageValue`.
 - Interactions: `InteractionEntry`, `ElicitationEntry`, `WorkspaceEntry`.
 - Evidence: `Observation`, `ObservationState`, `ObservationReason`,
-  `RawEvidence`, `RawEvidenceSource`, `EvidenceCapture`, `EvidenceConflict`,
+  `RawEvidence`, `RawEvidenceSource`, `EvidenceCapture`, `ConflictField`,
   `ArtifactEntry`, `RawMessageEntry`, `SafeHttpHeader`.
 
 Harness-specific projections are `ACPTrace`, `ClaudeCodeTrace`, `CodexTrace`,
