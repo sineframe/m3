@@ -12,7 +12,7 @@ import os
 import re
 from collections import defaultdict
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -227,6 +227,27 @@ def _entries(store: ExecutionStore, run_id: str) -> tuple[_Entry, ...]:
         )
     )
     return tuple(result)
+
+
+def _retry_missing_traces(
+    store: ExecutionStore, entries: Sequence[_Entry]
+) -> tuple[_Entry, ...]:
+    """Re-fetch traces that failed or were missing, as a fresh ``_entries``
+    load would."""
+    get_trace = getattr(store, "get_trace_view", None)
+    if not callable(get_trace):
+        return tuple(entries)
+    refreshed: list[_Entry] = []
+    for entry in entries:
+        if entry.trace is None:
+            try:
+                trace = get_trace(entry.report.snapshot.execution_id)
+            except Exception:
+                trace = None
+            if trace is not None:
+                entry = replace(entry, trace=trace)
+        refreshed.append(entry)
+    return tuple(refreshed)
 
 
 def _metadata(
@@ -1585,6 +1606,14 @@ def _attempt_effective_verdict(
     )
 
 
+def load_run_entries(store: ExecutionStore, run_id: RunId | str) -> tuple[_Entry, ...]:
+    """Load every execution of a run once for reuse across feedback projections."""
+    normalized = _run_key(run_id)
+    if normalized is None:
+        raise ValueError("run_id is required")
+    return _entries(store, normalized)
+
+
 def project_test_attempt(
     value: Mapping[str, Any],
     entries: Sequence[_Entry],
@@ -1678,12 +1707,22 @@ def project_test_attempt(
 def project_test_attempts(
     store: ExecutionStore,
     run_id: RunId | str,
+    *,
+    entries: Sequence[_Entry] | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
-    """Return projected pytest attempts for a run without building full feedback."""
+    """Return projected pytest attempts for a run without building full feedback.
+
+    Pass ``entries`` from :func:`load_run_entries` to reuse one load; they must
+    belong to ``run_id``.
+    """
     normalized_run_id = _run_key(run_id)
     if normalized_run_id is None:
         raise ValueError("run_id is required")
-    entries = _entries(store, normalized_run_id)
+    entries = (
+        _retry_missing_traces(store, entries)
+        if entries is not None
+        else _entries(store, normalized_run_id)
+    )
     results, manifest = _test_values(store, normalized_run_id)
     contexts = _contexts(results, manifest)
     execution_kinds = {
@@ -1819,11 +1858,22 @@ def build_feedback(
     run_id: RunId | str,
     *,
     baseline_run_id: RunId | str | None = None,
+    entries: Sequence[_Entry] | None = None,
+    baseline_entries: Sequence[_Entry] | None = None,
 ) -> Feedback:
+    """Build agent-facing feedback for a saved run.
+
+    Pass ``entries``/``baseline_entries`` from :func:`load_run_entries` to
+    reuse one load; they must belong to ``run_id``/``baseline_run_id``.
+    """
     current_id = _run_key(run_id)
     if current_id is None:
         raise ValueError("run_id is required")
-    current = _entries(store, current_id)
+    current = (
+        _retry_missing_traces(store, entries)
+        if entries is not None
+        else _entries(store, current_id)
+    )
     results, manifest = _test_values(store, current_id)
     current_label = _run_label(manifest)
     project_id = (
@@ -1901,7 +1951,11 @@ def build_feedback(
     if baseline_run_id is not None:
         baseline_id = _run_key(baseline_run_id)
         assert baseline_id is not None
-        baseline = _entries(store, baseline_id)
+        baseline = (
+            _retry_missing_traces(store, baseline_entries)
+            if baseline_entries is not None
+            else _entries(store, baseline_id)
+        )
         baseline_results, baseline_manifest = _test_values(store, baseline_id)
         baseline_contexts = _contexts(baseline_results, baseline_manifest)
         baseline_execution_kinds = {
@@ -2135,13 +2189,24 @@ def build_feedback(
 
 
 def export_feedback(
-    feedback: Feedback, store: ExecutionStore, directory: str | os.PathLike[str]
+    feedback: Feedback,
+    store: ExecutionStore,
+    directory: str | os.PathLike[str],
+    *,
+    entries: Sequence[_Entry] | None = None,
+    baseline_entries: Sequence[_Entry] | None = None,
 ) -> Path:
     """Write a complete feedback bundle with resolvable supporting files."""
-    entries = list(_entries(store, feedback.run_id))
+    loaded = (
+        list(entries) if entries is not None else list(_entries(store, feedback.run_id))
+    )
     if feedback.comparison is not None:
-        entries.extend(_entries(store, feedback.comparison.baseline_run_id))
-    reports = {_id(entry.report.snapshot.execution_id): entry for entry in entries}
+        loaded.extend(
+            baseline_entries
+            if baseline_entries is not None
+            else _entries(store, feedback.comparison.baseline_run_id)
+        )
+    reports = {_id(entry.report.snapshot.execution_id): entry for entry in loaded}
     execution_suites = {key: _suite(entry) for key, entry in reports.items()}
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
@@ -2202,22 +2267,33 @@ def export_feedback(
                 encoding="utf-8",
             )
             catalog_files[execution_id] = f"catalogs/{catalog_name}"
-        get_trace_view = getattr(store, "get_trace_view", None)
-        if callable(get_trace_view):
-            try:
-                trace = get_trace_view(entry.report.snapshot.execution_id)
-                if trace is not None:
-                    trace_name = _safe_filename(execution_id, ".json")
-                    (root / "traces" / trace_name).write_text(
-                        json.dumps(
-                            _jsonable(trace.model_dump(mode="json")),
-                            sort_keys=True,
-                            indent=2,
-                        )
-                        + "\n",
-                        encoding="utf-8",
+        trace = entry.trace
+        if trace is None:
+            get_trace_view = getattr(store, "get_trace_view", None)
+            if callable(get_trace_view):
+                try:
+                    trace = get_trace_view(entry.report.snapshot.execution_id)
+                except Exception:
+                    unavailable.append(
+                        {
+                            "execution_id": execution_id,
+                            "kind": "trace",
+                            "reason": "trace view unavailable",
+                        }
                     )
-                    trace_files[execution_id] = f"traces/{trace_name}"
+        if trace is not None:
+            try:
+                trace_name = _safe_filename(execution_id, ".json")
+                (root / "traces" / trace_name).write_text(
+                    json.dumps(
+                        _jsonable(trace.model_dump(mode="json")),
+                        sort_keys=True,
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                trace_files[execution_id] = f"traces/{trace_name}"
             except Exception:
                 unavailable.append(
                     {
@@ -2367,6 +2443,7 @@ __all__ = [
     "Feedback",
     "build_feedback",
     "export_feedback",
+    "load_run_entries",
     "project_test_attempt",
     "project_test_attempts",
 ]

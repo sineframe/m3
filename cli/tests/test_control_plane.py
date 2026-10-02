@@ -84,7 +84,7 @@ def test_execution_id_summary_uses_separate_cache_file(tmp_path, monkeypatch):
         monkeypatch.setattr(
             control_plane,
             "_execution_payload",
-            lambda _store, _snapshot, _attempts: {
+            lambda _store, _snapshot, _entry, _attempts: {
                 "transport_version": 1,
                 "marker": "execution",
                 "snapshot": {"execution_id": "summary", "run_id": "run-test"},
@@ -96,15 +96,27 @@ def test_execution_id_summary_uses_separate_cache_file(tmp_path, monkeypatch):
             lambda url, _token, body: sent.append((url, body)),
         )
 
-        for _ in range(2):
-            upload_current_run(
-                feedback,
-                store,
-                directory,
-                base_url="https://control-plane.example",
-                token="m3pat_test",
-            )
-
+        upload_current_run(
+            feedback,
+            store,
+            directory,
+            base_url="https://control-plane.example",
+            token="m3pat_test",
+        )
+        monkeypatch.setattr(
+            control_plane,
+            "load_run_entries",
+            lambda *_a, **_k: (_ for _ in ()).throw(
+                AssertionError("cached retry must not load the run")
+            ),
+        )
+        upload_current_run(
+            feedback,
+            store,
+            directory,
+            base_url="https://control-plane.example",
+            token="m3pat_test",
+        )
         cache = directory / "control-plane"
         assert (cache / "summary.json").read_bytes() == sent[0][1]
         assert (cache / "executions" / "summary.json").read_bytes() == sent[1][1]

@@ -1621,7 +1621,7 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
         effective_exitstatus = int(getattr(session, "exitstatus", final_status))
     timeout_summaries: list[tuple[str, str, float | None]] = []
     try:
-        from .feedback import build_feedback, export_feedback
+        from .feedback import build_feedback, export_feedback, load_run_entries
         from .storage import SQLiteExecutionStore
 
         export_store = SQLiteExecutionStore(path)
@@ -1658,10 +1658,19 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
                         operation_timeout.get("elapsed_seconds"),
                     )
                 )
+            baseline_run_id = getattr(config, "_m3_baseline", None)
+            run_entries = load_run_entries(export_store, run_id)
+            baseline_entries = (
+                load_run_entries(export_store, baseline_run_id)
+                if baseline_run_id is not None
+                else None
+            )
             feedback = build_feedback(
                 export_store,
                 run_id,
-                baseline_run_id=getattr(config, "_m3_baseline", None),
+                baseline_run_id=baseline_run_id,
+                entries=run_entries,
+                baseline_entries=baseline_entries,
             )
             counter_save_failed = _save_feedback_counters(
                 config,
@@ -1686,7 +1695,9 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
             feedback = build_feedback(
                 export_store,
                 run_id,
-                baseline_run_id=getattr(config, "_m3_baseline", None),
+                baseline_run_id=baseline_run_id,
+                entries=run_entries,
+                baseline_entries=baseline_entries,
             )
             output = export_feedback(
                 feedback,
@@ -1695,6 +1706,8 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
                 / ".m3"
                 / "reports"
                 / run_id.root,
+                entries=run_entries,
+                baseline_entries=baseline_entries,
             )
         finally:
             close = getattr(export_store, "close", None)

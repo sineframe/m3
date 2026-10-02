@@ -13,6 +13,7 @@ from collections.abc import Sequence as _Sequence
 from datetime import datetime as _datetime
 from datetime import timezone as _timezone
 from enum import Enum as _Enum
+from types import MappingProxyType as _MappingProxyType
 from typing import (
     Any as _Any,
 )
@@ -54,11 +55,14 @@ EVENT_SCHEMA_VERSION = "0.2"
 class _FrozenMapping(_Mapping[_Any, _Any]):
     """Tuple-backed immutable mapping with no mutable dict base to bypass."""
 
-    __slots__ = ("_items",)
+    __slots__ = ("_index", "_items")
     _items: tuple[tuple[_Any, _Any], ...]
+    _index: _Mapping[_Any, _Any]
 
     def __init__(self, values: _Mapping[_Any, _Any] | None = None) -> None:
-        object.__setattr__(self, "_items", tuple((values or {}).items()))
+        items = tuple((values or {}).items())
+        object.__setattr__(self, "_items", items)
+        object.__setattr__(self, "_index", _MappingProxyType(dict(items)))
 
     def __setattr__(self, name: str, value: _Any) -> None:
         raise TypeError("frozen mapping is immutable")
@@ -67,10 +71,10 @@ class _FrozenMapping(_Mapping[_Any, _Any]):
         raise TypeError("frozen mapping is immutable")
 
     def __getitem__(self, key: _Any) -> _Any:
-        for item_key, item_value in self._items:
-            if item_key == key:
-                return item_value
-        raise KeyError(key)
+        try:
+            return self._index[key]
+        except TypeError:
+            raise KeyError(key) from None
 
     def __iter__(self) -> _Iterator[_Any]:
         return (key for key, _ in self._items)
@@ -121,6 +125,8 @@ def _json_safe(value: _Any) -> bool:
 def _deep_freeze(value: _Any) -> _Any:
     """Recursively freeze containers while retaining JSON-compatible shapes."""
 
+    if isinstance(value, _FrozenMapping):
+        return value
     if isinstance(value, _BaseModel):
         return value
     if isinstance(value, _Mapping):
