@@ -11,7 +11,7 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -101,7 +101,12 @@ def _validate_body(body: bytes, token: str) -> None:
         raise RuntimeError("control-plane upload contains credential material")
 
 
-def _execution_payload(store: SQLiteExecutionStore, snapshot: Any) -> dict[str, Any]:
+def _execution_payload(
+    store: SQLiteExecutionStore,
+    snapshot: Any,
+    attempts: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Build one execution body; ``attempts`` are the run's projected pytest attempts."""
     execution_id = snapshot.execution_id.root
     report = store.get_report(execution_id, event_limit=None, artifact_limit=None)
     if report is None:
@@ -130,14 +135,9 @@ def _execution_payload(store: SQLiteExecutionStore, snapshot: Any) -> dict[str, 
     if project_id is not None and callable(get_project):
         project = get_project(project_id)
         project_name = project[1] if project is not None else None
-    test_results: tuple[dict[str, Any], ...] = ()
-    if snapshot.run_id is not None:
-        test_results = tuple(
-            asdict(item)
-            for item in project_test_results(
-                project_test_attempts(store, snapshot.run_id.root), execution_id
-            )
-        )
+    test_results = tuple(
+        asdict(item) for item in project_test_results(attempts, execution_id)
+    )
     public = build_report_envelope(execution_id, spec, report, trace, test_results)
     public_execution = build_execution_envelope(snapshot, spec, project_name)
     public_snapshot = public_execution["snapshot"]
@@ -202,12 +202,13 @@ def _current_run_bodies(
     store: SQLiteExecutionStore,
     directory: str | os.PathLike[str],
 ) -> Iterator[tuple[str, bytes]]:
-    _, snapshots, summary = _current_run_summary(feedback, store, directory)
+    run_id, snapshots, summary = _current_run_summary(feedback, store, directory)
     yield "", summary
+    attempts = project_test_attempts(store, run_id)
     for snapshot in snapshots:
         yield (
             snapshot.execution_id.root,
-            _json_bytes(_execution_payload(store, snapshot)),
+            _json_bytes(_execution_payload(store, snapshot, attempts)),
         )
 
 
@@ -283,6 +284,7 @@ def upload_current_run(
     run_id, snapshots, rendered_summary = _current_run_summary(
         feedback, store, directory
     )
+    attempts = project_test_attempts(store, run_id)
     summary_path = root / "summary.json"
     destination_path = root / "destination.json"
     if destination_path.is_symlink():
@@ -323,7 +325,7 @@ def upload_current_run(
         body = (
             path.read_bytes()
             if path.is_file()
-            else _json_bytes(_execution_payload(store, snapshot))
+            else _json_bytes(_execution_payload(store, snapshot, attempts))
         )
         _validate_body(body, token)
         _reject_known_secrets(body, sensitive_values)

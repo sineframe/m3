@@ -84,7 +84,7 @@ def test_execution_id_summary_uses_separate_cache_file(tmp_path, monkeypatch):
         monkeypatch.setattr(
             control_plane,
             "_execution_payload",
-            lambda _store, _snapshot: {
+            lambda _store, _snapshot, _attempts: {
                 "transport_version": 1,
                 "marker": "execution",
                 "snapshot": {"execution_id": "summary", "run_id": "run-test"},
