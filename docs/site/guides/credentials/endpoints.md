@@ -117,10 +117,10 @@ From the project directory, run:
 python -m pytest -q test_credentials.py
 ```
 
-The test sets `M3_DEMO_SERVICE_KEY` to a dummy value. M3 maps it to the child variable `DEMO_SERVICE_TOKEN`. The `credential accepted` result proves the server received the expected credential without returning it.
+The test sets `M3_DEMO_SERVICE_KEY` to a dummy value. M3 maps it to the child variable `DEMO_SERVICE_TOKEN`. The `credential accepted` result confirms that the server received the expected value without returning it.
 
 ```text
 1 passed
 ```
 
-If the source variable is missing, stdio startup fails. A present empty value is passed to the child as an empty string. See the [credential reference](../../reference/credentials.md) for the exact endpoint behavior and the other credential paths. To continue with another task, return to [Configure credentials](../credentials.md).
+If the source variable is missing, stdio startup fails. A present empty value is passed to the child as an empty string. See the [credential reference](../../reference/credentials.md) for exact endpoint behavior. For other credential tasks, return to [Configure credentials](../credentials.md).
