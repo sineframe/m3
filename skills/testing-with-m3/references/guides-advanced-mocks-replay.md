@@ -36,10 +36,10 @@ def test_mock_shipping() -> None:
     assert result.structured_content == {"amount": 9.0, "currency": "USD"}
 ```
 
-Run:
+Run from the first-test project:
 
 ```sh
-uv run pytest tests/test_mock_shipping.py
+m3 test -- tests/test_mock_shipping.py
 ```
 
 Unexpected requests raise `MockExpectationError`.
