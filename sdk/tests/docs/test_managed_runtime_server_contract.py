@@ -1,12 +1,19 @@
+"""Verify the shipping example's direct-call contract as an internal test."""
+
+import shutil
 import sys
 from pathlib import Path
+
+import pytest
 
 from m3 import MCPTestKit, expect
 from m3.evaluations import EvaluationDecision
 from m3.types import EvaluationStatus, StdioServer
 
-HERE = Path(__file__).resolve().parent
+PROJECT = Path(__file__).parents[3] / "sdk/examples/docs/agents-managed-runtimes"
 EXPECTED_QUOTE = {"amount": 9.0, "currency": "USD"}
+
+pytestmark = pytest.mark.process_lifecycle
 
 
 def quote_evaluator(context):
@@ -18,12 +25,14 @@ def quote_evaluator(context):
     )
 
 
-def test_local_server_matcher_and_evaluation() -> None:
+def test_local_server_matcher_and_evaluation(tmp_path: Path) -> None:
+    server_path = tmp_path / "shipping_server.py"
+    shutil.copy2(PROJECT / "shipping_server.py", server_path)
     server = StdioServer(
         name="shipping",
         command=sys.executable,
-        args=(str(HERE / "shipping_server.py"),),
-        cwd=str(HERE),
+        args=(str(server_path),),
+        cwd=str(tmp_path),
     )
     with MCPTestKit(env={}) as kit:
         kit.register_evaluator("shipping.quote.v1", quote_evaluator)

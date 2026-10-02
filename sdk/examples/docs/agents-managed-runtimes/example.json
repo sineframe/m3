@@ -4,7 +4,7 @@
   "owning_pages": ["guides-agents-managed-runtimes"],
   "target_release": "resolved from the published release pin",
   "python": ">=3.10",
-  "files": ["shipping_server.py", "test_managed_runtime.py", "test_managed_runtime_fixture.py", "test_local_contract.py"],
+  "files": ["shipping_server.py", "test_managed_runtime.py", "test_managed_runtime_fixture.py"],
   "displayed_blocks": [
     {"page": "guides-agents-managed-runtimes", "label": "shipping MCP server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-agents-managed-runtimes", "label": "pinned Codex runtime test", "source": "test_managed_runtime.py", "kind": "file"},
@@ -27,19 +27,6 @@
         "status": "requires live verification and provider access"
       },
       "verification": "live-provider"
-    },
-    {
-      "id": "local-runtime-contract",
-      "command": "python -m pytest -q test_local_contract.py",
-      "working_directory": "pinned-agent project directory",
-      "expected_exit_code": 0,
-      "assertions": ["local shipping server returns structured quote amount 9 USD", "recorded direct call matches name, server, arguments, success, and result", "registered evaluator passes against the observed structured result"],
-      "compatibility": {
-        "harness": "none; local MCP direct client",
-        "mode": "deterministic local",
-        "status": "verified locally; no managed runtime or provider was used"
-      },
-      "verification": "deterministic"
     },
     {
       "id": "cli-selected-codex-pin",

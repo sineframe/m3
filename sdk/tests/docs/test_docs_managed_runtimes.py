@@ -206,24 +206,6 @@ def test_two_version_example_acquires_both_selected_pins_locally(
     ]
 
 
-def test_local_runtime_project_contract_runs_from_manifest_copy(
-    tmp_path: Path, local_runtime_feed: tuple[Any, Path]
-) -> None:
-    feed, marker_path = local_runtime_feed
-    project = _copy_project("agents-managed-runtimes", tmp_path / "local-contract")
-    environment = _environment(
-        tmp_path,
-        manifest_feed_url=feed.manifest_feed_url,
-        marker_path=marker_path,
-    )
-    output = _run(
-        [sys.executable, "-m", "pytest", "-q", "test_local_contract.py"],
-        cwd=project,
-        env=environment,
-    )
-    assert "1 passed" in output
-
-
 def test_cli_selected_pin_fixture_runs_from_manifest_copy(
     tmp_path: Path, local_runtime_feed: tuple[Any, Path]
 ) -> None:
