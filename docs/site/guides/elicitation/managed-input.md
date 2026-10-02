@@ -1,28 +1,26 @@
 ---
 title: "Submit input to a paused execution"
-description: "Managed input lets an agent execution pause while it waits for a person’s response. The caller reads the persisted request, submits a response keyed by the request name, then waits for the worker to finish."
+description: "Pause an agent execution for MCP elicitation, submit a keyed response, and wait for the worker to finish."
 ---
 
 # Submit input to a paused execution
 
-Managed input lets an agent execution pause while it waits for a person’s response. The caller reads the persisted request, submits a response keyed by the request name, then waits for the worker to finish.
+With managed input, an agent execution pauses for a person’s response to an MCP
+elicitation request. Read the persisted request, submit a response under its
+request key, and wait for the worker to finish.
 
 ## Requirements
 
-From the repository root, install the candidate package and pytest with
-`python -m pip install -e 'sdk[pytest]'`. An index install of
-`sf-m3[pytest]` selects a published release. The live example uses Codex CLI
-`0.156.1`, an account-accessible model named by `M3_DOCS_CODEX_MODEL`, a
-persistent SQLite execution store, and network access for runtime acquisition
-and provider requests. M3 approves Codex's call to the selected
-`book_shipment` tool. Managed input
-requires a persistent store that implements M3's managed-input API. The
-separate storage contract test below uses SQLite and needs no harness or
-credentials.
+Works with Codex CLI `0.156.1`; other agent harnesses are unverified for this
+workflow. The live example requires a model available to the signed-in Codex
+account, network access, and a persistent SQLite execution store that
+implements M3's managed-input API. M3 approves Codex's call to the selected
+`book_shipment` tool.
 
-Works with Codex CLI `0.156.1` for the agent example. Managed input requires a
-persistent execution store; other agent harnesses are unverified for this
-workflow.
+From the repository root, install the candidate package and pytest with
+`python -m pip install -e 'sdk[pytest]'`. Installing `sf-m3[pytest]` from the
+package index selects a published release. The separate storage contract test
+uses SQLite and needs no harness or credentials.
 
 Set a model available to the signed-in Codex account before running that
 provider scenario:
@@ -30,9 +28,6 @@ provider scenario:
 ```sh
 export M3_DOCS_CODEX_MODEL='<model available to your Codex login>'
 ```
-
-The model variable was unset here, and Codex authentication was not checked.
-The live run was not performed.
 
 Create a directory named `elicitation-managed-input`. Save this complete
 server as `shipping_server.py`:
@@ -218,34 +213,28 @@ cd elicitation-managed-input
 python -m pytest -q test_managed_input.py
 ```
 
-The test waits up to two minutes for the form request. It then submits the
-response using the request key and round ID returned by the execution, and
-checks that the worker completes the tool call. It never relies on an
-author’s execution ID. The test’s `permission_policy="allow"` is limited to
-this non-destructive teaching tool so it does not require an interactive
-approval handler.
+`test_managed_form_input_resumes_codex_execution` polls for the form request
+for up to two minutes, submits a response with the request key and round ID
+from its own execution, and waits for the worker to finish the tool call. Its
+`permission_policy="allow"` applies only to this non-destructive teaching tool
+and avoids the need for an interactive approval handler.
 
-The live test has not been run in this documentation build because the model
-variable was unset; provider authentication was not checked. There is no
-captured passing output for this live-provider scenario. A separate maintainer
-test runs this project source with a local Responses fixture and the pinned
-native Codex executable; it verifies the managed protocol flow but not provider
-access. The submission idempotency key is
-derived from the reader’s own round ID. An application must persist the key
-with the submitted response so a retried submission reuses both. This live
-example handles form requests only. A URL request needs an explicit consent
-flow and a response without form content.
+This documentation build did not produce live output because
+`M3_DOCS_CODEX_MODEL` was unset, and it did not check Codex authentication. A
+maintainer test covers the managed protocol flow with the pinned Codex
+executable and a local Responses fixture, but does not test provider access.
+
+The test derives its idempotency key from the pending round ID. Persist the key
+with the response so retries reuse the same pair. This live path handles form
+requests only; URL requests need an explicit consent flow and a response
+without form content.
 
 ## Verify keyed storage, retry, and stale-response behavior locally
 
-The next test exercises the persistent managed-input store itself. SQLite
-opens a connection per operation, so the store has no `close()` method. The
-test discards one store instance and creates another on the same database
-path. It creates its own execution and round identities, records an invalid
-response without consuming the pending round, commits a valid keyed answer,
-reads the saved response after reopening the store, retries with the same
-idempotency key, and rejects a response after its lease expires. This test
-does not start or resume a native harness process.
+The storage test creates its own execution and round IDs, then reopens the same
+SQLite database through a second store instance. `SQLiteManagedInputStore`
+opens a connection per operation and has no `close()` method. No native
+harness process starts or resumes.
 
 Save as `test_managed_store.py` in the same directory:
 
@@ -386,14 +375,17 @@ Captured output:
 1 passed
 ```
 
-This checks atomic exact-key validation, same-key idempotency across store
-reopen, and rejection of a stale lease. It does not prove a native harness can
-resume after process loss. Managed worker recovery treats an unresolved native
-request as terminal when safe resumption cannot be proved; a persisted round
-is not a promise that the harness action resumes. See the
+`test_response_retry_survives_store_reopen_and_stale_lease_is_rejected` covers
+exact-key validation, a valid keyed response, the same idempotent submission
+after reopening the store, and rejection after the worker lease expires. It
+does not establish that a native harness can resume after process loss.
+Managed worker recovery marks an unresolved native request terminal unless it
+can resume safely; persisting the round alone does not make the harness action
+resumable. See the
 [managed-input API reference](../../reference/python/m3/managed-input.md).
 
-Complete source project: [`sdk/examples/docs/elicitation-managed-input`](../../../../sdk/examples/docs/elicitation-managed-input).
+The complete source project is
+[`sdk/examples/docs/elicitation-managed-input`](../../../../sdk/examples/docs/elicitation-managed-input).
 
 Managed input cannot be combined with a predefined elicitation plan on the
 same execution. Managed submissions also cannot be combined with direct

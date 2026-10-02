@@ -6,30 +6,27 @@ description: "Test action-bound elicitation in Codex and Pi sessions with a fres
 # Handle elicitation in agent tests
 
 Attach a complete elicitation plan to the agent action that may request input.
-This example gives each `session.send` turn its own plan and checks elicitation
-evidence against the turn that produced it.
+Give each `session.send` turn its own plan, then read that turn's trace for the
+elicitation evidence.
 
 ## Requirements
 
-Use Python 3.10 or newer. From the repository root, install the candidate
-package with `python -m pip install -e 'sdk[pytest]'`. An index install of
-`sf-m3[pytest]` selects a published release. The examples pin Codex CLI
-`0.156.1` and Pi `0.85.1` through their managed runtimes. Authenticate each
-provider and set its model variable to an account-accessible model:
+Works with Python 3.10 or newer, Codex CLI `0.156.1`, and Pi `0.85.1`. The
+examples acquire both harness versions through managed runtimes. Other
+harnesses are unverified; direct SDK elicitation does not require a harness.
+
+From the repository root, install the candidate package with
+`python -m pip install -e 'sdk[pytest]'`. Installing `sf-m3[pytest]` from the
+package index selects a published release. Authenticate each provider and set
+its model variable to a model available to that account:
 
 ```sh
 export M3_DOCS_CODEX_MODEL='<model available to your Codex login>'
 export M3_DOCS_PI_MODEL='<model available to your Pi provider>'
 ```
 
-These live calls need network access and provider credentials. The MCP server
-runs locally over stdio. The SDK has fixture bridge coverage for action-bound
-elicitation at Codex `0.156.1` and Pi `0.85.1`. Both complete tests were run
-with those binaries and local provider fixtures. This verifies adapter
-integration, not live model tool choice or account authentication.
-Works with Codex CLI `0.156.1` and Pi `0.85.1` through managed runtimes.
-Other harnesses are unverified. Direct SDK elicitation does not require an
-agent harness.
+The provider calls need network access and credentials. The MCP server runs
+locally over stdio.
 
 ## Complete server and two session examples
 
@@ -281,24 +278,25 @@ python -m pytest -q test_agent_sessions.py -k codex
 python -m pytest -q test_agent_sessions.py -k pi
 ```
 
-The live provider examples have not been run in this documentation build, so
-there is no captured passing transcript. The tests assert each turn's accepted
-form content and successful tool result from that turn's trace. Both complete
-tests passed with the actual pinned binaries and local provider fixtures;
-that does not verify live model tool choice or account authentication.
+No live transcript is included because this documentation build did not call
+the providers. Both tests pass with the pinned harness binaries and local
+provider fixtures. Each test reads the trace for its own turn and checks the
+accepted form content and successful tool result. Fixture-backed runs cover
+the adapter integration, not live model tool choice or account authentication.
 The runnable source project is
 [`sdk/examples/docs/elicitation-agents`](../../../../sdk/examples/docs/elicitation-agents).
 
-Each turn must receive a complete plan for that action. A required plan that
-the agent never uses fails the turn as incomplete. Pi's managed-input control
-protocol accepts a round limit from 1 through 1024; Codex has no matching
-adapter-specific maximum. Both guide examples use the default of 10.
+If the agent never uses a required plan, M3 marks the turn incomplete. Pi's
+managed-input control protocol accepts a round limit from 1 through 1024.
+Codex has no matching adapter-specific maximum. Both examples use the default
+limit of 10.
 
-This stdio example uses form requests on both turns. Codex `0.156.1` rejects
+The stdio server uses form requests on both turns. Codex `0.156.1` rejects
 a URL-mode `InputRequiredResult` in this server's tool call with
 `unsupported MCP tool input request`. Do not add a URL step to this native
 example. To test URL matching and acceptance without an agent, use
 [Compose elicitation workflows](composed.md). URL acceptance submits an action;
 it does not visit the URL. For a human response that pauses an execution, see
-[Submit input to a paused execution](managed-input.md).
-Exact plan behavior is in the [elicitation reference](../../reference/python/m3/elicitation.md).
+[Submit input to a paused execution](managed-input.md). See the
+[elicitation reference](../../reference/python/m3/elicitation.md) for exact
+plan behavior.

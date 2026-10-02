@@ -1,27 +1,28 @@
 ---
 title: "Plan answers to elicitation requests"
-description: "An elicitation plan describes the requests an operation may make and the response M3 should submit. Attach the plan to the action that can trigger those requests, then assert the action’s result."
+description: "Build an elicitation plan, attach it to one action, and assert the result."
 ---
 
 # Plan answers to elicitation requests
 
-An elicitation plan describes the requests an operation may make and the response M3 should submit. Attach the plan to the action that can trigger those requests, then assert the action’s result.
+An elicitation plan maps the requests an operation may make to the responses M3
+should submit. Attach a complete plan to the action that can request input,
+then assert the action’s result.
 
 ## Requirements and support
 
-Direct SDK operations can use elicitation without an agent harness. M3 tests agent-driven elicitation with Codex CLI `0.156.1` and Pi `0.85.1`; other harnesses have not been verified for this action. This limit does not apply to direct SDK elicitation. See [compatibility details](../../reference/compatibility.md).
+Works with Python 3.10 or newer and MCP protocol revision `2026-07-28` through
+direct SDK operations. Direct tests need no agent harness. Agent-driven
+elicitation is verified with Codex CLI `0.156.1` and Pi `0.85.1`; other
+harnesses are unverified. See
+[compatibility details](../../reference/compatibility.md).
 
-Works with Python 3.10 or newer and MCP protocol revision `2026-07-28`.
-From the repository root, install the candidate
-package and pytest with
+From the repository root, install the candidate package and pytest with
 `python -m pip install -e 'sdk[pytest]'`. Installing `sf-m3[pytest]` from the
-package index selects a published release. The example uses a local
-in-process server; the test needs no model, network service, or credentials.
-
-This direct SDK example uses a local MCP server that returns
-`InputRequiredResult` for `book_shipment`, asks for the `shipping_address`
-form, and completes only when it receives the keyed response. It needs no
-agent harness.
+package index selects a published release. The local in-process server needs no
+model, network service, or credentials. It returns `InputRequiredResult` for
+`book_shipment` and completes after receiving the keyed `shipping_address`
+response.
 
 ## Complete local server and test
 
@@ -176,10 +177,11 @@ Captured output:
 2 passed
 ```
 
-The first test proves that the direct client matched the request and submitted
-the planned response; the server then returned a booked result. The second
-test proves that a wrong key and content that fails the requested schema raise
-`ElicitationExpectationError` before the retry. The complete source project is also available at
+`test_direct_tool_call_answers_a_form_request` passes after the direct client
+matches the request, submits the planned response, and receives the booked
+result. `test_request_key_mismatch_and_invalid_content_fail_before_retry`
+raises `ElicitationExpectationError` for a wrong key or schema-invalid content
+before the retry. The complete source project is at
 [`sdk/examples/docs/elicitation-plans`](../../../../sdk/examples/docs/elicitation-plans).
 
 The plan’s request key and mode must match the server request. Context fields
@@ -189,7 +191,10 @@ acceptance uses `.accept()` without form content. A URL response does not
 visit the URL or complete authentication. See [response semantics](responses.md)
 for declined and cancelled responses.
 
-To require a second request in a later protocol round, compose bound leaves with `sequence(...)`. Use `one_of(...)` when one listed request may arrive, and `round_of(...)` when all listed requests belong to the same round. The server must exhibit that ordering; these helpers do not cause the server to ask.
+Compose bound leaves with `sequence(...)` when a second request must arrive in
+a later protocol round. Use `one_of(...)` for alternatives and `round_of(...)`
+for requests that must share a round. These helpers match server behavior;
+they do not cause the server to issue requests.
 
 The tool assertion runs after the action because one logical call owns all
 retries. Assert one logical operation and its ordered attempts.
@@ -206,8 +211,10 @@ Tool calls, prompt retrieval, and resource reads accept plans on the direct
 operation. Agent actions bind a plan to `agent.run`, `agent.submit`, or one
 `session.send` turn. Do not put a plan on long-lived session creation. ACP
 agents that ask before calling tools need explicit tool approval through
-`permission_policy`. The
-[composed workflow](composed.md) demonstrates alternatives and later rounds;
-[agent-specific guides](agents.md) describe Codex and Pi support; and the
-[manual guide](manual.md) handles a returned `InputRequiredResult`. Next:
-[submit input to a paused execution](managed-input.md).
+`permission_policy`.
+
+Continue with [Compose elicitation workflows](composed.md) for alternatives
+and later rounds. For an agent action, see
+[Handle elicitation in agent tests](agents.md). If application code needs the
+raw `InputRequiredResult`, use [manual handling](manual.md). To collect a
+response from a person, [submit input to a paused execution](managed-input.md).

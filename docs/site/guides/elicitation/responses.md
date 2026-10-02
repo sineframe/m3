@@ -5,18 +5,20 @@ description: "Test accepted, declined, and cancelled form and URL responses on d
 
 # Respond to elicitation requests
 
-Use this guide to check the action and payload M3 sends for form and URL
-requests. The local server records the exact response passed on the retry.
+The local server records the response M3 sends when it retries a form or URL
+request. The tests cover accepted, declined, and cancelled responses, along
+with response metadata.
 
 ## Requirements
 
-From the repository root, install the candidate
-package and pytest with `python -m pip install -e 'sdk[pytest]'`. An index
-install of `sf-m3[pytest]` selects a published release. Works with Python
-3.10 or newer and MCP protocol revision `2026-07-28` through direct SDK
-operations. This example uses an in-process MCP server and no credentials or
-network service. The `cancel` action below is an MCP elicitation response. It
-is distinct from `handle.cancel()`, which cancels an execution or session.
+Works with Python 3.10 or newer and MCP protocol revision `2026-07-28` through
+direct SDK operations. The tests use an in-process MCP server and need no
+credentials or network service. Here, `cancel` is an MCP elicitation response;
+`handle.cancel()` cancels an execution or session.
+
+From the repository root, install the candidate package and pytest with
+`python -m pip install -e 'sdk[pytest]'`. Installing `sf-m3[pytest]` from the
+package index selects a published release.
 
 ## Complete server and tests
 
@@ -223,11 +225,11 @@ Captured output:
 4 passed
 ```
 
-The assertions distinguish form acceptance with content, form decline,
-form cancellation, URL decline, URL cancellation, and response metadata. The
-URL tests only send an MCP action; they do not visit the URL. The server's
-normal tool result after receiving `cancel` shows why an elicitation cancel
-action is not the same as cancelling the enclosing execution.
+Form acceptance includes content; form decline and cancellation do not. URL
+decline and cancellation also omit form content, while response metadata is
+preserved under `_meta`. The URL tests send an MCP action without visiting the
+URL. After receiving `cancel`, the server still returns its normal tool result,
+so the enclosing execution continues.
 
 For schema mismatch behavior and plan composition, see
 [Compose elicitation workflows](composed.md) and the
