@@ -22,8 +22,11 @@ Installed distribution version.
 
 Lifecycle-safe synchronous configuration and capability shell.
 
-Public fields and methods:
+Public members:
 
+- `probes` (property): Synchronous capability namespace owned by this kit.
+- `store` (property): The optional execution store configured on this kit.
+- `run_id` (property)
 - `get_trace(self, execution_id: '_ExecutionId | str') -&gt; '_TraceResult'`: Return the finalized stable trace for an execution.
 - `get_trace_view(self, execution_id: '_ExecutionId | str') -&gt; 'TraceView'`: Return the finalized typed trace view for an execution.
 - `read_raw_evidence(self, reference: '_EvidenceRef', *, max_bytes: 'int' = 1048576) -&gt; 'RawEvidence'`: Read bounded, redacted raw evidence by its durable reference.
@@ -43,27 +46,27 @@ Public fields and methods:
 
 `m3.StdioServer(*, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], trust: m3.types.TrustLevel = &lt;TrustLevel.UNTRUSTED: 'untrusted'&gt;, kind: Literal['stdio'] = 'stdio', command: Annotated[str, MinLen(min_length=1)], args: tuple[str, ...] = (), environment: collections.abc.Mapping[str, m3.types.SecretReference | str] = &lt;factory&gt;, cwd: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `name: &lt;class 'str'&gt;` (required).
 - `trust: &lt;enum 'TrustLevel'&gt;` (default: `&lt;TrustLevel.UNTRUSTED: 'untrusted'&gt;`).
 - `kind: typing.Literal['stdio']` (default: `'stdio'`).
 - `command: &lt;class 'str'&gt;` (required).
 - `args: tuple[str, ...]` (default: `()`).
-- `environment: collections.abc.Mapping[str, m3.types.SecretReference | str]` (required).
+- `environment: collections.abc.Mapping[str, m3.types.SecretReference | str]` (default factory: `builtins.dict`).
 - `cwd: str | None` (default: `None`).
 
 ### `HTTPServer`
 
 `m3.HTTPServer(*, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], trust: m3.types.TrustLevel = &lt;TrustLevel.UNTRUSTED: 'untrusted'&gt;, kind: Literal['streamable_http'] = 'streamable_http', url: Annotated[str, MinLen(min_length=1)], headers: collections.abc.Mapping[str, m3.types.SecretReference | str] = &lt;factory&gt;, loopback_only: bool = False) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `name: &lt;class 'str'&gt;` (required).
 - `trust: &lt;enum 'TrustLevel'&gt;` (default: `&lt;TrustLevel.UNTRUSTED: 'untrusted'&gt;`).
 - `kind: typing.Literal['streamable_http']` (default: `'streamable_http'`).
 - `url: &lt;class 'str'&gt;` (required).
-- `headers: collections.abc.Mapping[str, m3.types.SecretReference | str]` (required).
+- `headers: collections.abc.Mapping[str, m3.types.SecretReference | str]` (default factory: `builtins.dict`).
 - `loopback_only: &lt;class 'bool'&gt;` (default: `False`).
 
 ### `InProcessServer`
@@ -72,20 +75,20 @@ Public fields and methods:
 
 Runtime-only server descriptor; the factory is excluded from serialization.
 
-Public fields and methods:
+Public members:
 
 - `name: &lt;class 'str'&gt;` (required).
 - `trust: &lt;enum 'TrustLevel'&gt;` (default: `&lt;TrustLevel.SDK_LOOPBACK: 'sdk_loopback'&gt;`).
 - `kind: typing.Literal['in_process']` (default: `'in_process'`).
 - `factory: typing.Any` (required).
-- `descriptor: collections.abc.Mapping[str, typing.Any]` (required).
+- `descriptor: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 - `origin: &lt;class 'str'&gt;` (default: `'python_registration'`).
 
 ### `ExecutionResult`
 
 `m3.ExecutionResult(*, snapshot: m3.types.ExecutionState, turns: tuple[m3.types.TurnResult, ...] = (), trace: m3.types.TraceResult | None = None, direct_result: Optional[Annotated[m3.types.ListToolsResult | m3.types.ListResourcesResult | m3.types.ListTemplatesResult | m3.types.ListPromptsResult | m3.types.CallToolResult | m3.types.ReadResourceResult | m3.types.GetPromptResult | m3.types.PingResult, FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] = None, evaluations: tuple[m3.types.EvaluationResult, ...] = (), artifacts: tuple[m3.types.ArtifactRef, ...] = (), activity_health: m3.types.ActivityHealth = &lt;ActivityHealth.NO_CALLS: 'no_calls'&gt;, error: m3.types.ErrorInfo | None = None, provenance: m3.types.SessionSource | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `snapshot: &lt;class 'm3.types.ExecutionState'&gt;` (required).
 - `turns: tuple[m3.types.TurnResult, ...]` (default: `()`).
@@ -96,14 +99,31 @@ Public fields and methods:
 - `activity_health: &lt;enum 'ActivityHealth'&gt;` (default: `&lt;ActivityHealth.NO_CALLS: 'no_calls'&gt;`).
 - `error: m3.types.ErrorInfo | None` (default: `None`).
 - `provenance: m3.types.SessionSource | None` (default: `None`).
+- `trace_view` (property): Return the finalized typed view for this execution trace.
 
 ### `ExecutionOutcome`
 
 `m3.ExecutionOutcome(*values)`
 
+Public members:
+
+- `COMPLETED` = `'completed'`
+- `FAILED` = `'failed'`
+- `TIMED_OUT` = `'timed_out'`
+- `CANCELLED` = `'cancelled'`
+- `INTERRUPTED` = `'interrupted'`
+
 ### `TurnOutcome`
 
 `m3.TurnOutcome(*values)`
+
+Public members:
+
+- `COMPLETED` = `'completed'`
+- `FAILED` = `'failed'`
+- `TIMED_OUT` = `'timed_out'`
+- `CANCELLED` = `'cancelled'`
+- `INTERRUPTED` = `'interrupted'`
 
 ### `expect`
 
@@ -137,11 +157,19 @@ str(object='') -&gt; str str(bytes_or_buffer[, encoding[, errors]]) -&gt; str
 
 `m3.types.ExecutionOutcome(*values)`
 
+Public members:
+
+- `COMPLETED` = `'completed'`
+- `FAILED` = `'failed'`
+- `TIMED_OUT` = `'timed_out'`
+- `CANCELLED` = `'cancelled'`
+- `INTERRUPTED` = `'interrupted'`
+
 ### `ExecutionResult`
 
 `m3.types.ExecutionResult(*, snapshot: m3.types.ExecutionState, turns: tuple[m3.types.TurnResult, ...] = (), trace: m3.types.TraceResult | None = None, direct_result: Optional[Annotated[m3.types.ListToolsResult | m3.types.ListResourcesResult | m3.types.ListTemplatesResult | m3.types.ListPromptsResult | m3.types.CallToolResult | m3.types.ReadResourceResult | m3.types.GetPromptResult | m3.types.PingResult, FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] = None, evaluations: tuple[m3.types.EvaluationResult, ...] = (), artifacts: tuple[m3.types.ArtifactRef, ...] = (), activity_health: m3.types.ActivityHealth = &lt;ActivityHealth.NO_CALLS: 'no_calls'&gt;, error: m3.types.ErrorInfo | None = None, provenance: m3.types.SessionSource | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `snapshot: &lt;class 'm3.types.ExecutionState'&gt;` (required).
 - `turns: tuple[m3.types.TurnResult, ...]` (default: `()`).
@@ -152,48 +180,58 @@ Public fields and methods:
 - `activity_health: &lt;enum 'ActivityHealth'&gt;` (default: `&lt;ActivityHealth.NO_CALLS: 'no_calls'&gt;`).
 - `error: m3.types.ErrorInfo | None` (default: `None`).
 - `provenance: m3.types.SessionSource | None` (default: `None`).
+- `trace_view` (property): Return the finalized typed view for this execution trace.
 
 ### `TurnOutcome`
 
 `m3.types.TurnOutcome(*values)`
 
+Public members:
+
+- `COMPLETED` = `'completed'`
+- `FAILED` = `'failed'`
+- `TIMED_OUT` = `'timed_out'`
+- `CANCELLED` = `'cancelled'`
+- `INTERRUPTED` = `'interrupted'`
+
 ### `TurnResult`
 
 `m3.types.TurnResult(*, snapshot: m3.types.TurnState, response: m3.types.TurnResponse | None = None, error: m3.types.ErrorInfo | None = None, trace: m3.types.TraceResult | None = None, evidence: collections.abc.Mapping[str, typing.Any] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `snapshot: &lt;class 'm3.types.TurnState'&gt;` (required).
 - `response: m3.types.TurnResponse | None` (default: `None`).
 - `error: m3.types.ErrorInfo | None` (default: `None`).
 - `trace: m3.types.TraceResult | None` (default: `None`).
-- `evidence: collections.abc.Mapping[str, typing.Any]` (required).
+- `evidence: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
+- `turn_id` (property): Stable identifier usable to scope finalized session assertions.
 
 ### `HTTPServer`
 
 `m3.types.HTTPServer(*, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], trust: m3.types.TrustLevel = &lt;TrustLevel.UNTRUSTED: 'untrusted'&gt;, kind: Literal['streamable_http'] = 'streamable_http', url: Annotated[str, MinLen(min_length=1)], headers: collections.abc.Mapping[str, m3.types.SecretReference | str] = &lt;factory&gt;, loopback_only: bool = False) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `name: &lt;class 'str'&gt;` (required).
 - `trust: &lt;enum 'TrustLevel'&gt;` (default: `&lt;TrustLevel.UNTRUSTED: 'untrusted'&gt;`).
 - `kind: typing.Literal['streamable_http']` (default: `'streamable_http'`).
 - `url: &lt;class 'str'&gt;` (required).
-- `headers: collections.abc.Mapping[str, m3.types.SecretReference | str]` (required).
+- `headers: collections.abc.Mapping[str, m3.types.SecretReference | str]` (default factory: `builtins.dict`).
 - `loopback_only: &lt;class 'bool'&gt;` (default: `False`).
 
 ### `StdioServer`
 
 `m3.types.StdioServer(*, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], trust: m3.types.TrustLevel = &lt;TrustLevel.UNTRUSTED: 'untrusted'&gt;, kind: Literal['stdio'] = 'stdio', command: Annotated[str, MinLen(min_length=1)], args: tuple[str, ...] = (), environment: collections.abc.Mapping[str, m3.types.SecretReference | str] = &lt;factory&gt;, cwd: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `name: &lt;class 'str'&gt;` (required).
 - `trust: &lt;enum 'TrustLevel'&gt;` (default: `&lt;TrustLevel.UNTRUSTED: 'untrusted'&gt;`).
 - `kind: typing.Literal['stdio']` (default: `'stdio'`).
 - `command: &lt;class 'str'&gt;` (required).
 - `args: tuple[str, ...]` (default: `()`).
-- `environment: collections.abc.Mapping[str, m3.types.SecretReference | str]` (required).
+- `environment: collections.abc.Mapping[str, m3.types.SecretReference | str]` (default factory: `builtins.dict`).
 - `cwd: str | None` (default: `None`).
 
 ### `InProcessServer`
@@ -202,13 +240,13 @@ Public fields and methods:
 
 Runtime-only server descriptor; the factory is excluded from serialization.
 
-Public fields and methods:
+Public members:
 
 - `name: &lt;class 'str'&gt;` (required).
 - `trust: &lt;enum 'TrustLevel'&gt;` (default: `&lt;TrustLevel.SDK_LOOPBACK: 'sdk_loopback'&gt;`).
 - `kind: typing.Literal['in_process']` (default: `'in_process'`).
 - `factory: typing.Any` (required).
-- `descriptor: collections.abc.Mapping[str, typing.Any]` (required).
+- `descriptor: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 - `origin: &lt;class 'str'&gt;` (default: `'python_registration'`).
 
 ### `SecretReference`
@@ -217,7 +255,7 @@ Public fields and methods:
 
 Reference to a secret; resolved values are deliberately not modelled.
 
-Public fields and methods:
+Public members:
 
 - `source: typing.Literal['environment', 'provider']` (required).
 - `name: &lt;class 'str'&gt;` (required).
@@ -226,7 +264,7 @@ Public fields and methods:
 
 `m3.types.ServerBinding(*, server: Optional[Annotated[m3.types.StdioServer | m3.types.HTTPServer | m3.types.InProcessServer, FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] = None, profile: m3.types.ServerProfileRef | None = None, alias: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, required: bool = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `server: typing.Optional[typing.Annotated[m3.types.StdioServer | m3.types.HTTPServer | m3.types.InProcessServer, FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]` (default: `None`).
 - `profile: m3.types.ServerProfileRef | None` (default: `None`).
@@ -251,16 +289,16 @@ Runtime representation of an annotated type.
 
 Typed user message; a string is accepted as text shorthand.
 
-Public fields and methods:
+Public members:
 
 - `content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]` (required).
-- `metadata: collections.abc.Mapping[str, typing.Any]` (required).
+- `metadata: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `TextContent`
 
 `m3.types.TextContent(*, kind: Literal['text'] = 'text', text: str) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['text']` (default: `'text'`).
 - `text: &lt;class 'str'&gt;` (required).
@@ -269,7 +307,7 @@ Public fields and methods:
 
 `m3.types.DirectSpec(*, run_id: m3.types.RunId | None = None, project_id: m3.types.ProjectId | None = None, project_name: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, suite_name: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, case_id: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, servers: tuple[m3.types.ServerBinding, ...] = (), protocol: m3.types.ProtocolConstraint = &lt;factory&gt;, timeout_seconds: Annotated[float | None, Gt(gt=0)] = None, goal: Annotated[str | None, MaxLen(max_length=32768)] = None, evaluations: tuple[m3.types.EvaluationRegistration, ...] = (), artifact_policy: m3.types.ArtifactPolicy = &lt;ArtifactPolicy.FAILED: 'failed'&gt;, declared_artifacts: tuple[str, ...] = (), workspace: m3.types.WorkspacePolicy = &lt;factory&gt;, tool_policy: m3.types.RestrictiveToolPolicy | m3.types.FullToolPolicy | m3.types.NativeToolPolicy = &lt;factory&gt;, permission_policy: m3.types.PermissionPolicy = &lt;factory&gt;, sampling_policy: m3.types.SamplingPolicy = &lt;factory&gt;, filesystem_policy: m3.types.FilesystemPolicy = &lt;factory&gt;, terminal_policy: m3.types.TerminalPolicy = &lt;factory&gt;, metadata: collections.abc.Mapping[str, str | int | float | bool | None] = &lt;factory&gt;, kind: Literal['direct'] = 'direct', operation: m3.types.ListTools | m3.types.ListResources | m3.types.ListTemplates | m3.types.ListPrompts | m3.types.CallTool | m3.types.ReadResource | m3.types.GetPrompt | m3.types.Ping, validate_schemas: bool = False) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `run_id: m3.types.RunId | None` (default: `None`).
 - `project_id: m3.types.ProjectId | None` (default: `None`).
@@ -277,19 +315,19 @@ Public fields and methods:
 - `suite_name: str | None` (default: `None`).
 - `case_id: str | None` (default: `None`).
 - `servers: tuple[m3.types.ServerBinding, ...]` (default: `()`).
-- `protocol: &lt;class 'm3.types.ProtocolConstraint'&gt;` (required).
+- `protocol: &lt;class 'm3.types.ProtocolConstraint'&gt;` (default factory: `m3.types.ProtocolConstraint`).
 - `timeout_seconds: float | None` (default: `None`).
 - `goal: str | None` (default: `None`).
 - `evaluations: tuple[m3.types.EvaluationRegistration, ...]` (default: `()`).
 - `artifact_policy: &lt;enum 'ArtifactPolicy'&gt;` (default: `&lt;ArtifactPolicy.FAILED: 'failed'&gt;`).
 - `declared_artifacts: tuple[str, ...]` (default: `()`).
-- `workspace: &lt;class 'm3.types.WorkspacePolicy'&gt;` (required).
-- `tool_policy: m3.types.RestrictiveToolPolicy | m3.types.FullToolPolicy | m3.types.NativeToolPolicy` (required).
-- `permission_policy: &lt;class 'm3.types.PermissionPolicy'&gt;` (required).
-- `sampling_policy: &lt;class 'm3.types.SamplingPolicy'&gt;` (required).
-- `filesystem_policy: &lt;class 'm3.types.FilesystemPolicy'&gt;` (required).
-- `terminal_policy: &lt;class 'm3.types.TerminalPolicy'&gt;` (required).
-- `metadata: collections.abc.Mapping[str, str | int | float | bool | None]` (required).
+- `workspace: &lt;class 'm3.types.WorkspacePolicy'&gt;` (default factory: `m3.types.WorkspacePolicy`).
+- `tool_policy: m3.types.RestrictiveToolPolicy | m3.types.FullToolPolicy | m3.types.NativeToolPolicy` (default factory: `m3.types.RestrictiveToolPolicy`).
+- `permission_policy: &lt;class 'm3.types.PermissionPolicy'&gt;` (default factory: `m3.types.PermissionPolicy`).
+- `sampling_policy: &lt;class 'm3.types.SamplingPolicy'&gt;` (default factory: `m3.types.SamplingPolicy`).
+- `filesystem_policy: &lt;class 'm3.types.FilesystemPolicy'&gt;` (default factory: `m3.types.FilesystemPolicy`).
+- `terminal_policy: &lt;class 'm3.types.TerminalPolicy'&gt;` (default factory: `m3.types.TerminalPolicy`).
+- `metadata: collections.abc.Mapping[str, str | int | float | bool | None]` (default factory: `builtins.dict`).
 - `kind: typing.Literal['direct']` (default: `'direct'`).
 - `operation: m3.types.ListTools | m3.types.ListResources | m3.types.ListTemplates | m3.types.ListPrompts | m3.types.CallTool | m3.types.ReadResource | m3.types.GetPrompt | m3.types.Ping` (required).
 - `validate_schemas: &lt;class 'bool'&gt;` (default: `False`).
@@ -304,18 +342,18 @@ Runtime representation of an annotated type.
 
 `m3.types.CallTool(*, server: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, kind: Literal['call_tool'] = 'call_tool', name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], arguments: collections.abc.Mapping[str, typing.Any] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `server: str | None` (default: `None`).
 - `kind: typing.Literal['call_tool']` (default: `'call_tool'`).
 - `name: &lt;class 'str'&gt;` (required).
-- `arguments: collections.abc.Mapping[str, typing.Any]` (required).
+- `arguments: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `ListTools`
 
 `m3.types.ListTools(*, server: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, kind: Literal['list_tools'] = 'list_tools', cursor: Annotated[str | None, MaxLen(max_length=256)] = None, all_pages: bool = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `server: str | None` (default: `None`).
 - `kind: typing.Literal['list_tools']` (default: `'list_tools'`).
@@ -326,7 +364,7 @@ Public fields and methods:
 
 `m3.types.ListResources(*, server: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, kind: Literal['list_resources'] = 'list_resources', cursor: Annotated[str | None, MaxLen(max_length=256)] = None, all_pages: bool = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `server: str | None` (default: `None`).
 - `kind: typing.Literal['list_resources']` (default: `'list_resources'`).
@@ -337,7 +375,7 @@ Public fields and methods:
 
 `m3.types.ListTemplates(*, server: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, kind: Literal['list_resource_templates'] = 'list_resource_templates', cursor: Annotated[str | None, MaxLen(max_length=256)] = None, all_pages: bool = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `server: str | None` (default: `None`).
 - `kind: typing.Literal['list_resource_templates']` (default: `'list_resource_templates'`).
@@ -348,7 +386,7 @@ Public fields and methods:
 
 `m3.types.ListPrompts(*, server: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, kind: Literal['list_prompts'] = 'list_prompts', cursor: Annotated[str | None, MaxLen(max_length=256)] = None, all_pages: bool = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `server: str | None` (default: `None`).
 - `kind: typing.Literal['list_prompts']` (default: `'list_prompts'`).
@@ -359,7 +397,7 @@ Public fields and methods:
 
 `m3.types.ReadResource(*, server: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, kind: Literal['read_resource'] = 'read_resource', uri: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)]) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `server: str | None` (default: `None`).
 - `kind: typing.Literal['read_resource']` (default: `'read_resource'`).
@@ -369,18 +407,18 @@ Public fields and methods:
 
 `m3.types.GetPrompt(*, server: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, kind: Literal['get_prompt'] = 'get_prompt', name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], arguments: collections.abc.Mapping[str, typing.Any] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `server: str | None` (default: `None`).
 - `kind: typing.Literal['get_prompt']` (default: `'get_prompt'`).
 - `name: &lt;class 'str'&gt;` (required).
-- `arguments: collections.abc.Mapping[str, typing.Any]` (required).
+- `arguments: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `Ping`
 
 `m3.types.Ping(*, server: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, kind: Literal['ping'] = 'ping') -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `server: str | None` (default: `None`).
 - `kind: typing.Literal['ping']` (default: `'ping'`).
@@ -389,7 +427,7 @@ Public fields and methods:
 
 `m3.types.EvaluationResult(*, evaluation_id: m3.types.EvaluationId, name: str, status: m3.types.EvaluationStatus, required: bool = False, message: str | None = None, context: m3.types.EvaluationContext | None = None, score: float | None = None, rationale: str | None = None, metrics: collections.abc.Mapping[str, float] = &lt;factory&gt;, provenance: m3.types.EvaluationSource | None = None, details: collections.abc.Mapping[str, typing.Any] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `evaluation_id: &lt;class 'm3.types.EvaluationId'&gt;` (required).
 - `name: &lt;class 'str'&gt;` (required).
@@ -399,9 +437,9 @@ Public fields and methods:
 - `context: m3.types.EvaluationContext | None` (default: `None`).
 - `score: float | None` (default: `None`).
 - `rationale: str | None` (default: `None`).
-- `metrics: collections.abc.Mapping[str, float]` (required).
+- `metrics: collections.abc.Mapping[str, float]` (default factory: `builtins.dict`).
 - `provenance: m3.types.EvaluationSource | None` (default: `None`).
-- `details: collections.abc.Mapping[str, typing.Any]` (required).
+- `details: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `EvaluationRecord`
 
@@ -409,7 +447,7 @@ Public fields and methods:
 
 Compact durable evaluation row linked to an execution report.
 
-Public fields and methods:
+Public members:
 
 - `evaluation_id: &lt;class 'm3.types.EvaluationId'&gt;` (required).
 - `execution_id: &lt;class 'm3.types.ExecutionId'&gt;` (required).
@@ -423,21 +461,21 @@ Public fields and methods:
 - `message: str | None` (default: `None`).
 - `score: float | None` (default: `None`).
 - `rationale: str | None` (default: `None`).
-- `metrics: collections.abc.Mapping[str, float]` (required).
+- `metrics: collections.abc.Mapping[str, float]` (default factory: `builtins.dict`).
 - `provenance: m3.types.EvaluationSource | None` (default: `None`).
-- `details: collections.abc.Mapping[str, typing.Any]` (required).
+- `details: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 - `goal: str | None` (default: `None`).
-- `metadata: collections.abc.Mapping[str, str | int | float | bool | None]` (required).
+- `metadata: collections.abc.Mapping[str, str | int | float | bool | None]` (default factory: `builtins.dict`).
 - `subject_kind: &lt;class 'str'&gt;` (default: `'unknown'`).
 - `subject_digest: str | None` (default: `None`).
 - `run_id: m3.types.RunId | None` (default: `None`).
-- `created_at: &lt;class 'datetime.datetime'&gt;` (required).
+- `created_at: &lt;class 'datetime.datetime'&gt;` (default factory: `m3._types.base._utc_now`).
 
 ### `EvaluationContext`
 
 `m3.types.EvaluationContext(*, subject: Any = None, subject_kind: str = 'unknown', execution_id: m3.types.ExecutionId | None = None, suite_id: m3.types.SuiteId | None = None, suite_name: str | None = None, case_id: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=256)] = None, turn_id: m3.types.TurnId | None = None, goal: str | None = None, trace: m3.types.TraceResult | None = None, artifacts: tuple[m3.types.ArtifactRef, ...] = (), metadata: collections.abc.Mapping[str, str | int | float | bool | None] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `subject: typing.Any` (default: `None`).
 - `subject_kind: &lt;class 'str'&gt;` (default: `'unknown'`).
@@ -449,7 +487,7 @@ Public fields and methods:
 - `goal: str | None` (default: `None`).
 - `trace: m3.types.TraceResult | None` (default: `None`).
 - `artifacts: tuple[m3.types.ArtifactRef, ...]` (default: `()`).
-- `metadata: collections.abc.Mapping[str, str | int | float | bool | None]` (required).
+- `metadata: collections.abc.Mapping[str, str | int | float | bool | None]` (default factory: `builtins.dict`).
 
 ### `EvaluationDecision`
 
@@ -457,18 +495,26 @@ Public fields and methods:
 
 Structured evaluator output, compatible with scalar verdicts.
 
-Public fields and methods:
+Public members:
 
 - `status: &lt;enum 'EvaluationStatus'&gt;` (required).
 - `score: float | None` (default: `None`).
 - `rationale: str | None` (default: `None`).
-- `metrics: collections.abc.Mapping[str, float]` (required).
+- `metrics: collections.abc.Mapping[str, float]` (default factory: `builtins.dict`).
 - `provenance: m3.types.EvaluationSource | None` (default: `None`).
-- `details: collections.abc.Mapping[str, typing.Any]` (required).
+- `details: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `EvaluationStatus`
 
 `m3.types.EvaluationStatus(*values)`
+
+Public members:
+
+- `PASSED` = `'passed'`
+- `FAILED` = `'failed'`
+- `INCONCLUSIVE` = `'inconclusive'`
+- `ERROR` = `'error'`
+- `NOT_RUN` = `'not_run'`
 
 ### `EvaluationSource`
 
@@ -476,7 +522,7 @@ Public fields and methods:
 
 Optional, redaction-safe provenance for a structured judgment.
 
-Public fields and methods:
+Public members:
 
 - `kind: &lt;class 'str'&gt;` (required).
 - `provider: str | None` (default: `None`).
@@ -489,7 +535,7 @@ Public fields and methods:
 
 `m3.types.TraceResult(*, trace_id: m3.types.TraceId, execution_id: m3.types.ExecutionId, completeness: Literal['complete', 'partial'] = 'complete', highest_sequence: Annotated[int, Ge(ge=0)] = 0, events: tuple[m3.types.Event, ...] = (), limitations: tuple[str, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `trace_id: &lt;class 'm3.types.TraceId'&gt;` (required).
 - `execution_id: &lt;class 'm3.types.ExecutionId'&gt;` (required).
@@ -503,7 +549,7 @@ Public fields and methods:
 
 `m3.types.EvidenceRef(*, evidence_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], sha256: Annotated[str | None, _PydanticGeneralMetadata(pattern='^[0-9a-f]{64}$')] = None, size_bytes: Annotated[int | None, Ge(ge=0)] = None, media_type: Annotated[str | None, MaxLen(max_length=256)] = None, storage_key: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=1024)] = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `evidence_id: &lt;class 'str'&gt;` (required).
 - `sha256: str | None` (default: `None`).
@@ -515,7 +561,7 @@ Public fields and methods:
 
 `m3.types.ArtifactRef(*, artifact_id: m3.types.ArtifactId, execution_id: m3.types.ExecutionId, name: Annotated[str, MinLen(min_length=1)], media_type: str | None = None, size_bytes: Annotated[int, Ge(ge=0)], sha256: Annotated[str, _PydanticGeneralMetadata(pattern='^[0-9a-f]{64}$')], redacted: Literal[True] = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `artifact_id: &lt;class 'm3.types.ArtifactId'&gt;` (required).
 - `execution_id: &lt;class 'm3.types.ExecutionId'&gt;` (required).
@@ -531,7 +577,7 @@ Public fields and methods:
 
 Portable evidence that is actually persisted by an execution store.
 
-Public fields and methods:
+Public members:
 
 - `snapshot: &lt;class 'm3.types.ExecutionState'&gt;` (required).
 - `agent: m3.types.AgentIdentity | None` (default: `None`).
@@ -554,7 +600,7 @@ Public fields and methods:
 
 Typed completeness markers persisted in stable terminal events.
 
-Public fields and methods:
+Public members:
 
 - `completeness: typing.Literal['complete', 'partial']` (required).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -564,7 +610,7 @@ Public fields and methods:
 
 `m3.types.Capability(*, name: str, status: m3.types.CapabilityStatus, reason: str | None = None, detected_version: str | None = None, protocol_version: str | None = None, transport: m3.types.TransportKind | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `name: &lt;class 'str'&gt;` (required).
 - `status: &lt;enum 'CapabilityStatus'&gt;` (required).
@@ -577,7 +623,7 @@ Public fields and methods:
 
 `m3.types.Readiness(*, ready: bool, capabilities: tuple[m3.types.Capability, ...] = (), reason: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `ready: &lt;class 'bool'&gt;` (required).
 - `capabilities: tuple[m3.types.Capability, ...]` (default: `()`).
@@ -587,7 +633,7 @@ Public fields and methods:
 
 `m3.types.ProtocolConstraint(*, revision: Annotated[str | None, MinLen(min_length=1), MaxLen(max_length=128)] = None, transport: m3.types.TransportKind | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `revision: str | None` (default: `None`).
 - `transport: m3.types.TransportKind | None` (default: `None`).
@@ -596,7 +642,7 @@ Public fields and methods:
 
 `m3.types.WorkspacePolicy(*, kind: m3.types.WorkspaceKind = &lt;WorkspaceKind.TEMPORARY: 'temporary'&gt;, source: str | None = None, acknowledge_risk: bool = False) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: &lt;enum 'WorkspaceKind'&gt;` (default: `&lt;WorkspaceKind.TEMPORARY: 'temporary'&gt;`).
 - `source: str | None` (default: `None`).
@@ -606,7 +652,7 @@ Public fields and methods:
 
 `m3.types.PermissionPolicy(*, mode: Literal['deny', 'prompt', 'allow'] = 'deny') -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `mode: typing.Literal['deny', 'prompt', 'allow']` (default: `'deny'`).
 
@@ -614,7 +660,7 @@ Public fields and methods:
 
 `m3.types.SamplingPolicy(*, mode: Literal['deny', 'allow'] = 'deny') -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `mode: typing.Literal['deny', 'allow']` (default: `'deny'`).
 
@@ -622,7 +668,7 @@ Public fields and methods:
 
 `m3.types.FilesystemPolicy(*, mode: Literal['deny', 'read_only', 'read_write'] = 'deny') -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `mode: typing.Literal['deny', 'read_only', 'read_write']` (default: `'deny'`).
 
@@ -630,7 +676,7 @@ Public fields and methods:
 
 `m3.types.TerminalPolicy(*, mode: Literal['deny', 'allow'] = 'deny') -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `mode: typing.Literal['deny', 'allow']` (default: `'deny'`).
 
@@ -738,11 +784,14 @@ An execution exists but has no usable trace evidence.
 
 Blocking proxy for the async session state machine.
 
-Public fields and methods:
+Public members:
 
 - `send(self, message: 'str | _UserMessage', *, timeout: 'float | None' = None, metadata: 'dict[str, object] | None' = None, elicitation: 'ElicitationPlan | None' = None, elicitation_round_limit: 'int' = 10) -&gt; '_TurnResult'`
 - `enqueue_turn(self, message: 'str | _UserMessage', *, timeout: 'float | None' = None, metadata: 'dict[str, object] | None' = None) -&gt; '_Any'`
 - `snapshot(self) -&gt; '_ExecutionState'`
+- `provenance` (property)
+- `interactions` (property): Policy-gated handlers owned by this session's portal task.
+- `result` (property)
 - `cancel(self) -&gt; 'None'`
 - `fork(self, request: '_SessionForkRequest', *, adapter_factory: '_Callable[..., _Any]') -&gt; 'AgentSession'`
 - `close(self) -&gt; 'None'`
@@ -753,7 +802,7 @@ Public fields and methods:
 
 Minimal injected adapter contract for one continuing conversation.
 
-Public fields and methods:
+Public members:
 
 - `start(self, spec: 'AgentSpec') -&gt; 'None'`
 - `send(self, message: 'UserMessage', *, timeout: 'float | None' = None, metadata: 'Mapping[str, object] | None' = None) -&gt; 'TurnResponse | AdapterTurn'`
@@ -765,7 +814,7 @@ Public fields and methods:
 
 Probe only explicitly requested capability targets.
 
-Public fields and methods:
+Public members:
 
 - `probe_binary(self, name: 'str', executable: 'str | os.PathLike[str]', *, args: 'Sequence[str]' = ('--version',), env: 'Mapping[str, str] | None' = None, timeout_seconds: 'float | None' = None) -&gt; 'ProbeResult'`: Check one explicitly selected executable and record its version.
 - `probe_protocol(self, name: 'str', executable: 'str | os.PathLike[str]', *, args: 'Sequence[str]' = ('--protocol-version',), env: 'Mapping[str, str] | None' = None, timeout_seconds: 'float | None' = None, transport: 'str | TransportKind | None' = None) -&gt; 'ProbeResult'`: Run the caller-selected protocol probe without version allowlists.
@@ -778,7 +827,7 @@ Public fields and methods:
 
 `m3.sync_api.CallToolResult(*, raw: Any = None, content: tuple[collections.abc.Mapping[str, typing.Any], ...] = (), structured_content: Any = None, is_error: bool = False) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `content: tuple[collections.abc.Mapping[str, typing.Any], ...]` (default: `()`).
@@ -789,7 +838,7 @@ Public fields and methods:
 
 `m3.sync_api.CompletionResult(*, raw: Any = None, values: tuple[str, ...] = (), total: int | None = None, has_more: bool | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `values: tuple[str, ...]` (default: `()`).
@@ -800,7 +849,7 @@ Public fields and methods:
 
 `m3.sync_api.ConfigOrigin(*, source: m3.configuration.ConfigSource, origin: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)]) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `source: &lt;enum 'ConfigSource'&gt;` (required).
 - `origin: &lt;class 'str'&gt;` (required).
@@ -809,18 +858,26 @@ Public fields and methods:
 
 `m3.sync_api.ConfigSource(*values)`
 
+Public members:
+
+- `EXPLICIT` = `'explicit'`
+- `ENVIRONMENT` = `'environment'`
+- `PROJECT` = `'project'`
+- `DEFAULT` = `'default'`
+
 ### `Config`
 
 `m3.sync_api.Config(*, artifact_policy: Literal['failed', 'always', 'never'] = 'failed', protocol_revision: Annotated[str, Strict(strict=True)] = 'auto', telemetry_enabled: Annotated[bool, Strict(strict=True)] = False, sources: collections.abc.Mapping[str, m3.configuration.ConfigOrigin] = &lt;factory&gt;) -&gt; None`
 
 Effective SDK-wide settings and the origin of each setting.
 
-Public fields and methods:
+Public members:
 
 - `artifact_policy: typing.Literal['failed', 'always', 'never']` (default: `'failed'`).
 - `protocol_revision: &lt;class 'str'&gt;` (default: `'auto'`).
 - `telemetry_enabled: &lt;class 'bool'&gt;` (default: `False`).
-- `sources: collections.abc.Mapping[str, m3.configuration.ConfigOrigin]` (required).
+- `sources: collections.abc.Mapping[str, m3.configuration.ConfigOrigin]` (default factory: `m3.configuration._default_origins`).
+- `provenance` (property): Compatibility name for callers that call origins provenance.
 - `source_for(self, field: 'str') -&gt; 'ConfigOrigin'`
 
 ### `ConfigError`
@@ -835,9 +892,14 @@ A strict, value-free configuration diagnostic.
 
 Synchronous proxy whose async protocol state remains in a portal thread.
 
-Public fields and methods:
+Public members:
 
 - `close(self) -&gt; 'None'`
+- `initialization` (property)
+- `timeout` (property)
+- `trace` (property)
+- `final_trace` (property)
+- `transport_evidence` (property)
 - `initialize(self) -&gt; 'InitializationResult'`
 - `list_tools(self, *, cursor: 'str | None' = None) -&gt; 'ListToolsResult'`
 - `list_all_tools(self) -&gt; 'tuple[Tool, ...]'`
@@ -866,8 +928,11 @@ Public fields and methods:
 
 Blocking twin of :class:`AsyncExecutionHandle` with no async leakage.
 
-Public fields and methods:
+Public members:
 
+- `execution_id` (property)
+- `spec` (property)
+- `submitted_spec` (property)
 - `snapshot(self) -&gt; '_ExecutionState'`
 - `pending_elicitation(self) -&gt; 'PendingElicitationRound | None'`
 - `respond_elicitation(self, round_id: 'str', responses: '_Mapping[str, ElicitationResponse]', *, idempotency_key: 'str') -&gt; 'None'`
@@ -880,7 +945,7 @@ Public fields and methods:
 
 `m3.sync_api.PromptInfo(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, description: str | None = None, arguments: tuple[collections.abc.Mapping[str, typing.Any], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -892,7 +957,7 @@ Public fields and methods:
 
 `m3.sync_api.ResourceInfo(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, uri: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], description: str | None = None, mime_type: str | None = None, size: Annotated[int | None, Ge(ge=0)] = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -906,7 +971,7 @@ Public fields and methods:
 
 `m3.sync_api.TemplateInfo(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, uri_template: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], description: str | None = None, mime_type: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -919,20 +984,20 @@ Public fields and methods:
 
 `m3.sync_api.ToolInfo(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, description: str | None = None, input_schema: collections.abc.Mapping[str, typing.Any] | bool = &lt;factory&gt;, output_schema: collections.abc.Mapping[str, typing.Any] | bool | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
 - `title: str | None` (default: `None`).
 - `description: str | None` (default: `None`).
-- `input_schema: collections.abc.Mapping[str, typing.Any] | bool` (required).
+- `input_schema: collections.abc.Mapping[str, typing.Any] | bool` (default factory: `builtins.dict`).
 - `output_schema: collections.abc.Mapping[str, typing.Any] | bool | None` (default: `None`).
 
 ### `EmptyResult`
 
 `m3.sync_api.EmptyResult(*, raw: Any = None, result_type: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `result_type: str | None` (default: `None`).
@@ -941,7 +1006,7 @@ Public fields and methods:
 
 `m3.sync_api.GetPromptResult(*, raw: Any = None, description: str | None = None, messages: tuple[collections.abc.Mapping[str, typing.Any], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `description: str | None` (default: `None`).
@@ -951,13 +1016,13 @@ Public fields and methods:
 
 `m3.sync_api.InitializationResult(*, raw: Any = None, protocol_version: str, server_info: collections.abc.Mapping[str, typing.Any], instructions: str | None = None, capabilities: collections.abc.Mapping[str, typing.Any] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `protocol_version: &lt;class 'str'&gt;` (required).
 - `server_info: collections.abc.Mapping[str, typing.Any]` (required).
 - `instructions: str | None` (default: `None`).
-- `capabilities: collections.abc.Mapping[str, typing.Any]` (required).
+- `capabilities: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `InputRequiredResult`
 
@@ -965,7 +1030,7 @@ Public fields and methods:
 
 Official MCP interactive result, preserved instead of coercing empty data.
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `result_type: typing.Literal['input_required']` (default: `'input_required'`).
@@ -976,7 +1041,7 @@ Public fields and methods:
 
 `m3.sync_api.ListPromptsResult(*, raw: Any = None, prompts: tuple[m3.types.PromptInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `prompts: tuple[m3.types.PromptInfo, ...]` (default: `()`).
@@ -986,7 +1051,7 @@ Public fields and methods:
 
 `m3.sync_api.ListResourcesResult(*, raw: Any = None, resources: tuple[m3.types.ResourceInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `resources: tuple[m3.types.ResourceInfo, ...]` (default: `()`).
@@ -996,7 +1061,7 @@ Public fields and methods:
 
 `m3.sync_api.ListResourceTemplatesResult(*, raw: Any = None, resource_templates: tuple[m3.types.TemplateInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `resource_templates: tuple[m3.types.TemplateInfo, ...]` (default: `()`).
@@ -1006,7 +1071,7 @@ Public fields and methods:
 
 `m3.sync_api.ListToolsResult(*, raw: Any = None, tools: tuple[m3.types.ToolInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `tools: tuple[m3.types.ToolInfo, ...]` (default: `()`).
@@ -1018,8 +1083,11 @@ Public fields and methods:
 
 Lifecycle-safe synchronous configuration and capability shell.
 
-Public fields and methods:
+Public members:
 
+- `probes` (property): Synchronous capability namespace owned by this kit.
+- `store` (property): The optional execution store configured on this kit.
+- `run_id` (property)
 - `get_trace(self, execution_id: '_ExecutionId | str') -&gt; '_TraceResult'`: Return the finalized stable trace for an execution.
 - `get_trace_view(self, execution_id: '_ExecutionId | str') -&gt; 'TraceView'`: Return the finalized typed trace view for an execution.
 - `read_raw_evidence(self, reference: '_EvidenceRef', *, max_bytes: 'int' = 1048576) -&gt; 'RawEvidence'`: Read bounded, redacted raw evidence by its durable reference.
@@ -1041,7 +1109,7 @@ Public fields and methods:
 
 Safe evidence collected by one probe.
 
-Public fields and methods:
+Public members:
 
 - `kind: &lt;enum 'ProbeKind'&gt;` (required).
 - `target: &lt;class 'str'&gt;` (required).
@@ -1050,7 +1118,7 @@ Public fields and methods:
 - `detected_version: str | None` (default: `None`).
 - `protocol_version: str | None` (default: `None`).
 - `output: &lt;class 'str'&gt;` (default: `''`).
-- `details: collections.abc.Mapping[str, typing.Any]` (required).
+- `details: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `ProbeKind`
 
@@ -1058,16 +1126,26 @@ Public fields and methods:
 
 The independently requestable capability categories.
 
+Public members:
+
+- `CONFIGURATION` = `'configuration'`
+- `BINARY` = `'binary'`
+- `PROTOCOL` = `'protocol'`
+- `TRANSPORT` = `'transport'`
+- `STORAGE` = `'storage'`
+- `HARNESS` = `'harness'`
+
 ### `ProbeReport`
 
 `m3.sync_api.ProbeReport(*, readiness: m3.types.Readiness, results: tuple[m3.services.probes.ProbeResult, ...] = ()) -&gt; None`
 
 Aggregate readiness for exactly the requested probes.
 
-Public fields and methods:
+Public members:
 
 - `readiness: &lt;class 'm3.types.Readiness'&gt;` (required).
 - `results: tuple[m3.services.probes.ProbeResult, ...]` (default: `()`).
+- `capabilities` (property)
 - `result_for(self, name: 'str') -&gt; 'ProbeResult | None'`: Return the result for ``name`` without guessing another target.
 
 ### `ProbeRequest`
@@ -1082,16 +1160,17 @@ Typed request used by :meth:`Probes.probe_requested`.
 
 One capability result and its separately inspectable evidence.
 
-Public fields and methods:
+Public members:
 
 - `capability: &lt;class 'm3.types.Capability'&gt;` (required).
 - `evidence: &lt;class 'm3.services.probes.ProbeEvidence'&gt;` (required).
+- `status` (property)
 
 ### `PromptResult`
 
 `m3.sync_api.PromptResult(*, raw: Any = None, description: str | None = None, messages: tuple[collections.abc.Mapping[str, typing.Any], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `description: str | None` (default: `None`).
@@ -1101,16 +1180,17 @@ Public fields and methods:
 
 `m3.sync_api.ResourceReadResult(*, raw: Any = None, contents: tuple[collections.abc.Mapping[str, typing.Any], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `contents: tuple[collections.abc.Mapping[str, typing.Any], ...]` (default: `()`).
+- `text` (property)
 
 ### `ToolCallResult`
 
 `m3.sync_api.ToolCallResult(*, raw: Any = None, content: tuple[collections.abc.Mapping[str, typing.Any], ...] = (), structured_content: Any = None, is_error: bool = False) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `content: tuple[collections.abc.Mapping[str, typing.Any], ...]` (default: `()`).
@@ -1121,20 +1201,20 @@ Public fields and methods:
 
 `m3.sync_api.Tool(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, description: str | None = None, input_schema: collections.abc.Mapping[str, typing.Any] | bool = &lt;factory&gt;, output_schema: collections.abc.Mapping[str, typing.Any] | bool | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
 - `title: str | None` (default: `None`).
 - `description: str | None` (default: `None`).
-- `input_schema: collections.abc.Mapping[str, typing.Any] | bool` (required).
+- `input_schema: collections.abc.Mapping[str, typing.Any] | bool` (default factory: `builtins.dict`).
 - `output_schema: collections.abc.Mapping[str, typing.Any] | bool | None` (default: `None`).
 
 ### `Resource`
 
 `m3.sync_api.Resource(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, uri: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], description: str | None = None, mime_type: str | None = None, size: Annotated[int | None, Ge(ge=0)] = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -1148,7 +1228,7 @@ Public fields and methods:
 
 `m3.sync_api.ResourceTemplate(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, uri_template: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], description: str | None = None, mime_type: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -1191,7 +1271,7 @@ FilesystemResult(allowed: 'bool', data: 'bytes | tuple[str, ...] | None', receip
 
 Apply immutable policies around explicit interaction callbacks.
 
-Public fields and methods:
+Public members:
 
 - `receipts(self) -&gt; 'tuple[InteractionReceipt, ...]'`
 - `permission(self, request: 'PermissionRequest') -&gt; 'PermissionResult'`
@@ -1271,13 +1351,17 @@ Bounded filesystem handler rooted inside one owned workspace.
 
 An immutable, serializable elicitation expectation tree.
 
-Public fields and methods:
+Public members:
 
 - `node: typing.Literal['leaf', 'sequence', 'optional', 'one_of', 'round_of']` (default: `'leaf'`).
 - `request: typing.Optional[typing.Annotated[m3.elicitation._FormExpectation | m3.elicitation._UrlExpectation, FieldInfo(annotation=NoneType, required=True, discriminator='mode')]]` (default: `None`).
 - `response: m3.elicitation.ElicitationResponse | None` (default: `None`).
 - `children: tuple[m3.elicitation.ElicitationPlan, ...]` (default: `()`).
 - `optional_occurrence: &lt;class 'bool'&gt;` (default: `False`).
+- `is_complete` (property)
+- `mode` (property)
+- `requested_schema` (property)
+- `optional` (property)
 - `accept(self, content: 'Mapping[str, object] | None' = None) -&gt; 'ElicitationPlan'`
 - `decline(self) -&gt; 'ElicitationPlan'`
 - `cancel(self) -&gt; 'ElicitationPlan'`
@@ -1293,7 +1377,7 @@ Public fields and methods:
 
 The response that will be associated with one request key.
 
-Public fields and methods:
+Public members:
 
 - `action: typing.Literal['accept', 'decline', 'cancel']` (required).
 - `content: collections.abc.Mapping[str, object] | None` (default: `None`).
@@ -1305,7 +1389,7 @@ Public fields and methods:
 
 A normalized form-mode elicitation request.
 
-Public fields and methods:
+Public members:
 
 - `request_key: &lt;class 'str'&gt;` (required).
 - `mode: typing.Literal['form']` (default: `'form'`).
@@ -1323,7 +1407,7 @@ Public fields and methods:
 
 A persisted, keyed set of elicitation requests awaiting responses.
 
-Public fields and methods:
+Public members:
 
 - `round_id: &lt;class 'str'&gt;` (required).
 - `execution_id: &lt;class 'str'&gt;` (required).
@@ -1342,7 +1426,7 @@ Public fields and methods:
 
 A normalized URL-mode elicitation request.
 
-Public fields and methods:
+Public members:
 
 - `request_key: &lt;class 'str'&gt;` (required).
 - `mode: typing.Literal['url']` (default: `'url'`).
@@ -1391,24 +1475,24 @@ Public fields and methods:
 
 `m3.sync_api.ACPTrace(*, kind: Literal['acp'] = 'acp', session_id: m3.observability.Observation[str] = &lt;factory&gt;, protocol_version: m3.observability.Observation[str] = &lt;factory&gt;, agent_identity: m3.observability.Observation[JsonValue] = &lt;factory&gt;, available_modes: m3.observability.Observation[JsonValue] = &lt;factory&gt;, current_mode: m3.observability.Observation[str] = &lt;factory&gt;, config_options: m3.observability.Observation[JsonValue] = &lt;factory&gt;, selected_config: m3.observability.Observation[JsonValue] = &lt;factory&gt;, plan_state_available: m3.observability.Observation[bool] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['acp']` (default: `'acp'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `agent_identity: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `available_modes: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `current_mode: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `config_options: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `selected_config: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `plan_state_available: &lt;class 'm3.observability.Observation[bool]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `agent_identity: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `available_modes: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `current_mode: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `config_options: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `selected_config: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `plan_state_available: &lt;class 'm3.observability.Observation[bool]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability.ACPTrace.&lt;lambda&gt;`).
 
 ### `ArtifactEntry`
 
 `m3.sync_api.ArtifactEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['artifact'] = 'artifact', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), artifact: m3.types.ArtifactRef) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['artifact']` (default: `'artifact'`).
@@ -1420,7 +1504,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -1432,7 +1516,7 @@ Public fields and methods:
 
 Boundaries for redacted provider/MCP evidence capture.
 
-Public fields and methods:
+Public members:
 
 - `capture_raw_evidence: &lt;class 'bool'&gt;` (default: `True`).
 - `capture_provider_messages: &lt;class 'bool'&gt;` (default: `True`).
@@ -1445,41 +1529,49 @@ Public fields and methods:
 
 `m3.sync_api.ClaudeCodeTrace(*, kind: Literal['claude_code'] = 'claude_code', session_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, result_subtype: m3.observability.Observation[str] = &lt;factory&gt;, stop_reason: m3.observability.Observation[str] = &lt;factory&gt;, service_tier: m3.observability.Observation[str] = &lt;factory&gt;, api_duration_ms: m3.observability.Observation[float] = &lt;factory&gt;, encrypted_reasoning: m3.observability.Observation[bool] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['claude_code']` (default: `'claude_code'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `result_subtype: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `service_tier: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `api_duration_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `encrypted_reasoning: &lt;class 'm3.observability.Observation[bool]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result_subtype: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `service_tier: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `api_duration_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `encrypted_reasoning: &lt;class 'm3.observability.Observation[bool]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `CodexTrace`
 
 `m3.sync_api.CodexTrace(*, kind: Literal['codex'] = 'codex', thread_id: m3.observability.Observation[str] = &lt;factory&gt;, turn_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, finish_reason: m3.observability.Observation[str] = &lt;factory&gt;, sandbox: m3.observability.Observation[str] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['codex']` (default: `'codex'`).
-- `thread_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `turn_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `sandbox: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `thread_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `turn_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `sandbox: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `CorrelationState`
 
 `m3.sync_api.CorrelationState(*values)`
 
+Public members:
+
+- `CORRELATED` = `'correlated'`
+- `REPORTED_ONLY` = `'reported_only'`
+- `WIRE_ONLY` = `'wire_only'`
+- `AMBIGUOUS` = `'ambiguous'`
+- `UNAVAILABLE` = `'unavailable'`
+
 ### `DiagnosticEntry`
 
 `m3.sync_api.DiagnosticEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['diagnostic'] = 'diagnostic', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), code: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], message: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], stage: Annotated[str | None, MaxLen(max_length=128)] = None, operation: Annotated[str | None, MaxLen(max_length=256)] = None, elapsed_seconds: Annotated[float | None, Ge(ge=0)] = None, timeout_seconds: Annotated[float | None, Gt(gt=0)] = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['diagnostic']` (default: `'diagnostic'`).
@@ -1491,7 +1583,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -1506,12 +1598,12 @@ Public fields and methods:
 
 `m3.sync_api.DirectTrace(*, kind: Literal['direct'] = 'direct', transport: m3.observability.Observation[TransportKind] = &lt;factory&gt;, protocol: m3.observability.Observation[str] = &lt;factory&gt;, initialization: m3.observability.Observation[InitializationValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['direct']` (default: `'direct'`).
-- `transport: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (required).
-- `protocol: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `initialization: &lt;class 'm3.observability.Observation[InitializationValue]'&gt;` (required).
+- `transport: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `protocol: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `initialization: &lt;class 'm3.observability.Observation[InitializationValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ElicitationEntry`
 
@@ -1519,7 +1611,7 @@ Public fields and methods:
 
 One keyed elicitation embedded in an MRTR input-required round.
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['elicitation']` (default: `'elicitation'`).
@@ -1531,7 +1623,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -1542,20 +1634,20 @@ Public fields and methods:
 - `round_index: &lt;class 'int'&gt;` (required).
 - `request_key: &lt;class 'str'&gt;` (required).
 - `mode: typing.Literal['form', 'url']` (required).
-- `message: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `requested_schema: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `url: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `elicitation_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `message: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `requested_schema: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `url: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `elicitation_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `action: typing.Optional[typing.Literal['accept', 'decline', 'cancel']]` (default: `None`).
-- `content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `EvaluationEntry`
 
 `m3.sync_api.EvaluationEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['evaluation'] = 'evaluation', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), evaluation: m3.types.EvaluationResult) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['evaluation']` (default: `'evaluation'`).
@@ -1567,7 +1659,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -1579,7 +1671,7 @@ Public fields and methods:
 
 Typed result of bounded, redacted raw-evidence capture.
 
-Public fields and methods:
+Public members:
 
 - `reference: &lt;class 'm3.types.EvidenceRef'&gt;` (required).
 - `preview: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
@@ -1592,7 +1684,7 @@ Public fields and methods:
 
 `m3.sync_api.EvidenceConflict(*, field: Literal['server', 'tool', 'arguments', 'result', 'status'], reported: m3.observability.Observation[JsonValue], wire: m3.observability.Observation[JsonValue]) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `field: typing.Literal['server', 'tool', 'arguments', 'result', 'status']` (required).
 - `reported: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
@@ -1602,7 +1694,7 @@ Public fields and methods:
 
 `m3.sync_api.HttpExchange(*, method: Annotated[str, MinLen(min_length=1)], status_code: Annotated[int, Ge(ge=100), Le(le=599)], headers: tuple[m3.observability.SafeHttpHeader, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `method: &lt;class 'str'&gt;` (required).
 - `status_code: &lt;class 'int'&gt;` (required).
@@ -1612,7 +1704,7 @@ Public fields and methods:
 
 `m3.sync_api.InitializationEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['initialization'] = 'initialization', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), protocol_version: m3.observability.Observation[str] = &lt;factory&gt;, server_name: m3.observability.Observation[str] = &lt;factory&gt;, server_version: m3.observability.Observation[str] = &lt;factory&gt;, instructions: m3.observability.Observation[str] = &lt;factory&gt;, capabilities: m3.observability.Observation[JsonValue] = &lt;factory&gt;, tools: m3.observability.Observation[tuple[ToolInfo, ...]] = &lt;factory&gt;, resources: m3.observability.Observation[tuple[ResourceInfo, ...]] = &lt;factory&gt;, resource_templates: m3.observability.Observation[tuple[TemplateInfo, ...]] = &lt;factory&gt;, prompts: m3.observability.Observation[tuple[PromptInfo, ...]] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['initialization']` (default: `'initialization'`).
@@ -1624,19 +1716,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (required).
-- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (required).
-- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (required).
-- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (required).
+- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `InitializationValue`
 
@@ -1644,23 +1736,23 @@ Public fields and methods:
 
 Value-only initialization metadata used by runtime information.
 
-Public fields and methods:
+Public members:
 
-- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (required).
-- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (required).
-- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (required).
-- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (required).
+- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `InteractionEntry`
 
 `m3.sync_api.InteractionEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['interaction'] = 'interaction', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), interaction_kind: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], request: m3.observability.Observation[JsonValue] = &lt;factory&gt;, response: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['interaction']` (default: `'interaction'`).
@@ -1672,19 +1764,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `interaction_kind: &lt;class 'str'&gt;` (required).
-- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `LifecycleEntry`
 
 `m3.sync_api.LifecycleEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['lifecycle'] = 'lifecycle', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), phase: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)]) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['lifecycle']` (default: `'lifecycle'`).
@@ -1696,7 +1788,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -1706,7 +1798,7 @@ Public fields and methods:
 
 `m3.sync_api.MessageEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['message'] = 'message', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), message_id: m3.observability.Observation[str] = &lt;factory&gt;, role: m3.observability.MessageRole = &lt;MessageRole.ASSISTANT: 'assistant'&gt;, content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...] = (), stop_reason: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['message']` (default: `'message'`).
@@ -1718,18 +1810,25 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `message_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `message_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `role: &lt;enum 'MessageRole'&gt;` (default: `&lt;MessageRole.ASSISTANT: 'assistant'&gt;`).
 - `content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]` (default: `()`).
-- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `MessageRole`
 
 `m3.sync_api.MessageRole(*values)`
+
+Public members:
+
+- `USER` = `'user'`
+- `ASSISTANT` = `'assistant'`
+- `SYSTEM` = `'system'`
+- `TOOL` = `'tool'`
 
 ### `Observation`
 
@@ -1737,7 +1836,7 @@ Public fields and methods:
 
 A typed value with explicit availability and provenance.
 
-Public fields and methods:
+Public members:
 
 - `state: &lt;enum 'ObservationState'&gt;` (required).
 - `value: typing.Optional[~_T]` (default: `None`).
@@ -1749,44 +1848,69 @@ Public fields and methods:
 
 `m3.sync_api.ObservationReason(*values)`
 
+Public members:
+
+- `PROVIDER_DID_NOT_EMIT` = `'provider_did_not_emit'`
+- `PROVIDER_HIDDEN` = `'provider_hidden'`
+- `PROVIDER_ENCRYPTED` = `'provider_encrypted'`
+- `HARNESS_UNSUPPORTED` = `'harness_unsupported'`
+- `TRANSPORT_NOT_APPLICABLE` = `'transport_not_applicable'`
+- `CAPTURE_DISABLED` = `'capture_disabled'`
+- `CAPTURE_FAILED` = `'capture_failed'`
+- `EVIDENCE_TRUNCATED` = `'evidence_truncated'`
+- `REDACTED_BY_POLICY` = `'redacted_by_policy'`
+- `CORRELATION_UNAVAILABLE` = `'correlation_unavailable'`
+- `MALFORMED_SOURCE` = `'malformed_source'`
+
 ### `ObservationState`
 
 `m3.sync_api.ObservationState(*values)`
 
 How completely a provider-dependent value was observed.
 
+Public members:
+
+- `OBSERVED` = `'observed'`
+- `NOT_EMITTED` = `'not_emitted'`
+- `UNSUPPORTED` = `'unsupported'`
+- `UNAVAILABLE` = `'unavailable'`
+- `PROVIDER_HIDDEN` = `'provider_hidden'`
+- `ENCRYPTED` = `'encrypted'`
+- `REDACTED` = `'redacted'`
+- `TRUNCATED` = `'truncated'`
+
 ### `OpenCodeTrace`
 
 `m3.sync_api.OpenCodeTrace(*, kind: Literal['opencode'] = 'opencode', session_id: m3.observability.Observation[str] = &lt;factory&gt;, provider_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, finish_reason: m3.observability.Observation[str] = &lt;factory&gt;, http_lifecycle: m3.observability.Observation[JsonValue] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['opencode']` (default: `'opencode'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `http_lifecycle: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `http_lifecycle: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `PiTrace`
 
 `m3.sync_api.PiTrace(*, kind: Literal['pi'] = 'pi', session_id: m3.observability.Observation[str] = &lt;factory&gt;, provider_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, finish_reason: m3.observability.Observation[str] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['pi']` (default: `'pi'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ProcessEntry`
 
 `m3.sync_api.ProcessEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['process'] = 'process', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), executable: m3.observability.Observation[str] = &lt;factory&gt;, pid: m3.observability.Observation[int] = &lt;factory&gt;, exit_code: m3.observability.Observation[int] = &lt;factory&gt;, signal: m3.observability.Observation[int] = &lt;factory&gt;, stderr: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['process']` (default: `'process'`).
@@ -1798,15 +1922,15 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `executable: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `pid: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `exit_code: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `signal: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `stderr: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `executable: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `pid: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `exit_code: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `signal: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `stderr: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ProtocolCallAttempt`
 
@@ -1814,27 +1938,27 @@ Public fields and methods:
 
 One wire-level attempt belonging to a prompt or resource call.
 
-Public fields and methods:
+Public members:
 
 - `attempt_index: &lt;class 'int'&gt;` (required).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `input_required: &lt;class 'bool'&gt;` (default: `False`).
-- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.INCOMPLETE: 'incomplete'&gt;`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 
 ### `ProtocolEntry`
 
 `m3.sync_api.ProtocolEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['protocol'] = 'protocol', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), protocol: m3.observability.ProtocolKind, method: m3.observability.Observation[str] = &lt;factory&gt;, direction: m3.types.EventDirection = &lt;EventDirection.INTERNAL: 'internal'&gt;, jsonrpc_id: m3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]] = &lt;factory&gt;, request: m3.observability.Observation[JsonValue] = &lt;factory&gt;, response: m3.observability.Observation[JsonValue] = &lt;factory&gt;, error: m3.observability.Observation[ProtocolErrorInfo] = &lt;factory&gt;, http: m3.observability.Observation[HttpExchange] = &lt;factory&gt;, operation_kind: Optional[Literal['prompt', 'resource']] = None, operation_name: m3.observability.Observation[str] = &lt;factory&gt;, attempts: tuple[m3.observability.ProtocolCallAttempt, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['protocol']` (default: `'protocol'`).
@@ -1846,41 +1970,48 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `protocol: &lt;enum 'ProtocolKind'&gt;` (required).
-- `method: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `method: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `direction: &lt;enum 'EventDirection'&gt;` (default: `&lt;EventDirection.INTERNAL: 'internal'&gt;`).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `error: &lt;class 'm3.observability.Observation[ProtocolErrorInfo]'&gt;` (required).
-- `http: &lt;class 'm3.observability.Observation[HttpExchange]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `error: &lt;class 'm3.observability.Observation[ProtocolErrorInfo]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `http: &lt;class 'm3.observability.Observation[HttpExchange]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `operation_kind: typing.Optional[typing.Literal['prompt', 'resource']]` (default: `None`).
-- `operation_name: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `operation_name: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `attempts: tuple[m3.observability.ProtocolCallAttempt, ...]` (default: `()`).
 
 ### `ProtocolErrorInfo`
 
 `m3.sync_api.ProtocolErrorInfo(*, code: int | str | None = None, message: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], data: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `code: int | str | None` (default: `None`).
 - `message: &lt;class 'str'&gt;` (required).
-- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ProtocolKind`
 
 `m3.sync_api.ProtocolKind(*values)`
 
+Public members:
+
+- `MCP` = `'mcp'`
+- `ACP` = `'acp'`
+- `PROVIDER_HTTP` = `'provider_http'`
+- `PROVIDER_STREAM` = `'provider_stream'`
+
 ### `ProviderEntry`
 
 `m3.sync_api.ProviderEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['provider'] = 'provider', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), provider: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], category: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], data: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['provider']` (default: `'provider'`).
@@ -1892,19 +2023,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `provider: &lt;class 'str'&gt;` (required).
 - `category: &lt;class 'str'&gt;` (required).
-- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `RawEvidence`
 
 `m3.sync_api.RawEvidence(*, reference: m3.types.EvidenceRef, media_type: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], content: Union[JsonValue, str], size_bytes: Annotated[int, Ge(ge=0)], returned_size_bytes: Annotated[int, Ge(ge=0)], truncated: bool = False, redacted: Literal[True] = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `reference: &lt;class 'm3.types.EvidenceRef'&gt;` (required).
 - `media_type: &lt;class 'str'&gt;` (required).
@@ -1918,11 +2049,19 @@ Public fields and methods:
 
 `m3.sync_api.RawEvidenceSource(*values)`
 
+Public members:
+
+- `MCP` = `'mcp'`
+- `ACP` = `'acp'`
+- `OPENCODE` = `'opencode'`
+- `CLAUDE_CODE` = `'claude_code'`
+- `PROCESS_STDERR` = `'process_stderr'`
+
 ### `RawMessageEntry`
 
 `m3.sync_api.RawMessageEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['raw_message'] = 'raw_message', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), source: m3.observability.RawEvidenceSource, direction: m3.types.EventDirection = &lt;EventDirection.INTERNAL: 'internal'&gt;, media_type: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], preview: m3.observability.Observation[Union[JsonValue, str]] = &lt;factory&gt;, evidence_ref: m3.types.EvidenceRef | None = None, size_bytes: Annotated[int, Ge(ge=0)] = 0, redacted: Literal[True] = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['raw_message']` (default: `'raw_message'`).
@@ -1934,14 +2073,14 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `source: &lt;enum 'RawEvidenceSource'&gt;` (required).
 - `direction: &lt;enum 'EventDirection'&gt;` (default: `&lt;EventDirection.INTERNAL: 'internal'&gt;`).
 - `media_type: &lt;class 'str'&gt;` (required).
-- `preview: &lt;class 'm3.observability.Observation[Union[JsonValue, str]]'&gt;` (required).
+- `preview: &lt;class 'm3.observability.Observation[Union[JsonValue, str]]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `evidence_ref: m3.types.EvidenceRef | None` (default: `None`).
 - `size_bytes: &lt;class 'int'&gt;` (default: `0`).
 - `redacted: typing.Literal[True]` (default: `True`).
@@ -1950,7 +2089,7 @@ Public fields and methods:
 
 `m3.sync_api.ReasoningEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['reasoning'] = 'reasoning', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), block_id: m3.observability.Observation[str] = &lt;factory&gt;, content: m3.observability.Observation[tuple[Annotated[Union[TextContent, FileContent, ImageContent, AudioContent, ResourceLink, OpaqueContent], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['reasoning']` (default: `'reasoning'`).
@@ -1962,25 +2101,25 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `block_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `content: &lt;class 'm3.observability.Observation[tuple[Annotated[Union[TextContent, FileContent, ImageContent, AudioContent, ResourceLink, OpaqueContent], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]]'&gt;` (required).
+- `block_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `content: &lt;class 'm3.observability.Observation[tuple[Annotated[Union[TextContent, FileContent, ImageContent, AudioContent, ResourceLink, OpaqueContent], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ReportedToolCall`
 
 `m3.sync_api.ReportedToolCall(*, provider_call_id: m3.observability.Observation[str] = &lt;factory&gt;, server: m3.observability.Observation[str] = &lt;factory&gt;, tool: m3.observability.Observation[str] = &lt;factory&gt;, arguments: m3.observability.Observation[JsonValue] = &lt;factory&gt;, result: m3.observability.Observation[JsonValue] = &lt;factory&gt;, status: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `status: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `status: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `RuntimeTraceInfo`
 
@@ -1992,7 +2131,7 @@ Runtime representation of an annotated type.
 
 `m3.sync_api.SafeHttpHeader(*, name: Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id'], value: str) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `name: typing.Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id']` (required).
 - `value: &lt;class 'str'&gt;` (required).
@@ -2003,27 +2142,27 @@ Public fields and methods:
 
 One wire-level attempt belonging to a logical tool call.
 
-Public fields and methods:
+Public members:
 
 - `attempt_index: &lt;class 'int'&gt;` (required).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `input_required: &lt;class 'bool'&gt;` (default: `False`).
-- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (required).
-- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `status: &lt;enum 'ToolCallStatus'&gt;` (default: `&lt;ToolCallStatus.INCOMPLETE: 'incomplete'&gt;`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 
 ### `ToolCallEntry`
 
 `m3.sync_api.ToolCallEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['tool_call'] = 'tool_call', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), call_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], provider_call_id: m3.observability.Observation[str] = &lt;factory&gt;, server: m3.observability.Observation[str] = &lt;factory&gt;, tool: m3.observability.Observation[str] = &lt;factory&gt;, arguments: m3.observability.Observation[JsonValue] = &lt;factory&gt;, result: m3.observability.Observation[ToolResult] = &lt;factory&gt;, tool_status: m3.observability.ToolCallStatus = &lt;ToolCallStatus.INCOMPLETE: 'incomplete'&gt;, correlation: m3.observability.CorrelationState = &lt;CorrelationState.UNAVAILABLE: 'unavailable'&gt;, jsonrpc_id: m3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]] = &lt;factory&gt;, server_latency_ms: m3.observability.Observation[float] = &lt;factory&gt;, policy: m3.observability.Observation[ToolPolicyDecision] = &lt;factory&gt;, reported: m3.observability.Observation[ReportedToolCall] = &lt;factory&gt;, wire: m3.observability.Observation[WireToolCall] = &lt;factory&gt;, conflicts: tuple[m3.observability.EvidenceConflict, ...] = (), attempts: tuple[m3.observability.ToolCallAttempt, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['tool_call']` (default: `'tool_call'`).
@@ -2035,23 +2174,23 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `call_id: &lt;class 'str'&gt;` (required).
-- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (required).
+- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `tool_status: &lt;enum 'ToolCallStatus'&gt;` (default: `&lt;ToolCallStatus.INCOMPLETE: 'incomplete'&gt;`).
 - `correlation: &lt;enum 'CorrelationState'&gt;` (default: `&lt;CorrelationState.UNAVAILABLE: 'unavailable'&gt;`).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `server_latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `policy: &lt;class 'm3.observability.Observation[ToolPolicyDecision]'&gt;` (required).
-- `reported: &lt;class 'm3.observability.Observation[ReportedToolCall]'&gt;` (required).
-- `wire: &lt;class 'm3.observability.Observation[WireToolCall]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `policy: &lt;class 'm3.observability.Observation[ToolPolicyDecision]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `reported: &lt;class 'm3.observability.Observation[ReportedToolCall]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `wire: &lt;class 'm3.observability.Observation[WireToolCall]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `conflicts: tuple[m3.observability.EvidenceConflict, ...]` (default: `()`).
 - `attempts: tuple[m3.observability.ToolCallAttempt, ...]` (default: `()`).
 
@@ -2059,16 +2198,26 @@ Public fields and methods:
 
 `m3.sync_api.ToolCallStatus(*values)`
 
+Public members:
+
+- `SUCCESS` = `'success'`
+- `TOOL_ERROR` = `'tool_error'`
+- `PROTOCOL_ERROR` = `'protocol_error'`
+- `TRANSPORT_ERROR` = `'transport_error'`
+- `CANCELLED` = `'cancelled'`
+- `TIMED_OUT` = `'timed_out'`
+- `INCOMPLETE` = `'incomplete'`
+
 ### `ToolResult`
 
 `m3.sync_api.ToolResult(*, content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...] = (), structured_content: m3.observability.Observation[JsonValue] = &lt;factory&gt;, is_error: bool = False, error: m3.observability.Observation[ErrorInfo] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]` (default: `()`).
-- `structured_content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `structured_content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `is_error: &lt;class 'bool'&gt;` (default: `False`).
-- `error: &lt;class 'm3.observability.Observation[ErrorInfo]'&gt;` (required).
+- `error: &lt;class 'm3.observability.Observation[ErrorInfo]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `TraceEntry`
 
@@ -2080,7 +2229,7 @@ Runtime representation of an annotated type.
 
 `m3.sync_api.TraceEntryBase(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Annotated[str, MinLen(min_length=1), MaxLen(max_length=64)], parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: &lt;class 'str'&gt;` (required).
@@ -2092,7 +2241,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -2101,14 +2250,27 @@ Public fields and methods:
 
 `m3.sync_api.TraceStatus(*values)`
 
+Public members:
+
+- `COMPLETED` = `'completed'`
+- `FAILED` = `'failed'`
+- `TOOL_ERROR` = `'tool_error'`
+- `PROTOCOL_ERROR` = `'protocol_error'`
+- `TRANSPORT_ERROR` = `'transport_error'`
+- `TIMED_OUT` = `'timed_out'`
+- `CANCELLED` = `'cancelled'`
+- `INTERRUPTED` = `'interrupted'`
+- `INCOMPLETE` = `'incomplete'`
+- `UNAVAILABLE` = `'unavailable'`
+
 ### `TraceSummary`
 
 `m3.sync_api.TraceSummary(*, timing: m3.observability.TraceTiming = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;, turn_count: Annotated[int, Ge(ge=0)] = 0, message_count: Annotated[int, Ge(ge=0)] = 0, reasoning_count: Annotated[int, Ge(ge=0)] = 0, tool_call_count: Annotated[int, Ge(ge=0)] = 0, successful_tool_call_count: Annotated[int, Ge(ge=0)] = 0, failed_tool_call_count: Annotated[int, Ge(ge=0)] = 0, protocol_error_count: Annotated[int, Ge(ge=0)] = 0, activity_health: m3.types.ActivityHealth = &lt;ActivityHealth.NO_CALLS: 'no_calls'&gt;, cleanup_status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `turn_count: &lt;class 'int'&gt;` (default: `0`).
 - `message_count: &lt;class 'int'&gt;` (default: `0`).
 - `reasoning_count: &lt;class 'int'&gt;` (default: `0`).
@@ -2123,9 +2285,9 @@ Public fields and methods:
 
 `m3.sync_api.TraceTiming(*, started_at: datetime.datetime = &lt;factory&gt;, finished_at: datetime.datetime | None = None, start_offset_ms: Annotated[float, Ge(ge=0)] = 0, end_offset_ms: Annotated[float, Ge(ge=0)] = 0, duration_ms: Annotated[float, Ge(ge=0)] = 0) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `started_at: &lt;class 'datetime.datetime'&gt;` (required).
+- `started_at: &lt;class 'datetime.datetime'&gt;` (default factory: `m3.observability.TraceTiming.&lt;lambda&gt;`).
 - `finished_at: datetime.datetime | None` (default: `None`).
 - `start_offset_ms: &lt;class 'float'&gt;` (default: `0`).
 - `end_offset_ms: &lt;class 'float'&gt;` (default: `0`).
@@ -2135,7 +2297,7 @@ Public fields and methods:
 
 `m3.sync_api.TraceView(*, schema_id: Literal['m3.trace_view'] = 'm3.trace_view', schema_version: Literal['1.1', '1.2'] = '1.1', trace_id: m3.types.TraceId, execution_id: m3.types.ExecutionId, outcome: m3.types.ExecutionOutcome = &lt;ExecutionOutcome.COMPLETED: 'completed'&gt;, completeness: Literal['complete', 'partial'] = 'complete', limitations: tuple[str, ...] = (), agent: m3.types.AgentIdentity | None = None, runtime: m3.observability.DirectTrace | m3.observability.OpenCodeTrace | m3.observability.ClaudeCodeTrace | m3.observability.CodexTrace | m3.observability.PiTrace | m3.observability.ACPTrace = &lt;factory&gt;, summary: m3.observability.TraceSummary = &lt;factory&gt;, timeline: tuple[typing.Annotated[m3.observability.LifecycleEntry | m3.observability.MessageEntry | m3.observability.ReasoningEntry | m3.observability.ToolCallEntry | m3.observability.ProtocolEntry | m3.observability.TransportEntry | m3.observability.InitializationEntry | m3.observability.UsageEntry | m3.observability.InteractionEntry | m3.observability.ElicitationEntry | m3.observability.ProcessEntry | m3.observability.WorkspaceEntry | m3.observability.ArtifactEntry | m3.observability.EvaluationEntry | m3.observability.DiagnosticEntry | m3.observability.RawMessageEntry | m3.observability.ProviderEntry, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `schema_id: typing.Literal['m3.trace_view']` (default: `'m3.trace_view'`).
 - `schema_version: typing.Literal['1.1', '1.2']` (default: `'1.1'`).
@@ -2145,9 +2307,19 @@ Public fields and methods:
 - `completeness: typing.Literal['complete', 'partial']` (default: `'complete'`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `agent: m3.types.AgentIdentity | None` (default: `None`).
-- `runtime: m3.observability.DirectTrace | m3.observability.OpenCodeTrace | m3.observability.ClaudeCodeTrace | m3.observability.CodexTrace | m3.observability.PiTrace | m3.observability.ACPTrace` (required).
-- `summary: &lt;class 'm3.observability.TraceSummary'&gt;` (required).
+- `runtime: m3.observability.DirectTrace | m3.observability.OpenCodeTrace | m3.observability.ClaudeCodeTrace | m3.observability.CodexTrace | m3.observability.PiTrace | m3.observability.ACPTrace` (default factory: `m3.observability.DirectTrace`).
+- `summary: &lt;class 'm3.observability.TraceSummary'&gt;` (default factory: `m3.observability.TraceSummary`).
 - `timeline: tuple[typing.Annotated[m3.observability.LifecycleEntry | m3.observability.MessageEntry | m3.observability.ReasoningEntry | m3.observability.ToolCallEntry | m3.observability.ProtocolEntry | m3.observability.TransportEntry | m3.observability.InitializationEntry | m3.observability.UsageEntry | m3.observability.InteractionEntry | m3.observability.ElicitationEntry | m3.observability.ProcessEntry | m3.observability.WorkspaceEntry | m3.observability.ArtifactEntry | m3.observability.EvaluationEntry | m3.observability.DiagnosticEntry | m3.observability.RawMessageEntry | m3.observability.ProviderEntry, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]` (default: `()`).
+- `tool_calls` (property)
+- `messages` (property)
+- `reasoning` (property)
+- `protocol` (property)
+- `transports` (property)
+- `raw_messages` (property)
+- `interactions` (property)
+- `elicitations` (property): Return keyed elicitation interactions correlated to MRTR rounds.
+- `processes` (property)
+- `diagnostics` (property)
 - `for_turn(self, turn: '_TurnResult | _TurnState | _TurnId | str') -&gt; 'TraceView'`: Return the finalized evidence belonging to one turn.
 - `for_session(self, session_id: '_SessionId | str') -&gt; 'TraceView'`
 - `for_server(self, server_binding: 'str') -&gt; 'TraceView'`
@@ -2159,7 +2331,7 @@ Public fields and methods:
 
 A stable MCP transport lifecycle observation.
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['transport']` (default: `'transport'`).
@@ -2171,19 +2343,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `phase: typing.Literal['connected', 'disconnected']` (required).
-- `configured: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (required).
-- `instrumented: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (required).
+- `configured: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `instrumented: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `UsageEntry`
 
 `m3.sync_api.UsageEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['usage'] = 'usage', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), input_tokens: m3.observability.Observation[int] = &lt;factory&gt;, output_tokens: m3.observability.Observation[int] = &lt;factory&gt;, reasoning_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cache_creation_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cache_read_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cache_write_tokens: m3.observability.Observation[int] = &lt;factory&gt;, total_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cost: m3.observability.Observation[float] = &lt;factory&gt;, currency: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['usage']` (default: `'usage'`).
@@ -2195,19 +2367,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `UsageValue`
 
@@ -2215,36 +2387,36 @@ Public fields and methods:
 
 Value-only usage aggregate used by summaries and runtime metadata.
 
-Public fields and methods:
+Public members:
 
-- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `WireToolCall`
 
 `m3.sync_api.WireToolCall(*, jsonrpc_id: m3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]] = &lt;factory&gt;, server: m3.observability.Observation[str] = &lt;factory&gt;, tool: m3.observability.Observation[str] = &lt;factory&gt;, arguments: m3.observability.Observation[JsonValue] = &lt;factory&gt;, result: m3.observability.Observation[ToolResult] = &lt;factory&gt;, latency_ms: m3.observability.Observation[float] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (required).
-- `latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `WorkspaceEntry`
 
 `m3.sync_api.WorkspaceEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['workspace'] = 'workspace', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), change: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['workspace']` (default: `'workspace'`).
@@ -2256,11 +2428,11 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `change: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `change: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ## `m3.async_api`
 
@@ -2270,12 +2442,15 @@ Public fields and methods:
 
 Lifecycle-safe async session over one injected harness adapter.
 
-Public fields and methods:
+Public members:
 
 - `send(self, message: 'str | UserMessage', *, timeout: 'float | None' = None, metadata: 'Mapping[str, object] | None' = None, elicitation: 'ElicitationPlan | None' = None, elicitation_round_limit: 'int' = 10) -&gt; 'TurnResult'`
 - `enqueue_turn(self, message: 'str | UserMessage', *, timeout: 'float | None' = None, metadata: 'Mapping[str, object] | None' = None) -&gt; 'QueuedTurn'`
 - `cancel(self) -&gt; 'None'`
 - `snapshot(self) -&gt; 'ExecutionState'`
+- `result` (property)
+- `provenance` (property): Immutable source linkage for a portable fork/replay session.
+- `interactions` (property): Policy-gated permission, filesystem, terminal, and model handlers.
 - `fork(self, request: 'SessionForkRequest', *, adapter_factory: 'Callable[[AgentSpec, SessionSource], HarnessAdapter | Awaitable[HarnessAdapter]]') -&gt; 'AsyncAgentSession'`: Create a fresh child execution from this terminal session.
 - `aclose(self) -&gt; 'None'`
 
@@ -2285,7 +2460,7 @@ Public fields and methods:
 
 Minimal injected adapter contract for one continuing conversation.
 
-Public fields and methods:
+Public members:
 
 - `start(self, spec: 'AgentSpec') -&gt; 'None'`
 - `send(self, message: 'UserMessage', *, timeout: 'float | None' = None, metadata: 'Mapping[str, object] | None' = None) -&gt; 'TurnResponse | AdapterTurn'`
@@ -2297,7 +2472,7 @@ Public fields and methods:
 
 Async namespace for capability probes.
 
-Public fields and methods:
+Public members:
 
 - `probe_binary(self, name: 'str', executable: 'str | os.PathLike[str]', *, args: 'Sequence[str]' = ('--version',), env: 'Mapping[str, str] | None' = None, timeout_seconds: 'float | None' = None) -&gt; 'ProbeResult'`
 - `probe_protocol(self, name: 'str', executable: 'str | os.PathLike[str]', *, args: 'Sequence[str]' = ('--protocol-version',), env: 'Mapping[str, str] | None' = None, timeout_seconds: 'float | None' = None, transport: 'str | TransportKind | None' = None) -&gt; 'ProbeResult'`
@@ -2312,9 +2487,14 @@ Public fields and methods:
 
 Lifecycle-owned async direct client returned by ``AsyncMCPTestKit``.
 
-Public fields and methods:
+Public members:
 
+- `transport_evidence` (property): Return sanitized partial/terminal transport evidence when available.
 - `aclose(self) -&gt; 'None'`
+- `final_trace` (property): Immutable finalized stable trace, if available.
+- `initialization` (property)
+- `timeout` (property)
+- `trace` (property): Immutable live stable trace when a bridge is attached.
 
 ### `AsyncExecutionHandle`
 
@@ -2322,8 +2502,11 @@ Public fields and methods:
 
 Live, immutable view of one submitted execution.
 
-Public fields and methods:
+Public members:
 
+- `execution_id` (property)
+- `spec` (property)
+- `submitted_spec` (property)
 - `snapshot(self) -&gt; 'ExecutionState'`
 - `pending_elicitation(self) -&gt; 'PendingElicitationRound | None'`: Return the current public managed-input round, if one is pending.
 - `respond_elicitation(self, round_id: 'str', responses: 'Mapping[str, ElicitationResponse]', *, idempotency_key: 'str') -&gt; 'None'`: Atomically validate and commit keyed human responses.
@@ -2338,8 +2521,11 @@ Public fields and methods:
 
 Async twin of :class:`m3.sync_api.MCPTestKit`.
 
-Public fields and methods:
+Public members:
 
+- `probes` (property): Asynchronous capability namespace owned by this kit.
+- `store` (property): The optional execution store configured on this kit.
+- `run_id` (property)
 - `get_trace(self, execution_id: '_ExecutionId | str') -&gt; '_TraceResult'`: Return the finalized stable trace for an execution.
 - `get_trace_view(self, execution_id: '_ExecutionId | str') -&gt; 'TraceView'`: Return the finalized typed trace view for an execution.
 - `read_raw_evidence(self, reference: '_EvidenceRef', *, max_bytes: 'int' = 1048576) -&gt; 'RawEvidence'`: Read bounded, redacted raw evidence by its durable reference.
@@ -2359,7 +2545,7 @@ Public fields and methods:
 
 `m3.async_api.CallToolResult(*, raw: Any = None, content: tuple[collections.abc.Mapping[str, typing.Any], ...] = (), structured_content: Any = None, is_error: bool = False) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `content: tuple[collections.abc.Mapping[str, typing.Any], ...]` (default: `()`).
@@ -2370,7 +2556,7 @@ Public fields and methods:
 
 `m3.async_api.CompletionResult(*, raw: Any = None, values: tuple[str, ...] = (), total: int | None = None, has_more: bool | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `values: tuple[str, ...]` (default: `()`).
@@ -2381,7 +2567,7 @@ Public fields and methods:
 
 `m3.async_api.ConfigOrigin(*, source: m3.configuration.ConfigSource, origin: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)]) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `source: &lt;enum 'ConfigSource'&gt;` (required).
 - `origin: &lt;class 'str'&gt;` (required).
@@ -2390,18 +2576,26 @@ Public fields and methods:
 
 `m3.async_api.ConfigSource(*values)`
 
+Public members:
+
+- `EXPLICIT` = `'explicit'`
+- `ENVIRONMENT` = `'environment'`
+- `PROJECT` = `'project'`
+- `DEFAULT` = `'default'`
+
 ### `Config`
 
 `m3.async_api.Config(*, artifact_policy: Literal['failed', 'always', 'never'] = 'failed', protocol_revision: Annotated[str, Strict(strict=True)] = 'auto', telemetry_enabled: Annotated[bool, Strict(strict=True)] = False, sources: collections.abc.Mapping[str, m3.configuration.ConfigOrigin] = &lt;factory&gt;) -&gt; None`
 
 Effective SDK-wide settings and the origin of each setting.
 
-Public fields and methods:
+Public members:
 
 - `artifact_policy: typing.Literal['failed', 'always', 'never']` (default: `'failed'`).
 - `protocol_revision: &lt;class 'str'&gt;` (default: `'auto'`).
 - `telemetry_enabled: &lt;class 'bool'&gt;` (default: `False`).
-- `sources: collections.abc.Mapping[str, m3.configuration.ConfigOrigin]` (required).
+- `sources: collections.abc.Mapping[str, m3.configuration.ConfigOrigin]` (default factory: `m3.configuration._default_origins`).
+- `provenance` (property): Compatibility name for callers that call origins provenance.
 - `source_for(self, field: 'str') -&gt; 'ConfigOrigin'`
 
 ### `ConfigError`
@@ -2414,7 +2608,7 @@ A strict, value-free configuration diagnostic.
 
 `m3.async_api.PromptInfo(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, description: str | None = None, arguments: tuple[collections.abc.Mapping[str, typing.Any], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -2426,7 +2620,7 @@ Public fields and methods:
 
 `m3.async_api.ResourceInfo(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, uri: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], description: str | None = None, mime_type: str | None = None, size: Annotated[int | None, Ge(ge=0)] = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -2440,7 +2634,7 @@ Public fields and methods:
 
 `m3.async_api.TemplateInfo(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, uri_template: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], description: str | None = None, mime_type: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -2453,20 +2647,20 @@ Public fields and methods:
 
 `m3.async_api.ToolInfo(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, description: str | None = None, input_schema: collections.abc.Mapping[str, typing.Any] | bool = &lt;factory&gt;, output_schema: collections.abc.Mapping[str, typing.Any] | bool | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
 - `title: str | None` (default: `None`).
 - `description: str | None` (default: `None`).
-- `input_schema: collections.abc.Mapping[str, typing.Any] | bool` (required).
+- `input_schema: collections.abc.Mapping[str, typing.Any] | bool` (default factory: `builtins.dict`).
 - `output_schema: collections.abc.Mapping[str, typing.Any] | bool | None` (default: `None`).
 
 ### `EmptyResult`
 
 `m3.async_api.EmptyResult(*, raw: Any = None, result_type: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `result_type: str | None` (default: `None`).
@@ -2475,7 +2669,7 @@ Public fields and methods:
 
 `m3.async_api.GetPromptResult(*, raw: Any = None, description: str | None = None, messages: tuple[collections.abc.Mapping[str, typing.Any], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `description: str | None` (default: `None`).
@@ -2485,25 +2679,25 @@ Public fields and methods:
 
 `m3.async_api.InitializeResult(*, raw: Any = None, protocol_version: str, server_info: collections.abc.Mapping[str, typing.Any], instructions: str | None = None, capabilities: collections.abc.Mapping[str, typing.Any] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `protocol_version: &lt;class 'str'&gt;` (required).
 - `server_info: collections.abc.Mapping[str, typing.Any]` (required).
 - `instructions: str | None` (default: `None`).
-- `capabilities: collections.abc.Mapping[str, typing.Any]` (required).
+- `capabilities: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `InitializationResult`
 
 `m3.async_api.InitializationResult(*, raw: Any = None, protocol_version: str, server_info: collections.abc.Mapping[str, typing.Any], instructions: str | None = None, capabilities: collections.abc.Mapping[str, typing.Any] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `protocol_version: &lt;class 'str'&gt;` (required).
 - `server_info: collections.abc.Mapping[str, typing.Any]` (required).
 - `instructions: str | None` (default: `None`).
-- `capabilities: collections.abc.Mapping[str, typing.Any]` (required).
+- `capabilities: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `InputRequiredResult`
 
@@ -2511,7 +2705,7 @@ Public fields and methods:
 
 Official MCP interactive result, preserved instead of coercing empty data.
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `result_type: typing.Literal['input_required']` (default: `'input_required'`).
@@ -2522,7 +2716,7 @@ Public fields and methods:
 
 `m3.async_api.ListPromptsResult(*, raw: Any = None, prompts: tuple[m3.types.PromptInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `prompts: tuple[m3.types.PromptInfo, ...]` (default: `()`).
@@ -2532,7 +2726,7 @@ Public fields and methods:
 
 `m3.async_api.ListResourcesResult(*, raw: Any = None, resources: tuple[m3.types.ResourceInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `resources: tuple[m3.types.ResourceInfo, ...]` (default: `()`).
@@ -2542,7 +2736,7 @@ Public fields and methods:
 
 `m3.async_api.ListResourceTemplatesResult(*, raw: Any = None, resource_templates: tuple[m3.types.TemplateInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `resource_templates: tuple[m3.types.TemplateInfo, ...]` (default: `()`).
@@ -2552,7 +2746,7 @@ Public fields and methods:
 
 `m3.async_api.ListToolsResult(*, raw: Any = None, tools: tuple[m3.types.ToolInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `tools: tuple[m3.types.ToolInfo, ...]` (default: `()`).
@@ -2564,7 +2758,7 @@ Public fields and methods:
 
 Safe evidence collected by one probe.
 
-Public fields and methods:
+Public members:
 
 - `kind: &lt;enum 'ProbeKind'&gt;` (required).
 - `target: &lt;class 'str'&gt;` (required).
@@ -2573,7 +2767,7 @@ Public fields and methods:
 - `detected_version: str | None` (default: `None`).
 - `protocol_version: str | None` (default: `None`).
 - `output: &lt;class 'str'&gt;` (default: `''`).
-- `details: collections.abc.Mapping[str, typing.Any]` (required).
+- `details: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `ProbeKind`
 
@@ -2581,16 +2775,26 @@ Public fields and methods:
 
 The independently requestable capability categories.
 
+Public members:
+
+- `CONFIGURATION` = `'configuration'`
+- `BINARY` = `'binary'`
+- `PROTOCOL` = `'protocol'`
+- `TRANSPORT` = `'transport'`
+- `STORAGE` = `'storage'`
+- `HARNESS` = `'harness'`
+
 ### `ProbeReport`
 
 `m3.async_api.ProbeReport(*, readiness: m3.types.Readiness, results: tuple[m3.services.probes.ProbeResult, ...] = ()) -&gt; None`
 
 Aggregate readiness for exactly the requested probes.
 
-Public fields and methods:
+Public members:
 
 - `readiness: &lt;class 'm3.types.Readiness'&gt;` (required).
 - `results: tuple[m3.services.probes.ProbeResult, ...]` (default: `()`).
+- `capabilities` (property)
 - `result_for(self, name: 'str') -&gt; 'ProbeResult | None'`: Return the result for ``name`` without guessing another target.
 
 ### `ProbeRequest`
@@ -2605,16 +2809,17 @@ Typed request used by :meth:`Probes.probe_requested`.
 
 One capability result and its separately inspectable evidence.
 
-Public fields and methods:
+Public members:
 
 - `capability: &lt;class 'm3.types.Capability'&gt;` (required).
 - `evidence: &lt;class 'm3.services.probes.ProbeEvidence'&gt;` (required).
+- `status` (property)
 
 ### `Prompt`
 
 `m3.async_api.Prompt(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, description: str | None = None, arguments: tuple[collections.abc.Mapping[str, typing.Any], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -2626,7 +2831,7 @@ Public fields and methods:
 
 `m3.async_api.PromptPage(*, raw: Any = None, prompts: tuple[m3.types.PromptInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `prompts: tuple[m3.types.PromptInfo, ...]` (default: `()`).
@@ -2636,7 +2841,7 @@ Public fields and methods:
 
 `m3.async_api.PromptResult(*, raw: Any = None, description: str | None = None, messages: tuple[collections.abc.Mapping[str, typing.Any], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `description: str | None` (default: `None`).
@@ -2646,16 +2851,17 @@ Public fields and methods:
 
 `m3.async_api.ReadResourceResult(*, raw: Any = None, contents: tuple[collections.abc.Mapping[str, typing.Any], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `contents: tuple[collections.abc.Mapping[str, typing.Any], ...]` (default: `()`).
+- `text` (property)
 
 ### `Resource`
 
 `m3.async_api.Resource(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, uri: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], description: str | None = None, mime_type: str | None = None, size: Annotated[int | None, Ge(ge=0)] = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -2669,7 +2875,7 @@ Public fields and methods:
 
 `m3.async_api.ResourcePage(*, raw: Any = None, resources: tuple[m3.types.ResourceInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `resources: tuple[m3.types.ResourceInfo, ...]` (default: `()`).
@@ -2679,16 +2885,17 @@ Public fields and methods:
 
 `m3.async_api.ResourceReadResult(*, raw: Any = None, contents: tuple[collections.abc.Mapping[str, typing.Any], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `contents: tuple[collections.abc.Mapping[str, typing.Any], ...]` (default: `()`).
+- `text` (property)
 
 ### `ResourceTemplate`
 
 `m3.async_api.ResourceTemplate(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, uri_template: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], description: str | None = None, mime_type: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
@@ -2701,7 +2908,7 @@ Public fields and methods:
 
 `m3.async_api.ResourceTemplatePage(*, raw: Any = None, resource_templates: tuple[m3.types.TemplateInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `resource_templates: tuple[m3.types.TemplateInfo, ...]` (default: `()`).
@@ -2711,7 +2918,7 @@ Public fields and methods:
 
 `m3.async_api.ResourceTemplatesPage(*, raw: Any = None, resource_templates: tuple[m3.types.TemplateInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `resource_templates: tuple[m3.types.TemplateInfo, ...]` (default: `()`).
@@ -2721,7 +2928,7 @@ Public fields and methods:
 
 `m3.async_api.ResourcesPage(*, raw: Any = None, resources: tuple[m3.types.ResourceInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `resources: tuple[m3.types.ResourceInfo, ...]` (default: `()`).
@@ -2731,20 +2938,20 @@ Public fields and methods:
 
 `m3.async_api.Tool(*, raw: Any = None, name: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], title: str | None = None, description: str | None = None, input_schema: collections.abc.Mapping[str, typing.Any] | bool = &lt;factory&gt;, output_schema: collections.abc.Mapping[str, typing.Any] | bool | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `name: &lt;class 'str'&gt;` (required).
 - `title: str | None` (default: `None`).
 - `description: str | None` (default: `None`).
-- `input_schema: collections.abc.Mapping[str, typing.Any] | bool` (required).
+- `input_schema: collections.abc.Mapping[str, typing.Any] | bool` (default factory: `builtins.dict`).
 - `output_schema: collections.abc.Mapping[str, typing.Any] | bool | None` (default: `None`).
 
 ### `ToolCallResult`
 
 `m3.async_api.ToolCallResult(*, raw: Any = None, content: tuple[collections.abc.Mapping[str, typing.Any], ...] = (), structured_content: Any = None, is_error: bool = False) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `content: tuple[collections.abc.Mapping[str, typing.Any], ...]` (default: `()`).
@@ -2755,7 +2962,7 @@ Public fields and methods:
 
 `m3.async_api.ToolPage(*, raw: Any = None, tools: tuple[m3.types.ToolInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `tools: tuple[m3.types.ToolInfo, ...]` (default: `()`).
@@ -2765,7 +2972,7 @@ Public fields and methods:
 
 `m3.async_api.ToolsPage(*, raw: Any = None, tools: tuple[m3.types.ToolInfo, ...] = (), next_cursor: str | None = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `raw: typing.Any` (default: `None`).
 - `tools: tuple[m3.types.ToolInfo, ...]` (default: `()`).
@@ -2805,7 +3012,7 @@ FilesystemResult(allowed: 'bool', data: 'bytes | tuple[str, ...] | None', receip
 
 Apply immutable policies around explicit interaction callbacks.
 
-Public fields and methods:
+Public members:
 
 - `receipts(self) -&gt; 'tuple[InteractionReceipt, ...]'`
 - `permission(self, request: 'PermissionRequest') -&gt; 'PermissionResult'`
@@ -2885,13 +3092,17 @@ Bounded filesystem handler rooted inside one owned workspace.
 
 An immutable, serializable elicitation expectation tree.
 
-Public fields and methods:
+Public members:
 
 - `node: typing.Literal['leaf', 'sequence', 'optional', 'one_of', 'round_of']` (default: `'leaf'`).
 - `request: typing.Optional[typing.Annotated[m3.elicitation._FormExpectation | m3.elicitation._UrlExpectation, FieldInfo(annotation=NoneType, required=True, discriminator='mode')]]` (default: `None`).
 - `response: m3.elicitation.ElicitationResponse | None` (default: `None`).
 - `children: tuple[m3.elicitation.ElicitationPlan, ...]` (default: `()`).
 - `optional_occurrence: &lt;class 'bool'&gt;` (default: `False`).
+- `is_complete` (property)
+- `mode` (property)
+- `requested_schema` (property)
+- `optional` (property)
 - `accept(self, content: 'Mapping[str, object] | None' = None) -&gt; 'ElicitationPlan'`
 - `decline(self) -&gt; 'ElicitationPlan'`
 - `cancel(self) -&gt; 'ElicitationPlan'`
@@ -2907,7 +3118,7 @@ Public fields and methods:
 
 The response that will be associated with one request key.
 
-Public fields and methods:
+Public members:
 
 - `action: typing.Literal['accept', 'decline', 'cancel']` (required).
 - `content: collections.abc.Mapping[str, object] | None` (default: `None`).
@@ -2919,7 +3130,7 @@ Public fields and methods:
 
 A normalized form-mode elicitation request.
 
-Public fields and methods:
+Public members:
 
 - `request_key: &lt;class 'str'&gt;` (required).
 - `mode: typing.Literal['form']` (default: `'form'`).
@@ -2937,7 +3148,7 @@ Public fields and methods:
 
 A persisted, keyed set of elicitation requests awaiting responses.
 
-Public fields and methods:
+Public members:
 
 - `round_id: &lt;class 'str'&gt;` (required).
 - `execution_id: &lt;class 'str'&gt;` (required).
@@ -2956,7 +3167,7 @@ Public fields and methods:
 
 A normalized URL-mode elicitation request.
 
-Public fields and methods:
+Public members:
 
 - `request_key: &lt;class 'str'&gt;` (required).
 - `mode: typing.Literal['url']` (default: `'url'`).
@@ -3005,24 +3216,24 @@ Public fields and methods:
 
 `m3.async_api.ACPTrace(*, kind: Literal['acp'] = 'acp', session_id: m3.observability.Observation[str] = &lt;factory&gt;, protocol_version: m3.observability.Observation[str] = &lt;factory&gt;, agent_identity: m3.observability.Observation[JsonValue] = &lt;factory&gt;, available_modes: m3.observability.Observation[JsonValue] = &lt;factory&gt;, current_mode: m3.observability.Observation[str] = &lt;factory&gt;, config_options: m3.observability.Observation[JsonValue] = &lt;factory&gt;, selected_config: m3.observability.Observation[JsonValue] = &lt;factory&gt;, plan_state_available: m3.observability.Observation[bool] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['acp']` (default: `'acp'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `agent_identity: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `available_modes: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `current_mode: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `config_options: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `selected_config: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `plan_state_available: &lt;class 'm3.observability.Observation[bool]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `agent_identity: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `available_modes: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `current_mode: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `config_options: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `selected_config: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `plan_state_available: &lt;class 'm3.observability.Observation[bool]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability.ACPTrace.&lt;lambda&gt;`).
 
 ### `ArtifactEntry`
 
 `m3.async_api.ArtifactEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['artifact'] = 'artifact', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), artifact: m3.types.ArtifactRef) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['artifact']` (default: `'artifact'`).
@@ -3034,7 +3245,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -3046,7 +3257,7 @@ Public fields and methods:
 
 Boundaries for redacted provider/MCP evidence capture.
 
-Public fields and methods:
+Public members:
 
 - `capture_raw_evidence: &lt;class 'bool'&gt;` (default: `True`).
 - `capture_provider_messages: &lt;class 'bool'&gt;` (default: `True`).
@@ -3059,41 +3270,49 @@ Public fields and methods:
 
 `m3.async_api.ClaudeCodeTrace(*, kind: Literal['claude_code'] = 'claude_code', session_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, result_subtype: m3.observability.Observation[str] = &lt;factory&gt;, stop_reason: m3.observability.Observation[str] = &lt;factory&gt;, service_tier: m3.observability.Observation[str] = &lt;factory&gt;, api_duration_ms: m3.observability.Observation[float] = &lt;factory&gt;, encrypted_reasoning: m3.observability.Observation[bool] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['claude_code']` (default: `'claude_code'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `result_subtype: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `service_tier: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `api_duration_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `encrypted_reasoning: &lt;class 'm3.observability.Observation[bool]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result_subtype: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `service_tier: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `api_duration_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `encrypted_reasoning: &lt;class 'm3.observability.Observation[bool]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `CodexTrace`
 
 `m3.async_api.CodexTrace(*, kind: Literal['codex'] = 'codex', thread_id: m3.observability.Observation[str] = &lt;factory&gt;, turn_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, finish_reason: m3.observability.Observation[str] = &lt;factory&gt;, sandbox: m3.observability.Observation[str] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['codex']` (default: `'codex'`).
-- `thread_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `turn_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `sandbox: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `thread_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `turn_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `sandbox: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `CorrelationState`
 
 `m3.async_api.CorrelationState(*values)`
 
+Public members:
+
+- `CORRELATED` = `'correlated'`
+- `REPORTED_ONLY` = `'reported_only'`
+- `WIRE_ONLY` = `'wire_only'`
+- `AMBIGUOUS` = `'ambiguous'`
+- `UNAVAILABLE` = `'unavailable'`
+
 ### `DiagnosticEntry`
 
 `m3.async_api.DiagnosticEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['diagnostic'] = 'diagnostic', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), code: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], message: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], stage: Annotated[str | None, MaxLen(max_length=128)] = None, operation: Annotated[str | None, MaxLen(max_length=256)] = None, elapsed_seconds: Annotated[float | None, Ge(ge=0)] = None, timeout_seconds: Annotated[float | None, Gt(gt=0)] = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['diagnostic']` (default: `'diagnostic'`).
@@ -3105,7 +3324,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -3120,12 +3339,12 @@ Public fields and methods:
 
 `m3.async_api.DirectTrace(*, kind: Literal['direct'] = 'direct', transport: m3.observability.Observation[TransportKind] = &lt;factory&gt;, protocol: m3.observability.Observation[str] = &lt;factory&gt;, initialization: m3.observability.Observation[InitializationValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['direct']` (default: `'direct'`).
-- `transport: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (required).
-- `protocol: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `initialization: &lt;class 'm3.observability.Observation[InitializationValue]'&gt;` (required).
+- `transport: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `protocol: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `initialization: &lt;class 'm3.observability.Observation[InitializationValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ElicitationEntry`
 
@@ -3133,7 +3352,7 @@ Public fields and methods:
 
 One keyed elicitation embedded in an MRTR input-required round.
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['elicitation']` (default: `'elicitation'`).
@@ -3145,7 +3364,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -3156,20 +3375,20 @@ Public fields and methods:
 - `round_index: &lt;class 'int'&gt;` (required).
 - `request_key: &lt;class 'str'&gt;` (required).
 - `mode: typing.Literal['form', 'url']` (required).
-- `message: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `requested_schema: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `url: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `elicitation_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `message: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `requested_schema: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `url: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `elicitation_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `action: typing.Optional[typing.Literal['accept', 'decline', 'cancel']]` (default: `None`).
-- `content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `EvaluationEntry`
 
 `m3.async_api.EvaluationEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['evaluation'] = 'evaluation', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), evaluation: m3.types.EvaluationResult) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['evaluation']` (default: `'evaluation'`).
@@ -3181,7 +3400,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -3193,7 +3412,7 @@ Public fields and methods:
 
 Typed result of bounded, redacted raw-evidence capture.
 
-Public fields and methods:
+Public members:
 
 - `reference: &lt;class 'm3.types.EvidenceRef'&gt;` (required).
 - `preview: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
@@ -3206,7 +3425,7 @@ Public fields and methods:
 
 `m3.async_api.EvidenceConflict(*, field: Literal['server', 'tool', 'arguments', 'result', 'status'], reported: m3.observability.Observation[JsonValue], wire: m3.observability.Observation[JsonValue]) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `field: typing.Literal['server', 'tool', 'arguments', 'result', 'status']` (required).
 - `reported: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
@@ -3216,7 +3435,7 @@ Public fields and methods:
 
 `m3.async_api.HttpExchange(*, method: Annotated[str, MinLen(min_length=1)], status_code: Annotated[int, Ge(ge=100), Le(le=599)], headers: tuple[m3.observability.SafeHttpHeader, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `method: &lt;class 'str'&gt;` (required).
 - `status_code: &lt;class 'int'&gt;` (required).
@@ -3226,7 +3445,7 @@ Public fields and methods:
 
 `m3.async_api.InitializationEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['initialization'] = 'initialization', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), protocol_version: m3.observability.Observation[str] = &lt;factory&gt;, server_name: m3.observability.Observation[str] = &lt;factory&gt;, server_version: m3.observability.Observation[str] = &lt;factory&gt;, instructions: m3.observability.Observation[str] = &lt;factory&gt;, capabilities: m3.observability.Observation[JsonValue] = &lt;factory&gt;, tools: m3.observability.Observation[tuple[ToolInfo, ...]] = &lt;factory&gt;, resources: m3.observability.Observation[tuple[ResourceInfo, ...]] = &lt;factory&gt;, resource_templates: m3.observability.Observation[tuple[TemplateInfo, ...]] = &lt;factory&gt;, prompts: m3.observability.Observation[tuple[PromptInfo, ...]] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['initialization']` (default: `'initialization'`).
@@ -3238,19 +3457,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (required).
-- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (required).
-- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (required).
-- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (required).
+- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `InitializationValue`
 
@@ -3258,23 +3477,23 @@ Public fields and methods:
 
 Value-only initialization metadata used by runtime information.
 
-Public fields and methods:
+Public members:
 
-- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (required).
-- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (required).
-- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (required).
-- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (required).
+- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `InteractionEntry`
 
 `m3.async_api.InteractionEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['interaction'] = 'interaction', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), interaction_kind: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], request: m3.observability.Observation[JsonValue] = &lt;factory&gt;, response: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['interaction']` (default: `'interaction'`).
@@ -3286,19 +3505,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `interaction_kind: &lt;class 'str'&gt;` (required).
-- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `LifecycleEntry`
 
 `m3.async_api.LifecycleEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['lifecycle'] = 'lifecycle', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), phase: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)]) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['lifecycle']` (default: `'lifecycle'`).
@@ -3310,7 +3529,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -3320,7 +3539,7 @@ Public fields and methods:
 
 `m3.async_api.MessageEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['message'] = 'message', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), message_id: m3.observability.Observation[str] = &lt;factory&gt;, role: m3.observability.MessageRole = &lt;MessageRole.ASSISTANT: 'assistant'&gt;, content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...] = (), stop_reason: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['message']` (default: `'message'`).
@@ -3332,18 +3551,25 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `message_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `message_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `role: &lt;enum 'MessageRole'&gt;` (default: `&lt;MessageRole.ASSISTANT: 'assistant'&gt;`).
 - `content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]` (default: `()`).
-- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `MessageRole`
 
 `m3.async_api.MessageRole(*values)`
+
+Public members:
+
+- `USER` = `'user'`
+- `ASSISTANT` = `'assistant'`
+- `SYSTEM` = `'system'`
+- `TOOL` = `'tool'`
 
 ### `Observation`
 
@@ -3351,7 +3577,7 @@ Public fields and methods:
 
 A typed value with explicit availability and provenance.
 
-Public fields and methods:
+Public members:
 
 - `state: &lt;enum 'ObservationState'&gt;` (required).
 - `value: typing.Optional[~_T]` (default: `None`).
@@ -3363,44 +3589,69 @@ Public fields and methods:
 
 `m3.async_api.ObservationReason(*values)`
 
+Public members:
+
+- `PROVIDER_DID_NOT_EMIT` = `'provider_did_not_emit'`
+- `PROVIDER_HIDDEN` = `'provider_hidden'`
+- `PROVIDER_ENCRYPTED` = `'provider_encrypted'`
+- `HARNESS_UNSUPPORTED` = `'harness_unsupported'`
+- `TRANSPORT_NOT_APPLICABLE` = `'transport_not_applicable'`
+- `CAPTURE_DISABLED` = `'capture_disabled'`
+- `CAPTURE_FAILED` = `'capture_failed'`
+- `EVIDENCE_TRUNCATED` = `'evidence_truncated'`
+- `REDACTED_BY_POLICY` = `'redacted_by_policy'`
+- `CORRELATION_UNAVAILABLE` = `'correlation_unavailable'`
+- `MALFORMED_SOURCE` = `'malformed_source'`
+
 ### `ObservationState`
 
 `m3.async_api.ObservationState(*values)`
 
 How completely a provider-dependent value was observed.
 
+Public members:
+
+- `OBSERVED` = `'observed'`
+- `NOT_EMITTED` = `'not_emitted'`
+- `UNSUPPORTED` = `'unsupported'`
+- `UNAVAILABLE` = `'unavailable'`
+- `PROVIDER_HIDDEN` = `'provider_hidden'`
+- `ENCRYPTED` = `'encrypted'`
+- `REDACTED` = `'redacted'`
+- `TRUNCATED` = `'truncated'`
+
 ### `OpenCodeTrace`
 
 `m3.async_api.OpenCodeTrace(*, kind: Literal['opencode'] = 'opencode', session_id: m3.observability.Observation[str] = &lt;factory&gt;, provider_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, finish_reason: m3.observability.Observation[str] = &lt;factory&gt;, http_lifecycle: m3.observability.Observation[JsonValue] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['opencode']` (default: `'opencode'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `http_lifecycle: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `http_lifecycle: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `PiTrace`
 
 `m3.async_api.PiTrace(*, kind: Literal['pi'] = 'pi', session_id: m3.observability.Observation[str] = &lt;factory&gt;, provider_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, finish_reason: m3.observability.Observation[str] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['pi']` (default: `'pi'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ProcessEntry`
 
 `m3.async_api.ProcessEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['process'] = 'process', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), executable: m3.observability.Observation[str] = &lt;factory&gt;, pid: m3.observability.Observation[int] = &lt;factory&gt;, exit_code: m3.observability.Observation[int] = &lt;factory&gt;, signal: m3.observability.Observation[int] = &lt;factory&gt;, stderr: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['process']` (default: `'process'`).
@@ -3412,15 +3663,15 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `executable: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `pid: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `exit_code: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `signal: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `stderr: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `executable: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `pid: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `exit_code: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `signal: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `stderr: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ProtocolCallAttempt`
 
@@ -3428,27 +3679,27 @@ Public fields and methods:
 
 One wire-level attempt belonging to a prompt or resource call.
 
-Public fields and methods:
+Public members:
 
 - `attempt_index: &lt;class 'int'&gt;` (required).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `input_required: &lt;class 'bool'&gt;` (default: `False`).
-- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.INCOMPLETE: 'incomplete'&gt;`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 
 ### `ProtocolEntry`
 
 `m3.async_api.ProtocolEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['protocol'] = 'protocol', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), protocol: m3.observability.ProtocolKind, method: m3.observability.Observation[str] = &lt;factory&gt;, direction: m3.types.EventDirection = &lt;EventDirection.INTERNAL: 'internal'&gt;, jsonrpc_id: m3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]] = &lt;factory&gt;, request: m3.observability.Observation[JsonValue] = &lt;factory&gt;, response: m3.observability.Observation[JsonValue] = &lt;factory&gt;, error: m3.observability.Observation[ProtocolErrorInfo] = &lt;factory&gt;, http: m3.observability.Observation[HttpExchange] = &lt;factory&gt;, operation_kind: Optional[Literal['prompt', 'resource']] = None, operation_name: m3.observability.Observation[str] = &lt;factory&gt;, attempts: tuple[m3.observability.ProtocolCallAttempt, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['protocol']` (default: `'protocol'`).
@@ -3460,41 +3711,48 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `protocol: &lt;enum 'ProtocolKind'&gt;` (required).
-- `method: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `method: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `direction: &lt;enum 'EventDirection'&gt;` (default: `&lt;EventDirection.INTERNAL: 'internal'&gt;`).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `error: &lt;class 'm3.observability.Observation[ProtocolErrorInfo]'&gt;` (required).
-- `http: &lt;class 'm3.observability.Observation[HttpExchange]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `error: &lt;class 'm3.observability.Observation[ProtocolErrorInfo]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `http: &lt;class 'm3.observability.Observation[HttpExchange]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `operation_kind: typing.Optional[typing.Literal['prompt', 'resource']]` (default: `None`).
-- `operation_name: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `operation_name: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `attempts: tuple[m3.observability.ProtocolCallAttempt, ...]` (default: `()`).
 
 ### `ProtocolErrorInfo`
 
 `m3.async_api.ProtocolErrorInfo(*, code: int | str | None = None, message: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], data: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `code: int | str | None` (default: `None`).
 - `message: &lt;class 'str'&gt;` (required).
-- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ProtocolKind`
 
 `m3.async_api.ProtocolKind(*values)`
 
+Public members:
+
+- `MCP` = `'mcp'`
+- `ACP` = `'acp'`
+- `PROVIDER_HTTP` = `'provider_http'`
+- `PROVIDER_STREAM` = `'provider_stream'`
+
 ### `ProviderEntry`
 
 `m3.async_api.ProviderEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['provider'] = 'provider', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), provider: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], category: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], data: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['provider']` (default: `'provider'`).
@@ -3506,19 +3764,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `provider: &lt;class 'str'&gt;` (required).
 - `category: &lt;class 'str'&gt;` (required).
-- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `RawEvidence`
 
 `m3.async_api.RawEvidence(*, reference: m3.types.EvidenceRef, media_type: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], content: Union[JsonValue, str], size_bytes: Annotated[int, Ge(ge=0)], returned_size_bytes: Annotated[int, Ge(ge=0)], truncated: bool = False, redacted: Literal[True] = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `reference: &lt;class 'm3.types.EvidenceRef'&gt;` (required).
 - `media_type: &lt;class 'str'&gt;` (required).
@@ -3532,11 +3790,19 @@ Public fields and methods:
 
 `m3.async_api.RawEvidenceSource(*values)`
 
+Public members:
+
+- `MCP` = `'mcp'`
+- `ACP` = `'acp'`
+- `OPENCODE` = `'opencode'`
+- `CLAUDE_CODE` = `'claude_code'`
+- `PROCESS_STDERR` = `'process_stderr'`
+
 ### `RawMessageEntry`
 
 `m3.async_api.RawMessageEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['raw_message'] = 'raw_message', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), source: m3.observability.RawEvidenceSource, direction: m3.types.EventDirection = &lt;EventDirection.INTERNAL: 'internal'&gt;, media_type: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], preview: m3.observability.Observation[Union[JsonValue, str]] = &lt;factory&gt;, evidence_ref: m3.types.EvidenceRef | None = None, size_bytes: Annotated[int, Ge(ge=0)] = 0, redacted: Literal[True] = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['raw_message']` (default: `'raw_message'`).
@@ -3548,14 +3814,14 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `source: &lt;enum 'RawEvidenceSource'&gt;` (required).
 - `direction: &lt;enum 'EventDirection'&gt;` (default: `&lt;EventDirection.INTERNAL: 'internal'&gt;`).
 - `media_type: &lt;class 'str'&gt;` (required).
-- `preview: &lt;class 'm3.observability.Observation[Union[JsonValue, str]]'&gt;` (required).
+- `preview: &lt;class 'm3.observability.Observation[Union[JsonValue, str]]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `evidence_ref: m3.types.EvidenceRef | None` (default: `None`).
 - `size_bytes: &lt;class 'int'&gt;` (default: `0`).
 - `redacted: typing.Literal[True]` (default: `True`).
@@ -3564,7 +3830,7 @@ Public fields and methods:
 
 `m3.async_api.ReasoningEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['reasoning'] = 'reasoning', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), block_id: m3.observability.Observation[str] = &lt;factory&gt;, content: m3.observability.Observation[tuple[Annotated[Union[TextContent, FileContent, ImageContent, AudioContent, ResourceLink, OpaqueContent], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['reasoning']` (default: `'reasoning'`).
@@ -3576,25 +3842,25 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `block_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `content: &lt;class 'm3.observability.Observation[tuple[Annotated[Union[TextContent, FileContent, ImageContent, AudioContent, ResourceLink, OpaqueContent], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]]'&gt;` (required).
+- `block_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `content: &lt;class 'm3.observability.Observation[tuple[Annotated[Union[TextContent, FileContent, ImageContent, AudioContent, ResourceLink, OpaqueContent], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ReportedToolCall`
 
 `m3.async_api.ReportedToolCall(*, provider_call_id: m3.observability.Observation[str] = &lt;factory&gt;, server: m3.observability.Observation[str] = &lt;factory&gt;, tool: m3.observability.Observation[str] = &lt;factory&gt;, arguments: m3.observability.Observation[JsonValue] = &lt;factory&gt;, result: m3.observability.Observation[JsonValue] = &lt;factory&gt;, status: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `status: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `status: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `RuntimeTraceInfo`
 
@@ -3606,7 +3872,7 @@ Runtime representation of an annotated type.
 
 `m3.async_api.SafeHttpHeader(*, name: Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id'], value: str) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `name: typing.Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id']` (required).
 - `value: &lt;class 'str'&gt;` (required).
@@ -3617,27 +3883,27 @@ Public fields and methods:
 
 One wire-level attempt belonging to a logical tool call.
 
-Public fields and methods:
+Public members:
 
 - `attempt_index: &lt;class 'int'&gt;` (required).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `input_required: &lt;class 'bool'&gt;` (default: `False`).
-- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (required).
-- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `status: &lt;enum 'ToolCallStatus'&gt;` (default: `&lt;ToolCallStatus.INCOMPLETE: 'incomplete'&gt;`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 
 ### `ToolCallEntry`
 
 `m3.async_api.ToolCallEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['tool_call'] = 'tool_call', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), call_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], provider_call_id: m3.observability.Observation[str] = &lt;factory&gt;, server: m3.observability.Observation[str] = &lt;factory&gt;, tool: m3.observability.Observation[str] = &lt;factory&gt;, arguments: m3.observability.Observation[JsonValue] = &lt;factory&gt;, result: m3.observability.Observation[ToolResult] = &lt;factory&gt;, tool_status: m3.observability.ToolCallStatus = &lt;ToolCallStatus.INCOMPLETE: 'incomplete'&gt;, correlation: m3.observability.CorrelationState = &lt;CorrelationState.UNAVAILABLE: 'unavailable'&gt;, jsonrpc_id: m3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]] = &lt;factory&gt;, server_latency_ms: m3.observability.Observation[float] = &lt;factory&gt;, policy: m3.observability.Observation[ToolPolicyDecision] = &lt;factory&gt;, reported: m3.observability.Observation[ReportedToolCall] = &lt;factory&gt;, wire: m3.observability.Observation[WireToolCall] = &lt;factory&gt;, conflicts: tuple[m3.observability.EvidenceConflict, ...] = (), attempts: tuple[m3.observability.ToolCallAttempt, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['tool_call']` (default: `'tool_call'`).
@@ -3649,23 +3915,23 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `call_id: &lt;class 'str'&gt;` (required).
-- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (required).
+- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `tool_status: &lt;enum 'ToolCallStatus'&gt;` (default: `&lt;ToolCallStatus.INCOMPLETE: 'incomplete'&gt;`).
 - `correlation: &lt;enum 'CorrelationState'&gt;` (default: `&lt;CorrelationState.UNAVAILABLE: 'unavailable'&gt;`).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `server_latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `policy: &lt;class 'm3.observability.Observation[ToolPolicyDecision]'&gt;` (required).
-- `reported: &lt;class 'm3.observability.Observation[ReportedToolCall]'&gt;` (required).
-- `wire: &lt;class 'm3.observability.Observation[WireToolCall]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `policy: &lt;class 'm3.observability.Observation[ToolPolicyDecision]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `reported: &lt;class 'm3.observability.Observation[ReportedToolCall]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `wire: &lt;class 'm3.observability.Observation[WireToolCall]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `conflicts: tuple[m3.observability.EvidenceConflict, ...]` (default: `()`).
 - `attempts: tuple[m3.observability.ToolCallAttempt, ...]` (default: `()`).
 
@@ -3673,16 +3939,26 @@ Public fields and methods:
 
 `m3.async_api.ToolCallStatus(*values)`
 
+Public members:
+
+- `SUCCESS` = `'success'`
+- `TOOL_ERROR` = `'tool_error'`
+- `PROTOCOL_ERROR` = `'protocol_error'`
+- `TRANSPORT_ERROR` = `'transport_error'`
+- `CANCELLED` = `'cancelled'`
+- `TIMED_OUT` = `'timed_out'`
+- `INCOMPLETE` = `'incomplete'`
+
 ### `ToolResult`
 
 `m3.async_api.ToolResult(*, content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...] = (), structured_content: m3.observability.Observation[JsonValue] = &lt;factory&gt;, is_error: bool = False, error: m3.observability.Observation[ErrorInfo] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]` (default: `()`).
-- `structured_content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `structured_content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `is_error: &lt;class 'bool'&gt;` (default: `False`).
-- `error: &lt;class 'm3.observability.Observation[ErrorInfo]'&gt;` (required).
+- `error: &lt;class 'm3.observability.Observation[ErrorInfo]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `TraceEntry`
 
@@ -3694,7 +3970,7 @@ Runtime representation of an annotated type.
 
 `m3.async_api.TraceEntryBase(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Annotated[str, MinLen(min_length=1), MaxLen(max_length=64)], parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: &lt;class 'str'&gt;` (required).
@@ -3706,7 +3982,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -3715,14 +3991,27 @@ Public fields and methods:
 
 `m3.async_api.TraceStatus(*values)`
 
+Public members:
+
+- `COMPLETED` = `'completed'`
+- `FAILED` = `'failed'`
+- `TOOL_ERROR` = `'tool_error'`
+- `PROTOCOL_ERROR` = `'protocol_error'`
+- `TRANSPORT_ERROR` = `'transport_error'`
+- `TIMED_OUT` = `'timed_out'`
+- `CANCELLED` = `'cancelled'`
+- `INTERRUPTED` = `'interrupted'`
+- `INCOMPLETE` = `'incomplete'`
+- `UNAVAILABLE` = `'unavailable'`
+
 ### `TraceSummary`
 
 `m3.async_api.TraceSummary(*, timing: m3.observability.TraceTiming = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;, turn_count: Annotated[int, Ge(ge=0)] = 0, message_count: Annotated[int, Ge(ge=0)] = 0, reasoning_count: Annotated[int, Ge(ge=0)] = 0, tool_call_count: Annotated[int, Ge(ge=0)] = 0, successful_tool_call_count: Annotated[int, Ge(ge=0)] = 0, failed_tool_call_count: Annotated[int, Ge(ge=0)] = 0, protocol_error_count: Annotated[int, Ge(ge=0)] = 0, activity_health: m3.types.ActivityHealth = &lt;ActivityHealth.NO_CALLS: 'no_calls'&gt;, cleanup_status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `turn_count: &lt;class 'int'&gt;` (default: `0`).
 - `message_count: &lt;class 'int'&gt;` (default: `0`).
 - `reasoning_count: &lt;class 'int'&gt;` (default: `0`).
@@ -3737,9 +4026,9 @@ Public fields and methods:
 
 `m3.async_api.TraceTiming(*, started_at: datetime.datetime = &lt;factory&gt;, finished_at: datetime.datetime | None = None, start_offset_ms: Annotated[float, Ge(ge=0)] = 0, end_offset_ms: Annotated[float, Ge(ge=0)] = 0, duration_ms: Annotated[float, Ge(ge=0)] = 0) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `started_at: &lt;class 'datetime.datetime'&gt;` (required).
+- `started_at: &lt;class 'datetime.datetime'&gt;` (default factory: `m3.observability.TraceTiming.&lt;lambda&gt;`).
 - `finished_at: datetime.datetime | None` (default: `None`).
 - `start_offset_ms: &lt;class 'float'&gt;` (default: `0`).
 - `end_offset_ms: &lt;class 'float'&gt;` (default: `0`).
@@ -3749,7 +4038,7 @@ Public fields and methods:
 
 `m3.async_api.TraceView(*, schema_id: Literal['m3.trace_view'] = 'm3.trace_view', schema_version: Literal['1.1', '1.2'] = '1.1', trace_id: m3.types.TraceId, execution_id: m3.types.ExecutionId, outcome: m3.types.ExecutionOutcome = &lt;ExecutionOutcome.COMPLETED: 'completed'&gt;, completeness: Literal['complete', 'partial'] = 'complete', limitations: tuple[str, ...] = (), agent: m3.types.AgentIdentity | None = None, runtime: m3.observability.DirectTrace | m3.observability.OpenCodeTrace | m3.observability.ClaudeCodeTrace | m3.observability.CodexTrace | m3.observability.PiTrace | m3.observability.ACPTrace = &lt;factory&gt;, summary: m3.observability.TraceSummary = &lt;factory&gt;, timeline: tuple[typing.Annotated[m3.observability.LifecycleEntry | m3.observability.MessageEntry | m3.observability.ReasoningEntry | m3.observability.ToolCallEntry | m3.observability.ProtocolEntry | m3.observability.TransportEntry | m3.observability.InitializationEntry | m3.observability.UsageEntry | m3.observability.InteractionEntry | m3.observability.ElicitationEntry | m3.observability.ProcessEntry | m3.observability.WorkspaceEntry | m3.observability.ArtifactEntry | m3.observability.EvaluationEntry | m3.observability.DiagnosticEntry | m3.observability.RawMessageEntry | m3.observability.ProviderEntry, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `schema_id: typing.Literal['m3.trace_view']` (default: `'m3.trace_view'`).
 - `schema_version: typing.Literal['1.1', '1.2']` (default: `'1.1'`).
@@ -3759,9 +4048,19 @@ Public fields and methods:
 - `completeness: typing.Literal['complete', 'partial']` (default: `'complete'`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `agent: m3.types.AgentIdentity | None` (default: `None`).
-- `runtime: m3.observability.DirectTrace | m3.observability.OpenCodeTrace | m3.observability.ClaudeCodeTrace | m3.observability.CodexTrace | m3.observability.PiTrace | m3.observability.ACPTrace` (required).
-- `summary: &lt;class 'm3.observability.TraceSummary'&gt;` (required).
+- `runtime: m3.observability.DirectTrace | m3.observability.OpenCodeTrace | m3.observability.ClaudeCodeTrace | m3.observability.CodexTrace | m3.observability.PiTrace | m3.observability.ACPTrace` (default factory: `m3.observability.DirectTrace`).
+- `summary: &lt;class 'm3.observability.TraceSummary'&gt;` (default factory: `m3.observability.TraceSummary`).
 - `timeline: tuple[typing.Annotated[m3.observability.LifecycleEntry | m3.observability.MessageEntry | m3.observability.ReasoningEntry | m3.observability.ToolCallEntry | m3.observability.ProtocolEntry | m3.observability.TransportEntry | m3.observability.InitializationEntry | m3.observability.UsageEntry | m3.observability.InteractionEntry | m3.observability.ElicitationEntry | m3.observability.ProcessEntry | m3.observability.WorkspaceEntry | m3.observability.ArtifactEntry | m3.observability.EvaluationEntry | m3.observability.DiagnosticEntry | m3.observability.RawMessageEntry | m3.observability.ProviderEntry, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]` (default: `()`).
+- `tool_calls` (property)
+- `messages` (property)
+- `reasoning` (property)
+- `protocol` (property)
+- `transports` (property)
+- `raw_messages` (property)
+- `interactions` (property)
+- `elicitations` (property): Return keyed elicitation interactions correlated to MRTR rounds.
+- `processes` (property)
+- `diagnostics` (property)
 - `for_turn(self, turn: '_TurnResult | _TurnState | _TurnId | str') -&gt; 'TraceView'`: Return the finalized evidence belonging to one turn.
 - `for_session(self, session_id: '_SessionId | str') -&gt; 'TraceView'`
 - `for_server(self, server_binding: 'str') -&gt; 'TraceView'`
@@ -3773,7 +4072,7 @@ Public fields and methods:
 
 A stable MCP transport lifecycle observation.
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['transport']` (default: `'transport'`).
@@ -3785,19 +4084,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `phase: typing.Literal['connected', 'disconnected']` (required).
-- `configured: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (required).
-- `instrumented: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (required).
+- `configured: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `instrumented: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `UsageEntry`
 
 `m3.async_api.UsageEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['usage'] = 'usage', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), input_tokens: m3.observability.Observation[int] = &lt;factory&gt;, output_tokens: m3.observability.Observation[int] = &lt;factory&gt;, reasoning_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cache_creation_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cache_read_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cache_write_tokens: m3.observability.Observation[int] = &lt;factory&gt;, total_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cost: m3.observability.Observation[float] = &lt;factory&gt;, currency: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['usage']` (default: `'usage'`).
@@ -3809,19 +4108,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `UsageValue`
 
@@ -3829,36 +4128,36 @@ Public fields and methods:
 
 Value-only usage aggregate used by summaries and runtime metadata.
 
-Public fields and methods:
+Public members:
 
-- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `WireToolCall`
 
 `m3.async_api.WireToolCall(*, jsonrpc_id: m3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]] = &lt;factory&gt;, server: m3.observability.Observation[str] = &lt;factory&gt;, tool: m3.observability.Observation[str] = &lt;factory&gt;, arguments: m3.observability.Observation[JsonValue] = &lt;factory&gt;, result: m3.observability.Observation[ToolResult] = &lt;factory&gt;, latency_ms: m3.observability.Observation[float] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (required).
-- `latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `WorkspaceEntry`
 
 `m3.async_api.WorkspaceEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['workspace'] = 'workspace', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), change: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['workspace']` (default: `'workspace'`).
@@ -3870,11 +4169,11 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `change: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `change: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ## `m3.matchers`
 
@@ -3884,7 +4183,7 @@ Public fields and methods:
 
 Collect assertion failures and report them together on context exit.
 
-Public fields and methods:
+Public members:
 
 - `expect(self, subject: '_Any') -&gt; 'Expectation[_Any]'`
 
@@ -3894,7 +4193,7 @@ Public fields and methods:
 
 One-shot assertion facade; optional pytest recording persists checks.
 
-Public fields and methods:
+Public members:
 
 - `to_have_text(self, expected: 'str') -&gt; 'None'`
 - `to_have_text_containing(self, expected: 'str') -&gt; 'None'`
@@ -3949,7 +4248,7 @@ A recorded artifact does not match its content-addressed metadata.
 
 ExpectedCall(method: 'str', matcher: '_Mapping[str, _Any]' = &lt;factory&gt;, response: '_Any' = None, optional_call: 'bool' = False, minimum: 'int' = 1, maximum: 'int | None' = 1, subset_match: 'bool' = False, unordered_group: 'str | None' = None, fallback_call: 'bool' = False, calls: 'int' = 0)
 
-Public fields and methods:
+Public members:
 
 - `optional(self) -&gt; 'ExpectedCall'`
 - `repeated(self, minimum: 'int' = 0, maximum: 'int | None' = None) -&gt; 'ExpectedCall'`
@@ -3964,7 +4263,7 @@ Public fields and methods:
 
 Deterministic faults for decoded in-process or literal stdio fixtures.
 
-Public fields and methods:
+Public members:
 
 - `delay(self, method: 'str', seconds: 'float') -&gt; 'FaultInjector'`
 - `hang(self, method: 'str', gate: 'Gate | None' = None) -&gt; 'Gate'`
@@ -3992,8 +4291,9 @@ Public fields and methods:
 
 Deterministic async gate for delay and hang tests.
 
-Public fields and methods:
+Public members:
 
+- `is_open` (property)
 - `open(self) -&gt; 'None'`
 - `release(self) -&gt; 'None'`
 - `close(self) -&gt; 'None'`
@@ -4012,7 +4312,7 @@ A scripted mock interaction did not match.
 
 Decorator-defined and stateful official in-process MCP server.
 
-Public fields and methods:
+Public members:
 
 - `tool(self, name: 'str | _Callable[..., _Any] | None' = None, *, description: 'str | None' = None, input_schema: '_Mapping[str, _Any] | None' = None, output_schema: '_Mapping[str, _Any] | None' = None) -&gt; '_Any'`
 - `resource(self, uri: 'str', *, name: 'str | None' = None, mime_type: 'str | None' = None) -&gt; '_Callable[[_Callable[_P, _R]], _Callable[_P, _R]]'`
@@ -4037,7 +4337,7 @@ Public fields and methods:
 
 Content-addressed artifact metadata carried by a recording.
 
-Public fields and methods:
+Public members:
 
 - `from_bytes(cls, artifact_id: 'str', content: 'bytes', *, media_type: 'str | None' = None) -&gt; 'RecordedArtifact'`
 - `validate(self, content: 'bytes') -&gt; 'None'`
@@ -4049,7 +4349,7 @@ Public fields and methods:
 
 RecordedInteraction(method: 'str', params: '_Mapping[str, _JsonValue]', response: '_JsonValue | None' = None, error: '_Mapping[str, _JsonValue] | None' = None, sequence: 'int' = 0, provenance: 'tuple[str, ...]' = ())
 
-Public fields and methods:
+Public members:
 
 - `model(self) -&gt; 'dict[str, _JsonValue]'`
 
@@ -4059,7 +4359,7 @@ Public fields and methods:
 
 Recording(interactions: 'tuple[RecordedInteraction, ...]', redaction_bound: 'bool', provenance: 'tuple[str, ...]' = (), server_name: 'str' = 'mock-mcp', server_version: 'str' = '1', initialization: '_Mapping[str, _JsonValue]' = &lt;factory&gt;, artifacts: 'tuple[RecordedArtifact, ...]' = (), redaction_bindings: 'tuple[RedactionBinding, ...]' = &lt;factory&gt;, _runtime: '_RedactionRuntime' = &lt;factory&gt;)
 
-Public fields and methods:
+Public members:
 
 - `with_redaction_config(self, config: '_RedactionConfig') -&gt; 'Recording'`: Bind an explicit in-process redaction config without serializing secrets.
 - `validate_artifacts(self, contents: '_Mapping[str, bytes]') -&gt; 'None'`: Validate every supplied artifact against the recorded digest/length.
@@ -4074,7 +4374,7 @@ Public fields and methods:
 
 Serializable redaction provenance without secret values.
 
-Public fields and methods:
+Public members:
 
 - `model(self) -&gt; 'dict[str, _JsonValue]'`
 
@@ -4090,10 +4390,11 @@ A strict replay request differs from the recorded interaction.
 
 Strict JSON-only replay matcher.
 
-Public fields and methods:
+Public members:
 
 - `match(self, method: 'str', params: '_Mapping[str, _Any]') -&gt; 'RecordedInteraction'`
 - `verify_replay(self) -&gt; 'None'`
+- `provenance` (property)
 
 ### `VirtualClock`
 
@@ -4101,8 +4402,9 @@ Public fields and methods:
 
 A process-local virtual clock with awaitable deterministic sleeps.
 
-Public fields and methods:
+Public members:
 
+- `now` (property)
 - `sleep(self, duration: 'float') -&gt; 'None'`
 - `advance(self, duration: 'float') -&gt; 'float'`
 
@@ -4118,14 +4420,14 @@ Public fields and methods:
 
 Structured evaluator output, compatible with scalar verdicts.
 
-Public fields and methods:
+Public members:
 
 - `status: &lt;enum 'EvaluationStatus'&gt;` (required).
 - `score: float | None` (default: `None`).
 - `rationale: str | None` (default: `None`).
-- `metrics: collections.abc.Mapping[str, float]` (required).
+- `metrics: collections.abc.Mapping[str, float]` (default factory: `builtins.dict`).
 - `provenance: m3.types.EvaluationSource | None` (default: `None`).
-- `details: collections.abc.Mapping[str, typing.Any]` (required).
+- `details: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 
 ### `EvaluationRunner`
 
@@ -4133,7 +4435,7 @@ Public fields and methods:
 
 Run and persist deterministic evaluations in a separate store.
 
-Public fields and methods:
+Public members:
 
 - `register(self, name: 'str', evaluator: 'EvaluatorCallable | AsyncEvaluator') -&gt; 'EvaluatorRegistration'`
 - `evaluate(self, subject: '_Any', evaluator: 'str | EvaluatorCallable', *, required: 'bool' = False, goal: 'str | None' = None, trace: '_TraceResult | None' = None, artifacts: '_Sequence[_ArtifactRef]' = (), metadata: '_Mapping[str, str | int | float | bool | None] | None' = None, evaluation_id: '_EvaluationId | str | None' = None, execution_id: '_ExecutionId | str | None' = None, turn_id: '_TurnId | str | None' = None, case_id: 'str | None' = None) -&gt; '_EvaluationResult'`
@@ -4144,7 +4446,7 @@ Public fields and methods:
 
 `m3.evaluations.EvaluationStore(*args, **kwargs)`
 
-Public fields and methods:
+Public members:
 
 - `save(self, result: '_EvaluationResult') -&gt; 'None'`
 - `get(self, evaluation_id: '_EvaluationId | str') -&gt; '_EvaluationResult | None'`
@@ -4172,7 +4474,7 @@ An evaluator callback over an immutable context.
 
 Explicit runtime registry for evaluator callables.
 
-Public fields and methods:
+Public members:
 
 - `register(self, name: 'str', evaluator: '_Any') -&gt; 'EvaluatorRegistration'`
 - `get(self, name: 'str') -&gt; '_Any'`
@@ -4190,7 +4492,7 @@ Runtime-only registration; only its stable name is serializable.
 
 Small independent store; evaluations never rewrite execution state.
 
-Public fields and methods:
+Public members:
 
 - `save(self, result: '_EvaluationResult') -&gt; 'None'`
 - `get(self, evaluation_id: '_EvaluationId | str') -&gt; '_EvaluationResult | None'`
@@ -4234,11 +4536,12 @@ Return a deterministic, redacted, JSON-compatible snapshot value.
 
 A qualified advertised tool identity used during preflight.
 
-Public fields and methods:
+Public members:
 
 - `server: &lt;class 'str'&gt;` (required).
 - `name: &lt;class 'str'&gt;` (required).
 - `destructive: &lt;class 'bool'&gt;` (default: `False`).
+- `qualified_name` (property)
 
 ### `ToolPolicyDecision`
 
@@ -4246,7 +4549,7 @@ Public fields and methods:
 
 Decision for one qualified tool call.
 
-Public fields and methods:
+Public members:
 
 - `allowed: &lt;class 'bool'&gt;` (required).
 - `requires_confirmation: &lt;class 'bool'&gt;` (default: `False`).
@@ -4259,7 +4562,7 @@ Public fields and methods:
 
 Truthful requested/enforced/observed policy status.
 
-Public fields and methods:
+Public members:
 
 - `requested: &lt;class 'str'&gt;` (required).
 - `enforced: str | None` (default: `None`).
@@ -4274,8 +4577,9 @@ Public fields and methods:
 
 Evaluate portable and explicitly native tool policies.
 
-Public fields and methods:
+Public members:
 
+- `tools` (property)
 - `preflight(self, policy: '_ToolPolicy', *, harness_name: 'str', supports_enforcement: 'bool') -&gt; 'ToolPolicyEvidence'`
 - `decide(self, policy: '_ToolPolicy', descriptor: 'ToolDescriptor', *, harness_name: 'str', supports_enforcement: 'bool', confirm: 'ConfirmationHook | None' = None) -&gt; 'ToolPolicyDecision'`
 
@@ -4329,11 +4633,11 @@ Selected typed server for an M3 marked test.
 
 One deterministic call definition owned by a server case.
 
-Public fields and methods:
+Public members:
 
 - `name: &lt;class 'str'&gt;` (required).
 - `id: str | None` (default: `None`).
-- `arguments: collections.abc.Mapping[str, typing.Any]` (required).
+- `arguments: collections.abc.Mapping[str, typing.Any]` (default factory: `builtins.dict`).
 - `prompt: str | m3.types.UserMessage | None` (default: `None`).
 
 ### `ServerCase`
@@ -4342,7 +4646,7 @@ Public fields and methods:
 
 A serializable MCP server and its owned logical tool cases.
 
-Public fields and methods:
+Public members:
 
 - `name: &lt;class 'str'&gt;` (required).
 - `server: m3.types.StdioServer | m3.types.HTTPServer | m3.types.InProcessServer` (required).
@@ -4355,7 +4659,7 @@ Public fields and methods:
 
 Expand server-owned deterministic tool cases in declared order.
 
-Public fields and methods:
+Public members:
 
 - `servers: tuple[m3.matrix.ServerCase, ...]` (required).
 - `id: str | None` (default: `None`).
@@ -4370,7 +4674,7 @@ Public fields and methods:
 
 One server-owned deterministic tool cell.
 
-Public fields and methods:
+Public members:
 
 - `id: &lt;class 'str'&gt;` (required).
 - `server: &lt;class 'm3.matrix.ServerCase'&gt;` (required).
@@ -4388,24 +4692,24 @@ Public fields and methods:
 
 `m3.observability.ACPTrace(*, kind: Literal['acp'] = 'acp', session_id: m3.observability.Observation[str] = &lt;factory&gt;, protocol_version: m3.observability.Observation[str] = &lt;factory&gt;, agent_identity: m3.observability.Observation[JsonValue] = &lt;factory&gt;, available_modes: m3.observability.Observation[JsonValue] = &lt;factory&gt;, current_mode: m3.observability.Observation[str] = &lt;factory&gt;, config_options: m3.observability.Observation[JsonValue] = &lt;factory&gt;, selected_config: m3.observability.Observation[JsonValue] = &lt;factory&gt;, plan_state_available: m3.observability.Observation[bool] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['acp']` (default: `'acp'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `agent_identity: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `available_modes: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `current_mode: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `config_options: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `selected_config: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `plan_state_available: &lt;class 'm3.observability.Observation[bool]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `agent_identity: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `available_modes: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `current_mode: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `config_options: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `selected_config: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `plan_state_available: &lt;class 'm3.observability.Observation[bool]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability.ACPTrace.&lt;lambda&gt;`).
 
 ### `ArtifactEntry`
 
 `m3.observability.ArtifactEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['artifact'] = 'artifact', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), artifact: m3.types.ArtifactRef) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['artifact']` (default: `'artifact'`).
@@ -4417,7 +4721,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -4429,7 +4733,7 @@ Public fields and methods:
 
 Boundaries for redacted provider/MCP evidence capture.
 
-Public fields and methods:
+Public members:
 
 - `capture_raw_evidence: &lt;class 'bool'&gt;` (default: `True`).
 - `capture_provider_messages: &lt;class 'bool'&gt;` (default: `True`).
@@ -4442,41 +4746,49 @@ Public fields and methods:
 
 `m3.observability.ClaudeCodeTrace(*, kind: Literal['claude_code'] = 'claude_code', session_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, result_subtype: m3.observability.Observation[str] = &lt;factory&gt;, stop_reason: m3.observability.Observation[str] = &lt;factory&gt;, service_tier: m3.observability.Observation[str] = &lt;factory&gt;, api_duration_ms: m3.observability.Observation[float] = &lt;factory&gt;, encrypted_reasoning: m3.observability.Observation[bool] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['claude_code']` (default: `'claude_code'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `result_subtype: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `service_tier: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `api_duration_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `encrypted_reasoning: &lt;class 'm3.observability.Observation[bool]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result_subtype: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `service_tier: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `api_duration_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `encrypted_reasoning: &lt;class 'm3.observability.Observation[bool]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `CodexTrace`
 
 `m3.observability.CodexTrace(*, kind: Literal['codex'] = 'codex', thread_id: m3.observability.Observation[str] = &lt;factory&gt;, turn_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, finish_reason: m3.observability.Observation[str] = &lt;factory&gt;, sandbox: m3.observability.Observation[str] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['codex']` (default: `'codex'`).
-- `thread_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `turn_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `sandbox: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `thread_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `turn_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `sandbox: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `CorrelationState`
 
 `m3.observability.CorrelationState(*values)`
 
+Public members:
+
+- `CORRELATED` = `'correlated'`
+- `REPORTED_ONLY` = `'reported_only'`
+- `WIRE_ONLY` = `'wire_only'`
+- `AMBIGUOUS` = `'ambiguous'`
+- `UNAVAILABLE` = `'unavailable'`
+
 ### `DiagnosticEntry`
 
 `m3.observability.DiagnosticEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['diagnostic'] = 'diagnostic', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), code: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], message: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], stage: Annotated[str | None, MaxLen(max_length=128)] = None, operation: Annotated[str | None, MaxLen(max_length=256)] = None, elapsed_seconds: Annotated[float | None, Ge(ge=0)] = None, timeout_seconds: Annotated[float | None, Gt(gt=0)] = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['diagnostic']` (default: `'diagnostic'`).
@@ -4488,7 +4800,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -4503,12 +4815,12 @@ Public fields and methods:
 
 `m3.observability.DirectTrace(*, kind: Literal['direct'] = 'direct', transport: m3.observability.Observation[TransportKind] = &lt;factory&gt;, protocol: m3.observability.Observation[str] = &lt;factory&gt;, initialization: m3.observability.Observation[InitializationValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['direct']` (default: `'direct'`).
-- `transport: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (required).
-- `protocol: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `initialization: &lt;class 'm3.observability.Observation[InitializationValue]'&gt;` (required).
+- `transport: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `protocol: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `initialization: &lt;class 'm3.observability.Observation[InitializationValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ElicitationEntry`
 
@@ -4516,7 +4828,7 @@ Public fields and methods:
 
 One keyed elicitation embedded in an MRTR input-required round.
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['elicitation']` (default: `'elicitation'`).
@@ -4528,7 +4840,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -4539,20 +4851,20 @@ Public fields and methods:
 - `round_index: &lt;class 'int'&gt;` (required).
 - `request_key: &lt;class 'str'&gt;` (required).
 - `mode: typing.Literal['form', 'url']` (required).
-- `message: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `requested_schema: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `url: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `elicitation_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `message: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `requested_schema: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `url: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `elicitation_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `action: typing.Optional[typing.Literal['accept', 'decline', 'cancel']]` (default: `None`).
-- `content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `EvaluationEntry`
 
 `m3.observability.EvaluationEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['evaluation'] = 'evaluation', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), evaluation: m3.types.EvaluationResult) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['evaluation']` (default: `'evaluation'`).
@@ -4564,7 +4876,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -4576,7 +4888,7 @@ Public fields and methods:
 
 Typed result of bounded, redacted raw-evidence capture.
 
-Public fields and methods:
+Public members:
 
 - `reference: &lt;class 'm3.types.EvidenceRef'&gt;` (required).
 - `preview: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
@@ -4589,7 +4901,7 @@ Public fields and methods:
 
 `m3.observability.EvidenceConflict(*, field: Literal['server', 'tool', 'arguments', 'result', 'status'], reported: m3.observability.Observation[JsonValue], wire: m3.observability.Observation[JsonValue]) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `field: typing.Literal['server', 'tool', 'arguments', 'result', 'status']` (required).
 - `reported: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
@@ -4599,7 +4911,7 @@ Public fields and methods:
 
 `m3.observability.HttpExchange(*, method: Annotated[str, MinLen(min_length=1)], status_code: Annotated[int, Ge(ge=100), Le(le=599)], headers: tuple[m3.observability.SafeHttpHeader, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `method: &lt;class 'str'&gt;` (required).
 - `status_code: &lt;class 'int'&gt;` (required).
@@ -4609,7 +4921,7 @@ Public fields and methods:
 
 `m3.observability.InitializationEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['initialization'] = 'initialization', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), protocol_version: m3.observability.Observation[str] = &lt;factory&gt;, server_name: m3.observability.Observation[str] = &lt;factory&gt;, server_version: m3.observability.Observation[str] = &lt;factory&gt;, instructions: m3.observability.Observation[str] = &lt;factory&gt;, capabilities: m3.observability.Observation[JsonValue] = &lt;factory&gt;, tools: m3.observability.Observation[tuple[ToolInfo, ...]] = &lt;factory&gt;, resources: m3.observability.Observation[tuple[ResourceInfo, ...]] = &lt;factory&gt;, resource_templates: m3.observability.Observation[tuple[TemplateInfo, ...]] = &lt;factory&gt;, prompts: m3.observability.Observation[tuple[PromptInfo, ...]] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['initialization']` (default: `'initialization'`).
@@ -4621,19 +4933,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (required).
-- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (required).
-- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (required).
-- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (required).
+- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `InitializationValue`
 
@@ -4641,23 +4953,23 @@ Public fields and methods:
 
 Value-only initialization metadata used by runtime information.
 
-Public fields and methods:
+Public members:
 
-- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (required).
-- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (required).
-- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (required).
-- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (required).
+- `protocol_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_name: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_version: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `instructions: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `capabilities: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tools: &lt;class 'm3.observability.Observation[tuple[ToolInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resources: &lt;class 'm3.observability.Observation[tuple[ResourceInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `resource_templates: &lt;class 'm3.observability.Observation[tuple[TemplateInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `prompts: &lt;class 'm3.observability.Observation[tuple[PromptInfo, ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `InteractionEntry`
 
 `m3.observability.InteractionEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['interaction'] = 'interaction', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), interaction_kind: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], request: m3.observability.Observation[JsonValue] = &lt;factory&gt;, response: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['interaction']` (default: `'interaction'`).
@@ -4669,19 +4981,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `interaction_kind: &lt;class 'str'&gt;` (required).
-- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `LifecycleEntry`
 
 `m3.observability.LifecycleEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['lifecycle'] = 'lifecycle', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), phase: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)]) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['lifecycle']` (default: `'lifecycle'`).
@@ -4693,7 +5005,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -4703,7 +5015,7 @@ Public fields and methods:
 
 `m3.observability.MessageEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['message'] = 'message', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), message_id: m3.observability.Observation[str] = &lt;factory&gt;, role: m3.observability.MessageRole = &lt;MessageRole.ASSISTANT: 'assistant'&gt;, content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...] = (), stop_reason: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['message']` (default: `'message'`).
@@ -4715,18 +5027,25 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `message_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `message_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `role: &lt;enum 'MessageRole'&gt;` (default: `&lt;MessageRole.ASSISTANT: 'assistant'&gt;`).
 - `content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]` (default: `()`).
-- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `stop_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `MessageRole`
 
 `m3.observability.MessageRole(*values)`
+
+Public members:
+
+- `USER` = `'user'`
+- `ASSISTANT` = `'assistant'`
+- `SYSTEM` = `'system'`
+- `TOOL` = `'tool'`
 
 ### `Observation`
 
@@ -4734,7 +5053,7 @@ Public fields and methods:
 
 A typed value with explicit availability and provenance.
 
-Public fields and methods:
+Public members:
 
 - `state: &lt;enum 'ObservationState'&gt;` (required).
 - `value: typing.Optional[~_T]` (default: `None`).
@@ -4746,44 +5065,69 @@ Public fields and methods:
 
 `m3.observability.ObservationReason(*values)`
 
+Public members:
+
+- `PROVIDER_DID_NOT_EMIT` = `'provider_did_not_emit'`
+- `PROVIDER_HIDDEN` = `'provider_hidden'`
+- `PROVIDER_ENCRYPTED` = `'provider_encrypted'`
+- `HARNESS_UNSUPPORTED` = `'harness_unsupported'`
+- `TRANSPORT_NOT_APPLICABLE` = `'transport_not_applicable'`
+- `CAPTURE_DISABLED` = `'capture_disabled'`
+- `CAPTURE_FAILED` = `'capture_failed'`
+- `EVIDENCE_TRUNCATED` = `'evidence_truncated'`
+- `REDACTED_BY_POLICY` = `'redacted_by_policy'`
+- `CORRELATION_UNAVAILABLE` = `'correlation_unavailable'`
+- `MALFORMED_SOURCE` = `'malformed_source'`
+
 ### `ObservationState`
 
 `m3.observability.ObservationState(*values)`
 
 How completely a provider-dependent value was observed.
 
+Public members:
+
+- `OBSERVED` = `'observed'`
+- `NOT_EMITTED` = `'not_emitted'`
+- `UNSUPPORTED` = `'unsupported'`
+- `UNAVAILABLE` = `'unavailable'`
+- `PROVIDER_HIDDEN` = `'provider_hidden'`
+- `ENCRYPTED` = `'encrypted'`
+- `REDACTED` = `'redacted'`
+- `TRUNCATED` = `'truncated'`
+
 ### `OpenCodeTrace`
 
 `m3.observability.OpenCodeTrace(*, kind: Literal['opencode'] = 'opencode', session_id: m3.observability.Observation[str] = &lt;factory&gt;, provider_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, finish_reason: m3.observability.Observation[str] = &lt;factory&gt;, http_lifecycle: m3.observability.Observation[JsonValue] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['opencode']` (default: `'opencode'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `http_lifecycle: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `http_lifecycle: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `PiTrace`
 
 `m3.observability.PiTrace(*, kind: Literal['pi'] = 'pi', session_id: m3.observability.Observation[str] = &lt;factory&gt;, provider_id: m3.observability.Observation[str] = &lt;factory&gt;, model_id: m3.observability.Observation[str] = &lt;factory&gt;, finish_reason: m3.observability.Observation[str] = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `kind: typing.Literal['pi']` (default: `'pi'`).
-- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `session_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `provider_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `model_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `finish_reason: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ProcessEntry`
 
 `m3.observability.ProcessEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['process'] = 'process', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), executable: m3.observability.Observation[str] = &lt;factory&gt;, pid: m3.observability.Observation[int] = &lt;factory&gt;, exit_code: m3.observability.Observation[int] = &lt;factory&gt;, signal: m3.observability.Observation[int] = &lt;factory&gt;, stderr: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['process']` (default: `'process'`).
@@ -4795,15 +5139,15 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `executable: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `pid: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `exit_code: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `signal: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `stderr: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `executable: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `pid: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `exit_code: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `signal: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `stderr: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ProtocolCallAttempt`
 
@@ -4811,27 +5155,27 @@ Public fields and methods:
 
 One wire-level attempt belonging to a prompt or resource call.
 
-Public fields and methods:
+Public members:
 
 - `attempt_index: &lt;class 'int'&gt;` (required).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `input_required: &lt;class 'bool'&gt;` (default: `False`).
-- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.INCOMPLETE: 'incomplete'&gt;`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 
 ### `ProtocolEntry`
 
 `m3.observability.ProtocolEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['protocol'] = 'protocol', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), protocol: m3.observability.ProtocolKind, method: m3.observability.Observation[str] = &lt;factory&gt;, direction: m3.types.EventDirection = &lt;EventDirection.INTERNAL: 'internal'&gt;, jsonrpc_id: m3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]] = &lt;factory&gt;, request: m3.observability.Observation[JsonValue] = &lt;factory&gt;, response: m3.observability.Observation[JsonValue] = &lt;factory&gt;, error: m3.observability.Observation[ProtocolErrorInfo] = &lt;factory&gt;, http: m3.observability.Observation[HttpExchange] = &lt;factory&gt;, operation_kind: Optional[Literal['prompt', 'resource']] = None, operation_name: m3.observability.Observation[str] = &lt;factory&gt;, attempts: tuple[m3.observability.ProtocolCallAttempt, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['protocol']` (default: `'protocol'`).
@@ -4843,41 +5187,48 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `protocol: &lt;enum 'ProtocolKind'&gt;` (required).
-- `method: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `method: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `direction: &lt;enum 'EventDirection'&gt;` (default: `&lt;EventDirection.INTERNAL: 'internal'&gt;`).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `error: &lt;class 'm3.observability.Observation[ProtocolErrorInfo]'&gt;` (required).
-- `http: &lt;class 'm3.observability.Observation[HttpExchange]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `response: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `error: &lt;class 'm3.observability.Observation[ProtocolErrorInfo]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `http: &lt;class 'm3.observability.Observation[HttpExchange]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `operation_kind: typing.Optional[typing.Literal['prompt', 'resource']]` (default: `None`).
-- `operation_name: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `operation_name: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `attempts: tuple[m3.observability.ProtocolCallAttempt, ...]` (default: `()`).
 
 ### `ProtocolErrorInfo`
 
 `m3.observability.ProtocolErrorInfo(*, code: int | str | None = None, message: Annotated[str, MinLen(min_length=1), MaxLen(max_length=4096)], data: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `code: int | str | None` (default: `None`).
 - `message: &lt;class 'str'&gt;` (required).
-- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ProtocolKind`
 
 `m3.observability.ProtocolKind(*values)`
 
+Public members:
+
+- `MCP` = `'mcp'`
+- `ACP` = `'acp'`
+- `PROVIDER_HTTP` = `'provider_http'`
+- `PROVIDER_STREAM` = `'provider_stream'`
+
 ### `ProviderEntry`
 
 `m3.observability.ProviderEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['provider'] = 'provider', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), provider: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], category: Annotated[str, MinLen(min_length=1), MaxLen(max_length=128)], data: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['provider']` (default: `'provider'`).
@@ -4889,19 +5240,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `provider: &lt;class 'str'&gt;` (required).
 - `category: &lt;class 'str'&gt;` (required).
-- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `data: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `RawEvidence`
 
 `m3.observability.RawEvidence(*, reference: m3.types.EvidenceRef, media_type: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], content: Union[JsonValue, str], size_bytes: Annotated[int, Ge(ge=0)], returned_size_bytes: Annotated[int, Ge(ge=0)], truncated: bool = False, redacted: Literal[True] = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `reference: &lt;class 'm3.types.EvidenceRef'&gt;` (required).
 - `media_type: &lt;class 'str'&gt;` (required).
@@ -4915,11 +5266,19 @@ Public fields and methods:
 
 `m3.observability.RawEvidenceSource(*values)`
 
+Public members:
+
+- `MCP` = `'mcp'`
+- `ACP` = `'acp'`
+- `OPENCODE` = `'opencode'`
+- `CLAUDE_CODE` = `'claude_code'`
+- `PROCESS_STDERR` = `'process_stderr'`
+
 ### `RawMessageEntry`
 
 `m3.observability.RawMessageEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['raw_message'] = 'raw_message', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), source: m3.observability.RawEvidenceSource, direction: m3.types.EventDirection = &lt;EventDirection.INTERNAL: 'internal'&gt;, media_type: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], preview: m3.observability.Observation[Union[JsonValue, str]] = &lt;factory&gt;, evidence_ref: m3.types.EvidenceRef | None = None, size_bytes: Annotated[int, Ge(ge=0)] = 0, redacted: Literal[True] = True) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['raw_message']` (default: `'raw_message'`).
@@ -4931,14 +5290,14 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `source: &lt;enum 'RawEvidenceSource'&gt;` (required).
 - `direction: &lt;enum 'EventDirection'&gt;` (default: `&lt;EventDirection.INTERNAL: 'internal'&gt;`).
 - `media_type: &lt;class 'str'&gt;` (required).
-- `preview: &lt;class 'm3.observability.Observation[Union[JsonValue, str]]'&gt;` (required).
+- `preview: &lt;class 'm3.observability.Observation[Union[JsonValue, str]]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `evidence_ref: m3.types.EvidenceRef | None` (default: `None`).
 - `size_bytes: &lt;class 'int'&gt;` (default: `0`).
 - `redacted: typing.Literal[True]` (default: `True`).
@@ -4947,7 +5306,7 @@ Public fields and methods:
 
 `m3.observability.ReasoningEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['reasoning'] = 'reasoning', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), block_id: m3.observability.Observation[str] = &lt;factory&gt;, content: m3.observability.Observation[tuple[Annotated[Union[TextContent, FileContent, ImageContent, AudioContent, ResourceLink, OpaqueContent], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['reasoning']` (default: `'reasoning'`).
@@ -4959,25 +5318,25 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `block_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `content: &lt;class 'm3.observability.Observation[tuple[Annotated[Union[TextContent, FileContent, ImageContent, AudioContent, ResourceLink, OpaqueContent], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]]'&gt;` (required).
+- `block_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `content: &lt;class 'm3.observability.Observation[tuple[Annotated[Union[TextContent, FileContent, ImageContent, AudioContent, ResourceLink, OpaqueContent], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `ReportedToolCall`
 
 `m3.observability.ReportedToolCall(*, provider_call_id: m3.observability.Observation[str] = &lt;factory&gt;, server: m3.observability.Observation[str] = &lt;factory&gt;, tool: m3.observability.Observation[str] = &lt;factory&gt;, arguments: m3.observability.Observation[JsonValue] = &lt;factory&gt;, result: m3.observability.Observation[JsonValue] = &lt;factory&gt;, status: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `status: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `status: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `RuntimeTraceInfo`
 
@@ -4989,7 +5348,7 @@ Runtime representation of an annotated type.
 
 `m3.observability.SafeHttpHeader(*, name: Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id'], value: str) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `name: typing.Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id']` (required).
 - `value: &lt;class 'str'&gt;` (required).
@@ -5000,27 +5359,27 @@ Public fields and methods:
 
 One wire-level attempt belonging to a logical tool call.
 
-Public fields and methods:
+Public members:
 
 - `attempt_index: &lt;class 'int'&gt;` (required).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `request_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `continuation_state: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `input_responses: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `operation_params: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `input_required: &lt;class 'bool'&gt;` (default: `False`).
-- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (required).
-- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `raw_result: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `status: &lt;enum 'ToolCallStatus'&gt;` (default: `&lt;ToolCallStatus.INCOMPLETE: 'incomplete'&gt;`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 
 ### `ToolCallEntry`
 
 `m3.observability.ToolCallEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['tool_call'] = 'tool_call', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), call_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], provider_call_id: m3.observability.Observation[str] = &lt;factory&gt;, server: m3.observability.Observation[str] = &lt;factory&gt;, tool: m3.observability.Observation[str] = &lt;factory&gt;, arguments: m3.observability.Observation[JsonValue] = &lt;factory&gt;, result: m3.observability.Observation[ToolResult] = &lt;factory&gt;, tool_status: m3.observability.ToolCallStatus = &lt;ToolCallStatus.INCOMPLETE: 'incomplete'&gt;, correlation: m3.observability.CorrelationState = &lt;CorrelationState.UNAVAILABLE: 'unavailable'&gt;, jsonrpc_id: m3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]] = &lt;factory&gt;, server_latency_ms: m3.observability.Observation[float] = &lt;factory&gt;, policy: m3.observability.Observation[ToolPolicyDecision] = &lt;factory&gt;, reported: m3.observability.Observation[ReportedToolCall] = &lt;factory&gt;, wire: m3.observability.Observation[WireToolCall] = &lt;factory&gt;, conflicts: tuple[m3.observability.EvidenceConflict, ...] = (), attempts: tuple[m3.observability.ToolCallAttempt, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['tool_call']` (default: `'tool_call'`).
@@ -5032,23 +5391,23 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `call_id: &lt;class 'str'&gt;` (required).
-- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (required).
+- `provider_call_id: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `tool_status: &lt;enum 'ToolCallStatus'&gt;` (default: `&lt;ToolCallStatus.INCOMPLETE: 'incomplete'&gt;`).
 - `correlation: &lt;enum 'CorrelationState'&gt;` (default: `&lt;CorrelationState.UNAVAILABLE: 'unavailable'&gt;`).
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `server_latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `policy: &lt;class 'm3.observability.Observation[ToolPolicyDecision]'&gt;` (required).
-- `reported: &lt;class 'm3.observability.Observation[ReportedToolCall]'&gt;` (required).
-- `wire: &lt;class 'm3.observability.Observation[WireToolCall]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server_latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `policy: &lt;class 'm3.observability.Observation[ToolPolicyDecision]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `reported: &lt;class 'm3.observability.Observation[ReportedToolCall]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `wire: &lt;class 'm3.observability.Observation[WireToolCall]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `conflicts: tuple[m3.observability.EvidenceConflict, ...]` (default: `()`).
 - `attempts: tuple[m3.observability.ToolCallAttempt, ...]` (default: `()`).
 
@@ -5056,16 +5415,26 @@ Public fields and methods:
 
 `m3.observability.ToolCallStatus(*values)`
 
+Public members:
+
+- `SUCCESS` = `'success'`
+- `TOOL_ERROR` = `'tool_error'`
+- `PROTOCOL_ERROR` = `'protocol_error'`
+- `TRANSPORT_ERROR` = `'transport_error'`
+- `CANCELLED` = `'cancelled'`
+- `TIMED_OUT` = `'timed_out'`
+- `INCOMPLETE` = `'incomplete'`
+
 ### `ToolResult`
 
 `m3.observability.ToolResult(*, content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...] = (), structured_content: m3.observability.Observation[JsonValue] = &lt;factory&gt;, is_error: bool = False, error: m3.observability.Observation[ErrorInfo] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `content: tuple[typing.Annotated[m3.types.TextContent | m3.types.FileContent | m3.types.ImageContent | m3.types.AudioContent | m3.types.ResourceLink | m3.types.OpaqueContent, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]` (default: `()`).
-- `structured_content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `structured_content: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `is_error: &lt;class 'bool'&gt;` (default: `False`).
-- `error: &lt;class 'm3.observability.Observation[ErrorInfo]'&gt;` (required).
+- `error: &lt;class 'm3.observability.Observation[ErrorInfo]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `TraceEntry`
 
@@ -5077,7 +5446,7 @@ Runtime representation of an annotated type.
 
 `m3.observability.TraceEntryBase(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Annotated[str, MinLen(min_length=1), MaxLen(max_length=64)], parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: &lt;class 'str'&gt;` (required).
@@ -5089,7 +5458,7 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
@@ -5098,14 +5467,27 @@ Public fields and methods:
 
 `m3.observability.TraceStatus(*values)`
 
+Public members:
+
+- `COMPLETED` = `'completed'`
+- `FAILED` = `'failed'`
+- `TOOL_ERROR` = `'tool_error'`
+- `PROTOCOL_ERROR` = `'protocol_error'`
+- `TRANSPORT_ERROR` = `'transport_error'`
+- `TIMED_OUT` = `'timed_out'`
+- `CANCELLED` = `'cancelled'`
+- `INTERRUPTED` = `'interrupted'`
+- `INCOMPLETE` = `'incomplete'`
+- `UNAVAILABLE` = `'unavailable'`
+
 ### `TraceSummary`
 
 `m3.observability.TraceSummary(*, timing: m3.observability.TraceTiming = &lt;factory&gt;, usage: m3.observability.Observation[UsageValue] = &lt;factory&gt;, turn_count: Annotated[int, Ge(ge=0)] = 0, message_count: Annotated[int, Ge(ge=0)] = 0, reasoning_count: Annotated[int, Ge(ge=0)] = 0, tool_call_count: Annotated[int, Ge(ge=0)] = 0, successful_tool_call_count: Annotated[int, Ge(ge=0)] = 0, failed_tool_call_count: Annotated[int, Ge(ge=0)] = 0, protocol_error_count: Annotated[int, Ge(ge=0)] = 0, activity_health: m3.types.ActivityHealth = &lt;ActivityHealth.NO_CALLS: 'no_calls'&gt;, cleanup_status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
-- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
+- `usage: &lt;class 'm3.observability.Observation[UsageValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 - `turn_count: &lt;class 'int'&gt;` (default: `0`).
 - `message_count: &lt;class 'int'&gt;` (default: `0`).
 - `reasoning_count: &lt;class 'int'&gt;` (default: `0`).
@@ -5120,9 +5502,9 @@ Public fields and methods:
 
 `m3.observability.TraceTiming(*, started_at: datetime.datetime = &lt;factory&gt;, finished_at: datetime.datetime | None = None, start_offset_ms: Annotated[float, Ge(ge=0)] = 0, end_offset_ms: Annotated[float, Ge(ge=0)] = 0, duration_ms: Annotated[float, Ge(ge=0)] = 0) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `started_at: &lt;class 'datetime.datetime'&gt;` (required).
+- `started_at: &lt;class 'datetime.datetime'&gt;` (default factory: `m3.observability.TraceTiming.&lt;lambda&gt;`).
 - `finished_at: datetime.datetime | None` (default: `None`).
 - `start_offset_ms: &lt;class 'float'&gt;` (default: `0`).
 - `end_offset_ms: &lt;class 'float'&gt;` (default: `0`).
@@ -5132,7 +5514,7 @@ Public fields and methods:
 
 `m3.observability.TraceView(*, schema_id: Literal['m3.trace_view'] = 'm3.trace_view', schema_version: Literal['1.1', '1.2'] = '1.1', trace_id: m3.types.TraceId, execution_id: m3.types.ExecutionId, outcome: m3.types.ExecutionOutcome = &lt;ExecutionOutcome.COMPLETED: 'completed'&gt;, completeness: Literal['complete', 'partial'] = 'complete', limitations: tuple[str, ...] = (), agent: m3.types.AgentIdentity | None = None, runtime: m3.observability.DirectTrace | m3.observability.OpenCodeTrace | m3.observability.ClaudeCodeTrace | m3.observability.CodexTrace | m3.observability.PiTrace | m3.observability.ACPTrace = &lt;factory&gt;, summary: m3.observability.TraceSummary = &lt;factory&gt;, timeline: tuple[typing.Annotated[m3.observability.LifecycleEntry | m3.observability.MessageEntry | m3.observability.ReasoningEntry | m3.observability.ToolCallEntry | m3.observability.ProtocolEntry | m3.observability.TransportEntry | m3.observability.InitializationEntry | m3.observability.UsageEntry | m3.observability.InteractionEntry | m3.observability.ElicitationEntry | m3.observability.ProcessEntry | m3.observability.WorkspaceEntry | m3.observability.ArtifactEntry | m3.observability.EvaluationEntry | m3.observability.DiagnosticEntry | m3.observability.RawMessageEntry | m3.observability.ProviderEntry, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...] = ()) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `schema_id: typing.Literal['m3.trace_view']` (default: `'m3.trace_view'`).
 - `schema_version: typing.Literal['1.1', '1.2']` (default: `'1.1'`).
@@ -5142,9 +5524,19 @@ Public fields and methods:
 - `completeness: typing.Literal['complete', 'partial']` (default: `'complete'`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `agent: m3.types.AgentIdentity | None` (default: `None`).
-- `runtime: m3.observability.DirectTrace | m3.observability.OpenCodeTrace | m3.observability.ClaudeCodeTrace | m3.observability.CodexTrace | m3.observability.PiTrace | m3.observability.ACPTrace` (required).
-- `summary: &lt;class 'm3.observability.TraceSummary'&gt;` (required).
+- `runtime: m3.observability.DirectTrace | m3.observability.OpenCodeTrace | m3.observability.ClaudeCodeTrace | m3.observability.CodexTrace | m3.observability.PiTrace | m3.observability.ACPTrace` (default factory: `m3.observability.DirectTrace`).
+- `summary: &lt;class 'm3.observability.TraceSummary'&gt;` (default factory: `m3.observability.TraceSummary`).
 - `timeline: tuple[typing.Annotated[m3.observability.LifecycleEntry | m3.observability.MessageEntry | m3.observability.ReasoningEntry | m3.observability.ToolCallEntry | m3.observability.ProtocolEntry | m3.observability.TransportEntry | m3.observability.InitializationEntry | m3.observability.UsageEntry | m3.observability.InteractionEntry | m3.observability.ElicitationEntry | m3.observability.ProcessEntry | m3.observability.WorkspaceEntry | m3.observability.ArtifactEntry | m3.observability.EvaluationEntry | m3.observability.DiagnosticEntry | m3.observability.RawMessageEntry | m3.observability.ProviderEntry, FieldInfo(annotation=NoneType, required=True, discriminator='kind')], ...]` (default: `()`).
+- `tool_calls` (property)
+- `messages` (property)
+- `reasoning` (property)
+- `protocol` (property)
+- `transports` (property)
+- `raw_messages` (property)
+- `interactions` (property)
+- `elicitations` (property): Return keyed elicitation interactions correlated to MRTR rounds.
+- `processes` (property)
+- `diagnostics` (property)
 - `for_turn(self, turn: '_TurnResult | _TurnState | _TurnId | str') -&gt; 'TraceView'`: Return the finalized evidence belonging to one turn.
 - `for_session(self, session_id: '_SessionId | str') -&gt; 'TraceView'`
 - `for_server(self, server_binding: 'str') -&gt; 'TraceView'`
@@ -5156,7 +5548,7 @@ Public fields and methods:
 
 A stable MCP transport lifecycle observation.
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['transport']` (default: `'transport'`).
@@ -5168,19 +5560,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
 - `phase: typing.Literal['connected', 'disconnected']` (required).
-- `configured: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (required).
-- `instrumented: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (required).
+- `configured: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `instrumented: &lt;class 'm3.observability.Observation[TransportKind]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `UsageEntry`
 
 `m3.observability.UsageEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['usage'] = 'usage', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), input_tokens: m3.observability.Observation[int] = &lt;factory&gt;, output_tokens: m3.observability.Observation[int] = &lt;factory&gt;, reasoning_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cache_creation_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cache_read_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cache_write_tokens: m3.observability.Observation[int] = &lt;factory&gt;, total_tokens: m3.observability.Observation[int] = &lt;factory&gt;, cost: m3.observability.Observation[float] = &lt;factory&gt;, currency: m3.observability.Observation[str] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['usage']` (default: `'usage'`).
@@ -5192,19 +5584,19 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `UsageValue`
 
@@ -5212,36 +5604,36 @@ Public fields and methods:
 
 Value-only usage aggregate used by summaries and runtime metadata.
 
-Public fields and methods:
+Public members:
 
-- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (required).
-- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
-- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
+- `input_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `output_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `reasoning_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_creation_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_read_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cache_write_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `total_tokens: &lt;class 'm3.observability.Observation[int]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `cost: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `currency: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `WireToolCall`
 
 `m3.observability.WireToolCall(*, jsonrpc_id: m3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]] = &lt;factory&gt;, server: m3.observability.Observation[str] = &lt;factory&gt;, tool: m3.observability.Observation[str] = &lt;factory&gt;, arguments: m3.observability.Observation[JsonValue] = &lt;factory&gt;, result: m3.observability.Observation[ToolResult] = &lt;factory&gt;, latency_ms: m3.observability.Observation[float] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (required).
-- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (required).
-- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
-- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (required).
-- `latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (required).
+- `jsonrpc_id: &lt;class 'm3.observability.Observation[Union[Annotated[int, Strict(strict=True)], Annotated[str, Strict(strict=True)]]]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `server: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `tool: &lt;class 'm3.observability.Observation[str]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `arguments: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `result: &lt;class 'm3.observability.Observation[ToolResult]'&gt;` (default factory: `m3.observability._not_emitted`).
+- `latency_ms: &lt;class 'm3.observability.Observation[float]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ### `WorkspaceEntry`
 
 `m3.observability.WorkspaceEntry(*, entry_id: Annotated[str, MinLen(min_length=1), MaxLen(max_length=256)], kind: Literal['workspace'] = 'workspace', parent_id: str | None = None, execution_id: m3.types.ExecutionId, session_id: m3.types.SessionId | None = None, turn_id: m3.types.TurnId | None = None, server_binding: str | None = None, connection_id: m3.types.ConnectionId | None = None, sequence_start: Annotated[int, Ge(ge=0)], sequence_end: Annotated[int, Ge(ge=0)], timing: m3.observability.TraceTiming = &lt;factory&gt;, status: m3.observability.TraceStatus = &lt;TraceStatus.COMPLETED: 'completed'&gt;, provenance: tuple[m3.types.EventSource, ...] = (), limitations: tuple[str, ...] = (), change: m3.observability.Observation[JsonValue] = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `entry_id: &lt;class 'str'&gt;` (required).
 - `kind: typing.Literal['workspace']` (default: `'workspace'`).
@@ -5253,11 +5645,11 @@ Public fields and methods:
 - `connection_id: m3.types.ConnectionId | None` (default: `None`).
 - `sequence_start: &lt;class 'int'&gt;` (required).
 - `sequence_end: &lt;class 'int'&gt;` (required).
-- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (required).
+- `timing: &lt;class 'm3.observability.TraceTiming'&gt;` (default factory: `m3.observability.TraceTiming`).
 - `status: &lt;enum 'TraceStatus'&gt;` (default: `&lt;TraceStatus.COMPLETED: 'completed'&gt;`).
 - `provenance: tuple[m3.types.EventSource, ...]` (default: `()`).
 - `limitations: tuple[str, ...]` (default: `()`).
-- `change: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (required).
+- `change: &lt;class 'm3.observability.Observation[JsonValue]'&gt;` (default factory: `m3.observability._not_emitted`).
 
 ## `m3.aggregations`
 
@@ -5265,10 +5657,10 @@ Public fields and methods:
 
 `m3.aggregations.EvaluationGroup(*, key: collections.abc.Mapping[str, str | int | float | bool | None] = &lt;factory&gt;, values: m3.aggregations.EvaluationStats = &lt;factory&gt;) -&gt; None`
 
-Public fields and methods:
+Public members:
 
-- `key: collections.abc.Mapping[str, str | int | float | bool | None]` (required).
-- `values: &lt;class 'm3.aggregations.EvaluationStats'&gt;` (required).
+- `key: collections.abc.Mapping[str, str | int | float | bool | None]` (default factory: `builtins.dict`).
+- `values: &lt;class 'm3.aggregations.EvaluationStats'&gt;` (default factory: `m3.aggregations.EvaluationStats`).
 
 ### `EvaluationQuery`
 
@@ -5276,24 +5668,25 @@ Public fields and methods:
 
 A read-only query over persisted evaluations.
 
-Public fields and methods:
+Public members:
 
 - `from_: datetime.datetime | None` (default: `None`).
 - `to: datetime.datetime | None` (default: `None`).
 - `group_by: tuple[str, ...]` (default: `()`).
-- `filters: collections.abc.Mapping[str, tuple[str | int | float | bool | None, ...]]` (required).
+- `filters: collections.abc.Mapping[str, tuple[str | int | float | bool | None, ...]]` (default factory: `builtins.dict`).
 - `limit: &lt;class 'int'&gt;` (default: `200`).
 - `offset: &lt;class 'int'&gt;` (default: `0`).
+- `start` (property)
 
 ### `EvaluationReport`
 
 `m3.aggregations.EvaluationReport(*, from_: datetime.datetime | None = None, to: datetime.datetime | None = None, totals: m3.aggregations.EvaluationStats = &lt;factory&gt;, groups: tuple[m3.aggregations.EvaluationGroup, ...] = (), total_groups: int = 0, limit: int = 200, offset: int = 0) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `from_: datetime.datetime | None` (default: `None`).
 - `to: datetime.datetime | None` (default: `None`).
-- `totals: &lt;class 'm3.aggregations.EvaluationStats'&gt;` (required).
+- `totals: &lt;class 'm3.aggregations.EvaluationStats'&gt;` (default factory: `m3.aggregations.EvaluationStats`).
 - `groups: tuple[m3.aggregations.EvaluationGroup, ...]` (default: `()`).
 - `total_groups: &lt;class 'int'&gt;` (default: `0`).
 - `limit: &lt;class 'int'&gt;` (default: `200`).
@@ -5305,18 +5698,18 @@ Public fields and methods:
 
 Counts and health metrics for one aggregate group.
 
-Public fields and methods:
+Public members:
 
 - `trial_count: &lt;class 'int'&gt;` (default: `0`).
 - `evaluation_count: &lt;class 'int'&gt;` (default: `0`).
 - `expected_count: &lt;class 'int'&gt;` (default: `0`).
 - `missing_required_count: &lt;class 'int'&gt;` (default: `0`).
 - `pending_required_count: &lt;class 'int'&gt;` (default: `0`).
-- `status_counts: collections.abc.Mapping[str, int]` (required).
+- `status_counts: collections.abc.Mapping[str, int]` (default factory: `builtins.dict`).
 - `pass_rate: float | None` (default: `None`).
 - `average_score: float | None` (default: `None`).
 - `score_count: &lt;class 'int'&gt;` (default: `0`).
-- `health: &lt;class 'm3.aggregations.HealthStats'&gt;` (required).
+- `health: &lt;class 'm3.aggregations.HealthStats'&gt;` (default factory: `m3.aggregations.HealthStats`).
 
 ### `HealthStats`
 
@@ -5324,20 +5717,20 @@ Public fields and methods:
 
 Execution and tool health observed for a group.
 
-Public fields and methods:
+Public members:
 
 - `execution_count: &lt;class 'int'&gt;` (default: `0`).
-- `tool_calls: &lt;class 'm3.aggregations.ToolCallStats'&gt;` (required).
+- `tool_calls: &lt;class 'm3.aggregations.ToolCallStats'&gt;` (default factory: `m3.aggregations.ToolCallStats`).
 - `protocol_error_count: &lt;class 'int'&gt;` (default: `0`).
-- `outcome_counts: collections.abc.Mapping[str, int]` (required).
-- `execution_duration_ms: &lt;class 'm3.aggregations.LatencyStats'&gt;` (required).
-- `server_latency_ms: &lt;class 'm3.aggregations.LatencyStats'&gt;` (required).
+- `outcome_counts: collections.abc.Mapping[str, int]` (default factory: `builtins.dict`).
+- `execution_duration_ms: &lt;class 'm3.aggregations.LatencyStats'&gt;` (default factory: `m3.aggregations.LatencyStats`).
+- `server_latency_ms: &lt;class 'm3.aggregations.LatencyStats'&gt;` (default factory: `m3.aggregations.LatencyStats`).
 
 ### `LatencyStats`
 
 `m3.aggregations.LatencyStats(*, count: Annotated[int, Ge(ge=0)] = 0, p50: Annotated[float | None, Ge(ge=0)] = None, p95: Annotated[float | None, Ge(ge=0)] = None) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `count: &lt;class 'int'&gt;` (default: `0`).
 - `p50: float | None` (default: `None`).
@@ -5347,7 +5740,7 @@ Public fields and methods:
 
 `m3.aggregations.ToolCallStats(*, total: Annotated[int, Ge(ge=0)] = 0, successful: Annotated[int, Ge(ge=0)] = 0, failed: Annotated[int, Ge(ge=0)] = 0) -&gt; None`
 
-Public fields and methods:
+Public members:
 
 - `total: &lt;class 'int'&gt;` (default: `0`).
 - `successful: &lt;class 'int'&gt;` (default: `0`).
@@ -5367,13 +5760,17 @@ Aggregate persisted evaluations and unresolved specification requirements.
 
 An immutable, serializable elicitation expectation tree.
 
-Public fields and methods:
+Public members:
 
 - `node: typing.Literal['leaf', 'sequence', 'optional', 'one_of', 'round_of']` (default: `'leaf'`).
 - `request: typing.Optional[typing.Annotated[m3.elicitation._FormExpectation | m3.elicitation._UrlExpectation, FieldInfo(annotation=NoneType, required=True, discriminator='mode')]]` (default: `None`).
 - `response: m3.elicitation.ElicitationResponse | None` (default: `None`).
 - `children: tuple[m3.elicitation.ElicitationPlan, ...]` (default: `()`).
 - `optional_occurrence: &lt;class 'bool'&gt;` (default: `False`).
+- `is_complete` (property)
+- `mode` (property)
+- `requested_schema` (property)
+- `optional` (property)
 - `accept(self, content: 'Mapping[str, object] | None' = None) -&gt; 'ElicitationPlan'`
 - `decline(self) -&gt; 'ElicitationPlan'`
 - `cancel(self) -&gt; 'ElicitationPlan'`
@@ -5395,7 +5792,7 @@ Represent a PEP 604 union type
 
 The response that will be associated with one request key.
 
-Public fields and methods:
+Public members:
 
 - `action: typing.Literal['accept', 'decline', 'cancel']` (required).
 - `content: collections.abc.Mapping[str, object] | None` (default: `None`).
@@ -5407,7 +5804,7 @@ Public fields and methods:
 
 A normalized form-mode elicitation request.
 
-Public fields and methods:
+Public members:
 
 - `request_key: &lt;class 'str'&gt;` (required).
 - `mode: typing.Literal['form']` (default: `'form'`).
@@ -5425,7 +5822,7 @@ Public fields and methods:
 
 A persisted, keyed set of elicitation requests awaiting responses.
 
-Public fields and methods:
+Public members:
 
 - `round_id: &lt;class 'str'&gt;` (required).
 - `execution_id: &lt;class 'str'&gt;` (required).
@@ -5444,7 +5841,7 @@ Public fields and methods:
 
 A normalized URL-mode elicitation request.
 
-Public fields and methods:
+Public members:
 
 - `request_key: &lt;class 'str'&gt;` (required).
 - `mode: typing.Literal['url']` (default: `'url'`).
@@ -5503,8 +5900,9 @@ str(object='') -&gt; str str(bytes_or_buffer[, encoding[, errors]]) -&gt; str
 
 LLMJudge(model: 'str', base_url: 'str | None' = None, api_key_env: 'str | None' = None, auth: 'str' = 'env', response_mode: 'str | None' = None, threshold: 'float' = 0.8, rubric: 'str | None' = None, rubric_id: 'str | None' = None, rubric_version: 'str | None' = None, timeout_seconds: 'float' = 30.0, max_retries: 'Literal[0, 1]' = 1)
 
-Public fields and methods:
+Public members:
 
+- `config_digest` (property)
 - `evaluate_async(self, context: 'EvaluationContext') -&gt; 'EvaluationDecision'`
 
 ## `m3.managed_input_api`
@@ -5551,14 +5949,18 @@ Read the durable policy, preserving fail as the old-envelope default.
 
 Exact profile/revision and ACP request dimensions.
 
-Public fields and methods:
+Public members:
 
 - `profile_id: &lt;class 'str'&gt;` (required).
 - `revision_id: &lt;class 'str'&gt;` (required).
 - `probe_type: &lt;enum 'ACPProbeKind'&gt;` (required).
 - `transport: &lt;class 'str'&gt;` (default: `'stdio'`).
 - `agent_mode_id: str | None` (default: `None`).
-- `session_config: collections.abc.Mapping[str, JsonValue]` (required).
+- `session_config: collections.abc.Mapping[str, JsonValue]` (default factory: `builtins.dict`).
+- `kind` (property)
+- `mode_id` (property)
+- `stable_session_config` (property)
+- `stable_key` (property)
 
 ### `ACPProbeResult`
 
@@ -5566,34 +5968,38 @@ Public fields and methods:
 
 One terminal or in-flight probe observation.
 
-Public fields and methods:
+Public members:
 
 - `profile_id: &lt;class 'str'&gt;` (required).
 - `revision_id: &lt;class 'str'&gt;` (required).
 - `probe_type: &lt;enum 'ACPProbeKind'&gt;` (required).
 - `transport: &lt;class 'str'&gt;` (default: `'stdio'`).
 - `agent_mode_id: str | None` (default: `None`).
-- `session_config: collections.abc.Mapping[str, JsonValue]` (required).
-- `id: &lt;class 'str'&gt;` (required).
+- `session_config: collections.abc.Mapping[str, JsonValue]` (default factory: `builtins.dict`).
+- `id: &lt;class 'str'&gt;` (default factory: `m3.services.acp_probes.ACPProbeResult.&lt;lambda&gt;`).
 - `status: &lt;enum 'ACPProbeStatus'&gt;` (required).
-- `agent_capabilities: collections.abc.Mapping[str, JsonValue]` (required).
+- `agent_capabilities: collections.abc.Mapping[str, JsonValue]` (default factory: `builtins.dict`).
 - `config_options: tuple[collections.abc.Mapping[str, JsonValue], ...]` (default: `()`).
-- `evidence: collections.abc.Mapping[str, JsonValue]` (required).
+- `evidence: collections.abc.Mapping[str, JsonValue]` (default factory: `builtins.dict`).
 - `diagnostics: str | None` (default: `None`).
 - `error: str | None` (default: `None`).
-- `created_at: &lt;class 'datetime.datetime'&gt;` (required).
+- `created_at: &lt;class 'datetime.datetime'&gt;` (default factory: `m3.services.acp_probes.ACPProbeResult.&lt;lambda&gt;`).
 - `started_at: datetime.datetime | None` (default: `None`).
 - `finished_at: datetime.datetime | None` (default: `None`).
 - `duration_ms: float | None` (default: `None`).
 - `agent_identity: m3.services.acp_probes.ACPAgentIdentity | None` (default: `None`).
 - `agent_modes: tuple[m3.services.acp_probes.ACPAgentMode, ...]` (default: `()`).
 - `current_agent_mode_id: str | None` (default: `None`).
+- `kind` (property)
+- `mode_id` (property)
+- `stable_key` (property)
+- `stable_session_config` (property)
 
 ### `ACPProbeStore`
 
 `m3.storage.ACPProbeStore(*args, **kwargs)`
 
-Public fields and methods:
+Public members:
 
 - `save_acp_probe(self, result: 'ACPProbeResult') -&gt; 'ACPProbeResult'`
 - `get_acp_probe(self, probe_id: 'str') -&gt; 'ACPProbeResult | None'`
@@ -5612,7 +6018,7 @@ An artifact or content-addressed blob is not present.
 
 Content-addressed artifact/blob store contract.
 
-Public fields and methods:
+Public members:
 
 - `put(self, execution_id: 'ExecutionId | str', name: 'str', content: 'bytes', *, media_type: 'str | None' = None) -&gt; 'ArtifactRef'`
 - `get(self, artifact: 'ArtifactRef | ArtifactId | str') -&gt; 'bytes'`
@@ -5655,7 +6061,7 @@ A value cannot safely cross a durable specification boundary.
 
 Store contract for immutable execution snapshots and event streams.
 
-Public fields and methods:
+Public members:
 
 - `create(self, snapshot: 'ExecutionState', *, specification: 'Mapping[str, object] | None' = None, provenance: 'Mapping[str, object] | None' = None, server_bindings: 'Sequence[Mapping[str, object]]' = (), harness_binding: 'Mapping[str, object] | None' = None, parent_execution_id: 'ExecutionId | str | None' = None, run_id: 'RunId | str | None' = None) -&gt; 'None'`
 - `get_snapshot(self, execution_id: 'ExecutionId | str') -&gt; 'ExecutionState | None'`
@@ -5685,7 +6091,7 @@ Public fields and methods:
 
 Uncommitted event batch used by :class:`ExecutionStore`.
 
-Public fields and methods:
+Public members:
 
 - `append(self, events: 'Sequence[Event]') -&gt; 'None'`
 - `commit(self) -&gt; 'None'`
@@ -5697,8 +6103,9 @@ Public fields and methods:
 
 Atomic, compressed, content-addressed filesystem storage.
 
-Public fields and methods:
+Public members:
 
+- `root` (property)
 - `path_for(self, sha256: 'str') -&gt; 'Path'`
 - `put(self, content: 'bytes', *, sha256: 'str | None' = None, size_bytes: 'int | None' = None) -&gt; 'BlobRecord'`: Atomically persist ``content`` and return verified metadata.
 - `put_blob(self, content: 'bytes', *, sha256: 'str | None' = None, size_bytes: 'int | None' = None) -&gt; 'BlobRecord'`: Atomically persist ``content`` and return verified metadata.
@@ -5717,7 +6124,7 @@ Public fields and methods:
 
 In-memory compressed, content-addressed artifact store.
 
-Public fields and methods:
+Public members:
 
 - `put(self, execution_id: 'ExecutionId | str', name: 'str', content: 'bytes', *, media_type: 'str | None' = None) -&gt; 'ArtifactRef'`
 - `get(self, artifact: 'ArtifactRef | ArtifactId | str') -&gt; 'bytes'`
@@ -5733,7 +6140,7 @@ Public fields and methods:
 
 Thread-safe execution metadata store with commit-gated visibility.
 
-Public fields and methods:
+Public members:
 
 - `save_acp_probe(self, result: 'ACPProbeResult') -&gt; 'ACPProbeResult'`
 - `get_acp_probe(self, probe_id: 'str') -&gt; 'ACPProbeResult | None'`
@@ -5797,7 +6204,7 @@ Lease(execution_id: 'ExecutionId', owner_id: 'str', lease_token: 'str', expires_
 
 The compare-and-set token currently allowed to mutate a round.
 
-Public fields and methods:
+Public members:
 
 - `owner_id: &lt;class 'str'&gt;` (required).
 - `lease_token: &lt;class 'str'&gt;` (required).
@@ -5809,7 +6216,7 @@ Public fields and methods:
 
 Immutable view of one durable managed-input round.
 
-Public fields and methods:
+Public members:
 
 - `pending: &lt;class 'm3.elicitation.PendingElicitationRound'&gt;` (required).
 - `round_index: &lt;class 'int'&gt;` (required).
@@ -5823,7 +6230,7 @@ Public fields and methods:
 - `delivery_idempotency_key: str | None` (default: `None`).
 - `session_id: str | None` (default: `None`).
 - `turn_id: str | None` (default: `None`).
-- `operation_parameters: collections.abc.Mapping[str, object]` (required).
+- `operation_parameters: collections.abc.Mapping[str, object]` (default factory: `builtins.dict`).
 - `delivery_attempts: &lt;class 'int'&gt;` (default: `0`).
 - `created_at: &lt;class 'datetime.datetime'&gt;` (required).
 - `updated_at: &lt;class 'datetime.datetime'&gt;` (required).
@@ -5834,6 +6241,11 @@ Public fields and methods:
 - `failed_at: datetime.datetime | None` (default: `None`).
 - `failure_code: str | None` (default: `None`).
 - `failure_message: str | None` (default: `None`).
+- `execution_id` (property)
+- `round_id` (property)
+- `request_state` (property)
+- `lease_token` (property)
+- `owner_id` (property)
 
 ### `ManagedInputStatus`
 
@@ -5845,7 +6257,7 @@ Public fields and methods:
 
 Storage contract consumed by future execution handles.
 
-Public fields and methods:
+Public members:
 
 - `create_round(self, pending: 'PendingElicitationRound', *, round_index: 'int', round_limit: 'int', owner_id: 'str', lease_seconds: 'float', lease_token: 'str | None' = None, harness_session_id: 'str | None' = None, native_resume_token: 'str | None' = None, delivery_idempotency_key: 'str | None' = None, session_id: 'str | None' = None, turn_id: 'str | None' = None, operation_parameters: 'Mapping[str, object] | None' = None) -&gt; 'ManagedInputRecord'`
 - `get_round(self, execution_id: 'str', round_id: 'str') -&gt; 'ManagedInputRecord | None'`
@@ -5866,8 +6278,9 @@ Public fields and methods:
 
 SQLite implementation of the public :class:`ExecutionStore` protocol.
 
-Public fields and methods:
+Public members:
 
+- `managed_input_store` (property): Lazily open the managed-input tables for opted-in executions.
 - `resolve_managed_input_store(self) -&gt; 'SQLiteManagedInputStore'`: Resolve managed-input storage lazily for opted-in executions.
 - `ensure_project(self, project_id: 'str', project_name: 'str') -&gt; 'tuple[str, str]'`: Register a stable project identity and refresh its display name.
 - `get_project(self, project_id: 'str') -&gt; 'tuple[str, str] | None'`
@@ -5972,7 +6385,7 @@ ProfileRecord(id: 'str', kind: 'str', name: 'str', description: 'str', archived:
 
 Read-only saved-profile lookup used by execution runtimes.
 
-Public fields and methods:
+Public members:
 
 - `resolve_profile(self, profile_id: 'str', selection: 'RevisionSelection', *, kind: "Literal['server', 'harness']") -&gt; 'tuple[Any, Any]'`
 
@@ -5988,7 +6401,7 @@ ProfileRevisionRecord(id: 'RevisionId', profile_id: 'str', revision_number: 'int
 
 Filesystem-backed content-addressed artifact store with SQLite refs.
 
-Public fields and methods:
+Public members:
 
 - `put(self, execution_id: 'ExecutionId | str', name: 'str', content: 'bytes', *, media_type: 'str | None' = None) -&gt; 'ArtifactRef'`
 - `get(self, artifact: 'ArtifactRef | ArtifactId | str') -&gt; 'bytes'`
@@ -5996,6 +6409,7 @@ Public fields and methods:
 - `iter_refs(self, execution_id: 'ExecutionId | str | None' = None) -&gt; 'Iterator[ArtifactRef]'`
 - `delete(self, artifact: 'ArtifactRef | ArtifactId | str') -&gt; 'None'`
 - `cleanup(self) -&gt; 'None'`
+- `blob_store` (property): The app-owned content-addressed store used by metadata rows.
 
 ### `SQLiteExecutionStore`
 
@@ -6003,8 +6417,9 @@ Public fields and methods:
 
 SQLite implementation of the public :class:`ExecutionStore` protocol.
 
-Public fields and methods:
+Public members:
 
+- `managed_input_store` (property): Lazily open the managed-input tables for opted-in executions.
 - `resolve_managed_input_store(self) -&gt; 'SQLiteManagedInputStore'`: Resolve managed-input storage lazily for opted-in executions.
 - `ensure_project(self, project_id: 'str', project_name: 'str') -&gt; 'tuple[str, str]'`: Register a stable project identity and refresh its display name.
 - `get_project(self, project_id: 'str') -&gt; 'tuple[str, str] | None'`
@@ -6103,7 +6518,7 @@ Public fields and methods:
 
 SQLite-backed managed-input storage sharing a database path safely.
 
-Public fields and methods:
+Public members:
 
 - `get_round(self, execution_id: 'str', round_id: 'str') -&gt; 'ManagedInputRecord | None'`
 - `list_rounds(self, execution_id: 'str') -&gt; 'tuple[ManagedInputRecord, ...]'`
@@ -6124,8 +6539,9 @@ Public fields and methods:
 
 SQLite implementation of the public :class:`ExecutionStore` protocol.
 
-Public fields and methods:
+Public members:
 
+- `managed_input_store` (property): Lazily open the managed-input tables for opted-in executions.
 - `resolve_managed_input_store(self) -&gt; 'SQLiteManagedInputStore'`: Resolve managed-input storage lazily for opted-in executions.
 - `ensure_project(self, project_id: 'str', project_name: 'str') -&gt; 'tuple[str, str]'`: Register a stable project identity and refresh its display name.
 - `get_project(self, project_id: 'str') -&gt; 'tuple[str, str] | None'`
@@ -6224,7 +6640,7 @@ Public fields and methods:
 
 Embedded worker facade for :class:`SQLiteExecutionStore`.
 
-Public fields and methods:
+Public members:
 
 - `run_once(self) -&gt; 'bool'`
 - `stop(self) -&gt; 'None'`
@@ -6247,8 +6663,9 @@ Base class for expected ephemeral storage failures.
 
 Filesystem-backed temporary artifact store with atomic blob placement.
 
-Public fields and methods:
+Public members:
 
+- `root` (property)
 - `put(self, execution_id: 'ExecutionId | str', name: 'str', content: 'bytes', *, media_type: 'str | None' = None) -&gt; 'ArtifactRef'`
 - `get(self, artifact: 'ArtifactRef | ArtifactId | str') -&gt; 'bytes'`
 - `delete(self, artifact: 'ArtifactRef | ArtifactId | str') -&gt; 'None'`
