@@ -5,7 +5,7 @@ description: "Map a parent environment variable to a stdio server and verify its
 
 # Pass a credential to a stdio MCP server
 
-This example passes a named environment value to a local stdio MCP server. The server checks a fixed dummy value and returns a result without returning the value itself.
+Pass a parent environment value to a local stdio MCP server and verify that the server accepts it without returning the credential.
 
 ## Requirements
 
@@ -117,10 +117,10 @@ From the project directory, run:
 python -m pytest -q test_credentials.py
 ```
 
-The test sets `M3_DEMO_SERVICE_KEY` to a dummy value. M3 maps it to the child variable `DEMO_SERVICE_TOKEN`. The successful tool result proves the server received the expected credential.
+The test sets `M3_DEMO_SERVICE_KEY` to a dummy value. M3 maps it to the child variable `DEMO_SERVICE_TOKEN`. The `credential accepted` result proves the server received the expected credential without returning it.
 
 ```text
 1 passed
 ```
 
-If the source variable is missing, stdio startup fails. A present empty value is passed to the child as an empty string. See the [credential reference](../../reference/credentials.md) for endpoint, agent, judge, ACP, and upload behavior.
+If the source variable is missing, stdio startup fails. A present empty value is passed to the child as an empty string. See the [credential reference](../../reference/credentials.md) for the exact endpoint behavior and the other credential paths. To continue with another task, return to [Configure credentials](../credentials.md).

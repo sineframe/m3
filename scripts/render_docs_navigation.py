@@ -69,8 +69,13 @@ NAVIGATION = [
                     "guides-evaluations-aggregate",
                 ],
             },
-            "guides-credentials",
-            "guides-credentials-endpoints",
+            {
+                "title": "Credentials",
+                "items": [
+                    "guides-credentials",
+                    "guides-credentials-endpoints",
+                ],
+            },
             {
                 "title": "Handle interaction",
                 "items": [
@@ -173,9 +178,16 @@ ALIASES = {
     "reference-pytest": ["suite_name", "pytest marker", "fixtures"],
     "guides-results-baselines": ["compare runs", "baseline run ID"],
     "guides-results-persistence": ["results database", "saved runs"],
-    "guides-evaluations-judges": ["judge key", "M3_JUDGE_API_KEY"],
+    "guides-evaluations-judges": ["M3_JUDGE_API_KEY"],
+    "guides-credentials": [
+        "agent credentials",
+        "judge key",
+        "MCP authentication",
+        "upload token",
+        "M3_ACCESS_TOKEN",
+    ],
     "guides-ci-publish": ["upload failed", "retry upload"],
-    "reference-configuration": ["env file", "credentials"],
+    "reference-configuration": ["env file"],
 }
 
 
