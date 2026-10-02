@@ -28,4 +28,4 @@ def test_shipping_trace():
     call = view.tool_calls[0]
     assert call.tool.value == "shipping_quote"
     assert call.arguments.value == {"weight_kg": 2, "zone": "local"}
-    assert call.wire.state.value == "observed"
+    assert call.correlation.value == "wire_only"
