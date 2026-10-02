@@ -74,6 +74,39 @@ def test_control_plane_origin_has_one_strict_policy():
             control_plane_url({"M3_CONTROL_PLANE_URL": invalid})
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("https://Example.COM", "https://example.com"),
+        ("https://example.com:8443", "https://example.com:8443"),
+        ("https://example.com:443", "https://example.com"),
+    ],
+)
+def test_control_plane_origin_normalizes_dns_and_ports(raw, expected):
+    assert control_plane_url({"M3_CONTROL_PLANE_URL": raw}) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://exa mple.com",
+        "https://éxample.com",
+        "https://-bad.example",
+        "https://bad-.example",
+        "https://bad..example",
+        "https://a" + "b" * 63 + ".example",
+        "https://" + ".".join(["a" * 63] * 4),
+        "https://example.com.",
+        "https://example.com:",
+        "https://example%2ecom",
+        "https://[::1]",
+    ],
+)
+def test_control_plane_origin_rejects_ambiguous_or_invalid_hosts(raw):
+    with pytest.raises(CLIError, match="HTTPS origin"):
+        control_plane_url({"M3_CONTROL_PLANE_URL": raw})
+
+
 def test_mapped_credential_source_values_are_scanned_for_upload():
     from m3_cli.ci_upload import _credential_source_names, _sensitive_values
     from m3_cli.control_plane import _reject_known_secrets
