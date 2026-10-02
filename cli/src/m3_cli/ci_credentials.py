@@ -24,18 +24,55 @@ _PAT = re.compile(r"m3pat_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}")
 def control_plane_url(environment: Mapping[str, str]) -> str:
     """Return the configured HTTPS origin without a trailing slash."""
     raw = environment.get(CONTROL_PLANE_URL_ENV, DEFAULT_CONTROL_PLANE_URL)
-    parsed = urlparse(raw)
+    try:
+        return normalize_https_origin(raw, "M3_CONTROL_PLANE_URL")
+    except ValueError:
+        raise CLIError("M3_CONTROL_PLANE_URL must be an HTTPS origin") from None
+
+
+def normalize_https_origin(raw: str, setting: str) -> str:
+    """Normalize the one HTTPS-origin policy used by all CLI endpoints."""
+    if not raw.isascii() or any(char.isspace() for char in raw):
+        raise ValueError(f"{setting} must be an HTTPS origin")
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        raise ValueError(f"{setting} must be an HTTPS origin") from None
     if (
         parsed.scheme != "https"
         or not parsed.netloc
+        or parsed.hostname is None
         or parsed.username is not None
         or parsed.password is not None
         or parsed.path not in ("", "/")
         or parsed.query
         or parsed.fragment
+        or "%" in parsed.netloc
     ):
-        raise CLIError("M3_CONTROL_PLANE_URL must be an HTTPS origin")
-    return raw.rstrip("/")
+        raise ValueError(f"{setting} must be an HTTPS origin")
+    try:
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        raise ValueError(f"{setting} must be an HTTPS origin") from None
+    if (
+        hostname is None
+        or ":" in hostname  # IPv6 is intentionally unsupported by this contract.
+        or "%" in hostname
+        or hostname.endswith(".")
+        or len(hostname) > 253
+        or any(
+            not label
+            or len(label) > 63
+            or label.startswith("-")
+            or label.endswith("-")
+            or not re.fullmatch(r"[A-Za-z0-9-]+", label)
+            for label in hostname.split(".")
+        )
+        or (":" in parsed.netloc and parsed.netloc.endswith(":"))
+    ):
+        raise ValueError(f"{setting} must be an HTTPS origin")
+    return f"https://{hostname.lower()}" + (f":{port}" if port and port != 443 else "")
 
 
 def resolved_environment(
@@ -143,6 +180,7 @@ __all__ = [
     "DEFAULT_CONTROL_PLANE_URL",
     "access_token",
     "control_plane_url",
+    "normalize_https_origin",
     "resolved_environment",
     "test_environment",
     "validate_credential_mappings",

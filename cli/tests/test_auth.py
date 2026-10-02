@@ -1,23 +1,22 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
-import sys
 import threading
-import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from types import SimpleNamespace
-from urllib import error, parse, request
 
 import pytest
 
 from m3_cli import auth
 
 
-class MemoryKeyring:
-    priority = 1
+def token() -> str:
+    enc = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+    return f"m3pat_{enc(b'i' * 16)}.{enc(b's' * 32)}"
 
+
+class Keyring:
     def __init__(self) -> None:
         self.values: dict[tuple[str, str], str] = {}
 
@@ -32,352 +31,399 @@ class MemoryKeyring:
 
 
 @pytest.fixture
-def keyring(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> MemoryKeyring:
-    value = MemoryKeyring()
+def store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Keyring:
+    value = Keyring()
     monkeypatch.setattr(auth, "_keyring", lambda: value)
-    monkeypatch.setattr(
-        auth, "_metadata_path", lambda: tmp_path / "config" / "auth.json"
-    )
+    monkeypatch.setattr(auth, "_metadata_path", lambda: tmp_path / "m3" / "auth.json")
     return value
 
 
-def test_saved_token_uses_origin_scoped_credential_and_metadata(
-    keyring: MemoryKeyring,
-) -> None:
-    base = "https://control-plane.example"
-    auth._save_token(
-        base,
-        "m3pat_secret",
-        {"token_id": "id", "expires_at": "2030-01-01T00:00:00+00:00"},
+def test_metadata_and_installation_are_preserved(store: Keyring) -> None:
+    base = "https://control.example"
+    installation = auth._installation_id()
+    auth._save_token(base, token(), {"id": "id", "kind": "cli"})
+    data = json.loads(auth._metadata_path().read_text())
+    assert data["_installation_id"] == installation
+    assert auth.load_saved_token(base) == token()
+    assert auth._remove_saved_token(base)
+    assert (
+        json.loads(auth._metadata_path().read_text())["_installation_id"]
+        == installation
     )
 
-    assert auth.load_saved_token(base) == "m3pat_secret"
-    assert auth.load_saved_token("https://other.example") is None
+
+def test_installation_id_does_not_replace_corrupt_metadata(store: Keyring) -> None:
     path = auth._metadata_path()
-    assert json.loads(path.read_text())[base]["token_id"] == "id"
-    assert "m3pat_secret" not in path.read_text()
-    assert path.stat().st_mode & 0o777 == 0o600
-    assert path.parent.stat().st_mode & 0o777 == 0o700
-    assert auth._remove_saved_token(base)
+    path.parent.mkdir(parents=True)
+    path.write_text("{broken", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="unreadable"):
+        auth._installation_id()
+    assert path.read_text(encoding="utf-8") == "{broken"
+
+
+def test_windows_metadata_lock_prepares_byte_and_acquires_releases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[int, int]] = []
+    import types
+
+    fake_msvcrt = types.SimpleNamespace(
+        LK_NBLCK=1,
+        LK_UNLCK=2,
+        locking=lambda _fd, mode, length: calls.append((mode, length)),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "msvcrt", fake_msvcrt)
+    monkeypatch.setattr(auth.os, "name", "nt")
+    lock = tmp_path / "auth.lock"
+    with auth._metadata_file_lock(lock):
+        assert lock.with_name(".auth.lock.lock").stat().st_size == 1
+    assert calls == [(fake_msvcrt.LK_NBLCK, 1), (fake_msvcrt.LK_UNLCK, 1)]
+
+
+def test_concurrent_installation_id_calls_persist_one_winner(store: Keyring) -> None:
+    barrier = threading.Barrier(8)
+    values: list[str] = []
+
+    def read_id() -> None:
+        barrier.wait()
+        values.append(auth._installation_id())
+
+    threads = [threading.Thread(target=read_id) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(set(values)) == 1
+    assert (
+        json.loads(auth._metadata_path().read_text())["_installation_id"] == values[0]
+    )
+
+
+def test_verification_urls_require_exact_next() -> None:
+    origin = "https://auth.example"
+    code = "ABCD-EFGH"
+    complete = origin + "/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DABCD-EFGH"
+    assert auth._validate_verification_url(origin + "/sign-in", origin, complete=False)
+    assert auth._validate_verification_url(
+        complete, origin, complete=True, user_code=code
+    )
+    for value in (
+        origin + "/sign-in?cli=1&user_code=ABCD-EFGH",
+        origin + "/sign-in?next=x&next=y",
+        origin + "/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DWRONG",
+        origin + "/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DABCD-EFGH#fragment",
+    ):
+        with pytest.raises(RuntimeError):
+            auth._validate_verification_url(
+                value, origin, complete=True, user_code=code
+            )
+
+
+def test_login_posts_device_body_and_saves_token(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring
+) -> None:
+    base = "https://control.example"
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
+    monkeypatch.setenv("M3_AUTH_URL", "https://auth.example/")
+    monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
+    monkeypatch.setattr(auth, "_cli_version", lambda: "9.8.7")
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *a, **k: True)
+    responses = iter(
+        [
+            {
+                "device_code": "device-secret",
+                "user_code": "ABCD-EFGH",
+                "verification_uri": "https://auth.example/sign-in",
+                "verification_uri_complete": "https://auth.example/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DABCD-EFGH",
+                "expires_in": 1,
+                "interval": 1,
+            },
+            {
+                "access_token": token(),
+                "token_type": "Bearer",
+                "metadata": {
+                    "id": "id",
+                    "kind": "cli",
+                    "org_id": "org",
+                    "name": "M3 CLI",
+                    "created_at": "a",
+                    "expires_at": "b",
+                },
+            },
+        ]
+    )
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    def fake(url: str, method: str, body=None, token=None):
+        calls.append((url, method, body))
+        return next(responses)
+
+    monkeypatch.setattr(auth, "_json_request", fake)
+    monkeypatch.setattr(auth.time, "sleep", lambda _: None)
+    monkeypatch.setattr(auth.time, "monotonic", lambda: 0.0)
+    assert auth.login() == 0
+    assert calls[0][0] == base + "/v1/cli/device/authorization"
+    assert calls[0][2]["installation_id"]
+    assert calls[0][2]["cli_version"] == "9.8.7"
+    assert calls[1][2] == {"device_code": "device-secret"}
+    assert auth.load_saved_token(base) == token()
+
+
+def test_login_reports_poll_error_without_secret(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", "https://control.example")
+    monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *a, **k: False)
+    start = {
+        "device_code": "device-secret",
+        "user_code": "ABCD-EFGH",
+        "verification_uri": "https://auth.sineframe.com/sign-in",
+        "verification_uri_complete": "https://auth.sineframe.com/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DABCD-EFGH",
+        "expires_in": 1,
+        "interval": 1,
+    }
+    monkeypatch.setattr(
+        auth,
+        "_json_request",
+        lambda url, method, body=None, token=None: (
+            start
+            if url.endswith("authorization")
+            else (_ for _ in ()).throw(RuntimeError("access_denied"))
+        ),
+    )
+    monkeypatch.setattr(auth.time, "sleep", lambda _: None)
+    clock = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr(auth.time, "monotonic", lambda: next(clock, 2.0))
+    assert auth.login() == 2
+    output = capsys.readouterr()
+    assert "access_denied" in output.err
+    assert "device-secret" not in output.err
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    ["authorization_pending", "slow_down", "expired_token", "invalid_grant"],
+)
+def test_login_poll_error_codes_are_handled(
+    monkeypatch: pytest.MonkeyPatch, error_code: str
+) -> None:
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", "https://control.example")
+    monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *a, **k: False)
+    start = {
+        "device_code": "device-secret",
+        "user_code": "ABCD-EFGH",
+        "verification_uri": "https://auth.sineframe.com/sign-in",
+        "verification_uri_complete": "https://auth.sineframe.com/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DABCD-EFGH",
+        "expires_in": 1,
+        "interval": 1,
+    }
+    monkeypatch.setattr(
+        auth,
+        "_json_request",
+        lambda url, method, body=None, token=None: (
+            start
+            if url.endswith("authorization")
+            else (_ for _ in ()).throw(RuntimeError(error_code))
+        ),
+    )
+    monkeypatch.setattr(auth.time, "sleep", lambda _: None)
+    clock = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr(auth.time, "monotonic", lambda: next(clock, 2.0))
+    assert auth.login() == 2
+
+
+def test_login_preflight_failure_and_browser_fallback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", "https://control.example")
+    monkeypatch.setattr(
+        auth, "_probe_keyring", lambda: (_ for _ in ()).throw(RuntimeError("no store"))
+    )
+    assert auth.login() == 2
+    assert "no store" in capsys.readouterr().err
+
+
+def test_save_failure_restores_old_credential_and_reports_revoke_failure(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
+) -> None:
+    base = "https://control.example"
+    old = token()
+    auth._save_token(base, old, {"id": "old"})
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
+    monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *a, **k: True)
+    start = {
+        "device_code": "d",
+        "user_code": "ABCD-EFGH",
+        "verification_uri": "https://auth.sineframe.com/sign-in",
+        "verification_uri_complete": "https://auth.sineframe.com/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DABCD-EFGH",
+        "expires_in": 1,
+        "interval": 1,
+    }
+    new = {
+        "access_token": token(),
+        "token_type": "Bearer",
+        "metadata": {
+            "id": "new",
+            "kind": "cli",
+            "org_id": "o",
+            "name": "M3 CLI",
+            "created_at": "a",
+            "expires_at": "b",
+        },
+    }
+    monkeypatch.setattr(
+        auth, "_save_token", lambda *a: (_ for _ in ()).throw(RuntimeError("disk full"))
+    )
+    responses = iter((start, new))
+    monkeypatch.setattr(
+        auth,
+        "_json_request",
+        lambda url, method, body=None, token=None: (
+            next(responses)
+            if url.endswith("authorization")
+            else new
+            if url.endswith("/token")
+            else (_ for _ in ()).throw(RuntimeError("offline"))
+        ),
+    )
+    monkeypatch.setattr(auth.time, "sleep", lambda _: None)
+    monkeypatch.setattr(auth.time, "monotonic", lambda: 0.0)
+    assert auth.login() == 2
+    assert auth.load_saved_token(base) == old
+    assert "revocation also failed" in capsys.readouterr().err
+
+
+def test_logout_remote_failure_retains_local_and_no_local_does_not_delete(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
+) -> None:
+    base = "https://control.example"
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
+    monkeypatch.setattr(
+        auth,
+        "_json_request",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    assert auth.logout() == 0
+    assert "No local" in capsys.readouterr().out
+    auth._save_token(base, token(), {"id": "id"})
+    assert auth.logout() == 2
+    assert auth.load_saved_token(base) == token()
+
+
+def test_json_request_caps_body_and_rejects_redirect() -> None:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/redirect":
+                self.send_response(302)
+                self.send_header("Location", "/ok")
+                self.end_headers()
+                return
+            if self.path == "/empty":
+                self.send_response(204)
+                self.end_headers()
+                return
+            if self.path == "/error":
+                self.send_response(500)
+                body = b"x" * (auth._MAX_RESPONSE + 1)
+            elif self.path == "/large":
+                self.send_response(200)
+                body = b"{" + b"x" * (auth._MAX_RESPONSE + 1)
+            elif self.path == "/json204":
+                self.send_response(204)
+                body = b""
+            else:
+                self.send_response(200)
+                body = b'{"ok":true}'
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_DELETE(self) -> None:
+            self.do_GET()
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        assert (
+            auth._json_request(base + "/empty", "DELETE", expect_no_content=True) == {}
+        )
+        with pytest.raises(RuntimeError, match="invalid response"):
+            auth._json_request(base + "/json204", "GET")
+        with pytest.raises(RuntimeError, match="too large"):
+            auth._json_request(base + "/error", "GET")
+        assert auth._json_request(base + "/ok", "GET") == {"ok": True}
+        with pytest.raises(RuntimeError, match="redirect"):
+            auth._json_request(base + "/redirect", "GET")
+        with pytest.raises(RuntimeError, match="too large"):
+            auth._json_request(base + "/large", "GET")
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_logout_ignores_environment_token(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring
+) -> None:
+    base = "https://control.example"
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
+    monkeypatch.setenv("M3_ACCESS_TOKEN", token())
+    auth._save_token(base, token(), {"id": "id", "kind": "cli"})
+    used: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        auth,
+        "_json_request",
+        lambda url, method, body=None, token=None, **kwargs: (
+            used.append((token or "", kwargs.get("expect_no_content", False))) or {}
+        ),
+    )
+    assert auth.logout() == 0
+    assert used == [(token(), True)]
     assert auth.load_saved_token(base) is None
 
 
-def test_saved_tokens_for_long_similar_origins_remain_separate(
-    keyring: MemoryKeyring,
+def test_status_reports_online_session_and_rejects_malformed_without_secret(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    prefix = "a" * 64
-    first = f"https://{prefix}.example.com"
-    second = f"https://{prefix}.example.org"
-    assert auth._account(first) != auth._account(second)
-
-    auth._save_token(first, "first-token", {"token_id": "first"})
-    auth._save_token(second, "second-token", {"token_id": "second"})
-    assert auth.load_saved_token(first) == "first-token"
-    assert auth.load_saved_token(second) == "second-token"
-
-    assert auth._remove_saved_token(first)
-    assert auth.load_saved_token(first) is None
-    assert auth.load_saved_token(second) == "second-token"
-
-
-def test_status_identifies_saved_developer_token_for_rotation(
-    keyring: MemoryKeyring,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    base = "https://control-plane.example"
-    auth._save_token(base, "m3pat_secret", {"token_id": "current-token-id"})
+    base = "https://control.example"
+    secret = token()
     monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
-
+    monkeypatch.setenv("M3_ACCESS_TOKEN", secret)
+    session = {
+        "metadata": {
+            "id": "id",
+            "kind": "cli",
+            "org_id": "org",
+            "name": "M3 CLI",
+            "created_at": "a",
+            "expires_at": "b",
+        }
+    }
+    monkeypatch.setattr(auth, "_json_request", lambda *a, **k: session)
     assert auth.status() == 0
-    output = capsys.readouterr().out
-    assert "ID current-token-id" in output
-    assert "m3pat_secret" not in output
+    assert "valid" in capsys.readouterr().out
+    monkeypatch.setattr(auth, "_json_request", lambda *a, **k: {"metadata": {}})
+    assert auth.status() == 2
+    output = capsys.readouterr()
+    assert secret not in output.out + output.err
 
 
-def test_control_plane_origin_must_be_https(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("M3_CONTROL_PLANE_URL", "http://control-plane.example")
-    with pytest.raises(ValueError, match="HTTPS origin"):
-        auth.control_plane_url()
-    monkeypatch.setenv("M3_CONTROL_PLANE_URL", "https://control-plane.example///")
-    with pytest.raises(ValueError, match="HTTPS origin"):
-        auth.control_plane_url()
-
-
-def test_only_os_keyring_backends_are_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FileKeyring:
-        priority = 100
-
-    fake = SimpleNamespace(get_keyring=lambda: FileKeyring())
-    monkeypatch.setitem(sys.modules, "keyring", fake)
-    with pytest.raises(RuntimeError, match="supported OS credential store"):
-        auth._keyring()
-
-    for module, name in (
-        ("keyring.backends.macOS", "Keyring"),
-        ("keyring.backends.Windows", "WinVaultKeyring"),
-        ("keyring.backends.SecretService", "Keyring"),
-        ("keyring.backends.libsecret", "Keyring"),
-        ("keyring.backends.kwallet", "DBusKeyring"),
-        ("keyring.backends.kwallet", "DBusKeyringKWallet4"),
-    ):
-        backend_type = type(name, (), {"__module__": module})
-        fake_backend = SimpleNamespace(
-            get_keyring=lambda backend_type=backend_type: backend_type()
-        )
-        monkeypatch.setitem(sys.modules, "keyring", fake_backend)
-        assert auth._keyring() is fake_backend
-
-
-def _start_login(monkeypatch: pytest.MonkeyPatch, exchange_result: dict[str, object]):
-    monkeypatch.setenv("M3_CONTROL_PLANE_URL", "https://control-plane.example")
-    opened: list[str] = []
-    calls: list[tuple[str, str, str, str]] = []
-    monkeypatch.setattr(
-        auth.webbrowser, "open", lambda url, **_kwargs: opened.append(url) or True
-    )
-
-    def exchange(base: str, code: str, verifier: str, redirect_uri: str):
-        calls.append((base, code, verifier, redirect_uri))
-        return exchange_result
-
-    monkeypatch.setattr(auth, "_exchange_code", exchange)
-    result: list[int] = []
-    thread = threading.Thread(target=lambda: result.append(auth.login()), daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 3
-    while not opened and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert opened
-    return opened[0], calls, result, thread
-
-
-def _callback_url(login_url: str) -> tuple[dict[str, list[str]], str]:
-    query = parse.parse_qs(parse.urlparse(login_url).query)
-    redirect_uri = query["redirect_uri"][0]
-    return query, redirect_uri
-
-
-def _send_callback(url: str, state: str, code: str = "opaque.one-time-code") -> int:
-    target = url + "?" + parse.urlencode({"code": code, "state": state})
-    try:
-        with request.urlopen(target, timeout=3) as response:
-            response.read()
-            return response.status
-    except error.HTTPError as exc:
-        return exc.code
-
-
-def test_login_uses_hosted_pkce_flow_and_leaves_saved_token_when_no_new_token(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    keyring: MemoryKeyring,
+def test_successful_logout_removes_only_credential_metadata(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring
 ) -> None:
-    base = "https://control-plane.example"
-    auth._save_token(base, "m3pat_previous", {"token_id": "previous-id"})
-    login_url, calls, result, thread = _start_login(monkeypatch, {"created": False})
-    query, redirect_uri = _callback_url(login_url)
-    assert parse.urlparse(login_url).path == "/cli/login"
-    assert set(query) == {
-        "redirect_uri",
-        "state",
-        "code_challenge",
-        "can_store_developer",
-    }
-    assert query["can_store_developer"] == ["1"]
-    assert redirect_uri.startswith("http://127.0.0.1:")
-    assert redirect_uri.endswith("/callback")
-
-    callback_query = parse.urlencode(
-        {"code": "opaque.one-time-code", "state": "incorrect-state"}
-    )
-    with pytest.raises(error.HTTPError) as invalid:
-        request.urlopen(redirect_uri + "?" + callback_query, timeout=3)
-    assert invalid.value.code == 400
-
-    valid_query = parse.urlencode(
-        {"code": "opaque.one-time-code", "state": query["state"][0]}
-    )
-    wrong_host = request.Request(
-        redirect_uri + "?" + valid_query,
-        headers={"Host": "localhost:" + str(parse.urlparse(redirect_uri).port)},
-    )
-    with pytest.raises(error.HTTPError) as host_error:
-        request.urlopen(wrong_host, timeout=3)
-    assert host_error.value.code == 400
-    with pytest.raises(error.HTTPError) as path_error:
-        request.urlopen(
-            redirect_uri.replace("/callback", "/other") + "?" + valid_query, timeout=3
-        )
-    assert path_error.value.code == 404
-
-    assert _send_callback(redirect_uri, query["state"][0]) == 200
-    thread.join(timeout=3)
-    assert not thread.is_alive()
-    assert result == [0]
-    assert len(calls) == 1
-    exchange_base, code, verifier, exchange_redirect = calls[0]
-    assert exchange_base == base
-    assert code == "opaque.one-time-code"
-    assert exchange_redirect == redirect_uri
-    expected_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
-    )
-    assert query["code_challenge"][0] == expected_challenge.rstrip(b"=").decode()
-    assert auth.load_saved_token(base) == "m3pat_previous"
-    assert "No developer token was created or changed" in capsys.readouterr().out
-
-
-def test_login_saves_only_token_returned_from_exchange(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    keyring: MemoryKeyring,
-) -> None:
-    login_url, calls, result, thread = _start_login(
-        monkeypatch,
-        {
-            "created": True,
-            "token": "m3pat_" + "A" * 22 + "." + "A" * 43,
-            "metadata": {"id": "token-id", "expires_at": "2030-01-01T00:00:00Z"},
-        },
-    )
-    query, redirect_uri = _callback_url(login_url)
-    assert _send_callback(redirect_uri, query["state"][0]) == 200
-    thread.join(timeout=3)
-    assert not thread.is_alive()
-    assert result == [0]
-    assert calls[0][1] == "opaque.one-time-code"
-    expected_token = "m3pat_" + "A" * 22 + "." + "A" * 43
-    assert auth.load_saved_token("https://control-plane.example") == expected_token
-    saved = json.loads(auth._metadata_path().read_text())
-    assert saved["https://control-plane.example"] == {
-        "token_id": "token-id",
-        "expires_at": "2030-01-01T00:00:00Z",
-    }
-    output = capsys.readouterr().out
-    assert "saved in the OS credential store" in output
-    assert expected_token not in output
-
-
-def test_login_keeps_available_without_secure_store_and_disables_token_creation(
-    monkeypatch: pytest.MonkeyPatch,
-    keyring: MemoryKeyring,
-) -> None:
-    monkeypatch.setattr(
-        auth,
-        "_probe_keyring",
-        lambda: (_ for _ in ()).throw(RuntimeError("unavailable")),
-    )
-    login_url, calls, result, thread = _start_login(monkeypatch, {"created": False})
-    query, redirect_uri = _callback_url(login_url)
-    assert query["can_store_developer"] == ["0"]
-    assert _send_callback(redirect_uri, query["state"][0]) == 200
-    thread.join(timeout=3)
-    assert not thread.is_alive()
-    assert result == [0]
-    assert len(calls) == 1
-    assert auth.load_saved_token("https://control-plane.example") is None
-
-
-def test_login_cancel_callback_does_not_exchange_or_replace_saved_token(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    keyring: MemoryKeyring,
-) -> None:
-    base = "https://control-plane.example"
-    auth._save_token(base, "m3pat_previous", {"token_id": "previous-id"})
-    login_url, calls, result, thread = _start_login(monkeypatch, {"created": False})
-    query, redirect_uri = _callback_url(login_url)
-    target = (
-        redirect_uri
-        + "?"
-        + parse.urlencode({"state": query["state"][0], "error": "access_denied"})
-    )
-    with request.urlopen(target, timeout=3) as response:
-        assert response.status == 200
-    thread.join(timeout=3)
-    assert not thread.is_alive()
-    assert result == [0]
-    assert calls == []
-    assert auth.load_saved_token(base) == "m3pat_previous"
-    assert "sign-in cancelled" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize(
-    "exchange_result",
-    [
-        {"created": True},
-        {"created": False, "token": "m3pat_" + "A" * 22 + "." + "A" * 43},
-    ],
-)
-def test_login_rejects_inconsistent_or_invalid_token_results(
-    monkeypatch: pytest.MonkeyPatch,
-    keyring: MemoryKeyring,
-    exchange_result: dict[str, object],
-) -> None:
-    base = "https://control-plane.example"
-    auth._save_token(base, "m3pat_previous", {"token_id": "previous-id"})
-    login_url, _calls, result, thread = _start_login(monkeypatch, exchange_result)
-    query, redirect_uri = _callback_url(login_url)
-    assert _send_callback(redirect_uri, query["state"][0]) == 200
-    thread.join(timeout=3)
-    assert not thread.is_alive()
-    assert result == [2]
-    assert auth.load_saved_token(base) == "m3pat_previous"
-
-
-@pytest.mark.parametrize(
-    "credential",
-    [
-        "m3pat_invalid",
-        "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyIn0.signature",
-        "supabase-refresh-token-that-is-not-an-m3-pat",
-    ],
-    ids=["invalid-m3pat", "supabase-jwt", "supabase-refresh-token"],
-)
-def test_exchange_rejects_noncanonical_credentials(
-    monkeypatch: pytest.MonkeyPatch, credential: str
-) -> None:
-    class Response:
-        status = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def read(self, _size: int) -> bytes:
-            return json.dumps({"created": True, "token": credential}).encode()
-
-    class Opener:
-        def open(self, req, *, timeout: int):
-            assert req.full_url == "https://control-plane.example/v1/cli/exchange"
-            assert req.get_method() == "POST"
-            assert timeout == 20
-            return Response()
-
-    monkeypatch.setattr(auth.request, "build_opener", lambda *_handlers: Opener())
-    with pytest.raises(RuntimeError, match="invalid developer token"):
-        auth._exchange_code(
-            "https://control-plane.example",
-            "opaque-code",
-            "verifier",
-            "http://127.0.0.1:1234/callback",
-        )
-
-
-def test_login_times_out_without_exchange_or_replacing_saved_token(
-    monkeypatch: pytest.MonkeyPatch,
-    keyring: MemoryKeyring,
-) -> None:
-    base = "https://control-plane.example"
-    auth._save_token(base, "m3pat_previous", {"token_id": "previous-id"})
-    monkeypatch.setattr(auth, "_LOGIN_TTL_SECONDS", 0.05)
-    login_url, calls, result, thread = _start_login(monkeypatch, {"created": False})
-    assert parse.urlparse(login_url).path == "/cli/login"
-    thread.join(timeout=3)
-    assert not thread.is_alive()
-    assert result == [2]
-    assert calls == []
-    assert auth.load_saved_token(base) == "m3pat_previous"
+    base = "https://control.example"
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", base)
+    installation = auth._installation_id()
+    auth._save_token(base, token(), {"id": "id", "kind": "cli"})
+    monkeypatch.setattr(auth, "_json_request", lambda *a, **k: {})
+    assert auth.logout() == 0
+    data = json.loads(auth._metadata_path().read_text())
+    assert data == {"_installation_id": installation}
+    assert auth.load_saved_token(base) is None

@@ -1,31 +1,36 @@
-"""Temporary loopback sign-in and local M3 access-token storage."""
+"""Device authorization and local M3 access-token storage."""
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import os
-import re
 import secrets
 import sys
 import threading
 import time
 import webbrowser
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from contextlib import contextmanager
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib import error, request
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qsl, urlparse
 
-from .ci_credentials import control_plane_url as _validated_control_plane_url
-from .ci_credentials import validate_access_token
+from .ci_credentials import (
+    control_plane_url as _validated_control_plane_url,
+)
+from .ci_credentials import (
+    normalize_https_origin,
+    validate_access_token,
+)
 from .errors import CLIError
 
 _SERVICE = "sf-m3"
-_LOGIN_TTL_SECONDS = 600
-_MAX_EXCHANGE_RESPONSE = 64 * 1024
+_MAX_RESPONSE = 64 * 1024
+_AUTH_DEFAULT = "https://auth.sineframe.com"
+_REQUEST_TIMEOUT = 20
+_METADATA_LOCK = threading.Lock()
 
 
 def control_plane_url() -> str:
@@ -33,6 +38,10 @@ def control_plane_url() -> str:
         return _validated_control_plane_url(os.environ)
     except CLIError as exc:
         raise ValueError("M3 control-plane URL must be an HTTPS origin") from exc
+
+
+def _origin(raw: str, setting: str) -> str:
+    return normalize_https_origin(raw, setting)
 
 
 def _metadata_path() -> Path:
@@ -48,32 +57,109 @@ def _metadata_path() -> Path:
 def _write_metadata(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(path.parent, 0o700)
-    tmp = path.with_name("." + path.name + "." + secrets.token_hex(8))
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    temp = path.with_name("." + path.name + "." + secrets.token_hex(8))
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(value, stream, sort_keys=True)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(tmp, path)
+        os.replace(temp, path)
         os.chmod(path, 0o600)
     finally:
         try:
-            tmp.unlink()
+            temp.unlink()
         except FileNotFoundError:
             pass
+
+
+def _read_metadata(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("local credential metadata is unreadable") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("local credential metadata is invalid")
+    return value
+
+
+def _update_metadata(update: Any) -> None:
+    """Serialize read-modify-write operations in this process atomically."""
+    path = _metadata_path()
+    with _METADATA_LOCK, _metadata_file_lock(path):
+        current = _read_metadata(path) if path.exists() else {}
+        update(current)
+        _write_metadata(path, current)
+
+
+@contextmanager
+def _metadata_file_lock(path: Path) -> Any:
+    """A crash-safe advisory lock around metadata read-modify-write."""
+    lock = path.with_name("." + path.name + ".lock")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    os.chmod(lock, 0o600)
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            for attempt in range(10):
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                    break
+                except OSError:
+                    if attempt == 9:
+                        raise
+                    time.sleep(0.05)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _installation_id() -> str:
+    path = _metadata_path()
+    with _METADATA_LOCK, _metadata_file_lock(path):
+        data = _read_metadata(path)
+        value = data.get("_installation_id")
+        if isinstance(value, str):
+            if len(value) == 32 and all(c in "0123456789abcdef" for c in value):
+                return value
+        value = secrets.token_hex(16)
+        # Installation metadata is shared with credential metadata.  Never replace
+        # that document merely because this is the first login on this machine.
+        data["_installation_id"] = value
+        _write_metadata(path, data)
+        return value
+
+
+def _device_name() -> str:
+    raw = os.environ.get("COMPUTERNAME" if sys.platform == "win32" else "HOSTNAME", "")
+    safe = "".join(c for c in raw if c.isascii() and (c.isalnum() or c in "-_"))[:48]
+    return "M3 CLI" + (f" ({safe})" if safe else "")
 
 
 def _keyring() -> Any:
     try:
         import keyring
-    except ImportError as exc:  # pragma: no cover - packaging supplies keyring
-        raise RuntimeError(
-            "secure credential storage is unavailable; set M3_ACCESS_TOKEN instead"
-        ) from exc
+    except ImportError as exc:
+        raise RuntimeError("OS credential storage is unavailable") from exc
     backend = keyring.get_keyring()
-    backend_type = type(backend)
-    trusted_backends = {
+    trusted = {
         ("keyring.backends.macOS", "Keyring"),
         ("keyring.backends.Windows", "WinVaultKeyring"),
         ("keyring.backends.SecretService", "Keyring"),
@@ -81,436 +167,373 @@ def _keyring() -> Any:
         ("keyring.backends.kwallet", "DBusKeyring"),
         ("keyring.backends.kwallet", "DBusKeyringKWallet4"),
     }
-    if (backend_type.__module__, backend_type.__name__) not in trusted_backends:
-        raise RuntimeError(
-            "a supported OS credential store is unavailable; set M3_ACCESS_TOKEN instead"
-        )
+    if (type(backend).__module__, type(backend).__name__) not in trusted:
+        raise RuntimeError("a supported OS credential store is unavailable")
     return keyring
 
 
-def _probe_keyring() -> Any:
-    keyring = _keyring()
-    service = _SERVICE + "-probe"
-    account = secrets.token_hex(16)
-    try:
-        keyring.set_password(service, account, secrets.token_urlsafe(32))
-        keyring.delete_password(service, account)
-    except Exception:
-        try:
-            keyring.delete_password(service, account)
-        except Exception:
-            pass
-        raise RuntimeError(
-            "OS credential storage cannot save a token; set M3_ACCESS_TOKEN instead"
-        ) from None
-    return keyring
-
-
-def _account(base_url: str) -> str:
-    parsed = urlparse(base_url)
-    origin = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
-    host = parsed.netloc.lower()
-    # Credential-manager account names are bounded and cannot contain secrets.
-    slug = re.sub(r"[^A-Za-z0-9._-]", "_", host)
-    digest = hashlib.sha256(origin.encode("utf-8")).hexdigest()[:32]
-    return f"m3_{slug[:20]}_{digest}"
+def _account(base: str) -> str:
+    return "m3_" + hashlib.sha256(base.encode()).hexdigest()[:32]
 
 
 def load_saved_token(base_url: str) -> str | None:
-    """Return the saved PAT for this exact API origin, if the OS store has one."""
     try:
         token = _keyring().get_password(_SERVICE, _account(base_url))
-        return token if isinstance(token, str) else None
+        if token is not None and not isinstance(token, str):
+            raise RuntimeError("OS credential store returned invalid data")
+        return token
     except RuntimeError:
         raise
     except Exception:
-        return None
+        raise RuntimeError("could not read OS credential store") from None
 
 
-def _save_token(base_url: str, token: str, metadata: dict[str, Any]) -> None:
+def _probe_keyring() -> None:
     keyring = _keyring()
-    account = _account(base_url)
-    previous = keyring.get_password(_SERVICE, account)
-    keyring.set_password(_SERVICE, account, token)
+    account = secrets.token_hex(16)
     try:
-        path = _metadata_path()
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        current: dict[str, Any] = {}
-        try:
-            decoded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(decoded, dict):
-                current = decoded
-        except (FileNotFoundError, json.JSONDecodeError):
-            pass
-        current[base_url] = metadata
-        _write_metadata(path, current)
+        keyring.set_password(_SERVICE + "-probe", account, secrets.token_urlsafe(32))
+        keyring.delete_password(_SERVICE + "-probe", account)
     except Exception:
         try:
-            if previous is None:
+            keyring.delete_password(_SERVICE + "-probe", account)
+        except Exception:
+            pass
+        raise RuntimeError("OS credential store cannot save credentials") from None
+
+
+def _save_token(base: str, token: str, metadata: dict[str, Any]) -> None:
+    keyring = _keyring()
+    account = _account(base)
+    old = keyring.get_password(_SERVICE, account)
+    keyring.set_password(_SERVICE, account, token)
+    try:
+        _update_metadata(lambda all_metadata: all_metadata.__setitem__(base, metadata))
+    except Exception:
+        try:
+            if old is None:
                 keyring.delete_password(_SERVICE, account)
             else:
-                keyring.set_password(_SERVICE, account, previous)
+                keyring.set_password(_SERVICE, account, old)
         except Exception:
             pass
         raise RuntimeError("could not save credential metadata securely") from None
 
 
-def _remove_saved_token(base_url: str) -> bool:
+def _remove_saved_token(base: str) -> bool:
+    keyring = _keyring()
+    account = _account(base)
     try:
-        keyring = _keyring()
-        account = _account(base_url)
         if keyring.get_password(_SERVICE, account) is not None:
             keyring.delete_password(_SERVICE, account)
     except Exception:
         return False
-    path = _metadata_path()
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(value, dict):
-            value.pop(base_url, None)
-            _write_metadata(path, value)
-    except (OSError, json.JSONDecodeError):
+        _update_metadata(lambda metadata: metadata.pop(base, None))
+    except Exception:
         pass
     return True
+
+
+class _NoRedirect(request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("redirect rejected")
+
+
+def _read_limited(stream: Any) -> bytes:
+    raw = stream.read(_MAX_RESPONSE + 1)
+    if len(raw) > _MAX_RESPONSE:
+        raise RuntimeError("server response is too large")
+    return cast(bytes, raw)
+
+
+def _json_request(
+    url: str,
+    method: str,
+    body: dict[str, Any] | None = None,
+    token: str | None = None,
+    *,
+    expect_no_content: bool = False,
+) -> dict[str, Any]:
+    headers = {"Accept": "application/json", "Cache-Control": "no-store"}
+    data = None
+    if body is not None:
+        data = json.dumps(body, separators=(",", ":")).encode()
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    req = request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with request.build_opener(_NoRedirect()).open(
+            req, timeout=_REQUEST_TIMEOUT
+        ) as response:
+            if response.status == 204:
+                if not expect_no_content:
+                    raise RuntimeError("server returned an invalid response")
+                return {}
+            raw = _read_limited(response)
+        result = json.loads(raw)
+    except error.HTTPError as exc:
+        try:
+            envelope = json.loads(_read_limited(exc))
+            err = envelope.get("error")
+            code = err.get("code") if isinstance(err, dict) else None
+            if code not in {
+                "authorization_pending",
+                "slow_down",
+                "access_denied",
+                "expired_token",
+                "invalid_grant",
+            }:
+                code = None
+        except RuntimeError:
+            raise
+        except Exception:
+            code = None
+        if code:
+            raise RuntimeError(code) from None
+        raise RuntimeError("server rejected the request") from None
+    except RuntimeError:
+        raise
+    except (error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        raise RuntimeError("could not contact the M3 control-plane") from None
+    if not isinstance(result, dict):
+        raise RuntimeError("server returned an invalid response")
+    return result
+
+
+def _is_ci() -> bool:
+    return any(os.environ.get(name) for name in ("CI", "GITHUB_ACTIONS", "GITLAB_CI"))
+
+
+def _credential(base: str) -> str | None:
+    env = os.environ.get("M3_ACCESS_TOKEN")
+    if env is not None:
+        return validate_access_token(env)
+    if _is_ci():
+        raise RuntimeError("M3_ACCESS_TOKEN is required in CI")
+    return load_saved_token(base)
 
 
 def status() -> int:
     try:
         base = control_plane_url()
-    except ValueError as exc:
+        token = _credential(base)
+        if not token:
+            print("No M3 CLI credential is configured.")
+            return 0
+        result = _json_request(base + "/v1/cli/session", "GET", token=token)
+        metadata = result.get("metadata")
+        fields = ("id", "kind", "org_id", "name", "created_at", "expires_at")
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("kind") != "cli"
+            or any(not isinstance(metadata.get(key), str) for key in fields)
+        ):
+            raise RuntimeError("server returned invalid session metadata")
+        print("M3 CLI credential is valid.")
+        for key, label in (
+            ("name", "Token"),
+            ("org_id", "Organization"),
+            ("id", "Token ID"),
+            ("expires_at", "Expires"),
+        ):
+            if isinstance(metadata.get(key), str):
+                print(f"{label}: {metadata[key]}")
+        return 0
+    except (RuntimeError, ValueError, CLIError) as exc:
         print(f"m3 auth status: {exc}", file=sys.stderr)
         return 2
-    try:
-        token = load_saved_token(base)
-    except RuntimeError as exc:
-        print(
-            f"OS credential store unavailable ({exc}); server validity was not checked."
-        )
-        token = None
-    env_token = os.environ.get("M3_ACCESS_TOKEN")
-    if env_token:
-        print(
-            "M3_ACCESS_TOKEN is set in the current environment (validity not checked)."
-        )
-    if token is None:
-        if not env_token:
-            print("No developer token is saved in the OS credential store.")
-        return 0
-    metadata: dict[str, Any] = {}
-    try:
-        all_metadata = json.loads(_metadata_path().read_text(encoding="utf-8"))
-        if isinstance(all_metadata, dict) and isinstance(all_metadata.get(base), dict):
-            metadata = all_metadata[base]
-    except (OSError, json.JSONDecodeError):
-        pass
-    expires = metadata.get("expires_at")
-    token_id = metadata.get("token_id")
-    description = "saved developer token found in the OS credential store"
-    if isinstance(token_id, str) and token_id:
-        description += f" (ID {token_id})"
-    if isinstance(expires, str):
-        description += f" (expires {expires})"
-    print(description + "; server validity has not been checked.")
-    return 0
 
 
 def logout() -> int:
     try:
         base = control_plane_url()
+        # Logout is deliberately local-only: an explicit environment token is
+        # not the CLI credential that this command owns.
+        token = load_saved_token(base)
+        if not token:
+            print("No local M3 CLI credential is configured.")
+            return 0
+        _json_request(
+            base + "/v1/cli/session", "DELETE", token=token, expect_no_content=True
+        )
         if not _remove_saved_token(base):
-            print(
-                "m3 auth logout: could not access the OS credential store",
-                file=sys.stderr,
+            raise RuntimeError(
+                "remote credential revoked, but local credential could not be removed"
             )
-            return 2
-    except ValueError as exc:
+        print("M3 CLI credential revoked and removed.")
+        return 0
+    except (RuntimeError, ValueError, CLIError) as exc:
         print(f"m3 auth logout: {exc}", file=sys.stderr)
         return 2
-    print(
-        "Removed the locally saved M3 credential. Copies held by other systems remain active."
+
+
+def _validate_verification_url(
+    value: Any, auth_origin: str, *, complete: bool, user_code: str | None = None
+) -> str:
+    if not isinstance(value, str) or len(value) > 2048:
+        raise RuntimeError("server returned an invalid verification URL")
+    parsed = urlparse(value)
+    expected = urlparse(auth_origin)
+    try:
+        same_origin = (
+            parsed.scheme == "https"
+            and parsed.hostname == expected.hostname
+            and (parsed.port or 443) == (expected.port or 443)
+        )
+    except ValueError:
+        same_origin = False
+    try:
+        pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        pairs = []
+    next_value = (
+        f"/cli/authorize?code={user_code}" if isinstance(user_code, str) else None
     )
-    return 0
+    valid_query = (
+        len(pairs) == 1 and pairs[0][0] == "next" and pairs[0][1] == next_value
+    )
+    if (
+        not same_origin
+        or parsed.path != "/sign-in"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or parsed.netloc.endswith(".")
+        or (not complete and parsed.query)
+        or (complete and not valid_query)
+    ):
+        raise RuntimeError("server returned an invalid verification URL")
+    return value
 
 
-class _NoRedirect(request.HTTPRedirectHandler):
-    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
-        raise RuntimeError("control-plane redirect rejected")
+def _cli_version() -> str:
+    try:
+        return version("sf-m3-cli")
+    except PackageNotFoundError:
+        return "0+unknown"
 
 
 def login() -> int:
     try:
         base = control_plane_url()
-    except ValueError as exc:
-        print(f"m3 auth login: {exc}", file=sys.stderr)
-        return 2
-    try:
+        auth_origin = _origin(
+            os.environ.get("M3_AUTH_URL", _AUTH_DEFAULT), "M3_AUTH_URL"
+        )
         _probe_keyring()
-        can_store_developer = True
-    except Exception:
-        can_store_developer = False
-    state = secrets.token_urlsafe(32)
-    verifier = secrets.token_urlsafe(32)
-    challenge_bytes = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
-    )
-    challenge = challenge_bytes.rstrip(b"=").decode("ascii")
-    callback: dict[str, str] = {}
-    callback_lock = threading.Lock()
-    completed = threading.Event()
-    started = time.monotonic()
-
-    class Handler(BaseHTTPRequestHandler):
-        server_version = "M3Auth/2"
-        sys_version = ""
-
-        def log_message(self, _format: str, *args: Any) -> None:
-            return
-
-        def do_GET(self) -> None:
-            expected_host = f"127.0.0.1:{server.server_address[1]}"
-            if self.headers.get("Host") != expected_host:
-                self.send_error(HTTPStatus.BAD_REQUEST)
-                return
-            if time.monotonic() - started > _LOGIN_TTL_SECONDS:
-                self._reply(
-                    HTTPStatus.GONE,
-                    "This sign-in has expired. Run m3 auth login again.",
-                )
-                return
-            parsed = urlparse(self.path)
-            if parsed.path != "/callback" or parsed.fragment:
-                self._reply(
-                    HTTPStatus.NOT_FOUND, "This local address is only for M3 sign-in."
-                )
-                return
-            try:
-                values = parse_qs(
-                    parsed.query, strict_parsing=True, keep_blank_values=True
-                )
-            except ValueError:
-                self._reply(HTTPStatus.BAD_REQUEST, "The sign-in response is invalid.")
-                return
-            if any(len(items) != 1 for items in values.values()) or not set(
-                values
-            ).issubset({"state", "code", "error"}):
-                self._reply(HTTPStatus.BAD_REQUEST, "The sign-in response is invalid.")
-                return
-            returned_state = values.get("state", [""])[0]
-            code = values.get("code", [""])[0]
-            callback_error = values.get("error", [""])[0]
-            if not secrets.compare_digest(returned_state, state):
-                self._reply(
-                    HTTPStatus.BAD_REQUEST,
-                    "The sign-in response could not be verified.",
-                )
-                return
-            if callback_error:
-                if code or callback_error not in {
-                    "access_denied",
-                    "login_required",
-                    "server_error",
-                }:
-                    self._reply(
-                        HTTPStatus.BAD_REQUEST, "The sign-in response is invalid."
-                    )
-                    return
-                with callback_lock:
-                    if completed.is_set():
-                        self._reply(
-                            HTTPStatus.CONFLICT,
-                            "This sign-in response was already received.",
-                        )
-                        return
-                    callback["error"] = callback_error
-                    completed.set()
-                self._reply(
-                    HTTPStatus.OK,
-                    "M3 sign-in was cancelled. You can close this browser tab.",
-                )
-                return
-            if (
-                not code
-                or len(code) > 4096
-                or not re.fullmatch(r"[A-Za-z0-9._~-]+", code)
-            ):
-                self._reply(HTTPStatus.BAD_REQUEST, "The sign-in response is invalid.")
-                return
-            with callback_lock:
-                if completed.is_set():
-                    self._reply(
-                        HTTPStatus.CONFLICT,
-                        "This sign-in response was already received.",
-                    )
-                    return
-                callback["code"] = code
-                completed.set()
-            self._reply(
-                HTTPStatus.OK, "M3 sign-in complete. You can close this browser tab."
-            )
-
-        def _reply(self, status: int, message: str) -> None:
-            body = (
-                "<!doctype html><meta charset=utf-8><title>M3 sign-in</title>"
-                "<p>" + message + "</p>"
-            ).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header(
-                "Content-Security-Policy",
-                "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-            )
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_POST(self) -> None:
-            self.send_error(HTTPStatus.METHOD_NOT_ALLOWED)
-
-        def do_HEAD(self) -> None:
-            self.send_error(HTTPStatus.METHOD_NOT_ALLOWED)
-
-        def do_OPTIONS(self) -> None:
-            self.send_error(HTTPStatus.FORBIDDEN)
-
-    try:
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    except OSError:
-        print("m3 auth login: could not bind the local sign-in page", file=sys.stderr)
-        return 2
-    server.daemon_threads = True
-    server.block_on_close = False
-    server.timeout = 0.25
-    redirect_uri = f"http://127.0.0.1:{server.server_address[1]}/callback"
-    login_url = (
-        base
-        + "/cli/login?"
-        + urlencode(
+        authorization = _json_request(
+            base + "/v1/cli/device/authorization",
+            "POST",
             {
-                "redirect_uri": redirect_uri,
-                "state": state,
-                "code_challenge": challenge,
-                "can_store_developer": "1" if can_store_developer else "0",
-            }
+                "installation_id": _installation_id(),
+                "device_name": _device_name(),
+                "cli_version": _cli_version(),
+            },
         )
-    )
-    thread = threading.Thread(
-        target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True
-    )
-    thread.start()
-    try:
-        print("Opening M3 sign-in in your browser…", flush=True)
-        if not webbrowser.open(login_url, new=2):
-            print(f"Open this sign-in page: {login_url}", flush=True)
-        while not completed.wait(0.25):
-            if time.monotonic() - started > _LOGIN_TTL_SECONDS:
-                raise RuntimeError("sign-in timed out; run m3 auth login again")
-    except KeyboardInterrupt:
-        print("m3 auth login: sign-in cancelled", file=sys.stderr)
-        return 130
-    except RuntimeError as exc:
-        print(f"m3 auth login: {exc}", file=sys.stderr)
-        return 2
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
-    if callback.get("error"):
-        print("M3 sign-in cancelled. Your saved credential was not changed.")
-        return 0
-    try:
-        result = _exchange_code(base, callback["code"], verifier, redirect_uri)
-    except RuntimeError as exc:
-        print(f"m3 auth login: {exc}", file=sys.stderr)
-        return 2
-    token = result.get("token")
-    if result["created"] != (token is not None):
-        print(
-            "m3 auth login: control-plane returned an incomplete token result",
-            file=sys.stderr,
+        required = (
+            "device_code",
+            "user_code",
+            "verification_uri",
+            "verification_uri_complete",
+            "expires_in",
+            "interval",
         )
-        return 2
-    if token is None:
-        print("M3 sign-in complete. No developer token was created or changed.")
-        return 0
-    if not can_store_developer:
-        print(
-            "m3 auth login: control-plane returned a token when secure storage was unavailable",
-            file=sys.stderr,
+        if any(key not in authorization for key in required):
+            raise RuntimeError("server returned incomplete device authorization")
+        code, user_code = authorization["device_code"], authorization["user_code"]
+        if (
+            not isinstance(code, str)
+            or not 1 <= len(code) <= 4096
+            or not isinstance(user_code, str)
+            or not 4 <= len(user_code) <= 64
+            or any(
+                not (char.isascii() and (char.isalnum() or char == "-"))
+                for char in user_code
+            )
+            or user_code.startswith("-")
+            or user_code.endswith("-")
+        ):
+            raise RuntimeError("server returned invalid device authorization")
+        uri = _validate_verification_url(
+            authorization["verification_uri"], auth_origin, complete=False
         )
-        return 2
-    metadata = result.get("metadata")
-    saved_metadata = {
-        "token_id": metadata.get("id") if isinstance(metadata, dict) else None,
-        "expires_at": metadata.get("expires_at")
-        if isinstance(metadata, dict)
-        else None,
-    }
-    try:
-        _save_token(base, token, saved_metadata)
-    except Exception:
-        print(
-            "m3 auth login: developer token was created but could not be saved in the OS credential store",
-            file=sys.stderr,
+        complete = _validate_verification_url(
+            authorization["verification_uri_complete"],
+            auth_origin,
+            complete=True,
+            user_code=user_code,
         )
-        return 2
-    token_id = saved_metadata["token_id"]
-    identifier = f" (ID {token_id})" if isinstance(token_id, str) and token_id else ""
-    print(
-        "M3 sign-in complete. Developer token"
-        f"{identifier} saved in the OS credential store. "
-        "Older developer tokens remain active until revoked in the sign-in page."
-    )
-    return 0
-
-
-def _exchange_code(
-    base: str, code: str, verifier: str, redirect_uri: str
-) -> dict[str, Any]:
-    body = json.dumps(
-        {"code": code, "code_verifier": verifier, "redirect_uri": redirect_uri},
-        separators=(",", ":"),
-    ).encode("utf-8")
-    req = request.Request(
-        base + "/v1/cli/exchange",
-        data=body,
-        method="POST",
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "Cache-Control": "no-store",
-        },
-    )
-    opener = request.build_opener(_NoRedirect())
-    try:
-        with opener.open(req, timeout=20) as response:
-            raw = response.read(_MAX_EXCHANGE_RESPONSE + 1)
-            if len(raw) > _MAX_EXCHANGE_RESPONSE:
-                raise RuntimeError("control-plane response is too large")
-            result = json.loads(raw)
-    except error.HTTPError:
-        raise RuntimeError("control-plane rejected the sign-in code") from None
-    except (error.URLError, TimeoutError, OSError, json.JSONDecodeError):
-        raise RuntimeError(
-            "could not complete sign-in with the M3 control-plane"
-        ) from None
-    if not isinstance(result, dict) or not isinstance(result.get("created"), bool):
-        raise RuntimeError("control-plane returned an invalid sign-in response")
-    token = result.get("token")
-    if token is not None:
-        if not isinstance(token, str) or not result["created"]:
-            raise RuntimeError("control-plane returned an invalid developer token")
+        expires, interval = authorization["expires_in"], authorization["interval"]
+        if (
+            not isinstance(code, str)
+            or not 1 <= len(code) <= 4096
+            or type(expires) is not int
+            or not 1 <= expires <= 3600
+            or type(interval) is not int
+            or not 1 <= interval <= 60
+        ):
+            raise RuntimeError("server returned invalid device authorization")
         try:
-            validate_access_token(token)
-        except CLIError:
-            raise RuntimeError(
-                "control-plane returned an invalid developer token"
-            ) from None
-    if "metadata" in result and not isinstance(result["metadata"], dict):
-        raise RuntimeError("control-plane returned invalid token metadata")
-    return result
-
-
-__all__ = ["control_plane_url", "load_saved_token", "login", "logout", "status"]
+            opened = bool(webbrowser.open(complete, new=2))
+        except Exception:
+            opened = False
+        if not opened:
+            print(f"Open {uri} and enter code: {user_code}", flush=True)
+        else:
+            print(f"Complete sign-in with code: {user_code}", flush=True)
+        deadline = time.monotonic() + expires
+        while time.monotonic() < deadline:
+            time.sleep(min(interval, max(0, deadline - time.monotonic())))
+            try:
+                result = _json_request(
+                    base + "/v1/cli/device/token", "POST", {"device_code": code}
+                )
+            except RuntimeError as exc:
+                if str(exc) == "authorization_pending":
+                    continue
+                if str(exc) == "slow_down":
+                    interval += 5
+                    continue
+                raise
+            token, metadata = result.get("access_token"), result.get("metadata")
+            fields = ("id", "kind", "org_id", "name", "created_at", "expires_at")
+            if (
+                not isinstance(token, str)
+                or result.get("token_type") != "Bearer"
+                or not isinstance(metadata, dict)
+                or any(
+                    not isinstance(metadata.get(k), str) or not metadata[k]
+                    for k in fields
+                )
+                or metadata.get("kind") != "cli"
+            ):
+                raise RuntimeError("server returned incomplete CLI token metadata")
+            try:
+                validate_access_token(token)
+            except CLIError:
+                raise RuntimeError("server returned an invalid CLI token") from None
+            try:
+                _save_token(base, token, {key: metadata[key] for key in fields})
+            except Exception:
+                try:
+                    _json_request(base + "/v1/cli/session", "DELETE", token=token)
+                except Exception:
+                    raise RuntimeError(
+                        "token was issued but could not be saved; remote revocation also failed"
+                    ) from None
+                raise RuntimeError(
+                    "token was issued but could not be saved; remote token revoked"
+                ) from None
+            print("M3 CLI credential saved in OS credential store.")
+            return 0
+        raise RuntimeError("device authorization expired")
+    except KeyboardInterrupt:
+        print(
+            "m3 auth login: cancelled; stopped polling (server authorization may remain active until expiry)",
+            file=sys.stderr,
+        )
+        return 130
+    except (RuntimeError, ValueError, CLIError) as exc:
+        print(f"m3 auth login: {exc}", file=sys.stderr)
+        return 2
