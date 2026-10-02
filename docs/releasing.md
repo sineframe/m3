@@ -1,46 +1,22 @@
 # Releasing M3
 
-CLI releases must contain no Firebase or Supabase SDKs, provider configuration,
-project URLs or keys, browser ID/access/refresh tokens, or service credentials.
-M3 personal access tokens are the only credentials used for API uploads.
-
-Release verification scans every archive member in the SDK, application, and
-CLI wheels for Firebase/Supabase code and configuration markers, Google/Firebase
-API keys, Supabase key prefixes, PEM private keys (including service-account
-JSON), and recognizable provider/browser JWT credentials. No wheel, directory,
-filename extension, or metadata member is exempt. Signature verification
-and expiry are irrelevant to detecting a bundled credential. Recognizable
-JWTs whose JSON exceeds safe inspection limits fail closed. All three
-wheels reject direct Firebase/Supabase provider requirements, including extra-
-and platform-marked requirements, so SDK/application wheel requirements cannot
-silently add them to a CLI installation. This is a conservative artifact
-policy, not a resolver for arbitrary third-party dependencies from PyPI.
-
-Firebase JWT detection uses the documented
-[ID-token issuer](https://firebase.google.com/docs/auth/admin/verify-id-tokens),
-[session-cookie issuer](https://firebase.google.com/docs/auth/admin/manage-cookies),
-and [custom-token audience](https://firebase.google.com/docs/auth/admin/create-custom-tokens).
-Service-account JSON embeds a sensitive private key; PEM private keys are
-rejected even without Firebase-specific filenames or project metadata. Public
-keys and unrelated JWTs are allowed. These static signatures do not guarantee
-detection of obfuscated or opaque credentials; never bundle live credentials.
+CLI releases must not bundle credentials. Release verification scans every
+archive member of the SDK, application, and CLI wheels for embedded
+credentials, such as API keys, private keys, and tokens, and rejects the
+release if it finds one. The scan matches known patterns; it cannot detect an
+obfuscated secret, so never place a live credential in the source tree.
 
 ## Sign-in and upload smoke test
 
-Before publishing a CLI release, check sign-in and both upload credentials
-against the deployed control plane and M3 account console. Use a controlled
-account that belongs to an organization, on a machine with a browser and a
-supported OS credential store.
+Before publishing a CLI release, check sign-in and both kinds of upload
+credential. Use a controlled account that belongs to an organization, on a
+machine with a browser and a supported OS credential store.
 
 1. Install the candidate CLI from the staged release wheels:
 
    ```sh
    uv tool install --force --no-index --find-links DIST_DIR DIST_DIR/sf_m3_cli-VERSION-py3-none-any.whl
    ```
-
-   For a non-production deployment, set `M3_CONTROL_PLANE_URL` and
-   `M3_AUTH_URL` to its HTTPS origins. `M3_AUTH_URL` must match the console
-   origin that the control plane is configured to use.
 
 2. From a project with a passing M3 test, and with `M3_ACCESS_TOKEN` unset,
    sign in and upload with the CLI credential:
