@@ -40,7 +40,8 @@ MARKDOWN_LINK = re.compile(
     r'(!?)\[([^\]]*)\]\(\s*(<[^>\n]*>|(?:\\.|[^)\s])+)(?:[ \t]+("[^"\n]*"|\'[^\'\n]*\'|\([^)\n]*\)))?[ \t]*\)'
 )
 REFERENCE_DEFINITION = re.compile(
-    r'(?m)^ {0,3}(\[[^\]\n]+\]:[ \t]*)(<[^>\n]*>|(?:\\.|[^\s])+)([ \t]+(?:"[^"\n]*"|\'[^\'\n]*\'|\([^)\n]*\)))?'
+    r'^[ \t]{0,3}(\[(?!\^)[^\]\n]+\]:[ \t]*)(<[^>\n]*>|(?:\\.|[^\s])+)([ \t]+(?:"[^"\n]*"|\'[^\'\n]*\'|\([^)\n]*\)))?[ \t]*$',
+    re.MULTILINE,
 )
 INLINE_CODE = re.compile(r"(`+)(.+?)\1")
 FLAG = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
@@ -98,26 +99,65 @@ def _non_fence_blocks(
     return blocks
 
 
+def _plausible_definition_target(target: str) -> bool:
+    raw_target, angle = _bare_target(target)
+    return (
+        angle
+        or any(character in raw_target for character in "/.#")
+        or bool(urlsplit(raw_target).scheme)
+    )
+
+
+def _reference_definitions(
+    block: str, spans: list[re.Match[str]]
+) -> list[re.Match[str]]:
+    """Find block-start reference definitions with meaningful link targets."""
+    matches: list[re.Match[str]] = []
+    previous_was_definition = False
+    offset = 0
+    for line in block.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        candidate = REFERENCE_DEFINITION.fullmatch(content)
+        at_block_start = offset == 0
+        after_blank = offset > 0 and block[:offset].endswith(("\n\n", "\r\n\r\n"))
+        match = (
+            candidate
+            if candidate is not None
+            and (at_block_start or after_blank or previous_was_definition)
+            and _plausible_definition_target(candidate.group(2))
+            else None
+        )
+        if match is not None:
+            line_match = REFERENCE_DEFINITION.match(block, offset)
+            if line_match is not None and not any(
+                span.start() <= line_match.start() and line_match.end() <= span.end()
+                for span in spans
+            ):
+                matches.append(line_match)
+        previous_was_definition = match is not None
+        offset += len(line)
+    return matches
+
+
 def _links_outside_code(
     text: str,
 ) -> list[tuple[re.Match[str], list[re.Match[str]], bool]]:
-    """Find inline links and reference definitions outside fences and code."""
+    """Find inline links and block-start reference definitions outside code."""
     matches: list[tuple[re.Match[str], list[re.Match[str]], bool]] = []
     for block, in_fence, spans in _non_fence_blocks(text):
         if in_fence:
             continue
-        for pattern, definition in (
-            (MARKDOWN_LINK, False),
-            (REFERENCE_DEFINITION, True),
-        ):
-            matches.extend(
-                (match, spans, definition)
-                for match in pattern.finditer(block)
-                if not any(
-                    span.start() <= match.start() and match.end() <= span.end()
-                    for span in spans
-                )
+        matches.extend(
+            (match, spans, False)
+            for match in MARKDOWN_LINK.finditer(block)
+            if not any(
+                span.start() <= match.start() and match.end() <= span.end()
+                for span in spans
             )
+        )
+        matches.extend(
+            (match, spans, True) for match in _reference_definitions(block, spans)
+        )
     return matches
 
 
@@ -175,19 +215,14 @@ def rewrite_links(text: str, source: str, selected: dict[str, str]) -> str:
             group = 2 if definition else 3
             target = match.group(group)
             rewritten, repository_path = _rewrite_target(target, source, selected)
-            if repository_path is not None:
-                if definition:
-                    replacement = (
-                        match.group(1) + f"(M3 repository: `{repository_path}`)"
-                    )
-                else:
-                    replacement = (
-                        f"{match.group(2)} (M3 repository: `{repository_path}`)"
-                    )
-            elif not rewritten:
-                replacement = "" if definition else match.group(2)
+            if definition and (repository_path is not None or not rewritten):
+                replacement = match.group(0)
+            elif repository_path is not None:
+                replacement = f"{match.group(2)} (M3 repository: `{repository_path}`)"
             elif definition:
                 replacement = match.group(1) + rewritten + (match.group(3) or "")
+            elif not rewritten:
+                replacement = match.group(2)
             elif match.group(1):
                 replacement = match.group(2)
             else:
@@ -199,6 +234,24 @@ def rewrite_links(text: str, source: str, selected: dict[str, str]) -> str:
         pieces.append(block[cursor:])
         rendered.append("".join(pieces))
     return "".join(rendered)
+
+
+def reference_definition_errors(
+    text: str, source: str, selected: dict[str, str], filename: str
+) -> list[str]:
+    """Report definitions whose targets cannot be represented in the bundle."""
+    errors: list[str] = []
+    for match, _, definition in _links_outside_code(text):
+        if not definition:
+            continue
+        target = match.group(2)
+        rewritten, repository_path = _rewrite_target(target, source, selected)
+        if repository_path is not None or not rewritten:
+            errors.append(
+                f"{filename} reference definition cannot be bundled: {target}; "
+                "use an inline link"
+            )
+    return errors
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -320,7 +373,10 @@ def _lint(
 
     available = {path.resolve() for path in expected_paths}
     for match, _, definition in _links_outside_code(skill_text):
-        target = match.group(2 if definition else 3)
+        if definition:
+            # Reported by _skill_reference_definition_errors.
+            continue
+        target = match.group(3)
         raw_target, _ = _bare_target(target)
         split = urlsplit(raw_target)
         if raw_target.startswith("#") or split.scheme:
@@ -334,19 +390,49 @@ def _lint(
         if flag not in cli_flags_available:
             errors.append(f"SKILL.md CLI flag is absent from the CLI reference: {flag}")
     errors.extend(_moving_branch_errors(skill_text, "SKILL.md"))
+    errors.extend(_skill_reference_definition_errors(skill_text, expected_paths))
     return errors
 
 
-def _reference_link_errors(expected: dict[Path, str]) -> list[str]:
-    """Find relative links in generated references that do not resolve."""
+def _skill_reference_definition_errors(
+    skill_text: str, expected_paths: set[Path]
+) -> list[str]:
+    available = {path.resolve() for path in expected_paths}
+    errors: list[str] = []
+    for match, _, definition in _links_outside_code(skill_text):
+        if not definition:
+            continue
+        target = match.group(2)
+        raw_target, _ = _bare_target(target)
+        split = urlsplit(raw_target)
+        if raw_target.startswith("#") or split.scheme:
+            continue
+        resolved = Path(os.path.normpath(SKILL_DIR / split.path)).resolve()
+        if resolved not in available:
+            errors.append(
+                f"SKILL.md reference definition cannot be bundled: {target}; "
+                "use an inline link"
+            )
+    return errors
+
+
+def _reference_link_errors(
+    expected: dict[Path, str], pages: list[dict[str, str]]
+) -> list[str]:
+    """Find broken links and definitions that cannot be bundled."""
     available = {path.resolve() for path in expected if path.parent == REFERENCES}
+    selected = {page["source"]: page["id"] for page in pages}
+    sources = {page["id"]: page["source"] for page in pages}
     errors: list[str] = []
     for path, content in expected.items():
         if path.parent != REFERENCES:
             continue
         filename = path.relative_to(SKILL_DIR).as_posix()
         for match, _, definition in _links_outside_code(content):
-            target = match.group(2 if definition else 3)
+            if definition:
+                # Definitions are checked against their source page below.
+                continue
+            target = match.group(3)
             raw_target, _ = _bare_target(target)
             split = urlsplit(raw_target)
             if raw_target.startswith("#") or split.scheme:
@@ -354,6 +440,12 @@ def _reference_link_errors(expected: dict[Path, str]) -> list[str]:
             resolved = Path(os.path.normpath(path.parent / split.path)).resolve()
             if resolved not in available:
                 errors.append(f"{filename} link does not resolve: {target}")
+        source = sources.get(path.stem)
+        if source is not None:
+            original = _strip_frontmatter((SITE / source).read_text(encoding="utf-8"))
+            errors.extend(
+                reference_definition_errors(original, source, selected, filename)
+            )
         errors.extend(_moving_branch_errors(content, filename))
     return errors
 
@@ -387,7 +479,7 @@ def main() -> int:
             path.unlink()
 
     errors = _lint(skill_text, expected_paths, fence_errors)
-    errors.extend(_reference_link_errors(expected))
+    errors.extend(_reference_link_errors(expected, pages))
     for path in sorted(set(stale)):
         print(f"agent skill is stale: {path.relative_to(ROOT)}")
     for error in errors:

@@ -120,7 +120,7 @@ def _exists(path: Path) -> bool:
 
 
 def ensure_agent_skill(project_root: Path, cli_version: str, *, enabled: bool) -> None:
-    """Install or update the release-matched skill without failing the command."""
+    """Install or update the release-matched skill without failing except on interrupts."""
 
     command = install_command(cli_version)
     cmd = " ".join(command)
@@ -207,6 +207,10 @@ def ensure_agent_skill(project_root: Path, cli_version: str, *, enabled: bool) -
         except subprocess.TimeoutExpired:
             _kill_process(process)
             stdout, stderr = process.communicate()
+        except BaseException:
+            _kill_process(process)
+            process.wait()
+            raise
     except OSError:
         pass
 

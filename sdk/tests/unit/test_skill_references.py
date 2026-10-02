@@ -144,6 +144,41 @@ def test_reference_definition_target_is_rewritten_and_title_kept() -> None:
     assert result == '[Guide]: guide.md "Reference"\n[Text][Guide]\n'
 
 
+def test_footnote_definition_is_left_unchanged() -> None:
+    text = "[^1]: Evidence is stored per attempt.\n"
+
+    assert _RENDERER.rewrite_links(text, "reference/index.md", {}) == text
+
+
+def test_prose_continuation_that_looks_like_definition_is_unchanged() -> None:
+    text = "A paragraph continues here:\n[note]: keep this\n"
+
+    assert _RENDERER.rewrite_links(text, "reference/index.md", {}) == text
+
+
+def test_definition_after_blank_line_is_rewritten_with_title() -> None:
+    text = 'A paragraph.\n\n[Guide]: ../guides/guide.md "Reference"\n'
+
+    assert (
+        _RENDERER.rewrite_links(
+            text, "reference/index.md", {"guides/guide.md": "guide"}
+        )
+        == 'A paragraph.\n\n[Guide]: guide.md "Reference"\n'
+    )
+
+
+def test_repository_reference_definition_is_preserved_and_linted() -> None:
+    text = "[Source]: ../../../sdk/README.md\n"
+
+    assert _RENDERER.rewrite_links(text, "reference/index.md", {}) == text
+    assert _RENDERER.reference_definition_errors(
+        text, "reference/index.md", {}, "references/example.md"
+    ) == [
+        "references/example.md reference definition cannot be bundled: "
+        "../../../sdk/README.md; use an inline link"
+    ]
+
+
 def test_cli_flag_extraction_matches_exact_tokens() -> None:
     available = _RENDERER.cli_flags("Options: --project-name NAME")
 

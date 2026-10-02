@@ -408,6 +408,37 @@ def test_install_timeout_decodes_output_kills_process_and_never_raises(
     assert "  npx: failure: timed out�" in output
 
 
+def test_keyboard_interrupt_kills_and_waits_for_install_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _prepare(monkeypatch, tmp_path)
+    killed: list[Any] = []
+    waited: list[bool] = []
+
+    class InterruptedProcess:
+        pid = 123
+
+        def communicate(self, *, timeout: int | None = None) -> tuple[str, str]:
+            raise KeyboardInterrupt
+
+        def wait(self) -> None:
+            waited.append(True)
+
+    process = InterruptedProcess()
+    monkeypatch.setattr(
+        agent_skill.subprocess, "Popen", lambda *_args, **_kwargs: process
+    )
+    monkeypatch.setattr(
+        agent_skill, "_kill_process", lambda child: killed.append(child)
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        agent_skill.ensure_agent_skill(tmp_path, VERSION, enabled=True)
+
+    assert killed == [process]
+    assert waited == [True]
+
+
 def test_managed_lock_with_non_string_source_is_treated_as_unmanaged(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
