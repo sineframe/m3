@@ -206,7 +206,7 @@ def test_fork_lock_does_not_manage_existing_project_copy(
 
 
 def test_home_copy_is_not_overwritten(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     calls = _prepare(monkeypatch, tmp_path)
     home_skill = tmp_path / "home" / SKILL_PATH
@@ -216,6 +216,14 @@ def test_home_copy_is_not_overwritten(
     agent_skill.ensure_agent_skill(tmp_path, VERSION, enabled=True)
 
     assert calls == []
+    output = capsys.readouterr().out
+    assert f"using existing testing-with-m3 at {home_skill}" in output
+    assert (
+        "To replace it with the copy for this M3 release, run: "
+        "npx --yes skills@1.7.0 add sineframe/m3#v1.2.3 --skill testing-with-m3 "
+        "--agent universal claude-code -y -g"
+    ) in output
+    assert "To use the copy for this M3 release" not in output
 
 
 @pytest.mark.parametrize("marker", ["JENKINS_URL", "TF_BUILD"])
@@ -231,7 +239,12 @@ def test_additional_ci_markers_skip_install(
     agent_skill.ensure_agent_skill(tmp_path, VERSION, enabled=True)
 
     assert calls == []
-    assert "Agent skill: skipped in CI" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Agent skill: skipped in CI. To install it, run:" in output
+    assert (
+        "  npx --yes skills@1.7.0 add sineframe/m3#v1.2.3 --skill "
+        "testing-with-m3 --agent universal claude-code -y" in output
+    )
 
 
 def test_missing_npx_prints_manual_command(
@@ -259,21 +272,23 @@ def test_ci_skips_install(
     agent_skill.ensure_agent_skill(tmp_path, VERSION, enabled=True)
 
     assert calls == []
-    assert "Agent skill: skipped in CI" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Agent skill: skipped in CI. To install it, run:" in output
+    assert (
+        "  npx --yes skills@1.7.0 add sineframe/m3#v1.2.3 --skill "
+        "testing-with-m3 --agent universal claude-code -y" in output
+    )
 
 
-def test_development_install_skips_with_manual_command(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def _direct_url_distribution(
+    monkeypatch: pytest.MonkeyPatch, direct_url: str | None
 ) -> None:
-    calls = _prepare(monkeypatch, tmp_path)
     distribution = type(
         "Distribution",
         (),
         {
             "read_text": lambda self, filename: (
-                '{"dir_info": {"editable": true}}'
-                if filename == "direct_url.json"
-                else None
+                direct_url if filename == "direct_url.json" else None
             )
         },
     )()
@@ -282,6 +297,27 @@ def test_development_install_skips_with_manual_command(
         "distribution",
         lambda name: distribution if name == "sf-m3-cli" else None,
     )
+
+
+@pytest.mark.parametrize(
+    "direct_url",
+    [
+        '{"url": "file:///src/m3/cli", "dir_info": {"editable": true}}',
+        '{"url": "file:///src/m3/cli", "dir_info": {}}',
+        '{"url": "file:///src/m3/cli", "dir_info": {"editable": false}}',
+        '{"url": "https://github.com/sineframe/m3", '
+        '"vcs_info": {"vcs": "git", "commit_id": "abc123"}}',
+    ],
+    ids=["editable", "local-directory", "non-editable-directory", "vcs"],
+)
+def test_development_install_skips_with_manual_command(
+    direct_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls = _prepare(monkeypatch, tmp_path)
+    _direct_url_distribution(monkeypatch, direct_url)
     monkeypatch.setattr(agent_skill, "_is_development_install", _DEVELOPMENT_CHECK)
 
     agent_skill.ensure_agent_skill(tmp_path, VERSION, enabled=True)
@@ -293,6 +329,28 @@ def test_development_install_skips_with_manual_command(
         in output
     )
     assert "  npx --yes skills@1.7.0 add sineframe/m3#v1.2.3" in output
+
+
+@pytest.mark.parametrize(
+    "direct_url",
+    [
+        None,
+        '{"url": "https://example.com/sf_m3_cli-1.2.3-py3-none-any.whl", '
+        '"archive_info": {"hashes": {"sha256": "abc"}}}',
+        "[]",
+    ],
+    ids=["registry", "archive", "unrecognized"],
+)
+def test_release_install_is_not_a_development_install(
+    direct_url: str | None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = _prepare(monkeypatch, tmp_path)
+    _direct_url_distribution(monkeypatch, direct_url)
+    monkeypatch.setattr(agent_skill, "_is_development_install", _DEVELOPMENT_CHECK)
+
+    agent_skill.ensure_agent_skill(tmp_path, VERSION, enabled=True)
+
+    assert len(calls) == 1
 
 
 def test_disabled_skill_install_is_skipped(
