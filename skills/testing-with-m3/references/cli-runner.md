@@ -30,9 +30,10 @@ For a judge key under a different name, use
 ## Authenticate an upload
 
 Upload results only when the user requests it. For a local upload, the CLI uses
-the `kind=cli` credential saved in the operating-system credential store by
+the CLI credential saved in the operating-system credential store by
 `m3 auth login`. If `M3_ACCESS_TOKEN` is present in the environment, it takes
-precedence over that saved credential and must contain a `kind=ci` credential.
+precedence over that saved credential and must contain a CI token created in
+the M3 account console.
 When `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` is truthy, set
 `M3_ACCESS_TOKEN`; the CLI does not fall back to the interactive credential
 store.

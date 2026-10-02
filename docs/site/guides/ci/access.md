@@ -40,9 +40,8 @@ m3 auth login
 
 The CLI opens sign-in in the M3 account console. If it cannot open a browser,
 it prints a page URL and code instead. Sign in, choose the organization,
-confirm the code, and approve the authorization. The CLI receives a 30-day
-credential with `kind=cli` and saves it in the operating-system credential
-store.
+confirm the code, and approve the authorization. The CLI receives a 30-day CLI
+credential and saves it in the operating-system credential store.
 
 A completed authorization prints `M3 CLI credential saved in OS credential
 store.` This message confirms that the CLI saved the credential. It does not
@@ -67,10 +66,10 @@ Run:
 m3 auth status
 ```
 
-The command validates the saved CLI credential with the control plane and
-reports its token name, organization, token ID, and expiry. It requires network
-access. If `M3_ACCESS_TOKEN` is also set, status validates its format and
-reports its presence, but does not check that CI token with the control plane.
+The command validates the saved CLI credential with M3 and reports its token
+name, organization, token ID, and expiry. It requires network access. If
+`M3_ACCESS_TOKEN` is also set, status checks its format and reports its
+presence, but does not validate that CI token with M3.
 
 ## Create a CI token
 
@@ -112,10 +111,10 @@ From any working directory, run:
 m3 auth logout
 ```
 
-Logout revokes the saved `kind=cli` credential with the control plane and then
-removes it from the operating-system credential store. If server revocation
-fails, the command retains the local credential so you can retry. Logout does
-not revoke, unset, or remove `M3_ACCESS_TOKEN`.
+Logout asks M3 to revoke the saved CLI credential, then removes it from the
+operating-system credential store. If revocation fails, the command keeps the
+local credential so you can retry. Logout does not revoke, unset, or remove
+`M3_ACCESS_TOKEN`.
 
 To rotate or remove CI access, create a replacement on the organization's
 **CI tokens** page, update the `M3_ACCESS_TOKEN` secret, verify an upload, and

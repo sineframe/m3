@@ -26,7 +26,7 @@ The SDK reads the process environment and does not load dotenv files. The CLI al
 
 When an explicit environment file is selected, values already present in the process environment take precedence, including empty values. File values fill names absent from the process environment. Values in the file are not interpolated. If an ambient variable is set but empty, M3 will not replace it with the non-empty value from the file.
 
-For local uploads, `m3 auth login` uses device authorization in the M3 account console and saves a 30-day `kind=cli` credential in a supported operating-system credential store. An environment-provided `M3_ACCESS_TOKEN` always takes precedence. If `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` has a non-empty value, M3 requires `M3_ACCESS_TOKEN` and never reads the interactive credential store. Without one of those markers, commands can use the saved CLI credential when `M3_ACCESS_TOKEN` is absent, including `m3 ci test`. A selected `--env-file` can provide values to CLI test commands. Do not commit files containing live credentials.
+For local uploads, `m3 auth login` uses device authorization in the M3 account console and saves a 30-day CLI credential in a supported operating-system credential store. An environment-provided `M3_ACCESS_TOKEN` always takes precedence. If `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` has a non-empty value, M3 requires `M3_ACCESS_TOKEN` and never reads the interactive credential store. Without one of those markers, commands can use the saved CLI credential when `M3_ACCESS_TOKEN` is absent, including `m3 ci test`. A selected `--env-file` can provide values to CLI test commands. Do not commit files containing live credentials.
 
 ## Common configuration mistakes
 
