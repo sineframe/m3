@@ -28,6 +28,7 @@ from ..types import (
 from ._codex_managed_mrtr import CodexManagedMRTRCoordinator
 from ._codex_mrtr import CodexMRTRAction
 from ._rpc_native import JsonRpcProcess, NativeRPCAdapter
+from ._verified_versions import CODEX_VERIFIED_VERSION
 from .contracts import (
     HarnessAdapterCapabilities,
     HarnessInteractionCapabilities,
@@ -269,7 +270,7 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             return
         version = probe_help(self.executable, ("--version",))
         version_line = version.splitlines()[0].strip() if version else ""
-        supported = version_line == "codex-cli 0.156.1"
+        supported = version_line == f"codex-cli {CODEX_VERIFIED_VERSION}"
         interaction = (
             HarnessInteractionCapabilities(
                 supports_elicitation=True,
@@ -330,7 +331,8 @@ class CodexHarnessAdapter(NativeRPCAdapter):
             elicitation is not None or self._managed_input_runtime is not None
         ) and not self.capabilities.interaction.supports_elicitation:
             raise UnsupportedFeature(
-                "Codex MCP elicitation requires the characterized Codex 0.156.1 App Server"
+                "Codex MCP elicitation requires the characterized "
+                f"Codex {CODEX_VERIFIED_VERSION} App Server"
             )
         managed_coordinator = (
             CodexManagedMRTRCoordinator(self._managed_input_runtime)

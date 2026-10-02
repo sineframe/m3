@@ -3,6 +3,7 @@
 import pytest
 from test_trace_projector import _trace
 
+from m3.harness._verified_versions import CODEX_VERIFIED_VERSION
 from m3.observability import (
     ElicitationEntry,
     ObservationState,
@@ -51,7 +52,7 @@ def _mrtr_trace(
             "threadId": "codex-thread-1",
             "io.modelcontextprotocol/clientInfo": {
                 "name": "codex-mcp-client",
-                "version": "0.156.1",
+                "version": CODEX_VERIFIED_VERSION,
             },
             "progressToken": 1,
         }

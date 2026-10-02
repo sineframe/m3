@@ -65,8 +65,8 @@ including scheduled thread-safe callbacks, while a separate bounded wait
 checks for the expected retry that Codex sends. The barrier cannot flush an
 event still queued in the child-side relay. Codex also omits the MCP request
 key, reverses multi-prompt order in observed cases, normalizes accepted URL
-responses to empty content, and supports at most nine MRTR prompts in tested
-version 0.156.1. The canonical details and evolving verification state live in
+responses to empty content, and supports at most nine MRTR prompts in the tested
+Codex 0.156.1. The canonical details and evolving verification state live in
 the [Codex limitations section](https://m3.sineframe.com/docs/reference/python/m3/elicitation)
 and [Pi-to-Codex parity inventory](../sdk/tests/mrtr-harness-parity.md).
 

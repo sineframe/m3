@@ -17,6 +17,8 @@ from typing import Any
 
 import pytest
 
+from m3.harness._verified_versions import CODEX_VERIFIED_VERSION, PI_VERIFIED_VERSION
+
 _ROOT = Path(__file__).parents[3]
 _SDK = _ROOT / "sdk"
 _FIXTURES = _SDK / "tests" / "fixtures"
@@ -30,7 +32,7 @@ _RUNTIME_FEED_MODULE = importlib.util.module_from_spec(_RUNTIME_FEED_SPEC)
 _RUNTIME_FEED_SPEC.loader.exec_module(_RUNTIME_FEED_MODULE)
 LocalRuntimeFeed = _RUNTIME_FEED_MODULE.LocalRuntimeFeed
 
-PIN_A = "0.156.1"
+PIN_A = CODEX_VERIFIED_VERSION
 PIN_B = "0.155.1"
 MODEL = "fixture-codex"
 
@@ -252,7 +254,7 @@ def test_cli_version_comparison_reports_each_pin_and_reuses_cache(
 
 
 def test_cli_comparison_uses_two_codex_and_two_pi_versions(tmp_path: Path) -> None:
-    pi_versions = ("0.85.0", "0.85.1")
+    pi_versions = ("0.85.0", PI_VERIFIED_VERSION)
     marker_path = tmp_path / "comparison-wire.jsonl"
     with LocalRuntimeFeed(
         marker_path=marker_path,

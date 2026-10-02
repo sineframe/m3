@@ -12,6 +12,7 @@ import m3.harness.characterize as characterize_module
 import m3.harness.codex as codex_module
 from m3.agent_session import _require_elicitation_capability
 from m3.errors import UnsupportedFeature
+from m3.harness._verified_versions import CODEX_VERIFIED_VERSION
 from m3.harness.acp import AcpHarnessAdapter
 from m3.harness.characterize import MAX_PROBE_OUTPUT, _run_probe
 from m3.harness.claude import ClaudeCodeHarnessAdapter
@@ -59,7 +60,7 @@ def test_real_adapter_declarations_remain_explicit(
         codex_module,
         "probe_help",
         lambda executable, args: (
-            "codex-cli 0.156.1"
+            f"codex-cli {CODEX_VERIFIED_VERSION}"
             if Path(executable).name == "codex" and args == ("--version",)
             else None
         ),

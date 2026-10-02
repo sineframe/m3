@@ -61,6 +61,10 @@ Set `M3_CODEX_EXECUTABLE` if the binary is not on `PATH`; the tests require
 and the [Pi-to-Codex scenario inventory](../mrtr-harness-parity.md) before
 interpreting partial suite results.
 
+### Bumping the verified Codex or Pi version
+
+The verified versions are defined once in `sdk/src/m3/harness/_verified_versions.py`. To bump one, change the constant, then update the workflow, documentation, example, and fixture copies that `uv run --no-sync python scripts/check_harness_versions.py --check` lists until it passes. Re-run the real-harness gates above against the new version, and regenerate the skill references with `python3 scripts/render_skill_references.py` if a `docs/site` page changed.
+
 The live OpenCode test is isolated from the deterministic suite because it may
 use credentials, make network requests, and incur provider cost. Its default is
 the free `opencode/big-pickle` model. It includes model-selected search,

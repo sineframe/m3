@@ -27,6 +27,7 @@ from m3.agent_session import (
 from m3.elicitation import expect_form
 from m3.errors import UnsupportedFeature
 from m3.harness._rpc_native import NativeRPCAdapter
+from m3.harness._verified_versions import CODEX_VERIFIED_VERSION
 from m3.harness.codex import (
     CodexHarnessAdapter,
     codex_configuration,
@@ -197,7 +198,7 @@ async def test_codex_managed_mrtr_selects_runtime_before_capability_probe(
 
         def __init__(self) -> None:
             self.environment: dict[str, str] = {}
-            self.provenance = {"version": "0.156.1"}
+            self.provenance = {"version": CODEX_VERIFIED_VERSION}
 
         async def release(self) -> None:
             return None
@@ -235,7 +236,7 @@ async def test_codex_managed_mrtr_selects_runtime_before_capability_probe(
         order.append(f"probe:{executable}")
         probes.append(executable)
         if args == ("--version",) and executable == managed_executable:
-            return "codex-cli 0.156.1"
+            return f"codex-cli {CODEX_VERIFIED_VERSION}"
         if args == ("--version",):
             return "codex-cli 0.1.0" if system_binary == "unsupported" else None
         return None
@@ -259,7 +260,7 @@ async def test_codex_managed_mrtr_selects_runtime_before_capability_probe(
             model="fixture",
             executable=str(system_executable),
             runtime="managed",
-            version="0.156.1",
+            version=CODEX_VERIFIED_VERSION,
         ),
         servers=(ServerBinding(server=StdioServer(name="fixture", command="fixture")),),
         elicitation=(
@@ -278,7 +279,7 @@ async def test_codex_managed_mrtr_selects_runtime_before_capability_probe(
 
     await session.__aenter__()
     try:
-        assert order[0] == "acquire:codex:0.156.1"
+        assert order[0] == f"acquire:codex:{CODEX_VERIFIED_VERSION}"
         assert probes == [managed_executable]
         assert order.index(f"probe:{managed_executable}") < order.index("server-start")
         assert (
@@ -304,7 +305,7 @@ def test_codex_capability_cache_tracks_executable_identity(
     def fake_probe(executable: str, _args: tuple[str, ...]) -> str:
         probes.append(executable)
         return (
-            "codex-cli 0.156.1"
+            f"codex-cli {CODEX_VERIFIED_VERSION}"
             if executable == str(managed_executable)
             else "codex-cli 0.1.0"
         )
@@ -326,7 +327,7 @@ def test_codex_capability_cache_rechecks_binary_created_at_same_path(
 
     def fake_probe(path: str, _args: tuple[str, ...]) -> str | None:
         probes.append(path)
-        return "codex-cli 0.156.1" if executable.exists() else None
+        return f"codex-cli {CODEX_VERIFIED_VERSION}" if executable.exists() else None
 
     monkeypatch.setattr(codex_module, "probe_help", fake_probe)
     adapter = CodexHarnessAdapter(executable=str(executable))
