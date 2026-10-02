@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "id": "evaluations-assertions-judges",
+  "owning_pages": ["guides-evaluations-assertions", "guides-evaluations-judges"],
+  "target_release": "resolved from the published release pin",
+  "python": ">=3.10",
+  "dependencies": ["sf-m3-cli", "sf-m3[pytest,judge]", "mcp (installed with sf-m3)"],
+  "files": [
+    "shipping_server.py",
+    "tests/test_direct_result.py",
+    "tests/test_agent_evidence.py",
+    "tests/test_answer.py",
+    "tests/test_answer_loopback.py"
+  ],
+  "displayed_blocks": [
+    {"page": "guides-evaluations-assertions", "label": "direct result test", "source": "tests/test_direct_result.py", "kind": "file"},
+    {"page": "guides-evaluations-assertions", "label": "agent evidence test", "source": "tests/test_agent_evidence.py", "kind": "file"},
+    {"page": "guides-evaluations-judges", "label": "LLM judge test", "source": "tests/test_answer.py", "kind": "file"}
+  ],
+  "working_directory": "project root",
+  "setup": ["m3 init", "m3 setup", "copy shipping_server.py from the first-test guide into the project root"],
+  "scenarios": [
+    {
+      "id": "direct-result",
+      "page": "guides-evaluations-assertions",
+      "command": "m3 test -- tests/test_direct_result.py",
+      "expected_exit_code": 0,
+      "assertions": ["the tool result is not an error", "structured content is 9.0 USD"],
+      "verification": "deterministic"
+    },
+    {
+      "id": "agent-evidence",
+      "page": "guides-evaluations-assertions",
+      "command": "m3 test --harness codex=YOUR_AGENT_MODEL -- tests/test_agent_evidence.py",
+      "expected_exit_code": 0,
+      "assertions": ["the captured trace has one successful shipping_quote call with weight_kg 2 and zone local"],
+      "compatibility": {
+        "harness": "Codex CLI",
+        "model": "chosen by the reader",
+        "mode": "native live provider",
+        "status": "requires live verification and provider access"
+      },
+      "verification": "live-provider"
+    },
+    {
+      "id": "llm-judge-live",
+      "page": "guides-evaluations-judges",
+      "command": "m3 test --judge-max-requests 1 -- tests/test_answer.py",
+      "expected_exit_code": 0,
+      "assertions": ["the judge result for answer.correctness.v1 has status PASSED"],
+      "compatibility": {
+        "endpoint": "https://api.openai.com/v1, the LLMJudge default",
+        "model": "YOUR_JUDGE_MODEL is replaced with a model the endpoint serves",
+        "mode": "live provider",
+        "status": "requires live verification and provider access"
+      },
+      "verification": "live-provider"
+    },
+    {
+      "id": "llm-judge-loopback",
+      "page": "guides-evaluations-judges",
+      "command": "m3 test -- tests/test_answer_loopback.py",
+      "expected_exit_code": 0,
+      "assertions": [
+        "LLMJudge defaults to https://api.openai.com/v1 with a 30 second timeout and a 0.8 threshold",
+        "judge_response registers the judge under the evaluator name without register_evaluator",
+        "the judge sends the input, expected, and actual strings to the configured /chat/completions endpoint"
+      ],
+      "verification": "deterministic"
+    }
+  ],
+  "compatibility": {
+    "transports": ["stdio"],
+    "minimum_python": "3.10",
+    "provider_credentials_required": "only for the agent-evidence and llm-judge-live scenarios",
+    "account_required": false
+  },
+  "network": "The deterministic scenarios use a local stdio server and a loopback HTTP server. The live scenarios need provider access.",
+  "credentials": "The deterministic scenarios need none. The judge scenario reads M3_JUDGE_API_KEY.",
+  "cleanup": "MCPTestKit closes the client and server subprocess; the loopback test shuts down its HTTP server."
+}

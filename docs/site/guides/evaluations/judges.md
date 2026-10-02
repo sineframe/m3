@@ -16,10 +16,21 @@ extra. Set `M3_JUDGE_API_KEY` in the process environment or in `.env` at the
 project root, which M3 loads automatically. Use `--env-file PATH` to load a
 custom file instead.
 
-Register a judge with `kit.register_evaluator(name, judge)` and use the subject
-`{"input", "expected", "actual"}`.
+`kit.judge_response(...)` registers the judge under `name` on first use and
+builds the subject `{"input", "expected", "actual"}` from its arguments, so the
+test needs no separate `register_evaluator` call. To call `kit.evaluate`
+yourself, register the judge with `kit.register_evaluator(name, judge)` and pass
+a subject with those three keys.
 
-Choose a judge model supported by your configured Chat Completions endpoint:
+`LLMJudge` sends requests to `https://api.openai.com/v1` unless you pass
+`base_url`, and gives each request 30 seconds unless you pass `timeout_seconds`.
+A request that times out, is rate limited, or gets a server error is retried
+once; `max_retries=0` disables the retry. `model` is required. A custom
+`base_url` also needs `response_mode` and, when it authenticates, `api_key_env`.
+Use one when subject text must stay off the default provider.
+
+Save this as `tests/test_answer.py`. Choose a judge model supported by your
+configured Chat Completions endpoint:
 
 ```python
 import pytest
@@ -31,7 +42,9 @@ from m3.types import EvaluationStatus
 @pytest.mark.m3(suite_name="answers")
 def test_answer(m3_kit):
     judge = LLMJudge(model="YOUR_JUDGE_MODEL")
-    result = m3_kit.judge_response(name="answer.correctness.v1", input="What is 2 + 3?",
+    result = m3_kit.judge_response(
+        name="answer.correctness.v1",
+        input="What is 2 + 3?",
         actual="The answer is 5.",
         expected="The answer is 5.",
         judge=judge,
@@ -40,7 +53,7 @@ def test_answer(m3_kit):
     assert result.status is EvaluationStatus.PASSED
 ```
 
-Replace `YOUR_JUDGE_MODEL`, then run with a request cap:
+Replace `YOUR_JUDGE_MODEL` in `tests/test_answer.py`, then run with a request cap:
 
 ```sh
 m3 test --judge-max-requests 1 -- tests/test_answer.py
