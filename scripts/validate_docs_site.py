@@ -27,12 +27,24 @@ REQUIRED = {
     "reference/compatibility.md",
 }
 LINK = re.compile(r"!?(?:\[[^\]]*\])\(([^)]+)\)")
+VITEPRESS_SPECIAL = re.compile(
+    r"[\s~`!@#$%^&*()_+\-=\[\]{}|\\;:\"'\u201c\u201d\u2018\u2019<>,.?/]+"
+)
 RESERVED_OUTPUTS = {"assets", "404", "sitemap", "llms", "llms-full"}
 EXCLUDED_NAVIGATION_KINDS = {"migration", "redirect", "maintainer"}
 OBSOLETE_DOC_LINK = re.compile(
     r"(?:m3\.sineframe\.com/docs|github\.com/sineframe/m3/"
     r"(?:blob|tree)/(?:main|master)/(?:README\.md|sdk/README\.md|"
     r"cli/README\.md|sdk/docs/))",
+    re.IGNORECASE,
+)
+ESCAPED_ANGLE_ENTITY = re.compile(
+    r"&(?:amp;)*(?:lt|gt);|&#0*(?:60|62);|&#x0*(?:3c|3e);",
+    re.IGNORECASE,
+)
+UNFORMATTED_SIGNATURE = re.compile(
+    r"^\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\(.*"
+    r"&(?:amp;)*(?:lt|gt);",
     re.IGNORECASE,
 )
 
@@ -46,27 +58,134 @@ def expected_route(source: str) -> str:
 
 
 def heading_anchors(text: str) -> set[str]:
-    """Return common VitePress/GitHub heading slugs for fragment validation."""
+    """Return VitePress heading slugs and explicit HTML IDs."""
     anchors: set[str] = set()
     counts: dict[str, int] = {}
+    anchors.update(
+        match.group(1) for match in re.finditer(r"\bid\s*=\s*['\"]([^'\"]+)['\"]", text)
+    )
     for line in text.splitlines():
         match = re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line)
         if not match:
             continue
         title = re.sub(r"!?(?:\[([^\]]*)\])\([^)]*\)", r"\1", match.group(1))
-        title = re.sub(r"<[^>]+>|[`*_~]", "", title)
-        title = (
-            unicodedata.normalize("NFKD", title)
-            .encode("ascii", "ignore")
-            .decode()
-            .lower()
-        )
-        slug = re.sub(r"[^a-z0-9 -]", "", title).strip().replace(" ", "-")
+        title = re.sub(r"<[^>]+>|`", "", title)
+        title = unicodedata.normalize("NFKD", title)
+        title = re.sub(r"[\u0300-\u036f]", "", title)
+        title = re.sub(r"[\x00-\x1f]", "", title)
+        slug = VITEPRESS_SPECIAL.sub("-", title)
         slug = re.sub(r"-+", "-", slug)
+        slug = re.sub(r"^-+|-+$", "", slug)
+        slug = re.sub(r"^(\d)", r"_\1", slug).lower()
         count = counts.get(slug, 0)
         counts[slug] = count + 1
         anchors.add(slug if count == 0 else f"{slug}-{count}")
     return anchors
+
+
+def markdown_code_regions(text: str) -> list[str]:
+    """Return fenced and inline code contents without treating prose as code."""
+    lines = text.splitlines(keepends=True)
+    inline_source: list[str] = []
+    regions: list[str] = []
+    fence_char: str | None = None
+    fence_size = 0
+    fence_content: list[str] = []
+
+    for line in lines:
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if fence_char is None:
+            if marker:
+                fence_char = marker.group(1)[0]
+                fence_size = len(marker.group(1))
+                fence_content = []
+            else:
+                inline_source.append(line)
+            continue
+
+        if (
+            marker
+            and marker.group(1)[0] == fence_char
+            and len(marker.group(1)) >= fence_size
+            and re.fullmatch(
+                rf" {{0,3}}{re.escape(marker.group(1))}[ \t]*(?:\r?\n)?",
+                line,
+            )
+        ):
+            regions.append("".join(fence_content))
+            fence_char = None
+            fence_size = 0
+            fence_content = []
+        else:
+            fence_content.append(line)
+
+    if fence_char is not None:
+        regions.append("".join(fence_content))
+
+    # Inline code spans use matching runs of backticks. Entities inside them
+    # remain literal in Markdown renderers, which is the source of this bug.
+    inline = "".join(inline_source)
+    cursor = 0
+    while cursor < len(inline):
+        if inline[cursor] != "`":
+            cursor += 1
+            continue
+        end = cursor
+        while end < len(inline) and inline[end] == "`":
+            end += 1
+        marker = inline[cursor:end]
+        search = end
+        while True:
+            close = inline.find(marker, search)
+            if close < 0:
+                cursor = end
+                break
+            if (close == 0 or inline[close - 1] != "`") and (
+                close + len(marker) == len(inline) or inline[close + len(marker)] != "`"
+            ):
+                regions.append(inline[end:close])
+                cursor = close + len(marker)
+                break
+            search = close + 1
+
+    return regions
+
+
+def unformatted_signature_entity_count(text: str) -> int:
+    """Catch generated signatures that contain entities but lack code markup."""
+    count = 0
+    fence_char: str | None = None
+    fence_size = 0
+    for line in text.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if fence_char is None:
+            if marker:
+                fence_char = marker.group(1)[0]
+                fence_size = len(marker.group(1))
+                continue
+            if "`" not in line and UNFORMATTED_SIGNATURE.search(line):
+                count += len(ESCAPED_ANGLE_ENTITY.findall(line))
+            continue
+        if (
+            marker
+            and marker.group(1)[0] == fence_char
+            and len(marker.group(1)) >= fence_size
+            and re.fullmatch(
+                rf" {{0,3}}{re.escape(marker.group(1))}[ \t]*(?:\r?\n)?",
+                line,
+            )
+        ):
+            fence_char = None
+            fence_size = 0
+    return count
+
+
+def escaped_angle_count(text: str) -> int:
+    """Count escaped angle entities in code and unformatted signatures."""
+    return sum(
+        len(ESCAPED_ANGLE_ENTITY.findall(region))
+        for region in markdown_code_regions(text)
+    ) + unformatted_signature_entity_count(text)
 
 
 def main() -> int:
@@ -264,6 +383,12 @@ def main() -> int:
         if OBSOLETE_DOC_LINK.search(text):
             errors.append(
                 f"{source}: contains an obsolete hosted or legacy documentation link"
+            )
+        escaped_angles = escaped_angle_count(text)
+        if escaped_angles:
+            errors.append(
+                f"{source}: contains {escaped_angles} HTML-escaped angle bracket(s) "
+                "inside Markdown code; write literal < and > characters instead"
             )
         frontmatter = re.match(r"\A---\r?\n(.*?)\r?\n---\r?\n", text, re.S)
         if not frontmatter:
