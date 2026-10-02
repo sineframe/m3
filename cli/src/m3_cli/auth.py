@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import re
 import secrets
 import sys
@@ -12,6 +13,8 @@ import threading
 import time
 import webbrowser
 from contextlib import contextmanager
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, cast
@@ -33,6 +36,30 @@ _MAX_RESPONSE = 64 * 1024
 _AUTH_DEFAULT = "https://auth.sineframe.com"
 _REQUEST_TIMEOUT = 20
 _METADATA_LOCK = threading.Lock()
+
+
+class _RateLimited(RuntimeError):
+    def __init__(self, retry_after: float) -> None:
+        self.retry_after = retry_after
+        super().__init__("rate_limited")
+
+
+def _retry_after_seconds(value: str | None) -> float:
+    if value is None:
+        return 0.0
+    value = value.strip()
+    if re.fullmatch(r"[0-9]+", value):
+        try:
+            return float(value)
+        except (ValueError, OverflowError):
+            return 0.0
+    try:
+        retry_at = parsedate_to_datetime(value)
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        return max(0.0, retry_at.timestamp() - time.time())
+    except (ValueError, TypeError, OverflowError):
+        return 0.0
 
 
 def control_plane_url() -> str:
@@ -331,12 +358,15 @@ def _json_request(
                 "access_denied",
                 "expired_token",
                 "invalid_grant",
-            }:
+            } and not (exc.code == 429 and code == "rate_limited"):
                 code = None
         except RuntimeError:
             raise
         except Exception:
             code = None
+        if code == "rate_limited" and exc.code == 429:
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            raise _RateLimited(_retry_after_seconds(retry_after)) from None
         if code:
             raise RuntimeError(code) from None
         raise RuntimeError("server rejected the request") from None
@@ -540,6 +570,8 @@ def login() -> int:
             or not 1 <= interval <= 60
         ):
             raise RuntimeError("server returned invalid device authorization")
+        deadline = time.monotonic() + expires
+        poll_delay: float = interval
         try:
             opened = bool(webbrowser.open(complete, new=2))
         except Exception:
@@ -549,20 +581,24 @@ def login() -> int:
             print(f"Confirm the code shown in the browser: {user_code}", flush=True)
         else:
             print(f"Complete sign-in with code: {user_code}", flush=True)
-        deadline = time.monotonic() + expires
         while time.monotonic() < deadline:
-            time.sleep(min(interval, max(0, deadline - time.monotonic())))
+            time.sleep(min(poll_delay, max(0, deadline - time.monotonic())))
             if time.monotonic() >= deadline:
                 break
+            poll_delay = interval
             try:
                 result = _json_request(
                     base + "/v1/cli/device/token", "POST", {"device_code": code}
                 )
+            except _RateLimited as exc:
+                poll_delay = max(interval, exc.retry_after) + random.uniform(0.1, 0.5)
+                continue
             except RuntimeError as exc:
                 if str(exc) == "authorization_pending":
                     continue
                 if str(exc) == "slow_down":
                     interval += 5
+                    poll_delay = interval
                     continue
                 raise
             token, metadata = result.get("access_token"), result.get("metadata")
