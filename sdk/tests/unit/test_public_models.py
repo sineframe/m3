@@ -605,6 +605,15 @@ def test_nested_payloads_are_copied_and_deeply_immutable() -> None:
     assert restored == payload
 
 
+def test_frozen_mapping_lookups_preserve_mapping_semantics() -> None:
+    payload = OpaqueContent(provider="fixture", payload={"a": 1, "b": {"c": 2}})
+    assert payload.payload.get(["x"]) is None
+    assert ["x"] not in payload.payload
+    assert list(payload.payload) == ["a", "b"]
+    assert payload.payload == {"a": 1, "b": {"c": 2}}
+    assert payload.payload["b"]["c"] == 2
+
+
 def test_secret_references_remain_references_inside_arbitrary_payloads() -> None:
     source = {"credential": SecretReference(source="environment", name="TOKEN")}
     payload = OpaqueContent(provider="fixture", payload=source)
