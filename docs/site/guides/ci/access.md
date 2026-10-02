@@ -1,26 +1,33 @@
 ---
 title: "Manage M3 access"
-description: "Authorize the local M3 CLI and save its credential, then create and store a separate CI token for automated uploads."
+description: "Use device authorization for local uploads, or create and store a separate CI token for automated uploads."
 ---
 
 # Manage M3 access
 
-Authorize the CLI on your workstation, then create a separate CI token for your
-CI secret store. Local commands can use the saved CLI credential. If `CI`,
-`GITHUB_ACTIONS`, or `GITLAB_CI` has a non-empty value, M3 requires
+Choose the credential for where uploads run. Local commands can use a CLI
+credential saved by `m3 auth login`. Automated CI jobs use a separately
+created token through `M3_ACCESS_TOKEN`. These paths are independent: creating
+a CI token does not require `m3 auth login`.
+
+If `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` has a non-empty value, M3 requires
 `M3_ACCESS_TOKEN` and does not read the interactive credential store.
 
 ## Requirements
+
+For local CLI authorization:
 
 - Install the M3 CLI on a computer where you can complete sign-in on the hosted
   authorization page.
 - Use macOS Keychain, Windows Credential Manager, or a supported Linux Secret
   Service or KWallet credential store. `m3 auth login` stops before
   authorization when supported storage is unavailable.
-- Have active membership in an M3 organization. The hosted flow keeps the
-  organization creation and join paths available when you need membership.
-- Choose a CI secret store that can expose the CI token to the M3 process as
-  `M3_ACCESS_TOKEN`.
+
+For CI token creation, sign in to the hosted account console and choose a CI
+secret store that can expose the token to the M3 process as
+`M3_ACCESS_TOKEN`. Both paths require active membership in the target M3
+organization. The hosted console provides organization creation and join paths
+when you need membership.
 
 ## Authorize the local CLI
 
