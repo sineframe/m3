@@ -88,9 +88,11 @@ token.
 `list` shows managed harness assets. `prune` removes unused assets. Both accept
 `--cache-dir` (also `--harness-cache-dir`) and `--project-root`.
 
-See [runtime cache management](../../guides/agents/runtime-cache.md) for cache
-locations, inspection output, and active lease behavior, and [managed runtime
-selection](../../guides/agents/managed-runtimes.md) for pinning a harness.
+Use `list` to inspect downloaded versions and `prune` when you want to reclaim
+disk space. Cleanup is optional; later tests download pruned runtimes again.
+See [cache configuration and reuse](../managed-runtimes.md#cache-location-and-precedence)
+and [inspection and pruning](../managed-runtimes.md#inspect-and-prune-cached-runtimes)
+for details.
 
 Invalid command/configuration is an operational error. Pytest failures retain
 pytest's failure exit behavior; requested upload failures can turn an otherwise

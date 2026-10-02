@@ -112,6 +112,10 @@ blocked system-directory roots (including Windows system directories).
 
 ## Cache location and precedence
 
+Managed sessions download missing runtimes and reuse valid cached assets
+automatically. The default cache persists between runs; per-execution state is
+created separately.
+
 Set an external path with `M3_HARNESS_CACHE_DIR`,
 `MCPTestKit(harness_cache_dir=...)`, `AgentSession(..., harness_cache_dir=...)`,
 or the CLI test option `--harness-cache-dir`. Precedence is AgentSession
@@ -126,9 +130,10 @@ the OS default. The standalone cache commands accept `--cache-dir` (alias
 | Linux and other supported Unix targets | `$XDG_CACHE_HOME/m3/harnesses`, falling back to `~/.cache/m3/harnesses` |
 
 `m3 runtime cache list` and `prune` also accept `--project-root`. Without an
-explicit path, M3 uses the same OS default. Cache roots must be outside the
-project and `PATH`, and outside blocked system directories. Symlinked cache
-paths are rejected.
+explicit path or `M3_HARNESS_CACHE_DIR`, M3 uses the same OS default. Cache roots
+must be outside the project and `PATH`, and outside blocked system directories.
+Symlinked cache paths are rejected. In CI, retain the selected cache directory
+between jobs to avoid downloading the same pinned releases again.
 
 The receipt's `provenance` object stores `kind`, `version`, `target`,
 query-stripped `url`, `sha256`, `source`, `executable`, `asset_name`,
@@ -144,11 +149,35 @@ assets.
 
 Runtime acquisitions and sessions share cache entries. M3 serializes entry
 installation and pruning with a lock. An active session holds a lease, shown
-as `in_use` by CLI listing. Pruning preserves leased entries. The CLI waits
-briefly for leases to clear, then exits with an operational error if entries
-remain in use. Close sessions and kits before pruning. Corrupt entries without
-active leases can be removed with `m3 runtime cache prune` and reacquired on a
-later run.
+as `in_use` by CLI listing. Sessions release their leases when closed.
+
+## Inspect and prune cached runtimes
+
+To inspect downloaded versions or troubleshoot a cache entry, run:
+
+```sh
+m3 runtime cache list
+```
+
+The JSON output includes each entry's harness, version, target, digest, and
+status. To inspect a non-default cache, pass `--cache-dir PATH` or set
+`M3_HARNESS_CACHE_DIR`.
+
+Cleanup is optional. To reclaim disk space after trying several versions,
+close sessions and kits, then run:
+
+```sh
+m3 runtime cache prune
+```
+
+Pruning removes entries without active leases, including corrupt entries.
+Later tests reacquire any runtimes they need. Keep the cache between comparison
+runs to retain the download savings. Use the same `--cache-dir PATH` override
+if your tests use a custom cache.
+
+Pruning preserves leased entries. The CLI waits briefly for leases to clear,
+then exits with an operational error if entries remain in use. It does not
+stop running sessions.
 
 ## Authentication and failure behavior
 

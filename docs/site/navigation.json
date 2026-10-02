@@ -146,13 +146,6 @@
       "kind": "guides"
     },
     {
-      "id": "guides-agents-runtime-cache",
-      "title": "Inspect and maintain the runtime cache",
-      "source": "guides/agents/runtime-cache.md",
-      "description": "Acquire one pinned Codex runtime into a temporary cache, inspect its receipt, verify reuse and lease protection, then prune that cache.",
-      "kind": "guides"
-    },
-    {
       "id": "guides-agents-sessions",
       "title": "Test a multi-turn agent session",
       "source": "guides/agents/sessions.md",
@@ -593,7 +586,6 @@
             "guides-agents-harnesses",
             "guides-agents-managed-runtimes",
             "guides-agents-versions",
-            "guides-agents-runtime-cache",
             "guides-agents-acp",
             "guides-agents-acp-connect",
             "guides-agents-acp-wrapper",

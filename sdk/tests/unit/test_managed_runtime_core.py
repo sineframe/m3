@@ -127,23 +127,41 @@ async def test_acquire_receipt_cache_hit_progress_and_prune(
     events = tmp_path / "events.jsonl"
     digest = hashlib.sha256(_Server.body).hexdigest()
     manager = RuntimeManager(cache, project, tmp_path / "invoke", events)
-    first = await manager.acquire(
-        "claude", {"version": "1.2.3", "url": archive_server, "sha256": digest}
-    )
-    await first.release()
-    second = await manager.acquire(
-        "claude", {"version": "1.2.3", "url": archive_server, "sha256": digest}
-    )
-    assert second.executable.name == "claude"
-    assert _Server.requests == 1
-    assert (
-        list_cache(cache)[0]["files"]["claude"]
-        == hashlib.sha256(FAKE_BINARY).hexdigest()
-    )
-    lines = [json.loads(line) for line in events.read_text().splitlines()]
-    assert all("?" not in str(line.get("url", "")) for line in lines)
-    await second.release()
-    assert prune_cache(cache, max_age=-1)
+    try:
+        first = await manager.acquire(
+            "claude", {"version": "1.2.3", "url": archive_server, "sha256": digest}
+        )
+        entries = list_cache(cache)
+        assert len(entries) == 1
+        assert entries[0]["status"] == "ready"
+        provenance = entries[0]["provenance"]
+        assert provenance["kind"] == "claude"
+        assert provenance["version"] == "1.2.3"
+        assert provenance["target"] == detect_target("claude")
+        assert provenance["sha256"] == digest
+        assert entries[0]["files"]["claude"] == hashlib.sha256(FAKE_BINARY).hexdigest()
+
+        event_count = len(events.read_text().splitlines())
+        second = await manager.acquire("claude", "1.2.3")
+        assert second.executable == first.executable
+        assert second.executable.name == "claude"
+        assert _Server.requests == 1
+        lines = [json.loads(line) for line in events.read_text().splitlines()]
+        assert [line["event"] for line in lines[event_count:]] == ["cache_hit"]
+        assert all("?" not in str(line.get("url", "")) for line in lines)
+
+        assert prune_cache(cache) == []
+        assert first.executable.is_file()
+        await manager.release(first)
+        assert prune_cache(cache) == []
+        assert second.executable.is_file()
+        assert len(list_cache(cache)) == 1
+
+        await manager.release(second)
+        assert prune_cache(cache) == [second.executable.parent]
+        assert list_cache(cache) == []
+    finally:
+        await manager.close()
 
 
 @pytest.mark.asyncio

@@ -248,16 +248,18 @@ their own executable and cannot join a command with global `--runtime managed`.
 ## Repeat with cached runtimes
 
 Run either comparison command again. Explicit pins reuse verified cache entries
-and the CLI reports `loaded from cache` for those assets. The test still
+automatically, and the CLI reports `loaded from cache` for those assets. Reuse
+avoids downloading the same releases for each comparison. The test still
 creates fresh executions with separate writable state and makes new provider
-requests. A cached executable makes repeated version comparisons faster; it
-does not cache model responses.
+requests; model responses are not cached.
 
 By default, assets remain in M3's external user cache. To choose another
-external cache, add `--harness-cache-dir PATH` to both commands; see
-[runtime cache management](runtime-cache.md). M3's runtime isolation concerns
-executable selection and per-execution state. It is not an operating-system
-filesystem or network sandbox.
+external cache, add `--harness-cache-dir PATH` to both commands. In CI, retain
+that directory between jobs to reuse downloaded releases. Cleanup is optional;
+see [cache configuration and cleanup](../../reference/managed-runtimes.md#cache-location-and-precedence).
+
+M3's runtime isolation concerns executable selection and per-execution state.
+It is not an operating-system filesystem or network sandbox.
 
 ## Select versions through the SDK
 
@@ -342,6 +344,6 @@ The CLI workflow gives each selection a separate pytest result; the SDK variant
 prints each identity from its loop and reports one combined pytest result.
 
 See [pinned runtime selection](managed-runtimes.md) and
-[runtime cache management](runtime-cache.md).
+[cache configuration and reuse](../../reference/managed-runtimes.md#cache-location-and-precedence).
 
 Complete source project: [`sdk/examples/docs/agents-runtime-versions`](../../../../sdk/examples/docs/agents-runtime-versions).

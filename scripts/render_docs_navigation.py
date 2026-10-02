@@ -44,7 +44,6 @@ NAVIGATION = [
                     "guides-agents-harnesses",
                     "guides-agents-managed-runtimes",
                     "guides-agents-versions",
-                    "guides-agents-runtime-cache",
                     "guides-agents-acp",
                     "guides-agents-acp-connect",
                     "guides-agents-acp-wrapper",

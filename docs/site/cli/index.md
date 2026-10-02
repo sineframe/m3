@@ -13,6 +13,6 @@ with selected agents and servers, and inspect saved results.
 - [Browse commands and options](../reference/cli/index.md)
 - [Configure harness runtimes](../guides/agents/managed-runtimes.md)
 - [Compare agent harnesses and versions](../guides/agents/versions.md)
-- [Inspect and prune the runtime cache](../guides/agents/runtime-cache.md)
+- [Inspect downloaded runtimes and reclaim disk space](../reference/managed-runtimes.md#inspect-and-prune-cached-runtimes)
 - [View results and the local UI](../guides/results/viewer.md)
 - [Configure CI and report publishing](../guides/ci/run.md)
