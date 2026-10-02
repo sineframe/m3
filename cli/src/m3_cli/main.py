@@ -83,6 +83,11 @@ def _parser() -> argparse.ArgumentParser:
     setup_parser.add_argument(
         "--project-root", type=Path, help="project root used for environment setup"
     )
+    setup_parser.add_argument(
+        "--no-skill",
+        action="store_true",
+        help="do not install or update the testing-with-m3 agent skill",
+    )
 
     init_parser = subparsers.add_parser(
         "init", help="create a project identity and pytest starter test"
@@ -93,6 +98,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     init_parser.add_argument(
         "--suite", help="starter suite name (prompts when omitted)"
+    )
+    init_parser.add_argument(
+        "--no-skill",
+        action="store_true",
+        help="do not install or update the testing-with-m3 agent skill",
     )
     setup_parser.add_argument(
         "--python",

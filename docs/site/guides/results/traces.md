@@ -63,3 +63,5 @@ error because the trace is not final yet.
 
 Next, [open the saved run](viewer.md) or read about
 [evidence availability](../../concepts/evidence.md).
+
+For what each trace limitation means, see [CLI output and trace limitations](../../reference/output.md).

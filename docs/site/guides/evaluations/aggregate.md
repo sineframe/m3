@@ -54,3 +54,8 @@ Pass rate uses passed evaluations over expected evaluations. Terminal missing
 requirements and error-like statuses affect the denominator; a pending
 requirement from a still-running attempt does not enter it yet. Pytest outcomes
 remain separate.
+
+Keep deterministic evaluators and LLM judges separate in aggregates. The
+plugin keeps a stable logical case ID across harnesses and trials; aggregate
+by `metadata.harness_config`. Scripts use `kit.agents([...], trials=N)` with
+the same explicit `case_id`.

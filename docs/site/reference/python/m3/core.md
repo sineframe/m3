@@ -31,6 +31,10 @@ results are typed; normal MCP tool errors remain `ToolCallResult` values with
 `final_trace` is available after the client closes. Calls that depend on one
 server session must stay in the same client context.
 
+`client.initialization` contains initialization evidence.
+`client.transport_evidence` remains available with state `"closed"` after
+exit. Read transport entries with `trace.view().transports`.
+
 ## Agents and sessions
 
 An agent selection can run one action with `run(...)`, start a continuing
@@ -41,6 +45,11 @@ the session closes.
 Tool availability, permission policy, workspace policy, timeout, and
 elicitation plan belong to the action that uses them. Consult the applicable
 harness guide because integrations expose different evidence and interactions.
+
+Omitting `tools` advertises the bound server's tools; `tools=[]` denies them.
+The default permission policy denies MCP tool approvals. For a trusted test
+server under native Codex, pass `permission_policy="allow"` to `agent.run(...)`
+or `agent.session(...)`.
 
 ## Async API
 

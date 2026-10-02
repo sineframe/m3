@@ -22,6 +22,11 @@ expect(result).to_have_tool_call("shipping_quote", arguments={"weight_kg": 2, "z
 )
 ```
 
+Tool-call matchers accept `min_count` and `max_count`, and
+`expect(...).to_not_have_tool_call(...)` checks that a call did not occur.
+Matchers use wire-observed calls by default. After a failed positive matcher,
+later matchers do not run; use grouped `check()` to record both.
+
 Unavailable evidence fails a predicate that requires it; it is not treated as
 an empty value. Matcher failures are ordinary assertion failures even when the
 plugin also records them as evaluation evidence.

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import os
 import subprocess
 import sys
 import typing
 import uuid
 from pathlib import Path
+
+from m3_cli.agent_skill import ensure_agent_skill
 
 if typing.TYPE_CHECKING:
     import tomli as _tomllib
@@ -132,12 +135,7 @@ def run(args: object) -> int:
         if config_present and config.is_file() and not config.is_symlink()
         else None
     )
-    if (
-        data is not None
-        and starter_present
-        and starter.is_file()
-        and not starter.is_symlink()
-    ):
+    if data is not None:
         try:
             created_example = _create_env_example(env_example)
         except OSError:
@@ -145,18 +143,26 @@ def run(args: object) -> int:
             return 2
         print(f"m3 is already initialized at {root}")
         print(f"Project: {data['project_name']}")
-        print(f"Files: {config}, {starter}")
+        print(f"Config: {config}")
         if created_example:
             print(f"Created {env_example}")
             print("Existing project files unchanged; supplied names were not applied.")
         else:
             print("Nothing changed; supplied names were not applied.")
+        try:
+            version = importlib.metadata.version("sf-m3-cli")
+        except importlib.metadata.PackageNotFoundError:
+            print("Agent skill: skipped; M3 CLI version unavailable")
+        else:
+            ensure_agent_skill(
+                root, version, enabled=not getattr(args, "no_skill", False)
+            )
         print("Edit project_name in m3.toml to rename the project; keep project_id.")
         return 0
-    if config_present or starter_present:
+    if config_present:
         print(
-            f"m3 init: partial initialization found at {root}; "
-            "repair m3.toml and tests/test_m3_starter.py, then retry.",
+            f"m3 init: m3.toml at {root} is not a valid M3 project identity; "
+            "fix it or restore it from Git, then retry.",
             file=sys.stderr,
         )
         return 2
@@ -206,9 +212,10 @@ def run(args: object) -> int:
         with config.open("x", encoding="utf-8", newline="\n") as stream:
             created.append(config)
             stream.write(config_text)
-        with starter.open("x", encoding="utf-8", newline="\n") as stream:
-            created.append(starter)
-            stream.write(_starter(suite_name))
+        if not starter_present:
+            with starter.open("x", encoding="utf-8", newline="\n") as stream:
+                created.append(starter)
+                stream.write(_starter(suite_name))
         if _create_env_example(env_example):
             created.append(env_example)
     except OSError:
@@ -226,9 +233,26 @@ def run(args: object) -> int:
         return 2
     print(_style(f"Initialized M3 project {project_name!r} at {root}", "32"))
     print(f"Created {config}")
-    print(f"Created {starter}")
+    if starter in created:
+        print(f"Created {starter}")
+    else:
+        print(f"Kept existing {starter}")
     if env_example in created:
         print(f"Created {env_example}")
+    history = root / ".m3" / "executions.sqlite"
+    if history.exists():
+        print(
+            f"Warning: {history} already holds saved runs. They keep their previous "
+            "project_id, so --baseline cannot compare against them and new uploads "
+            "go to a different project. To keep the previous identity, delete this "
+            "m3.toml and restore the old one from Git."
+        )
+    try:
+        version = importlib.metadata.version("sf-m3-cli")
+    except importlib.metadata.PackageNotFoundError:
+        print("Agent skill: skipped; M3 CLI version unavailable")
+    else:
+        ensure_agent_skill(root, version, enabled=not getattr(args, "no_skill", False))
     print("Next: m3 setup")
     print(
         "For agent or judge tests, add the keys you use to .env (copy .env.example if needed)."

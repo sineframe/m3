@@ -1,235 +1,259 @@
 ---
 name: testing-with-m3
-description: Use when setting up M3 or writing, running, debugging, evaluating, or comparing Python tests of MCP servers and the agents that use them
+description: Use when setting up M3 or when writing, running, debugging, or evaluating tests for an MCP server or for agents that use one. Covers m3 init, setup, doctor, and test; direct MCP tests; agent tests with Codex, Claude Code, OpenCode, Pi, or ACP agents; evaluations and LLM judges; saved runs, feedback files, and traces. Use it whenever a project has an m3.toml file, imports m3, or the user mentions M3, MCP server tests, or testing an MCP tool with an agent.
+license: Apache-2.0
 ---
 
 # Testing with M3
 
-M3 runs ordinary Python and pytest tests against an MCP server. A direct test
-proves server behavior; an agent test proves what a selected harness did with
-the server. Choose the boundary from the claim, then assert observed results.
-A collected test, a completed execution, and a passing evaluation are different
-facts.
+M3 tests MCP servers with ordinary Python and pytest. It has two parts that
+are installed separately:
 
-Read only the reference needed for the task:
+- The `m3` command (PyPI package `sf-m3-cli`) is installed once per machine.
+  It runs pytest in the project environment and saves every run.
+- The `m3` Python package (PyPI package `sf-m3`) is what tests import.
+  `m3 setup` installs the version that matches the command into the project.
 
-- [CLI runner](references/cli-runner.md) for installing the standalone `m3`
-  command, choosing the project Python, credentials, or CLI options.
-- [Test patterns](references/test-patterns.md) before writing a test; use its
-  section for the claim under test.
-- [Feedback and iteration](references/feedback-iteration.md) for saved runs,
-  trace inspection, evaluation totals, a baseline comparison, or opening
-  existing run history without executing tests.
+M3 has two kinds of test:
 
-## Begin in the target project
+- A **direct test** connects to the server as an MCP client and calls it. It
+  shows what the server does and needs no model provider.
+- An **agent test** gives a coding agent access to the server and checks what
+  the agent observably did, such as which tools it called with which
+  arguments. It needs a harness such as Codex or Claude Code and its
+  credentials.
 
-1. Read the project's documented behavior, server launch command or MCP URL,
-   existing fixtures and pytest conventions. Find independent expected results
-   before writing assertions. Do not copy the current output into an expected
-   value merely to make a test pass.
-2. Use the standalone `m3` CLI as the default runner. Check its availability,
-   the project Python, and the installed M3 version. If the CLI is missing,
-   install the intended release using [CLI runner](references/cli-runner.md).
-   The CLI and SDK install separately.
-3. In the target project, run
-   `m3 init --project-name NAME --suite mcp-behavior`, then `m3 setup` and
-   `m3 doctor`. Run `init` even when the project is already fully initialized:
-   it preserves existing files and creates a missing `.env.example`. If it
-   reports partial initialization, repair the named files and retry. Supply
-   both names to avoid interactive prompts. `setup`
-   installs the matching SDK into the selected project Python without editing
-   the dependency manifest or lockfile. Replace the skipped starter with a
-   real test and remove its skip.
-4. Write a deterministic direct test that actually calls a server tool, then
-   give every test selected for the persisted `m3 test` run a non-empty
-   `suite_name` via `@pytest.mark.m3(suite_name="mcp-behavior")` or a module
-   `pytestmark`, and run it with `m3 test -- tests/PATH.py`. A normal pytest
-   assertion without an M3 client or agent operation produces no execution.
-   Give every test a short
-   behavior-focused function docstring; M3 saves it as the test description
-   shown in the UI. Use the [stdio example](references/test-patterns.md#stdio-local-command)
-   or the project's equivalent server fixture. Add agent/provider tests when
-   the claim involves tool selection or an agent's output.
-5. Inspect the printed feedback path and require a passing pytest case **and**
-   at least one linked execution for the direct test. If no execution was
-   recorded, fix the test and rerun it before claiming M3 coverage. Follow
-   [feedback and iteration](references/feedback-iteration.md#one-run-find-the-verdict-and-evidence)
-   for the exact JSON checks.
+Start with direct tests. Add agent tests only when the claim is about tool
+choice or about the agent's answer.
 
-## Choose the test and the evidence
+This skill was installed for one M3 release, and `references/` holds that
+release's documentation. M3 changes between releases, so read the relevant
+reference before writing code instead of relying on memory, and use
+`m3 COMMAND --help` for exact options.
 
-| Claim | Test boundary | Minimum evidence |
-|---|---|---|
-| The server advertises a tool, description, input/output schema, resource, or prompt | `MCPTestKit.direct()` | Discovered object and its expected fields; use `list_all_tools()` for paged catalogs |
-| A tool handles valid, boundary, or invalid arguments | Direct client or `ToolMatrix` | Expected structured result, typed tool error, or expected exception |
-| Calls share state or depend on earlier results | One direct-client context | Result of each call and final state |
-| An agent selects the right tool | Marked pytest `agent` or `kit.agents(...)` | Finalized wire-observed call, server, arguments, result, count, and relevant absent calls |
-| An agent handles a continuing conversation | `agent.session(...)` | Turn-scoped calls and the finalized `session.result` |
-| An answer meets a quality rule | Explicit `kit.evaluate(...)` or `judge_response(...)` | An evaluator result that fails the test when the rule is required |
-| A change helps across cases or harnesses | Stable cases, selections, and trials plus a saved baseline | Matched test/evaluation changes, observed interface change, coverage, and limitations |
+## Rules
 
-For a simple marked test, declare server cases with
-`@pytest.mark.m3(suite_name="mcp-behavior", servers=[{"type": "http", "url": URL, "trust": "public"}])`
-or choose them with CLI `--server http --url URL --trust public`. Request
-`server` in the test function and pass it to `agent.run(..., server=server)`
-or `kit.direct(server)`. Each entry runs separately with each selected agent
-and trial; CLI server groups replace the marker list completely. Use
-`StdioServer` or `HTTPServer` directly for advanced settings. An HTTP URL is
-one MCP protocol endpoint, not a REST route. A server definition does not
-start a deployed service. For async tests, use `AsyncMCPTestKit` with
-`async with` and `await`.
+- Take expected values from the project's documentation, its specification,
+  or the user. Never copy the server's current output into an assertion just
+  to make a test pass.
+- A passing pytest case is not M3 coverage on its own. A test counts only
+  when it called the server through M3 and the run recorded an execution for
+  it.
+- A collected test, a completed execution, and a passing evaluation are
+  different facts. Report the one you observed.
+- An agent saying that it used a tool is not evidence. Use the recorded tool
+  calls.
+- Keep secrets out of tests, commands, and reports. Refer to keys by variable
+  name, keep `.env` out of Git, and pass `--env-file .env` to `m3 test` when
+  keys are needed.
+- Upload results only when the user asks.
+- If `m3 doctor` reports that the command and the project SDK do not match,
+  run `m3 setup`. Do not work around the mismatch.
+- Use the M3 APIs the references teach first: `MCPTestKit`, `kit.direct(...)`
+  and its client methods, the pytest `agent` fixture, `expect(...)`, and
+  evaluators. Lower-level types such as `DirectSpec` exist for advanced use.
+  Use them only when the project's existing tests already do, and read
+  their reference before writing code.
+- Results are read-only: nested lists come back as tuples and nested objects
+  as read-only mappings. Write expected values with tuples, or convert with
+  `list(...)` and `dict(...)` at each level you compare.
 
-For feature and regression tests, cover the behavior that can fail: advertised
-catalog and schema, representative valid and boundary cases, expected domain
-errors, invalid schemas, and any resource, prompt, state, or transport behavior
-the project exposes. Isolate persistent external state between cases. Keep
-known-call contract checks separate from agent selection checks.
+## Set up the project
 
-A tool-choice test needs realistic safe alternatives. Do not name the desired
-tool in a prompt intended to test discovery or description quality. Assert
-wire-observed use with `expect(result).to_have_tool_call(...)`, and check
-arguments, count, status, and unwanted calls where the claim needs them. A
-policy that exposes only one tool proves use, not choice. Omitted `tools`
-advertises the bound server's tools; `tools=[]` denies them.
-For a trusted test server under the native Codex harness, explicitly pass
-`permission_policy="allow"` to `agent.run` or `agent.session`. The default
-permission policy denies MCP tool approvals. A nonlocal HTTP agent server
-defaults to `untrusted`; declare `trust="public"` for a public endpoint or
-`trusted_private` for a private endpoint you own. Literal loopback addresses
-and `localhost` get loopback-only private trust; a mixed DNS result containing
-any non-loopback address is rejected.
-Keep the server's tool policy and test workspace scoped to the intended
-operations.
-
-## Run and score
-
-`m3 test` is the primary runner. It runs pytest in the project Python, saves
-executions and pytest outcomes in SQLite, and prints a run ID plus the feedback
-path. `--suite` selects a suite but does not assign its name; tests surviving
-pytest selection must declare or inherit one. Deselected tests and
-`--collect-only` do not need names. Put CLI options before `--` and pytest
-selectors after it:
+Run these from the project root:
 
 ```sh
-m3 test --suite mcp-behavior -- tests/test_m3_starter.py
-m3 test --harness codex=gpt-5.6-sol --trials 2 -- tests/test_agent.py
+m3 --version
+m3 init --project-name PROJECT_NAME --suite SUITE_NAME
+m3 setup
+m3 doctor
 ```
 
-For reproducible native harness versions, add `--runtime=managed` and use
-`--harness KIND@VERSION=MODEL`; repeat `--harness` for each version. An
-unversioned managed selection resolves `latest` once per run. Without
-managed mode, M3 uses the locally installed harness. In Python, set
-`runtime="managed"` and `version="..."` on the harness spec. Both test kit
-constructors accept `harness_cache_dir=...`; CLI runs may use
-`--harness-cache-dir PATH` or `M3_HARNESS_CACHE_DIR`. Agent startup waits
-for download or cache verification. Reports show the resolved version.
+- If `m3` is not installed, follow [Install M3](references/start-install.md).
+- Pass both names to `m3 init`; without a terminal it cannot ask for them.
+- `m3 init` creates `m3.toml`, a skipped starter test at
+  `tests/test_m3_starter.py`, and `.env.example`. `m3.toml` holds the
+  project's `project_id`, which links saved runs, baselines, and uploads, so
+  keep it in Git. A project counts as initialized when `m3.toml` is valid;
+  you can move, rename, or delete the starter. Running `m3 init` again keeps
+  existing files.
+- `m3 setup` installs the matching SDK into the project's Python environment.
+  It does not edit `pyproject.toml` or the lockfile.
+- Continue only when `m3 doctor` prints `m3 doctor: ready`.
 
-A marked test requesting `agent` needs `--harness KIND=MODEL` or marker
-`agents=[...]`. A marker alone does not select an agent. When the user
-specifically needs SDK-only pytest, use the project's approved SDK
-installation workflow. Direct pytest history is in memory unless the kit uses
-`SQLiteExecutionStore` or the M3 pytest plugin receives `--results-db`.
-Only the plugin with `--results-db` requires suite names on pytest items.
-Standalone scripts and notebooks do not require a suite name, even with an
-explicit SQLite store.
-Keep direct-only and agent tests in separate files when running without a
-harness: `-k` filters after collection and does not avoid an agent fixture
-selection error in the same collected file.
+## If the project already has M3 tests
 
-Treat an evaluator as a test gate only when it uses `required=True` or asserts
-`status == EvaluationStatus.PASSED`. `required=False` records non-passing
-decisions without failing pytest. Keep deterministic evaluators and LLM judges
-separate in aggregates. Use ordinary pytest parameters for logical cases and
-`--trials N` for independent agent attempts; never rerun only failures and
-report the best attempt. Pass rate is passed evaluations divided by expected
-evaluations, so error, inconclusive, not-run, and terminal missing required
-evidence lower it. Report status and missing/pending counts with the rate.
-Small trial counts show observations, not reliable improvement estimates.
+Look for `m3.toml` and for test files that import `m3`. If they exist:
 
-## Elicitation
+- Run `m3 setup` and `m3 doctor`. Running `m3 init` is also safe: when
+  `m3.toml` is valid it changes nothing except adding a missing `.env.example`.
+- Before writing anything, read the existing M3 tests, their fixtures, and
+  the project's pytest configuration (`testpaths`, markers, `conftest.py`).
+  Reuse their server fixtures and suite names.
+- Add tests for behavior the existing suites do not cover. Do not add a copy
+  of the starter; delete the generated skipped starter if the project does
+  not use it.
+- Pass the path you changed to `m3 test`, for example
+  `m3 test -- m3_tests/test_new.py`. Without a path, pytest selects tests
+  from its `testpaths` setting.
 
-Start with the complete [Elicitation guide](https://m3.sineframe.com/docs/guides/elicitation/plans).
-Its runnable test sends one prompt, answers either an address form or its
-alternative, then answers a URL request on a later retry. It asserts one
-successful logical tool call after `agent.run` returns. Copy the maintained
-[composed tests](https://github.com/sineframe/m3/blob/main/sdk/examples/tests/test_modern_mrtr_pi_composed.py),
-which also run the optional-address and two-addresses-in-one-round variants.
+## Write a first direct test
 
-To write a new test, first build a deterministic server fixture that emits
-keyed `InputRequiredResult` requests and validates the next call's
-`requestState` and `inputResponses`. Bind each form or URL leaf to a response.
-Use `one_of` for alternatives in one round, `round_of` for multiple keys in
-one round, `optional` for a round that may be skipped, and `sequence` for
-successive rounds. Attach the complete plan to `client.call_tool`,
-`agent.run`, or the exact `session.send` that can elicit. Assert the final
-operation result or `expect(result).to_have_tool_call(...)`; inspect attempts
-and elicitation entries when order matters. The tool assertion runs after the
-action because one logical call owns all retries.
+First find out how the project starts its MCP server (a command for a local
+process, or a URL for a running service) and what its tools are documented to
+return.
 
-The maintained [server](https://github.com/sineframe/m3/blob/main/sdk/examples/servers/modern_mrtr_server.py),
-[direct test](https://github.com/sineframe/m3/blob/main/sdk/examples/tests/test_modern_mrtr_direct.py), and
-[session test](https://github.com/sineframe/m3/blob/main/sdk/examples/tests/test_modern_mrtr_pi_session.py) show
-those action boundaries. Pi 0.85.1 is the verified Pi baseline. Codex support
-uses the unmodified App Server and local deterministic provider fixtures; its
-full M3 conformance gate is pending. Do not treat native Codex characterization
-or a skipped binary test as proof that M3 action integration passed. The
-[Codex limitations section](https://m3.sineframe.com/docs/reference/python/m3/elicitation)
-is canonical, and the [Pi-to-Codex parity inventory](https://github.com/sineframe/m3/blob/main/sdk/tests/mrtr-harness-parity.md)
-lists each existing Pi scenario, its Codex counterpart, and remaining gaps.
-For exact helper signatures, prompt/resource actions, manual and managed
-input, URL details, and trace fields, use the
-[MRTR API reference](https://m3.sineframe.com/docs/reference/python/m3/elicitation).
+This is the complete first test from the M3 getting-started guide. It starts
+a local stdio server, checks the advertised tools, and calls one tool:
 
-Run the pinned Codex MRTR gate only with Codex CLI 0.156.1 installed; both
-suites use local deterministic MCP and Responses API fixtures and make no
-paid model-provider calls:
+```python
+import sys
+from pathlib import Path
 
-```bash
-M3_REQUIRE_CODEX_MRTR=1 \
-  uv run --project sdk --all-extras pytest -q \
-  sdk/tests/e2e/test_real_codex_native_mrtr.py \
-  sdk/tests/e2e/test_real_codex_managed_mrtr.py
+import pytest
+
+from m3 import MCPTestKit, StdioServer
+
+pytestmark = pytest.mark.m3(suite_name="shipping")
+
+
+def test_shipping_quote() -> None:
+    project_root = Path(__file__).parents[1]
+    server = StdioServer(
+        name="shipping",
+        command=sys.executable,
+        args=(str(project_root / "shipping_server.py"),),
+        cwd=str(project_root),
+    )
+    with MCPTestKit(env={}) as kit, kit.direct(server) as client:
+        tools = client.list_all_tools()
+        assert [tool.name for tool in tools] == ["shipping_quote"]
+        result = client.call_tool("shipping_quote", {"weight_kg": 2, "zone": "local"})
+
+    assert result.is_error is False
+    assert result.structured_content == {"amount": 9.0, "currency": "USD"}
 ```
 
-## Credentials and troubleshooting
+What each part does:
 
-| Needed for | Source |
+- `pytestmark = pytest.mark.m3(suite_name=...)` names the suite. `m3 test`
+  rejects selected tests that have no suite name.
+- `StdioServer(...)` tells M3 how to start the server process. Replace the
+  command and arguments with the project's own. For a server that is already
+  running at a URL, use `HTTPServer`; see
+  [HTTP servers](references/guides-servers-http.md).
+- `MCPTestKit(...)` and `kit.direct(server)` open one MCP connection. Leaving
+  the `with` block closes it and stops the server process.
+- The assertions check the advertised tool list and the structured result. A
+  call that returns without an error proves very little.
+
+The server this test uses, and the full walkthrough, are in
+[Getting started](references/getting-started.md). For the project's own
+server, read [Test your own server](references/start-your-server.md).
+
+Replace `tests/test_m3_starter.py` with a test like this for the project's
+server. Give each test function a short docstring that states the behavior;
+M3 shows it in the results viewer. Then run:
+
+```sh
+m3 test -- tests/test_m3_starter.py
+```
+
+## Confirm the run recorded evidence
+
+`m3 test` prints the run ID and the path of a feedback file,
+`.m3/reports/RUN_ID/feedback.json`. Use the printed path; do not guess the
+run ID. Check that the test passed and is linked to at least one execution,
+replacing the node ID with your test's:
+
+```sh
+report=.m3/reports/RUN_ID/feedback.json
+node=tests/test_m3_starter.py::test_shipping_quote
+jq -e --arg node "$node" '
+  (.summary.executions > 0) and
+  any(.tests[];
+    .node_id == $node and .outcome == "passed" and
+    ((.execution_ids // []) | length > 0))
+' "$report"
+```
+
+If this prints `false`, the test did not call the server through M3. Fix the
+test and run it again before reporting coverage. Read selected fields like
+this rather than printing whole feedback or trace files, which can contain
+application data. The file format is described in
+[Saved results](references/guides-results-persistence.md). To browse saved
+runs in a browser, run `m3 ui` from the project root. If `jq` is not
+installed, read the same fields with Python's `json` module.
+
+`m3 test` also prints lines that start with `M3`, and traces list
+limitations such as `capture_incomplete`. Some of these are routine in a
+passing run. Before reporting one as a problem, look it up in
+[CLI output and trace limitations](references/reference-output.md).
+
+## Choose the next test
+
+Choose the test from the claim being made, and read the reference before
+writing it.
+
+| Claim | Test | Read |
+|---|---|---|
+| The server advertises the right tools, schemas, resources, or prompts | Direct | [Tools](references/guides-servers-tools.md), [Resources and prompts](references/guides-servers-resources-prompts.md) |
+| A tool handles valid, boundary, and invalid input | Direct, one case per test or a `ToolMatrix` | [Errors and schemas](references/guides-servers-errors-schemas.md), [ToolMatrix](references/reference-python-m3-matrix.md) |
+| Calls share state | Direct, one client for the whole sequence | [Stateful tests](references/guides-servers-stateful-tests.md) |
+| An agent picks the right tool | Agent | [First agent test](references/guides-agents-first-test.md), [Assertions](references/guides-evaluations-assertions.md) |
+| An agent handles a conversation | Agent session | [Sessions](references/guides-agents-sessions.md) |
+| An answer meets a quality rule | Evaluator or LLM judge | [Custom evaluators](references/guides-evaluations-custom.md), [LLM judges](references/guides-evaluations-judges.md) |
+| A change helps across agents or models | Matrix with trials, compared with a baseline | [Matrices](references/guides-agents-matrices.md), [Baselines](references/guides-results-baselines.md) |
+| The server asks the user for input | Direct or agent test with an input plan | [Elicitation](references/guides-elicitation-plans.md) |
+
+For server behavior, cover what can actually fail: the advertised catalog and
+schemas, representative valid and boundary inputs, expected errors, and any
+state, resource, or prompt behavior the project exposes. Keep each expected
+failure in its own test so its reason stays visible.
+
+For agent tool-choice tests:
+
+- Keep realistic alternative tools available. A policy that exposes only one
+  tool shows that the agent used it, not that it chose it.
+- Do not name the target tool in the prompt when testing whether the agent
+  finds it.
+- Assert the recorded call, its arguments, and the calls that must not
+  happen.
+- Use `--trials N` for repeated attempts and report every attempt. Never
+  rerun only the failures and report the best result. A few trials are an
+  observation, not a reliable rate.
+
+## Find details
+
+| Task | Reference |
 |---|---|
-| Installing the CLI and SDK | `uv tool install sf-m3-cli` for the CLI; `m3 setup` for the project SDK |
-| Selected model provider | Its named environment variable or a supported native harness login |
-| `LLMJudge` | `M3_JUDGE_API_KEY` by default; separate from the agent key |
-| Authenticated MCP endpoint | `SecretReference` in `HTTPServer.headers` for agent access, or a direct-client bearer reference |
+| Install or upgrade M3 | [Install M3](references/start-install.md) |
+| Connect to a local or remote server | [Test your own server](references/start-your-server.md), [Stdio](references/guides-servers-stdio.md), [HTTP](references/guides-servers-http.md) |
+| pytest marker, fixtures, and suite names | [pytest reference](references/reference-pytest.md) |
+| `m3` commands and options | [CLI reference](references/reference-cli.md) |
+| Credentials and `.env` | [Credentials](references/guides-credentials.md), [Credential reference](references/reference-credentials.md) |
+| Harnesses, models, and versions | [Harnesses](references/guides-agents-harnesses.md), [Versions](references/guides-agents-versions.md), [Managed runtimes](references/guides-agents-managed-runtimes.md) |
+| ACP agents | [Connect an ACP agent](references/guides-agents-acp-connect.md) |
+| Traces | [Traces](references/guides-results-traces.md), [Observability API](references/reference-python-m3-observability.md) |
+| Saved runs and the viewer | [Saved results](references/guides-results-persistence.md), [Viewer](references/guides-results-viewer.md) |
+| Async tests | [Async](references/guides-advanced-async.md) |
+| Running in CI | [Run in CI](references/guides-ci-run.md), [GitHub Actions](references/guides-ci-github-actions.md) |
+| Python API | [Python reference](references/reference-python.md) |
+| Supported harnesses and limits | [Compatibility](references/reference-compatibility.md) |
+| What M3 counts as evidence | [Testing model](references/concepts-testing-model.md), [Evidence](references/concepts-evidence.md), [Outcomes](references/concepts-outcomes.md) |
+| What a CLI output line or a trace limitation means | [CLI output and trace limitations](references/reference-output.md) |
+| Anything else | [Documentation index](references/index.md) |
 
-Local direct tests and the deterministic ACP fixture need no model key.
-`m3 init` creates `.env.example` with blank credential names, not working
-credentials. For agent or judge tests, copy it to `.env` if needed, fill only
-the keys for the selected provider or judge from an authorized source, and
-run `m3 test --env-file .env ...`; the CLI never auto-loads `.env`. A supported
-native harness login can also authenticate without a key. Keep `.env`
-ignored, use names rather than values in flags, and never print or place
-secrets in tests or reports. CLI-run tests receive credentials through the
-selected child environment; configuring the app's `Settings` separately is
-unnecessary for this workflow.
+## When a run fails
 
-When a run fails, check collection and environment first, then server startup
-or connection, harness/provider setup, operation assertions, evaluator status,
-and finally trace completeness. An MCP tool failure is a result with
-`is_error=True`; transport, protocol, timeout, and local schema failures are
-exceptions. `validate_schemas=True` opts into local JSON Schema checks.
-Read `client.final_trace` or `session.result.trace_view` only after closure.
-`TraceView` observations have states: an unavailable or hidden value is not
-observed evidence.
-If Codex lists tools but makes no call, inspect the prompt and permission
-policy separately. A request for a real-world quote can reasonably prompt for
-carrier and postal details; name the bound test service without naming its
-target tool when testing discovery. An explicit tool request that times out
-while waiting for a harness response may indicate an unanswered Codex MCP
-approval request. A trace with no `tools/call` never proves tool choice.
+Check in this order and read the matching page:
 
-For debugging, the CLI already writes `.m3/reports/<run-id>/feedback.json` and
-referenced trace files. Read selected JSON fields, not a full dump in the
-terminal or shared logs; arguments and results can contain application data.
-See [feedback and iteration](references/feedback-iteration.md) for commands.
-A `tests[].outcome` is a pytest case outcome, `tests[].verdict` refines it,
-`executions[].outcome=completed` is lifecycle only, and
-`evaluation_stats` describes explicit saved evaluations.
+1. Collection and environment: [Install problems](references/troubleshooting-install.md)
+2. Server startup or connection: [Server problems](references/troubleshooting-servers.md)
+3. Harness and provider setup: [Agent problems](references/troubleshooting-agents.md)
+4. The test's own assertions
+5. Evaluator status: [Evaluations API](references/reference-python-m3-evaluations.md)
+6. Saved results and traces: [Result problems](references/troubleshooting-results.md)
+
+A tool that reports an error returns a result with `is_error=True`. Transport,
+protocol, and timeout failures raise exceptions instead.

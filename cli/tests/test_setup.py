@@ -224,10 +224,37 @@ def test_setup_ready_environment_skips_install(
         "_install_sdk",
         lambda *_args: pytest.fail("installed despite ready environment"),
     )
-    assert setup.run(SimpleNamespace(project_root=tmp_path, python=None)) == 0
+    assert (
+        setup.run(SimpleNamespace(project_root=tmp_path, python=None, no_skill=False))
+        == 0
+    )
     output = capsys.readouterr().out
     assert "Project environment ready" in output
     assert "Installer: skipped; environment is already ready" in output
+
+
+def test_setup_skips_skill_without_project_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = setup.EnvironmentTarget(
+        tmp_path / ".venv", tmp_path / ".venv" / "bin" / "python", "project .venv"
+    )
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(setup, "_cli_version", lambda: "1.2.3")
+    monkeypatch.setattr(setup, "resolve_target", lambda *_args, **_kwargs: target)
+    monkeypatch.setattr(setup, "_ready", lambda *_args: True)
+    monkeypatch.setattr(
+        setup, "ensure_agent_skill", lambda *args, **kwargs: calls.append(args)
+    )
+
+    assert (
+        setup.run(SimpleNamespace(project_root=tmp_path, python=None, no_skill=False))
+        == 0
+    )
+    assert calls == []
+    assert "Agent skill: skipped; no m3.toml in" in capsys.readouterr().out
 
 
 def test_setup_mismatch_installs_and_existing_environment_survives_failure(
@@ -242,7 +269,7 @@ def test_setup_mismatch_installs_and_existing_environment_survives_failure(
     monkeypatch.setattr(setup, "_ready", lambda *_args: False)
     monkeypatch.setattr(setup, "_install_sdk", lambda *_args: "uv")
     with pytest.raises(setup.SetupError):
-        setup.run(SimpleNamespace(project_root=tmp_path, python=None))
+        setup.run(SimpleNamespace(project_root=tmp_path, python=None, no_skill=False))
     assert target.path.is_dir()
 
 
@@ -264,7 +291,7 @@ def test_setup_failure_removes_only_new_environment(
 
     monkeypatch.setattr(setup, "_create_environment", fail_create)
     with pytest.raises(setup.SetupError):
-        setup.run(SimpleNamespace(project_root=tmp_path, python=None))
+        setup.run(SimpleNamespace(project_root=tmp_path, python=None, no_skill=False))
     assert not target.path.exists()
 
 

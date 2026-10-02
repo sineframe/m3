@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -13,6 +14,9 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "docs" / "site"
 MANIFEST = SITE / "navigation.json"
+PLUGIN_SOURCE = ROOT / "sdk" / "src" / "m3" / "pytest_plugin.py"
+LIMITATIONS_SOURCE = ROOT / "sdk" / "src" / "m3" / "harness" / "observations.py"
+OUTPUT_PAGE = SITE / "reference" / "output.md"
 REQUIRED = {
     "index.md",
     "getting-started.md",
@@ -186,6 +190,71 @@ def escaped_angle_count(text: str) -> int:
         len(ESCAPED_ANGLE_ENTITY.findall(region))
         for region in markdown_code_regions(text)
     ) + unformatted_signature_entity_count(text)
+
+
+def output_terms(
+    plugin_source: str, observations_source: str
+) -> tuple[list[str], list[str]]:
+    """Return CLI output prefixes and trace limitation codes from the SDK."""
+
+    def leading_text(node: ast.expr) -> str:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.JoinedStr):
+            parts: list[str] = []
+            for value in node.values:
+                if isinstance(value, ast.FormattedValue):
+                    break
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    parts.append(value.value)
+            return "".join(parts)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return leading_text(node.left)
+        return ""
+
+    plugin_tree = ast.parse(plugin_source)
+    lines: set[str] = set()
+    for node in ast.walk(plugin_tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "write_line"
+            and node.args
+        ):
+            continue
+        value = leading_text(node.args[0])
+        if not value.startswith("M3"):
+            continue
+        value = value.split("{", 1)[0]
+        separator = value.find(": ")
+        if separator > len("M3"):
+            value = value[:separator]
+        lines.add(value.rstrip(" :"))
+
+    observations_tree = ast.parse(observations_source)
+    limitations: set[str] = set()
+    for node in observations_tree.body:
+        if not isinstance(node, ast.Assign) or not any(
+            isinstance(target, ast.Name) and target.id == "_ALLOWED_LIMITATIONS"
+            for target in node.targets
+        ):
+            continue
+        value = node.value
+        if not (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "frozenset"
+            and value.args
+            and isinstance(value.args[0], ast.Set)
+        ):
+            continue
+        limitations.update(
+            element.value
+            for element in value.args[0].elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        )
+        break
+    return sorted(lines), sorted(limitations)
 
 
 def main() -> int:
@@ -455,6 +524,14 @@ def main() -> int:
                     errors.append(
                         f"{source}: unresolved local heading anchor in {target}"
                     )
+    lines, limitations = output_terms(
+        PLUGIN_SOURCE.read_text(encoding="utf-8"),
+        LIMITATIONS_SOURCE.read_text(encoding="utf-8"),
+    )
+    output_page = OUTPUT_PAGE.read_text(encoding="utf-8")
+    for term in [*lines, *limitations]:
+        if f"`{term}`" not in output_page:
+            errors.append(f"reference/output.md does not document {term!r}")
     if errors:
         print("Documentation validation failed:", file=sys.stderr)
         for error in errors:

@@ -11,6 +11,24 @@ or unavailable.
 
 Main entry groups:
 
+Scope a trace with `trace_view.for_turn(turn)`, `for_session`, `for_server`,
+or `between`.
+
+The top-level fields are `schema_id`, `schema_version`, `trace_id`,
+`execution_id`, `outcome`, `completeness`, `limitations`, `runtime`, and
+`summary`, plus `timeline`. Indexes include `messages`, `reasoning`,
+`tool_calls`, `protocol`, `transports`, `interactions`, `processes`,
+`diagnostics`, and `raw_messages`.
+
+Use `view.model_dump(mode="json")` to serialize a view. Observation states
+such as unavailable, unsupported, hidden, encrypted, redacted, and truncated
+describe whether a value can be read; check `state` and `reason` before
+reading `value`. Call `read_raw_evidence(reference, max_bytes=...)` while the
+kit or store is open.
+
+`summary.usage` is the latest usage entry, not a sum. `usage.cost.value` and
+`usage.currency.value` may be absent.
+
 - Initialization and lifecycle: `InitializationEntry`, `LifecycleEntry`,
   `ProcessEntry`, `RuntimeTraceInfo`, `TraceStatus`, `TraceTiming`.
 - Protocol and transport: `ProtocolEntry`, `ProtocolCallAttempt`,

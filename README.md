@@ -83,15 +83,14 @@ It uses a local server and needs no model credentials.
 
 ## Agent skill
 
-Install the `testing-with-m3` skill in the project where you want an agent to
-write or debug M3 tests:
+`m3 init` and `m3 setup` install the `testing-with-m3` agent skill for the
+installed M3 release with `npx skills`. To install it yourself:
 
 ```sh
-npx skills add sineframe/m3@testing-with-m3
+npx skills add sineframe/m3#vVERSION --skill testing-with-m3
 ```
 
-Use `-g` to make the skill available across projects. The published skill and
-its supporting references are explained in the
+`VERSION` is the output of `m3 --version`. See the
 [agent skill guide](https://m3.sineframe.com/docs/guides/agents/skill).
 
 ## Documentation

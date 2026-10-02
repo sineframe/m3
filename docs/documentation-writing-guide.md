@@ -51,7 +51,9 @@ external requirements, and verification mode. The displayed source is
 synchronized from these files. Test every documented executable variation.
 Run `python3 scripts/render_docs_examples.py` after editing source. Then run
 `python3 scripts/validate_docs_examples.py` to reject unmapped Python blocks,
-source drift, invalid manifests, and syntax errors.
+source drift, invalid manifests, and syntax errors. After changing any page
+under `docs/site`, run `python3 scripts/render_skill_references.py` and commit
+the regenerated `skills/testing-with-m3/references/`.
 
 ## Runtime-created state
 

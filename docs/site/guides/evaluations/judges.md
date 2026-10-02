@@ -15,6 +15,9 @@ sending private data unless that transfer is intended.
 extra. Set `M3_JUDGE_API_KEY` in the process environment or an explicitly
 selected environment file. M3 does not discover `.env` automatically.
 
+Register a judge with `kit.register_evaluator(name, judge)` and use the subject
+`{"input", "expected", "actual"}`.
+
 Choose a judge model supported by your configured Chat Completions endpoint:
 
 ```python
@@ -57,3 +60,9 @@ The mapping reads `MY_JUDGE_KEY` and supplies `M3_JUDGE_API_KEY` for the judge. 
 The default threshold is `0.8`. Abstention, refusal, malformed output, and
 provider failure produce an error result. `required=True` persists the result
 before enforcing the required-evaluation policy.
+
+The judge receives JSON strings for input, expected, and actual, plus an
+optional rubric. It returns exactly `score` (0–1 or null), `rationale`, and
+`abstain`. `json_schema` mode, the default, is enforced by the provider;
+`json_text` is validated locally. A score at or above the threshold maps to
+`PASSED`; a lower score maps to `FAILED`.

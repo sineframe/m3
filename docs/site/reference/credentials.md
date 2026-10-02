@@ -21,6 +21,8 @@ For direct HTTP, the default environment resolver treats a missing or empty envi
 
 For stdio, an environment `SecretReference` fails with `TransportStartupError` when its source name is absent. A present empty value is copied to the child as an empty string. A custom resolver determines its own behavior.
 
+Bearer authentication uses `kit.direct(server, bearer_token=SecretReference(...))`.
+
 ## Native harnesses
 
 In `kit.agents(...)`, set `credential_env={"OPENAI_API_KEY": "MY_OPENAI_KEY"}` to pass the parent process's `MY_OPENAI_KEY` value as `OPENAI_API_KEY` in the agent process. For pytest-selected agents, use `--credential-env codex:OPENAI_API_KEY=MY_OPENAI_KEY`. See [Choose an agent harness](../guides/agents/harnesses.md) for a complete SDK example.
@@ -28,6 +30,8 @@ In `kit.agents(...)`, set `credential_env={"OPENAI_API_KEY": "MY_OPENAI_KEY"}` t
 When constructing `Codex`, `Pi`, `ClaudeCode`, or `OpenCode` directly, use `credential_references`. Its keys are agent environment variable names; its values are `SecretReference` objects naming the credential source.
 
 M3 also selects non-empty standard credential variables for the chosen harness and provider, such as `OPENAI_API_KEY` for Codex and `ANTHROPIC_API_KEY` for Claude Code. An explicit `credential_env` entry overrides the default for that target variable.
+
+OpenCode reads `OPENCODE_API_KEY`.
 
 With `kit.agents(...)`, a missing mapped source raises `ValueError` when you start the run, before launching the agent. A present empty source passes that check, but launch requires a non-empty value and otherwise raises `HarnessStartupError`.
 

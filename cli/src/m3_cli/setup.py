@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from m3_cli.agent_skill import ensure_agent_skill
+
 _VALIDATE_SCRIPT = r"""
 import importlib
 import importlib.metadata
@@ -324,6 +326,13 @@ def run(args: Any) -> int:
         print(f"Project environment ready: {target.path}")
         print(f"M3 SDK: {version}")
         print("Installer: skipped; environment is already ready")
+        if (root / "m3.toml").is_file():
+            ensure_agent_skill(root, version, enabled=not args.no_skill)
+        else:
+            print(
+                f"Agent skill: skipped; no m3.toml in {root}. "
+                "Run m3 setup from the project root."
+            )
         print("Next:\n  m3 doctor\n  m3 test --ui -- -q")
         return 0
 
@@ -346,6 +355,13 @@ def run(args: Any) -> int:
     print(f"Project environment ready: {target.path}")
     print(f"M3 SDK: {version}")
     print(f"Installer: {installer}")
+    if (root / "m3.toml").is_file():
+        ensure_agent_skill(root, version, enabled=not args.no_skill)
+    else:
+        print(
+            f"Agent skill: skipped; no m3.toml in {root}. "
+            "Run m3 setup from the project root."
+        )
     print("Next:\n  m3 doctor\n  m3 test --ui -- -q")
     return 0
 

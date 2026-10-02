@@ -17,6 +17,7 @@ python3 scripts/render_docs_examples.py --check
 python3 scripts/render_docs_navigation.py --check
 python3 scripts/validate_docs_site.py
 python3 scripts/validate_docs_examples.py
+python3 scripts/render_skill_references.py --check
 .venv/bin/python scripts/render_docs_api_reference.py --check
 ```
 

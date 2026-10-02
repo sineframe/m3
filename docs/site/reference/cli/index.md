@@ -7,7 +7,10 @@ description: "The standalone m3 command selects the project Python and coordinat
 
 The standalone `m3` command selects the project Python and coordinates pytest,
 saved history, the local viewer, managed harnesses, authentication, and report
-publishing. Options after `--` are passed to pytest unchanged.
+publishing. Options after `--` are passed to pytest unchanged. `m3 --version`
+prints the installed CLI version, and `m3 COMMAND --help` lists every option
+of a command. There are no `m3 report` or `m3 compare` commands; use
+`m3 test --baseline`.
 
 ## `m3 init`
 
@@ -18,9 +21,22 @@ Create `m3.toml`, `tests/test_m3_starter.py`, and `.env.example` when absent.
 | `--project-root PATH` | Project to initialize; otherwise use the Git root or current directory. |
 | `--project-name NAME` | Non-interactive project name. |
 | `--suite NAME` | Non-interactive starter suite name. |
+| `--no-skill` | Do not install or update the `testing-with-m3` agent skill. |
 
-Existing complete initialization is left unchanged. Partial initialization is
-reported for manual repair.
+`.env.example` contains blank `OPENCODE_API_KEY`, `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `M3_JUDGE_API_KEY`, and `M3_ACCESS_TOKEN`. `m3 init`
+does not install the SDK or create the results database.
+
+A project is initialized when `m3.toml` holds a valid identity. Rerunning
+`m3 init` then changes nothing except creating a missing `.env.example`. The
+starter test is created only when absent, and you can move, rename, or delete
+it. An invalid `m3.toml` stops `m3 init` with exit code 2. If `m3.toml` is
+missing but `.m3/executions.sqlite` exists, `m3 init` creates a new
+`project_id` and warns that earlier saved runs and uploads keep the previous
+one; restore `m3.toml` from Git to keep that identity.
+
+On success, it installs or updates the `testing-with-m3` agent skill; see
+[Install the M3 agent skill](../../guides/agents/skill.md).
 
 ## `m3 setup`
 
@@ -28,7 +44,10 @@ Install the matching SDK with pytest, storage, and judge support into an
 isolated project environment. It does not install the CLI there or update a
 dependency manifest or lockfile.
 
-Options: `--project-root PATH`, `--python PATH`.
+Options: `--project-root PATH`, `--python PATH`, `--no-skill`.
+
+On success, it installs or updates the `testing-with-m3` agent skill; see
+[Install the M3 agent skill](../../guides/agents/skill.md).
 
 ## `m3 doctor`
 
@@ -59,6 +78,12 @@ Run pytest in the project environment and save M3 history.
 | `--env-file PATH` | Load one explicit dotenv file. |
 | `--ui` | Open the bundled viewer after pytest. |
 | `--port PORT` | Viewer port; `8000` by default. |
+
+CLI server groups use `--server http --url URL --trust public` and
+`--server stdio --command python --arg=-m --arg=MODULE`. Groups replace the
+marker server list entirely, including trust settings. Cases are the product
+of harnesses, servers, and trials, so 2 harnesses × 2 servers × 2 trials
+creates 8 cases. Blank `--suite` input exits with status 2.
 
 ## `m3 ci test`
 

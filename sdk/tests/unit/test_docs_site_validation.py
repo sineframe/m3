@@ -20,6 +20,32 @@ def _escaped_angle_count(markdown: str) -> int:
     return _VALIDATOR.escaped_angle_count(markdown)
 
 
+def test_output_terms_extracts_m3_line_prefixes() -> None:
+    plugin_source = """
+reporter.write_line(f"M3 run {x}")
+reporter.write_line("M3 " + "x")
+reporter.write_line("M3 execution timeout: " f"id={x}")
+reporter.write_line("M3: no tests executed; skipped-only runs fail")
+"""
+
+    lines, _ = _VALIDATOR.output_terms(plugin_source, "")
+
+    assert lines == [
+        "M3",
+        "M3 execution timeout",
+        "M3 run",
+        "M3: no tests executed; skipped-only runs fail",
+    ]
+
+
+def test_output_terms_extracts_allowed_limitations() -> None:
+    observations_source = '_ALLOWED_LIMITATIONS = frozenset({"b", "a"})'
+
+    _, limitations = _VALIDATOR.output_terms("", observations_source)
+
+    assert limitations == ["a", "b"]
+
+
 def test_code_regions_find_inline_and_fenced_entities_but_skip_prose() -> None:
     markdown = """Use &lt; in prose when describing an HTML entity.
 

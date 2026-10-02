@@ -17,15 +17,16 @@ test. Your installed command-line clients are left in place.
 
 ## Requirements
 
-Install `sf-m3[pytest]` and the standalone M3 CLI on matching releases. Sign in
-to Codex and choose a model available to that login. Select two distinct
-explicit versions with release assets for your OS and CPU. Each pin needs
-network access for acquisition or a valid cache entry; model access is separate.
+Install `sf-m3[pytest,storage,judge]` and the standalone M3 CLI on matching
+releases. Sign in to Codex and choose a model available to that login. Select
+two distinct explicit versions with release assets for your OS and CPU. Each
+pin needs network access for acquisition or a valid cache entry; model access
+is separate.
 
 Add the SDK to your uv project:
 
 ```sh
-uv add 'sf-m3[pytest]'
+uv add 'sf-m3[pytest,storage,judge]'
 ```
 
 See [Install and update M3](../../start/install.md) for the standalone CLI.

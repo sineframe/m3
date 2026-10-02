@@ -30,11 +30,18 @@ be associated reliably and is rejected. The effective tested plan limit is
 nine surfaced prompts. Prompt/resource elicitation and sampling/roots callbacks
 inside a native Codex tool round are not verified supported paths.
 
+The capture barrier cannot flush an event that has not reached the M3 process.
+Codex integration uses the unmodified App Server.
+
 ## Pi elicitation
 
 Pi supports the native request-key and round behavior used by M3's interaction
 bridge. Its tested round capacity differs from Codex. Use the version named in
 the elicitation guide and do not transfer Codex-specific limits to Pi.
+
+Managed Pi delivery is verified for same-worker form, multi-round, and URL
+rounds with `SQLiteExecutionStore`. Worker or process restart redelivery and
+recovery are unsupported and terminalize when ambiguous.
 
 ## Viewer database
 

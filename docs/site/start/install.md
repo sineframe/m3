@@ -29,6 +29,8 @@ The CLI runs outside your project environment. To update it, use:
 uv tool upgrade sf-m3-cli
 ```
 
+After `uv tool upgrade sf-m3-cli`, rerun `m3 setup` to upgrade the project SDK.
+
 On macOS or Linux, you can use the shell installer instead:
 
 ```sh
@@ -59,14 +61,17 @@ the CLI and project environment separately.
 
 Keep the CLI and project SDK on matching releases. If the environment is
 recreated or synchronized, run `m3 setup` again. For a project that manages its
-dependencies directly, add `sf-m3[pytest]` as a project dependency instead of
+dependencies directly, add `sf-m3[pytest,storage,judge]` as a project dependency instead of
 using CLI-managed setup; you still install the standalone CLI separately when
-you want `m3 test`, saved history, or the bundled viewer.
+you want `m3 test`, saved history, or the bundled viewer. `m3 test` checks that
+the project environment can import pytest support, SQLite storage, and the
+`openai` package used by `LLMJudge`; `sf-m3[pytest]` alone is enough only for
+plain pytest without the CLI.
 
 With uv, add the SDK from the project root with:
 
 ```sh
-uv add "sf-m3[pytest]"
+uv add "sf-m3[pytest,storage,judge]"
 ```
 
 This declares the SDK in the project manifest. The standalone CLI remains a
