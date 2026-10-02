@@ -37,7 +37,7 @@
 - [Compare agent harnesses and versions](guides-agents-versions.md): Run the same test across pinned agent harnesses in isolated runtimes and compare each execution's recorded tool-call result.
 - [Manage M3 access](guides-ci-access.md): Use device authorization for local uploads, or create and store a separate CI token for automated uploads.
 - [Run M3 in GitHub Actions](guides-ci-github-actions.md): Run M3 tests in a consumer repository with a credential-free pull request workflow and an optional trusted upload workflow.
-- [Publish or retry a CI run](guides-ci-publish.md): Publishing is explicit. Run locally without upload first, then add --upload with M3_ACCESS_TOKEN in the environment:
+- [Publish or retry a run](guides-ci-publish.md): Publishing is opt-in. Add --upload to m3 test after m3 auth login, or to m3 ci test with M3_ACCESS_TOKEN in CI.
 - [Run M3 tests in CI](guides-ci-run.md): m3 ci test uses the normal project Python, storage, harness, and pytest selection. It excludes tests whose nearest M3 marker sets ci=False.
 - [Configure credentials](guides-credentials.md): Choose a credential source and pass it only to the M3 process that needs it.
 - [Pass a credential to a stdio MCP server](guides-credentials-endpoints.md): Map a parent environment variable to a stdio server and verify its tool result.

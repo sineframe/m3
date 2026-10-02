@@ -76,6 +76,7 @@ Run pytest in the project environment and save M3 history.
 | `--judge-max-requests N` | Judge request budget for the run. |
 | `--credential-env [KIND:]TARGET=SOURCE` | Map a credential variable. Repeatable. |
 | `--env-file PATH` | Project root `.env` when present; otherwise none. Pass a path to load a custom dotenv file instead. |
+| `--upload` | Publish the run; see [Publishing](#publishing). Cannot be combined with `--ui`. |
 | `--ui` | Open the bundled viewer after pytest. |
 | `--port PORT` | Viewer port; `8000` by default. |
 
@@ -88,14 +89,52 @@ creates 8 cases. Blank `--suite` input exits with status 2.
 ## `m3 ci test`
 
 Accepts the test options except viewer options. It applies CI marker selection.
-`--upload` publishes completed passing and failing reports;
 `--ci-metadata PATH` supplies supported CI metadata overrides.
+
+## Publishing
+
+`m3 test` and `m3 ci test` publish a run only when `--upload` is present.
+Without it, nothing is sent and the run cannot be published later.
+
+With `--upload`:
+
+1. Before pytest starts, M3 loads the access credential: `M3_ACCESS_TOKEN`, or
+   the credential saved by `m3 auth login`. When `CI`, `GITHUB_ACTIONS`, or
+   `GITLAB_CI` has a non-empty value, only `M3_ACCESS_TOKEN` is used. A missing
+   or malformed credential stops the command with status 2 before any test
+   runs.
+2. If pytest exits 0 or 1, M3 checks the run for credential values from the
+   test environment. If none are found, it publishes the run. Other exit codes
+   publish nothing.
+3. If publishing fails, the message gives the reason and ends with the next
+   step: `retry with m3 upload RUN_ID` when the M3 server was unreachable or
+   temporarily unavailable, or `fix the cause and rerun tests` otherwise.
+
+Neither command passes `M3_ACCESS_TOKEN` to pytest.
 
 ## `m3 upload RUN_ID`
 
-Retry publication of a saved run without rerunning tests. Options:
-`--project-root`, `--results-db`, and `--env-file`. The project root `.env` is
-loaded automatically when `--env-file` is omitted.
+Publish a run started with `--upload` that was not published, without
+rerunning tests. Options: `--project-root`, `--results-db`, and `--env-file`.
+The project root `.env` is loaded automatically when `--env-file` is omitted.
+
+The run must meet all of these conditions:
+
+- It was started with `m3 test --upload` or `m3 ci test --upload`, pytest
+  exited 0 or 1, and the credential check completed without finding credential
+  values.
+- `--project-root` and `--results-db` select the project and database that
+  recorded it.
+- Its report files have not changed since the run.
+- `m3.toml` contains `project_id`.
+
+`m3 upload` also needs an access credential, as described in
+[Publishing](#publishing). A run without a completed credential check is
+refused with:
+
+```text
+m3 upload: run RUN_ID cannot be uploaded: it was not started with --upload, pytest did not exit 0 or 1, or its credential scan failed; rerun the tests with --upload
+```
 
 ## `m3 ui`
 

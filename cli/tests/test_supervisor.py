@@ -1115,6 +1115,33 @@ def test_rejected_candidate_does_not_fall_back(
     assert supervisor.run_test(python=candidate, project_root=tmp_path) == 2
 
 
+@pytest.mark.parametrize("with_env_file", [False, True])
+def test_plain_test_child_omits_access_token(monkeypatch, tmp_path, with_env_file):
+    monkeypatch.setenv("M3_ACCESS_TOKEN", "ambient-secret")
+    args = ["test", "--project-root", str(tmp_path)]
+    if with_env_file:
+        env_file = tmp_path / "custom.env"
+        env_file.write_text("M3_ACCESS_TOKEN=dotenv-secret\nM3_TEST_SETTING=dotenv\n")
+        monkeypatch.setenv("M3_TEST_SETTING", "ambient")
+        args.extend(["--env-file", str(env_file)])
+    monkeypatch.setattr(
+        supervisor,
+        "_prepare_test",
+        lambda *_args: (Path(sys.executable), tmp_path / "results.sqlite"),
+    )
+    captured = {}
+
+    def run_pytest(*_args, **kwargs):
+        captured.update(kwargs["environment"])
+        return 0
+
+    monkeypatch.setattr(supervisor, "_run_pytest_process", run_pytest)
+    assert main(args) == 0
+    assert "M3_ACCESS_TOKEN" not in captured
+    if with_env_file:
+        assert captured["M3_TEST_SETTING"] == "ambient"
+
+
 def test_validation_requires_exact_sdk_version(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -1,6 +1,7 @@
-"""Shared report uploader for explicit ``m3 ci test --upload`` and ``m3 upload``.
+"""Report uploader for ``m3 test --upload``, ``m3 ci test --upload``, and
+``m3 upload``.
 
-Ordinary ``m3 test`` does not import or invoke this module.
+Commands without ``--upload`` do not import this module.
 """
 
 from __future__ import annotations

@@ -300,3 +300,26 @@ def test_post_reports_unreachable_server_as_retryable(monkeypatch):
         "could not reach the M3 server to send run r summary after 3 attempts"
     )
     assert (raised.value.retryable, raised.value.status) == (True, None)
+
+
+def test_post_retries_malformed_response_as_unreachable(monkeypatch):
+    import m3_cli.control_plane as control_plane
+
+    class Handler(BaseHTTPRequestHandler):
+        calls = 0
+
+        def do_POST(self):
+            Handler.calls += 1
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.wfile.write(b"GARBAGE\r\n\r\n")
+            self.close_connection = True
+
+    monkeypatch.setattr(control_plane.time, "sleep", lambda _seconds: None)
+    with _serve(Handler) as base:
+        with pytest.raises(UploadError) as raised:
+            _post(base + "/", "secret", b"{}", "run r summary")
+    assert str(raised.value) == (
+        "could not reach the M3 server to send run r summary after 3 attempts"
+    )
+    assert (raised.value.retryable, raised.value.status) == (True, None)
+    assert Handler.calls == 3

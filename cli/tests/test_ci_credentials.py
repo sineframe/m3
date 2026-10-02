@@ -454,7 +454,7 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
             "upload_scan_clean",
             "upload_scan_sources",
         } & set(manifest)
-        with pytest.raises(CLIError, match="run-test was not scanned"):
+        with pytest.raises(CLIError, match="run run-test cannot be uploaded"):
             ci_upload.publish_run("run-test", **kwargs)
     finally:
         store.close()

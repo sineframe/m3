@@ -186,9 +186,9 @@
     },
     {
       "id": "guides-ci-publish",
-      "title": "Publish or retry a CI run",
+      "title": "Publish or retry a run",
       "source": "guides/ci/publish.md",
-      "description": "Publishing is explicit. Run locally without upload first, then add --upload with M3_ACCESS_TOKEN in the environment:",
+      "description": "Publishing is opt-in. Add --upload to m3 test after m3 auth login, or to m3 ci test with M3_ACCESS_TOKEN in CI.",
       "kind": "guides",
       "searchAliases": [
         "upload failed",
