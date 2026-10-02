@@ -20,8 +20,19 @@ to the service root may not be the MCP route. Add endpoint credentials through
 
 ## Nonlocal HTTP trust error
 
-Classify a public or trusted private endpoint explicitly. Omitting trust is
-accepted only for addresses that resolve exclusively to loopback.
+Classify a public or trusted private endpoint explicitly. A direct
+`HTTPServer(name=..., url=...)` defaults to `TrustLevel.UNTRUSTED`, so
+`kit.direct(...)` raises `EndpointTrustError` ("untrusted MCP endpoint resolved
+to a private or local address") for a loopback or private URL. Pass
+`trust=TrustLevel.TRUSTED_PRIVATE`, as in
+[Test a Streamable HTTP server](guides-servers-http.md).
+
+Omitting trust is accepted only for servers selected through
+`servers=[{"type": "http", ...}]` in the `m3` marker or through
+`m3 test --server http --url URL` without `--trust`, and only when the URL host
+is `localhost` or a loopback IP address. The connection is then treated as
+`TRUSTED_PRIVATE` and must resolve exclusively to loopback. Supplying `trust`
+in either form skips this inference.
 
 A nonlocal HTTP agent server defaults to `untrusted`, which cannot be exposed
 to an agent. Use `TrustLevel.PUBLIC` or `TRUSTED_PRIVATE`. A direct public
