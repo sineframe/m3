@@ -166,7 +166,11 @@ class LocalRuntimeFeed:
         return f"{self.base_url}/manifest"
 
     def __enter__(self) -> LocalRuntimeFeed:
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever,
+            kwargs={"poll_interval": 0.01},
+            daemon=True,
+        )
         self._thread.start()
         return self
 

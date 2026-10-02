@@ -173,7 +173,11 @@ def open_codex_responses_provider(
             self.wfile.write(content)
 
     server = HttpServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, name="m3-codex-provider")
+    thread = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.01},
+        name="m3-codex-provider",
+    )
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}/v1"

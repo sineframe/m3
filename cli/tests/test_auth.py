@@ -715,7 +715,9 @@ def test_json_request_caps_body_and_rejects_redirect() -> None:
             pass
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     try:
         base = f"http://127.0.0.1:{server.server_port}"
@@ -797,7 +799,9 @@ def test_login_retries_through_real_json_request_after_rate_limit(
             pass
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     try:
         base = f"http://127.0.0.1:{server.server_port}"

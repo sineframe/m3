@@ -376,7 +376,7 @@ def test_wire_redirects_do_not_follow_or_leak_credentials(monkeypatch, status, a
     destination_server = ThreadingHTTPServer(("127.0.0.1", 0), Destination)
     original_server = ThreadingHTTPServer(("127.0.0.1", 0), Original)
     threads = [
-        Thread(target=server.serve_forever, daemon=True)
+        Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         for server in (destination_server, original_server)
     ]
     for thread in threads:
@@ -479,7 +479,8 @@ async def test_authenticated_loopback_bypasses_environment_proxy(
     origin = ThreadingHTTPServer(("127.0.0.1", 0), Origin)
     proxy = ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
     threads = [
-        Thread(target=server.serve_forever, daemon=True) for server in (origin, proxy)
+        Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        for server in (origin, proxy)
     ]
     for thread in threads:
         thread.start()
@@ -615,7 +616,8 @@ async def test_https_loopback_uses_environment_ca_without_proxy(
     origin.socket = tls.wrap_socket(origin.socket, server_side=True)
     proxy = ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
     threads = [
-        Thread(target=server.serve_forever, daemon=True) for server in (origin, proxy)
+        Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        for server in (origin, proxy)
     ]
     for thread in threads:
         thread.start()
@@ -711,7 +713,9 @@ def test_live_http_status_retry_counts(
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = Thread(target=server.serve_forever, daemon=True)
+    thread = Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     try:
         monkeypatch.setenv("KEY", "secret")

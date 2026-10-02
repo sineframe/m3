@@ -132,7 +132,9 @@ async def test_api_key_literals_are_scanned_on_http_and_stdio(
             return
 
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = Thread(target=upstream.serve_forever, daemon=True)
+    thread = Thread(
+        target=upstream.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     script = tmp_path / "echo_server.py"
     _echo_server(script)
@@ -247,7 +249,9 @@ async def test_proxy_writer_receives_resolved_canaries(
             return
 
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    Thread(target=upstream.serve_forever, daemon=True).start()
+    Thread(
+        target=upstream.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    ).start()
     manager = McpCaptureManager(tmp_path / "capture", trusted_private_keys=("proxy",))
     try:
         config = _configuration(
