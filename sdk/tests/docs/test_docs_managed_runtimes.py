@@ -6,11 +6,13 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
 from pathlib import Path
+from string import Template
 from typing import Any
 
 import pytest
@@ -51,6 +53,19 @@ def _copy_project(project_id: str, destination: Path) -> Path:
         target_file.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_file, target_file)
     return destination
+
+
+def _scenario_command(
+    project_id: str, scenario_id: str, environment: dict[str, str]
+) -> list[str]:
+    manifest_path = _SDK / "examples" / "docs" / project_id / "example.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    scenario = next(item for item in manifest["scenarios"] if item["id"] == scenario_id)
+    command = shlex.split(scenario["command"])
+    assert command[:2] == ["m3", "test"]
+    cli = Path(sys.executable).with_name("m3")
+    assert cli.is_file(), "candidate m3 CLI must come from this branch environment"
+    return [str(cli), *(Template(arg).substitute(environment) for arg in command[1:])]
 
 
 def _environment(
@@ -150,8 +165,11 @@ def local_runtime_feed(tmp_path: Path):
         yield feed, marker_path
 
 
-def test_managed_runtime_example_uses_local_codex_protocol_and_real_mcp(
-    tmp_path: Path, local_runtime_feed: tuple[Any, Path]
+@pytest.mark.parametrize(
+    "cache_override", (False, True), ids=("env-cache", "cli-cache")
+)
+def test_managed_runtime_example_uses_cli_and_reuses_cache(
+    tmp_path: Path, local_runtime_feed: tuple[Any, Path], cache_override: bool
 ) -> None:
     feed, marker_path = local_runtime_feed
     project = _copy_project("agents-managed-runtimes", tmp_path / "managed-runtimes")
@@ -161,50 +179,39 @@ def test_managed_runtime_example_uses_local_codex_protocol_and_real_mcp(
         marker_path=marker_path,
     )
 
-    output = _run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            "test_managed_runtime.py",
-        ],
-        cwd=project,
-        env=environment,
+    command = _scenario_command(
+        "agents-managed-runtimes", "pinned-codex-runtime", environment
     )
-    assert "1 passed" in output
+    cache = Path(environment["M3_HARNESS_CACHE_DIR"])
+    if cache_override:
+        cache = tmp_path / "explicit-cache"
+        separator = command.index("--")
+        command[separator:separator] = ["--harness-cache-dir", str(cache)]
+
+    first = _run(command, cwd=project, env=environment)
+    assert "1 passed" in first
+    assert f"managed-{PIN_A}-trial-1" in first
     _assert_tool_calls(marker_path, expected_count=1)
     assert feed.requests == [
         f"/manifest/codex/{PIN_A}",
         f"/asset/codex/{PIN_A}.zip",
     ]
+    assert len(list(cache.glob(f"codex/{PIN_A}/*/sha256-*/receipt.json"))) == 1
+    if cache_override:
+        assert not Path(environment["M3_HARNESS_CACHE_DIR"]).exists()
 
-
-def test_two_version_example_acquires_both_selected_pins_locally(
-    tmp_path: Path, local_runtime_feed: tuple[Any, Path]
-) -> None:
-    feed, marker_path = local_runtime_feed
-    project = _copy_project("agents-runtime-versions", tmp_path / "runtime-versions")
-    environment = _environment(
-        tmp_path,
-        manifest_feed_url=feed.manifest_feed_url,
-        marker_path=marker_path,
-        versions=(PIN_A, PIN_B),
+    repeat_command = _scenario_command(
+        "agents-managed-runtimes", "repeat-cached-codex-pin", environment
     )
-
-    output = _run(
-        [sys.executable, "-m", "pytest", "-q", "test_sdk_versions.py"],
-        cwd=project,
-        env=environment,
-    )
-    assert "1 passed" in output
+    if cache_override:
+        separator = repeat_command.index("--")
+        repeat_command[separator:separator] = ["--harness-cache-dir", str(cache)]
+    requests_after_first = tuple(feed.requests)
+    second = _run(repeat_command, cwd=project, env=environment)
+    assert "1 passed" in second
+    assert f"Codex {PIN_A}: loaded from cache" in second
+    assert tuple(feed.requests) == requests_after_first
     _assert_tool_calls(marker_path, expected_count=2)
-    assert feed.requests == [
-        f"/manifest/codex/{PIN_A}",
-        f"/asset/codex/{PIN_A}.zip",
-        f"/manifest/codex/{PIN_B}",
-        f"/asset/codex/{PIN_B}.zip",
-    ]
 
 
 def test_cli_version_comparison_reports_each_pin_and_reuses_cache(
@@ -218,23 +225,9 @@ def test_cli_version_comparison_reports_each_pin_and_reuses_cache(
         marker_path=marker_path,
         versions=(PIN_A, PIN_B),
     )
-    cli = Path(sys.executable).with_name("m3")
-    command = [
-        str(cli),
-        "test",
-        "--python",
-        sys.executable,
-        "--runtime",
-        "managed",
-        "--harness",
-        f"codex@{PIN_A}={MODEL}",
-        "--harness",
-        f"codex@{PIN_B}={MODEL}",
-        "--",
-        "-v",
-        "-s",
-        "test_versions.py",
-    ]
+    command = _scenario_command(
+        "agents-runtime-versions", "compare-two-codex-versions", environment
+    )
     first = _run(command, cwd=project, env=environment)
     assert "2 passed" in first
     for version in (PIN_A, PIN_B):
@@ -243,7 +236,10 @@ def test_cli_version_comparison_reports_each_pin_and_reuses_cache(
     assert 'quote={"amount": 9.0, "currency": "USD"}' in first
     assert len(set(re.findall(r"execution=(\S+)", first))) == 2
     requests_after_first = tuple(feed.requests)
-    second = _run(command, cwd=project, env=environment)
+    repeat_command = _scenario_command(
+        "agents-runtime-versions", "repeat-cached-codex-versions", environment
+    )
+    second = _run(repeat_command, cwd=project, env=environment)
     assert "2 passed" in second
     for version in (PIN_A, PIN_B):
         assert f"Codex {version}: loaded from cache" in second
@@ -269,23 +265,12 @@ def test_cli_comparison_uses_two_codex_and_two_pi_versions(tmp_path: Path) -> No
             marker_path=marker_path,
         )
         environment["M3_DOCS_PI_API_KEY"] = "dummy-local-provider-key"
-        cli = Path(sys.executable).with_name("m3")
-        command = [str(cli), "test", "--python", sys.executable, "--runtime", "managed"]
-        for kind, versions, model in (
-            ("codex", (PIN_A, PIN_B), MODEL),
-            ("pi", pi_versions, "openai/fixture-pi"),
-        ):
-            for version in versions:
-                command.extend(("--harness", f"{kind}@{version}={model}"))
-        command.extend(
-            (
-                "--credential-env",
-                "pi:OPENAI_API_KEY=M3_DOCS_PI_API_KEY",
-                "--",
-                "-v",
-                "-s",
-                "test_versions.py",
-            )
+        environment["M3_DOCS_PI_MODEL"] = "openai/fixture-pi"
+        environment["M3_DOCS_PI_VERSION_A"] = pi_versions[0]
+        environment["M3_DOCS_PI_VERSION_B"] = pi_versions[1]
+        environment["M3_DOCS_CODEX_VERSION_B"] = PIN_B
+        command = _scenario_command(
+            "agents-runtime-versions", "compare-codex-and-pi-versions", environment
         )
         output = _run(command, cwd=project, env=environment)
         assert "4 passed" in output
@@ -295,39 +280,3 @@ def test_cli_comparison_uses_two_codex_and_two_pi_versions(tmp_path: Path) -> No
                 assert f"{kind}: requested={version} resolved={version}" in output
         _assert_tool_calls(marker_path, expected_count=4)
         assert len(feed.requests) == 8
-
-
-def test_cli_selected_pin_fixture_runs_from_manifest_copy(
-    tmp_path: Path, local_runtime_feed: tuple[Any, Path]
-) -> None:
-    feed, marker_path = local_runtime_feed
-    project = _copy_project("agents-managed-runtimes", tmp_path / "cli-fixture")
-    environment = _environment(
-        tmp_path,
-        manifest_feed_url=feed.manifest_feed_url,
-        marker_path=marker_path,
-    )
-    cli = Path(sys.executable).absolute().parent / "m3"
-    assert cli.is_file(), "candidate m3 CLI must come from this branch environment"
-    output = _run(
-        [
-            str(cli),
-            "test",
-            "--python",
-            sys.executable,
-            "--runtime",
-            "managed",
-            "--harness",
-            f"codex@{PIN_A}={MODEL}",
-            "--",
-            "test_managed_runtime_fixture.py",
-        ],
-        cwd=project,
-        env=environment,
-    )
-    assert "1 passed" in output
-    _assert_tool_calls(marker_path, expected_count=1)
-    assert feed.requests == [
-        f"/manifest/codex/{PIN_A}",
-        f"/asset/codex/{PIN_A}.zip",
-    ]

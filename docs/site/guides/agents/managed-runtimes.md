@@ -5,16 +5,18 @@ description: "Acquire an explicit native harness version, run an agent test, and
 
 # Run a pinned agent harness
 
-Run a tool-use test with an explicit native harness version by setting
-`runtime="managed"` and a version. M3 downloads or reuses that release for
-your platform and records the executable's identity with the execution.
+Run a Codex tool-use test with an explicit version selected by
+`m3 test --runtime managed`. M3 downloads or reuses that release for your
+platform and records the executable's identity with the execution. Your
+installed Codex executable is left in place.
 
 ## Requirements
 
-This project uses Codex CLI and one local stdio MCP server. Sign in to Codex,
-choose a model available to that login, and set the model and version variables
-below. Runtime download and provider authentication are separate; you need a
-Codex login even when M3 supplies the executable.
+Use Python 3.10 or newer and install the SDK and standalone M3 CLI on matching
+releases. Sign in to Codex and select a model available to that login. The
+selected version needs a release asset for your OS and CPU, with network
+access for acquisition or a valid cache entry. Runtime acquisition does not
+provide model credentials.
 
 Install the SDK in the Python environment used to run the test:
 
@@ -22,8 +24,9 @@ Install the SDK in the Python environment used to run the test:
 python -m pip install 'sf-m3[pytest]'
 ```
 
-For the CLI variation, install the standalone CLI on the same M3 release as
-the SDK. See [Install and update M3](../../start/install.md).
+See [Install and update M3](../../start/install.md) for the standalone CLI.
+Set the following values in Bash or zsh. `M3_DOCS_PYTHON` selects the project
+interpreter that has the SDK installed:
 
 ```sh
 export M3_DOCS_CODEX_MODEL='<model available to your Codex login>'
@@ -32,17 +35,17 @@ export M3_DOCS_PYTHON="$(command -v python)"
 ```
 
 Use a semantic version such as `0.155.1`; `latest` is not a pin. The native
-adapter name is `codex`. The same selection field names apply to `pi`,
+adapter name is `codex`. The same selector syntax applies to `pi`,
 `claude_code`, and `opencode`; see [the compatibility reference](../../reference/compatibility.md)
 for native support. To run one test across several pins or harnesses, see
 [Compare agent harnesses and versions](versions.md).
 
-## Complete project
+## Shipping tool test
 
-Create a directory named `pinned-agent` and add both files. The server returns
-the structured quote `{ "amount": 9.0, "currency": "USD" }` for the requested
-weight and zone. The assertions require that quote and the requested runtime
-version in the execution record.
+The test uses a local MCP server returning a structured shipping quote.
+Keep `shipping_server.py` and `test_managed_runtime.py` in the same directory.
+M3's `agent` fixture receives the harness, model, and version selected by the
+CLI. The assertions check the quote and the recorded runtime identity.
 
 `shipping_server.py`:
 
@@ -124,51 +127,40 @@ if __name__ == "__main__":
 `test_managed_runtime.py`:
 
 ```python
-import os
 import sys
 from pathlib import Path
 
-from m3 import ExecutionOutcome, MCPTestKit, expect
+import pytest
+
+from m3 import ExecutionOutcome, expect
 from m3.types import StdioServer
 
 HERE = Path(__file__).resolve().parent
 
+pytestmark = pytest.mark.m3(suite_name="pinned-runtime")
 
-def test_codex_pin_is_recorded(tmp_path: Path) -> None:
-    model = os.environ["M3_DOCS_CODEX_MODEL"]
-    version = os.environ["M3_DOCS_CODEX_VERSION"]
-    if version == "latest":
-        raise ValueError("M3_DOCS_CODEX_VERSION must be an explicit version")
 
+def test_codex_pin_is_recorded(agent) -> None:
     server = StdioServer(
         name="shipping",
         command=sys.executable,
         args=(str(HERE / "shipping_server.py"),),
         cwd=str(HERE),
     )
-    selection = {
-        "harness": "codex",
-        "models": [model],
-        "runtime": "managed",
-        "version": version,
-    }
-
-    with MCPTestKit(env={}, harness_cache_dir=tmp_path / "harness-cache") as kit:
-        agent = kit.agents([selection])[0]
-        result = agent.run(
-            "Use shipping:shipping_quote once with weight_kg 2 and zone local.",
-            server=server,
-            tools=["shipping:shipping_quote"],
-            timeout=180,
-        )
+    result = agent.run(
+        "Use shipping:shipping_quote once with weight_kg 2 and zone local.",
+        server=server,
+        tools=["shipping:shipping_quote"],
+        timeout=180,
+    )
 
     assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
     identity = result.snapshot.agent
     assert identity is not None
     assert identity.harness.kind == "codex"
     assert identity.harness.runtime == "managed"
-    assert identity.harness.requested_selector == version
-    assert identity.harness.resolved_version == version
+    assert identity.harness.requested_selector != "latest"
+    assert identity.harness.requested_selector == identity.harness.resolved_version
     assert identity.harness.target is not None
     assert identity.harness.digest is not None
     assert len(identity.harness.digest) == 64
@@ -183,86 +175,41 @@ def test_codex_pin_is_recorded(tmp_path: Path) -> None:
     )
 ```
 
-Run this command from the `pinned-agent` directory:
+## Run the pinned version
+
+Run from the directory containing the two files:
 
 ```sh
-python -m pytest -q test_managed_runtime.py
+m3 test --python "$M3_DOCS_PYTHON" --runtime managed \
+  --harness "codex@${M3_DOCS_CODEX_VERSION}=${M3_DOCS_CODEX_MODEL}" \
+  -- -v test_managed_runtime.py
 ```
+
+`--runtime managed` and `--harness` configure M3's agent selection. The
+versioned selector requires managed mode. Arguments after `--` are passed to
+pytest; here, `-v` shows the selected version in the test case name.
 
 On success, the execution contains one call to `shipping:shipping_quote` with
 the requested arguments and a structured quote of 9 USD. Its requested and
 resolved versions match your pin, and the runtime identity includes a target
 and SHA-256 digest. Release availability depends on the harness and platform.
 
-Complete source project: [`sdk/examples/docs/agents-managed-runtimes`](../../../../sdk/examples/docs/agents-managed-runtimes).
+## Reuse the downloaded runtime
 
-## Choose the runtime source
+Repeat the same command. M3 reuses the verified binary from its persistent
+user cache and reports `loaded from cache`. Each run creates a new execution
+and makes new model requests; the cache contains runtime assets, not responses.
 
-`runtime="system"` is the default. It uses the executable supplied by the
-native adapter's system lookup and does not guarantee an exact version. Use
-`runtime="managed"` with `version="latest"` when the test intentionally
-follows the release currently resolved for that invocation. Use a concrete
-semantic version for a repeatable pin. `latest` is resolved through release
-metadata and pinned for the current CLI invocation, including workers in one
-pytest run; the next invocation may resolve a newer release.
+To select another external cache, pass `--harness-cache-dir PATH` before `--`.
+This is an M3 CLI option, not a pytest option. Without an override, M3 uses
+`M3_HARNESS_CACHE_DIR` or the operating-system default. See
+[cache configuration and reuse](../../reference/managed-runtimes.md#cache-location-and-precedence).
 
-For a CLI-selected pytest fixture, add this separate file to the same project.
-It uses the same local server and assertions, with the pinned agent supplied
-by M3's `agent` fixture.
+Direct pytest can also run managed runtimes selected through the M3 plugin or
+SDK, but it does not accept `--harness-cache-dir`. Those paths use
+`M3_HARNESS_CACHE_DIR` or the SDK's `harness_cache_dir` argument.
 
-`test_managed_runtime_fixture.py`:
-
-```python
-import sys
-from pathlib import Path
-
-import pytest
-
-from m3 import ExecutionOutcome, expect
-from m3.types import StdioServer
-
-HERE = Path(__file__).resolve().parent
-
-pytestmark = pytest.mark.m3(suite_name="pinned-runtime")
-
-
-def test_cli_selected_pin_is_recorded(agent) -> None:
-    server = StdioServer(
-        name="shipping",
-        command=sys.executable,
-        args=(str(HERE / "shipping_server.py"),),
-        cwd=str(HERE),
-    )
-    result = agent.run(
-        "Use shipping:shipping_quote once with weight_kg 2 and zone local.",
-        server=server,
-        tools=["shipping:shipping_quote"],
-        timeout=180,
-    )
-    assert result.snapshot.outcome is ExecutionOutcome.COMPLETED, result.error
-    identity = result.snapshot.agent
-    assert identity is not None
-    assert identity.harness.runtime == "managed"
-    assert identity.harness.requested_selector == identity.harness.resolved_version
-    expect(result).to_have_tool_call(
-        "shipping_quote",
-        server="shipping",
-        arguments={"weight_kg": 2, "zone": "local"},
-        status="success",
-        count=1,
-        result={"structured_content": {"amount": 9.0, "currency": "USD"}},
-        result_partial=True,
-    )
-```
-
-From the `pinned-agent` directory, run:
-
-```sh
-m3 test --python "$M3_DOCS_PYTHON" --runtime managed --harness "codex@${M3_DOCS_CODEX_VERSION}=${M3_DOCS_CODEX_MODEL}" -- test_managed_runtime_fixture.py
-```
-
-`@VERSION` pins the CLI fixture selection. The global `--runtime managed` is
-required for a versioned CLI selector.
+Example source: [`sdk/examples/docs/agents-managed-runtimes`](../../../../sdk/examples/docs/agents-managed-runtimes).
 
 For selection, cache locations, and recorded identity fields, see the [managed
 runtime reference](../../reference/managed-runtimes.md). For auth setup, see
