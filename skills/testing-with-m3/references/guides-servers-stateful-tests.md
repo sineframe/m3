@@ -10,7 +10,7 @@ calls.
 ## Requirements
 
 Use Python 3.10 or newer with a project prepared by `m3 setup`. Download the
-example `shipping_server.py` (M3 repository: `sdk/examples/docs/servers-stdio/shipping_server.py`)
+example [`shipping_server.py`](../examples/servers-stdio/shipping_server.py)
 and save it as `shipping_server.py` in the project root. It holds orders in
 process memory for the lifetime of its subprocess.
 

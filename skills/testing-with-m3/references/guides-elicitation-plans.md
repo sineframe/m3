@@ -8,7 +8,7 @@ An elicitation plan describes the requests an operation may make and the respons
 
 Direct SDK operations can use elicitation without an agent harness. M3 tests agent-driven elicitation with Codex CLI `0.156.1` and Pi `0.85.1`; other harnesses have not been verified for this action. This limit does not apply to direct SDK elicitation. See [compatibility details](reference-compatibility.md).
 
-This example uses a local MCP server that returns `InputRequiredResult` for `book_shipment`, asks for the `shipping_address` form, and completes only when it receives the keyed response. The runnable project (M3 repository: `sdk/examples/docs/elicitation-plans`) contains that server as `elicitation_server.py` and the test as `test_plan.py`.
+This example uses a local MCP server that returns `InputRequiredResult` for `book_shipment`, asks for the `shipping_address` form, and completes only when it receives the keyed response. The [runnable project](../examples/elicitation-plans) contains that server as `elicitation_server.py` and the test as `test_plan.py`.
 
 The server fixture emits keyed `InputRequiredResult` and validates the next
 call's `requestState` and `inputResponses`.

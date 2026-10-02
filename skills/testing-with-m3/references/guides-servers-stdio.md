@@ -10,7 +10,7 @@ client closes.
 
 Use Python 3.10 or newer and run `m3 init` and `m3 setup` in the project. The
 server command must be available in the project environment. Download the
-example `shipping_server.py` (M3 repository: `sdk/examples/docs/servers-stdio/shipping_server.py`)
+example [`shipping_server.py`](../examples/servers-stdio/shipping_server.py)
 and save it as `shipping_server.py` in the project root. It starts without
 credentials or external services.
 
