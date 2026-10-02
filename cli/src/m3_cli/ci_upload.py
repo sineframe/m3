@@ -24,6 +24,7 @@ from .control_plane import inspect_current_run, upload_current_run
 from .errors import CLIError
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_SCAN_FIELDS = ("upload_scan_digest", "upload_scan_clean", "upload_scan_sources")
 
 
 def record_upload_inspection(
@@ -33,23 +34,34 @@ def record_upload_inspection(
     credential_env: Sequence[str],
     environment: dict[str, str],
 ) -> None:
-    """Inspect the finalized upload bytes against test-time credentials."""
+    """Run the upload checks on the finalized run and record the attested digest.
+
+    Any earlier scan result is cleared first, so a failed inspection can never
+    leave a stale digest that a later ``m3 upload`` would accept.
+    """
+    if not _SAFE_ID.fullmatch(run_id) or ".." in run_id:
+        raise CLIError("invalid run ID")
     sources = _credential_source_names(credential_env)
     store = SQLiteExecutionStore(database)
     try:
         manifest = store.get_test_run(run_id)
         if manifest is None or manifest.get("status") != "finished":
-            raise CLIError("the selected run has no finalized manifest")
+            raise CLIError(f"run {run_id} did not finish")
+        if any(field in manifest for field in _SCAN_FIELDS):
+            for field in _SCAN_FIELDS:
+                manifest.pop(field, None)
+            store.save_test_run(run_id, manifest)
         directory = project_root / ".m3" / "reports" / run_id
         feedback = _load_feedback(directory, run_id, manifest)
-        digest, contains_secret = inspect_current_run(
+        digest = inspect_current_run(
             feedback,
             store,
             directory,
+            token=environment.get(ACCESS_TOKEN_ENV, ""),
             sensitive_values=_sensitive_values(environment, source_names=sources),
         )
         manifest["upload_scan_digest"] = digest
-        manifest["upload_scan_clean"] = not contains_secret
+        manifest["upload_scan_clean"] = True
         manifest["upload_scan_sources"] = list(sources)
         store.save_test_run(run_id, manifest)
     finally:
@@ -82,20 +94,23 @@ def publish_run(
         if manifest is None or manifest.get("status") != "finished":
             raise CLIError("the selected run is missing or incomplete")
         if manifest.get("persistence_error") or manifest.get("worker_errors"):
-            raise CLIError("the selected run has incomplete persisted data")
+            raise CLIError(f"run {run_id} did not save all results")
         if not manifest.get("project_id"):
             raise CLIError("published runs require a valid m3.toml project identity")
         feedback = _load_feedback(directory, run_id, manifest)
         digest = manifest.get("upload_scan_digest")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise CLIError("this run has no valid CI credential inspection")
+            raise CLIError(f"run {run_id} was not scanned for credentials")
+        # Runs scanned before inspection raised on a match recorded ``False``.
         if manifest.get("upload_scan_clean") is not True:
-            raise CLIError("run output contains test-time credential material")
+            raise CLIError(
+                f"run {run_id} output contains a credential from the test environment"
+            )
         sources = manifest.get("upload_scan_sources")
         if not isinstance(sources, list) or any(
             not isinstance(name, str) for name in sources
         ):
-            raise CLIError("the selected run has invalid credential metadata")
+            raise CLIError(f"run {run_id} has unreadable credential scan data")
         sensitive_values = _sensitive_values(env, source_names=sources)
         upload_current_run(
             feedback,

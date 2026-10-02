@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from m3_cli.errors import CLIError
+from m3_cli.errors import CLIError, UploadError
 from m3_cli.main import main
 from m3_cli.supervisor import StoredRun
 from m3_cli.supervisor import TestRunResult as RunResult
@@ -196,7 +196,7 @@ def test_ci_missing_project_python_does_not_advertise_report(tmp_path, capsys):
     assert "Local report:" not in output.out
 
 
-def test_ci_inspection_failure_keeps_local_test_outcome(monkeypatch, tmp_path, capsys):
+def _inspection_fails(monkeypatch, tmp_path):
     import m3_cli.ci_upload as ci_upload
     import m3_cli.supervisor as supervisor
 
@@ -213,38 +213,36 @@ def test_ci_inspection_failure_keeps_local_test_outcome(monkeypatch, tmp_path, c
     monkeypatch.setattr(
         ci_upload,
         "record_upload_inspection",
-        lambda *_args: (_ for _ in ()).throw(CLIError("inspection unavailable")),
-    )
-    assert main(["ci", "test", "--project-root", str(tmp_path)]) == 0
-    assert "upload inspection unavailable" in capsys.readouterr().err
-
-
-def test_ci_requested_upload_stops_when_inspection_fails(monkeypatch, tmp_path):
-    import m3_cli.ci_upload as ci_upload
-    import m3_cli.supervisor as supervisor
-
-    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
-    monkeypatch.setattr(
-        supervisor,
-        "run_ci_test",
-        lambda **_kwargs: RunResult(
-            0,
-            run_id="run-local",
-            database_path=tmp_path / "results.sqlite",
-            project_root=tmp_path,
+        lambda *_args: (_ for _ in ()).throw(
+            UploadError(
+                "execution exec-1 report is 20 bytes; limit is 10", retryable=False
+            )
         ),
-    )
-    monkeypatch.setattr(
-        ci_upload,
-        "record_upload_inspection",
-        lambda *_args: (_ for _ in ()).throw(CLIError("inspection unavailable")),
     )
     monkeypatch.setattr(
         ci_upload,
         "publish_run",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("uploaded")),
     )
+
+
+def test_ci_inspection_failure_keeps_local_test_outcome(monkeypatch, tmp_path, capsys):
+    _inspection_fails(monkeypatch, tmp_path)
+    assert main(["ci", "test", "--project-root", str(tmp_path)]) == 0
+    assert capsys.readouterr().err == (
+        "m3 ci: upload inspection failed: execution exec-1 report is 20 bytes; "
+        "limit is 10; local test result is unchanged\n"
+    )
+
+
+def test_ci_requested_upload_stops_when_inspection_fails(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
+    _inspection_fails(monkeypatch, tmp_path)
     assert main(["ci", "test", "--upload", "--project-root", str(tmp_path)]) == 2
+    assert capsys.readouterr().err == (
+        "m3 ci: publishing failed: execution exec-1 report is 20 bytes; "
+        "limit is 10; fix the cause and rerun tests\n"
+    )
 
 
 def test_ci_without_upload_persists_mapped_source_names(monkeypatch, tmp_path):
@@ -291,7 +289,7 @@ def test_ci_without_upload_persists_mapped_source_names(monkeypatch, tmp_path):
     assert captured[0][4]["DEPLOY_CRED"] == "opaque-deployment-credential"
 
 
-def test_passing_tests_fail_job_when_requested_upload_fails(monkeypatch, tmp_path):
+def _publish_fails(monkeypatch, tmp_path, exit_code, error):
     import m3_cli.ci_upload as ci_upload
     import m3_cli.supervisor as supervisor
 
@@ -301,32 +299,8 @@ def test_passing_tests_fail_job_when_requested_upload_fails(monkeypatch, tmp_pat
         supervisor,
         "run_ci_test",
         lambda **_kwargs: RunResult(
-            0,
-            run_id="run-failed-upload",
-            database_path=tmp_path / "results.sqlite",
-            project_root=tmp_path,
-        ),
-    )
-
-    def fail(*_args, **_kwargs):
-        raise RuntimeError("network failed")
-
-    monkeypatch.setattr(ci_upload, "publish_run", fail)
-    assert main(["ci", "test", "--upload", "--project-root", str(tmp_path)]) == 2
-
-
-def test_failed_test_code_takes_priority_over_upload_failure(monkeypatch, tmp_path):
-    import m3_cli.ci_upload as ci_upload
-    import m3_cli.supervisor as supervisor
-
-    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
-    monkeypatch.setattr(ci_upload, "record_upload_inspection", lambda *_args: None)
-    monkeypatch.setattr(
-        supervisor,
-        "run_ci_test",
-        lambda **_kwargs: RunResult(
-            1,
-            run_id="run-failed-test",
+            exit_code,
+            run_id="run-1",
             database_path=tmp_path / "results.sqlite",
             project_root=tmp_path,
         ),
@@ -334,6 +308,89 @@ def test_failed_test_code_takes_priority_over_upload_failure(monkeypatch, tmp_pa
     monkeypatch.setattr(
         ci_upload,
         "publish_run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("network failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
     )
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (
+            UploadError("could not reach the M3 server", retryable=True),
+            "publishing failed: could not reach the M3 server; "
+            "retry with m3 upload run-1",
+        ),
+        (
+            UploadError("the M3 server rejected it (HTTP 413)", retryable=False),
+            "publishing failed: the M3 server rejected it (HTTP 413); "
+            "fix the cause and rerun tests",
+        ),
+        (
+            CLIError("run run-1 was not scanned for credentials"),
+            "publishing failed: run run-1 was not scanned for credentials; "
+            "fix the cause and rerun tests",
+        ),
+        (
+            PermissionError(13, "Permission denied", "/secret-path/cache.json"),
+            "publishing failed: Permission denied; fix the cause and rerun tests",
+        ),
+        (
+            RuntimeError("untrusted-value"),
+            "publishing failed; retry with m3 upload run-1",
+        ),
+        (
+            ValueError("untrusted-value"),
+            "publishing failed; retry with m3 upload run-1",
+        ),
+    ],
+)
+def test_ci_publish_failure_reports_trusted_reason_once(
+    monkeypatch, tmp_path, capsys, error, message
+):
+    _publish_fails(monkeypatch, tmp_path, 0, error)
+    assert main(["ci", "test", "--upload", "--project-root", str(tmp_path)]) == 2
+    assert capsys.readouterr().err == f"m3 ci: {message}\n"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [UploadError("rejected", retryable=False), ValueError("corrupt cache")],
+)
+def test_failed_test_code_takes_priority_over_upload_failure(
+    monkeypatch, tmp_path, error
+):
+    _publish_fails(monkeypatch, tmp_path, 1, error)
     assert main(["ci", "test", "--upload", "--project-root", str(tmp_path)]) == 1
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (
+            UploadError("could not reach the M3 server", retryable=True),
+            "m3 upload: publishing failed: could not reach the M3 server; "
+            "retry with m3 upload run-1",
+        ),
+        (
+            UploadError("run run-1 results changed", retryable=False),
+            "m3 upload: publishing failed: run run-1 results changed; "
+            "fix the cause and rerun tests",
+        ),
+        (
+            RuntimeError("untrusted-value"),
+            "m3 upload: publication failed; local results are unchanged",
+        ),
+    ],
+)
+def test_upload_command_reports_trusted_reason_once(
+    monkeypatch, tmp_path, capsys, error, message
+):
+    import m3_cli.ci_upload as ci_upload
+
+    monkeypatch.setattr(
+        ci_upload,
+        "publish_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+    assert main(["upload", "run-1", "--project-root", str(tmp_path)]) == 2
+    assert capsys.readouterr().err == message + "\n"

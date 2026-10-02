@@ -196,7 +196,7 @@ def test_cli_ci_excludes_parameter_marked_agent_without_harness(tmp_path: Path) 
         capture_output=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "upload inspection unavailable" not in result.stderr
+    assert "upload inspection" not in result.stderr
     assert "1 passed" in result.stdout
     assert "M3 CI excluded 1 test(s)" in result.stdout
 

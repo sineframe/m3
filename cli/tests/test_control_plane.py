@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -12,6 +13,7 @@ from m3.types import ExecutionId, ExecutionState, RunId
 from m3_app.api.report_payloads import build_execution_envelope
 from m3_app.services.execution_service import project_test_results
 from m3_cli.control_plane import _post, upload_current_run
+from m3_cli.errors import UploadError
 
 
 def test_public_execution_envelope_is_json_serializable():
@@ -33,7 +35,7 @@ def test_empty_sqlite_run_uploads_feedback_then_publishes(tmp_path, monkeypatch)
         monkeypatch.setattr(
             control_plane,
             "_post",
-            lambda url, token, body: requests.append((url, token, body)),
+            lambda url, token, body, _subject: requests.append((url, token, body)),
         )
         upload_current_run(
             feedback,
@@ -93,7 +95,7 @@ def test_execution_id_summary_uses_separate_cache_file(tmp_path, monkeypatch):
         monkeypatch.setattr(
             control_plane,
             "_post",
-            lambda url, _token, body: sent.append((url, body)),
+            lambda url, _token, body, _subject: sent.append((url, body)),
         )
 
         upload_current_run(
@@ -158,7 +160,43 @@ def test_test_results_match_public_order_and_drop_invalid_records():
     assert values[1].duration_seconds is None
 
 
-def test_post_uses_json_and_retries_same_bytes():
+@contextmanager
+def _serve(handler):
+    """Run ``handler`` on a local HTTP server and yield its base URL."""
+    handler.log_message = lambda *_args: None
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def _replying(status, body=b""):
+    """Build a handler that counts requests and always answers ``status``."""
+
+    class Handler(BaseHTTPRequestHandler):
+        calls = 0
+
+        def do_POST(self):
+            Handler.calls += 1
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    return Handler
+
+
+def test_post_uses_json_and_retries_same_bytes(monkeypatch):
+    import m3_cli.control_plane as control_plane
+
+    monkeypatch.setattr(control_plane.time, "sleep", lambda _seconds: None)
     received = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -177,47 +215,88 @@ def test_post_uses_json_and_retries_same_bytes():
             self.send_response(503 if Handler.calls == 1 else 201)
             self.end_headers()
 
-        def log_message(self, *_args):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(
-        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
-    )
-    thread.start()
-    try:
-        _post(
-            f"http://127.0.0.1:{server.server_port}/v1/runs/r/report",
-            "secret",
-            b'{"x":1}',
-        )
-    finally:
-        server.shutdown()
-        thread.join()
+    with _serve(Handler) as base:
+        _post(base + "/v1/runs/r/report", "secret", b'{"x":1}', "run r summary")
     assert len(received) == 2
     assert {item[1] for item in received} == {"application/json"}
     assert {item[2] for item in received} == {"Bearer secret"}
     assert received[0][3] == received[1][3] == b'{"x":1}'
 
 
-def test_post_rejects_redirect_without_forwarding_token():
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            self.send_response(302)
+def test_post_rejects_redirect_once_without_forwarding_token():
+    class Handler(_replying(302)):
+        def send_response(self, code, message=None):
+            super().send_response(code, message)
             self.send_header("Location", "https://example.invalid/")
-            self.end_headers()
 
-        def log_message(self, *_args):
-            pass
+    with _serve(Handler) as base:
+        with pytest.raises(UploadError, match="redirected") as raised:
+            _post(base + "/", "secret", b"{}", "run r summary")
+    assert raised.value.retryable is False
+    assert Handler.calls == 1
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(
-        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+
+def test_post_client_rejection_names_subject_and_server_code_without_retrying():
+    handler = _replying(
+        413, b'{"error":{"code":"payload_too_large","message":"too big"}}'
     )
-    thread.start()
-    try:
-        with pytest.raises(RuntimeError, match="upload failed"):
-            _post(f"http://127.0.0.1:{server.server_port}/", "secret", b"{}")
-    finally:
-        server.shutdown()
-        thread.join()
+    with _serve(handler) as base:
+        with pytest.raises(UploadError) as raised:
+            _post(base + "/", "secret", b"{}", "execution exec-1 report")
+    assert str(raised.value) == (
+        "the M3 server rejected execution exec-1 report (HTTP 413 payload_too_large)"
+    )
+    assert (raised.value.retryable, raised.value.status, raised.value.code) == (
+        False,
+        413,
+        "payload_too_large",
+    )
+    assert handler.calls == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"error":{"code":"Bad Code\\u001b[31m"}}',
+        b'{"error":{"code":"' + b"a" * 65 + b'"}}',
+        b'{"error":"payload_too_large"}',
+        b"[" * 5000,
+        b"not json",
+    ],
+)
+def test_post_drops_server_codes_that_are_not_plain_identifiers(body):
+    with _serve(_replying(400, body)) as base:
+        with pytest.raises(UploadError) as raised:
+            _post(base + "/", "secret", b"{}", "run r summary")
+    assert str(raised.value) == "the M3 server rejected run r summary (HTTP 400)"
+    assert raised.value.code is None
+
+
+def test_post_reports_retryable_server_failure_after_all_attempts(monkeypatch):
+    import m3_cli.control_plane as control_plane
+
+    monkeypatch.setattr(control_plane.time, "sleep", lambda _seconds: None)
+    handler = _replying(503, b'{"error":{"code":"unavailable"}}')
+    with _serve(handler) as base:
+        with pytest.raises(UploadError) as raised:
+            _post(base + "/", "secret", b"{}", "run r publication")
+    assert str(raised.value) == (
+        "the M3 server did not accept run r publication after 3 attempts "
+        "(HTTP 503 unavailable)"
+    )
+    assert raised.value.retryable is True
+    assert handler.calls == 3
+
+
+def test_post_reports_unreachable_server_as_retryable(monkeypatch):
+    import m3_cli.control_plane as control_plane
+
+    monkeypatch.setattr(control_plane.time, "sleep", lambda _seconds: None)
+    with _serve(_replying(201)) as base:
+        pass
+    with pytest.raises(UploadError) as raised:
+        _post(base + "/", "secret", b"{}", "run r summary")
+    assert str(raised.value) == (
+        "could not reach the M3 server to send run r summary after 3 attempts"
+    )
+    assert (raised.value.retryable, raised.value.status) == (True, None)
