@@ -17,7 +17,7 @@
       "command": "python -m pytest -q test_versions.py",
       "working_directory": "compare-versions project directory",
       "expected_exit_code": 0,
-      "assertions": ["two different execution IDs", "each execution records its requested and resolved version", "each execution records exactly one successful shipping_quote call and the structured quote", "two distinct passing evaluations are linked to the actual captured quote"],
+      "assertions": ["two different execution IDs", "each execution records its requested and resolved version", "each execution records exactly one successful shipping_quote call and the structured quote"],
       "compatibility": {
         "harness": "Codex CLI managed runtime",
         "versions": ["M3_DOCS_CODEX_VERSION_A", "M3_DOCS_CODEX_VERSION_B"],

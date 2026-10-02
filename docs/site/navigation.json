@@ -174,7 +174,7 @@
       "id": "guides-agents-versions",
       "title": "Compare harness versions",
       "source": "guides/agents/versions.md",
-      "description": "Run one unchanged agent test with two pinned native harness versions and compare execution identity and deterministic evaluations.",
+      "description": "Run one unchanged agent test with two pinned native harness versions and compare runtime identities and tool-call results.",
       "kind": "guides"
     },
     {
