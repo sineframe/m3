@@ -1707,12 +1707,22 @@ def project_test_attempt(
 def project_test_attempts(
     store: ExecutionStore,
     run_id: RunId | str,
+    *,
+    entries: Sequence[_Entry] | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
-    """Return projected pytest attempts for a run without building full feedback."""
+    """Return projected pytest attempts for a run without building full feedback.
+
+    Pass ``entries`` from :func:`load_run_entries` to reuse one load; they must
+    belong to ``run_id``.
+    """
     normalized_run_id = _run_key(run_id)
     if normalized_run_id is None:
         raise ValueError("run_id is required")
-    entries = _entries(store, normalized_run_id)
+    entries = (
+        _retry_missing_traces(store, entries)
+        if entries is not None
+        else _entries(store, normalized_run_id)
+    )
     results, manifest = _test_values(store, normalized_run_id)
     contexts = _contexts(results, manifest)
     execution_kinds = {

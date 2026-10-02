@@ -18,7 +18,7 @@ from typing import Any
 from urllib import error, request
 from urllib.parse import quote, urlparse
 
-from m3.feedback import Feedback, project_test_attempts
+from m3.feedback import Feedback, load_run_entries, project_test_attempts
 from m3.storage import SQLiteExecutionStore
 from m3_app.api.report_payloads import (
     build_execution_envelope,
@@ -101,14 +101,28 @@ def _validate_body(body: bytes, token: str) -> None:
         raise RuntimeError("control-plane upload contains credential material")
 
 
+def _run_projection(
+    store: SQLiteExecutionStore, run_id: str
+) -> tuple[dict[str, Any], tuple[Mapping[str, Any], ...]]:
+    """Load the run once; return entries by execution ID and projected attempts."""
+    entries = load_run_entries(store, run_id)
+    by_id = {entry.report.snapshot.execution_id.root: entry for entry in entries}
+    return by_id, project_test_attempts(store, run_id, entries=entries)
+
+
 def _execution_payload(
     store: SQLiteExecutionStore,
     snapshot: Any,
+    entry: Any | None,
     attempts: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Build one execution body; ``attempts`` are the run's projected pytest attempts."""
+    """Build one execution body, reusing the run's preloaded ``entry`` where it loaded successfully."""
     execution_id = snapshot.execution_id.root
-    report = store.get_report(execution_id, event_limit=None, artifact_limit=None)
+    report = (
+        entry.report
+        if entry is not None
+        else store.get_report(execution_id, event_limit=None, artifact_limit=None)
+    )
     if report is None:
         raise RuntimeError("execution data unavailable")
     if snapshot.lifecycle.value != "finished" or snapshot.outcome is None:
@@ -125,10 +139,14 @@ def _execution_payload(
         report.artifacts
     ):
         raise RuntimeError("execution report is incomplete")
-    trace = store.get_trace_view(execution_id)
+    trace = (
+        entry.trace
+        if entry is not None and entry.trace is not None
+        else store.get_trace_view(execution_id)
+    )
     if trace is None:
         raise RuntimeError("trace data unavailable")
-    spec = store.get_execution_spec(execution_id)
+    spec = entry.spec if entry is not None else store.get_execution_spec(execution_id)
     project_name = None
     project_id = snapshot.project_id.root if snapshot.project_id is not None else None
     get_project = getattr(store, "get_project", None)
@@ -204,11 +222,18 @@ def _current_run_bodies(
 ) -> Iterator[tuple[str, bytes]]:
     run_id, snapshots, summary = _current_run_summary(feedback, store, directory)
     yield "", summary
-    attempts = project_test_attempts(store, run_id)
+    entries_by_id, attempts = _run_projection(store, run_id)
     for snapshot in snapshots:
         yield (
             snapshot.execution_id.root,
-            _json_bytes(_execution_payload(store, snapshot, attempts)),
+            _json_bytes(
+                _execution_payload(
+                    store,
+                    snapshot,
+                    entries_by_id.get(snapshot.execution_id.root),
+                    attempts,
+                )
+            ),
         )
 
 
@@ -284,7 +309,12 @@ def upload_current_run(
     run_id, snapshots, rendered_summary = _current_run_summary(
         feedback, store, directory
     )
-    attempts = project_test_attempts(store, run_id)
+    needs_projection = any(
+        not (execution_cache / (snapshot.execution_id.root + ".json")).is_file()
+        or (execution_cache / (snapshot.execution_id.root + ".json")).is_symlink()
+        for snapshot in snapshots
+    )
+    projection = _run_projection(store, run_id) if needs_projection else None
     summary_path = root / "summary.json"
     destination_path = root / "destination.json"
     if destination_path.is_symlink():
@@ -322,11 +352,16 @@ def upload_current_run(
         path = execution_cache / (execution_id + ".json")
         if path.is_symlink():
             raise RuntimeError("upload cache file is a symlink")
-        body = (
-            path.read_bytes()
-            if path.is_file()
-            else _json_bytes(_execution_payload(store, snapshot, attempts))
-        )
+        if path.is_file():
+            body = path.read_bytes()
+        else:
+            assert projection is not None
+            entries_by_id, attempts = projection
+            body = _json_bytes(
+                _execution_payload(
+                    store, snapshot, entries_by_id.get(execution_id), attempts
+                )
+            )
         _validate_body(body, token)
         _reject_known_secrets(body, sensitive_values)
         if path.is_file():
