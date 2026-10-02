@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import threading
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -36,6 +38,83 @@ def store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Keyring:
     monkeypatch.setattr(auth, "_keyring", lambda: value)
     monkeypatch.setattr(auth, "_metadata_path", lambda: tmp_path / "m3" / "auth.json")
     return value
+
+
+def fake_clock(monkeypatch: pytest.MonkeyPatch) -> tuple[list[float], list[float]]:
+    current = [0.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        current[0] += seconds
+
+    monkeypatch.setattr(auth.time, "monotonic", lambda: current[0])
+    monkeypatch.setattr(auth.time, "sleep", sleep)
+    return current, sleeps
+
+
+def device_authorization(*, expires: int = 30, interval: int = 1) -> dict[str, object]:
+    return {
+        "device_code": "device-secret",
+        "user_code": "ABCD-EFGH",
+        "verification_uri": "https://auth.sineframe.com/sign-in",
+        "verification_uri_complete": "https://auth.sineframe.com/sign-in?next=%2Fcli%2Fauthorize%3Fcode%3DABCD-EFGH",
+        "expires_in": expires,
+        "interval": interval,
+    }
+
+
+def issued_token() -> dict[str, object]:
+    return {
+        "access_token": token(),
+        "token_type": "Bearer",
+        "metadata": {
+            "id": "id",
+            "kind": "cli",
+            "org_id": "org",
+            "name": "M3 CLI",
+            "created_at": "a",
+            "expires_at": "b",
+        },
+    }
+
+
+def prepare_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("M3_CONTROL_PLANE_URL", "https://control.example")
+    monkeypatch.setattr(auth, "_probe_keyring", lambda: None)
+    monkeypatch.setattr(auth.webbrowser, "open", lambda *a, **k: True)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, 0.0),
+        ("", 0.0),
+        ("   ", 0.0),
+        ("0", 0.0),
+        ("12", 12.0),
+        (" 7 ", 7.0),
+        ("-1", 0.0),
+        ("1.5", 0.0),
+        ("NaN", 0.0),
+        ("Infinity", 0.0),
+        ("-Infinity", 0.0),
+        ("not a date", 0.0),
+    ],
+)
+def test_retry_after_seconds_integer_and_malformed_values(
+    value: str | None, expected: float
+) -> None:
+    assert auth._retry_after_seconds(value) == expected
+
+
+def test_retry_after_seconds_http_dates(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(auth.time, "time", lambda: now.timestamp())
+    future = format_datetime(now + timedelta(seconds=90), usegmt=True)
+    past = format_datetime(now - timedelta(seconds=90), usegmt=True)
+    assert auth._retry_after_seconds(future) == 90.0
+    assert auth._retry_after_seconds(past) == 0.0
 
 
 def test_metadata_and_installation_are_preserved(store: Keyring) -> None:
@@ -178,6 +257,212 @@ def test_login_posts_device_body_and_saves_token(
     assert calls[0][2]["cli_version"] == "9.8.7"
     assert calls[1][2] == {"device_code": "device-secret"}
     assert auth.load_saved_token(base) == token()
+
+
+@pytest.mark.parametrize(
+    ("interval", "retry_after", "expected_wait"),
+    [
+        (1, None, 1.25),
+        (1, "malformed", 1.25),
+        (1, "0", 1.25),
+        (1, "4", 4.25),
+        (5, "1", 5.25),
+    ],
+)
+def test_login_retries_rate_limit_with_same_authorization_and_advised_delay(
+    monkeypatch: pytest.MonkeyPatch,
+    store: Keyring,
+    interval: int,
+    retry_after: str | None,
+    expected_wait: float,
+) -> None:
+    prepare_login(monkeypatch)
+    current, sleeps = fake_clock(monkeypatch)
+    jitter_bounds: list[tuple[float, float]] = []
+
+    def jitter(low: float, high: float) -> float:
+        jitter_bounds.append((low, high))
+        return 0.25
+
+    monkeypatch.setattr(auth.random, "uniform", jitter)
+    start = device_authorization(interval=interval)
+    requests: list[tuple[str, dict[str, object] | None]] = []
+    poll_results = iter(
+        (auth._RateLimited(auth._retry_after_seconds(retry_after)), issued_token())
+    )
+
+    def fake_request(url: str, method: str, body=None, token=None):
+        requests.append((url, body))
+        if url.endswith("/authorization"):
+            return start
+        outcome = next(poll_results)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(auth, "_json_request", fake_request)
+    assert auth.login() == 0
+    assert len([url for url, _ in requests if url.endswith("/authorization")]) == 1
+    polls = [(url, body) for url, body in requests if url.endswith("/token")]
+    assert polls == [
+        (
+            "https://control.example/v1/cli/device/token",
+            {"device_code": "device-secret"},
+        ),
+        (
+            "https://control.example/v1/cli/device/token",
+            {"device_code": "device-secret"},
+        ),
+    ]
+    assert sleeps == pytest.approx([float(interval), expected_wait])
+    assert jitter_bounds == [(0.1, 0.5)]
+    assert current[0] == pytest.approx(float(interval) + expected_wait)
+    assert auth.load_saved_token("https://control.example") == token()
+
+
+def test_login_rate_limit_retries_stop_at_original_expiry(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
+) -> None:
+    old = token(b"o")
+    auth._save_token("https://control.example", old, {"id": "old", "kind": "cli"})
+    prepare_login(monkeypatch)
+    _, sleeps = fake_clock(monkeypatch)
+    monkeypatch.setattr(auth.random, "uniform", lambda _low, _high: 0.25)
+    requests: list[str] = []
+    outcomes = iter((auth._RateLimited(1.0), auth._RateLimited(100.0)))
+
+    def fake_request(url: str, method: str, body=None, token=None):
+        requests.append(url)
+        if url.endswith("/authorization"):
+            return device_authorization(expires=4)
+        raise next(outcomes)
+
+    monkeypatch.setattr(auth, "_json_request", fake_request)
+    assert auth.login() == 2
+    polls = [url for url in requests if url.endswith("/token")]
+    assert len(polls) == 2
+    assert sleeps == pytest.approx([1.0, 1.25, 1.75])
+    assert sum(sleeps) == pytest.approx(4.0)
+    assert "device authorization expired" in capsys.readouterr().err
+    assert auth.load_saved_token("https://control.example") == old
+
+
+@pytest.mark.parametrize("retry_header", ["10000000", "9" * 400])
+def test_login_large_retry_after_is_clipped_to_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    store: Keyring,
+    capsys: pytest.CaptureFixture[str],
+    retry_header: str,
+) -> None:
+    prepare_login(monkeypatch)
+    _, sleeps = fake_clock(monkeypatch)
+    monkeypatch.setattr(auth.random, "uniform", lambda _low, _high: 0.25)
+    polls = 0
+
+    def fake_request(url: str, method: str, body=None, token=None):
+        nonlocal polls
+        if url.endswith("/authorization"):
+            return device_authorization(expires=3)
+        polls += 1
+        raise auth._RateLimited(auth._retry_after_seconds(retry_header))
+
+    monkeypatch.setattr(auth, "_json_request", fake_request)
+    assert auth.login() == 2
+    assert polls == 1
+    assert sleeps == pytest.approx([1.0, 2.0])
+    assert "device authorization expired" in capsys.readouterr().err
+
+
+def test_login_rate_limited_authorization_creation_fails_without_retry(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
+) -> None:
+    prepare_login(monkeypatch)
+    _, sleeps = fake_clock(monkeypatch)
+    jitter_calls: list[tuple[float, float]] = []
+    monkeypatch.setattr(
+        auth.random,
+        "uniform",
+        lambda low, high: jitter_calls.append((low, high)) or 0.25,
+    )
+    calls: list[str] = []
+
+    def fake_request(url: str, method: str, body=None, token=None):
+        calls.append(url)
+        raise auth._RateLimited(3.0)
+
+    monkeypatch.setattr(auth, "_json_request", fake_request)
+    assert auth.login() == 2
+    assert calls == ["https://control.example/v1/cli/device/authorization"]
+    assert sleeps == []
+    assert jitter_calls == []
+    assert "rate_limited" in capsys.readouterr().err
+
+
+def test_login_slow_down_and_rate_limit_delays_are_scoped_correctly(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring
+) -> None:
+    prepare_login(monkeypatch)
+    _, sleeps = fake_clock(monkeypatch)
+    jitter_bounds: list[tuple[float, float]] = []
+
+    def jitter(low: float, high: float) -> float:
+        jitter_bounds.append((low, high))
+        return 0.25
+
+    monkeypatch.setattr(auth.random, "uniform", jitter)
+    outcomes = iter(
+        (
+            RuntimeError("slow_down"),
+            auth._RateLimited(0.5),
+            RuntimeError("authorization_pending"),
+            issued_token(),
+        )
+    )
+    requests: list[dict[str, object] | None] = []
+
+    def fake_request(url: str, method: str, body=None, token=None):
+        if url.endswith("/authorization"):
+            return device_authorization(expires=30)
+        requests.append(body)
+        outcome = next(outcomes)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(auth, "_json_request", fake_request)
+    assert auth.login() == 0
+    assert sleeps == pytest.approx([1.0, 6.0, 6.25, 6.0])
+    assert jitter_bounds == [(0.1, 0.5)]
+    assert requests == [{"device_code": "device-secret"}] * 4
+
+
+def test_login_browser_delay_counts_against_authorization_deadline(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring, capsys: pytest.CaptureFixture[str]
+) -> None:
+    prepare_login(monkeypatch)
+    current, sleeps = fake_clock(monkeypatch)
+    requests: list[str] = []
+
+    def open_browser(*_args, **_kwargs) -> bool:
+        current[0] += 2.0
+        return True
+
+    monkeypatch.setattr(auth.webbrowser, "open", open_browser)
+
+    def fake_request(url: str, method: str, body=None, token=None):
+        requests.append(url)
+        return (
+            device_authorization(expires=2)
+            if url.endswith("/authorization")
+            else issued_token()
+        )
+
+    monkeypatch.setattr(auth, "_json_request", fake_request)
+    assert auth.login() == 2
+    assert requests == ["https://control.example/v1/cli/device/authorization"]
+    assert sleeps == []
+    assert current[0] == 2.0
+    assert "device authorization expired" in capsys.readouterr().err
 
 
 def test_login_reports_poll_error_without_secret(
@@ -379,6 +664,7 @@ def test_logout_remote_failure_retains_local_and_no_local_does_not_delete(
 def test_json_request_caps_body_and_rejects_redirect() -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            extra_headers: dict[str, str] = {}
             if self.path == "/redirect":
                 self.send_response(302)
                 self.send_header("Location", "/ok")
@@ -397,10 +683,28 @@ def test_json_request_caps_body_and_rejects_redirect() -> None:
             elif self.path == "/json204":
                 self.send_response(204)
                 body = b""
+            elif self.path == "/rate-limited":
+                self.send_response(429)
+                extra_headers["Retry-After"] = "7"
+                body = b'{"error":{"code":"rate_limited","message":"try later"}}'
+            elif self.path == "/rate-limited-wrong-status":
+                self.send_response(400)
+                extra_headers["Retry-After"] = "7"
+                body = b'{"error":{"code":"rate_limited","message":"try later"}}'
+            elif self.path == "/wrong-rate-limit-code":
+                self.send_response(429)
+                extra_headers["Retry-After"] = "7"
+                body = b'{"error":{"code":"unexpected_error","message":"failure"}}'
+            elif self.path == "/rate-limit-not-json":
+                self.send_response(429)
+                extra_headers["Retry-After"] = "7"
+                body = b"not json"
             else:
                 self.send_response(200)
                 body = b'{"ok":true}'
             self.send_header("Content-Length", str(len(body)))
+            for name, value in extra_headers.items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(body)
 
@@ -423,6 +727,17 @@ def test_json_request_caps_body_and_rejects_redirect() -> None:
         with pytest.raises(RuntimeError, match="too large"):
             auth._json_request(base + "/error", "GET")
         assert auth._json_request(base + "/ok", "GET") == {"ok": True}
+        with pytest.raises(auth._RateLimited) as limited:
+            auth._json_request(base + "/rate-limited", "GET")
+        assert limited.value.retry_after == 7.0
+        for path in (
+            "/rate-limited-wrong-status",
+            "/wrong-rate-limit-code",
+            "/rate-limit-not-json",
+        ):
+            with pytest.raises(RuntimeError, match="server rejected") as rejected:
+                auth._json_request(base + path, "GET")
+            assert not isinstance(rejected.value, auth._RateLimited)
         with pytest.raises(RuntimeError, match="redirect"):
             auth._json_request(base + "/redirect", "GET")
         with pytest.raises(RuntimeError, match="too large"):
@@ -430,6 +745,84 @@ def test_json_request_caps_body_and_rejects_redirect() -> None:
     finally:
         server.shutdown()
         thread.join()
+
+
+def test_login_retries_through_real_json_request_after_rate_limit(
+    monkeypatch: pytest.MonkeyPatch, store: Keyring
+) -> None:
+    clock, sleeps = fake_clock(monkeypatch)
+    prepare_login(monkeypatch)
+    jitter_bounds: list[tuple[float, float]] = []
+
+    def jitter(low: float, high: float) -> float:
+        jitter_bounds.append((low, high))
+        return 0.25
+
+    monkeypatch.setattr(auth.random, "uniform", jitter)
+    observed: list[tuple[str, dict[str, object]]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        poll_count = 0
+
+        def _reply(self, status: int, value: dict[str, object], headers=None) -> None:
+            raw = json.dumps(value).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            for name, header_value in (headers or {}).items():
+                self.send_header(name, header_value)
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self) -> None:
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            observed.append((self.path, body))
+            if self.path.endswith("/authorization"):
+                self._reply(200, device_authorization(expires=10))
+                return
+            if self.path.endswith("/token"):
+                type(self).poll_count += 1
+                if type(self).poll_count == 1:
+                    self._reply(
+                        429,
+                        {"error": {"code": "rate_limited", "message": "try later"}},
+                        {"Retry-After": "2"},
+                    )
+                else:
+                    self._reply(200, issued_token())
+                return
+            self._reply(404, {"error": {"code": "not_found"}})
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        monkeypatch.setattr(auth, "control_plane_url", lambda: base)
+        assert auth.login() == 0
+    finally:
+        server.shutdown()
+        thread.join()
+
+    assert observed == [
+        (
+            "/v1/cli/device/authorization",
+            {
+                "installation_id": auth._installation_id(),
+                "device_name": auth._device_name(),
+                "cli_version": auth._cli_version(),
+            },
+        ),
+        ("/v1/cli/device/token", {"device_code": "device-secret"}),
+        ("/v1/cli/device/token", {"device_code": "device-secret"}),
+    ]
+    assert sleeps == pytest.approx([1.0, 2.25])
+    assert clock[0] == pytest.approx(3.25)
+    assert jitter_bounds == [(0.1, 0.5)]
+    assert auth.load_saved_token(base) == token()
 
 
 def test_logout_ignores_environment_token(
