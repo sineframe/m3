@@ -12,6 +12,8 @@ M3 keeps three judgments separate:
 | Pytest outcome | Did the Python test and its fixtures pass? |
 | Execution outcome | Did the MCP or agent execution complete, fail, time out, or get cancelled? |
 | Evaluation result | Did one named evaluator accept the supplied subject? |
+A plain pytest assertion without an M3 client or agent operation records no
+execution.
 
 A completed execution does not prove that its response is correct. A failed
 matcher normally fails pytest and can also be recorded as evaluation evidence

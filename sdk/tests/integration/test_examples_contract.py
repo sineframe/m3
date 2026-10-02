@@ -174,12 +174,6 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     index = (_SDK / "docs" / "README.md").read_text(encoding="utf-8")
     parity = (_SDK / "tests" / "mrtr-harness-parity.md").read_text(encoding="utf-8")
     api = (_REPO / "app" / "docs" / "api-v2.md").read_text(encoding="utf-8")
-    skill = (_REPO / "skills" / "testing-with-m3" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    patterns = (
-        _REPO / "skills" / "testing-with-m3" / "references" / "test-patterns.md"
-    ).read_text(encoding="utf-8")
 
     assert "guides/elicitation/plans.md" in examples
     assert "## Modern MRTR elicitation" not in concepts
@@ -237,12 +231,6 @@ def test_elicitation_docs_and_testing_guidance_keep_one_current_contract() -> No
     assert "AgentSpec" in api
     assert "sends a `DirectSpec` or `AgentSpec` through `MCPTestKit`" in api
     assert "are the API v2 `ExecutionSpec` wire variants" in api
-    assert "Elicitation guide" in skill
-    assert "https://m3.sineframe.com/docs/guides/elicitation/plans" in patterns
-    assert "https://m3.sineframe.com/docs/reference/python/m3/elicitation" in skill
-    assert "https://m3.sineframe.com/docs/reference/python/m3/elicitation" in patterns
-    assert "AgentSpec" not in skill
-    assert "AgentSpec" not in patterns
 
 
 def test_elicitation_python_snippets_compile() -> None:

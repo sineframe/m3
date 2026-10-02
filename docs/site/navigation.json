@@ -156,7 +156,7 @@
       "id": "guides-agents-skill",
       "title": "Install the M3 agent skill",
       "source": "guides/agents/skill.md",
-      "description": "Install the M3 testing skill from GitHub with npx.",
+      "description": "How m3 init and m3 setup install the testing-with-m3 agent skill, and how to install it yourself.",
       "kind": "guides",
       "searchAliases": [
         "npx skills",
@@ -404,6 +404,18 @@
       "source": "reference/managed-runtimes.md",
       "description": "Reference for native harness selection, version resolution, executable acquisition, provenance, cache configuration, leases, and failure behavior.",
       "kind": "reference"
+    },
+    {
+      "id": "reference-output",
+      "title": "CLI output and trace limitations",
+      "source": "reference/output.md",
+      "description": "What each M3 line printed after a pytest run means, and which trace limitations are routine.",
+      "kind": "reference",
+      "searchAliases": [
+        "M3 execution timeout",
+        "capture_incomplete",
+        "trace limitations"
+      ]
     },
     {
       "id": "reference-pytest",
@@ -793,6 +805,7 @@
       "items": [
         "reference",
         "reference-cli",
+        "reference-output",
         "reference-credentials",
         "reference-acp",
         {

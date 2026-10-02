@@ -16,6 +16,48 @@ m3 test -- tests/test_m3_starter.py
 
 This writes `.m3/executions.sqlite` and a feedback bundle under
 `.m3/reports/<run-id>/feedback.json`. The CLI prints the run ID and report path.
+The CLI prints `M3 feedback: .m3/reports/RUN_ID/feedback.json`. The bundle's
+top-level fields include `summary`, `limitations`, and `evaluation_stats`.
+`summary.executions` counts executions, while `summary.failures` counts
+failed or errored cases plus collection errors. `evaluation_stats` groups
+explicit saved evaluations by name.
+
+Each `tests[]` entry has `node_id`, `outcome`, `verdict`,
+`effective_verdict`, `tool_result`, and `execution_ids`. `outcome` is the
+pytest case outcome. `verdict` distinguishes assertion, protocol, setup,
+teardown, and other results. `effective_verdict` applies the required-
+evaluation policy without relabeling `outcome`.
+
+The `failures[]` array includes failed pytest cases copied from `tests[]`.
+Those entries include `node_id`, `outcome`, `verdict`, `effective_verdict`,
+and `execution_ids`; they do not have `kind` or `execution_id`. Required
+evaluation failures may be attached to a failed case under `evaluations[]`.
+When they appear as separate entries, they have `kind: "evaluation"`,
+`evaluation_id`, `execution_id`, `evaluator`, `case_id`, and `status`, plus
+evaluation details such as `required`, `score`, `rationale`, and `message`.
+Detached evaluation entries have `execution_id: null`. Collection and worker
+failures have `kind: "collection"` or `kind: "worker"` plus fields from their
+manifest reports; persistence failures have `kind: "persistence"` and
+`message`. These sources do not necessarily have `node_id`, `verdict`, or
+`execution_ids`, so inspect each entry's source-specific fields rather than
+filtering on one set of fields. An `executions[].outcome` value of `completed`
+describes lifecycle only.
+
+File maps are relative to the report directory: `trace_files`,
+`execution_files`, `spec_files`, `catalog_files`, `diagnostic_files`,
+`test_run_files`, and `test_result_files`. `unavailable_references` lists
+references that could not be included.
+
+Trace `timeline[]` entries use these shapes:
+
+- `tool_call`: `server_binding`, `status`, `tool`, `arguments`, `result`,
+  and `provenance`
+- `diagnostic`: `code`, `status`, `stage`, `operation`, `elapsed_seconds`,
+  `timeout_seconds`, `message`, and `limitations`
+
+With the plugin, pytest outcomes are saved as run records and M3 matcher
+checks as execution evaluations. Other Python assertion results and aggregate
+summary rows are not saved. Add `.m3/` to the project's Git ignore rules.
 
 ## Direct SDK storage
 

@@ -37,6 +37,9 @@ describe terminal meaning separately from pytest.
 refer to stored material; their existence does not imply that raw content is
 available.
 
+Nested results are immutable mappings and tuples. Compare with `dict(...)` and
+`list(...)` at each level.
+
 ## Content and policy
 
 `UserMessage` and `TextContent` are supported message/content values.

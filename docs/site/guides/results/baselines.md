@@ -51,5 +51,28 @@ The second command prints a different run ID. Capture it as `CURRENT_RUN_ID`
 the same way, then inspect `.m3/reports/<CURRENT_RUN_ID>/feedback.json`. The
 comparison reads the baseline; it does not modify it.
 
+The `comparison` object has `baseline_run_id`, `current_run_id`, `coverage`,
+`limitations`, `interface_changes[]`, `test_changes[]`, `failures[]`, and
+`evaluation_changes[]`. Each `failures[]` entry has `source`, `kind`,
+`node_id`, `verdict`, `evaluator`, and `status`. Each
+`evaluation_changes[]` entry has `case_id`, `evaluator`, `configuration`,
+`comparable`, `changed_fields`, `before`, `after`, and `delta`.
+
+An entry describes an observed tool interface change only when it has
+`complete: true`. A `catalog_coverage` entry reports matched, baseline-only,
+and current-only catalog coverage; it is incomplete evidence and does not
+describe an interface change. `catalog_completeness` entries report a
+catalog's completeness changing, while `catalog_distribution` entries report
+unpaired distributions of observed catalog versions. These catalog entries
+report coverage, completeness, or catalog distributions, not tool interface
+changes. An empty list proves no interface change only when both runs observed
+complete catalogs with matched identity. A changed judge model, rubric,
+prompt version, or configuration digest makes `evaluation_changes`
+unlike-for-like, as shown by `comparable` and `changed_fields`.
+
+`--baseline` needs a matching project identity. A fresh worktree or CI job
+has no history because `.m3/` is ignored, so preserve a database and pass it
+with `--results-db`.
+
 If M3 reports that the baseline was not found, confirm that both commands used
 the same project root and results database.

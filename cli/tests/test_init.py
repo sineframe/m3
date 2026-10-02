@@ -197,7 +197,7 @@ def test_init_prompts_for_missing_fields_in_order(
     assert 'suite_name="mcp-behavior"' in source
 
 
-def test_init_rejects_partial_state_without_overwriting(
+def test_init_keeps_existing_starter_when_identity_is_missing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     existing = tmp_path / "tests" / "test_m3_starter.py"
@@ -215,12 +215,89 @@ def test_init_rejects_partial_state_without_overwriting(
                 "core",
             ]
         )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert existing.read_text(encoding="utf-8") == "existing test\n"
+    assert (tmp_path / "m3.toml").is_file()
+    assert (tmp_path / ".env.example").is_file()
+    assert f"Kept existing {existing}" in output
+
+
+def test_init_without_starter_counts_as_initialized(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    command = [
+        "init",
+        "--project-root",
+        str(tmp_path),
+        "--project-name",
+        "Catalog",
+        "--suite",
+        "core",
+    ]
+    assert main(command) == 0
+    capsys.readouterr()
+    starter = tmp_path / "tests" / "test_m3_starter.py"
+    starter.unlink()
+    config = tmp_path / "m3.toml"
+    before = config.read_bytes()
+
+    assert main(command) == 0
+    assert "already initialized" in capsys.readouterr().out
+    assert not starter.exists()
+    assert config.read_bytes() == before
+
+
+def test_init_rejects_invalid_identity(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / "m3.toml"
+    config.write_text("not = [valid", encoding="utf-8")
+    before = config.read_bytes()
+
+    assert (
+        main(
+            [
+                "init",
+                "--project-root",
+                str(tmp_path),
+                "--project-name",
+                "Catalog",
+                "--suite",
+                "core",
+            ]
+        )
         == 2
     )
-    assert "partial initialization" in capsys.readouterr().err
-    assert existing.read_text(encoding="utf-8") == "existing test\n"
-    assert not (tmp_path / "m3.toml").exists()
+    assert "is not a valid M3 project identity" in capsys.readouterr().err
+    assert config.read_bytes() == before
+    assert not (tmp_path / "tests" / "test_m3_starter.py").exists()
     assert not (tmp_path / ".env.example").exists()
+
+
+def test_init_warns_when_saved_runs_exist(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    history = tmp_path / ".m3" / "executions.sqlite"
+    history.parent.mkdir()
+    history.touch()
+
+    assert (
+        main(
+            [
+                "init",
+                "--project-root",
+                str(tmp_path),
+                "--project-name",
+                "Catalog",
+                "--suite",
+                "core",
+            ]
+        )
+        == 0
+    )
+    assert "already holds saved runs" in capsys.readouterr().out
 
 
 def test_init_noninteractive_missing_name_is_usage_error(tmp_path: Path) -> None:

@@ -21,10 +21,14 @@ prepare-release VERSION:
 api:
     uv run --project app uvicorn m3_app.main:app --host 127.0.0.1 --reload
 
+# Sync every extra once: `m3 test` subprocesses in cli/tests need the SDK's
+# judge (openai) and storage extras, and a per-project `uv run` sync would
+# uninstall them from the shared workspace environment.
 test:
-    PYTHONDONTWRITEBYTECODE=1 uv run --project sdk --extra pytest --extra judge --group typecheck pytest -q sdk/tests
-    PYTHONDONTWRITEBYTECODE=1 uv run --project app --group test --group typecheck pytest -q app/tests
-    PYTHONDONTWRITEBYTECODE=1 uv run --project cli pytest -q cli/tests
+    uv sync --locked --all-packages --extra pytest --extra judge --extra storage --extra property --group test --group typecheck
+    PYTHONDONTWRITEBYTECODE=1 uv run --locked --no-sync --project sdk pytest -q sdk/tests
+    PYTHONDONTWRITEBYTECODE=1 uv run --locked --no-sync --project app pytest -q app/tests
+    PYTHONDONTWRITEBYTECODE=1 uv run --locked --no-sync --project cli pytest -q cli/tests
 
 # Complete non-live suite for an explicit local run.
 test-all:

@@ -12,16 +12,17 @@ installed Codex executable is left in place.
 
 ## Requirements
 
-Use Python 3.10 or newer and install the SDK and standalone M3 CLI on matching
-releases. Sign in to Codex and select a model available to that login. The
-selected version needs a release asset for your OS and CPU, with network
+Use Python 3.10 or newer and install `sf-m3[pytest,storage,judge]` and the
+standalone M3 CLI on matching releases. Sign in to Codex and select a model
+available to that login. The selected version needs a release asset for your
+OS and CPU, with network
 access for acquisition or a valid cache entry. Runtime acquisition does not
 provide model credentials.
 
 Add the SDK to your uv project:
 
 ```sh
-uv add 'sf-m3[pytest]'
+uv add 'sf-m3[pytest,storage,judge]'
 ```
 
 See [Install and update M3](../../start/install.md) for the standalone CLI.
