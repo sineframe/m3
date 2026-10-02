@@ -10,7 +10,7 @@ endpoint or network service.
 
 Use Python 3.10 or newer and install the CLI/project SDK with `m3 init` and
 `m3 setup`. Run the supplied service and test from the
-HTTP example project (M3 repository: `sdk/examples/docs/servers-http`). The
+[HTTP example project](../examples/servers-http). The
 service listens on loopback port 8765 and needs no credentials.
 
 ## Start the local MCP service

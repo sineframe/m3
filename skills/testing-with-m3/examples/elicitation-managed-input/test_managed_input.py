@@ -1,20 +1,3 @@
-<!-- Generated from docs/site/guides/elicitation/managed-input.md by scripts/render_skill_references.py. Edit the source page, then rerun the script. -->
-
-# Submit input to a paused execution
-
-Managed input lets an agent execution pause while it waits for a person’s response. The caller reads the persisted request, submits a response keyed by the request name, then waits for the worker to finish.
-
-## Requirements
-
-This example uses Codex CLI `0.156.1` and a model available to your Codex login. That adapter supports action-bound elicitation in the tested version. Set `M3_DOCS_CODEX_MODEL`, install M3 with pytest, and review Codex’s tool approval prompt. The run uses a SQLite execution store because managed input needs a persistent store that implements M3’s managed-input API. Provider access and managed runtime acquisition require network access.
-
-The companion `shipping_server.py` in the [runnable project](../examples/elicitation-managed-input) implements `book_shipment`: its first call requests the `shipping_address` form, and its next call returns a booked result only when that keyed response matches. The project includes both this server and the test below.
-
-## Pause, read, submit, and wait
-
-Save the following complete test as `test_managed_input.py` beside `shipping_server.py`:
-
-```python
 from __future__ import annotations
 
 import os
@@ -92,10 +75,3 @@ def test_managed_form_input_resumes_codex_execution(tmp_path: Path) -> None:
         )
     finally:
         store.close()
-```
-
-Run it from the project directory with `python -m pytest -q test_managed_input.py`. The test waits up to two minutes for the form request. It then submits the response using the request key and round ID returned by the execution, and checks that the worker completes the tool call. It never relies on an author’s execution ID.
-
-The submission idempotency key is derived from the reader’s round ID. In an application, persist the key with the submitted response so a retried submission reuses both. This test handles form requests only. A URL request needs an explicit consent flow and a response without form content.
-
-Managed input cannot be combined with a predefined elicitation plan on the same execution. Direct SDK elicitation does not need an agent harness; agent-driven elicitation uses the harness capability described in [the elicitation guide](guides-elicitation-plans.md). Next: read the [elicitation API reference](reference-python-m3-elicitation.md) and [execution lifecycle](concepts-lifecycle.md).

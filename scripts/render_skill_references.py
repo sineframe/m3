@@ -17,6 +17,8 @@ MANIFEST = SITE / "navigation.json"
 SKILL_DIR = ROOT / "skills" / "testing-with-m3"
 SKILL_FILE = SKILL_DIR / "SKILL.md"
 REFERENCES = SKILL_DIR / "references"
+EXAMPLES = SKILL_DIR / "examples"
+EXAMPLE_SOURCES = ROOT / "sdk" / "examples" / "docs"
 STARTER_TEST = (
     ROOT / "sdk" / "examples" / "docs" / "first-test" / "tests" / "test_m3_starter.py"
 )
@@ -167,9 +169,16 @@ def _bare_target(target: str) -> tuple[str, bool]:
 
 
 def _rewrite_target(
-    target: str, source: str, selected: dict[str, str]
+    target: str,
+    source: str,
+    selected: dict[str, str],
+    examples: set[str] | None = None,
 ) -> tuple[str, str | None]:
-    """Return target, or a repository path for the caller to explain."""
+    """Return target, or a repository path for the caller to explain.
+
+    Links into an example project under ``sdk/examples/docs`` point at its
+    bundled copy; ``examples`` collects the project ids to copy.
+    """
     raw_target, angle = _bare_target(target)
     split = urlsplit(raw_target)
     if raw_target.startswith("#") or split.scheme:
@@ -187,6 +196,11 @@ def _rewrite_target(
             rewritten = f"{HOSTED_DOCS}{expected_route(relative)}{query}{suffix}"
         else:
             return "", None
+    elif _inside(resolved, EXAMPLE_SOURCES) and resolved != EXAMPLE_SOURCES:
+        relative = resolved.relative_to(EXAMPLE_SOURCES)
+        if examples is not None:
+            examples.add(relative.parts[0])
+        rewritten = f"../examples/{relative.as_posix()}{suffix}"
     elif _inside(resolved, ROOT):
         return "", resolved.relative_to(ROOT).as_posix()
     else:
@@ -194,7 +208,12 @@ def _rewrite_target(
     return (f"<{rewritten}>" if angle else rewritten), None
 
 
-def rewrite_links(text: str, source: str, selected: dict[str, str]) -> str:
+def rewrite_links(
+    text: str,
+    source: str,
+    selected: dict[str, str],
+    examples: set[str] | None = None,
+) -> str:
     """Rewrite links in one documentation page for the bundled references."""
     rendered: list[str] = []
     for block, in_fence, _ in _non_fence_blocks(text):
@@ -214,7 +233,9 @@ def rewrite_links(text: str, source: str, selected: dict[str, str]) -> str:
             pieces.append(block[cursor : match.start()])
             group = 2 if definition else 3
             target = match.group(group)
-            rewritten, repository_path = _rewrite_target(target, source, selected)
+            rewritten, repository_path = _rewrite_target(
+                target, source, selected, examples
+            )
             if definition and (repository_path is not None or not rewritten):
                 replacement = match.group(0)
             elif repository_path is not None:
@@ -279,13 +300,23 @@ def _selected_pages() -> list[dict[str, str]]:
 
 def _render_references(pages: list[dict[str, str]]) -> dict[Path, str]:
     selected = {page["source"]: page["id"] for page in pages}
+    examples: set[str] = set()
     rendered: dict[Path, str] = {}
     for page in pages:
         body = _strip_frontmatter((SITE / page["source"]).read_text(encoding="utf-8"))
-        body = rewrite_links(body, page["source"], selected)
+        body = rewrite_links(body, page["source"], selected, examples)
         rendered[REFERENCES / f"{page['id']}.md"] = (
             GENERATED_NOTE.format(source=page["source"]) + "\n\n" + body
         )
+    # Copy each linked example project's runnable files verbatim, so the
+    # installed skill carries the sources of its own release.
+    for example_id in sorted(examples):
+        project = EXAMPLE_SOURCES / example_id
+        manifest = json.loads((project / "example.json").read_text(encoding="utf-8"))
+        for name in manifest["files"]:
+            rendered[EXAMPLES / example_id / name] = (project / name).read_text(
+                encoding="utf-8"
+            )
 
     headings = {
         "getting-started": "Getting started",
@@ -421,6 +452,13 @@ def _reference_link_errors(
 ) -> list[str]:
     """Find broken links and definitions that cannot be bundled."""
     available = {path.resolve() for path in expected if path.parent == REFERENCES}
+    for path in expected:
+        if _inside(path, EXAMPLES):
+            # Links may target a bundled file or its project directory.
+            parent = path
+            while parent != EXAMPLES:
+                available.add(parent.resolve())
+                parent = parent.parent
     selected = {page["source"]: page["id"] for page in pages}
     sources = {page["id"]: page["source"] for page in pages}
     errors: list[str] = []
@@ -460,9 +498,17 @@ def main() -> int:
     skill_text, fence_errors = _sync_starter(SKILL_FILE.read_text(encoding="utf-8"))
     expected[SKILL_FILE] = skill_text
     expected_paths = set(expected)
-    expected_reference_paths = {path for path in expected if path.parent == REFERENCES}
+    expected_reference_paths = {
+        path
+        for path in expected
+        if path.parent == REFERENCES or _inside(path, EXAMPLES)
+    }
     existing_reference_paths = (
         set(REFERENCES.glob("*.md")) if REFERENCES.exists() else set()
+    ) | (
+        {path for path in EXAMPLES.rglob("*") if path.is_file()}
+        if EXAMPLES.exists()
+        else set()
     )
 
     stale: list[Path] = []
@@ -474,9 +520,14 @@ def main() -> int:
     else:
         REFERENCES.mkdir(parents=True, exist_ok=True)
         for path, content in expected.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
         for path in existing_reference_paths - expected_reference_paths:
             path.unlink()
+        if EXAMPLES.exists():
+            for directory in sorted(EXAMPLES.rglob("*"), reverse=True):
+                if directory.is_dir() and not any(directory.iterdir()):
+                    directory.rmdir()
 
     errors = _lint(skill_text, expected_paths, fence_errors)
     errors.extend(_reference_link_errors(expected, pages))
