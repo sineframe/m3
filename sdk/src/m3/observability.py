@@ -350,6 +350,26 @@ class ToolResult(_FrozenModel):
     is_error: bool = False
     error: Observation[_ErrorInfo] = _Field(default_factory=_not_emitted)
 
+    def to_mcp_json(self) -> _JsonValue:
+        """Return the MCP-shaped JSON projection of this result."""
+        value: dict[str, _JsonValue] = {
+            "content": [block.model_dump(mode="json") for block in self.content]
+        }
+        if self.structured_content.state is ObservationState.OBSERVED:
+            value["structuredContent"] = self.structured_content.value
+        if self.is_error:
+            value["isError"] = True
+        if (
+            self.error.state is ObservationState.OBSERVED
+            and self.error.value is not None
+        ):
+            value["error"] = _cast(_JsonValue, self.error.value.model_dump(mode="json"))
+        return value
+
+
+_ReportedSameField: _TypeAlias = _Literal["arguments", "result"]
+ConflictField: _TypeAlias = _Literal["server", "tool", "arguments", "result", "status"]
+
 
 class ReportedToolCall(_FrozenModel):
     provider_call_id: Observation[str] = _Field(default_factory=_not_emitted)
@@ -358,12 +378,18 @@ class ReportedToolCall(_FrozenModel):
     arguments: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     result: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
     status: Observation[str] = _Field(default_factory=_not_emitted)
+    # Fields whose harness value is byte-identical to the value reconstructible
+    # from the enclosing ToolCallEntry; they are not stored here.
+    same_as_call: tuple[_ReportedSameField, ...] = ()
 
-
-class EvidenceConflict(_FrozenModel):
-    field: _Literal["server", "tool", "arguments", "result", "status"]
-    reported: Observation[_JsonValue]
-    wire: Observation[_JsonValue]
+    @_model_validator(mode="after")
+    def _same_as_call_fields_are_elided(self) -> ReportedToolCall:
+        if list(self.same_as_call) != sorted(set(self.same_as_call)):
+            raise ValueError("same_as_call must be sorted and unique")
+        for field in self.same_as_call:
+            if getattr(self, field).state is not ObservationState.NOT_EMITTED:
+                raise ValueError(f"same_as_call field {field} must not be stored")
+        return self
 
 
 class ToolCallAttempt(_FrozenModel):
@@ -423,8 +449,23 @@ class ToolCallEntry(TraceEntryBase):
     server_latency_ms: Observation[float] = _Field(default_factory=_not_emitted)
     policy: Observation[_ToolPolicyDecision] = _Field(default_factory=_not_emitted)
     reported: Observation[ReportedToolCall] = _Field(default_factory=_not_emitted)
-    conflicts: tuple[EvidenceConflict, ...] = ()
+    # Fields where harness and wire evidence disagree; values are not copied.
+    conflicts: tuple[ConflictField, ...] = ()
     attempts: tuple[ToolCallAttempt, ...] = ()
+
+    def reported_field(self, field: _ReportedSameField) -> Observation[_JsonValue]:
+        """Return the harness value of a field, reconstructing elided ones."""
+        reported = self.reported.value
+        if reported is None:
+            return _not_emitted()
+        observation: Observation[_JsonValue] = getattr(reported, field)
+        if field not in reported.same_as_call:
+            return observation
+        if field == "arguments":
+            return self.arguments
+        result = self.result.value
+        assert result is not None
+        return Observation(state=ObservationState.OBSERVED, value=result.to_mcp_json())
 
 
 class ProtocolKind(str, _Enum):
@@ -951,7 +992,6 @@ for _model in (
     ReportedToolCall,
     ProtocolCallAttempt,
     ToolCallAttempt,
-    EvidenceConflict,
     ToolCallEntry,
     ProtocolErrorInfo,
     ProtocolEntry,
@@ -990,13 +1030,13 @@ __all__ = [
     "CaptureOptions",
     "ClaudeCodeTrace",
     "CodexTrace",
+    "ConflictField",
     "CorrelationState",
     "DiagnosticEntry",
     "DirectTrace",
     "ElicitationEntry",
     "EvaluationEntry",
     "EvidenceCapture",
-    "EvidenceConflict",
     "HttpExchange",
     "InitializationEntry",
     "InitializationValue",

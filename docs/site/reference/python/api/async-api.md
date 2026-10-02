@@ -2031,6 +2031,15 @@ Model fields:
 | `sandbox` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `usage` | `m3.observability.Observation[m3.observability.UsageValue]` | No | `factory m3.observability._not_emitted()` | — | — |
 
+## `ConflictField`
+
+```python
+m3.async_api.ConflictField(
+    *args,
+    **kwargs,
+)
+```
+
 ## `CorrelationState`
 
 ```python
@@ -2261,25 +2270,6 @@ Model fields:
 | `stored_size_bytes` | `int` | Yes | — | `ge=0` | — |
 | `redacted` | `bool` | Yes | — | — | — |
 | `truncated` | `bool` | Yes | — | — | — |
-
-## `EvidenceConflict`
-
-```python
-m3.async_api.EvidenceConflict(
-    *,
-    field: Literal['server', 'tool', 'arguments', 'result', 'status'],
-    reported: m3.observability.Observation[JsonValue],
-    wire: m3.observability.Observation[JsonValue],
-) -> None
-```
-
-Model fields:
-
-| Field | Type | Required | Default | Constraints | Description |
-| --- | --- | --- | --- | --- | --- |
-| `field` | `Literal['server', 'tool', 'arguments', 'result', 'status']` | Yes | — | — | — |
-| `reported` | `m3.observability.Observation[JsonValue]` | Yes | — | — | — |
-| `wire` | `m3.observability.Observation[JsonValue]` | Yes | — | — | — |
 
 ## `HttpExchange`
 
@@ -3040,6 +3030,7 @@ m3.async_api.ReportedToolCall(
     arguments: m3.observability.Observation[JsonValue] = ...,
     result: m3.observability.Observation[JsonValue] = ...,
     status: m3.observability.Observation[str] = ...,
+    same_as_call: tuple[Literal['arguments', 'result'], ...] = (),
 ) -> None
 ```
 
@@ -3053,6 +3044,7 @@ Model fields:
 | `arguments` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `result` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `status` | `m3.observability.Observation[str]` | No | `factory m3.observability._not_emitted()` | — | — |
+| `same_as_call` | `tuple[Literal['arguments', 'result'], ...]` | No | `()` | — | — |
 
 ## `RuntimeTraceInfo`
 
@@ -3148,7 +3140,7 @@ m3.async_api.ToolCallEntry(
     server_latency_ms: m3.observability.Observation[float] = ...,
     policy: m3.observability.Observation[m3.policy.ToolPolicyDecision] = ...,
     reported: m3.observability.Observation[m3.observability.ReportedToolCall] = ...,
-    conflicts: tuple[m3.observability.EvidenceConflict, ...] = (),
+    conflicts: tuple[Literal['server', 'tool', 'arguments', 'result', 'status'], ...] = (),
     attempts: tuple[m3.observability.ToolCallAttempt, ...] = (),
 ) -> None
 ```
@@ -3183,8 +3175,16 @@ Model fields:
 | `server_latency_ms` | `m3.observability.Observation[float]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `policy` | `m3.observability.Observation[m3.policy.ToolPolicyDecision]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `reported` | `m3.observability.Observation[m3.observability.ReportedToolCall]` | No | `factory m3.observability._not_emitted()` | — | — |
-| `conflicts` | `tuple[m3.observability.EvidenceConflict, ...]` | No | `()` | — | — |
+| `conflicts` | `tuple[Literal['server', 'tool', 'arguments', 'result', 'status'], ...]` | No | `()` | — | — |
 | `attempts` | `tuple[m3.observability.ToolCallAttempt, ...]` | No | `()` | — | — |
+
+```python
+reported_field(
+    self,
+    field: _ReportedSameField,
+) -> Observation[_JsonValue]
+```
+Return the harness value of a field, reconstructing elided ones.
 
 ## `ToolCallStatus`
 
@@ -3222,6 +3222,13 @@ Model fields:
 | `structured_content` | `m3.observability.Observation[JsonValue]` | No | `factory m3.observability._not_emitted()` | — | — |
 | `is_error` | `bool` | No | `False` | — | — |
 | `error` | `m3.observability.Observation[m3.types.ErrorInfo]` | No | `factory m3.observability._not_emitted()` | — | — |
+
+```python
+to_mcp_json(
+    self,
+) -> _JsonValue
+```
+Return the MCP-shaped JSON projection of this result.
 
 ## `TraceEntry`
 

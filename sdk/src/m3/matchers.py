@@ -430,11 +430,11 @@ def _source_projection(entry: _ToolCallEntry, evidence: str) -> dict[str, _Any] 
         return None
     assert source is not None
     status = _observation_value(source.status)
-    result = _observation_value(source.result)
+    result = _observation_value(entry.reported_field("result"))
     return {
         "server": _observation_value(source.server),
         "tool": _observation_value(source.tool),
-        "arguments": _observation_value(source.arguments),
+        "arguments": _observation_value(entry.reported_field("arguments")),
         "result": _reported_result_projection(result),
         "status": getattr(status, "value", status),
         "latency_ms": _UNAVAILABLE,

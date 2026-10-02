@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from math import isfinite
@@ -17,13 +18,13 @@ from ..observability import (
     ArtifactEntry,
     ClaudeCodeTrace,
     CodexTrace,
+    ConflictField,
     CorrelationState,
     DiagnosticEntry,
     DirectTrace,
     ElicitationEntry,
     EvaluationEntry,
     EvidenceCapture,
-    EvidenceConflict,
     InitializationEntry,
     InitializationValue,
     InteractionEntry,
@@ -346,7 +347,7 @@ def _merge_tool_evidence(reported: ToolCallEntry, wire: ToolCallEntry) -> ToolCa
 
 def _tool_evidence_conflicts(
     reported: ToolCallEntry, wire: ToolCallEntry
-) -> tuple[EvidenceConflict, ...]:
+) -> tuple[ConflictField, ...]:
     if reported.reported.state is not ObservationState.OBSERVED:
         return ()
     reported_value = reported.reported.value
@@ -354,7 +355,7 @@ def _tool_evidence_conflicts(
         return ()
     wire_result = wire.result
     if wire_result.state is ObservationState.OBSERVED and wire_result.value is not None:
-        wire_result_observation = _observed(_tool_result_projection(wire_result.value))
+        wire_result_observation = _observed(wire_result.value.to_mcp_json())
     else:
         wire_result_observation = _unavailable(
             ObservationReason.CORRELATION_UNAVAILABLE
@@ -372,13 +373,7 @@ def _tool_evidence_conflicts(
             ToolCallStatus.TIMED_OUT,
         }
     )
-    pairs: list[
-        tuple[
-            Literal["server", "tool", "arguments", "result", "status"],
-            Observation[Any],
-            Observation[Any],
-        ]
-    ] = [
+    pairs: list[tuple[ConflictField, Observation[Any], Observation[Any]]] = [
         ("server", reported_value.server, wire.server),
         ("tool", reported_value.tool, wire.tool),
         ("arguments", reported_value.arguments, wire.arguments),
@@ -394,7 +389,7 @@ def _tool_evidence_conflicts(
                 ),
             )
         )
-    conflicts: list[EvidenceConflict] = []
+    conflicts: list[ConflictField] = []
     for field, left, right in pairs:
         if (
             left.state is ObservationState.OBSERVED
@@ -406,24 +401,56 @@ def _tool_evidence_conflicts(
                 else right.value,
             )
         ):
-            conflicts.append(EvidenceConflict(field=field, reported=left, wire=right))
+            conflicts.append(field)
     return tuple(conflicts)
 
 
-def _tool_result_projection(result: ToolResult) -> JsonValue:
-    value: dict[str, JsonValue] = {
-        "content": [block.model_dump(mode="json") for block in result.content]
-    }
-    if result.structured_content.state is ObservationState.OBSERVED:
-        value["structuredContent"] = result.structured_content.value
-    if result.is_error:
-        value["isError"] = True
+def _elide_reported_duplicates(entry: TraceEntry) -> TraceEntry:
+    """Drop harness-reported values the entry already holds byte-for-byte."""
+    if not isinstance(entry, ToolCallEntry):
+        return entry
+    reported = entry.reported.value
+    if entry.reported.state is not ObservationState.OBSERVED or reported is None:
+        return entry
+    same: list[Literal["arguments", "result"]] = []
+    if _same_canonical_json(reported.arguments, entry.arguments):
+        same.append("arguments")
+    entry_result = entry.result.value
     if (
-        result.error.state is ObservationState.OBSERVED
-        and result.error.value is not None
+        entry.result.state is ObservationState.OBSERVED
+        and entry_result is not None
+        and _same_canonical_json(reported.result, _observed(entry_result.to_mcp_json()))
     ):
-        value["error"] = cast(JsonValue, result.error.value.model_dump(mode="json"))
-    return value
+        same.append("result")
+    if not same:
+        return entry
+    elided = reported.model_copy(
+        update={
+            **{field: _not_emitted() for field in same},
+            "same_as_call": tuple(same),
+        }
+    )
+    return entry.model_copy(
+        update={"reported": entry.reported.model_copy(update={"value": elided})}
+    )
+
+
+def _same_canonical_json(left: Observation[Any], right: Observation[Any]) -> bool:
+    """Compare observed JSON by canonical text, so 1, 1.0 and true all differ."""
+    return (
+        left.state is ObservationState.OBSERVED
+        and right.state is ObservationState.OBSERVED
+        and _canonical_json(left.value) == _canonical_json(right.value)
+    )
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        _thaw_json(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
 
 
 def _json_equal(left: Any, right: Any) -> bool:
@@ -2556,6 +2583,7 @@ class TraceProjector:
         )
         projected = TraceProjector._correlate_reported_wire(projected)
         projected = _elicitation_entries(projected, events_by_sequence)
+        projected = tuple(_elide_reported_duplicates(entry) for entry in projected)
         return tuple(
             sorted(
                 projected,
