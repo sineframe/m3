@@ -27,6 +27,24 @@ the scoped `KIND:TARGET=SOURCE` form. Only names belong in flags and code.
 For a judge key under a different name, use
 `--credential-env judge:M3_JUDGE_API_KEY=SOURCE`.
 
+## Authenticate an upload
+
+Upload results only when the user requests it. For a local upload, the CLI uses
+the CLI credential saved in the operating-system credential store by
+`m3 auth login`. If `M3_ACCESS_TOKEN` is present in the environment, it takes
+precedence over that saved credential and must contain a CI token created in
+the M3 account console.
+When `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` is truthy, set
+`M3_ACCESS_TOKEN`; the CLI does not fall back to the interactive credential
+store.
+
+Keep upload authentication separate from provider keys such as
+`OPENAI_API_KEY` and from the judge key, `M3_JUDGE_API_KEY`. `m3 auth logout`
+revokes and removes only the saved local CLI credential. It does not act on
+`M3_ACCESS_TOKEN`. See
+[Manage M3 access](https://m3.sineframe.com/docs/guides/ci/access) for
+login, status, logout, and CI token setup.
+
 Choose server cases with the marker's `servers=[...]` or grouped CLI flags:
 
 ```bash

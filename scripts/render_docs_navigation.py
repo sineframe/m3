@@ -11,6 +11,18 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "docs" / "site"
 OUTPUT = SITE / "navigation.json"
+
+
+def page_id(source: str) -> str:
+    if source == "index.md":
+        return "home"
+    path = PurePosixPath(source)
+    parts = list(path.with_suffix("").parts)
+    if parts[-1] == "index":
+        parts.pop()
+    return "-".join(parts)
+
+
 NAVIGATION = [
     {
         "title": "Getting started",
@@ -136,7 +148,18 @@ NAVIGATION = [
                     "reference-python-m3-testing",
                     "reference-python-m3-storage",
                     "reference-python-m3-errors",
-                    "reference-python-api",
+                    {
+                        "title": "API inventory",
+                        "items": [
+                            "reference-python-api",
+                            *[
+                                page_id(path.relative_to(SITE).as_posix())
+                                for path in sorted(
+                                    (SITE / "reference" / "python" / "api").glob("*.md")
+                                )
+                            ],
+                        ],
+                    },
                 ],
             },
             "reference-pytest",
@@ -189,16 +212,6 @@ ALIASES = {
     "guides-ci-publish": ["upload failed", "retry upload"],
     "reference-configuration": ["env file"],
 }
-
-
-def page_id(source: str) -> str:
-    if source == "index.md":
-        return "home"
-    path = PurePosixPath(source)
-    parts = list(path.with_suffix("").parts)
-    if parts[-1] == "index":
-        parts.pop()
-    return "-".join(parts)
 
 
 def metadata(text: str, source: str) -> tuple[str, str, str]:

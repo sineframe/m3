@@ -172,9 +172,9 @@
     },
     {
       "id": "guides-ci-access",
-      "title": "Manage access tokens",
+      "title": "Manage M3 access",
       "source": "guides/ci/access.md",
-      "description": "Run m3 auth login on a computer with a browser. The login page lets you manage organization access and tokens; the CLI receives a one-use authorization result and can save a developer token in the operating-system credential store.",
+      "description": "Use device authorization for local uploads, or create and store a separate CI token for automated uploads.",
       "kind": "guides"
     },
     {
@@ -418,10 +418,136 @@
       ]
     },
     {
+      "id": "reference-python-api-aggregations",
+      "title": "m3.aggregations",
+      "source": "reference/python/api/aggregations.md",
+      "description": "Public Python API reference for m3.aggregations.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-async-api",
+      "title": "m3.async_api",
+      "source": "reference/python/api/async-api.md",
+      "description": "Public Python API reference for m3.async_api.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-elicitation",
+      "title": "m3.elicitation",
+      "source": "reference/python/api/elicitation.md",
+      "description": "Public Python API reference for m3.elicitation.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-errors",
+      "title": "m3.errors",
+      "source": "reference/python/api/errors.md",
+      "description": "Public Python API reference for m3.errors.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-evaluations",
+      "title": "m3.evaluations",
+      "source": "reference/python/api/evaluations.md",
+      "description": "Public Python API reference for m3.evaluations.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-judges",
+      "title": "m3.judges",
+      "source": "reference/python/api/judges.md",
+      "description": "Public Python API reference for m3.judges.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-m3",
+      "title": "m3",
+      "source": "reference/python/api/m3.md",
+      "description": "Public Python API reference for m3.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-managed-input-api",
+      "title": "m3.managed_input_api",
+      "source": "reference/python/api/managed-input-api.md",
+      "description": "Public Python API reference for m3.managed_input_api.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-matchers",
+      "title": "m3.matchers",
+      "source": "reference/python/api/matchers.md",
+      "description": "Public Python API reference for m3.matchers.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-matrix",
+      "title": "m3.matrix",
+      "source": "reference/python/api/matrix.md",
+      "description": "Public Python API reference for m3.matrix.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-observability",
+      "title": "m3.observability",
+      "source": "reference/python/api/observability.md",
+      "description": "Public Python API reference for m3.observability.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-policy",
+      "title": "m3.policy",
+      "source": "reference/python/api/policy.md",
+      "description": "Public Python API reference for m3.policy.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-pytest-plugin",
+      "title": "m3.pytest_plugin",
+      "source": "reference/python/api/pytest-plugin.md",
+      "description": "Public Python API reference for m3.pytest_plugin.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-snapshots",
+      "title": "m3.snapshots",
+      "source": "reference/python/api/snapshots.md",
+      "description": "Public Python API reference for m3.snapshots.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-storage",
+      "title": "m3.storage",
+      "source": "reference/python/api/storage.md",
+      "description": "Public Python API reference for m3.storage.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-sync-api",
+      "title": "m3.sync_api",
+      "source": "reference/python/api/sync-api.md",
+      "description": "Public Python API reference for m3.sync_api.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-testing",
+      "title": "m3.testing",
+      "source": "reference/python/api/testing.md",
+      "description": "Public Python API reference for m3.testing.",
+      "kind": "reference"
+    },
+    {
+      "id": "reference-python-api-types",
+      "title": "m3.types",
+      "source": "reference/python/api/types.md",
+      "description": "Public Python API reference for m3.types.",
+      "kind": "reference"
+    },
+    {
       "id": "reference-python-api",
       "title": "Python API inventory",
       "source": "reference/python/api.md",
-      "description": "Exact signatures, model fields, and public members for the documented release. The capability pages explain how these objects work together.",
+      "description": "Callable signatures, model fields, and public members for the documented release. The capability pages explain how these objects work together.",
       "kind": "reference"
     },
     {
@@ -683,7 +809,30 @@
             "reference-python-m3-testing",
             "reference-python-m3-storage",
             "reference-python-m3-errors",
-            "reference-python-api"
+            {
+              "title": "API inventory",
+              "items": [
+                "reference-python-api",
+                "reference-python-api-aggregations",
+                "reference-python-api-async-api",
+                "reference-python-api-elicitation",
+                "reference-python-api-errors",
+                "reference-python-api-evaluations",
+                "reference-python-api-judges",
+                "reference-python-api-m3",
+                "reference-python-api-managed-input-api",
+                "reference-python-api-matchers",
+                "reference-python-api-matrix",
+                "reference-python-api-observability",
+                "reference-python-api-policy",
+                "reference-python-api-pytest-plugin",
+                "reference-python-api-snapshots",
+                "reference-python-api-storage",
+                "reference-python-api-sync-api",
+                "reference-python-api-testing",
+                "reference-python-api-types"
+              ]
+            }
           ]
         },
         "reference-pytest",
