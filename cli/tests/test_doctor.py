@@ -66,6 +66,27 @@ def test_doctor_selected_env_file_and_ambient_precedence(
     assert settings["sources"]["artifact_policy"]["source"] == "environment"
 
 
+def test_doctor_discovers_project_root_env(tmp_path: Path, monkeypatch, capsys) -> None:
+    (tmp_path / ".env").write_text("M3_ARTIFACT_POLICY=always\n", encoding="utf-8")
+    monkeypatch.delenv("M3_ARTIFACT_POLICY", raising=False)
+
+    assert (
+        main(
+            [
+                "doctor",
+                "--require",
+                "config",
+                "--project-root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["configuration"]["settings"]["artifact_policy"] == "always"
+
+
 def test_doctor_rejects_invalid_requirement_without_echoing_input(capsys) -> None:
     secret = "secret-token-value"
     assert main(["doctor", "--require", secret]) == 2

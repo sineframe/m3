@@ -4,7 +4,7 @@ Run this separately from the deterministic catalog:
 
     set -a; source .env; set +a
     M3_RUN_LIVE_OPENCODE=1 uv run --project cli m3 test \
-      --env-file .env --harness opencode=opencode/big-pickle -- \
+      --harness opencode=opencode/big-pickle -- \
       -q sdk/examples/tests/test_live_opencode.py
 
 The provider response is nondeterministic and may incur cost. The assertion

@@ -53,7 +53,6 @@ def test_init_creates_project_identity_and_one_collectable_starter(
         "M3_JUDGE_API_KEY",
     ):
         assert f"{name}=\n" in template
-    assert "--env-file .env" in output.out
     assert not (tmp_path / ".env").exists()
 
     starter = tmp_path / "tests" / "test_m3_starter.py"

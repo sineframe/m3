@@ -44,8 +44,8 @@ reference before writing code instead of relying on memory, and use
 - An agent saying that it used a tool is not evidence. Use the recorded tool
   calls.
 - Keep secrets out of tests, commands, and reports. Refer to keys by variable
-  name, keep `.env` out of Git, and pass `--env-file .env` to `m3 test` when
-  keys are needed.
+  name, and keep `.env` out of Git. `m3 test` loads the project root `.env`
+  automatically; pass `--env-file PATH` only for a custom file.
 - Upload results only when the user asks.
 - If `m3 doctor` reports that the command and the project SDK do not match,
   run `m3 setup`. Do not work around the mismatch.

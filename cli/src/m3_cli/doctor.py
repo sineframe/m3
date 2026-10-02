@@ -211,7 +211,6 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
         kind == "config" for kind, _ in requirements
     ):
         raise DoctorArgumentError("--env-file requires a config requirement")
-    environment = _read_selected_environment(args.env_file)
     if args.project_root is not None:
         try:
             if not args.project_root.is_dir():
@@ -222,11 +221,17 @@ def run(args: Any) -> tuple[int, dict[str, Any]]:
     project_python: dict[str, Any] | None = None
     from .supervisor import (
         ProjectPythonError,
+        discover_env_file,
         resolve_project_python,
         validate_project_python,
     )
 
     root = (args.project_root or Path.cwd()).resolve()
+    environment = (
+        _read_selected_environment(discover_env_file(args.env_file, root))
+        if any(kind == "config" for kind, _ in requirements)
+        else None
+    )
     try:
         cli_version = importlib.metadata.version("sf-m3-cli")
         bundled_sdk_version = importlib.metadata.version("sf-m3")

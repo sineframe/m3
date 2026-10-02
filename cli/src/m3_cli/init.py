@@ -257,7 +257,7 @@ def run(args: object) -> int:
     print(
         "For agent or judge tests, add the keys you use to .env (copy .env.example if needed)."
     )
-    print("Pass --env-file .env to m3 test to load those keys.")
+    print("m3 test loads .env from the project root automatically.")
     print("Then implement and unskip the test, and run:")
     print(f"  m3 test --suite {suite_name} -- tests/test_m3_starter.py")
     return 0
