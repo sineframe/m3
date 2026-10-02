@@ -1,276 +1,82 @@
 # Releasing M3
 
-M3 publishes a CLI whose interactive and CI credentials have separate
-lifecycles. `m3 auth login` obtains a 30-day `kind=cli` PAT through the hosted
-device authorization flow and saves it in a supported operating-system
-credential store. The account console creates copy-once `kind=ci` PATs for
-`M3_ACCESS_TOKEN`. When `CI`, `GITHUB_ACTIONS`, or `GITLAB_CI` is truthy, the
-CLI does not read the interactive keyring. `m3 auth logout` does not act on
-`M3_ACCESS_TOKEN`.
-
 CLI releases must contain no Firebase or Supabase SDKs, provider configuration,
-project URLs or keys, browser access or refresh tokens, or service credentials.
-M3 PATs are the only credentials used for API uploads. Release verification
-scans every archive member in the SDK, application, and CLI wheels for
-Firebase or Supabase code and configuration markers, Google or Firebase API
-keys, Supabase key prefixes, PEM private keys including service-account JSON,
-and recognizable provider or browser JWT credentials. No wheel, directory,
-filename extension, or metadata member is exempt.
+project URLs or keys, browser ID/access/refresh tokens, or service credentials.
+M3 personal access tokens are the only credentials used for API uploads.
 
-All three wheels reject direct Firebase and Supabase requirements, including
-extra-marked and platform-marked requirements, so an SDK or application wheel
-cannot add one directly to a CLI installation. This policy does not resolve
-arbitrary third-party dependency trees and cannot detect every obfuscated or
-opaque credential. Never bundle a live credential.
+Release verification scans every archive member in the SDK, application, and
+CLI wheels for Firebase/Supabase code and configuration markers, Google/Firebase
+API keys, Supabase key prefixes, PEM private keys (including service-account
+JSON), and recognizable provider/browser JWT credentials. No wheel, directory,
+filename extension, or metadata member is exempt. Signature verification
+and expiry are irrelevant to detecting a bundled credential. Recognizable
+JWTs whose JSON exceeds safe inspection limits fail closed. All three
+wheels reject direct Firebase/Supabase provider requirements, including extra-
+and platform-marked requirements, so SDK/application wheel requirements cannot
+silently add them to a CLI installation. This is a conservative artifact
+policy, not a resolver for arbitrary third-party dependencies from PyPI.
 
-## Coordinated authentication release smoke
+Firebase JWT detection uses the documented
+[ID-token issuer](https://firebase.google.com/docs/auth/admin/verify-id-tokens),
+[session-cookie issuer](https://firebase.google.com/docs/auth/admin/manage-cookies),
+and [custom-token audience](https://firebase.google.com/docs/auth/admin/create-custom-tokens).
+Service-account JSON embeds a sensitive private key; PEM private keys are
+rejected even without Firebase-specific filenames or project metadata. Public
+keys and unrelated JWTs are allowed. These static signatures do not guarantee
+detection of obfuscated or opaque credentials; never bundle live credentials.
 
-Run this checklist when releasing the device authorization change or changing
-its control-plane or account-console contract. The observable result is a
-matched control-plane, console, and CLI release that can issue, validate, use,
-and revoke a CLI credential without changing an independent CI credential.
+## Sign-in and upload smoke test
 
-### Requirements
+Before publishing a CLI release, check sign-in and both upload credentials
+against the deployed control plane and M3 account console. Use a controlled
+account that belongs to an organization, on a machine with a browser and a
+supported OS credential store.
 
-- Deploy the control-plane revision containing
-  [`sineframe/control-plane#15`](https://github.com/sineframe/control-plane/pull/15)
-  with all migrations applied.
-- Deploy the account-console revision containing
-  [`rishhavv/m3-ui#62`](https://github.com/rishhavv/m3-ui/pull/62), including
-  its `/cli/authorize` route and exact control-plane proxies.
-- Stage the version-matched `sf-m3`, `sf-m3-app`, and `sf-m3-cli` candidate
-  wheels and their resolved dependency wheels in one directory. Use an
-  absolute path to the exact CLI wheel.
-- Use a machine with `uv`, a POSIX shell, a supported OS credential store, and
-  a browser. On Windows, translate the shell functions and environment
-  handling to PowerShell without changing the credential boundaries.
-- Use a controlled account with an active organization. Create a disposable CI
-  token for that organization and inject it into the shell as
-  `M3_ACCESS_TOKEN` through the operator's secret manager. Do not paste it into
-  commands, history, logs, issue comments, or release evidence.
-
-From the M3 repository root, configure the staged artifacts and the deterministic
-smoke project:
-
-```sh
-export M3_RELEASE_DIST="${M3_RELEASE_DIST:?set the absolute staged-wheel directory}"
-export M3_CLI_WHEEL="${M3_CLI_WHEEL:?set the absolute sf-m3-cli candidate wheel}"
-export M3_SDK_WHEEL="${M3_SDK_WHEEL:?set the absolute sf-m3 candidate wheel}"
-export M3_SMOKE_PROJECT="$PWD/sdk/examples/docs/first-test"
-
-case "$M3_RELEASE_DIST:$M3_CLI_WHEEL:$M3_SDK_WHEEL:$M3_SMOKE_PROJECT" in
-  /*:/*:/*:/*) ;;
-  *) printf '%s\n' "release and smoke paths must be absolute" >&2; exit 2 ;;
-esac
-test -d "$M3_RELEASE_DIST"
-test -f "$M3_CLI_WHEEL"
-test -f "$M3_SDK_WHEEL"
-test -f "$M3_SMOKE_PROJECT/tests/test_m3_starter.py"
-
-m3_candidate() {
-  uv run --isolated --no-project --no-index \
-    --find-links "$M3_RELEASE_DIST" \
-    --with "$M3_CLI_WHEEL" m3 "$@"
-}
-
-m3_local() {
-  (
-    unset M3_ACCESS_TOKEN
-    m3_candidate "$@"
-  )
-}
-```
-
-The `--no-index` candidate wrapper prevents an `m3` executable or M3 wheel from
-being substituted from a package index. `M3_RELEASE_DIST` must contain the
-version-matched first-party wheels and every dependency wheel needed to create
-the isolated candidate environment.
-
-For a non-production deployment, set the two public origins explicitly:
-
-```sh
-export M3_CONTROL_PLANE_URL="${CONTROL_PLANE_ORIGIN:?set the deployed control-plane HTTPS origin}"
-export M3_AUTH_URL="${AUTH_ORIGIN:?set the deployed account-console HTTPS origin}"
-```
-
-Both values must be strict HTTPS origins, with no path, query, fragment,
-userinfo, or ambiguous host spelling. `M3_AUTH_URL` must exactly match the
-control plane's deployed `CONSOLE_ORIGIN` after default HTTPS-port
-normalization. `M3_CONTROL_PLANE_URL` must identify that console deployment's
-matching control plane. The two origins do not need to use the same hostname.
-Production uses the candidate's default origins unless the production
-deployment contract says otherwise.
-
-### Automated evidence before the live smoke
-
-Run each command from a clean checkout of the named repository.
-
-From the M3 repository root:
-
-```sh
-uv run --project cli --group test pytest \
-  cli/tests/test_auth.py cli/tests/test_ci_credentials.py
-```
-
-From the control-plane repository root:
-
-```sh
-go test -count=1 ./...
-go vet ./...
-go build ./...
-```
-
-From the `m3-ui` repository root:
-
-```sh
-npm ci
-npm test
-npm run typecheck
-npm run lint
-npm run build
-```
-
-Record failures and environment-gated skips as limits. Passing mocked CLI,
-handler, database, or browser tests is not evidence that hosted routing,
-Supabase policy, trusted client-IP configuration, the local keyring, and
-revocation work together.
-
-### Live coordinated smoke
-
-1. Confirm the control plane reports ready. Inspect deployment configuration
-   without printing secrets. Confirm its console origin matches `M3_AUTH_URL`,
-   its allowed browser origin includes that console, and its trusted client-IP
-   header is supplied and overwritten by the actual edge proxy.
+1. Install the candidate CLI from the staged release wheels:
 
    ```sh
-   curl --fail --silent --show-error \
-     "${M3_CONTROL_PLANE_URL}/readyz" >/dev/null
+   uv tool install --force --no-index --find-links DIST_DIR DIST_DIR/sf_m3_cli-VERSION-py3-none-any.whl
    ```
 
-2. Remove any old disposable local CLI credential. If logout reports a remote
-   error, stop and resolve it. Do not treat deletion of keyring state by hand
-   as revocation.
+   For a non-production deployment, set `M3_CONTROL_PLANE_URL` and
+   `M3_AUTH_URL` to its HTTPS origins. `M3_AUTH_URL` must match the console
+   origin that the control plane is configured to use.
+
+2. From a project with a passing M3 test, and with `M3_ACCESS_TOKEN` unset,
+   sign in and upload with the CLI credential:
 
    ```sh
-   m3_local auth logout
+   m3 auth login
+   m3 auth status
+   m3 ci test --upload
    ```
 
-3. Prepare one uploadable run with the staged SDK wheel. The temporary project
-   environment uses the exact candidate SDK artifact while resolving its
-   third-party test dependencies normally:
+   Approve the request in the browser after checking that the code matches the
+   terminal. `m3 auth status` must report a valid CLI credential, and the
+   upload must succeed.
+
+3. Sign out and confirm that the local credential is gone:
 
    ```sh
-   export M3_SMOKE_ENV="$(mktemp -d)/venv"
-   uv venv "$M3_SMOKE_ENV"
-   uv pip install --python "$M3_SMOKE_ENV/bin/python" \
-     --find-links "$M3_RELEASE_DIST" \
-     "$M3_SDK_WHEEL[pytest,storage]"
-
-   M3_CI_OUTPUT="$(
-     m3_local ci test \
-       --project-root "$M3_SMOKE_PROJECT" \
-       --python "$M3_SMOKE_ENV/bin/python" \
-       -- tests/test_m3_starter.py
-   )" || {
-     printf '%s\n' "$M3_CI_OUTPUT"
-     exit 1
-   }
-   printf '%s\n' "$M3_CI_OUTPUT"
-   test "$(printf '%s\n' "$M3_CI_OUTPUT" | awk '/^Run ID: / { count++ } END { print count+0 }')" -eq 1
-   export RUN_ID="$(
-     printf '%s\n' "$M3_CI_OUTPUT" |
-       awk -F ': ' '/^Run ID: / { print $2 }'
-   )"
-   test -n "$RUN_ID"
+   m3 auth logout
+   m3 auth status
    ```
 
-   Keep the default database and `.m3/reports` state under
-   `M3_SMOKE_PROJECT`. Do not pass `--results-db`, move the report, or delete
-   that state before both upload checks finish.
+   `m3 auth status` must report that no local CLI credential is configured.
 
-4. Run the interactive flow with no environment-provided CI token:
+4. Create a short-lived CI token on the organization's **CI tokens** page in
+   the M3 account console. Export it as `M3_ACCESS_TOKEN` from a secret
+   manager, without pasting it into a command line, and upload again:
 
    ```sh
-   m3_local auth login
-   m3_local auth status
-   m3_local upload "$RUN_ID" --project-root "$M3_SMOKE_PROJECT"
+   m3 ci test --upload
    ```
 
-   In the browser, confirm that the sign-in page is on `M3_AUTH_URL`, the user
-   code matches the terminal, the device and CLI metadata are expected, and
-   the selected organization is correct before approving. Confirm that status
-   validates the saved CLI credential online and that the upload completes.
-   Do not record the user code, PAT, browser session, or response headers.
+   The upload must succeed with the CI token. Revoke the token on the
+   **CI tokens** page afterward.
 
-5. Use the exact candidate wheel to retain the saved CLI bearer only in memory,
-   call logout, and require the same bearer to receive HTTP 401. The probe does
-   not put the bearer in arguments, environment variables, files, or output:
-
-   ```sh
-   env -u M3_ACCESS_TOKEN uv run --isolated --no-project --no-index \
-     --find-links "$M3_RELEASE_DIST" \
-     --with "$M3_CLI_WHEEL" python - <<'PY'
-   import urllib.error
-   import urllib.request
-
-   from m3_cli.auth import control_plane_url, load_saved_token, logout
-
-   class NoRedirect(urllib.request.HTTPRedirectHandler):
-       def redirect_request(self, *args, **kwargs):
-           return None
-
-   base = control_plane_url()
-   token = load_saved_token(base)
-   if token is None:
-       raise SystemExit("no saved CLI credential before logout check")
-   if logout() != 0:
-       raise SystemExit("CLI logout failed")
-
-   request = urllib.request.Request(
-       base + "/v1/cli/session",
-       headers={
-           "Accept": "application/json",
-           "Authorization": "Bearer " + token,
-           "Cache-Control": "no-store",
-       },
-   )
-   try:
-       urllib.request.build_opener(NoRedirect()).open(
-           request, timeout=20
-       ).close()
-   except urllib.error.HTTPError as response:
-       status = response.code
-       response.close()
-       if status != 401:
-           raise SystemExit(f"revocation probe returned HTTP {status}")
-   except (urllib.error.URLError, TimeoutError, OSError):
-       raise SystemExit("revocation probe could not reach the control plane") from None
-   else:
-       raise SystemExit("revoked CLI credential was still accepted")
-   PY
-   ```
-
-6. Confirm local removal, then prove that the separate CI token still works:
-
-   ```sh
-   m3_local auth status
-   test -n "${M3_ACCESS_TOKEN:-}"
-   m3_candidate auth logout
-   m3_candidate upload "$RUN_ID" --project-root "$M3_SMOKE_PROJECT"
-   ```
-
-   Status must report no local CLI credential. Logout with only
-   `M3_ACCESS_TOKEN` present must not revoke or remove that environment
-   credential. The repeated upload must complete with the CI token. Revoke the
-   disposable CI token in the console after the smoke, unset
-   `M3_ACCESS_TOKEN`, and remove `M3_SMOKE_ENV` without printing either secret.
-
-Record the candidate versions, wheel hashes, source revisions, deployed
-origins, OS, credential-store backend, identity provider, organization
-fixture, commands, exit codes, and UTC date. Record only token IDs or redacted
-metadata if needed, never a PAT, device code, browser credential, or CI secret.
-If any live step was not run, state that exact limit. The automated suites and
-the coordinated PR results do not constitute live hosted verification.
+Record the candidate version, OS, credential store, and date. Never record a
+token, device code, or browser session.
 
 M3 publishes version matched `sf-m3`, `sf-m3-app`, and `sf-m3-cli` wheels to PyPI. The `m3` Python import and `m3` command remain stable public interfaces. The tag controls whether a GitHub Release is final or a prerelease: `v0.2.0` is final and `v0.3.0a1` is an alpha.
 
