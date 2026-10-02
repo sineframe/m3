@@ -40,10 +40,22 @@ manifest reports; persistence failures have `kind: "persistence"` and
 filtering on one set of fields. An `executions[].outcome` value of `completed`
 describes lifecycle only.
 
-File maps are relative to the report directory: `trace_files`,
-`execution_files`, `spec_files`, `catalog_files`, `diagnostic_files`,
-`test_run_files`, and `test_result_files`. `unavailable_references` lists
-references that could not be included.
+File maps are relative to the report directory. Each maps an ID to a file
+path; a map is `{}` when the run has nothing of that kind:
+
+| Map | Key | File holds |
+| --- | --- | --- |
+| `execution_files` | execution ID | The execution report (`executions/`). |
+| `spec_files` | execution ID | The execution spec, when one was recorded (`specs/`). |
+| `catalog_files` | execution ID | Tool-catalog versions observed through `tools/list` (`catalogs/`). |
+| `trace_files` | execution ID | The trace view (`traces/`). |
+| `evidence_files` | evidence ID | Raw captured evidence referenced by trace events; truncated captures are listed in `unavailable_references` instead (`evidence/`). |
+| `artifact_files` | artifact ID | The bytes of each artifact recorded on the execution (`artifacts/`). |
+| `diagnostic_files` | attempt ID | Diagnostics attached to a test result (`diagnostics/`). |
+| `test_run_files` | run ID | The saved test-run manifest for this run and its baseline run, if any (`diagnostics/`). |
+| `test_result_files` | attempt ID | One saved test result per attempt (`diagnostics/`). |
+
+`unavailable_references` lists references that could not be included.
 
 Trace `timeline[]` entries use these shapes:
 
