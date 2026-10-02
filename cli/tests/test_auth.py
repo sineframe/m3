@@ -193,8 +193,8 @@ def test_login_reports_poll_error_without_secret(
         ),
     )
     monkeypatch.setattr(auth.time, "sleep", lambda _: None)
-    clock = iter((0.0, 0.0, 2.0))
-    monkeypatch.setattr(auth.time, "monotonic", lambda: next(clock, 2.0))
+    clock = iter((0.0, 0.0, 0.5))
+    monkeypatch.setattr(auth.time, "monotonic", lambda: next(clock, 0.5))
     assert auth.login() == 2
     output = capsys.readouterr()
     assert "access_denied" in output.err

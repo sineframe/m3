@@ -466,9 +466,7 @@ def login() -> int:
         )
         expires, interval = authorization["expires_in"], authorization["interval"]
         if (
-            not isinstance(code, str)
-            or not 1 <= len(code) <= 4096
-            or type(expires) is not int
+            type(expires) is not int
             or not 1 <= expires <= 3600
             or type(interval) is not int
             or not 1 <= interval <= 60
@@ -485,6 +483,8 @@ def login() -> int:
         deadline = time.monotonic() + expires
         while time.monotonic() < deadline:
             time.sleep(min(interval, max(0, deadline - time.monotonic())))
+            if time.monotonic() >= deadline:
+                break
             try:
                 result = _json_request(
                     base + "/v1/cli/device/token", "POST", {"device_code": code}
