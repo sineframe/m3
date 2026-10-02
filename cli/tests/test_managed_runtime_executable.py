@@ -78,7 +78,9 @@ def fake_runtime_server(tmp_path: Path):
         f"http://127.0.0.1:{server.server_port}/{asset.name}"
     )
     (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}/manifest.json", requests

@@ -38,7 +38,9 @@ def test_readiness_signal_does_not_contact_ambient_http_proxy(
             pass
 
     proxy_server = ThreadingHTTPServer(("127.0.0.1", 0), ProxyHandler)
-    proxy_thread = Thread(target=proxy_server.serve_forever, daemon=True)
+    proxy_thread = Thread(
+        target=proxy_server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     proxy_thread.start()
     proxy_url = f"http://127.0.0.1:{proxy_server.server_port}"
     monkeypatch.setenv("HTTP_PROXY", proxy_url)
@@ -99,7 +101,9 @@ def test_competing_listener_never_receives_launch_token_or_ui_link(
     port = released.getsockname()[1]
     released.close()
     competitor = ThreadingHTTPServer(("127.0.0.1", port), CompetingHandler)
-    competitor_thread = Thread(target=competitor.serve_forever, daemon=True)
+    competitor_thread = Thread(
+        target=competitor.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     competitor_thread.start()
 
     _use_fixture_ui_in_child(monkeypatch, Path(__file__).parent / "fixtures" / "ui")

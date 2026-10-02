@@ -169,7 +169,9 @@ def test_post_uses_json_and_retries_same_bytes():
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     try:
         _post(
@@ -197,7 +199,9 @@ def test_post_rejects_redirect_without_forwarding_token():
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     try:
         with pytest.raises(RuntimeError, match="upload failed"):
