@@ -132,14 +132,15 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
 _UPLOAD_LIMIT_BYTES = 16 * 1024 * 1024
 
 
-def test_correlated_five_mib_argument_upload_stays_below_the_limit(
-    tmp_path: Path,
+@pytest.mark.parametrize("field", ("arguments", "result"))
+def test_correlated_five_mib_value_upload_stays_below_the_limit(
+    tmp_path: Path, field: str
 ) -> None:
-    """The argument is held by the wire event, the harness event and the trace once."""
+    """A value is held by the wire event, the harness event and the trace once."""
     root = tmp_path.resolve()
     repository = Path(__file__).parents[2]
     fixture = repository / "sdk/tests/fixtures/matrix_stdio_server.py"
-    argument = "a" * (5 * 1024 * 1024)
+    large = "a" * (5 * 1024 * 1024)
     store = SQLiteExecutionStore(root / "results.sqlite")
     try:
         server = StdioServer(
@@ -170,15 +171,28 @@ def test_correlated_five_mib_argument_upload_stays_below_the_limit(
         response = next(
             e for e in wire.events if e.kind is EventKind.TOOL_RESULT_RECEIVED
         )
-        large_request = request.model_copy(
-            update={
-                "payload": {
-                    **request.payload,
-                    "params": {"name": "echo", "arguments": {"text": argument}},
-                },
-                "payload_ref": None,
-            }
-        )
+        large_request = request
+        large_response = response
+        if field == "arguments":
+            large_request = request.model_copy(
+                update={
+                    "payload": {
+                        **request.payload,
+                        "params": {"name": "echo", "arguments": {"text": large}},
+                    },
+                    "payload_ref": None,
+                }
+            )
+        else:
+            large_response = response.model_copy(
+                update={
+                    "payload": {
+                        **response.payload,
+                        "result": {"content": [{"type": "text", "text": large}]},
+                    },
+                    "payload_ref": None,
+                }
+            )
         provenance = EventSource(origin=EventOrigin.HARNESS_REPORTED, source="harness")
         sequence = wire.highest_sequence
         harness = [
@@ -188,14 +202,20 @@ def test_correlated_five_mib_argument_upload_stays_below_the_limit(
                     "event_id": EventId(f"harness-{offset}"),
                     "correlation": None,
                     "provenance": provenance,
+                    "payload": {**event.payload, "call_id": "harness-call"},
                     "payload_ref": None,
                 }
             )
-            for offset, event in enumerate((large_request, response))
+            for offset, event in enumerate((large_request, large_response))
         ]
         terminal = wire.events[-1].model_copy(update={"sequence": sequence + 2})
         events = tuple(
-            large_request if event is request else event for event in wire.events[:-1]
+            large_request
+            if event is request
+            else large_response
+            if event is response
+            else event
+            for event in wire.events[:-1]
         )
         trace = wire.model_copy(
             update={
@@ -207,7 +227,7 @@ def test_correlated_five_mib_argument_upload_stays_below_the_limit(
         (call,) = view.tool_calls
         assert call.correlation is CorrelationState.CORRELATED
         assert call.reported.value is not None
-        assert call.reported.value.same_as_call == ("arguments",)
+        assert field in call.reported.value.same_as_call
 
         entry = SimpleNamespace(
             report=report.model_copy(
@@ -223,10 +243,10 @@ def test_correlated_five_mib_argument_upload_stays_below_the_limit(
             control_plane._execution_payload(store, snapshot, entry, ())
         )
 
-        print(f"correlated 5 MiB execution body: {len(body)} bytes")
+        print(f"correlated 5 MiB {field} execution body: {len(body)} bytes")
         assert len(body) < _UPLOAD_LIMIT_BYTES
         envelope = json.loads(body)["report"]
-        assert json.dumps(envelope["trace"]).count(argument) == 1
-        assert json.dumps(envelope["report"]["events"]).count(argument) == 2
+        assert json.dumps(envelope["trace"]).count(large) == 1
+        assert json.dumps(envelope["report"]["events"]).count(large) == 2
     finally:
         store.close()

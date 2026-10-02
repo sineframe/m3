@@ -344,6 +344,20 @@ class CorrelationState(str, _Enum):
     UNAVAILABLE = "unavailable"
 
 
+def _mcp_content_block(block: _ContentBlock) -> _JsonValue:
+    """Spell one content block as MCP does; opaque blocks are their original JSON."""
+    dumped = block.model_dump(mode="json")
+    kind = dumped.pop("kind")
+    if kind == "opaque":
+        return _cast(_JsonValue, dumped["payload"])
+    media_type_key = "mediaType" if kind == "file" else "mimeType"
+    wire: dict[str, _JsonValue] = {"type": kind}
+    for key, item in dumped.items():
+        if item is not None:
+            wire[media_type_key if key == "media_type" else key] = item
+    return wire
+
+
 class ToolResult(_FrozenModel):
     content: tuple[_ContentBlock, ...] = ()
     structured_content: Observation[_JsonValue] = _Field(default_factory=_not_emitted)
@@ -351,9 +365,19 @@ class ToolResult(_FrozenModel):
     error: Observation[_ErrorInfo] = _Field(default_factory=_not_emitted)
 
     def to_mcp_json(self) -> _JsonValue:
-        """Return the MCP-shaped JSON projection of this result."""
+        """Return this result as MCP ``CallToolResult`` wire JSON.
+
+        This is the inverse of how the projector reads a wire result, for the
+        fields m3 keeps: content blocks use MCP spellings (``type``,
+        ``mimeType``), ``structuredContent`` appears only when observed, and
+        ``isError`` only when true. Fields m3 does not model (annotations,
+        ``_meta``, embedded resources) are absent, so a harness copy carrying
+        them is never byte-identical to this form and is stored in full.
+        ``error`` has no MCP wire form; it keeps m3's own ``ErrorInfo`` shape,
+        so a harness copy matches it only if it spells the error identically.
+        """
         value: dict[str, _JsonValue] = {
-            "content": [block.model_dump(mode="json") for block in self.content]
+            "content": [_mcp_content_block(block) for block in self.content]
         }
         if self.structured_content.state is ObservationState.OBSERVED:
             value["structuredContent"] = self.structured_content.value

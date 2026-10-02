@@ -647,6 +647,22 @@ def _full_reported(call: ToolCallEntry) -> dict[str, Any]:
     return dumped
 
 
+def _internal_result(result: Any) -> Any:
+    """The wire result in m3's own block spelling, as the frozen file records it."""
+    if result is None:
+        return None
+    value: dict[str, Any] = {
+        "content": [block.model_dump(mode="json") for block in result.content]
+    }
+    if result.structured_content.state is ObservationState.OBSERVED:
+        value["structuredContent"] = result.structured_content.value
+    if result.is_error:
+        value["isError"] = True
+    if result.error.state is ObservationState.OBSERVED and result.error.value:
+        value["error"] = result.error.value.model_dump(mode="json")
+    return value
+
+
 def _conflicts(call: ToolCallEntry) -> list[dict[str, Any]]:
     """Rebuild each conflict's reported and wire values from the entry."""
     reported = call.reported.value
@@ -657,7 +673,7 @@ def _conflicts(call: ToolCallEntry) -> list[dict[str, Any]]:
         "arguments": call.arguments,
         "result": Observation(
             state=ObservationState.OBSERVED,
-            value=call.result.value.to_mcp_json() if call.result.value else None,
+            value=_internal_result(call.result.value),
         ),
         "status": Observation(
             state=ObservationState.OBSERVED, value=call.tool_status.value

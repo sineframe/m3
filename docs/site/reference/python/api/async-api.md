@@ -3228,7 +3228,7 @@ to_mcp_json(
     self,
 ) -> _JsonValue
 ```
-Return the MCP-shaped JSON projection of this result.
+Return this result as MCP ``CallToolResult`` wire JSON.
 
 ## `TraceEntry`
 

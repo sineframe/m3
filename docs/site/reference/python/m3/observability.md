@@ -38,8 +38,10 @@ and/or `"result"`): their stored observation is `not_emitted`, and
 `ToolCallEntry.reported_field(field)` returns the harness value, reconstructed
 from the entry when elided. A harness argument is elided when its canonical
 JSON is byte-identical to the entry's argument; a harness result is elided
-when it is byte-identical to the MCP JSON form of the entry's `ToolResult`
-(`ToolResult.to_mcp_json()`). `conflicts` is a tuple of field names
+when it is byte-identical to the MCP `CallToolResult` JSON of the entry's
+`ToolResult` (`ToolResult.to_mcp_json()`: `type`/`mimeType` content blocks,
+`structuredContent` when observed, `isError` when true). A harness result that
+carries fields m3 does not model, such as annotations, is kept in full. `conflicts` is a tuple of field names
 (`"server"`, `"tool"`, `"arguments"`, `"result"`, `"status"`) where harness and
 wire evidence disagree; it holds no values, which are the entry's value (wire)
 and `reported_field` or `reported` (harness). `ToolCallAttempt` and `ProtocolCallAttempt` keep per-round MRTR

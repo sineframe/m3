@@ -40,7 +40,7 @@ _RESULT = "result-marker-5d1c42"
 _MESSAGE = "message-marker-93a6f0"
 _HARNESS_ARGUMENT = "harness-argument-marker-2e8f13"
 _HARNESS_RESULT = "harness-result-marker-7a40cd"
-_MCP_RESULT = {"content": [{"kind": "text", "text": _RESULT}]}
+_MCP_RESULT = {"content": [{"type": "text", "text": _RESULT}]}
 
 
 def _count(view: TraceView, marker: str) -> int:
@@ -76,7 +76,9 @@ def _correlated(
     wire_argument: str = _ARGUMENT,
     reported_argument: str | dict[str, Any] | None = None,
     reported_result: Any = None,
-    wire_result: str = _RESULT,
+    wire_result: dict[str, Any] | None = None,
+    wire_extra: dict[str, Any] | None = None,
+    status: str = "success",
 ) -> TraceResult:
     """Correlate a harness report with a wire echo call carrying marker values."""
     reported_arguments = (
@@ -85,6 +87,7 @@ def _correlated(
     trace = _plain_reported(
         arguments=reported_arguments,
         result={"content": []},
+        status=status,
     )
     events = list(trace.events)
     request, response = events[7], events[8]
@@ -92,7 +95,10 @@ def _correlated(
         update={
             "payload": {
                 **request.model_dump(mode="json")["payload"],
-                "params": {"name": "echo", "arguments": {"text": wire_argument}},
+                "params": {
+                    "name": "echo",
+                    "arguments": {"text": wire_argument, **(wire_extra or {})},
+                },
             }
         }
     )
@@ -100,7 +106,7 @@ def _correlated(
         update={
             "payload": {
                 "method": "tools/call",
-                "result": {"content": [{"type": "text", "text": wire_result}]},
+                "result": _MCP_RESULT if wire_result is None else wire_result,
             }
         }
     )
@@ -110,7 +116,7 @@ def _correlated(
             "payload": {
                 **harness_response.payload,
                 "result": (
-                    {"content": [{"type": "text", "text": wire_result}]}
+                    events[8].model_dump(mode="json")["payload"]["result"]
                     if reported_result is None
                     else reported_result
                 ),
@@ -398,15 +404,77 @@ def test_equal_correlated_values_are_stored_once_and_reconstructed() -> None:
     _expect_reported_matches(view, call)
 
 
-def test_correlated_result_in_a_different_shape_is_kept() -> None:
+def test_harness_mcp_result_equal_to_the_wire_result_is_elided() -> None:
     view, call = _call(_correlated())
 
     assert call.conflicts == ()
     assert call.reported.value is not None
-    # The harness spelled the content block ``type``; the entry says ``kind``.
+    assert call.reported.value.same_as_call == ("arguments", "result")
+    assert _count(view, _RESULT) == 1
+    _expect_reported_matches(view, call)
+
+
+@pytest.mark.parametrize(
+    "result",
+    (
+        {
+            "content": [{"type": "text", "text": _RESULT}],
+            "structuredContent": {"note": _MESSAGE},
+        },
+        {"content": [{"type": "text", "text": _RESULT}], "isError": True},
+        {
+            "content": [
+                {"type": "text", "text": _RESULT},
+                {"type": "image", "data": "aGk=", "mimeType": "image/png"},
+                {"type": "resource_link", "uri": "file:///a", "mimeType": "text/x"},
+            ],
+            "structuredContent": {"n": 1},
+            "isError": True,
+        },
+    ),
+)
+def test_structured_content_is_error_and_media_blocks_round_trip(
+    result: dict[str, Any],
+) -> None:
+    status = "tool_error" if result.get("isError") else "success"
+    view, call = _call(
+        _correlated(wire_result=result, reported_result=result, status=status)
+    )
+
+    assert call.conflicts == ()
+    assert call.reported.value is not None
+    assert call.reported.value.same_as_call == ("arguments", "result")
+    assert _count(view, _RESULT) == 1
+    assert call.reported_field("result").model_dump(mode="json")["value"] == result
+    _expect_reported_matches(view, call)
+
+
+def test_result_with_a_field_m3_does_not_model_is_kept() -> None:
+    annotated = {
+        "content": [
+            {
+                "type": "text",
+                "text": _RESULT,
+                "annotations": {"audience": ["user"]},
+            }
+        ]
+    }
+    view, call = _call(_correlated(wire_result=annotated, reported_result=annotated))
+
+    assert call.reported.value is not None
     assert call.reported.value.same_as_call == ("arguments",)
     assert call.reported.value.result.state is ObservationState.OBSERVED
-    assert _count(view, _ARGUMENT) == 1
+    assert _count(view, _RESULT) == 2
+    _expect_reported_matches(view, call)
+
+
+def test_result_in_m3_block_spelling_is_not_mcp_json_and_is_kept() -> None:
+    view, call = _call(
+        _correlated(reported_result={"content": [{"kind": "text", "text": _RESULT}]})
+    )
+
+    assert call.reported.value is not None
+    assert call.reported.value.same_as_call == ("arguments",)
     assert _count(view, _RESULT) == 2
     _expect_reported_matches(view, call)
 
@@ -462,11 +530,13 @@ def test_string_harness_result_is_not_reconstructible_and_is_kept() -> None:
 def test_number_spellings_are_not_elided() -> None:
     _view, call = _call(
         _correlated(
-            wire_argument=_ARGUMENT, reported_argument={"text": _ARGUMENT, "n": 1.0}
+            wire_extra={"n": 1},
+            reported_argument={"text": _ARGUMENT, "n": 1.0},
         )
     )
+    assert call.conflicts == ()
     assert call.reported.value is not None
-    assert call.reported.value.same_as_call == ()
+    assert call.reported.value.same_as_call == ("result",)
     assert call.reported_field("arguments").value == {"text": _ARGUMENT, "n": 1.0}
 
 
@@ -475,7 +545,7 @@ def test_reported_only_call_stores_equal_values_once() -> None:
         tool="other",
         call_id="solo",
         arguments={"text": _ARGUMENT},
-        result={"content": [{"kind": "text", "text": _RESULT}]},
+        result={"content": [{"type": "text", "text": _RESULT}]},
     )
     view = _normalized(trace).view()
     (call,) = (
@@ -490,7 +560,7 @@ def test_reported_only_call_stores_equal_values_once() -> None:
         "other",
         evidence="reported",
         arguments={"text": _ARGUMENT},
-        result={"content": [{"kind": "text", "text": _RESULT}]},
+        result={"content": [{"type": "text", "text": _RESULT}]},
     )
 
 
