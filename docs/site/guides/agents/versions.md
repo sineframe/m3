@@ -216,11 +216,12 @@ Run from the `compare-versions` directory:
 python -m pytest -q test_versions.py
 ```
 
-The two runs use the same server, model, prompt, arguments, and matcher. The
-test checks distinct execution IDs, each requested and resolved pin, each
-successful structured result, and a passing deterministic evaluation for each
-execution. A provider can still behave differently across runs; matching the
-local evaluation does not establish general model quality.
+Both executions must record their own version pin, return the same quote,
+and pass the quote evaluator. Separate execution and evaluation IDs let you
+trace each result to its harness version. The server, model, prompt, and
+assertions stay the same, though provider responses can vary between runs.
+The evaluator covers this shipping quote; broader model-quality comparisons
+need additional cases.
 
 See [pinned runtime selection](managed-runtimes.md) and
 [runtime cache management](runtime-cache.md).

@@ -56,14 +56,6 @@ target.
 | OpenCode | `api.github.com/repos/anomalyco/opencode/releases/{latest or tag}` | `v<VERSION>` |
 | Claude Code | `downloads.claude.ai/claude-code-releases/latest` or `/{VERSION}/manifest.json` | Vendor manifest version; not a Git tag lookup |
 
-GitHub release metadata must include an independent asset digest. Claude's
-platform manifest must include its checksum. M3 does not treat a digest
-computed only after download as independent verification. The receipt's
-`provenance` object stores `kind`, `version`, `target`, query-stripped `url`,
-`sha256`, `source`, `executable`, `asset_name`, `verification_method`, and
-`immutable_release`. The agent identity exposes the corresponding resolved
-version, target, digest, verification method, and immutable-release value.
-
 Target strings are computed by `detect_target(kind, env=...)`. `amd64` and
 `x86_64` normalize to `x64`; `aarch64` normalizes to `arm64`. The resolver
 reads target overrides from the selector mapping's `env` field, not from a new
@@ -81,17 +73,10 @@ Examples of target labels include `darwin-arm64-64`, `linux-x64-64`,
 `linux-x64-musl-avx2`. These labels describe M3's lookup input; they do not
 promise that a vendor publishes an asset for it.
 
-## Target and acquisition
-
-M3 normalizes `amd64` and `x86_64` to `x64`, and `aarch64` to `arm64`.
-Codex, Pi, and Claude Code use OS and architecture targets. OpenCode also
-records Linux libc and CPU variant, such as `linux-x64-glibc-baseline` or
-`linux-arm64-musl-baseline`. On macOS, `M3_ROSETTA=1` marks an arm64 host
-running under Rosetta as `x64-rosetta`. A release must contain one matching
-asset; availability varies by vendor version and target.
+## Acquisition and recorded identity
 
 The resolver reads the vendor release manifest, selects one target asset, and
-requires an independent SHA-256 value from the release metadata. Claude Code
+requires an independent SHA-256 value from GitHub release metadata. Claude Code
 uses the checksum in its platform manifest. A caller-supplied runtime selector
 must provide its own `sha256`; a hash computed only after downloading is not
 independent verification. M3 stages the archive, compares its SHA-256, rejects
@@ -145,9 +130,9 @@ explicit path, M3 uses the same OS default. Cache roots must be outside the
 project and `PATH`, and outside blocked system directories. Symlinked cache
 paths are rejected.
 
-The receipt records resolved release, target, source URL without query
-parameters, archive digest, selected executable, asset name, verification
-method, and immutable-release status where the vendor metadata provides it.
+The receipt's `provenance` object stores `kind`, `version`, `target`,
+query-stripped `url`, `sha256`, `source`, `executable`, `asset_name`,
+`verification_method`, and `immutable_release`.
 `m3 runtime cache list --cache-dir PATH` reports ready entries by kind,
 version, target, digest, and status. A malformed receipt or changed executable
 is reported as corrupt and is not accepted as a cache hit. Progress events

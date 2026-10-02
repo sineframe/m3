@@ -5,18 +5,16 @@ description: "Acquire an explicit native harness version, run an agent test, and
 
 # Run a pinned agent harness
 
-Set `runtime="managed"` and an explicit version when the test must identify
-which native harness executable it used. M3 resolves the release for the
-current target, verifies the archive digest, checks the executable's reported
-version, and records the resolved identity with the execution.
+Run a tool-use test with an explicit native harness version by setting
+`runtime="managed"` and a version. M3 downloads or reuses that release for
+your platform and records the executable's identity with the execution.
 
 ## Requirements
 
-This complete project uses Codex CLI and one local stdio MCP server. Install
-`sf-m3[pytest]`, sign in to Codex, choose a model available to that login, and
-set both variables before running the test. Runtime download and provider
-authentication are separate: the managed executable does not create a Codex
-login or provide model access.
+This project uses Codex CLI and one local stdio MCP server. Sign in to Codex,
+choose a model available to that login, and set the model and version variables
+below. Runtime download and provider authentication are separate; you need a
+Codex login even when M3 supplies the executable.
 
 Install the SDK in the Python environment used to run the test:
 
@@ -43,8 +41,8 @@ run.
 
 Create a directory named `pinned-agent` and add both files. The server returns
 the structured quote `{ "amount": 9.0, "currency": "USD" }` for the requested
-weight and zone. The test checks that result and the runtime identity M3
-recorded.
+weight and zone. The assertions require that quote and the requested runtime
+version in the execution record.
 
 `shipping_server.py`:
 
@@ -191,83 +189,10 @@ Run this command from the `pinned-agent` directory:
 python -m pytest -q test_managed_runtime.py
 ```
 
-The outcome assertion checks that the execution completed. The tool matcher
-checks one successful call, its server, arguments, and structured quote. The
-identity assertions compare the requested pin with M3's resolved version and
-require a target and SHA-256 digest. They do not prove that every harness or
-operating system has an asset for every version.
-
-## Verify local result and evaluation mechanics
-
-This separate deterministic test calls only the local MCP server. It checks
-the returned structured data, matches the recorded direct tool call, and
-evaluates that observed result with a registered evaluator. It does not test a
-managed binary or make a provider request. Add `test_local_contract.py` beside
-`shipping_server.py`:
-
-```python
-import sys
-from pathlib import Path
-
-from m3 import MCPTestKit, expect
-from m3.evaluations import EvaluationDecision
-from m3.types import EvaluationStatus, StdioServer
-
-HERE = Path(__file__).resolve().parent
-EXPECTED_QUOTE = {"amount": 9.0, "currency": "USD"}
-
-
-def quote_evaluator(context):
-    passed = context.subject == EXPECTED_QUOTE
-    return EvaluationDecision(
-        status=EvaluationStatus.PASSED if passed else EvaluationStatus.FAILED,
-        score=1.0 if passed else 0.0,
-        rationale="structured shipping quote matches the local contract",
-    )
-
-
-def test_local_server_matcher_and_evaluation() -> None:
-    server = StdioServer(
-        name="shipping",
-        command=sys.executable,
-        args=(str(HERE / "shipping_server.py"),),
-        cwd=str(HERE),
-    )
-    with MCPTestKit(env={}) as kit:
-        kit.register_evaluator("shipping.quote.v1", quote_evaluator)
-        with kit.direct(server) as client:
-            result = client.call_tool(
-                "shipping_quote", {"weight_kg": 2, "zone": "local"}
-            )
-        trace = client.final_trace
-
-        assert result.structured_content == EXPECTED_QUOTE
-        assert trace is not None
-        expect(trace).to_have_tool_call(
-            "shipping_quote",
-            server="shipping",
-            arguments={"weight_kg": 2, "zone": "local"},
-            status="success",
-            count=1,
-            result={"structured_content": EXPECTED_QUOTE},
-            result_partial=True,
-        )
-        evaluation = kit.evaluate(
-            result.structured_content,
-            "shipping.quote.v1",
-            execution_id=trace.execution_id,
-        )
-
-    assert evaluation.status is EvaluationStatus.PASSED
-```
-
-From the `pinned-agent` directory, run the deterministic local test:
-
-```sh
-python -m pytest -q test_local_contract.py
-```
-
-The passing local assertion does not stand in for the pin or provider tests.
+On success, the execution contains one call to `shipping:shipping_quote` with
+the requested arguments and a structured quote of 9 USD. Its requested and
+resolved versions match your pin, and the runtime identity includes a target
+and SHA-256 digest. Release availability depends on the harness and platform.
 
 Complete source project: [`sdk/examples/docs/agents-managed-runtimes`](../../../../sdk/examples/docs/agents-managed-runtimes).
 
@@ -282,9 +207,8 @@ metadata and pinned for the current CLI invocation, including workers in one
 pytest run; the next invocation may resolve a newer release.
 
 For a CLI-selected pytest fixture, add this separate file to the same project.
-It uses the same local server but receives the pinned agent from M3's `agent`
-fixture. The result assertion checks the actual execution outcome, call, and
-requested/resolved identity.
+It uses the same local server and assertions, with the pinned agent supplied
+by M3's `agent` fixture.
 
 `test_managed_runtime_fixture.py`:
 
@@ -338,8 +262,7 @@ m3 test --python "$M3_DOCS_PYTHON" --runtime managed --harness "codex@${M3_DOCS_
 ```
 
 `@VERSION` pins the CLI fixture selection. The global `--runtime managed` is
-required for a versioned CLI selector. For SDK selection and cache options,
-see the [managed runtime reference](../../reference/managed-runtimes.md).
+required for a versioned CLI selector.
 
 For selection, cache locations, and recorded identity fields, see the [managed
 runtime reference](../../reference/managed-runtimes.md). For auth setup, see

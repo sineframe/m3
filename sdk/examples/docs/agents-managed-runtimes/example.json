@@ -8,7 +8,6 @@
   "displayed_blocks": [
     {"page": "guides-agents-managed-runtimes", "label": "shipping MCP server", "source": "shipping_server.py", "kind": "file"},
     {"page": "guides-agents-managed-runtimes", "label": "pinned Codex runtime test", "source": "test_managed_runtime.py", "kind": "file"},
-    {"page": "guides-agents-managed-runtimes", "label": "local matcher and evaluator contract test", "source": "test_local_contract.py", "kind": "file"},
     {"page": "guides-agents-managed-runtimes", "label": "CLI-selected pinned runtime test", "source": "test_managed_runtime_fixture.py", "kind": "file"}
   ],
   "dependencies": ["sf-m3[pytest]", "sf-m3-cli for the CLI variation", "Codex login"],
