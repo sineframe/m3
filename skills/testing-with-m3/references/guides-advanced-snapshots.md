@@ -39,10 +39,10 @@ def test_shipping_snapshot() -> None:
     }
 ```
 
-Run:
+Run from the first-test project:
 
 ```sh
-uv run pytest tests/test_shipping_snapshot.py
+m3 test -- tests/test_shipping_snapshot.py
 ```
 
 The expected snapshot must come from a reviewed test result, not hand-written
