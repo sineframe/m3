@@ -332,7 +332,7 @@ def print_human(report: dict[str, Any]) -> None:
     if cli is not None:
         canary = cli.get("canary")
         suffix = (
-            f" (canary {canary['release_tag']}, {canary['source_commit'][:7]})"
+            f" ({canary['release_tag']}, {canary['source_commit'][:7]})"
             if isinstance(canary, dict)
             else ""
         )
