@@ -52,6 +52,22 @@ def test_renderer_emits_one_versioned_posix_installer(tmp_path: Path) -> None:
     assert "gh auth" not in contents
 
 
+def test_renderer_defaults_to_version_tag_and_accepts_canary_tags(
+    tmp_path: Path,
+) -> None:
+    stable = renderer.render_installer("0.2.0a13", tmp_path / "stable")
+    assert "RELEASE_TAG='v0.2.0a13'" in stable.read_text(encoding="utf-8")
+    canary = renderer.render_installer(
+        "0.2.0a14.dev7", tmp_path / "canary", "canary-pr-12"
+    )
+    contents = canary.read_text(encoding="utf-8")
+    assert "RELEASE_TAG='canary-pr-12'" in contents
+    assert "@M3_RELEASE_TAG@" not in contents
+    for tag in ("canary-pr-0", "latest", "v1; rm -rf /"):
+        with pytest.raises(renderer.InstallerRenderError):
+            renderer.render_installer("1.2.3", tmp_path / "bad", tag)
+
+
 def test_renderer_rejects_unsafe_version(tmp_path: Path) -> None:
     with pytest.raises(renderer.InstallerRenderError):
         renderer.render_installer("0.2.0; touch /tmp/pwned", tmp_path)
@@ -143,9 +159,9 @@ def _bootstrap(
         (directory / "install.sh").write_text(installer, encoding="utf-8")
         checksums = "not executed by the bootstrap test\n"
         (directory / "SHA256SUMS").write_text(checksums, encoding="utf-8")
-        version = tag[1:]
         manifest = {
-            "version": version,
+            "version": "0.2.0a14.dev7" if tag.startswith("canary-") else tag[1:],
+            "release_tag": str(release.get("manifest_tag", tag)),
             "assets": {
                 "install.sh": hashlib.sha256(installer.encode()).hexdigest(),
                 "SHA256SUMS": hashlib.sha256(checksums.encode()).hexdigest(),
@@ -282,4 +298,53 @@ def test_bootstrap_fails_when_release_has_no_installer(tmp_path: Path) -> None:
     )
     assert result.returncode != 0
     assert "no published M3 release with install.sh" in result.stderr
+    assert selected is None
+
+
+def test_bootstrap_installs_requested_canary_builds(tmp_path: Path) -> None:
+    releases = [
+        _release("v1.0.0"),
+        _release("canary-main", prerelease=True),
+        _release("canary-pr-12", prerelease=True),
+    ]
+    result, selected = _bootstrap(tmp_path / "pr", releases, "--pr", "12")
+    assert result.returncode == 0, result.stderr
+    assert selected == "canary-pr-12"
+    result, selected = _bootstrap(tmp_path / "main", releases, "--canary")
+    assert result.returncode == 0, result.stderr
+    assert selected == "canary-main"
+    result, selected = _bootstrap(tmp_path / "stable", releases)
+    assert result.returncode == 0, result.stderr
+    assert selected == "v1.0.0"
+    result, selected = _bootstrap(tmp_path / "pre", releases, "--prerelease")
+    assert result.returncode != 0
+    assert selected is None
+
+
+def test_bootstrap_reports_missing_canary(tmp_path: Path) -> None:
+    result, selected = _bootstrap(
+        tmp_path / "missing", [_release("v1.0.0")], "--pr", "12"
+    )
+    assert result.returncode != 0
+    assert "canary-pr-12" in result.stderr
+    assert "canary label" in result.stderr
+    assert selected is None
+
+
+@pytest.mark.parametrize("value", ["", "0", "012", "12a", "../1"])
+def test_bootstrap_rejects_invalid_pull_request_numbers(
+    tmp_path: Path, value: str
+) -> None:
+    result, selected = _bootstrap(tmp_path / "invalid", [], "--pr", value)
+    assert result.returncode == 2
+    assert "--pr requires a pull request number" in result.stderr
+    assert selected is None
+
+
+def test_bootstrap_rejects_canary_manifest_for_another_build(tmp_path: Path) -> None:
+    release = _release("canary-pr-12", prerelease=True)
+    release["manifest_tag"] = "canary-pr-13"
+    result, selected = _bootstrap(tmp_path / "mismatch", [release], "--pr", "12")
+    assert result.returncode != 0
+    assert "canary manifest does not match" in result.stderr
     assert selected is None

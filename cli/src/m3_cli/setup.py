@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from m3_cli.agent_skill import ensure_agent_skill
+from m3_cli.canary import canary_build
 
 _VALIDATE_SCRIPT = r"""
 import importlib
@@ -290,8 +291,18 @@ def _ready(python: Path, version: str, project_root: Path) -> bool:
         return False
 
 
+def _sdk_source() -> str:
+    canary = canary_build()
+    return "PyPI" if canary is None else canary.release_tag
+
+
 def _install_sdk(target: EnvironmentTarget, version: str) -> str:
-    requirement = f"sf-m3[pytest,storage,judge]=={version}"
+    canary = canary_build()
+    requirement = (
+        f"sf-m3[pytest,storage,judge]=={version}"
+        if canary is None
+        else canary.sdk_requirement(version)
+    )
     uv = shutil.which("uv")
     command = (
         [uv, "pip", "install", "--python", str(target.python), requirement]
@@ -310,9 +321,11 @@ def _install_sdk(target: EnvironmentTarget, version: str) -> str:
             command, capture_output=True, text=True, check=False, timeout=300
         )
     except (OSError, subprocess.TimeoutExpired):
-        raise SetupError("could not install the matching M3 SDK from PyPI") from None
+        raise SetupError(
+            f"could not install the matching M3 SDK from {_sdk_source()}"
+        ) from None
     if result.returncode != 0:
-        raise SetupError("could not install the matching M3 SDK from PyPI")
+        raise SetupError(f"could not install the matching M3 SDK from {_sdk_source()}")
     return "uv" if uv else "venv/pip"
 
 
@@ -345,7 +358,7 @@ def run(args: Any) -> int:
             target = _create_environment(target)
         else:
             print("[1/3] Selecting project environment")
-        print("[2/3] Installing matching SDK from PyPI")
+        print(f"[2/3] Installing matching SDK from {_sdk_source()}")
         installer = _install_sdk(target, version)
         print("[3/3] Verifying project environment")
         if not _ready(target.python, version, root):

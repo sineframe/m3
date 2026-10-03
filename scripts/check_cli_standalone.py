@@ -1216,6 +1216,8 @@ def check(
             # leaving third-party dependencies on their normal public index.
             setup_env["UV_FIND_LINKS"] = str(release)
             setup_env["PIP_FIND_LINKS"] = str(release)
+            # Canary CLIs install the SDK by URL from their own release.
+            setup_env["M3_RELEASE_BASE_URL"] = release.resolve().as_uri()
             _run(
                 [str(executable), "setup", "--project-root", str(version_repo)],
                 cwd=version_repo,

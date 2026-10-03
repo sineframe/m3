@@ -1,15 +1,15 @@
 #!/bin/sh
 set -eu
 
-# This file is rendered into a release asset.  Keep the version placeholder
-# unique: scripts/render_cli_installers.py rejects templates that do not have
-# exactly one occurrence.
+# This file is rendered into a release asset.  Keep each placeholder unique:
+# scripts/render_cli_installers.py rejects templates that do not have exactly
+# one occurrence of each.
 VERSION='@M3_VERSION@'
 REPOSITORY='sineframe/m3'
-RELEASE_TAG="v${VERSION}"
+RELEASE_TAG='@M3_RELEASE_TAG@'
 HAS_BASE_URL=0
 [ -n "${M3_RELEASE_BASE_URL:-}" ] && HAS_BASE_URL=1
-BASE_URL=${M3_RELEASE_BASE_URL:-"https://github.com/${REPOSITORY}/releases/download/v${VERSION}"}
+BASE_URL=${M3_RELEASE_BASE_URL:-"https://github.com/${REPOSITORY}/releases/download/${RELEASE_TAG}"}
 BASE_URL=${BASE_URL%/}
 
 CLI_WHEEL="sf_m3_cli-${VERSION}-py3-none-any.whl"

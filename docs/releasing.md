@@ -110,6 +110,23 @@ If PyPI accepted only some files or the publish job stopped after upload, dispat
 
 A manual dispatch with the default `build` operation creates a verification artifact without publishing a release.
 
+## Canary builds
+
+The `Canary` workflow publishes installable preview builds as GitHub
+prereleases. It never publishes to PyPI.
+
+- Add the `canary` label to a pull request from a branch in this repository to
+  publish `canary-pr-N`. Each push rebuilds it, and the workflow comments the
+  install commands on the pull request. Closing the pull request deletes the
+  prerelease and its tag. Pull requests from forks are not built.
+- Each push to `main` replaces `canary-main`.
+
+Canary versions are `<next release>.devN`, for example `0.2.0a14.dev42`, so the
+next real release replaces them. The CLI wheel carries `m3_cli/canary.json`,
+which `m3 setup` uses to install the SDK wheel from the same prerelease.
+Stable wheels do not contain it. The bootstrap installer only selects canaries
+when asked with `--canary` or `--pr N`.
+
 ## Local metadata check
 
 ```sh

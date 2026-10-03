@@ -1,0 +1,276 @@
+name: Canary
+
+# Installable preview builds published as GitHub prereleases, never to PyPI.
+# Pull requests opt in with the `canary` label and publish `canary-pr-<N>`;
+# pushes to main refresh `canary-main`. Fork pull requests are not built.
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened, closed]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Concurrency is per job, not per workflow, so runs that skip every job (an
+# unrelated label, an unlabelled push) never cancel an in-flight canary.
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  TAG: ${{ github.event_name == 'pull_request' && format('canary-pr-{0}', github.event.pull_request.number) || 'canary-main' }}
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  build:
+    name: Build canary
+    if: >-
+      (github.event_name != 'pull_request' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       github.event.action != 'closed' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'canary') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'canary'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    concurrency:
+      group: canary-${{ github.event.pull_request.number || 'main' }}
+      cancel-in-progress: true
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out M3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Validate pinned UI reference and secret
+        id: ui-ref
+        env:
+          UI_REPOSITORY_TOKEN: ${{ secrets.MCPPAL_UI_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UI_REPOSITORY_TOKEN" ]]; then
+            echo 'MCPPAL_UI_TOKEN is required to build the production UI from rishhavv/m3-ui' >&2
+            exit 1
+          fi
+          ui_ref=$(tr -d '\r\n' < cli/UI_REF)
+          [[ "$ui_ref" =~ ^[0-9a-f]{40}$ ]] || { echo 'cli/UI_REF must be a 40-character lowercase commit SHA' >&2; exit 1; }
+          echo "sha=$ui_ref" >> "$GITHUB_OUTPUT"
+      - name: Check out pinned UI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rishhavv/m3-ui
+          ref: ${{ steps.ui-ref.outputs.sha }}
+          path: .release-ui
+          token: ${{ secrets.MCPPAL_UI_TOKEN }}
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+          python-version: "3.10"
+      - name: Install Node.js
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .release-ui/package-lock.json
+      - name: Build production UI
+        working-directory: .release-ui
+        run: |
+          npm ci
+          npm run build
+          npm run build:cli
+          npx playwright install --with-deps chromium
+      - name: Prepare canary version in disposable checkout
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(uv run --no-project --with packaging python scripts/canary_version.py --build-number "$GITHUB_RUN_NUMBER")
+          uv run --no-project --with packaging python scripts/prepare_release.py "$version"
+          python scripts/build_cli_release.py --print-version --expected-version "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build wheels and installer
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          UI_SHA: ${{ steps.ui-ref.outputs.sha }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/m3-canary"
+          mkdir -p "$out"
+          python scripts/build_cli_release.py --ui-dist .release-ui/dist-cli --out-dir "$out" \
+            --expected-version "$VERSION" --canary-tag "$TAG" --source-commit "$SOURCE_SHA"
+          python scripts/render_cli_installers.py --version "$VERSION" --output-dir "$out" --release-tag "$TAG"
+          cp scripts/install-latest.sh "$out/install-latest.sh"
+          chmod 755 "$out/install-latest.sh"
+          wheels=("sf_m3-${VERSION}-py3-none-any.whl" "sf_m3_app-${VERSION}-py3-none-any.whl" "sf_m3_cli-${VERSION}-py3-none-any.whl")
+          (cd "$out" && sha256sum "${wheels[@]}" | sort -k2 > SHA256SUMS && sha256sum -c SHA256SUMS)
+          M3_RELEASE_BASE_URL="file://$out" \
+            UV_TOOL_DIR="$RUNNER_TEMP/m3-installer-tools" \
+            UV_TOOL_BIN_DIR="$RUNNER_TEMP/m3-installer-bin" \
+            sh "$out/install.sh"
+          "$RUNNER_TEMP/m3-installer-bin/m3" --version | grep -F "($TAG, ${SOURCE_SHA:0:7})"
+          python scripts/smoke_cli_uv_install.py --release-dir "$out" --version "$VERSION"
+          python scripts/check_cli_standalone.py --release-dir "$out" --version "$VERSION" --ui-dir .release-ui
+          python - "$out" "$VERSION" "$TAG" "$SOURCE_SHA" "$UI_SHA" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); version=sys.argv[2]
+          names={f"sf_m3-{version}-py3-none-any.whl",f"sf_m3_app-{version}-py3-none-any.whl",f"sf_m3_cli-{version}-py3-none-any.whl","install.sh","install-latest.sh","SHA256SUMS"}
+          if any(not (root/name).is_file() for name in names): raise SystemExit("canary asset set is incomplete")
+          manifest={"version":version,"release_tag":sys.argv[3],"source_commit":sys.argv[4],"ui_commit":sys.argv[5],"assets":{n:hashlib.sha256((root/n).read_bytes()).hexdigest() for n in sorted(names)}}
+          (root/"manifest.json").write_text(json.dumps(manifest,sort_keys=True,indent=2)+"\n")
+          PY
+      - name: Upload canary assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: m3-canary
+          path: ${{ runner.temp }}/m3-canary/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish canary
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: canary-${{ github.event.pull_request.number || 'main' }}
+      cancel-in-progress: true
+    # Runs no repository code: it only uploads the built assets.
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.build.outputs.version }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Download canary assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: m3-canary
+          path: ${{ runner.temp }}/m3-canary
+      - name: Replace the GitHub prerelease
+        run: |
+          set -euo pipefail
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          if [[ -n "$PR_NUMBER" ]]; then source="pull request #${PR_NUMBER}"; else source="main"; fi
+          notes="Canary build of ${source} at ${SOURCE_SHA}. Not a supported release; it is replaced on every build."
+          gh release create "$TAG" "$RUNNER_TEMP"/m3-canary/* --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" --prerelease --latest=false \
+            --title "Canary ${VERSION} (${TAG})" --notes "$notes"
+      - name: Comment install instructions on the pull request
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          body=$(cat <<EOF
+          <!-- m3-canary -->
+          📦 **Canary \`${VERSION}\`** built from ${SOURCE_SHA:0:7} ([release](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}))
+
+          CLI:
+          \`\`\`sh
+          curl -LsSf https://m3.sineframe.com/install.sh | sh -s -- --pr ${PR_NUMBER}
+          # or, before the hosted installer supports --pr:
+          curl -LsSf ${base}/install.sh | sh
+          \`\`\`
+
+          CLI with uv:
+          \`\`\`sh
+          uv tool install --force ${base}/sf_m3_cli-${VERSION}-py3-none-any.whl --with ${base}/sf_m3-${VERSION}-py3-none-any.whl --with ${base}/sf_m3_app-${VERSION}-py3-none-any.whl
+          \`\`\`
+
+          SDK only:
+          \`\`\`sh
+          pip install "sf-m3[pytest,storage,judge] @ ${base}/sf_m3-${VERSION}-py3-none-any.whl"
+          \`\`\`
+
+          Rebuilt on every push while the \`canary\` label is set; deleted when the PR closes. Return to stable with \`curl -LsSf https://m3.sineframe.com/install.sh | sh\`.
+          EOF
+          )
+          comment_id=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- m3-canary -->"))) | .id' | head -n 1)
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -f body="$body" >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
+          fi
+
+  verify:
+    name: Install canary (uv ${{ matrix.uv }})
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        uv: [present, absent]
+    steps:
+      - name: Check out bootstrap installer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+          sparse-checkout: scripts/install-latest.sh
+          sparse-checkout-cone-mode: false
+      - name: Install Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.10"
+      - name: Install uv
+        if: matrix.uv == 'present'
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.7"
+      - name: Install through the bootstrap and set up a project
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          UV_PRESENT: ${{ matrix.uv }}
+        run: |
+          set -euo pipefail
+          python_bin=$(command -v python)
+          if [[ -n "$PR_NUMBER" ]]; then selector=(--pr "$PR_NUMBER"); else selector=(--canary); fi
+          export M3_INSTALL_ROOT="$RUNNER_TEMP/m3-env" M3_BIN_DIR="$RUNNER_TEMP/m3-bin" M3_PYTHON="$python_bin"
+          export UV_TOOL_DIR="$RUNNER_TEMP/uv-tools" UV_TOOL_BIN_DIR="$RUNNER_TEMP/m3-bin"
+          runner=()
+          if [[ "$UV_PRESENT" == absent ]]; then
+            runner=(env PATH="$(dirname "$python_bin"):/usr/bin:/bin:/usr/sbin:/sbin")
+          fi
+          "${runner[@]}" sh scripts/install-latest.sh "${selector[@]}"
+          m3="$RUNNER_TEMP/m3-bin/m3"
+          "$m3" --version | tee /dev/stderr | grep -F "($TAG, ${SOURCE_SHA:0:7})"
+          project="$RUNNER_TEMP/project"
+          mkdir "$project"
+          "${runner[@]}" "$m3" setup --project-root "$project" | tee "$RUNNER_TEMP/setup.log"
+          grep -F "Installing matching SDK from $TAG" "$RUNNER_TEMP/setup.log"
+          "${runner[@]}" "$m3" doctor --project-root "$project"
+
+  cleanup:
+    name: Remove canary
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: canary-${{ github.event.pull_request.number || 'main' }}
+      cancel-in-progress: true
+    # Runs no repository code.
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Delete the prerelease and mark the comment
+        run: |
+          set -euo pipefail
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          comment_id=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- m3-canary -->"))) | .id' | head -n 1)
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              -f body=$'<!-- m3-canary -->\n📦 Canary removed: this pull request is closed.' >/dev/null
+          fi
