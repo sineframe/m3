@@ -282,6 +282,8 @@ jobs:
           "${runner[@]}" "$m3" setup --project-root "$project" | tee "$RUNNER_TEMP/setup.log"
           grep -F "Installing matching SDK from $TAG" "$RUNNER_TEMP/setup.log"
           "${runner[@]}" "$m3" doctor --project-root "$project"
+          echo "TEMPORARY: fail the install check to exercise the failed comment state" >&2
+          exit 1
 
   comment:
     name: Report canary on the pull request
