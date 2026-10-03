@@ -7,7 +7,6 @@ import os
 import re
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +21,7 @@ from .ci_credentials import (
     parse_credential_mapping,
     resolved_environment,
 )
-from .control_plane import inspect_current_run, upload_current_run
+from .control_plane import PublishResult, inspect_current_run, upload_current_run
 from .errors import CLIError
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -68,12 +67,6 @@ def record_upload_inspection(
         store.save_test_run(run_id, manifest)
     finally:
         store.close()
-
-
-@dataclass(frozen=True)
-class PublishResult:
-    run_label: str | None
-    run_url: str | None
 
 
 def publish_run(
@@ -124,7 +117,7 @@ def publish_run(
         ):
             raise CLIError(f"run {run_id} has unreadable credential scan data")
         sensitive_values = _sensitive_values(env, source_names=sources)
-        run_url = upload_current_run(
+        published = upload_current_run(
             feedback,
             store,
             directory,
@@ -135,7 +128,9 @@ def publish_run(
         )
         label = manifest.get("run_label")
         return PublishResult(
-            label if isinstance(label, str) and label else None, run_url
+            published.run_label
+            or (label if isinstance(label, str) and label else None),
+            published.run_url,
         )
     finally:
         store.close()

@@ -375,6 +375,46 @@ def test_ci_metadata_generic_ci_flag():
     assert resolve_ci_metadata({}) == {}
 
 
+@pytest.mark.parametrize(
+    ("env", "branch"),
+    [
+        (
+            {
+                "GITHUB_REF_TYPE": "branch",
+                "GITHUB_REF": "refs/heads/main",
+                "GITHUB_REF_NAME": "main",
+            },
+            "main",
+        ),
+        (
+            {"GITHUB_REF": "refs/heads/release", "GITHUB_REF_NAME": "release"},
+            "release",
+        ),
+        (
+            {
+                "GITHUB_REF_TYPE": "tag",
+                "GITHUB_REF": "refs/tags/v1.2.3",
+                "GITHUB_REF_NAME": "v1.2.3",
+            },
+            None,
+        ),
+        ({"GITHUB_REF": "refs/tags/v1.2.3", "GITHUB_REF_NAME": "v1.2.3"}, None),
+        (
+            {
+                "GITHUB_REF_TYPE": "branch",
+                "GITHUB_REF": "refs/pull/7/merge",
+                "GITHUB_HEAD_REF": "feat/x",
+                "GITHUB_REF_NAME": "7/merge",
+            },
+            "feat/x",
+        ),
+    ],
+)
+def test_ci_metadata_branch_excludes_tags(env, branch):
+    values = resolve_ci_metadata({"GITHUB_ACTIONS": "true", **env})
+    assert values.get("branch") == branch
+
+
 def test_upload_rejects_path_like_run_id_before_opening_store(tmp_path):
     from m3_cli.ci_upload import publish_run
 
@@ -408,11 +448,13 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
         feedback = build_feedback(store, "run-test")
         export_feedback(feedback, store, root / ".m3" / "reports" / "run-test")
         sent = []
-        monkeypatch.setattr(
-            ci_upload,
-            "upload_current_run",
-            lambda *args, **kwargs: sent.append((args, kwargs)),
-        )
+        hosted: list[str | None] = [None]
+
+        def fake_upload(*args, **kwargs):
+            sent.append((args, kwargs))
+            return ci_upload.PublishResult(hosted[0], None)
+
+        monkeypatch.setattr(ci_upload, "upload_current_run", fake_upload)
         kwargs = {
             "project_root": root,
             "database": database,
@@ -434,13 +476,17 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
             ["codex:VENDOR_API_KEY=DEPLOY_CRED"],
             kwargs["environment"],
         )
-        ci_upload.publish_run(
+        first = ci_upload.publish_run(
             "run-test",
             project_root=root,
             database=database,
             environment={"M3_ACCESS_TOKEN": TOKEN},
         )
-        ci_upload.publish_run(
+        manifest_label = (store.get_test_run("run-test") or {}).get("run_label")
+        assert manifest_label
+        assert first.run_label == manifest_label
+        hosted[0] = "Run hosted-label"
+        second = ci_upload.publish_run(
             "run-test",
             project_root=root,
             database=database,
@@ -449,6 +495,7 @@ def test_explicit_saved_run_publishes_only_after_finalization(tmp_path, monkeypa
                 "DEPLOY_CRED": "changed-deployment-credential",
             },
         )
+        assert second.run_label == "Run hosted-label"
         assert len(sent) == 2
         assert sent[0][0][0].run_id == "run-test"
         assert "changed-deployment-credential" in sent[1][1]["sensitive_values"]

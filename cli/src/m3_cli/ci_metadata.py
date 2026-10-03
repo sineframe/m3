@@ -48,8 +48,14 @@ def resolve_ci_metadata(
                 if environment.get(source)
             }
         )
-        if branch := environment.get("GITHUB_HEAD_REF") or environment.get(
-            "GITHUB_REF_NAME"
+        ref_type = environment.get("GITHUB_REF_TYPE")
+        on_branch = (
+            ref_type == "branch"
+            if ref_type
+            else environment.get("GITHUB_REF", "").startswith("refs/heads/")
+        )
+        if branch := environment.get("GITHUB_HEAD_REF") or (
+            environment.get("GITHUB_REF_NAME") if on_branch else None
         ):
             values["branch"] = branch
         pull = re.fullmatch(

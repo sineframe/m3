@@ -12,7 +12,7 @@ from m3.storage import SQLiteExecutionStore
 from m3.types import ExecutionId, ExecutionState, RunId
 from m3_app.api.report_payloads import build_execution_envelope
 from m3_app.services.execution_service import project_test_results
-from m3_cli.control_plane import _post, upload_current_run
+from m3_cli.control_plane import PublishResult, _post, upload_current_run
 from m3_cli.errors import UploadError
 
 
@@ -72,15 +72,29 @@ def test_empty_sqlite_run_uploads_feedback_then_publishes(tmp_path, monkeypatch)
     ("response", "expected"),
     [
         (
-            {"published": True, "run_url": "https://x/reports/runs/r"},
-            "https://x/reports/runs/r",
+            {
+                "published": True,
+                "run_url": "https://x/reports/runs/r",
+                "run_label": "Run abcdef02",
+            },
+            PublishResult("Run abcdef02", "https://x/reports/runs/r"),
         ),
-        ({"published": True, "run_url": "http://x/reports/runs/r"}, None),
-        ({"published": True}, None),
-        (None, None),
+        (
+            {"published": True, "run_url": "https://x/reports/runs/r"},
+            PublishResult(None, "https://x/reports/runs/r"),
+        ),
+        (
+            {"published": True, "run_url": "http://x/reports/runs/r"},
+            PublishResult(None, None),
+        ),
+        ({"published": True, "run_label": ""}, PublishResult(None, None)),
+        ({"published": True, "run_label": "x" * 257}, PublishResult(None, None)),
+        ({"published": True, "run_label": 7}, PublishResult(None, None)),
+        ({"published": True}, PublishResult(None, None)),
+        (None, PublishResult(None, None)),
     ],
 )
-def test_upload_returns_https_run_url_from_publish_response(
+def test_upload_returns_label_and_https_run_url_from_publish_response(
     tmp_path, monkeypatch, response, expected
 ):
     import m3_cli.control_plane as control_plane

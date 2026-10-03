@@ -481,7 +481,9 @@ def test_test_upload_records_inspection_and_publishes_run(monkeypatch, tmp_path)
     monkeypatch.setattr(
         ci_upload,
         "upload_current_run",
-        lambda *args, **kwargs: uploaded.append((args, kwargs)),
+        lambda *args, **kwargs: (
+            uploaded.append((args, kwargs)) or ci_upload.PublishResult(None, None)
+        ),
     )
     assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 0
     store = SQLiteExecutionStore(database)
@@ -739,7 +741,11 @@ def test_timings_summary_includes_upload_steps_after_published(
         )
 
     monkeypatch.setattr(supervisor, "run_test_with_runs", run_test)
-    monkeypatch.setattr(ci_upload, "upload_current_run", lambda *a, **k: None)
+    monkeypatch.setattr(
+        ci_upload,
+        "upload_current_run",
+        lambda *a, **k: ci_upload.PublishResult(None, None),
+    )
     try:
         assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 0
         out = capsys.readouterr().out
@@ -748,9 +754,9 @@ def test_timings_summary_includes_upload_steps_after_published(
         monkeypatch.delenv("M3_TIMINGS", raising=False)
         _timing._reset()
         supervisor._timing_state.update(directory=None, run=None)
-    assert "Published: yes" in out
+    assert "Published: Run " in out
     summary = out[out.index("M3 timings:") :]
-    assert out.index("Published: yes") < out.index("M3 timings:")
+    assert out.index("Published: Run ") < out.index("M3 timings:")
     assert "cli.upload.inspect" in summary
     assert "cli.upload.publish" in summary
     assert "cli.credentials" in summary

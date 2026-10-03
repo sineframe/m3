@@ -14,7 +14,7 @@ import re
 import tempfile
 import time
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 from urllib import error, request
@@ -37,8 +37,17 @@ _MAX_EXECUTION_BYTES = 16 << 20
 _MAX_SUMMARY_BYTES = 1 << 20
 _MAX_ERROR_BODY_BYTES = 4 << 10
 _MAX_RESPONSE_BYTES = 64 << 10
+_MAX_RUN_LABEL = 256
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
+
+
+@dataclass(frozen=True)
+class PublishResult:
+    """What the server reported when publishing: its label and report link."""
+
+    run_label: str | None
+    run_url: str | None
 
 
 def _id_value(value: Any) -> str:
@@ -366,7 +375,7 @@ def upload_current_run(
     token: str,
     sensitive_values: Sequence[str] = (),
     expected_digest: str | None = None,
-) -> str | None:
+) -> PublishResult:
     """Upload summary, complete current-run executions, then publish.
 
     Every body is cached before its first request, making retries byte-identical.
@@ -514,9 +523,15 @@ def upload_current_run(
             f"run {run_id} publication",
         )
     run_url = published.get("run_url") if published else None
-    if isinstance(run_url, str) and urlsplit(run_url).scheme == "https":
-        return run_url
-    return None
+    run_label = published.get("run_label") if published else None
+    return PublishResult(
+        run_label
+        if isinstance(run_label, str) and 0 < len(run_label) <= _MAX_RUN_LABEL
+        else None,
+        run_url
+        if isinstance(run_url, str) and urlsplit(run_url).scheme == "https"
+        else None,
+    )
 
 
 def _cache(path: Path, data: bytes) -> None:
