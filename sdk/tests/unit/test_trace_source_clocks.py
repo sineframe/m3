@@ -224,11 +224,39 @@ def test_harness_offsets_without_turn_origin_are_labelled_ingested() -> None:
     assert call.timing.start_offset_ms == pytest.approx(20_000.0)
 
 
-def test_correlated_call_keeps_wire_timing_over_ingested_report() -> None:
-    # Adapters that build observations after the turn report the call at the
-    # turn's end; joining that would stretch the 5 ms call to 8.75 s.
+def _adapter_reported_call() -> tuple[EventKind, dict[str, Any]]:
+    """A call the session emits after the turn with no source timestamp."""
+
+    return (
+        EventKind.TOOL_CALL_REQUESTED,
+        {
+            "payload": {
+                "evidence_mode": "adapter_reported",
+                "call_id": "reported-1",
+                "tool": "echo",
+                "server": "fixture",
+                "arguments": {"text": "hi"},
+            },
+            "provenance": EventSource(
+                origin=EventOrigin.HARNESS_REPORTED, source="m3.agent.adapter"
+            ),
+            **_at(20_000.0),
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "reported",
+    [_harness_call(None), _adapter_reported_call()],
+    ids=["harness_without_origin", "adapter_reported"],
+)
+def test_correlated_call_keeps_wire_timing_over_ingested_report(
+    reported: tuple[EventKind, dict[str, Any]],
+) -> None:
+    # Both report the call when the turn ends; joining that would stretch the
+    # 5 ms call to the end of the turn.
     trace = _trace(
-        _harness_call(None),
+        reported,
         *_wire_call(
             ingested_ms=20_000.0,
             request_wire_ms=11_000.0,

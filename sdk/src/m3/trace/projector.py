@@ -563,7 +563,9 @@ def _timing(events: Sequence[Event]) -> TraceTiming:
     # Harness observations and wire captures reach the recorder after the
     # fact, so their event offset is ingestion time. Use the source's own
     # timestamp when its clock origin was recorded; otherwise label the timing
-    # approximate. Events without a source timestamp were recorded live.
+    # approximate. Calls an adapter returns without turn evidence are emitted
+    # after the turn with no source timestamp at all. Other events without a
+    # source timestamp were recorded live.
     source = _SOURCE_CLOCKS.get(first.provenance.origin)
     if source is not None and source[2] in first.payload:
         clock_kind, origin_key, offset_key, wall_key = source
@@ -575,6 +577,8 @@ def _timing(events: Sequence[Event]) -> TraceTiming:
             clock = clock_kind
         else:
             clock = TimingClock.INGESTED
+    elif first.payload.get("evidence_mode") == "adapter_reported":
+        clock = TimingClock.INGESTED
     if end < start:
         end = start
     if finished_at < started_at:
