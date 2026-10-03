@@ -31,7 +31,7 @@ def _progress(reporter: _Reporter, **option: Any) -> Any:
     from m3.pytest_plugin import _Progress
 
     config = SimpleNamespace(
-        option=SimpleNamespace(verbose=0, numprocesses=0, **option),
+        option=SimpleNamespace(**{"verbose": 0, "numprocesses": 0, **option}),
         pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
     )
     progress = _Progress(config)
