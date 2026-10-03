@@ -188,9 +188,9 @@ def xfail_waives_required_evaluations(state: Mapping[str, Any]) -> bool:
     ):
         return False
     diagnostics = state.get("diagnostics")
-    # A setup-phase xfail (``run=False`` or ``pytest.xfail()`` in a fixture)
-    # carries its own skip longrepr; that is not a setup error.
-    ignored = "setup:longrepr" if xfail_name == "setup" else None
+    # An xfail in setup or teardown carries its own skip longrepr; that is not
+    # a phase error.
+    ignored = f"{xfail_name}:longrepr"
     if isinstance(diagnostics, Mapping) and any(
         str(key).split(":", 1)[0] in {"setup", "teardown"}
         and str(key).endswith(":longrepr")
@@ -230,14 +230,15 @@ def xfail_phase(phases: Any) -> tuple[str, Mapping[str, Any]] | None:
         and call.get("wasxfail")
     ):
         return "call", call
-    setup = phases.get("setup")
-    if (
-        isinstance(setup, Mapping)
-        and setup.get("outcome") == "skipped"
-        and setup.get("wasxfail")
-        and str(setup.get("exception_type", "")).endswith("XFailed")
-    ):
-        return "setup", setup
+    for name in ("setup", "teardown"):
+        phase = phases.get(name)
+        if (
+            isinstance(phase, Mapping)
+            and phase.get("outcome") == "skipped"
+            and phase.get("wasxfail")
+            and str(phase.get("exception_type", "")).endswith("XFailed")
+        ):
+            return name, phase
     return None
 
 

@@ -1240,7 +1240,7 @@ def _pytest_runtest_logreport(report: _Any) -> None:
     )
     if report.outcome == "failed" or (
         report.outcome == "skipped"
-        and report.when == "setup"
+        and report.when in {"setup", "teardown"}
         and hasattr(report, "wasxfail")
     ):
         if isinstance(exception_type, str):
@@ -1391,9 +1391,7 @@ def _required_evaluation_issues(
         diagnostics = attempt.get("diagnostics")
         xfail_found = _xfail_phase(phases)
         ignored_diagnostic = (
-            "setup:longrepr"
-            if xfail_found is not None and xfail_found[0] == "setup"
-            else None
+            f"{xfail_found[0]}:longrepr" if xfail_found is not None else None
         )
         has_phase_error = isinstance(diagnostics, _Mapping) and any(
             str(key).split(":", 1)[0] in {"setup", "teardown"}
@@ -2058,21 +2056,34 @@ class _Progress:
         if not self.enabled or report.when not in {"setup", "call", "teardown"}:
             return
         if report.when == "teardown":
-            if (
-                report.outcome == "failed"
-                and report.nodeid in self._counted
-                and self._outcomes.get(report.nodeid) != "failed"
+            if report.nodeid not in self._counted:
+                return
+            previous = self._outcomes.get(report.nodeid)
+            crash = getattr(getattr(report, "longrepr", None), "reprcrash", None)
+            crash = getattr(crash, "message", None)
+            teardown_xfail = (
+                report.outcome == "skipped"
+                and hasattr(report, "wasxfail")
+                and not (
+                    isinstance(crash, str) and "XFailed" not in crash.split(":", 1)[0]
+                )
+            )
+            if (report.outcome == "failed" and previous != "failed") or (
+                teardown_xfail and previous in {"passed", "skipped"}
             ):
-                previous = self._outcomes[report.nodeid]
                 if previous == "passed":
                     self.passed -= 1
                 elif previous == "skipped":
                     self.skipped -= 1
                 elif previous == "xfailed":
                     self.xfailed -= 1
-                self.failed += 1
-                self._outcomes[report.nodeid] = "failed"
-                self._report_failure(report.nodeid)
+                if teardown_xfail:
+                    self.xfailed += 1
+                    self._outcomes[report.nodeid] = "xfailed"
+                else:
+                    self.failed += 1
+                    self._outcomes[report.nodeid] = "failed"
+                    self._report_failure(report.nodeid)
                 self._write(force=True)
             return
         if report.nodeid in self._counted:

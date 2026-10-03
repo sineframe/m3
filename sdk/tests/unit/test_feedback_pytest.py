@@ -555,6 +555,55 @@ def test_fixture_xfail(fixture_xfail):
     assert feedback["tests"][0]["effective_verdict"] == "xfailed"
 
 
+def test_teardown_phase_xfail_is_xfailed_and_does_not_block(tmp_path: Path) -> None:
+    source = """
+@pytest.fixture
+def teardown_xfail():
+    yield
+    pytest.xfail('teardown says xfail')
+
+def test_teardown_xfail(teardown_xfail):
+    assert True
+"""
+    result, database = _run(tmp_path, source)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "incomplete" not in result.stdout
+    assert "blocked finalization" not in result.stdout
+    assert "M3 verdicts: 1 xfailed" in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        attempt = store.list_test_results(run_id)[0]
+    finally:
+        store.close()
+    assert attempt["outcome"] == "xfailed"
+    assert attempt["xfail_reason"] == "teardown says xfail"
+    report = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
+    feedback = json.loads(report.read_text(encoding="utf-8"))
+    assert feedback["tests"][0]["effective_verdict"] == "xfailed"
+    assert feedback["summary"]["xfailed_tests"] == 1
+
+
+def test_teardown_error_without_xfail_stays_error(tmp_path: Path) -> None:
+    source = """
+@pytest.fixture
+def teardown_error():
+    yield
+    raise RuntimeError('teardown boom')
+
+def test_teardown_error(teardown_error):
+    assert True
+"""
+    result, database = _run(tmp_path, source)
+    assert result.returncode != 0, result.stdout + result.stderr
+    store, run_id, _ = _manifest(database)
+    try:
+        attempt = store.list_test_results(run_id)[0]
+    finally:
+        store.close()
+    assert attempt["outcome"] == "error"
+    assert not attempt.get("xfail_reason")
+
+
 def test_setup_xfail_normalisation_requires_xfailed_exception_type() -> None:
     xfailed = {
         "outcome": "skipped",
