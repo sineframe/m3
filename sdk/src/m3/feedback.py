@@ -30,6 +30,9 @@ from ._test_runs import (
     required_status_blocks as _required_status_blocks,
 )
 from ._test_runs import (
+    xfail_phase as _xfail_phase,
+)
+from ._test_runs import (
     xfail_waives_required_evaluations as _xfail_waives_required_evaluations,
 )
 from .types import (
@@ -1577,11 +1580,12 @@ def _xfail_state(test: Mapping[str, Any]) -> tuple[bool, bool]:
     if not isinstance(phases, Mapping):
         return False, False
     call = phases.get("call")
-    if not isinstance(call, Mapping) or not call.get("wasxfail"):
-        return False, False
-    # A failed call with wasxfail is strict XPASS; a skipped call is the
-    # ordinary expected-failure path.  The latter is the only waiver case.
-    return call.get("outcome") == "skipped", call.get("outcome") == "passed"
+    if isinstance(call, Mapping) and call.get("wasxfail"):
+        # A failed call with wasxfail is strict XPASS; a skipped call is the
+        # ordinary expected-failure path.  The latter is the only waiver case.
+        return call.get("outcome") == "skipped", call.get("outcome") == "passed"
+    # ``run=False`` and fixture-level ``pytest.xfail()`` skip the setup phase.
+    return _xfail_phase(phases) is not None, False
 
 
 def _effective_verdict(
@@ -1644,18 +1648,14 @@ def _normalised_outcome(value: Mapping[str, Any]) -> Any:
     """Return the stored outcome, mapping legacy xfail rows to ``xfailed``.
 
     Rows stored before ``xfailed`` existed recorded expected failures as
-    skipped; the call phase still identifies them.
+    skipped; the call phase (or, for ``run=False``/fixture-level xfails, the
+    setup phase with no call phase) still identifies them.
     """
     outcome = value.get("outcome")
     if outcome != "skipped":
         return outcome
     phases = value.get("phases")
-    call = phases.get("call") if isinstance(phases, Mapping) else None
-    if (
-        isinstance(call, Mapping)
-        and call.get("outcome") == "skipped"
-        and call.get("wasxfail")
-    ):
+    if isinstance(phases, Mapping) and _xfail_phase(phases) is not None:
         return "xfailed"
     return outcome
 

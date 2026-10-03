@@ -78,6 +78,9 @@ from ._test_runs import (
     test_attempt as _test_attempt,
 )
 from ._test_runs import (
+    xfail_phase as _xfail_phase,
+)
+from ._test_runs import (
     xfail_waives_required_evaluations as _xfail_waives_required_evaluations,
 )
 
@@ -1180,10 +1183,12 @@ def _pytest_runtest_protocol(item: _Any, nextitem: _Any) -> _Iterator[_Any]:
     finally:
         state["finished_at"] = _now_iso()
         state["outcome"] = _attempt_outcome(state)
-        phases = state.get("phases")
-        call_phase = phases.get("call") if isinstance(phases, dict) else None
+        call_phase = (state.get("phases") or {}).get("call")
+        xfail_found = _xfail_phase(state.get("phases"))
         if isinstance(call_phase, dict) and call_phase.get("wasxfail"):
             state["xfail_reason"] = str(call_phase.get("xfail_reason", ""))
+        elif xfail_found is not None:
+            state["xfail_reason"] = str(xfail_found[1].get("xfail_reason", ""))
         _save_attempt(config, state)
         _reset_test(token)
 
@@ -1203,8 +1208,7 @@ def _attempt_outcome(state: dict[str, object]) -> str:
         if phase != "call"
     ):
         return "error"
-    call_phase = values.get("call", {})
-    if call_phase.get("outcome") == "skipped" and call_phase.get("wasxfail"):
+    if _xfail_phase(values) is not None:
         return "xfailed"
     if any(value.get("outcome") == "skipped" for value in values.values()):
         return "skipped"
@@ -1234,7 +1238,11 @@ def _pytest_runtest_logreport(report: _Any) -> None:
         if isinstance(exception_types, dict)
         else None
     )
-    if report.outcome == "failed":
+    if report.outcome == "failed" or (
+        report.outcome == "skipped"
+        and report.when == "setup"
+        and hasattr(report, "wasxfail")
+    ):
         if isinstance(exception_type, str):
             phases[str(report.when)]["exception_type"] = exception_type
         else:
@@ -1381,9 +1389,16 @@ def _required_evaluation_issues(
                 )
         phases = attempt.get("phases")
         diagnostics = attempt.get("diagnostics")
+        xfail_found = _xfail_phase(phases)
+        ignored_diagnostic = (
+            "setup:longrepr"
+            if xfail_found is not None and xfail_found[0] == "setup"
+            else None
+        )
         has_phase_error = isinstance(diagnostics, _Mapping) and any(
             str(key).split(":", 1)[0] in {"setup", "teardown"}
             and str(key).endswith(":longrepr")
+            and str(key) != ignored_diagnostic
             for key in diagnostics
         )
         has_xfail_phase = isinstance(phases, _Mapping) and any(
@@ -2069,10 +2084,19 @@ class _Progress:
             return
         self._counted.add(report.nodeid)
         outcome = report.outcome
+        crash_message = getattr(getattr(report, "longrepr", None), "reprcrash", None)
+        crash_message = getattr(crash_message, "message", None)
         is_xfail = (
             outcome == "skipped"
-            and report.when == "call"
+            and report.when in {"setup", "call"}
             and hasattr(report, "wasxfail")
+            # A setup *error* under an xfail marker also carries ``wasxfail``;
+            # when pytest exposes the exception, only ``XFailed`` counts.
+            and not (
+                report.when == "setup"
+                and isinstance(crash_message, str)
+                and "XFailed" not in crash_message.split(":", 1)[0]
+            )
         )
         self._outcomes[report.nodeid] = "xfailed" if is_xfail else outcome
         self.completed += 1

@@ -830,6 +830,32 @@ def test_progress_counts_xfail_apart_from_skips() -> None:
     assert progress.xfailed == 1
 
 
+def test_progress_counts_setup_phase_xfail_as_xfailed() -> None:
+    from m3.pytest_plugin import _Progress
+
+    reporter = SimpleNamespace(
+        isatty=True,
+        rewrite=lambda *_args, **_kwargs: None,
+        write_line=lambda *_args: None,
+    )
+    config = SimpleNamespace(
+        option=SimpleNamespace(verbose=0, numprocesses=0),
+        pluginmanager=SimpleNamespace(getplugin=lambda _: reporter),
+    )
+    progress = _Progress(config)
+    progress.reporter = reporter
+    progress.enabled = True
+    progress.pytest_collection_finish(SimpleNamespace(items=[1, 2]))
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="norun", when="setup", outcome="skipped", wasxfail="r")
+    )
+    progress.pytest_runtest_logreport(
+        SimpleNamespace(nodeid="skip", when="setup", outcome="skipped")
+    )
+    assert (progress.completed, progress.passed, progress.skipped) == (2, 0, 1)
+    assert progress.xfailed == 1
+
+
 def test_progress_is_disabled_for_non_tty() -> None:
     from m3.pytest_plugin import _Progress
 

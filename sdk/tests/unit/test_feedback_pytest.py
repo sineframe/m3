@@ -473,6 +473,112 @@ def test_skipped():
     assert summary["effective_verdict_counts"]["skipped"] == 1
 
 
+_SETUP_XFAIL_SOURCE = """
+@pytest.fixture
+def fixture_xfail():
+    pytest.xfail('fixture says xfail')
+
+def test_ok():
+    assert True
+
+@pytest.mark.xfail(run=False, reason='not run')
+def test_no_run():
+    assert False
+
+def test_fixture_xfail(fixture_xfail):
+    pass
+"""
+
+
+def test_setup_phase_xfails_are_xfailed_and_do_not_block(tmp_path: Path) -> None:
+    result, database = _run(tmp_path, _SETUP_XFAIL_SOURCE)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed, 2 xfailed" in result.stdout
+    assert "M3 verdicts: 1 passed, 2 xfailed" in result.stdout
+    assert "blocked finalization" not in result.stdout
+    assert "incomplete" not in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        attempts = {
+            row["node_id"].rsplit("::", 1)[-1]: row
+            for row in store.list_test_results(run_id)
+        }
+    finally:
+        store.close()
+    assert attempts["test_no_run"]["outcome"] == "xfailed"
+    assert attempts["test_no_run"]["xfail_reason"] == "[NOTRUN] not run"
+    assert attempts["test_fixture_xfail"]["outcome"] == "xfailed"
+    assert attempts["test_fixture_xfail"]["xfail_reason"] == "fixture says xfail"
+    assert attempts["test_no_run"]["phases"]["setup"]["outcome"] == "skipped"
+    report = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
+    feedback = json.loads(report.read_text(encoding="utf-8"))
+    tests = {item["node_id"].rsplit("::", 1)[-1]: item for item in feedback["tests"]}
+    assert tests["test_no_run"]["effective_verdict"] == "xfailed"
+    assert tests["test_fixture_xfail"]["effective_verdict"] == "xfailed"
+    assert tests["test_ok"]["effective_verdict"] == "passed"
+    assert feedback["summary"]["xfailed_tests"] == 2
+
+
+def test_setup_phase_xfail_waives_linked_required_evaluations(
+    tmp_path: Path,
+) -> None:
+    source = """
+from m3 import EvaluationStatus, ExecutionId, ExecutionState
+from m3.evaluations import RequiredEvaluationError
+
+@pytest.fixture
+def fixture_xfail(m3_kit):
+    execution_id = ExecutionId('execution-setup-xfail')
+    m3_kit.store.create(ExecutionState(execution_id=execution_id), run_id=m3_kit.run_id)
+    m3_kit.register_evaluator('required.setup', lambda _context: EvaluationStatus.FAILED)
+    try:
+        m3_kit.evaluate({}, 'required.setup', required=True, execution_id=execution_id)
+    except RequiredEvaluationError:
+        pass
+    pytest.xfail('fixture says xfail')
+
+def test_fixture_xfail(fixture_xfail):
+    pass
+"""
+    result, database = _run(tmp_path, source)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "blocked finalization" not in result.stdout
+    store, run_id, _ = _manifest(database)
+    try:
+        attempt = store.list_test_results(run_id)[0]
+    finally:
+        store.close()
+    assert attempt["outcome"] == "xfailed"
+    assert attempt["xfail_reason"] == "fixture says xfail"
+    report = tmp_path / ".m3" / "reports" / run_id / "feedback.json"
+    feedback = json.loads(report.read_text(encoding="utf-8"))
+    assert feedback["tests"][0]["effective_verdict"] == "xfailed"
+
+
+def test_setup_xfail_normalisation_requires_xfailed_exception_type() -> None:
+    xfailed = {
+        "outcome": "skipped",
+        "phases": {
+            "setup": {
+                "outcome": "skipped",
+                "wasxfail": True,
+                "exception_type": "_pytest.outcomes.XFailed",
+            }
+        },
+    }
+    assert feedback_module._normalised_outcome(xfailed) == "xfailed"
+    # A setup error under an xfail marker, or a legacy row without exception
+    # type, is not a genuine setup-phase xfail.
+    for setup in (
+        {"outcome": "skipped", "wasxfail": True, "exception_type": "RuntimeError"},
+        {"outcome": "skipped", "wasxfail": True},
+    ):
+        row = {"outcome": "skipped", "phases": {"setup": setup}}
+        assert feedback_module._normalised_outcome(row) == "skipped"
+    plain = {"outcome": "skipped", "phases": {"setup": {"outcome": "skipped"}}}
+    assert feedback_module._normalised_outcome(plain) == "skipped"
+
+
 def test_xfail_only_run_counts_as_executed(tmp_path: Path) -> None:
     source = """
 @pytest.mark.xfail
