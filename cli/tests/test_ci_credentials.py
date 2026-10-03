@@ -135,6 +135,17 @@ def test_mapped_credential_source_values_are_scanned_for_upload():
         _check_body("run-test", "", value.encode(), "", sensitive)
 
 
+@pytest.mark.parametrize(
+    ("execution_id", "limit"), [("", 6 << 20), ("exec-1", 16 << 20)]
+)
+def test_upload_body_size_limits(execution_id, limit):
+    from m3_cli.control_plane import _check_body
+
+    _check_body("run-test", execution_id, b" " * limit, "", ())
+    with pytest.raises(UploadError, match=f"; limit is {limit}$"):
+        _check_body("run-test", execution_id, b" " * (limit + 1), "", ())
+
+
 def test_upload_token_cannot_be_mapped_to_test_credentials():
     for mapping in (
         "OPENAI_API_KEY=M3_ACCESS_TOKEN",
