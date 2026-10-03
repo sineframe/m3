@@ -769,6 +769,13 @@ def _tool_result(event: Event) -> ToolResult:
         and not isinstance(event_error, Mapping)
     ):
         return ToolResult(error=_unavailable(ObservationReason.MALFORMED_SOURCE))
+    if (
+        event.kind is EventKind.MCP_ERROR
+        and "result" not in event.payload
+        and "error" not in event.payload
+    ):
+        # The call was refused at the HTTP layer without a JSON-RPC body.
+        return ToolResult(is_error=True, error=_not_emitted())
     result = raw_result if isinstance(raw_result, Mapping) else {}
     if not isinstance(raw_result, Mapping) and not isinstance(event_error, Mapping):
         return ToolResult(error=_unavailable(ObservationReason.MALFORMED_SOURCE))

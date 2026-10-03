@@ -1787,3 +1787,25 @@ def test_http_refusal_without_a_jsonrpc_error_projects_as_a_protocol_error() -> 
     assert entry.error.state is ObservationState.NOT_EMITTED
     assert entry.http.value is not None
     assert entry.http.value.status_code == 401
+
+
+@pytest.mark.parametrize("status", [401, 403, 500])
+def test_http_refused_tool_call_projects_as_a_failed_call(status: int) -> None:
+    trace = _trace()
+    refused = trace.events[8].model_copy(
+        update={
+            "kind": EventKind.MCP_ERROR,
+            "payload": {
+                "method": "tools/call",
+                "http": {"method": "POST", "status_code": status, "headers": []},
+            },
+        }
+    )
+    view = trace.model_copy(
+        update={"events": (*trace.events[:8], refused, *trace.events[9:])}
+    ).view()
+    call = view.tool_calls[0]
+    assert call.tool_status.value == "protocol_error"
+    assert call.result.value is not None
+    assert call.result.value.is_error is True
+    assert call.result.value.error.state is ObservationState.NOT_EMITTED
