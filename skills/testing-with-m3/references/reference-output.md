@@ -4,6 +4,8 @@
 
 ## Lines printed after a run
 
+In an interactive terminal, `m3 test` prints the M3 banner before pytest starts, replaces pytest's per-test dots with one live progress line, and lists each failing test above that line as it fails. The `M3 run`, `M3 feedback`, `M3 verdicts`, and `M3 observations` lines are shown as a panel titled with the run ID, with `verdicts`, `observations`, and `feedback` rows. When output is piped or redirected, under `m3 ci test`, or with `TERM=dumb`, M3 prints the plain lines below. Set `NO_COLOR` to keep the interactive layout without colour. Pytest's own output takes over the progress line under `-v`, `-s`, `-n`, or live logging.
+
 | Line | Meaning | What to do |
 |---|---|---|
 | `M3 run` | The run ID created by this invocation. | Use it with `--baseline`. If a run started with `--upload` was not published, use it with `m3 upload`. |
