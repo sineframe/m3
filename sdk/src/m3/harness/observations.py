@@ -301,12 +301,23 @@ class TurnEvidence(FrozenModel):
     status: Literal["completed", "failed", "timed_out", "cancelled", "interrupted"]
     observations: tuple[HarnessObservation, ...] = ()
     limitations: tuple[str, ...] = ()
+    # ``time.monotonic()`` reading, in seconds, that the observations'
+    # ``monotonic_offset_ms`` values are measured from. Without it the
+    # offsets cannot be placed on the trace clock.
+    monotonic_origin: float | None = None
 
     @field_validator("sequence", mode="before")
     @classmethod
     def _strict_sequence(cls, value: object) -> object:
         if isinstance(value, bool) or not isinstance(value, int):
             raise TypeError("sequence must be an integer")
+        return value
+
+    @field_validator("monotonic_origin")
+    @classmethod
+    def _finite_origin(cls, value: float | None) -> float | None:
+        if value is not None and not isfinite(value):
+            raise ValueError("monotonic_origin must be finite")
         return value
 
     @model_validator(mode="after")

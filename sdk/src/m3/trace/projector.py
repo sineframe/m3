@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import isfinite
 from typing import Any, Literal, TypeVar, cast
 
@@ -48,6 +48,7 @@ from ..observability import (
     ReasoningEntry,
     ReportedToolCall,
     RuntimeTraceInfo,
+    TimingClock,
     ToolCallAttempt,
     ToolCallEntry,
     ToolCallStatus,
@@ -281,6 +282,10 @@ def _same_observed_text(left: Observation[Any], right: Observation[Any]) -> bool
     )
 
 
+def _joined_clock(left: TraceTiming, right: TraceTiming) -> TimingClock:
+    return left.clock if left.clock is right.clock else TimingClock.MIXED
+
+
 def _merge_tool_evidence(reported: ToolCallEntry, wire: ToolCallEntry) -> ToolCallEntry:
     """Build one correlated entry with wire fields authoritative."""
     first_timing = min(
@@ -296,6 +301,7 @@ def _merge_tool_evidence(reported: ToolCallEntry, wire: ToolCallEntry) -> ToolCa
             "duration_ms": max(
                 0.0, last_timing.end_offset_ms - first_timing.start_offset_ms
             ),
+            "clock": _joined_clock(reported.timing, wire.timing),
         }
     )
     provider_call_id = (
@@ -540,38 +546,97 @@ def _timing(events: Sequence[Event]) -> TraceTiming:
     end = max(start, last.monotonic_offset_ms)
     started_at = first.timestamp
     finished_at = last.timestamp
-    if first.provenance.origin is EventOrigin.HARNESS_REPORTED:
-        source_start = _source_clock(first)
-        source_end = _source_clock(last)
+    clock = TimingClock.RECORDED
+    # Harness observations and wire captures reach the recorder after the
+    # fact, so their event offset is ingestion time. Use the source's own
+    # timestamp when its clock origin was recorded; otherwise label the timing
+    # approximate. Events without a source timestamp were recorded live.
+    source = _SOURCE_CLOCKS.get(first.provenance.origin)
+    if source is not None and source[2] in first.payload:
+        clock_kind, origin_key, offset_key, wall_key = source
+        source_start = _anchored_clock(first, origin_key, offset_key, wall_key)
+        source_end = _anchored_clock(last, origin_key, offset_key, wall_key)
         if source_start is not None and source_end is not None:
             started_at, start = source_start
             finished_at, end = source_end
-            if end < start:
-                end = start
-                finished_at = started_at
+            clock = clock_kind
+        else:
+            clock = TimingClock.INGESTED
+    if end < start:
+        end = start
+    if finished_at < started_at:
+        finished_at = started_at
     return TraceTiming(
         started_at=started_at,
         finished_at=finished_at,
         start_offset_ms=start,
         end_offset_ms=end,
         duration_ms=end - start,
+        clock=clock,
     )
 
 
-def _source_clock(event: Event) -> tuple[datetime, float] | None:
-    wall_time = event.payload.get("wall_time")
-    offset = event.payload.get("monotonic_offset_ms")
-    if not isinstance(wall_time, str) or not isinstance(offset, (int, float)):
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    if isinstance(offset, bool) or offset < 0 or not isfinite(offset):
+    return float(value) if isfinite(value) else None
+
+
+def _aware_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str):
         return None
     try:
-        timestamp = datetime.fromisoformat(wall_time)
+        timestamp = datetime.fromisoformat(value)
     except ValueError:
         return None
     if timestamp.tzinfo is None or timestamp.utcoffset() is None:
         return None
-    return timestamp, float(offset)
+    return timestamp
+
+
+_SOURCE_CLOCKS: dict[EventOrigin, tuple[TimingClock, str, str, str | None]] = {
+    EventOrigin.HARNESS_REPORTED: (
+        TimingClock.HARNESS,
+        "harness_clock_origin_ms",
+        "monotonic_offset_ms",
+        # Adapters disagree on whether ``wall_time`` is per event or per turn.
+        None,
+    ),
+    EventOrigin.WIRE_OBSERVED: (
+        TimingClock.WIRE,
+        "wire_clock_origin_ms",
+        "wire_offset_ms",
+        "wire_occurred_at",
+    ),
+}
+
+
+def _anchored_clock(
+    event: Event, origin_key: str, offset_key: str, wall_key: str | None
+) -> tuple[datetime, float] | None:
+    """Place a source-timed event on the trace clock.
+
+    ``origin_key`` holds the source clock's zero point measured on the trace
+    clock when the evidence was ingested. The result is rejected unless it
+    falls inside the trace and no later than the event's ingestion, since
+    evidence cannot be ingested before it was observed.
+    """
+
+    origin = _finite_number(event.payload.get(origin_key))
+    source_offset = _finite_number(event.payload.get(offset_key))
+    if origin is None or source_offset is None or source_offset < 0:
+        return None
+    offset = origin + source_offset
+    if offset < 0 or offset > event.monotonic_offset_ms:
+        return None
+    occurred_at = (
+        _aware_datetime(event.payload.get(wall_key)) if wall_key is not None else None
+    )
+    if occurred_at is None:
+        occurred_at = event.timestamp - timedelta(
+            milliseconds=event.monotonic_offset_ms - offset
+        )
+    return occurred_at, offset
 
 
 def _base_kwargs(
@@ -1158,9 +1223,19 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
         status = ToolCallStatus.SUCCESS
     elif status is None:
         status = ToolCallStatus.INCOMPLETE
+    timing = _timing(events)
     latency = None
     if len(events) > 1:
-        latency = max(0.0, (last.monotonic_offset_ms - first.monotonic_offset_ms))
+        # The capture proxy measures request->response latency itself; it stays
+        # exact even when the trace lacks the anchor to place the span.
+        wire_latency = (
+            _finite_number(last.payload.get("latency_ms"))
+            if last.provenance.origin is EventOrigin.WIRE_OBSERVED
+            else None
+        )
+        latency = (
+            max(0.0, wire_latency) if wire_latency is not None else timing.duration_ms
+        )
     server_latency = _observed(latency) if latency is not None else _not_emitted()
     if result is not None:
         result_observation = _observed(result)
@@ -1203,7 +1278,7 @@ def _tool_entry(events: Sequence[Event]) -> TraceEntry:
         latency_ms=server_latency,
         sequence_start=first.sequence,
         sequence_end=last.sequence,
-        timing=_timing(events),
+        timing=timing,
     )
     reported_call = ReportedToolCall(
         provider_call_id=_string_observation(
@@ -1385,6 +1460,7 @@ def _merge_mrtr_tool_calls(
             "duration_ms": max(
                 0.0, second.timing.end_offset_ms - first.timing.start_offset_ms
             ),
+            "clock": _joined_clock(first.timing, second.timing),
         }
     )
     return first.model_copy(
@@ -1648,6 +1724,7 @@ def _merge_mrtr_protocol_calls(
             "duration_ms": max(
                 0.0, second.timing.end_offset_ms - first.timing.start_offset_ms
             ),
+            "clock": _joined_clock(first.timing, second.timing),
         }
     )
     return first.model_copy(

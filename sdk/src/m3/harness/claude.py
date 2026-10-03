@@ -295,6 +295,7 @@ def _claude_result(
             status=status,  # type: ignore[arg-type]
             observations=tuple(observations),
             limitations=tuple(limitations),
+            monotonic_origin=started,
         ),
     )
 

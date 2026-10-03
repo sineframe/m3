@@ -61,6 +61,25 @@ The result assertion checks the server response. The trace assertions check
 the call M3 observed. Moving `client.final_trace` inside the `with` block is an
 error because the trace is not final yet.
 
+## Entry timing
+
+Every timeline entry has a `timing` with offsets in milliseconds from the start
+of the execution. `timing.clock` says where those offsets were measured:
+
+| `clock` | Measured by |
+| --- | --- |
+| `recorded` | M3, when it recorded the event as it happened. |
+| `wire` | The MCP capture proxy, when the message crossed the transport. |
+| `harness` | The agent harness, timed from the start of the turn. |
+| `ingested` | M3, when it received evidence that was observed earlier. The offset is an upper bound, not the time the call ran. |
+| `mixed` | Evidence from two of the above, such as a harness-reported call joined to its wire exchange. |
+
+Harness and wire evidence reach the trace after the turn ends. M3 places them
+at the time their source recorded. When the source's clock cannot be tied to
+the execution clock, as in traces saved by older versions, the entry is marked
+`ingested`. A wire tool call's `server_latency_ms` is the proxy's own
+request-to-response measurement in either case.
+
 Next, [open the saved run](viewer.md) or read about
 [evidence availability](../../concepts/evidence.md).
 

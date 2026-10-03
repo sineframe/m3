@@ -1083,6 +1083,17 @@ class AsyncAgentSession:
                 for record in records
             }
             observed_snapshots = tuple(snapshots())
+            baseline_ns = getattr(capture, "baseline_ns", None)
+            convert = getattr(self._trace_recorder, "offset_for_perf_counter_ns", None)
+            # Capture writers measure from the manager's perf-counter baseline;
+            # this is that baseline expressed on the trace clock.
+            wire_clock_origin_ms = (
+                convert(baseline_ns)
+                if callable(convert)
+                and isinstance(baseline_ns, int)
+                and not isinstance(baseline_ns, bool)
+                else None
+            )
         except Exception:
             return
         for snapshot in observed_snapshots:
@@ -1130,6 +1141,8 @@ class AsyncAgentSession:
                     "jsonrpc_id": getattr(event, "jsonrpc_id", None),
                     "latency_ms": getattr(event, "latency_ms", None),
                     "wire_offset_ms": getattr(event, "offset_ms", None),
+                    "wire_clock_origin_ms": wire_clock_origin_ms,
+                    "wire_occurred_at": getattr(event, "occurred_at", None),
                     "policy_denied": getattr(event, "provenance", None)
                     == "policy_denied",
                     "dedup_key": f"{connection_id}:{getattr(event, 'request_sequence', None)}",
@@ -2101,7 +2114,11 @@ class AsyncAgentSession:
             from .harness.observations import TurnEvidence
 
             if isinstance(typed_evidence, TurnEvidence):
-                sink = HarnessObservationSink(self._trace_recorder, turn_id=turn_id)
+                sink = HarnessObservationSink(
+                    self._trace_recorder,
+                    turn_id=turn_id,
+                    monotonic_origin=typed_evidence.monotonic_origin,
+                )
                 for observation in typed_evidence.observations:
                     sink.emit(observation)
                 for limitation in (*typed_evidence.limitations, *sink.limitations):

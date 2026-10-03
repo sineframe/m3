@@ -1210,6 +1210,22 @@ Model fields:
 | `name` | `Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id']` | Yes | — | — | — |
 | `value` | `str` | Yes | — | — | — |
 
+## `TimingClock`
+
+```python
+m3.observability.TimingClock(
+    *values,
+)
+```
+
+Where a span's offsets were measured.
+
+- `RECORDED` = `'recorded'`
+- `WIRE` = `'wire'`
+- `HARNESS` = `'harness'`
+- `INGESTED` = `'ingested'`
+- `MIXED` = `'mixed'`
+
 ## `ToolCallAttempt`
 
 ```python
@@ -1482,6 +1498,7 @@ m3.observability.TraceTiming(
     start_offset_ms: float = 0,
     end_offset_ms: float = 0,
     duration_ms: float = 0,
+    clock: m3.observability.TimingClock = TimingClock.RECORDED,
 ) -> None
 ```
 
@@ -1494,6 +1511,7 @@ Model fields:
 | `start_offset_ms` | `float` | No | `0` | `ge=0` | — |
 | `end_offset_ms` | `float` | No | `0` | `ge=0` | — |
 | `duration_ms` | `float` | No | `0` | `ge=0` | — |
+| `clock` | `m3.observability.TimingClock` | No | `TimingClock.RECORDED ('recorded')` | — | — |
 
 ## `TraceView`
 

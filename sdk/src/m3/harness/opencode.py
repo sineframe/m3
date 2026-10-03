@@ -1314,6 +1314,7 @@ class OpenCodeHarnessAdapter:
                 status=turn_status,
                 observations=tuple(observations),
                 limitations=tuple(dict.fromkeys(limitations)),
+                monotonic_origin=turn_started,
             ),
         )
 
@@ -1847,6 +1848,7 @@ class OpenCodeHarnessAdapter:
                 status=status,
                 observations=tuple(observations),
                 limitations=limitations,
+                monotonic_origin=turn_started,
             ),
         )
 

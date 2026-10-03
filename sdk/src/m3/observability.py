@@ -245,12 +245,30 @@ class TraceStatus(str, _Enum):
     UNAVAILABLE = "unavailable"
 
 
+class TimingClock(str, _Enum):
+    """Where a span's offsets were measured.
+
+    ``recorded``: when M3 recorded the event, which is when it happened.
+    ``wire``: the MCP capture proxy's timestamp, converted to the trace clock.
+    ``harness``: a timestamp reported by the harness.
+    ``ingested``: when M3 ingested evidence observed earlier; approximate.
+    ``mixed``: a span joining evidence measured on different clocks.
+    """
+
+    RECORDED = "recorded"
+    WIRE = "wire"
+    HARNESS = "harness"
+    INGESTED = "ingested"
+    MIXED = "mixed"
+
+
 class TraceTiming(_FrozenModel):
     started_at: _datetime = _Field(default_factory=lambda: _datetime.now(_timezone.utc))
     finished_at: _datetime | None = None
     start_offset_ms: float = _Field(default=0, ge=0)
     end_offset_ms: float = _Field(default=0, ge=0)
     duration_ms: float = _Field(default=0, ge=0)
+    clock: TimingClock = TimingClock.RECORDED
 
     @_field_validator("started_at", "finished_at")
     @classmethod
@@ -1086,6 +1104,7 @@ __all__ = [
     "ReportedToolCall",
     "RuntimeTraceInfo",
     "SafeHttpHeader",
+    "TimingClock",
     "ToolCallAttempt",
     "ToolCallEntry",
     "ToolCallStatus",

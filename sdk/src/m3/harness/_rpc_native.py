@@ -532,6 +532,7 @@ class NativeRPCAdapter:
                 status=status,
                 observations=tuple(observations),
                 limitations=tuple(dict.fromkeys(limitations)),
+                monotonic_origin=started,
             )
             return HarnessTurnResult(
                 sequence=sequence,
@@ -574,6 +575,7 @@ class NativeRPCAdapter:
                 status="timed_out",
                 observations=tuple(observations),
                 limitations=tuple(dict.fromkeys(limitations)),
+                monotonic_origin=started,
             )
             return HarnessTurnResult(
                 sequence=sequence,
@@ -599,6 +601,7 @@ class NativeRPCAdapter:
                 status=failure_status,
                 observations=tuple(observations),
                 limitations=tuple(dict.fromkeys(limitations or ["capture_incomplete"])),
+                monotonic_origin=started,
             )
             return HarnessTurnResult(
                 sequence=sequence,

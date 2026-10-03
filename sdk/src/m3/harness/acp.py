@@ -970,7 +970,12 @@ class _AcpContractSession:
                     and isfinite(raw_offset)
                     and raw_offset >= 0
                 ):
-                    frame_offset = float(raw_offset)
+                    # Frames are timed from the session baseline; turn
+                    # evidence is measured from the turn start. Setup frames
+                    # that preceded this turn are pinned to its start.
+                    frame_offset = max(
+                        0.0, float(raw_offset) - (started - self._baseline) * 1000.0
+                    )
                 elif raw_offset is not None:
                     limit()
                 observations.append(
@@ -1632,6 +1637,7 @@ class _AcpContractSession:
                         status="completed",
                         observations=tuple(observations),
                         limitations=tuple(limitations),
+                        monotonic_origin=turn_started,
                     ),
                 )
             except asyncio.TimeoutError:
@@ -1666,6 +1672,7 @@ class _AcpContractSession:
                         status="timed_out",
                         observations=tuple(observations),
                         limitations=tuple(limitations),
+                        monotonic_origin=turn_started,
                     ),
                 )
             except asyncio.CancelledError:
@@ -1700,6 +1707,7 @@ class _AcpContractSession:
                             status="cancelled",
                             observations=tuple(observations),
                             limitations=tuple(limitations),
+                            monotonic_origin=turn_started,
                         ),
                     )
                 raise
@@ -1741,6 +1749,7 @@ class _AcpContractSession:
                         status="failed",
                         observations=tuple(observations),
                         limitations=tuple(limitations),
+                        monotonic_origin=turn_started,
                     ),
                 )
             finally:

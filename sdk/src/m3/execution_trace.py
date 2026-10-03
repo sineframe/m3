@@ -172,6 +172,10 @@ class ExecutionTraceRecorder:
         self._clock_lock = threading.RLock()
         self._started_monotonic_ns = perf_counter_ns()
         self._last_offset_ms = 0.0
+        # A recorder reopened over persisted events clamps new offsets to the
+        # persisted maximum, so its perf-counter baseline no longer maps onto
+        # the stored timeline.
+        self._clock_resumed = False
         self._final: TraceResult | None = None
         self._runtime_limitations: list[str] = []
         if store.get_snapshot(self._execution_id) is None:
@@ -290,6 +294,7 @@ class ExecutionTraceRecorder:
                 self._last_offset_ms = max(
                     event.monotonic_offset_ms for event in existing_events
                 )
+                self._clock_resumed = True
             if self._has_committed_terminal():
                 existing = self._project_trace()
                 existing.view()
@@ -637,6 +642,20 @@ class ExecutionTraceRecorder:
         ):
             raise TraceRecorderError("event identity changed during redaction")
         return safe_event
+
+    def offset_for_perf_counter_ns(self, value_ns: int) -> float | None:
+        """Return the trace offset of a ``time.perf_counter_ns()`` reading.
+
+        Other observers (such as MCP capture writers) measure on the same
+        clock from their own baseline; this converts that baseline into the
+        trace's clock domain. The result may be negative when the reading
+        predates this recorder. ``None`` means the recorder was reopened over
+        persisted events and has no faithful mapping.
+        """
+
+        if self._clock_resumed:
+            return None
+        return (value_ns - self._started_monotonic_ns) / 1_000_000
 
     def _clock(self) -> tuple[datetime, float]:
         with self._clock_lock:
