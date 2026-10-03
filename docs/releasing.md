@@ -116,8 +116,10 @@ The `Canary` workflow publishes installable preview builds as GitHub
 prereleases. It never publishes to PyPI.
 
 - Add the `canary` label to a pull request from a branch in this repository to
-  publish `canary-pr-N`. Each push rebuilds it, and the workflow comments the
-  install commands on the pull request. Closing the pull request deletes the
+  publish `canary-pr-N`. Each push rebuilds it. One workflow comment on the
+  pull request shows the state: ⏳ while building, then ✅ with the install
+  commands once the published build passes its install checks, or ❌ with a
+  link to the run if it fails. Closing the pull request deletes the
   prerelease and its tag. Pull requests from forks are not built.
 - Each push to `main` replaces `canary-main`.
 
