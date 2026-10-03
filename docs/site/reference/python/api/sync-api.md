@@ -3092,7 +3092,7 @@ m3.sync_api.RuntimeTraceInfo(
 ```python
 m3.sync_api.SafeHttpHeader(
     *,
-    name: Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id'],
+    name: Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id', 'www-authenticate'],
     value: str,
 ) -> None
 ```
@@ -3101,7 +3101,7 @@ Model fields:
 
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
-| `name` | `Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id']` | Yes | — | — | — |
+| `name` | `Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id', 'www-authenticate']` | Yes | — | — | — |
 | `value` | `str` | Yes | — | — | — |
 
 ## `ToolCallAttempt`
