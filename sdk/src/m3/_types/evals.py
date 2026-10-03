@@ -4,6 +4,7 @@ from collections.abc import Mapping as _Mapping
 from datetime import datetime as _datetime
 from math import isfinite as _isfinite
 from typing import Any as _Any
+from typing import Literal as _Literal
 
 from pydantic import Field as _Field
 from pydantic import field_validator as _field_validator
@@ -48,6 +49,45 @@ class EvaluationSource(FrozenModel):
     config_digest: str | None = _Field(default=None, max_length=256)
 
 
+class JudgeEvidence(FrozenModel):
+    """Redacted, bounded evidence for auditing one judge verdict.
+
+    Built automatically by ``m3.judges.LLMJudge``; a custom or user-LLM judge
+    supplies the same fields on ``EvaluationDecision(judge_evidence=...)``.
+    ``EvaluationRunner`` redacts and bounds the bundle before any store sees
+    it, so a field that was not supplied is ``None`` and never an empty
+    string. ``subject_digest`` on the persisted record is unaffected.
+    """
+
+    schema_version: _Literal["m3.judge_evidence.v1"] = "m3.judge_evidence.v1"
+    input: str | None = None
+    # The reference answer the candidate is compared with, and/or the atomic
+    # claims it must satisfy.
+    reference: str | None = None
+    claims: tuple[str, ...] | None = None
+    # The answer under judgment.
+    candidate: str | None = None
+    rubric: str | None = None
+    # Pass boundary: ``score >= threshold`` passes.
+    threshold: float | None = None
+    rubric_digest: str | None = _Field(default=None, max_length=256)
+    config_digest: str | None = _Field(default=None, max_length=256)
+    # Names of fields shortened to fit the size bound.
+    truncated: tuple[str, ...] = ()
+
+    @_field_validator("threshold", mode="before")
+    @classmethod
+    def _finite_threshold(cls, value: _Any) -> float | None:
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not _isfinite(float(value))
+            or not 0 <= float(value) <= 1
+        ):
+            raise ValueError("threshold must be finite and between 0 and 1")
+        return float(value) if value is not None else None
+
+
 class EvaluationDecision(FrozenModel):
     """Structured evaluator output, compatible with scalar verdicts."""
 
@@ -57,6 +97,7 @@ class EvaluationDecision(FrozenModel):
     metrics: _Mapping[str, float] = _Field(default_factory=dict)
     provenance: EvaluationSource | None = None
     details: _Mapping[str, _Any] = _Field(default_factory=dict)
+    judge_evidence: JudgeEvidence | None = None
 
     @_field_validator("score", mode="before")
     @classmethod
@@ -102,6 +143,9 @@ class EvaluationResult(FrozenModel):
     # user evaluator.  The mapping is intentionally open so old stores and
     # framework-specific checks remain forward compatible.
     details: _Mapping[str, _Any] = _Field(default_factory=dict)
+    # Auditable judge inputs, rubric and threshold; ``None`` when the evaluator
+    # supplied none (including every record written before SINEF-149).
+    judge_evidence: JudgeEvidence | None = None
 
     @_field_validator("score", mode="before")
     @classmethod
@@ -136,6 +180,7 @@ class EvaluationRecord(FrozenModel):
     metrics: _Mapping[str, float] = _Field(default_factory=dict)
     provenance: EvaluationSource | None = None
     details: _Mapping[str, _Any] = _Field(default_factory=dict)
+    judge_evidence: JudgeEvidence | None = None
     goal: str | None = None
     metadata: _Mapping[str, str | int | float | bool | None] = _Field(
         default_factory=dict
@@ -152,4 +197,5 @@ __all__ = [
     "EvaluationRecord",
     "EvaluationResult",
     "EvaluationSource",
+    "JudgeEvidence",
 ]

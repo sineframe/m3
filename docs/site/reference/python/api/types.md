@@ -517,6 +517,7 @@ m3.types.EvaluationResult(
     metrics: collections.abc.Mapping[str, float] = ...,
     provenance: m3.types.EvaluationSource | None = None,
     details: collections.abc.Mapping[str, Any] = ...,
+    judge_evidence: m3.types.JudgeEvidence | None = None,
 ) -> None
 ```
 
@@ -535,6 +536,7 @@ Model fields:
 | `metrics` | `collections.abc.Mapping[str, float]` | No | `factory builtins.dict()` | — | — |
 | `provenance` | `m3.types.EvaluationSource \| None` | No | `None` | — | — |
 | `details` | `collections.abc.Mapping[str, Any]` | No | `factory builtins.dict()` | — | — |
+| `judge_evidence` | `m3.types.JudgeEvidence \| None` | No | `None` | — | — |
 
 ## `EvaluationRecord`
 
@@ -556,6 +558,7 @@ m3.types.EvaluationRecord(
     metrics: collections.abc.Mapping[str, float] = ...,
     provenance: m3.types.EvaluationSource | None = None,
     details: collections.abc.Mapping[str, Any] = ...,
+    judge_evidence: m3.types.JudgeEvidence | None = None,
     goal: str | None = None,
     metadata: collections.abc.Mapping[str, str | int | float | bool | None] = ...,
     subject_kind: str = 'unknown',
@@ -586,6 +589,7 @@ Model fields:
 | `metrics` | `collections.abc.Mapping[str, float]` | No | `factory builtins.dict()` | — | — |
 | `provenance` | `m3.types.EvaluationSource \| None` | No | `None` | — | — |
 | `details` | `collections.abc.Mapping[str, Any]` | No | `factory builtins.dict()` | — | — |
+| `judge_evidence` | `m3.types.JudgeEvidence \| None` | No | `None` | — | — |
 | `goal` | `str \| None` | No | `None` | — | — |
 | `metadata` | `collections.abc.Mapping[str, str \| int \| float \| bool \| None]` | No | `factory builtins.dict()` | — | — |
 | `subject_kind` | `str` | No | `'unknown'` | — | — |
@@ -639,6 +643,7 @@ m3.types.EvaluationDecision(
     metrics: collections.abc.Mapping[str, float] = ...,
     provenance: m3.types.EvaluationSource | None = None,
     details: collections.abc.Mapping[str, Any] = ...,
+    judge_evidence: m3.types.JudgeEvidence | None = None,
 ) -> None
 ```
 
@@ -654,6 +659,7 @@ Model fields:
 | `metrics` | `collections.abc.Mapping[str, float]` | No | `factory builtins.dict()` | — | — |
 | `provenance` | `m3.types.EvaluationSource \| None` | No | `None` | — | — |
 | `details` | `collections.abc.Mapping[str, Any]` | No | `factory builtins.dict()` | — | — |
+| `judge_evidence` | `m3.types.JudgeEvidence \| None` | No | `None` | — | — |
 
 ## `EvaluationStatus`
 
@@ -695,6 +701,41 @@ Model fields:
 | `rubric_id` | `str \| None` | No | `None` | `max_length=256` | — |
 | `rubric_version` | `str \| None` | No | `None` | `max_length=128` | — |
 | `config_digest` | `str \| None` | No | `None` | `max_length=256` | — |
+
+## `JudgeEvidence`
+
+```python
+m3.types.JudgeEvidence(
+    *,
+    schema_version: Literal['m3.judge_evidence.v1'] = 'm3.judge_evidence.v1',
+    input: str | None = None,
+    reference: str | None = None,
+    claims: tuple[str, ...] | None = None,
+    candidate: str | None = None,
+    rubric: str | None = None,
+    threshold: float | None = None,
+    rubric_digest: str | None = None,
+    config_digest: str | None = None,
+    truncated: tuple[str, ...] = (),
+) -> None
+```
+
+Redacted, bounded evidence for auditing one judge verdict.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `schema_version` | `Literal['m3.judge_evidence.v1']` | No | `'m3.judge_evidence.v1'` | — | — |
+| `input` | `str \| None` | No | `None` | — | — |
+| `reference` | `str \| None` | No | `None` | — | — |
+| `claims` | `tuple[str, ...] \| None` | No | `None` | — | — |
+| `candidate` | `str \| None` | No | `None` | — | — |
+| `rubric` | `str \| None` | No | `None` | — | — |
+| `threshold` | `float \| None` | No | `None` | — | — |
+| `rubric_digest` | `str \| None` | No | `None` | `max_length=256` | — |
+| `config_digest` | `str \| None` | No | `None` | `max_length=256` | — |
+| `truncated` | `tuple[str, ...]` | No | `()` | — | — |
 
 ## `TraceResult`
 

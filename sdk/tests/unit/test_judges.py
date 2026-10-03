@@ -984,16 +984,23 @@ def test_sqlite_judge_reopen_keeps_safe_fields_and_digest(tmp_path):
     assert record.score == 0.9 and record.provenance is not None
     assert record.subject_digest is not None and secret not in str(record.model_dump())
     raw = path.read_bytes()
-    for value in (secret, raw_input, raw_expected, raw_actual):
-        assert value.encode() not in raw
+    # The credential never reaches disk; the subject text does, but only as the
+    # redacted judge evidence bundle (checked below), not as ``subject``.
+    assert secret.encode() not in raw
     assert b"Authorization" not in raw
     evaluation_json = reopened.evaluation_json(execution_id)[0]
     report = reopened.get_report(execution_id)
     assert report is not None and report.evaluations
     assert evaluation_json["score"] == 0.9
-    for value in (secret, raw_input, raw_expected, raw_actual):
-        assert value not in str(evaluation_json)
-        assert value not in str(report.model_dump())
+    assert record.judge_evidence is not None
+    assert record.judge_evidence.input == raw_input
+    assert record.judge_evidence.reference == raw_expected
+    assert record.judge_evidence.candidate == raw_actual
+    assert record.judge_evidence.threshold == 0.8
+    for value in (raw_input, raw_expected, raw_actual):
+        assert value not in str(evaluation_json["details"])
+        assert value not in str(evaluation_json["rationale"])
+    assert secret not in str(evaluation_json) and secret not in str(report.model_dump())
     from m3.feedback import build_feedback, export_feedback
 
     feedback = build_feedback(reopened, "judge-run")

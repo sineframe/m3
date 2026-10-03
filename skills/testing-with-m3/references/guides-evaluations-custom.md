@@ -75,3 +75,62 @@ A user-LLM evaluator returns
 `EvaluationDecision(provenance=EvaluationSource(kind="user_llm", ...))`.
 SQLite persists the result and provenance, not the client, key, prompt, or
 hidden LLM state.
+
+## Make a judge verdict auditable
+
+A judge-style evaluator, whether it calls an LLM or scores a rubric by hand,
+records what it judged by returning `JudgeEvidence` on its decision. The hosted
+viewer then shows the threshold, score, rubric, reference and candidate answer,
+and input together:
+
+```python
+import pytest
+
+from m3.evaluations import EvaluationDecision
+from m3.types import EvaluationStatus, JudgeEvidence
+
+THRESHOLD = 0.8
+CLAIMS = ("The ticket is open", "The owner is Dana")
+
+
+def claims_judge(context):
+    question = context.subject["question"]
+    answer = context.subject["answer"]
+    supported = sum(1 for claim in CLAIMS if claim.lower() in answer.lower())
+    score = supported / len(CLAIMS)
+    return EvaluationDecision(
+        status=(
+            EvaluationStatus.PASSED if score >= THRESHOLD else EvaluationStatus.FAILED
+        ),
+        score=score,
+        rationale=f"{supported} of {len(CLAIMS)} claims supported.",
+        judge_evidence=JudgeEvidence(
+            input=question,
+            claims=CLAIMS,
+            candidate=answer,
+            rubric="The answer must support every claim.",
+            threshold=THRESHOLD,
+        ),
+    )
+
+
+@pytest.mark.m3(suite_name="judge-evidence")
+def test_claims_judge_records_its_evidence(m3_kit):
+    m3_kit.register_evaluator("ticket.claims.v1", claims_judge)
+    evaluation = m3_kit.evaluate(
+        {"question": "What is ticket 41?", "answer": "The ticket is open."},
+        "ticket.claims.v1",
+    )
+    assert evaluation.status is EvaluationStatus.FAILED
+    assert evaluation.judge_evidence.threshold == THRESHOLD
+    assert evaluation.judge_evidence.candidate == "The ticket is open."
+```
+
+Every field is optional; leave out what you do not have. `reference` is a
+reference answer and `claims` are atomic statements the answer must satisfy.
+`rubric_digest` is computed from `rubric` when you omit it; pass `config_digest`
+to identify your judge's configuration. Evidence is redacted and size-bounded
+before it is stored, exactly as for `LLMJudge` (see
+[Evaluate a response with an LLM judge](guides-evaluations-judges.md#audit-a-verdict-from-the-stored-evidence)).
+Return the same threshold your code compares against: M3 records it, but does
+not apply it.

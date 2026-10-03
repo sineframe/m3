@@ -67,3 +67,32 @@ optional rubric. It returns exactly `score` (0–1 or null), `rationale`, and
 `abstain`. `json_schema` mode, the default, is enforced by the provider;
 `json_text` is validated locally. A score at or above the threshold maps to
 `PASSED`; a lower score maps to `FAILED`.
+
+## Audit a verdict from the stored evidence
+
+Every `LLMJudge` result stores a judge evidence bundle next to the score and
+rationale, so a failed verdict can be audited without re-running the test:
+
+| Field | Meaning |
+| --- | --- |
+| `input` | The question or task the answer responds to. |
+| `reference` | The reference answer (`expected`). |
+| `candidate` | The answer that was judged (`actual`). |
+| `rubric` | The rubric text, when the judge has one. |
+| `threshold` | The pass boundary: a score at or above it passes. |
+| `rubric_digest`, `config_digest` | SHA-256 digests that identify the rubric and the full judge configuration. |
+| `truncated` | Names of fields shortened to fit the size bound. |
+
+The bundle is also recorded when the judge returns an error, for example when
+the credential is missing. The hosted viewer shows it beside the score and
+rationale. Runs recorded before the bundle existed show "not captured".
+
+The bundle is stored in the local run store and uploaded with the run, so it
+is not a digest of the subject: it is the subject. It goes through the same
+redaction as other persisted evaluation data: configured secret values and
+credential-shaped fields become `[REDACTED]` before anything is written or
+uploaded. Each text field is capped at 32 KiB, and claims at 64 entries of
+2 KiB. `subject_digest` on the evaluation record is unchanged.
+
+Avoid putting private data in judge subjects unless that data may be stored and
+uploaded; the judge already sends the same text to its endpoint.

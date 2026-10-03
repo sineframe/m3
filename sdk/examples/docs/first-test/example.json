@@ -25,6 +25,7 @@
     "tests/test_trace.py",
     "tests/test_persistence.py",
     "tests/test_shipping_evaluation.py",
+    "tests/test_judge_evidence.py",
     "tests/test_shipping_async.py",
     "tests/test_mock_shipping.py",
     "tests/test_shipping_snapshot.py"
@@ -38,6 +39,7 @@
     {"page": "guides-results-persistence", "label": "SQLite persistence test", "source": "tests/test_persistence.py", "kind": "file"},
     {"page": "guides-evaluations-aggregate", "label": "evaluation report script", "source": "report_evaluations.py", "kind": "file"},
     {"page": "guides-evaluations-custom", "label": "custom evaluator test", "source": "tests/test_shipping_evaluation.py", "kind": "file"},
+    {"page": "guides-evaluations-custom", "label": "judge evidence test", "source": "tests/test_judge_evidence.py", "kind": "file"},
     {"page": "guides-advanced-async", "label": "async direct test", "source": "tests/test_shipping_async.py", "kind": "file"},
     {"page": "guides-advanced-mocks-replay", "label": "mock server test", "source": "tests/test_mock_shipping.py", "kind": "file"},
     {"page": "guides-advanced-snapshots", "label": "snapshot test", "source": "tests/test_shipping_snapshot.py", "kind": "file"},
@@ -82,9 +84,9 @@
     },
     {
       "id": "first-test-guide-extensions",
-      "command": "m3 test -- tests/test_trace.py tests/test_persistence.py tests/test_shipping_evaluation.py tests/test_shipping_async.py tests/test_mock_shipping.py tests/test_shipping_snapshot.py",
+      "command": "m3 test -- tests/test_trace.py tests/test_persistence.py tests/test_shipping_evaluation.py tests/test_judge_evidence.py tests/test_shipping_async.py tests/test_mock_shipping.py tests/test_shipping_snapshot.py",
       "expected_exit_code": 0,
-      "assertions": ["trace, storage, evaluator, async, mock, and snapshot guide tests pass"],
+      "assertions": ["trace, storage, evaluator, judge evidence, async, mock, and snapshot guide tests pass"],
       "verification": "deterministic"
     },
     {

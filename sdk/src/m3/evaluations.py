@@ -22,6 +22,7 @@ from typing import TypeAlias as _TypeAlias
 from uuid import uuid4 as _uuid4
 
 from . import _timing
+from ._judge_evidence import bound_judge_evidence as _bound_judge_evidence
 from .errors import ModelValidationError as _ModelValidationError
 from .errors import UnsupportedFeature as _UnsupportedFeature
 from .trace.redaction import (
@@ -53,6 +54,9 @@ from .types import (
 )
 from .types import (
     ExecutionId as _ExecutionId,
+)
+from .types import (
+    JudgeEvidence as _JudgeEvidence,
 )
 from .types import (
     TraceResult as _TraceResult,
@@ -492,6 +496,7 @@ class EvaluationRunner:
         metrics: dict[str, float] = {}
         provenance = None
         details: dict[str, _Any] = {}
+        judge_evidence: _JudgeEvidence | None = None
         try:
             from .judges import reset_request_budget, set_request_budget
 
@@ -521,6 +526,10 @@ class EvaluationRunner:
                             raw.provenance,
                         )
                         details = dict(raw.details)
+                        if raw.judge_evidence is not None:
+                            judge_evidence = _bound_judge_evidence(
+                                raw.judge_evidence, config=self.redaction_config
+                            )
                 except Exception:
                     status = _EvaluationStatus.ERROR
                     message = "evaluator failed"
@@ -536,6 +545,7 @@ class EvaluationRunner:
             metrics=metrics,
             provenance=provenance,
             details=details,
+            judge_evidence=judge_evidence,
         )
         self._persist(result)
         _raise_for_required(result)
@@ -598,6 +608,7 @@ class EvaluationRunner:
         metrics: dict[str, float] = {}
         provenance: _Any = None
         details: dict[str, _Any] = {}
+        judge_evidence: _JudgeEvidence | None = None
         try:
             from .judges import reset_request_budget, set_request_budget
 
@@ -616,10 +627,15 @@ class EvaluationRunner:
                 raw.provenance if isinstance(raw, _EvaluationDecision) else None
             )
             details = dict(raw.details) if isinstance(raw, _EvaluationDecision) else {}
+            if isinstance(raw, _EvaluationDecision) and raw.judge_evidence is not None:
+                judge_evidence = _bound_judge_evidence(
+                    raw.judge_evidence, config=self.redaction_config
+                )
         except Exception:
             status = _EvaluationStatus.ERROR
             message = "evaluator failed"
             score = rationale = provenance = None
+            judge_evidence = None
             metrics = {}
         result = _EvaluationResult(
             evaluation_id=identifier,
@@ -633,6 +649,7 @@ class EvaluationRunner:
             metrics=metrics,
             provenance=provenance,
             details=details,
+            judge_evidence=judge_evidence,
         )
         self._persist(result)
         _raise_for_required(result)

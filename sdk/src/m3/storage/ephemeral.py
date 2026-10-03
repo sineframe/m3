@@ -940,6 +940,7 @@ class InMemoryExecutionStore:
                 metrics=value.get("metrics", {}),
                 provenance=value.get("provenance"),
                 details=value.get("details", {}),
+                judge_evidence=value.get("judge_evidence"),
                 goal=context.get("goal"),
                 metadata=context.get("metadata", {}),
                 subject_kind=str(context.get("subject_kind", "unknown")),
