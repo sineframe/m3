@@ -113,13 +113,12 @@ def comparison_input(manifest: Mapping[str, Any], tests: Any) -> dict[str, Any]:
                 if isinstance(value, Mapping)
             }
         attempts.append(item)
-    return neutralize_response(
-        "/api/v2/feedback/{run_id}",
-        {
-            "schema_version": 1,
-            "manifest": projected,
-            "test_results": attempts,
-        },
+    return cast(
+        "dict[str, Any]",
+        neutralize_response(
+            "/api/v2/feedback/{run_id}",
+            {"schema_version": 1, "manifest": projected, "test_results": attempts},
+        ),
     )
 
 
