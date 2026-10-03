@@ -137,8 +137,10 @@ m3 test -- tests/test_list_changed.py
 `resources_list_changed`, and `resource_subscriptions` (resource URIs whose
 `notifications/resources/updated` events you want). `next(timeout=...)`
 returns a `SubscriptionEvent` with `method` and, for resource updates, `uri`.
-It raises `OperationTimeout` when no event arrives in time and returns `None`
-after the server ends the stream. The events are also recorded in
+It raises `OperationTimeout` when no event arrives in time, without failing
+the trace, so it can also check that nothing changed. It returns `None` after
+the server ends the stream and raises `OperationCancelled` if the subscription
+or its client closes while it waits. The events are also recorded in
 `final_trace`. The stream closes with its `with` block or with the client.
 
 On earlier protocol versions servers send these notifications on the

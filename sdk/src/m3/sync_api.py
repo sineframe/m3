@@ -447,7 +447,13 @@ class _PortalRuntime:
         entry = self.subscriptions.get(identifier)
         if entry is None:
             raise RuntimeError("subscription is closed")
-        return await entry[2].next(timeout=timeout)
+        handle, _context, subscription = entry
+        if handle in self.closing:
+            raise _OperationCancelled(
+                "synchronous direct operation cancelled by client close",
+                details={"operation": "subscriptions/listen", "cause": "client_close"},
+            )
+        return await subscription.next(timeout=timeout)
 
     async def close_subscription(self, identifier: int) -> None:
         entry = self.subscriptions.pop(identifier, None)

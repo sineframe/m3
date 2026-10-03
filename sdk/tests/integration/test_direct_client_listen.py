@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from typing import Any
+
+import anyio
 import pytest
+from mcp import types
+from mcp.server.lowlevel import Server
 from mcp.server.mcpserver import Context, MCPServer
 
-from m3 import InProcessServer, MCPTestKit, UnsupportedFeature
+from m3 import (
+    InProcessServer,
+    MCPTestKit,
+    OperationCancelled,
+    OperationTimeout,
+    ProtocolError,
+    TransportError,
+    UnsupportedFeature,
+)
 from m3.async_api import AsyncMCPTestKit
 from m3.types import TraceResult
 
@@ -101,3 +116,89 @@ def test_closing_the_client_ends_an_open_subscription() -> None:
         subscription.close()
 
     assert TOOLS_CHANGED in _notification_methods(client.final_trace)
+
+
+def _listen_server(handler: Any) -> InProcessServer:
+    return InProcessServer(
+        name="listen-handler",
+        factory=lambda: Server("listen-handler", on_subscriptions_listen=handler),
+    )
+
+
+async def _reject(_context: Any, _params: Any) -> None:
+    raise RuntimeError("LISTEN_REJECTED_CANARY")
+
+
+def _outcome(trace: TraceResult | None) -> str:
+    assert trace is not None
+    return str(trace.events[-1].payload["outcome"])
+
+
+async def test_rejected_listen_surfaces_the_original_failure_once() -> None:
+    async with AsyncMCPTestKit(env={}) as kit:
+        client = kit.direct(
+            _listen_server(_reject), protocol=MODERN, raise_server_exceptions=True
+        )
+        async with client:
+            with pytest.raises(RuntimeError, match="LISTEN_REJECTED_CANARY"):
+                async with client.listen(tools_list_changed=True):
+                    pass
+
+    assert _outcome(client.final_trace) == "failed"
+
+
+def test_caught_listen_rejection_still_fails_the_trace() -> None:
+    # No listen handler: the server answers with a JSON-RPC error.
+    server = InProcessServer(name="no-listen", factory=lambda: Server("no-listen"))
+    with MCPTestKit(env={}) as kit:
+        with kit.direct(server, protocol=MODERN) as client:
+            with pytest.raises(ProtocolError):
+                client.listen(tools_list_changed=True).__enter__()
+
+    assert _outcome(client.final_trace) == "failed"
+
+
+def test_stream_lost_before_acknowledgement_is_a_transport_error() -> None:
+    async def cancel_before_ack(context: Any, _params: Any) -> None:
+        await context.session.send_notification(
+            types.CancelledNotification(
+                params=types.CancelledNotificationParams(request_id=context.request_id)
+            )
+        )
+        await anyio.sleep_forever()
+
+    with MCPTestKit(env={}) as kit:
+        with kit.direct(_listen_server(cancel_before_ack), protocol=MODERN) as client:
+            with pytest.raises(TransportError):
+                client.listen(tools_list_changed=True).__enter__()
+
+
+def test_closing_the_client_cancels_a_blocked_next() -> None:
+    outcome: dict[str, object] = {}
+    with MCPTestKit(env={}) as kit:
+        with kit.direct(_server(), protocol=MODERN) as client:
+            subscription = client.listen(tools_list_changed=True).__enter__()
+
+            def read() -> None:
+                try:
+                    outcome["value"] = subscription.next(timeout=30)
+                except BaseException as exc:
+                    outcome["error"] = exc
+
+            reader = threading.Thread(target=read)
+            reader.start()
+            time.sleep(0.5)  # let the reader block on the stream
+        reader.join(timeout=10)
+
+    assert not reader.is_alive()
+    assert isinstance(outcome.get("error"), OperationCancelled)
+
+
+def test_an_empty_wait_times_out_without_failing_the_trace() -> None:
+    with MCPTestKit(env={}) as kit:
+        with kit.direct(_server(), protocol=MODERN) as client:
+            with client.listen(tools_list_changed=True) as subscription:
+                with pytest.raises(OperationTimeout):
+                    subscription.next(timeout=0.2)
+
+    assert _outcome(client.final_trace) == "completed"

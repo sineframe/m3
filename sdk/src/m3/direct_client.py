@@ -349,6 +349,8 @@ class SubscriptionEvent(FrozenModel):
 
 
 _LISTEN_OPERATION = "subscriptions/listen"
+# ``AsyncSubscription._receive`` result for "no event before the deadline".
+_NO_EVENT = object()
 
 
 def _subscription_event(event: Any) -> SubscriptionEvent:
@@ -405,7 +407,12 @@ class AsyncSubscription:
         return event
 
     async def next(self, *, timeout: float | None = None) -> SubscriptionEvent | None:
-        """Return the next event, or ``None`` once the server closed the stream."""
+        """Return the next event, or ``None`` once the server closed the stream.
+
+        Raises ``OperationTimeout`` when no event arrives in time, and
+        ``OperationCancelled`` when the subscription or its client is closed
+        while waiting.
+        """
 
         if self._closed:
             raise RuntimeError("subscription is closed")
@@ -415,12 +422,24 @@ class AsyncSubscription:
             raise ModelValidationError(
                 "timeout must be positive", details={"operation": _LISTEN_OPERATION}
             )
+        received = await self._client._guard(self._receive(effective))
+        if received is _NO_EVENT:
+            # An empty wait is an answer ("nothing changed"), not a failed
+            # operation, so it stays outside the guard and the trace outcome.
+            raise self._client._timeout_failure(_LISTEN_OPERATION, effective)
+        return cast("SubscriptionEvent | None", received)
+
+    async def _receive(self, timeout: float) -> SubscriptionEvent | object | None:
         try:
-            event = await asyncio.wait_for(self._official.__anext__(), effective)
+            event = await asyncio.wait_for(self._official.__anext__(), timeout)
+        except asyncio.TimeoutError:
+            return _NO_EVENT
         except StopAsyncIteration:
+            if self._closed:
+                # The local side ended the stream (subscription or client
+                # close); only a server-side end is a graceful ``None``.
+                raise self._client._cancelled_failure(_LISTEN_OPERATION) from None
             return None
-        except asyncio.TimeoutError as exc:
-            raise self._client._timeout_failure(_LISTEN_OPERATION, effective) from exc
         except _SubscriptionLost as exc:
             raise self._client._transport_failure(_LISTEN_OPERATION, exc) from exc
         return _subscription_event(event)
@@ -752,6 +771,15 @@ class AsyncDirectClient:
         if self._closed or not self._entered:
             raise RuntimeError("direct client must be entered before use")
 
+    async def _guard(self, operation: Awaitable[_T]) -> _T:
+        """Run one operation under the owner's failure handling.
+
+        The kit-owned client overrides this to settle transport failures and
+        record the trace outcome; a bare core client has nothing to add.
+        """
+
+        return await operation
+
     def _evidence(
         self, operation: str, phase: Literal["started", "succeeded", "failed"]
     ) -> Mapping[str, Any]:
@@ -899,7 +927,7 @@ class AsyncDirectClient:
 
     @staticmethod
     def _is_transport_exception(error: BaseException) -> bool:
-        if isinstance(error, (OSError, ConnectionError, EOFError)):
+        if isinstance(error, (OSError, ConnectionError, EOFError, _SubscriptionLost)):
             return True
         module = type(error).__module__
         return module.startswith(("anyio", "httpx", "httpcore"))
@@ -1639,14 +1667,16 @@ class AsyncDirectClient:
             resources_list_changed=resources_list_changed,
             resource_subscriptions=tuple(resource_subscriptions),
         )
-        try:
+
+        async def open_subscription() -> AsyncSubscription:
             opened = await self._execute(_LISTEN_OPERATION, official.__aenter__())
-        except (ProtocolError, TransportError, OperationTimeout, OperationCancelled):
-            raise
-        except Exception as exc:
-            raise self._protocol_failure(_LISTEN_OPERATION, exc) from exc
-        subscription = AsyncSubscription(self, official, opened)
-        self._subscriptions.add(subscription)
+            # Register before the owner's post-operation checks so a failure
+            # raised there still leaves the stream for ``aclose`` to end.
+            subscription = AsyncSubscription(self, official, opened)
+            self._subscriptions.add(subscription)
+            return subscription
+
+        subscription = await self._guard(open_subscription())
         try:
             yield subscription
         finally:
