@@ -1768,6 +1768,7 @@ def _merge_mrtr_protocol_calls(
             "status": second.status,
             "response": second.response,
             "error": second.error,
+            "http": second.http,
             "attempts": attempts,
         }
     )

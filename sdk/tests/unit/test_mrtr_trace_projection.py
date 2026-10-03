@@ -1717,3 +1717,54 @@ def test_prompt_and_resource_mrtr_attempts_keep_round_responses_scoped(
         (1, "approval"),
         (2, "confirmation"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    (
+        ("prompts/get", {"name": "interactive-prompt", "arguments": {"q": "x"}}),
+        ("resources/read", {"uri": "memory://interactive"}),
+    ),
+)
+def test_mrtr_protocol_merge_takes_http_from_final_continuation(
+    method: str, params: dict[str, object]
+) -> None:
+    trace = _mrtr_protocol_trace(method, params)
+    required = trace.events[8]
+    completed = trace.events[10]
+    required = required.model_copy(
+        update={
+            "payload": {
+                **required.payload,
+                "http": {"method": "POST", "status_code": 200, "headers": []},
+            }
+        }
+    )
+    refused = completed.model_copy(
+        update={
+            "kind": EventKind.MCP_ERROR,
+            "payload": {
+                "method": method,
+                "error": {
+                    "code": -32603,
+                    "message": "Server returned an error response",
+                },
+                "http": {"method": "POST", "status_code": 401, "headers": []},
+            },
+        }
+    )
+    events = (*trace.events[:8], required, trace.events[9], refused, *trace.events[11:])
+    trace = trace.model_copy(update={"events": events})
+
+    calls = [
+        entry
+        for entry in trace.view().protocol
+        if entry.method.state is ObservationState.OBSERVED
+        and entry.method.value == method
+    ]
+    assert len(calls) == 1
+    call = calls[0]
+    assert len(call.attempts) == 2
+    assert call.status is TraceStatus.PROTOCOL_ERROR
+    assert call.http.state is ObservationState.OBSERVED
+    assert call.http.value.status_code == 401
