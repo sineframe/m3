@@ -13,6 +13,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
+from . import _timing
 from .trace.redaction import RedactionConfig, redact_for_persistence
 from .types import EvaluationContext, EvaluationId, EvaluationResult, EvaluationStatus
 
@@ -184,6 +185,7 @@ def unbind_execution(execution_id: Any, store: Any | None = None) -> None:
         return
 
 
+@_timing.counted("matcher.record")
 def record_matcher(
     subject: Any,
     matcher: str,

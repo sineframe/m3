@@ -14,7 +14,10 @@ import signal
 import subprocess
 import time
 
+from .. import _timing
 
+
+@_timing.timed("harness.terminate_group")
 def terminate_process_group(
     pid: int | None = None, *, pgid: int | None = None, grace_seconds: float = 1.0
 ) -> bool:

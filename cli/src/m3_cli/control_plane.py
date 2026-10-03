@@ -20,6 +20,7 @@ from typing import Any
 from urllib import error, request
 from urllib.parse import quote, urlparse
 
+from m3 import _timing
 from m3.feedback import Feedback, load_run_entries, project_test_attempts
 from m3.storage import SQLiteExecutionStore
 from m3_app.api.report_payloads import (
@@ -493,13 +494,15 @@ def upload_current_run(
     for path, body in pending_cache:
         _cache(path, body)
     for url, body, subject in pending:
-        _post(url, token, body, subject)
-    _post(
-        base + "/publish",
-        token,
-        _json_bytes({"transport_version": 1}),
-        f"run {run_id} publication",
-    )
+        with _timing.count("upload.post"):
+            _post(url, token, body, subject)
+    with _timing.count("upload.post"):
+        _post(
+            base + "/publish",
+            token,
+            _json_bytes({"transport_version": 1}),
+            f"run {run_id} publication",
+        )
 
 
 def _cache(path: Path, data: bytes) -> None:

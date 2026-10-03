@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
+from . import _timing
 from .types import (
     EvaluationContext,
     EvaluationDecision,
@@ -256,6 +257,7 @@ class LLMJudge:
             provenance=self._source(),
         )
 
+    @_timing.timed("judge.request")
     def _request(
         self, payload: Mapping[str, str], key: str
     ) -> tuple[Mapping[str, Any], int, Mapping[str, Any], str | None, float]:
@@ -284,6 +286,7 @@ class LLMJudge:
                 }:
                     raise
 
+    @_timing.timed("judge.request")
     async def _request_async(
         self, payload: Mapping[str, str], key: str
     ) -> tuple[Mapping[str, Any], int, Mapping[str, Any], str | None, float]:

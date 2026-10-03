@@ -22,6 +22,7 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
+from m3 import _timing
 from m3.trace.capture import CaptureWriter, parse_json_payload
 from m3.trace.redaction import is_sensitive_key
 from m3.types import ToolPolicy
@@ -193,6 +194,7 @@ class McpHttpProxy:
         self.initial_path = upstream.path or "/"
         self.initial_query = upstream.query
 
+    @_timing.timed("servers.http_proxy")
     async def start(self) -> str:
         upstream, upstream_port = _parse_upstream(self.upstream_url)
         assert upstream.hostname is not None
@@ -363,6 +365,7 @@ class McpHttpProxy:
             headers[key] = value
         return headers
 
+    @_timing.counted("proxy.forward")
     async def _forward(self, request: Request) -> Response:
         assert self.client is not None
         body = await request.body()

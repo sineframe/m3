@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Protocol
 
+from . import _timing
 from .elicitation import ElicitationResponse, PendingElicitationRound
 from .errors import (
     ElicitationRoundLimitError,
@@ -193,27 +194,28 @@ class _ManagedInputCoordinator:
                 self._waiters[pending.round_id] = (loop, waiter)
             self._active_round = pending.round_id
             try:
-                record = await asyncio.to_thread(
-                    self._store.create_round,
-                    pending,
-                    round_index=self._rounds,
-                    round_limit=self._round_limit,
-                    owner_id=self._owner_id,
-                    lease_seconds=self._LEASE_SECONDS,
-                    harness_session_id=self._session_identity,
-                    session_id=self._m3_session_identity or self._turn_identity[0],
-                    turn_id=self._turn_identity[1],
-                    operation_parameters={
-                        **parameters,
-                        "logical_operation_id": pending.logical_operation_id,
-                        "operation_kind": pending.operation_kind,
-                        "operation_name": pending.operation_name,
-                    },
-                )
-                self._active_record = record
-                self._renew_task = asyncio.create_task(self._renew(record.round_id))
-                await self._emit_request(record)
-                await self._transition_waiting()
+                with _timing.span("elicitation.setup"):
+                    record = await asyncio.to_thread(
+                        self._store.create_round,
+                        pending,
+                        round_index=self._rounds,
+                        round_limit=self._round_limit,
+                        owner_id=self._owner_id,
+                        lease_seconds=self._LEASE_SECONDS,
+                        harness_session_id=self._session_identity,
+                        session_id=self._m3_session_identity or self._turn_identity[0],
+                        turn_id=self._turn_identity[1],
+                        operation_parameters={
+                            **parameters,
+                            "logical_operation_id": pending.logical_operation_id,
+                            "operation_kind": pending.operation_kind,
+                            "operation_name": pending.operation_name,
+                        },
+                    )
+                    self._active_record = record
+                    self._renew_task = asyncio.create_task(self._renew(record.round_id))
+                    await self._emit_request(record)
+                    await self._transition_waiting()
             except BaseException:
                 self._remove_waiter(pending.round_id)
                 if self._active_record is not None:
@@ -235,38 +237,39 @@ class _ManagedInputCoordinator:
                 timeout=timeout,
                 deadline=pending.deadline,
             )
-            loaded = await asyncio.to_thread(
-                self._store.get_round, self._execution_id, pending.round_id
-            )
-            if (
-                loaded is None
-                or loaded.status != "response_validated"
-                or loaded.responses is None
-            ):
-                raise ManagedRuntimeStateError(
-                    "managed-input response commit is missing"
+            with _timing.span("elicitation.commit"):
+                loaded = await asyncio.to_thread(
+                    self._store.get_round, self._execution_id, pending.round_id
                 )
-            if (
-                pending.deadline is not None
-                and loaded.response_validated_at is not None
-                and loaded.response_validated_at > pending.deadline
-            ):
-                raise asyncio.TimeoutError
-            record = loaded
-            responses = loaded.responses
-            redacted = await asyncio.to_thread(
-                self._store.redacted_responses, self._execution_id, pending.round_id
-            )
-            await self._emit_response(record, redacted or {})
-            record = await asyncio.to_thread(
-                self._store.start_delivery,
-                self._execution_id,
-                pending.round_id,
-                owner_id=record.owner_id,
-                lease_token=record.lease_token,
-            )
-            await self._transition_running()
-            return dict(responses)
+                if (
+                    loaded is None
+                    or loaded.status != "response_validated"
+                    or loaded.responses is None
+                ):
+                    raise ManagedRuntimeStateError(
+                        "managed-input response commit is missing"
+                    )
+                if (
+                    pending.deadline is not None
+                    and loaded.response_validated_at is not None
+                    and loaded.response_validated_at > pending.deadline
+                ):
+                    raise asyncio.TimeoutError
+                record = loaded
+                responses = loaded.responses
+                redacted = await asyncio.to_thread(
+                    self._store.redacted_responses, self._execution_id, pending.round_id
+                )
+                await self._emit_response(record, redacted or {})
+                record = await asyncio.to_thread(
+                    self._store.start_delivery,
+                    self._execution_id,
+                    pending.round_id,
+                    owner_id=record.owner_id,
+                    lease_token=record.lease_token,
+                )
+                await self._transition_running()
+                return dict(responses)
         except asyncio.TimeoutError as exc:
             timeout_error = OperationTimeout("managed elicitation timed out")
             await self._fail(timeout_error)
@@ -281,6 +284,7 @@ class _ManagedInputCoordinator:
         finally:
             self._remove_waiter(pending.round_id)
 
+    @_timing.timed("elicitation.wait")
     async def _wait_for_response(
         self,
         waiter: asyncio.Future[None],
@@ -318,6 +322,7 @@ class _ManagedInputCoordinator:
                 if monotonic_deadline is not None and loop.time() >= monotonic_deadline:
                     raise asyncio.TimeoutError from None
 
+    @_timing.timed("elicitation.resolve")
     async def resolve_round(
         self, round_id: str, *, operation_complete: bool = False
     ) -> None:

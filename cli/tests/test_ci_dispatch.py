@@ -600,3 +600,57 @@ def test_upload_refuses_run_without_inspection(monkeypatch, tmp_path, capsys):
         "--upload, pytest did not exit 0 or 1, or its credential scan failed; rerun "
         "the tests with --upload\n"
     )
+
+
+def test_timings_summary_includes_upload_steps_after_published(
+    monkeypatch, tmp_path, capsys
+):
+    import m3_cli.ci_upload as ci_upload
+    import m3_cli.supervisor as supervisor
+    from m3 import _timing
+    from m3.feedback import build_feedback, export_feedback
+    from m3.storage import SQLiteExecutionStore
+
+    monkeypatch.setenv("M3_ACCESS_TOKEN", TOKEN)
+    monkeypatch.setenv("M3_TIMINGS", "1")
+    _timing._reset()
+    database = tmp_path / "results.sqlite"
+    run_id = "run-timed"
+
+    def run_test(**kwargs):
+        assert kwargs["run_id"].startswith("run-")
+        store = SQLiteExecutionStore(database)
+        try:
+            store.ensure_project("2a75f9d8-7dfa-4a30-b594-7526448d19bb", "Example")
+            store.save_test_run(
+                run_id,
+                {
+                    "run_id": run_id,
+                    "status": "finished",
+                    "project_id": "2a75f9d8-7dfa-4a30-b594-7526448d19bb",
+                },
+            )
+            feedback = build_feedback(store, run_id)
+            export_feedback(feedback, store, tmp_path / ".m3" / "reports" / run_id)
+        finally:
+            store.close()
+        return RunResult(
+            0, run_id=run_id, database_path=database, project_root=tmp_path
+        )
+
+    monkeypatch.setattr(supervisor, "run_test_with_runs", run_test)
+    monkeypatch.setattr(ci_upload, "upload_current_run", lambda *a, **k: None)
+    try:
+        assert main(["test", "--upload", "--project-root", str(tmp_path)]) == 0
+        out = capsys.readouterr().out
+    finally:
+        _timing.stop()
+        monkeypatch.delenv("M3_TIMINGS", raising=False)
+        _timing._reset()
+        supervisor._timing_state.update(directory=None, run=None)
+    assert "Published: yes" in out
+    summary = out[out.index("M3 timings:") :]
+    assert out.index("Published: yes") < out.index("M3 timings:")
+    assert "cli.upload.inspect" in summary
+    assert "cli.upload.publish" in summary
+    assert "cli.credentials" in summary

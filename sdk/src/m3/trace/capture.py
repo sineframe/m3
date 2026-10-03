@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .. import _timing
 from .redaction import known_secret_values, redact
 
 
@@ -39,6 +40,7 @@ class CaptureWriter:
                 self._secrets = set(known_secret_values())
             self._secrets.update(value for value in secrets if value)
 
+    @_timing.counted("capture.write")
     def write(
         self,
         *,
@@ -104,6 +106,7 @@ def parse_json_payload(data: bytes | str) -> Any:
         return text
 
 
+@_timing.counted("capture.read")
 def read_capture(path: str) -> list[dict[str, Any]]:
     capture = Path(path)
     if not capture.exists():

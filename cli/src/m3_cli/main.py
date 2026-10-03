@@ -273,15 +273,21 @@ def _finish_upload_run(
         return result.exit_code
     if not run_id or not database or not root:
         raise CLIError("the selected run has no saved results to publish")
+    from m3 import _timing
+
     from .ci_upload import publish_run, record_upload_inspection
 
     try:
-        record_upload_inspection(database, run_id, root, credential_env, resolved)
+        with _timing.span("cli.upload.inspect"):
+            record_upload_inspection(database, run_id, root, credential_env, resolved)
     except Exception as exc:
         print(_inspection_failure(command_name, exc), file=sys.stderr)
         return result.exit_code or 2
     try:
-        publish_run(run_id, project_root=root, database=database, environment=resolved)
+        with _timing.span("cli.upload.publish"):
+            publish_run(
+                run_id, project_root=root, database=database, environment=resolved
+            )
     except Exception as exc:
         print(
             _publish_failure(
@@ -362,7 +368,11 @@ def main(argv: list[str] | None = None) -> int:
             return exc.code if isinstance(exc.code, int) else 2
         if args.command == "test" or args.command == "ci":
             from .ci_credentials import validate_credential_mappings
-            from .supervisor import _passthrough_option_error, run_test
+            from .supervisor import (
+                _finish_timings,
+                _passthrough_option_error,
+                run_test,
+            )
 
             validate_credential_mappings(args.credential_env)
 
@@ -371,78 +381,94 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"m3 {args.command}: {passthrough_error}", file=sys.stderr)
                 return 2
 
-            is_ci = args.command == "ci"
+            try:
+                is_ci = args.command == "ci"
 
-            if args.command == "test" and args.upload and args.ui:
-                print("m3 test: --upload cannot be combined with --ui", file=sys.stderr)
-                return 2
-
-            server_selections = normalize_server_groups(
-                getattr(args, "_server_groups", None)
-            )
-            test_kwargs = dict(
-                python=args.python,
-                project_root=args.project_root,
-                pytest_args=pytest_args,
-                database=args.results_db,
-                ui=getattr(args, "ui", False),
-                port=getattr(args, "port", 8000),
-                baseline=args.baseline,
-                harnesses=args.harness,
-                server_selections=server_selections,
-                trials=args.trials,
-                num_processes=args.num_processes,
-                suite=args.suite,
-                credential_env=args.credential_env,
-                env_file=args.env_file,
-                execution_timeout=args.execution_timeout,
-                judge_max_requests=args.judge_max_requests,
-                runtime=args.runtime,
-                harness_cache_dir=args.harness_cache_dir,
-            )
-            if is_ci or args.upload:
-                from .ci_credentials import (
-                    ACCESS_TOKEN_ENV,
-                    access_token,
-                    resolved_environment,
-                    test_environment,
-                )
-                from .ci_upload import control_plane_url
-                from .supervisor import (
-                    discover_env_file,
-                    resolve_project_root,
-                    run_test_with_runs,
-                )
-
-                resolved = resolved_environment(
-                    discover_env_file(
-                        args.env_file, resolve_project_root(args.project_root)
+                if args.command == "test" and args.upload and args.ui:
+                    print(
+                        "m3 test: --upload cannot be combined with --ui",
+                        file=sys.stderr,
                     )
-                )
-                if args.upload:
-                    resolved[ACCESS_TOKEN_ENV] = access_token(
-                        resolved, base_url=control_plane_url(resolved)
-                    )
-                test_kwargs["env_file"] = None
-                test_kwargs["environment"] = test_environment(resolved)
-                if is_ci:
-                    from .ci_metadata import resolve_ci_metadata
-                    from .supervisor import run_ci_test
+                    return 2
 
-                    test_kwargs["ci_metadata"] = resolve_ci_metadata(
-                        resolved, args.ci_metadata
-                    )
-                    result = run_ci_test(**test_kwargs)
-                else:
-                    result = run_test_with_runs(**test_kwargs)
-                return _finish_upload_run(
-                    result,
-                    resolved=resolved,
+                server_selections = normalize_server_groups(
+                    getattr(args, "_server_groups", None)
+                )
+                test_kwargs = dict(
+                    python=args.python,
+                    project_root=args.project_root,
+                    pytest_args=pytest_args,
+                    database=args.results_db,
+                    ui=getattr(args, "ui", False),
+                    port=getattr(args, "port", 8000),
+                    baseline=args.baseline,
+                    harnesses=args.harness,
+                    server_selections=server_selections,
+                    trials=args.trials,
+                    num_processes=args.num_processes,
+                    suite=args.suite,
                     credential_env=args.credential_env,
-                    upload=args.upload,
-                    command_name="ci" if is_ci else "test",
+                    env_file=args.env_file,
+                    execution_timeout=args.execution_timeout,
+                    judge_max_requests=args.judge_max_requests,
+                    runtime=args.runtime,
+                    harness_cache_dir=args.harness_cache_dir,
                 )
-            return run_test(**test_kwargs)
+                if is_ci or args.upload:
+                    from uuid import uuid4
+
+                    from m3 import _timing
+
+                    from .ci_credentials import (
+                        ACCESS_TOKEN_ENV,
+                        access_token,
+                        resolved_environment,
+                        test_environment,
+                    )
+                    from .ci_upload import control_plane_url
+                    from .supervisor import (
+                        _start_timings,
+                        discover_env_file,
+                        resolve_project_root,
+                        run_test_with_runs,
+                    )
+
+                    root = resolve_project_root(args.project_root)
+                    if _timing.ENABLED:
+                        # Start timing before credentials so they are measured.
+                        test_kwargs["run_id"] = f"run-{uuid4().hex}"
+                        _start_timings(root, test_kwargs["run_id"])
+
+                    resolved = resolved_environment(
+                        discover_env_file(args.env_file, root)
+                    )
+                    if args.upload:
+                        with _timing.span("cli.credentials"):
+                            resolved[ACCESS_TOKEN_ENV] = access_token(
+                                resolved, base_url=control_plane_url(resolved)
+                            )
+                    test_kwargs["env_file"] = None
+                    test_kwargs["environment"] = test_environment(resolved)
+                    if is_ci:
+                        from .ci_metadata import resolve_ci_metadata
+                        from .supervisor import run_ci_test
+
+                        test_kwargs["ci_metadata"] = resolve_ci_metadata(
+                            resolved, args.ci_metadata
+                        )
+                        result = run_ci_test(**test_kwargs)
+                    else:
+                        result = run_test_with_runs(**test_kwargs)
+                    return _finish_upload_run(
+                        result,
+                        resolved=resolved,
+                        credential_env=args.credential_env,
+                        upload=args.upload,
+                        command_name="ci" if is_ci else "test",
+                    )
+                return run_test(**test_kwargs)
+            finally:
+                _finish_timings()
         if args.command == "upload":
             from .ci_upload import publish_run
             from .supervisor import (
@@ -453,13 +479,16 @@ def main(argv: list[str] | None = None) -> int:
 
             root = resolve_project_root(args.project_root)
             database = _absolute_database(args.results_db, project_root=root)
+            from m3 import _timing
+
             try:
-                publish_run(
-                    args.run_id,
-                    project_root=root,
-                    database=database,
-                    env_file=discover_env_file(args.env_file, root),
-                )
+                with _timing.span("cli.upload.publish"):
+                    publish_run(
+                        args.run_id,
+                        project_root=root,
+                        database=database,
+                        env_file=discover_env_file(args.env_file, root),
+                    )
             except (RuntimeError, OSError) as exc:
                 print(
                     _publish_failure(

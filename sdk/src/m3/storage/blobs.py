@@ -26,6 +26,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import _timing
 from .ephemeral import ArtifactNotFound, BlobIntegrityError, StorageError
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -137,6 +138,7 @@ class FilesystemBlobStore:
             raise StorageError("blob path escaped store root") from exc
         return path
 
+    @_timing.counted("blob.put")
     def put(
         self,
         content: bytes,

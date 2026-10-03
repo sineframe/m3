@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter, ValidationError
 
+from . import _timing
 from ._check_recording import (
     bind_execution as _bind_execution,
 )
@@ -537,6 +538,7 @@ class AsyncExecutionHandle:
         if runtime is not None:
             runtime.notify_response(round_id)
 
+    @_timing.timed("execution.result_wait")
     async def _wait_terminal(self, timeout: float | None) -> None:
         if timeout is not None and timeout <= 0:
             raise ModelValidationError(
@@ -685,16 +687,17 @@ class AsyncExecutionHandle:
         cancellation_requested = getattr(self._store, "cancellation_requested", None)
         while not task.done():
             try:
-                requested = (
-                    bool(
-                        await asyncio.to_thread(
-                            cancellation_requested,
-                            self._execution_id,
+                with _timing.count("execution.cancel_poll"):
+                    requested = (
+                        bool(
+                            await asyncio.to_thread(
+                                cancellation_requested,
+                                self._execution_id,
+                            )
                         )
+                        if callable(cancellation_requested)
+                        else False
                     )
-                    if callable(cancellation_requested)
-                    else False
-                )
             except Exception:
                 requested = False
             if requested:
@@ -838,6 +841,7 @@ class AsyncExecutionHandle:
         finally:
             unsubscribe()
 
+    @_timing.timed("execution.run")
     async def _run(self) -> None:
         failure: BaseException | None = None
         trace: TraceResult | None = None
@@ -1431,6 +1435,7 @@ class AsyncExecutionHandle:
             ),
         )
 
+    @_timing.timed("execution.finalize")
     def _finalize(
         self,
         outcome: ExecutionOutcome,

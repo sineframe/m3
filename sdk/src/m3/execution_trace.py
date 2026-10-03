@@ -14,6 +14,7 @@ from time import perf_counter_ns
 from typing import Any, Final, Literal, cast
 from uuid import uuid4
 
+from . import _timing
 from ._types.agent_identity import project_agent_identity
 from .storage import ExecutionStore, StorageConflict
 from .trace.counts import tool_call_count
@@ -419,6 +420,7 @@ class ExecutionTraceRecorder:
             self._store.append_events((safe_event,))
             return safe_event
 
+    @_timing.counted("trace.emit")
     def emit(
         self,
         kind: EventKind,
@@ -515,6 +517,7 @@ class ExecutionTraceRecorder:
         with self._record_lock:
             return tuple(self._store.iter_events(self._execution_id))
 
+    @_timing.timed("trace.finalize")
     def finalize(
         self,
         outcome: ExecutionOutcome,

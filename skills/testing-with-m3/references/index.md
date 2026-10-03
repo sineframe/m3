@@ -49,6 +49,7 @@
 - [Evaluate a response with an LLM judge](guides-evaluations-judges.md): An LLM judge sends the selected subject text to its configured endpoint. Use it for criteria that cannot be expressed as deterministic assertions, and avoid sending private data unless that transfer is intended.
 - [Compare a run with a baseline](guides-results-baselines.md): --baseline compares a new feedback bundle with an earlier run in the same results database. Capture the ID produced by your own first run; IDs printed in documentation do not exist in your database.
 - [Save and reopen executions](guides-results-persistence.md): Direct SDK use keeps data in memory unless you choose a persistent store. The CLI chooses SQLite automatically.
+- [Find slow steps in a test run](guides-results-timings.md): Set M3_TIMINGS=1 to record where time goes in an m3 test run: a summary table, a per-step JSON file, and a trace you can open in Perfetto.
 - [Read a finalized trace](guides-results-traces.md): Use the operation result for the immediate response and the finalized trace for the complete observed execution.
 - [Open saved test results](guides-results-viewer.md): The standalone CLI includes a local viewer for runs saved in the default project database.
 - [Test tool errors and input schemas](guides-servers-errors-schemas.md): An MCP tool can report an expected application error as a normal call result. When schema validation is enabled, M3 can also reject test arguments that do not match the tool's advertised input schema before sending the call.

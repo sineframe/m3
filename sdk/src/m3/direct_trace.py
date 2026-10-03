@@ -24,6 +24,7 @@ from mcp_types import (
     JSONRPCResponse,
 )
 
+from . import _timing
 from .events import EventFactory, EventSequence
 from .execution_trace import ExecutionTraceRecorder, TraceRecorderError
 from .storage import ExecutionStore, InMemoryExecutionStore
@@ -576,6 +577,7 @@ class DirectTraceBridge:
             phase=LifecyclePhase.UNKNOWN,
         )
 
+    @_timing.timed("trace.finalize")
     def finalize(
         self,
         outcome: ExecutionOutcome,

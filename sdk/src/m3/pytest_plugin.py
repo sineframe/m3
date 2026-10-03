@@ -18,6 +18,7 @@ from uuid import uuid4 as _uuid4
 
 import pytest as _pytest
 
+from . import _timing
 from ._check_recording import (
     restore_default_record_checks as _restore_default_record_checks,
 )
@@ -206,6 +207,13 @@ def pytest_addoption(parser: _Any) -> None:
         help="internal run identity assigned by the M3 CLI",
     )
     group.addoption(
+        "--m3-timings-owner",
+        action="store",
+        default="pytest",
+        choices=("pytest", "cli"),
+        help="internal owner of the M3_TIMINGS final report",
+    )
+    group.addoption(
         "--m3-ci-metadata",
         action="store",
         default=None,
@@ -214,6 +222,18 @@ def pytest_addoption(parser: _Any) -> None:
 
 
 def pytest_configure(config: _Any) -> None:
+    _TimingPlugin.install(config)
+    try:
+        with _timing.span("pytest.configure"):
+            _configure(config)
+    except BaseException:
+        timing_plugin = getattr(config, "_m3_timing_plugin", None)
+        if timing_plugin is not None:
+            timing_plugin.close(config)
+        raise
+
+
+def _configure(config: _Any) -> None:
     raw_ci_metadata = config.getoption("--m3-ci-metadata")
     ci_metadata: dict[str, str] = {}
     if raw_ci_metadata is not None:
@@ -276,7 +296,9 @@ def pytest_configure(config: _Any) -> None:
         run_id = (
             RunId(str(requested_run_id))
             if requested_run_id
-            else RunId(f"run-{_uuid4().hex}")
+            else RunId(
+                getattr(config, "_m3_timing_run_id", None) or f"run-{_uuid4().hex}"
+            )
         )
         worker_id = "master"
     config._m3_run_id = run_id
@@ -322,35 +344,16 @@ def pytest_configure(config: _Any) -> None:
                 "m3.toml must contain a valid project_id and project_name"
             ) from exc
 
-    config._m3_manifest_store = SQLiteExecutionStore(path)
-    if config._m3_project_id is not None:
-        config._m3_manifest_store.ensure_project(
-            config._m3_project_id.root, config._m3_project_name
-        )
+    with _timing.span("configure.store_open"):
+        config._m3_manifest_store = SQLiteExecutionStore(path)
+        if config._m3_project_id is not None:
+            config._m3_manifest_store.ensure_project(
+                config._m3_project_id.root, config._m3_project_name
+            )
     config._m3_checks_token = _set_default_record_checks(True)
     if not config._m3_is_worker:
-        run_record = _run_record(
-            run_id.root,
-            project_root=str(config._m3_project_root),
-            selection=tuple(str(value) for value in getattr(config, "args", ()) or ()),
-            capture={
-                "mode": getattr(config.option, "capture", None),
-                "show_capture": bool(getattr(config.option, "showcapture", False)),
-                "verbose": int(getattr(config.option, "verbose", 0) or 0),
-            },
-            project_id=(
-                config._m3_project_id.root
-                if config._m3_project_id is not None
-                else None
-            ),
-            project_name=getattr(config, "_m3_project_name", None),
-        )
-        if ci_metadata:
-            run_record["ci"] = dict(ci_metadata)
-        config._m3_manifest_store.save_test_run(
-            run_id.root,
-            run_record,
-        )
+        with _timing.span("configure.manifest_init"):
+            _init_manifest(config, run_id, ci_metadata)
     config._m3_run_id_previous = _install_default_run_id_factory(lambda: run_id)
     config._m3_judge_limit_previous = _install_default_judge_limit_factory(
         lambda: config._m3_judge_max_requests
@@ -368,6 +371,29 @@ def pytest_configure(config: _Any) -> None:
     config.pluginmanager.register(config._m3_progress, "m3-progress")
     config._m3_manifest_hooks = _ManifestHooks()
     config.pluginmanager.register(config._m3_manifest_hooks, "m3-manifest-hooks")
+
+
+def _init_manifest(config: _Any, run_id: _Any, ci_metadata: dict[str, str]) -> None:
+    run_record = _run_record(
+        run_id.root,
+        project_root=str(config._m3_project_root),
+        selection=tuple(str(value) for value in getattr(config, "args", ()) or ()),
+        capture={
+            "mode": getattr(config.option, "capture", None),
+            "show_capture": bool(getattr(config.option, "showcapture", False)),
+            "verbose": int(getattr(config.option, "verbose", 0) or 0),
+        },
+        project_id=(
+            config._m3_project_id.root if config._m3_project_id is not None else None
+        ),
+        project_name=getattr(config, "_m3_project_name", None),
+    )
+    if ci_metadata:
+        run_record["ci"] = dict(ci_metadata)
+    config._m3_manifest_store.save_test_run(
+        run_id.root,
+        run_record,
+    )
 
 
 @_pytest.fixture
@@ -657,6 +683,7 @@ def _has_included_ci_parameter(metafunc: _Any) -> bool:
 
 
 @_pytest.hookimpl(trylast=True)
+@_timing.counted("pytest.generate")
 def pytest_generate_tests(metafunc: _Any) -> None:
     marker = metafunc.definition.get_closest_marker("m3")
     if marker is None:
@@ -725,6 +752,7 @@ def pytest_generate_tests(metafunc: _Any) -> None:
 
 
 @_pytest.hookimpl(tryfirst=True)
+@_timing.timed("collection.select")
 def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
     if config.getoption("--m3-ci"):
         ci_kept: list[_Any] = []
@@ -798,6 +826,9 @@ def pytest_collection_modifyitems(config: _Any, items: list[_Any]) -> None:
 
 
 def pytest_unconfigure(config: _Any) -> None:
+    timing_plugin = getattr(config, "_m3_timing_plugin", None)
+    if timing_plugin is not None:
+        timing_plugin.close(config)
     for target, previous in getattr(config, "_m3_judge_env_previous", {}).items():
         if previous is None:
             _os.environ.pop(target, None)
@@ -842,6 +873,7 @@ def _pytest_configure_node(node: _Any) -> None:
         workerinput["m3_run_id"] = run_id.root
 
 
+@_timing.timed("collection.select")
 def _pytest_collection_modifyitems(
     session: _Any, config: _Any, items: list[_Any]
 ) -> None:
@@ -931,6 +963,7 @@ def _record_collected(
     store.save_test_run(run_id.root, record)
 
 
+@_timing.timed("collection.manifest")
 def _pytest_collection_finish(session: _Any) -> None:
     config = session.config
     items = session.items
@@ -1098,6 +1131,7 @@ def _diagnostic(value: object, *, limit: int = 20_000) -> dict[str, object] | st
     return {"text": text[:limit], "truncated": True, "total_characters": len(text)}
 
 
+@_timing.counted("pytest.persist_attempt")
 def _save_attempt(config: _Any, state: dict[str, object]) -> None:
     store = getattr(config, "_m3_manifest_store", None)
     run_id = getattr(config, "_m3_run_id", None)
@@ -1267,6 +1301,7 @@ def _manifest_not_run_attempt(
     }
 
 
+@_timing.timed("finish.manifest")
 def _persist_manifest_not_run(
     config: _Any, store: _Any, run_id: str, manifest: dict[str, object]
 ) -> bool:
@@ -1294,6 +1329,7 @@ def _persist_manifest_not_run(
     return not failed
 
 
+@_timing.timed("finish.required_evaluations")
 def _required_evaluation_issues(
     store: _Any,
     run_id: str,
@@ -1433,6 +1469,7 @@ def _manifest_status(manifest: _Mapping[str, object], exit_status: int) -> str:
     return "interrupted" if exit_status in {2, 3, 4} else "finished"
 
 
+@_timing.counted("pytest.manifest_write")
 def _save_manifest(
     config: _Any,
     store: _Any,
@@ -1626,52 +1663,54 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
 
         export_store = SQLiteExecutionStore(path)
         try:
-            timed_out_snapshots = []
-            timeout_offset = 0
-            while True:
-                timeout_page = export_store.list_executions(
-                    run_id=run_id.root,
-                    outcome="timed_out",
-                    limit=100,
-                    offset=timeout_offset,
-                )
-                timed_out_snapshots.extend(timeout_page.items)
-                timeout_offset += len(timeout_page.items)
-                if not timeout_page.items or timeout_offset >= timeout_page.total:
-                    break
-            for snapshot in timed_out_snapshots:
-                operation_timeout: dict[str, _Any] = next(
-                    (
-                        event.payload
-                        for event in reversed(
-                            tuple(export_store.iter_events(snapshot.execution_id))
-                        )
-                        if event.kind.value == "diagnostic"
-                        and event.payload.get("code") == "operation_timeout"
-                    ),
-                    {},
-                )
-                timeout_summaries.append(
-                    (
-                        snapshot.execution_id.root,
-                        str(operation_timeout.get("stage", "unknown")),
-                        operation_timeout.get("elapsed_seconds"),
+            with _timing.span("finish.timeout_scan"):
+                timed_out_snapshots = []
+                timeout_offset = 0
+                while True:
+                    timeout_page = export_store.list_executions(
+                        run_id=run_id.root,
+                        outcome="timed_out",
+                        limit=100,
+                        offset=timeout_offset,
                     )
-                )
+                    timed_out_snapshots.extend(timeout_page.items)
+                    timeout_offset += len(timeout_page.items)
+                    if not timeout_page.items or timeout_offset >= timeout_page.total:
+                        break
+                for snapshot in timed_out_snapshots:
+                    operation_timeout: dict[str, _Any] = next(
+                        (
+                            event.payload
+                            for event in reversed(
+                                tuple(export_store.iter_events(snapshot.execution_id))
+                            )
+                            if event.kind.value == "diagnostic"
+                            and event.payload.get("code") == "operation_timeout"
+                        ),
+                        {},
+                    )
+                    timeout_summaries.append(
+                        (
+                            snapshot.execution_id.root,
+                            str(operation_timeout.get("stage", "unknown")),
+                            operation_timeout.get("elapsed_seconds"),
+                        )
+                    )
             baseline_run_id = getattr(config, "_m3_baseline", None)
-            run_entries = load_run_entries(export_store, run_id)
-            baseline_entries = (
-                load_run_entries(export_store, baseline_run_id)
-                if baseline_run_id is not None
-                else None
-            )
-            feedback = build_feedback(
-                export_store,
-                run_id,
-                baseline_run_id=baseline_run_id,
-                entries=run_entries,
-                baseline_entries=baseline_entries,
-            )
+            with _timing.span("finish.load_entries", "run"):
+                run_entries = load_run_entries(export_store, run_id)
+            baseline_entries = None
+            if baseline_run_id is not None:
+                with _timing.span("finish.load_entries", "baseline"):
+                    baseline_entries = load_run_entries(export_store, baseline_run_id)
+            with _timing.span("feedback.build", "counters"):
+                feedback = build_feedback(
+                    export_store,
+                    run_id,
+                    baseline_run_id=baseline_run_id,
+                    entries=run_entries,
+                    baseline_entries=baseline_entries,
+                )
             counter_save_failed = _save_feedback_counters(
                 config,
                 store,
@@ -1692,23 +1731,25 @@ def _pytest_sessionfinish(session: _Any, exitstatus: int) -> None:
                 )
             # Rebuild after the final manifest write so the exported feedback
             # and its diagnostic manifest describe the same terminal state.
-            feedback = build_feedback(
-                export_store,
-                run_id,
-                baseline_run_id=baseline_run_id,
-                entries=run_entries,
-                baseline_entries=baseline_entries,
-            )
-            output = export_feedback(
-                feedback,
-                export_store,
-                getattr(config, "_m3_project_root", _Path.cwd())
-                / ".m3"
-                / "reports"
-                / run_id.root,
-                entries=run_entries,
-                baseline_entries=baseline_entries,
-            )
+            with _timing.span("feedback.build", "final"):
+                feedback = build_feedback(
+                    export_store,
+                    run_id,
+                    baseline_run_id=baseline_run_id,
+                    entries=run_entries,
+                    baseline_entries=baseline_entries,
+                )
+            with _timing.span("feedback.export"):
+                output = export_feedback(
+                    feedback,
+                    export_store,
+                    getattr(config, "_m3_project_root", _Path.cwd())
+                    / ".m3"
+                    / "reports"
+                    / run_id.root,
+                    entries=run_entries,
+                    baseline_entries=baseline_entries,
+                )
         finally:
             close = getattr(export_store, "close", None)
             if callable(close):
@@ -1831,7 +1872,8 @@ class _ManifestHooks:
 
     @_pytest.hookimpl
     def pytest_sessionfinish(self, session: _Any, exitstatus: int) -> None:
-        _pytest_sessionfinish(session, exitstatus)
+        with _timing.span("pytest.finish"):
+            _pytest_sessionfinish(session, exitstatus)
 
 
 class _Progress:
@@ -1956,6 +1998,157 @@ class _Progress:
         if self.config.getoption("--m3-ci"):
             terminalreporter.write_line(f"M3 CI excluded {excluded} test(s)")
         self.finish()
+
+
+def _safe_nodeid(item: _Any) -> str:
+    """Node id without parameter values, which may contain secrets."""
+
+    nodeid = str(item.nodeid).split("[", 1)[0]
+    callspec = getattr(item, "callspec", None)
+    if callspec is None:
+        return nodeid
+    indices = getattr(callspec, "indices", None)
+    if not indices:
+        return f"{nodeid}[param]"
+    return nodeid + "[" + "-".join(str(i) for i in indices.values()) + "]"
+
+
+def _fail_on_exception(span: _Any, outcome: _Any) -> None:
+    excinfo = getattr(outcome, "excinfo", None)
+    if excinfo is not None:
+        span.fail(type(excinfo[1]).__name__)
+
+
+class _TimingPlugin:
+    """Opt-in M3_TIMINGS spans for pytest; registered only when enabled."""
+
+    def __init__(self, directory: str, owner: str, is_worker: bool) -> None:
+        self.directory = directory
+        self.owner = owner
+        self.is_worker = is_worker
+        self.reported = False
+        self.test_span: _Any = None
+
+    @classmethod
+    def install(cls, config: _Any) -> None:
+        if not _timing.ENABLED:
+            return
+        workerinput = getattr(config, "workerinput", None)
+        if isinstance(workerinput, dict):
+            directory = workerinput.get("m3_timings_dir")
+            if not directory:
+                return
+            owner = str(workerinput.get("m3_timings_owner") or "pytest")
+            label = f"worker-{workerinput.get('workerid', 'worker')}"
+        else:
+            requested = config.getoption("--m3-run-id")
+            run_id = str(requested) if requested else f"run-{_uuid4().hex}"
+            config._m3_timing_run_id = run_id
+            root = (
+                _Path(
+                    config.getoption("--project-root")
+                    or getattr(config, "rootpath", _Path.cwd())
+                )
+                .expanduser()
+                .resolve()
+            )
+            directory = str(root / ".m3" / "reports" / run_id / "timings")
+            owner = str(config.getoption("--m3-timings-owner") or "pytest")
+            label = "controller"
+        _timing.start(directory, label)
+        plugin = cls(str(directory), owner, isinstance(workerinput, dict))
+        config._m3_timing_plugin = plugin
+        config.pluginmanager.register(plugin, "m3-timings")
+
+    def close(self, config: _Any) -> None:
+        _timing.stop()
+        if not self.is_worker and self.owner == "pytest" and not self.reported:
+            self.reported = True
+            from . import _timing_report
+
+            _timing_report.finish(self.directory)
+        config.pluginmanager.unregister(self)
+        config._m3_timing_plugin = None
+
+    @_pytest.hookimpl(optionalhook=True)
+    def pytest_configure_node(self, node: _Any) -> None:
+        workerinput = getattr(node, "workerinput", None)
+        if isinstance(workerinput, dict):
+            workerinput["m3_timings_dir"] = self.directory
+            workerinput["m3_timings_owner"] = self.owner
+
+    @_pytest.hookimpl(hookwrapper=True)
+    def pytest_collection(self) -> _Iterator[None]:
+        with _timing.span("pytest.collection"):
+            yield
+
+    @_pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_protocol(self, item: _Any, nextitem: _Any) -> _Iterator[None]:
+        del nextitem
+        nodeid = _safe_nodeid(item)
+        with _timing.test_scope(nodeid), _timing.span("test", nodeid) as span:
+            self.test_span = span
+            try:
+                outcome = yield
+                _fail_on_exception(span, outcome)
+            finally:
+                self.test_span = None
+
+    def pytest_runtest_logreport(self, report: _Any) -> None:
+        if report.failed and self.test_span is not None:
+            self.test_span.fail(str(report.when))
+
+    @_pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_setup(self, item: _Any) -> _Iterator[None]:
+        del item
+        with _timing.span("test.setup") as span:
+            _fail_on_exception(span, (yield))
+
+    @_pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_call(self, item: _Any) -> _Iterator[None]:
+        del item
+        with _timing.span("test.call") as span:
+            _fail_on_exception(span, (yield))
+
+    @_pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_teardown(self, item: _Any, nextitem: _Any) -> _Iterator[None]:
+        del item, nextitem
+        with _timing.span("test.teardown") as span:
+            _fail_on_exception(span, (yield))
+
+    @_pytest.hookimpl(hookwrapper=True)
+    def pytest_fixture_setup(self, fixturedef: _Any, request: _Any) -> _Iterator[None]:
+        del request
+        with _timing.span("fixture.setup", str(fixturedef.argname)) as span:
+            _fail_on_exception(span, (yield))
+
+    @_pytest.hookimpl(trylast=True)
+    def pytest_sessionfinish(self, session: _Any, exitstatus: int) -> None:
+        del session, exitstatus
+        if self.is_worker:
+            _timing.stop()
+
+    @_pytest.hookimpl(trylast=True)
+    def pytest_terminal_summary(self, terminalreporter: _Any, **_: _Any) -> None:
+        if self.is_worker:
+            return
+        _timing.stop()
+        if self.owner != "pytest" or self.reported:
+            return
+        self.reported = True
+        from . import _timing_report
+
+        class _Out:
+            def write(self, text: str) -> int:
+                terminalreporter.write(text)
+                return len(text)
+
+            def flush(self) -> None:
+                pass
+
+        terminalreporter.write_line("")
+        out: _Any = _Out()
+        _timing_report.finish(self.directory, print_to=out)
 
 
 # This order is a compatibility contract for the focused plugin surface.

@@ -1785,3 +1785,138 @@ def test_upload_from_subdirectory_uses_the_discovered_root(
     assert seen["project_root"] == root.resolve()
     assert seen["database"] == root.resolve() / ".m3" / "executions.sqlite"
     assert seen["env_file"] == root.resolve() / ".env"
+
+
+@pytest.fixture
+def timings(monkeypatch: pytest.MonkeyPatch) -> Any:
+    from m3 import _timing
+
+    monkeypatch.setenv("M3_TIMINGS", "1")
+    _timing._reset()
+    yield _timing
+    _timing.stop()
+    monkeypatch.delenv("M3_TIMINGS", raising=False)
+    _timing._reset()
+    supervisor._timing_state.update(directory=None, run=None)
+
+
+def _timing_names(directory: Path, process: str) -> set[str]:
+    names: set[str] = set()
+    for path in directory.glob(f"{process}-*.jsonl"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            record = json.loads(line)
+            if record.get("type") == "span":
+                names.add(record["name"])
+    return names
+
+
+def test_timings_record_cli_steps_and_hand_report_ownership_to_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    timings: Any,
+) -> None:
+    (tmp_path / "m3.toml").write_text("", encoding="utf-8")
+    _stub_project_python(monkeypatch)
+    seen: dict[str, Any] = {}
+
+    def spawn(command: list[str], **kwargs: Any) -> _Process:
+        seen["command"] = command
+        seen["env"] = kwargs["env"]
+        return _Process(0)
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", spawn)
+    result = supervisor.run_test_with_runs(project_root=tmp_path, pytest_args=["-q"])
+    assert result.exit_code == 0
+    command = seen["command"]
+    assert "--m3-timings-owner=cli" in command
+    assert seen["env"]["M3_TIMINGS"] == "1"
+    run_id = command[command.index("--m3-run-id") + 1]
+    directory = tmp_path / ".m3" / "reports" / run_id / "timings"
+    names = _timing_names(directory, "cli")
+    # run_test_with_runs leaves reporting to its caller (main's finally).
+    supervisor._finish_timings()
+    assert "M3 timings:" in capsys.readouterr().out
+    names = _timing_names(directory, "cli")
+    assert {
+        "cli.run",
+        "cli.validate_python",
+        "cli.history_scan",
+        "cli.pytest",
+    } <= names
+    assert (directory / "summary.json").is_file()
+
+
+def test_timings_off_adds_no_option_and_no_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from m3 import _timing
+
+    monkeypatch.delenv("M3_TIMINGS", raising=False)
+    _timing._reset()
+    (tmp_path / "m3.toml").write_text("", encoding="utf-8")
+    _stub_project_python(monkeypatch)
+    seen: dict[str, Any] = {}
+
+    def spawn(command: list[str], **kwargs: Any) -> _Process:
+        seen["command"] = command
+        return _Process(0)
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", spawn)
+    assert main(["test", "--project-root", str(tmp_path), "--", "-q"]) == 0
+    assert not any(arg.startswith("--m3-timings-owner") for arg in seen["command"])
+    assert not list(tmp_path.glob(".m3/reports/*/timings"))
+
+
+def test_timings_owner_option_is_reserved(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["test", "--", "--m3-timings-owner=pytest"]) == 2
+    assert "pytest passthrough" in capsys.readouterr().err
+
+
+def test_ui_prints_timing_summary_before_serving(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    timings: Any,
+) -> None:
+    import threading
+
+    monkeypatch.setattr(supervisor, "_validate_port", lambda _port: None)
+    monkeypatch.setattr(supervisor, "_ui_prerequisite_error", lambda _ui_dir: None)
+    monkeypatch.setattr(
+        supervisor,
+        "_prepare_test",
+        lambda *_args, **_kwargs: (Path(sys.executable), tmp_path / "results.sqlite"),
+    )
+    monkeypatch.setattr(supervisor, "_run_pytest_process", lambda *_a, **_k: 0)
+
+    class Child:
+        process = SimpleNamespace(poll=lambda: None)
+
+        def alive(self) -> bool:
+            return True
+
+    monkeypatch.setattr(supervisor, "_ServerChild", lambda *_args: Child())
+    monkeypatch.setattr(supervisor, "_wait_ready", lambda *_args: True)
+    monkeypatch.setattr(supervisor, "_terminate_process", lambda _process: None)
+    monkeypatch.setattr(supervisor.webbrowser, "open", lambda _url: True)
+    real_sleep = supervisor.time.sleep
+
+    def sleep(seconds: float) -> None:
+        if threading.current_thread() is not threading.main_thread() or seconds == 1:
+            real_sleep(min(seconds, 0.001))
+            return
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(supervisor.time, "sleep", sleep)
+    result = supervisor.run_test_with_runs(
+        ui=True, port=8123, ui_dir=tmp_path, project_root=tmp_path
+    )
+    assert result.exit_code == 0
+    output = capsys.readouterr().out
+    assert "M3 timings:" in output
+    assert "cli.ui.start" in output
+    assert output.index("cli.ui.start") < output.index("http://127.0.0.1:8123")
+    assert supervisor._timing_state["directory"] is None

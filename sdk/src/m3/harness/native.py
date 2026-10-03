@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from .. import _timing
 from ..errors import CleanupError
 from ..types import ErrorCode, ErrorInfo, SecretReference
 from .contracts import (
@@ -289,6 +290,7 @@ async def discard_bounded(
     await drain_bounded(stream, maximum=maximum)
 
 
+@_timing.timed("harness.probe_help")
 def probe_help(executable: str, args: tuple[str, ...]) -> str | None:
     """Read bounded capability help without credentials or model execution."""
 
@@ -326,6 +328,7 @@ class ProcessOwner:
         self.pgid: int | None = None
         self._closed = False
 
+    @_timing.timed("harness.spawn")
     async def spawn(
         self,
         argv: list[str],
@@ -365,6 +368,7 @@ class ProcessOwner:
             except (ProcessLookupError, PermissionError, OSError):
                 pass
 
+    @_timing.timed("harness.terminate")
     async def terminate(self) -> None:
         process = self.process
         if process is None:

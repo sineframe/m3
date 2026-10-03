@@ -57,6 +57,10 @@ path; a map is `{}` when the run has nothing of that kind:
 
 `unavailable_references` lists references that could not be included.
 
+When a run sets `M3_TIMINGS=1`, `.m3/reports/<run-id>/` also has a `timings/`
+folder with `summary.json`, `trace.json`, and the raw per-process records. The
+bundle does not reference it. See [Find slow steps in a test run](guides-results-timings.md).
+
 Trace `timeline[]` entries use these shapes:
 
 - `tool_call`: `server_binding`, `status`, `tool`, `arguments`, `result`,

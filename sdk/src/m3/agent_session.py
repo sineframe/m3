@@ -19,6 +19,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 from uuid import uuid4
 
+from . import _timing
 from ._types.agent_identity import project_agent_identity
 from ._types.specs import AgentSpec
 from .elicitation import ElicitationPlan
@@ -507,7 +508,8 @@ class AsyncAgentSession:
             return self
         try:
             await asyncio.to_thread(self._workspace.create)
-            await self._start_adapter()
+            with _timing.span("session.start", key=self._policy_harness_name):
+                await self._start_adapter()
             async with self._state_lock:
                 if self._closing or self._closed:
                     raise KitClosed("agent session is closing")
@@ -592,6 +594,7 @@ class AsyncAgentSession:
     ) -> None:
         await self.aclose()
 
+    @_timing.timed("harness.preflight")
     async def _preflight_launch(self, launch: Any) -> Any:
         """Run adapter policy preflight before opening or starting a harness."""
 
@@ -807,8 +810,9 @@ class AsyncAgentSession:
                 else:
                     enter = getattr(self.adapter, "__aenter__", None)
                     result = enter() if enter is not None else None
-        if inspect.isawaitable(result):
-            result = await result
+        with _timing.span("harness.open"):
+            if inspect.isawaitable(result):
+                result = await result
         self._adapter_session = self._coerce_adapter_session(result)
         if self._managed_input_runtime is not None:
             target = result if result is not None else self.adapter
@@ -1018,16 +1022,17 @@ class AsyncAgentSession:
                 close = getattr(self.adapter, "close", None) or getattr(
                     self.adapter, "aclose", None
                 )
-                if close is not None:
-                    result = close()
-                    if inspect.isawaitable(result):
-                        await result
-                else:
-                    exit_method = getattr(self.adapter, "__aexit__", None)
-                    if exit_method is not None:
-                        result = exit_method(None, None, None)
+                with _timing.span("harness.close"):
+                    if close is not None:
+                        result = close()
                         if inspect.isawaitable(result):
                             await result
+                    else:
+                        exit_method = getattr(self.adapter, "__aexit__", None)
+                        if exit_method is not None:
+                            result = exit_method(None, None, None)
+                            if inspect.isawaitable(result):
+                                await result
                 self._adapter_closed = True
             except Exception as exc:
                 failure = exc
@@ -1044,9 +1049,10 @@ class AsyncAgentSession:
                     self._runtime_lease, "close", None
                 )
                 if callable(release):
-                    value = release()
-                    if inspect.isawaitable(value):
-                        await value
+                    with _timing.span("runtime.release"):
+                        value = release()
+                        if inspect.isawaitable(value):
+                            await value
                 self._runtime_lease = None
             except Exception as exc:
                 if failure is None:
@@ -1054,6 +1060,7 @@ class AsyncAgentSession:
         if failure is not None:
             raise failure
 
+    @_timing.timed("session.wire_replay")
     def _emit_captured_wire_events(self, turn_id: TurnId | None) -> None:
         """Project newly observed MCP wire events into the session trace.
 
@@ -1473,11 +1480,12 @@ class AsyncAgentSession:
                 )
             else:
                 operation = sender(message, timeout=timeout, metadata=metadata)
-            raw = (
-                await asyncio.wait_for(operation, timeout=timeout)
-                if timeout is not None
-                else await operation
-            )
+            with _timing.span("session.turn", key=self._policy_harness_name):
+                raw = (
+                    await asyncio.wait_for(operation, timeout=timeout)
+                    if timeout is not None
+                    else await operation
+                )
             self._emit_event(
                 EventKind.DIAGNOSTIC,
                 {
@@ -2387,6 +2395,7 @@ class AsyncAgentSession:
         self._terminal_error = error
         self._terminal_result = result.model_copy(update={"error": error})
 
+    @_timing.timed("session.close")
     async def _complete_close(self, outcome: ExecutionOutcome) -> None:
         await self._wait_for_startup()
         # Startup owns terminalization and cleanup when it loses a race with

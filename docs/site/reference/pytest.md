@@ -60,6 +60,14 @@ in the same file. Keep direct-only and agent tests in separate files.
 installs a default `SQLiteExecutionStore` for kits without an explicit store;
 an explicit kit store takes precedence.
 
+## Step timings
+
+`M3_TIMINGS=1 pytest -p m3.pytest_plugin tests/` records step timings and prints the summary at the
+end of the run. It works with plain pytest, with or without `--results-db`, and
+with pytest-xdist: the controller and each worker write their own file, and the
+report merges them. Plain pytest has no `cli.*` steps. See
+[Find slow steps in a test run](../guides/results/timings.md).
+
 ## Parallel runs
 
 `m3 test -n 4` runs tests in four pytest-xdist worker processes; `m3 test -n

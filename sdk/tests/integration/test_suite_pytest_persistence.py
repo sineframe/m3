@@ -19,6 +19,7 @@ def _run(
     ci_metadata: str | None = None,
     persist: bool = True,
     pytest_args: tuple[str, ...] = (),
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     db = tmp_path / ("xdist.sqlite" if xdist else "results.sqlite")
     args = [
@@ -46,6 +47,7 @@ def _run(
     env = {
         "PYTHONPATH": str(Path(__file__).parents[2].resolve() / "src"),
         "SUITE_DB": str(db),
+        **(extra_env or {}),
     }
     return subprocess.run(args, cwd=tmp_path, env=env, text=True, capture_output=True)
 
@@ -558,6 +560,30 @@ def test_xdist_suite_rows_when_available(tmp_path: Path) -> None:
     db = sqlite3.connect(tmp_path / "xdist.sqlite")
     rows = db.execute("select suite_id,record_json from v2_test_results").fetchall()
     assert len(rows) == 8 and len({row[0] for row in rows}) == 1
+
+
+def test_xdist_timings_include_controller_and_workers(tmp_path: Path) -> None:
+    pytest.importorskip("xdist")
+    test_file = tmp_path / "many.py"
+    test_file.write_text(
+        "import pytest\npytestmark=pytest.mark.m3(suite_name='catalog')\n"
+        + "\n".join(f"def test_{i}(): pass" for i in range(8))
+    )
+    result = _run(tmp_path, test_file, xdist=True, extra_env={"M3_TIMINGS": "1"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "M3 timings:" in result.stdout
+    (directory,) = tmp_path.glob(".m3/reports/*/timings")
+    assert list(directory.glob("controller-*.jsonl"))
+    assert list(directory.glob("worker-*.jsonl"))
+    trace = json.loads((directory / "trace.json").read_text(encoding="utf-8"))
+    events = trace["traceEvents"] if isinstance(trace, dict) else trace
+    processes = {
+        str(event.get("args", {}).get("name"))
+        for event in events
+        if event.get("ph") == "M"
+    }
+    assert any("controller" in name for name in processes)
+    assert any("worker" in name for name in processes)
 
 
 def test_suite_selection_normalizes_marker_for_plain_and_agent_tests(

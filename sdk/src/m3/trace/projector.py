@@ -11,6 +11,7 @@ from typing import Any, Literal, TypeVar, cast
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
+from .. import _timing as _step_timing
 from .._types.agent_identity import project_agent_identity
 from ..errors import TraceNotFinalized, TraceUnavailable
 from ..observability import (
@@ -2267,6 +2268,7 @@ class TraceProjector:
     """Pure deterministic projector with no storage or adapter dependencies."""
 
     @staticmethod
+    @_step_timing.counted("trace.project")
     def project(trace: TraceResult) -> TraceView:
         if not isinstance(trace, TraceResult):
             raise TraceUnavailable("trace evidence is invalid")
