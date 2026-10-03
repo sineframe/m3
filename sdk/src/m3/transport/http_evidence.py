@@ -33,12 +33,36 @@ _CHALLENGE_PARAMS: Final[frozenset[str]] = frozenset(
 )
 _MAX_HEADER_VALUE: Final[int] = 2048
 _MAX_PARAM_VALUE: Final[int] = 512
+# IANA HTTP Authentication Scheme Registry.  A bare token in scheme position
+# is indistinguishable from a leaked credential, so only registered schemes
+# are recorded.
+_SCHEMES: Final[dict[str, str]] = {
+    name.lower(): name
+    for name in (
+        "Basic",
+        "Bearer",
+        "Concealed",
+        "Digest",
+        "DPoP",
+        "GNAP",
+        "HOBA",
+        "Mutual",
+        "Negotiate",
+        "NTLM",
+        "OAuth",
+        "PrivateToken",
+        "SCRAM-SHA-1",
+        "SCRAM-SHA-256",
+        "vapid",
+    )
+}
 _TOKEN: Final[str] = r"[A-Za-z0-9!#$%&'*+.^_`|~-]+"
+_END: Final[str] = r"(?=[ \t]*(?:,|$))"
 _PARAM: Final[re.Pattern[str]] = re.compile(
-    rf'\s*({_TOKEN})\s*=\s*("(?:[^"\\]|\\.)*"|{_TOKEN})\s*(?:,|$)'
+    rf'({_TOKEN})[ \t]*=[ \t]*("(?:[^"\\]|\\.)*"|{_TOKEN}){_END}'
 )
-_SCHEME: Final[re.Pattern[str]] = re.compile(rf"\s*({_TOKEN})(?=\s|,|$)")
-_TOKEN68: Final[re.Pattern[str]] = re.compile(r"\s*[A-Za-z0-9\-._~+/]+=*\s*(?:,|$)")
+_SCHEME: Final[re.Pattern[str]] = re.compile(rf"({_TOKEN})(?=[ \t]|,|$)")
+_TOKEN68: Final[re.Pattern[str]] = re.compile(rf"[A-Za-z0-9\-._~+/]+=*{_END}")
 
 
 def _quoted(value: str) -> str:
@@ -51,37 +75,55 @@ def _quoted(value: str) -> str:
 def safe_challenge(value: str) -> str | None:
     """Return the challenge with only its schemes and explanatory parameters.
 
-    Token68 credentials and unknown parameters are dropped.  Parsing stops at
-    the first malformed element so nothing after it can leak through.
+    Token68 credentials and unknown parameters are dropped, and only
+    registered schemes are kept.  Parsing stops at the first element that is
+    not a registered scheme, a parameter or a scheme's token68, so nothing
+    after it can leak through.
     """
 
     challenges: list[tuple[str, list[str]]] = []
     position = 0
+    # A challenge or parameter may start only at the beginning of the header
+    # or after a comma, or as a scheme's parameters after whitespace.
+    boundary = True
     while position < len(value):
-        if value[position] in " \t,":
+        char = value[position]
+        if char in " \t":
             position += 1
             continue
+        if char == ",":
+            boundary = True
+            position += 1
+            continue
+        if not boundary:
+            break
         param = _PARAM.match(value, position)
         if param is not None and challenges:
             name = param.group(1).lower()
             if name in _CHALLENGE_PARAMS:
                 challenges[-1][1].append(f"{name}={_quoted(param.group(2))}")
             position = param.end()
+            boundary = False
             continue
         scheme = _SCHEME.match(value, position)
-        if scheme is not None:
-            challenges.append((scheme.group(1), []))
-            position = scheme.end()
-            # Only whitespace separates a scheme from its own token68 or
-            # parameters; a comma starts the next challenge or parameter.
-            separated = value[position : position + 1] in (" ", "\t")
-            rest = value[position:].lstrip(" \t")
-            if separated and rest and not rest.startswith(","):
-                token68 = _TOKEN68.match(value, position)
-                if token68 is not None and _PARAM.match(value, position) is None:
-                    position = token68.end()
+        if scheme is None or scheme.group(1).lower() not in _SCHEMES:
+            break
+        challenges.append((_SCHEMES[scheme.group(1).lower()], []))
+        position = scheme.end()
+        boundary = False
+        after = position
+        while after < len(value) and value[after] in " \t":
+            after += 1
+        if after == position or after == len(value) or value[after] == ",":
             continue
-        break
+        if _PARAM.match(value, after) is not None:
+            position = after
+            boundary = True
+            continue
+        token68 = _TOKEN68.match(value, after)
+        if token68 is None:
+            break
+        position = token68.end()
     if not challenges:
         return None
     rendered = ", ".join(
