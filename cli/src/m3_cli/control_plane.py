@@ -22,6 +22,7 @@ from urllib.parse import quote, urlparse, urlsplit
 
 from m3 import _timing
 from m3.feedback import Feedback, load_run_entries, project_test_attempts
+from m3.hosted_comparison import comparison_input as project_comparison_input
 from m3.storage import SQLiteExecutionStore
 from m3_app.api.report_payloads import (
     build_execution_envelope,
@@ -304,6 +305,12 @@ def _current_run_summary(
         ) from exc
     if not isinstance(exported, dict):
         raise UploadError(f"run {run_id} feedback.json is invalid", retryable=False)
+    manifest = store.get_test_run(run_id)
+    comparison_input = None
+    if manifest is not None:
+        comparison_input = project_comparison_input(
+            manifest, store.list_test_results(run_id)
+        )
     summary = {
         "transport_version": 1,
         "execution_ids": execution_ids,
@@ -315,6 +322,8 @@ def _current_run_summary(
             "feedback": neutralize_response("/api/v2/feedback/{run_id}", exported),
         },
     }
+    if comparison_input is not None:
+        summary["comparison_input"] = comparison_input
     return run_id, snapshots, _json_bytes(summary)
 
 

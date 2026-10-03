@@ -65,6 +65,14 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
                 "execution_ids": [execution_id],
             },
         )
+        store.save_test_run(
+            "run-upload",
+            {
+                "run_id": "run-upload",
+                "status": "finished",
+                "selection": ["tests/test_upload.py"],
+            },
+        )
         feedback = build_feedback(store, "run-upload")
         directory = root / "reports" / "run-upload"
         export_feedback(feedback, store, directory)
@@ -100,6 +108,13 @@ def test_complete_current_run_uploads_summary_execution_and_publish(
         execution = json.loads(sent[1][1])
         assert summary["execution_ids"] == [execution_id]
         assert summary["feedback"]["feedback"]["run_id"] == "run-upload"
+        assert summary["comparison_input"]["schema_version"] == 1
+        assert summary["comparison_input"]["manifest"]["selection"] == [
+            "tests/test_upload.py"
+        ]
+        assert summary["comparison_input"]["test_results"][0]["execution_ids"] == [
+            execution_id
+        ]
         assert execution["snapshot"]["execution_id"] == execution_id
         assert execution["snapshot"]["run_id"] == "run-upload"
         assert execution["snapshot"]["lifecycle"] == "finished"
@@ -248,5 +263,56 @@ def test_correlated_five_mib_value_upload_stays_below_the_limit(
         envelope = json.loads(body)["report"]
         assert json.dumps(envelope["trace"]).count(large) == 1
         assert json.dumps(envelope["report"]["events"]).count(large) == 2
+    finally:
+        store.close()
+
+
+def test_compact_summary_stays_under_limit_and_digest_is_environment_independent(
+    tmp_path, monkeypatch
+):
+    store = SQLiteExecutionStore(tmp_path / "results.sqlite")
+    try:
+        store.save_test_run(
+            "run-compact",
+            {
+                "run_id": "run-compact",
+                "status": "finished",
+                "project_root": "/private/user/workspace",
+                "selection": [
+                    "tests/test_login.py",
+                    "--db-url=postgres://u:hunter2@db/x",
+                ],
+                "capture": {"private": "machine data"},
+            },
+        )
+        for index in range(500):
+            store.save_test_result(
+                "run-compact",
+                f"attempt-{index}",
+                {
+                    "run_id": "run-compact",
+                    "attempt_id": f"attempt-{index}",
+                    "suite_name": "Compact suite",
+                    "suite_id": 1,
+                    "node_id": f"tests/test_login.py::test_{index}",
+                    "outcome": "passed",
+                    "execution_ids": [],
+                    "diagnostics": {"stdout": "x" * 7000},
+                    "phases": {"call": {"outcome": "passed"}},
+                },
+            )
+        feedback = build_feedback(store, "run-compact")
+        directory = tmp_path / "reports"
+        export_feedback(feedback, store, directory)
+        _, _, before = control_plane._current_run_summary(feedback, store, directory)
+        monkeypatch.setenv("CI_DEPLOY_PASSWORD", "login")
+        _, _, after = control_plane._current_run_summary(feedback, store, directory)
+        assert before == after
+        assert len(after) < control_plane._MAX_SUMMARY_BYTES
+        compact = json.loads(after)["comparison_input"]
+        assert "hunter2" not in json.dumps(compact)
+        assert "/private/user/workspace" not in json.dumps(compact)
+        assert compact["test_results"][0]["node_id"].startswith("tests/test_login.py")
+        assert all("diagnostics" not in attempt for attempt in compact["test_results"])
     finally:
         store.close()
