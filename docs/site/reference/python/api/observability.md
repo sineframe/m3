@@ -1198,7 +1198,7 @@ m3.observability.RuntimeTraceInfo(
 ```python
 m3.observability.SafeHttpHeader(
     *,
-    name: Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id'],
+    name: Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id', 'www-authenticate'],
     value: str,
 ) -> None
 ```
@@ -1207,7 +1207,7 @@ Model fields:
 
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
-| `name` | `Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id']` | Yes | — | — | — |
+| `name` | `Literal['content-type', 'content-length', 'retry-after', 'request-id', 'x-request-id', 'www-authenticate']` | Yes | — | — | — |
 | `value` | `str` | Yes | — | — | — |
 
 ## `TimingClock`

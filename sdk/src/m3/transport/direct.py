@@ -40,6 +40,7 @@ from ._http_pinning import (
     canonical_hostname,
     safe_endpoint_error_message,
 )
+from .http_evidence import http_exchange_payload, jsonrpc_request_ids
 
 TransportName: TypeAlias = Literal["streamable_http"]
 HostResolver: TypeAlias = Callable[[str, int], tuple[str, ...]]
@@ -611,7 +612,7 @@ class _RemoteConnection:
                 resolve_host=self._resolve_host,
             )
         timeout = httpx2.Timeout(self._timeout, read=self._read_timeout)
-        return _safe_mcp_http_client(
+        client = _safe_mcp_http_client(
             headers=headers,
             timeout=timeout,
             auth=self._auth,
@@ -620,6 +621,33 @@ class _RemoteConnection:
             allow_public_auth_origins=self._auth is not None,
             first_connect_deadline=first_connect_deadline,
         )
+        if self._trace_bridge is not None:
+            hooks = client.event_hooks
+            client.event_hooks = {
+                **hooks,
+                "response": [*hooks["response"], self._observe_http_response],
+            }
+        return client
+
+    async def _observe_http_response(self, response: httpx2.Response) -> None:
+        """Record the status the official client folds into a generic error."""
+
+        bridge = self._trace_bridge
+        if bridge is None:
+            return
+        try:
+            request = response.request
+            ids = jsonrpc_request_ids(request.content)
+            if not ids:
+                return
+            exchange = http_exchange_payload(
+                request.method, response.status_code, response.headers
+            )
+            for request_id in ids:
+                bridge.observe_http_exchange(request_id, exchange)
+        except Exception:
+            # Evidence capture must never change the transport's behavior.
+            return
 
     def capture_session_metadata(self) -> None:
         """Capture safe initialization metadata after an external initializer."""
