@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import Mapping
 
@@ -134,11 +135,11 @@ class _SlowHarness(HarnessAdapter):
         return None
 
 
-def _agent_spec() -> AgentSpec:
+def _agent_spec(text: str = "hello") -> AgentSpec:
     return AgentSpec(
         servers=(ServerBinding(server=StdioServer(name="unused", command="echo")),),
         harness=ACPAgent(model="fixture"),
-        message=UserMessage(content=(TextContent(text="hello"),)),
+        message=UserMessage(content=(TextContent(text=text),)),
     )
 
 
@@ -175,3 +176,85 @@ def test_private_queue_kits_run_concurrently_and_only_their_own_work(tmp_path):
     outcomes, elapsed = asyncio.run(run())
     assert outcomes == [ExecutionOutcome.COMPLETED] * 8
     assert elapsed < 3
+
+
+class _GatedHarness(HarnessAdapter):
+    """Blocks turns whose message is "block" until the test releases them."""
+
+    def __init__(self, started: threading.Event, release: threading.Event) -> None:
+        self._started = started
+        self._release = release
+
+    async def start(self, _spec: AgentSpec) -> None:
+        return None
+
+    async def send(
+        self,
+        message: UserMessage,
+        *,
+        timeout: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TurnResponse | AdapterTurn:
+        del timeout, metadata
+        if message.content[0].text == "block":
+            self._started.set()
+            await asyncio.to_thread(self._release.wait, 30)
+        return TurnResponse(content=(TextContent(text="ok"),))
+
+    async def close(self) -> None:
+        return None
+
+
+def test_submission_racing_idle_worker_exit_is_still_claimed(tmp_path, monkeypatch):
+    from m3.services.persistent import SQLiteStoreWorker
+
+    long_started = threading.Event()
+    release_long = threading.Event()
+    armed = threading.Event()
+    idle_paused = threading.Event()
+    resume_idle = threading.Event()
+    original_run_once = SQLiteStoreWorker.run_once
+
+    def run_once(self):
+        claimed = original_run_once(self)
+        # Armed only once the primary worker is busy with the long execution,
+        # so the first empty claim after that comes from the extra worker that
+        # ran the short one. Hold it between its empty claim and its exit
+        # decision.
+        if not claimed and armed.is_set() and not idle_paused.is_set():
+            idle_paused.set()
+            resume_idle.wait(30)
+        return claimed
+
+    monkeypatch.setattr(SQLiteStoreWorker, "run_once", run_once)
+
+    async def run() -> ExecutionOutcome:
+        kit = AsyncMCPTestKit(
+            env={},
+            cwd="/tmp/m3-no-project",
+            adapter_registry=HarnessAdapterRegistry(
+                {"acp": lambda _h: _GatedHarness(long_started, release_long)}
+            ),
+            store=SQLiteExecutionStore(
+                tmp_path / "race.sqlite", execution_queue="pytest-race"
+            ),
+        )
+        try:
+            long = kit.submit(_agent_spec("block"))
+            assert await asyncio.to_thread(long_started.wait, 10)
+            armed.set()
+            await kit.submit(_agent_spec()).result(timeout=10)
+            assert await asyncio.to_thread(idle_paused.wait, 10)
+            # Lands while the idle extra worker is still counted as alive.
+            late = kit.submit(_agent_spec())
+            resume_idle.set()
+            result = await late.result(timeout=10)
+            release_long.set()
+            await long.result(timeout=10)
+            return result.snapshot.outcome
+        finally:
+            resume_idle.set()
+            release_long.set()
+            await kit.aclose()
+
+    assert asyncio.run(run()) is ExecutionOutcome.COMPLETED

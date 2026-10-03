@@ -1478,6 +1478,9 @@ class AsyncExecutionController:
         self._persistent_workers: list[Any] = []
         self._worker_threads: list[threading.Thread] = []
         self._worker_lock = threading.Lock()
+        # Bumped under _worker_lock on every _ensure_persistent_worker call; an
+        # idle extra worker exits only if no submission arrived since its claim.
+        self._worker_generation = 0
         self._worker_limit = (
             _PRIVATE_QUEUE_WORKER_LIMIT
             if getattr(store, "execution_queue", None) is not None
@@ -1496,6 +1499,7 @@ class AsyncExecutionController:
         if self._persistent_store is None or not self._worker_enabled:
             return
         with self._worker_lock:
+            self._worker_generation += 1
             self._worker_threads = [t for t in self._worker_threads if t.is_alive()]
             if not self._worker_threads:
                 self._worker_loop = asyncio.get_running_loop()
@@ -1505,9 +1509,6 @@ class AsyncExecutionController:
                 wanted = min(self._worker_limit, len(self._handles_by_id))
                 while len(self._worker_threads) < wanted:
                     self._start_worker_thread(idle_exit=True)
-                    self._worker_threads = [
-                        t for t in self._worker_threads if t.is_alive()
-                    ]
 
     def _run_claimed_command(self, command: Any, _store: Any, _lease: Any) -> None:
         identifier = str(command.execution_id)
@@ -1574,6 +1575,8 @@ class AsyncExecutionController:
 
         def worker_main() -> None:
             while not self._worker_stop.is_set():
+                with self._worker_lock:
+                    generation = self._worker_generation
                 try:
                     claimed = worker.run_once()
                 except Exception:
@@ -1584,6 +1587,16 @@ class AsyncExecutionController:
                 if not claimed:
                     if idle_exit:
                         with self._worker_lock:
+                            # A submission after the empty claim may have
+                            # counted this thread instead of starting one;
+                            # claim again rather than strand that command.
+                            if self._worker_generation != generation:
+                                continue
+                            # Leave both lists under the lock so the next
+                            # submission sees the reduced count and replaces it.
+                            current = threading.current_thread()
+                            if current in self._worker_threads:
+                                self._worker_threads.remove(current)
                             if worker in self._persistent_workers:
                                 self._persistent_workers.remove(worker)
                         return
