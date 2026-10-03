@@ -17,13 +17,15 @@ See the [credential reference](credentials.md) for credential destinations and t
 
 ## Diagnostics
 
-`M3_TIMINGS` turns on step timings for a run. It is an environment variable only; there is no `[tool.m3]` key and no SDK argument.
+`M3_TIMINGS` turns on step timings for a run, and `M3_LOG_LEVEL` and `M3_LOG_FILE` control the local app's API request log. They are environment variables only; there is no `[tool.m3]` key and no SDK argument.
 
 | Variable | Values | Default | Effect |
 | --- | --- | --- | --- |
 | `M3_TIMINGS` | `1`, `true`, `yes`, `on` (case-insensitive) | unset | Records step timings under `.m3/reports/<run-id>/timings/` during `m3 test`, `m3 ci test`, and `pytest`, and prints a summary after the run. Any other value, or unset, records and prints nothing. |
+| `M3_LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` (case-insensitive) | `INFO` | Level of the local app's API request log. `DEBUG` adds a per-store-method breakdown for each request. Any other value means `INFO`. |
+| `M3_LOG_FILE` | a file path | `.m3/logs/api.log` under the app's working directory | Where the local app writes its API request log. |
 
-See [Find slow steps in a test run](../guides/results/timings.md).
+See [Find slow steps in a test run](../guides/results/timings.md), which also covers [API request logs](../guides/results/timings.md#api-request-logs).
 
 ## SDK settings
 

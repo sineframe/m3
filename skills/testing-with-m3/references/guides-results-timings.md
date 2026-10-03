@@ -276,6 +276,53 @@ brackets, such as `mcp.request[tools/call]`.
 | `eval.run` | span | Running one evaluation. |
 | `eval.persist` | span | Saving the evaluation result. |
 
+## API request logs
+
+The local app (`m3 ui`, or `just api` in this repository) writes one line per
+`/api/` request to `.m3/logs/api.log`, under the directory the app started in.
+Logging is on by default at `INFO`. Each line splits the request time into
+phases and shows how much went to the execution store:
+
+```text
+2026-10-03 14:02:11,482 INFO pid=48213 GET /api/v2/executions/{execution_id}/report 200 total=61.3ms pre=0.4ms handler=47.0ms post=12.9ms store=22.1ms/31
+```
+
+| Field | Meaning |
+| --- | --- |
+| route | The route template, such as `/api/v2/executions/{execution_id}`. Real IDs are never logged. Paths that match no route show as `unmatched`. |
+| `pre` | From arrival until the endpoint starts: security checks, request rewriting, body parsing, and validation. |
+| `handler` | The endpoint function. |
+| `post` | From the endpoint's return until the response starts: response validation and JSON encoding. |
+| `total` | Until the last byte of the response is sent. |
+| `store` | Time and call count in the execution store, as `time/calls`. |
+
+Levels:
+
+| Level | Written when |
+| --- | --- |
+| `DEBUG` | After each request line, a breakdown per store method, slowest first, and the pytest node ID when the request came from a test: `GET /api/v2/executions store: list_executions=0.9ms/1 test=tests/integration/test_api_v2.py::test_list`. |
+| `INFO` | Every request, plus one `session start` line per process. |
+| `WARNING` | Instead of the `INFO` line when `total` is 1 second or more, prefixed with `slow`. |
+| `ERROR` | Instead of the `INFO` line when the endpoint raises. Only the exception class is logged, as `error=KeyError`, never its message. |
+
+Set `M3_LOG_LEVEL=DEBUG` before starting the app to get the store breakdown,
+and `M3_LOG_FILE=PATH` to write somewhere else:
+
+```sh
+M3_LOG_LEVEL=DEBUG m3 ui
+```
+
+Each process appends to the file; a new session never clears it. When a
+process starts and the file is over 10 MB, it is renamed to `api.log.1`,
+replacing any earlier `api.log.1`. If the file cannot be opened, the app prints
+one warning and keeps serving requests without logging.
+
+To list the slowest requests:
+
+```sh
+sort -t= -k2 -rn .m3/logs/api.log | head
+```
+
 ## Limitations
 
 - Time inside a harness appears as the surrounding `session.turn` and

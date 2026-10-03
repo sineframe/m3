@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 
+from m3_app.api_log import install_api_log
 from m3_app.local_security import install_local_security
 from m3_app.services.app_service import AppRuntimeService
 from m3_app.settings import Settings, get_settings
@@ -137,6 +138,7 @@ def create_app(
         auth_token=auth_token,
     )
     install_local_security(application, auth_token=auth_token)
+    install_api_log(application)
     return application
 
 
@@ -179,6 +181,7 @@ def create_viewer_app(
 
     application.state.viewer_read_only = True
     install_local_security(application)
+    install_api_log(application)
     return application
 
 
