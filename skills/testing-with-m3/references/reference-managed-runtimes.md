@@ -36,8 +36,12 @@ selection. A custom ACP agent owns its launch executable and cache.
 
 `latest` uses release metadata. The CLI creates an invocation-scoped pin shared
 by workers in that `m3 test` invocation, including xdist workers. A later CLI
-invocation resolves it again. A concrete version can use a valid matching
-cache entry without a metadata request. Cache hits are keyed by harness,
+invocation resolves it again. A plain concrete version can use a valid matching
+cache entry without a metadata request only when that entry was resolved from
+the harness's built-in release metadata URL, for that version or for `latest`
+(provenance `manifest_url`). Entries installed from an explicit download URL or
+a custom `manifest_url` are reused only by selectors that name the same digest.
+Cache hits are keyed by harness,
 resolved version, target, and archive digest.
 
 ## Release metadata and target rules
@@ -82,6 +86,23 @@ checks the expected executable with `--version`, writes a receipt, and then
 creates a session lease. It does not infer a provider identity from an
 executable download.
 
+Extraction preserves the owner execute bit of regular files and normalizes
+file modes to `0755` (executable) or `0644`. Setuid, setgid, sticky, and group
+or world write bits are never kept.
+
+For Codex, M3 prefers the official `codex-package-<target>.tar.gz` archive,
+which contains `bin/codex`, `codex-package.json`, and supporting resources. It
+falls back to the standalone `codex-<target>` archive only for releases that
+publish no package. When the release also publishes `codex-code-mode-host` for
+the target, Codex needs `bin/codex-code-mode-host` next to `bin/codex` to run
+MCP tool calls. In that case M3 requires the package asset, requires the
+companion to be an executable regular file in the archive, and records it in
+the provenance `companions` list. M3 also requires `codex-package.json` to
+match the selected version, target, and entrypoint. If such a release has no
+package asset, acquisition fails instead of installing a runtime that cannot
+call tools. Releases that publish no host, including all releases without a
+package, record an empty `companions` list.
+
 The stable agent identity separates the requested selector from resolved
 metadata. `snapshot.agent.harness` records `kind`, `runtime`, and
 `requested_selector`; after resolution it can also record `resolved_version`,
@@ -98,7 +119,7 @@ exist in any particular vendor release:
 
 | Harness | Target details |
 | --- | --- |
-| Codex | `codex-{x86_64\|aarch64}-apple-darwin` on macOS, `-unknown-linux-musl` preferred then `-unknown-linux-gnu` on Linux, and `-pc-windows-msvc.exe.zip` on Windows. |
+| Codex | `codex-package-{x86_64\|aarch64}-{apple-darwin\|unknown-linux-musl\|pc-windows-msvc}.tar.gz` preferred. Without a package: `codex-{x86_64\|aarch64}-apple-darwin` on macOS, `-unknown-linux-musl` preferred then `-unknown-linux-gnu` on Linux, and `-pc-windows-msvc.exe.zip` on Windows. |
 | Pi | `pi-{darwin\|linux\|windows}-{x64\|arm64}` with `.tar.gz`, `.tgz`, or `.zip` suffix. |
 | Claude Code | Looks up a platform key derived from the target in the vendor manifest and uses that entry's checksum. M3 does not hard-code a fixed platform allowlist. |
 | OpenCode | macOS/Windows patterns include OS and `x64` or `arm64`. Linux patterns additionally encode libc and baseline/AVX2; arm64 has a separate musl suffix. |
@@ -134,17 +155,41 @@ must be outside the project and `PATH`, and outside blocked system directories.
 Symlinked cache paths are rejected. In CI, retain the selected cache directory
 between jobs to avoid downloading the same pinned releases again.
 
-The receipt's `provenance` object stores `kind`, `version`, `target`,
-query-stripped `url`, `sha256`, `source`, `executable`, `asset_name`,
-`verification_method`, and `immutable_release`.
-`m3 runtime cache list --cache-dir PATH` reports ready entries by kind,
-version, target, digest, and status. A malformed receipt or changed executable
-is reported as corrupt and is not accepted as a cache hit. Progress events
-report resolution, download, verification, extraction, readiness, and cache
-hits; download URLs omit query values. The cache stores immutable executable
-assets and receipts. Adapter configuration, credentials, MCP server state,
-and harness home/config files are per execution and are not shared as cache
-assets.
+The receipt stores a top-level `format` number (currently `2`), the
+`provenance` object, the SHA-256 of every installed file in `files`, and
+`executables`, the sorted relative paths of files with the owner execute bit
+(an empty list on Windows). The `provenance` object stores `kind`, `version`,
+`target`, query-stripped `url`, `sha256`, `source`, `manifest_url`, `executable`,
+`companions`, `asset_name`, `verification_method`, and `immutable_release`.
+`manifest_url` is the query-stripped metadata URL used for resolution, or `null`
+for an explicit download URL. `source` records
+where the asset metadata came from: `github-release`, `claude-manifest`,
+`manifest` (any other manifest URL), or `selector` (an explicit download URL in
+the selector). M3 sets it; neither selector keys nor manifest contents can
+override it. Receipt paths in `files`, `executables`, `executable`, and
+`companions` always use `/` separators, including on Windows. A cache entry is
+reused only when the receipt format matches, the file hashes and executable
+list match the installed tree, and the main executable and every companion are
+still executable on POSIX systems. Reuse also re-checks the selected release's
+requirements: the required companions must be present and executable, and
+`codex-package.json` must match. A cached archive that does not meet them fails
+with the same errors as installation. M3 does not reinstall it, because the
+digest identifies the same bytes.
+
+`m3 runtime cache list --cache-dir PATH` reports entries by kind, version,
+target, digest, and status:
+
+| Status | Meaning |
+| --- | --- |
+| `ready` | The receipt is valid and the installed tree matches it. |
+| `outdated` | A receipt written by an earlier M3 version with a different `format`. It is never a cache hit. The next use of that runtime downloads it again, and `m3 runtime cache prune` removes it. |
+| `corrupt` | A malformed receipt, changed files, or changed executable bits. It is not accepted as a cache hit. |
+
+Progress events report resolution, download, verification, extraction,
+readiness, and cache hits; download URLs omit query values. The cache stores
+immutable executable assets and receipts. Adapter configuration, credentials,
+MCP server state, and harness home/config files are per execution and are not
+shared as cache assets.
 
 Runtime acquisitions and sessions share cache entries. M3 serializes entry
 installation and pruning with a lock. An active session holds a lease, shown
@@ -169,7 +214,7 @@ close sessions and kits, then run:
 m3 runtime cache prune
 ```
 
-Pruning removes entries without active leases, including corrupt entries.
+Pruning removes entries without active leases, including corrupt and outdated entries.
 Later tests reacquire any runtimes they need. Keep the cache between comparison
 runs to retain the download savings. Use the same `--cache-dir PATH` override
 if your tests use a custom cache.
@@ -210,6 +255,9 @@ message strings identify these conditions:
 | No/ambiguous GitHub asset for target | `no ... release asset matches target ...` / `ambiguous ... release asset matches target ...` |
 | Cache symlink or tampered receipt/tree | `runtime cache path contains a symlink` / `runtime cache entry failed verification` |
 | Expected executable absent | `runtime archive contains no expected executable` |
+| Required companion missing, not a regular file, or not executable | `runtime archive lacks required companion executable` |
+| `codex-package.json` disagrees with the selected release | `codex package metadata does not match the selected release` |
+| Codex release publishes the host but only a standalone asset matches | `codex release publishes codex-code-mode-host for target ... but no codex-package asset` |
 | Version smoke test failure | `runtime executable failed --version smoke check` / `runtime executable reported an unexpected version` |
 | Entry lock timeout | `runtime cache entry is busy` |
 | Latest manifest lock timeout | `runtime manifest resolution lock timed out` |

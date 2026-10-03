@@ -101,17 +101,29 @@ def _m3(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]
 
 
 def _receipt(root: Path, kind: str, version: str, target: str = "darwin-arm64") -> Path:
-    path = root / kind / version / target / f"sha256-{kind}-{version}"
-    path.mkdir(parents=True)
+    digest = hashlib.sha256(f"{kind}-{version}".encode()).hexdigest()
+    path = root / kind / version / target / f"sha256-{digest}"
+    executable = f"bin/{kind}"
+    (path / "bin").mkdir(parents=True)
+    binary = path / executable
+    content = b"#!/bin/sh\necho runtime\n"
+    binary.write_bytes(content)
+    if os.name != "nt":
+        binary.chmod(0o755)
     (path / "receipt.json").write_text(
         json.dumps(
             {
+                "format": 2,
                 "provenance": {
                     "kind": kind,
                     "version": version,
                     "target": target,
-                    "sha256": f"{kind}-{version}",
-                }
+                    "sha256": digest,
+                    "executable": executable,
+                    "companions": [],
+                },
+                "files": {executable: hashlib.sha256(content).hexdigest()},
+                "executables": [] if os.name == "nt" else [executable],
             }
         ),
         encoding="utf-8",

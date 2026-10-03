@@ -180,3 +180,18 @@ def test_prune_keeps_active_leases_and_removes_free_entries(tmp_path: Path) -> N
     removed = prune_cache(root, max_age=-1)
     assert free in removed
     assert leased.exists()
+
+
+def test_receipt_without_current_format_is_reported_as_outdated(
+    tmp_path: Path,
+) -> None:
+    entry = tmp_path / "cache" / "claude" / "1.2.3" / "target" / ("sha256-" + "a" * 64)
+    entry.mkdir(parents=True)
+    (entry / "receipt.json").write_text(
+        json.dumps({"format": 1, "provenance": {"kind": "claude"}, "files": {}}),
+        encoding="utf-8",
+    )
+
+    assert not core.RuntimeManager._receipt_valid(entry)
+    entries = list_cache(tmp_path / "cache")
+    assert [item["status"] for item in entries] == ["outdated"]
