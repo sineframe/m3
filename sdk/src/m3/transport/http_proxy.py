@@ -32,6 +32,7 @@ from ._http_pinning import (
     canonical_hostname,
     safe_endpoint_error_message,
 )
+from .http_evidence import http_exchange_payload, jsonrpc_request_ids
 from .tool_policy import ProxyToolPolicy
 
 HOP_BY_HOP = {
@@ -511,16 +512,20 @@ class McpHttpProxy:
                 trust_message or "MCP upstream request failed", status_code=502
             )
 
+        exchange = http_exchange_payload(
+            request.method, response.status_code, response.headers
+        )
         content_type = response.headers.get("content-type", "")
         if "text/event-stream" in content_type:
             return StreamingResponse(
-                self._stream_sse(response),
+                self._stream_sse(response, exchange),
                 status_code=response.status_code,
                 headers=self._response_headers(response, base_url=target),
                 media_type="text/event-stream",
             )
         data = await response.aread()
         await response.aclose()
+        answered: set[tuple[type[Any], Any]] = set()
         if data:
             response_payload = parse_json_payload(data)
             if self._tool_policy is not None:
@@ -532,8 +537,33 @@ class McpHttpProxy:
                 metadata={
                     "status_code": response.status_code,
                     "content_type": content_type,
+                    "http": exchange,
                 },
             )
+            for item in (
+                response_payload
+                if isinstance(response_payload, list)
+                else [response_payload]
+            ):
+                if (
+                    isinstance(item, dict)
+                    and ("result" in item or "error" in item)
+                    and isinstance(item.get("id"), (int, str))
+                ):
+                    answered.add((type(item["id"]), item["id"]))
+        if not 200 <= response.status_code < 300:
+            # A refused request has no JSON-RPC answer; record the HTTP
+            # status against each request so the refusal stays correlated.
+            for request_id in jsonrpc_request_ids(body):
+                if (type(request_id), request_id) in answered:
+                    continue
+                self.writer.write(
+                    transport=self.transport,
+                    direction="server_to_client",
+                    payload={"jsonrpc": "2.0", "id": request_id},
+                    kind="http_status",
+                    metadata={"http": exchange},
+                )
         return Response(
             data,
             status_code=response.status_code,
@@ -541,7 +571,9 @@ class McpHttpProxy:
             media_type=None,
         )
 
-    async def _stream_sse(self, response: httpx.Response) -> AsyncIterator[bytes]:
+    async def _stream_sse(
+        self, response: httpx.Response, http: dict[str, Any] | None = None
+    ) -> AsyncIterator[bytes]:
         buffer = ""
         buffer_bytes = 0
         decoder = codecs.getincrementaldecoder("utf-8")()
@@ -583,7 +615,7 @@ class McpHttpProxy:
                         buffer_bytes = 0
                         passthrough = True
                         return
-                    rewritten = self._capture_sse_frame(frame)
+                    rewritten = self._capture_sse_frame(frame, http)
                     yield (rewritten + event_separator).encode("utf-8")
                     buffer = remainder
                     buffer_bytes -= len(consumed.encode("utf-8"))
@@ -602,11 +634,11 @@ class McpHttpProxy:
             async for output in consume_text(decoder.decode(b"", final=True)):
                 yield output
             if buffer:
-                yield self._capture_sse_frame(buffer).encode("utf-8")
+                yield self._capture_sse_frame(buffer, http).encode("utf-8")
         finally:
             await response.aclose()
 
-    def _capture_sse_frame(self, frame: str) -> str:
+    def _capture_sse_frame(self, frame: str, http: dict[str, Any] | None = None) -> str:
         output: list[str] = []
         data_values: list[str] = []
         # Keep original line endings for forwarding, while interpreting only
@@ -648,5 +680,6 @@ class McpHttpProxy:
                 direction="server_to_client",
                 payload=event_payload,
                 kind="sse_data",
+                metadata={"http": http} if http is not None else None,
             )
         return "".join(output)

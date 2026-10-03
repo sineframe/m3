@@ -360,6 +360,7 @@ class McpWireEvent:
     latency_ms: float | None = None
     provenance: str = "wire_observed"
     raw_evidence_ref: str | None = None
+    http: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,8 +426,16 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
         transport = str(record.get("transport", target.transport))
         offset = record.get("offset_ms", 0.0)
         offset_ms = float(offset) if isinstance(offset, (int, float)) else 0.0
-        kind = _event_kind(payload, direction)
+        # An HTTP status record answers a request the server refused without
+        # a JSON-RPC body; it carries only the id and the HTTP exchange.
+        kind = (
+            "error"
+            if record.get("kind") == "http_status"
+            else _event_kind(payload, direction)
+        )
         ident = _json_id(payload)
+        metadata = record.get("metadata")
+        http = metadata.get("http") if isinstance(metadata, Mapping) else None
         method = (
             payload.get("method") if isinstance(payload.get("method"), str) else None
         )
@@ -493,6 +502,7 @@ def _project_events(target: _CaptureTarget) -> tuple[McpWireEvent, ...]:
                 latency_ms=latency,
                 provenance=provenance,
                 raw_evidence_ref=raw_ref,
+                http=http if isinstance(http, Mapping) else None,
             )
         )
     return tuple(output)

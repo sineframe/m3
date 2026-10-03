@@ -1149,6 +1149,9 @@ class AsyncAgentSession:
                     payload["result"] = result
                 if error is not None:
                     payload["error"] = error
+                http = getattr(event, "http", None)
+                if isinstance(http, Mapping):
+                    payload["http"] = dict(http)
                 if method == "tools/call" and event_kind in {"error", "response"}:
                     failed = error is not None or (
                         isinstance(result, Mapping)

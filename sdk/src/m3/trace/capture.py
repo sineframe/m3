@@ -85,8 +85,9 @@ class CaptureWriter:
                 )
         # Live control consumers need the original decoded exchange while the
         # durable trace above must remain redacted. Policy denials describe
-        # messages that were not forwarded across the MCP boundary.
-        if self._on_event is not None and kind != "policy_denied":
+        # messages that were not forwarded across the MCP boundary, and an
+        # HTTP status record describes a response that carried no message.
+        if self._on_event is not None and kind not in {"policy_denied", "http_status"}:
             try:
                 self._on_event(transport, direction, payload)
             except Exception:

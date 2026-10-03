@@ -1764,3 +1764,26 @@ def test_protocol_entry_marks_a_malformed_http_exchange_unavailable(
     observation = _with_initialize_http(http).view().protocol[0].http
     assert observation.state is ObservationState.UNAVAILABLE
     assert observation.reason is ObservationReason.MALFORMED_SOURCE
+
+
+def test_http_refusal_without_a_jsonrpc_error_projects_as_a_protocol_error() -> None:
+    trace = _trace()
+    response = trace.events[3]
+    refused = response.model_copy(
+        update={
+            "kind": EventKind.MCP_ERROR,
+            "payload": {
+                "method": "initialize",
+                "http": {"method": "POST", "status_code": 401, "headers": []},
+            },
+        }
+    )
+    view = trace.model_copy(
+        update={"events": (*trace.events[:3], refused, *trace.events[5:])}
+    ).view()
+    entry = view.protocol[0]
+    assert entry.method.value == "initialize"
+    assert entry.status is TraceStatus.PROTOCOL_ERROR
+    assert entry.error.state is ObservationState.NOT_EMITTED
+    assert entry.http.value is not None
+    assert entry.http.value.status_code == 401
