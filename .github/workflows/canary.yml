@@ -37,11 +37,14 @@ jobs:
       cancel-in-progress: true
     outputs:
       version: ${{ steps.version.outputs.version }}
+      base: ${{ steps.version.outputs.base }}
     steps:
       - name: Check out M3
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SOURCE_SHA }}
+          # Full history and tags: the canary version follows the latest v* release.
+          fetch-depth: 0
           persist-credentials: false
       - name: Validate pinned UI reference and secret
         id: ui-ref
@@ -75,21 +78,22 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: .release-ui/package-lock.json
+      # Only the CLI bundle is packaged. The release workflow keeps the full
+      # web build and browser gate; canaries are previews and skip them.
       - name: Build production UI
         working-directory: .release-ui
         run: |
           npm ci
-          npm run build
           npm run build:cli
-          npx playwright install --with-deps chromium
       - name: Prepare canary version in disposable checkout
         id: version
         run: |
           set -euo pipefail
           version=$(uv run --no-project --with packaging python scripts/canary_version.py --build-number "$GITHUB_RUN_NUMBER")
+          base=$(uv run --no-project --with packaging python scripts/canary_version.py --build-number "$GITHUB_RUN_NUMBER" --print-base)
           uv run --no-project --with packaging python scripts/prepare_release.py "$version"
           python scripts/build_cli_release.py --print-version --expected-version "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          { echo "version=$version"; echo "base=$base"; } >> "$GITHUB_OUTPUT"
       - name: Build wheels and installer
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -110,8 +114,6 @@ jobs:
             UV_TOOL_BIN_DIR="$RUNNER_TEMP/m3-installer-bin" \
             sh "$out/install.sh"
           "$RUNNER_TEMP/m3-installer-bin/m3" --version | grep -F "($TAG, ${SOURCE_SHA:0:7})"
-          python scripts/smoke_cli_uv_install.py --release-dir "$out" --version "$VERSION"
-          python scripts/check_cli_standalone.py --release-dir "$out" --version "$VERSION" --ui-dir .release-ui
           python - "$out" "$VERSION" "$TAG" "$SOURCE_SHA" "$UI_SHA" <<'PY'
           import hashlib,json,pathlib,sys
           root=pathlib.Path(sys.argv[1]); version=sys.argv[2]
@@ -150,44 +152,54 @@ jobs:
         with:
           name: m3-canary
           path: ${{ runner.temp }}/m3-canary
+      - name: Write install instructions
+        env:
+          BASE: ${{ needs.build.outputs.base }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          if [[ -n "$PR_NUMBER" ]]; then
+            source="pull request #${PR_NUMBER}"
+            lifetime="It is rebuilt on every push while the \`canary\` label is set and deleted when the pull request closes."
+          else
+            source="main"
+            lifetime="It is replaced on every push to main."
+          fi
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          📦 **Canary \`${VERSION}\`**: ${source} at ${SOURCE_SHA:0:7}, after v${BASE}
+
+          Install the CLI (macOS and Linux):
+          \`\`\`sh
+          curl -LsSf ${url}/install.sh | sh
+          \`\`\`
+
+          Or install the CLI with uv:
+          \`\`\`sh
+          uv tool install --force ${url}/sf_m3_cli-${VERSION}-py3-none-any.whl --with ${url}/sf_m3-${VERSION}-py3-none-any.whl --with ${url}/sf_m3_app-${VERSION}-py3-none-any.whl
+          \`\`\`
+
+          Install only the SDK into a project:
+          \`\`\`sh
+          pip install "sf-m3[pytest,storage,judge] @ ${url}/sf_m3-${VERSION}-py3-none-any.whl"
+          \`\`\`
+
+          After installing the CLI, \`m3 setup\` installs this SDK into your project and \`m3 --version\` shows \`${VERSION} (${TAG}, ${SOURCE_SHA:0:7})\`. Return to stable with \`curl -LsSf https://m3.sineframe.com/install.sh | sh\`.
+
+          This is a preview build, not a supported release. ${lifetime}
+          EOF
+          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Replace the GitHub prerelease
         run: |
           set -euo pipefail
           gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
-          if [[ -n "$PR_NUMBER" ]]; then source="pull request #${PR_NUMBER}"; else source="main"; fi
-          notes="Canary build of ${source} at ${SOURCE_SHA}. Not a supported release; it is replaced on every build."
           gh release create "$TAG" "$RUNNER_TEMP"/m3-canary/* --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_SHA" --prerelease --latest=false \
-            --title "Canary ${VERSION} (${TAG})" --notes "$notes"
+            --title "Canary ${VERSION} (${TAG})" --notes-file "$RUNNER_TEMP/notes.md"
       - name: Comment install instructions on the pull request
         if: github.event_name == 'pull_request'
         run: |
           set -euo pipefail
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          body=$(cat <<EOF
-          <!-- m3-canary -->
-          📦 **Canary \`${VERSION}\`** built from ${SOURCE_SHA:0:7} ([release](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}))
-
-          CLI:
-          \`\`\`sh
-          curl -LsSf https://m3.sineframe.com/install.sh | sh -s -- --pr ${PR_NUMBER}
-          # or, before the hosted installer supports --pr:
-          curl -LsSf ${base}/install.sh | sh
-          \`\`\`
-
-          CLI with uv:
-          \`\`\`sh
-          uv tool install --force ${base}/sf_m3_cli-${VERSION}-py3-none-any.whl --with ${base}/sf_m3-${VERSION}-py3-none-any.whl --with ${base}/sf_m3_app-${VERSION}-py3-none-any.whl
-          \`\`\`
-
-          SDK only:
-          \`\`\`sh
-          pip install "sf-m3[pytest,storage,judge] @ ${base}/sf_m3-${VERSION}-py3-none-any.whl"
-          \`\`\`
-
-          Rebuilt on every push while the \`canary\` label is set; deleted when the PR closes. Return to stable with \`curl -LsSf https://m3.sineframe.com/install.sh | sh\`.
-          EOF
-          )
+          body=$(printf '<!-- m3-canary -->\n%s' "$(cat "$RUNNER_TEMP/notes.md")")
           comment_id=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- m3-canary -->"))) | .id' | head -n 1)
           if [[ -n "$comment_id" ]]; then

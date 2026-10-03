@@ -92,7 +92,11 @@ curl -LsSf https://m3.sineframe.com/install.sh | sh -s -- --canary
 curl -LsSf https://m3.sineframe.com/install.sh | sh -s -- --pr 123
 ```
 
-`m3 --version` and `m3 doctor` name the canary and its commit. `m3 setup`
+Each canary's release page, such as
+[canary-main](https://github.com/sineframe/m3/releases/tag/canary-main), shows
+its version and the exact install commands, including a pinned `install.sh`
+link and a `uv tool install` command. `m3 --version` and `m3 doctor` name the
+installed canary and its commit. `m3 setup`
 installs the matching SDK from the same canary release. To return to the latest
 stable release, rerun the installer without options.
 

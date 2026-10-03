@@ -121,8 +121,17 @@ prereleases. It never publishes to PyPI.
   prerelease and its tag. Pull requests from forks are not built.
 - Each push to `main` replaces `canary-main`.
 
-Canary versions are `<next release>.devN`, for example `0.2.0a14.dev42`, so the
-next real release replaces them. The CLI wheel carries `m3_cli/canary.json`,
+Canary versions are `<next release>.devN`, where the next release follows the
+latest `v*` tag in the build's history: after `v0.2.31`, canaries are
+`0.2.32.devN`. Releases take their version from the tag and never bump
+`pyproject.toml`, so the tag is the source of truth. A dev version sorts after
+the release it follows and before the next one, so the next real release
+replaces it. The release page, the pull request comment, and the workflow run
+summary show the version and the exact install commands.
+
+Canary builds skip the release's full standalone gate (two Python versions and
+browser tests). They install the published prerelease through
+`install-latest.sh` and run `m3 setup` and `m3 doctor` against it instead. The CLI wheel carries `m3_cli/canary.json`,
 which `m3 setup` uses to install the SDK wheel from the same prerelease.
 Stable wheels do not contain it. The bootstrap installer only selects canaries
 when asked with `--canary` or `--pr N`.
