@@ -37,7 +37,7 @@ _TOKEN: Final[str] = r"[A-Za-z0-9!#$%&'*+.^_`|~-]+"
 _PARAM: Final[re.Pattern[str]] = re.compile(
     rf'\s*({_TOKEN})\s*=\s*("(?:[^"\\]|\\.)*"|{_TOKEN})\s*(?:,|$)'
 )
-_SCHEME: Final[re.Pattern[str]] = re.compile(rf"\s*({_TOKEN})(?=\s|,|$)\s*,?")
+_SCHEME: Final[re.Pattern[str]] = re.compile(rf"\s*({_TOKEN})(?=\s|,|$)")
 _TOKEN68: Final[re.Pattern[str]] = re.compile(r"\s*[A-Za-z0-9\-._~+/]+=*\s*(?:,|$)")
 
 
@@ -72,9 +72,14 @@ def safe_challenge(value: str) -> str | None:
         if scheme is not None:
             challenges.append((scheme.group(1), []))
             position = scheme.end()
-            token68 = _TOKEN68.match(value, position)
-            if token68 is not None and _PARAM.match(value, position) is None:
-                position = token68.end()
+            # Only whitespace separates a scheme from its own token68 or
+            # parameters; a comma starts the next challenge or parameter.
+            separated = value[position : position + 1] in (" ", "\t")
+            rest = value[position:].lstrip(" \t")
+            if separated and rest and not rest.startswith(","):
+                token68 = _TOKEN68.match(value, position)
+                if token68 is not None and _PARAM.match(value, position) is None:
+                    position = token68.end()
             continue
         break
     if not challenges:
