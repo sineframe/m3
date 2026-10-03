@@ -184,3 +184,83 @@ def test_cli_flag_extraction_matches_exact_tokens() -> None:
 
     assert "--project-name" in available
     assert "--project" not in available
+
+
+_GUIDE = _RENDERER.REFERENCES / "guide.md"
+_GUIDE_TEXT = "# Guide\n\n## Real heading\n"
+
+
+def _skill(body: str, description: str = "description: Use when testing.") -> str:
+    return f"---\nname: testing-with-m3\n{description}\n---\n\n{body}\n"
+
+
+def _lint(skill_text: str) -> list[str]:
+    expected = {_RENDERER.SKILL_FILE: skill_text, _GUIDE: _GUIDE_TEXT}
+    return _RENDERER._lint(skill_text, expected, [])
+
+
+def test_skill_link_to_existing_heading_passes() -> None:
+    text = _skill("# Top\n\n[Guide](references/guide.md#real-heading) [Up](#top)")
+
+    assert _lint(text) == []
+
+
+def test_skill_link_to_missing_heading_is_rejected() -> None:
+    text = _skill("[Guide](references/guide.md#no-such-heading)")
+
+    assert _lint(text) == [
+        "SKILL.md link anchor does not resolve: references/guide.md#no-such-heading"
+    ]
+
+
+def test_skill_in_page_link_to_missing_heading_is_rejected() -> None:
+    assert _lint(_skill("# Top\n\n[Nope](#nope)")) == [
+        "SKILL.md link anchor does not resolve: #nope"
+    ]
+
+
+def test_skill_fragment_on_non_markdown_target_is_not_checked() -> None:
+    expected = {
+        _RENDERER.SKILL_FILE: _skill("[Code](examples/a/test_a.py#L1)"),
+        _RENDERER.EXAMPLES / "a" / "test_a.py": "# not a heading\n",
+    }
+
+    assert _RENDERER._lint(expected[_RENDERER.SKILL_FILE], expected, []) == []
+
+
+def test_reference_link_to_missing_heading_is_rejected() -> None:
+    other = _RENDERER.REFERENCES / "other.md"
+    expected = {
+        other: "[Guide](guide.md#no-such-heading) [Ok](guide.md#real-heading)\n",
+        _GUIDE: _GUIDE_TEXT,
+    }
+
+    assert _RENDERER._reference_link_errors(expected, []) == [
+        "references/other.md link anchor does not resolve: guide.md#no-such-heading"
+    ]
+
+
+def test_reference_in_page_link_to_missing_heading_is_rejected() -> None:
+    expected = {_GUIDE: _GUIDE_TEXT + "\n[Here](#real-heading) [Gone](#gone)\n"}
+
+    assert _RENDERER._reference_link_errors(expected, []) == [
+        "references/guide.md link anchor does not resolve: #gone"
+    ]
+
+
+def test_block_scalar_description_is_rejected() -> None:
+    text = _skill("body", "description: >\n  Use when testing\n  with M3.")
+
+    errors = _lint(text)
+
+    assert (
+        "SKILL.md frontmatter 'description' must be a single-line value, not a block scalar"
+        in errors
+    )
+    assert any("unsupported line" in error for error in errors)
+
+
+def test_literal_block_description_is_rejected() -> None:
+    errors = _lint(_skill("body", "description: |\n  Use when testing."))
+
+    assert any("not a block scalar" in error for error in errors)

@@ -9,7 +9,7 @@ import json
 import os
 import re
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "docs" / "site"
@@ -380,6 +380,51 @@ def _frontmatter(text: str) -> dict[str, str]:
     return values
 
 
+def _frontmatter_shape_errors(text: str) -> list[str]:
+    """Reject frontmatter this line parser would silently misread.
+
+    Only single-line ``key: value`` pairs are supported. A block scalar such as
+    ``description: >`` or an indented continuation line would otherwise be read
+    as a one-character value that passes the length check.
+    """
+    if not text.startswith("---\n"):
+        return ["SKILL.md must start with YAML frontmatter"]
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return ["SKILL.md frontmatter is not closed with ---"]
+    errors: list[str] = []
+    for line in text[4:end].splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        key, separator, value = line.partition(":")
+        if line[0].isspace() or not separator:
+            errors.append(
+                "SKILL.md frontmatter must use single-line 'key: value' pairs; "
+                f"unsupported line: {line.strip()!r}"
+            )
+        elif value.strip()[:1] in {">", "|"}:
+            errors.append(
+                f"SKILL.md frontmatter {key.strip()!r} must be a single-line "
+                "value, not a block scalar"
+            )
+    return errors
+
+
+def _dead_anchor(split: SplitResult, current: Path, contents: dict[Path, str]) -> bool:
+    """Return whether a link fragment names no heading in a bundled markdown file."""
+    if not split.fragment:
+        return False
+    target = (
+        Path(os.path.normpath(current.parent / split.path)).resolve()
+        if split.path
+        else current
+    )
+    text = contents.get(target)
+    if target.suffix != ".md" or text is None:
+        return False
+    return unquote(split.fragment).lower() not in _VALIDATOR.heading_anchors(text)
+
+
 def _moving_branch_errors(content: str, filename: str) -> list[str]:
     errors = []
     for match in re.finditer(r"https?://[^\s]+", content):
@@ -390,9 +435,10 @@ def _moving_branch_errors(content: str, filename: str) -> list[str]:
 
 
 def _lint(
-    skill_text: str, expected_paths: set[Path], fence_errors: list[str]
+    skill_text: str, expected: dict[Path, str], fence_errors: list[str]
 ) -> list[str]:
     errors = list(fence_errors)
+    errors.extend(_frontmatter_shape_errors(skill_text))
     metadata = _frontmatter(skill_text)
     if metadata.get("name") != SKILL_NAME:
         errors.append(f"SKILL.md frontmatter name must equal {SKILL_NAME!r}")
@@ -402,7 +448,8 @@ def _lint(
     if len(skill_text.splitlines()) > 500:
         errors.append("SKILL.md must contain at most 500 lines")
 
-    available = {path.resolve() for path in expected_paths}
+    contents = {path.resolve(): content for path, content in expected.items()}
+    skill_path = SKILL_FILE.resolve()
     for match, _, definition in _links_outside_code(skill_text):
         if definition:
             # Reported by _skill_reference_definition_errors.
@@ -410,18 +457,23 @@ def _lint(
         target = match.group(3)
         raw_target, _ = _bare_target(target)
         split = urlsplit(raw_target)
-        if raw_target.startswith("#") or split.scheme:
+        if split.scheme:
             continue
-        resolved = Path(os.path.normpath(SKILL_DIR / split.path)).resolve()
-        if resolved not in available:
+        if raw_target.startswith("#"):
+            resolved = skill_path
+        else:
+            resolved = Path(os.path.normpath(SKILL_DIR / split.path)).resolve()
+        if resolved not in contents:
             errors.append(f"SKILL.md relative link does not resolve: {target}")
+        elif _dead_anchor(split, skill_path, contents):
+            errors.append(f"SKILL.md link anchor does not resolve: {target}")
 
     cli_flags_available = cli_flags(CLI_REFERENCE.read_text(encoding="utf-8"))
     for flag in cli_flags(skill_text) - NON_M3_FLAGS:
         if flag not in cli_flags_available:
             errors.append(f"SKILL.md CLI flag is absent from the CLI reference: {flag}")
     errors.extend(_moving_branch_errors(skill_text, "SKILL.md"))
-    errors.extend(_skill_reference_definition_errors(skill_text, expected_paths))
+    errors.extend(_skill_reference_definition_errors(skill_text, set(expected)))
     return errors
 
 
@@ -459,6 +511,7 @@ def _reference_link_errors(
             while parent != EXAMPLES:
                 available.add(parent.resolve())
                 parent = parent.parent
+    contents = {path.resolve(): content for path, content in expected.items()}
     selected = {page["source"]: page["id"] for page in pages}
     sources = {page["id"]: page["source"] for page in pages}
     errors: list[str] = []
@@ -473,11 +526,15 @@ def _reference_link_errors(
             target = match.group(3)
             raw_target, _ = _bare_target(target)
             split = urlsplit(raw_target)
-            if raw_target.startswith("#") or split.scheme:
+            if split.scheme:
                 continue
-            resolved = Path(os.path.normpath(path.parent / split.path)).resolve()
-            if resolved not in available:
-                errors.append(f"{filename} link does not resolve: {target}")
+            if not raw_target.startswith("#"):
+                resolved = Path(os.path.normpath(path.parent / split.path)).resolve()
+                if resolved not in available:
+                    errors.append(f"{filename} link does not resolve: {target}")
+                    continue
+            if _dead_anchor(split, path.resolve(), contents):
+                errors.append(f"{filename} link anchor does not resolve: {target}")
         source = sources.get(path.stem)
         if source is not None:
             original = _strip_frontmatter((SITE / source).read_text(encoding="utf-8"))
@@ -497,7 +554,6 @@ def main() -> int:
     expected = _render_references(pages)
     skill_text, fence_errors = _sync_starter(SKILL_FILE.read_text(encoding="utf-8"))
     expected[SKILL_FILE] = skill_text
-    expected_paths = set(expected)
     expected_reference_paths = {
         path
         for path in expected
@@ -529,7 +585,7 @@ def main() -> int:
                 if directory.is_dir() and not any(directory.iterdir()):
                     directory.rmdir()
 
-    errors = _lint(skill_text, expected_paths, fence_errors)
+    errors = _lint(skill_text, expected, fence_errors)
     errors.extend(_reference_link_errors(expected, pages))
     for path in sorted(set(stale)):
         print(f"agent skill is stale: {path.relative_to(ROOT)}")
