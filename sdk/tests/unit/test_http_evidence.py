@@ -35,6 +35,16 @@ from m3.transport.http_evidence import (
         ("Basic , Bearer", "Basic, Bearer"),
         ("Negotiate c2VjcmV0, NTLM", "Negotiate, NTLM"),
         ("", None),
+        (
+            'Bearer realm="api", eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.c2ln',
+            'Bearer realm="api"',
+        ),
+        ('Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.c2ln realm="api"', "Bearer"),
+        ('Basic realm="x", dXNlcjpwYXNz', 'Basic realm="x"'),
+        ("Bearer abc!def", "Bearer"),
+        ('Bearer realm="x" Basic', "Bearer"),
+        ('Bearer realm="x", X-Vendor-Token realm="y"', 'Bearer realm="x"'),
+        ("bearer REALM=x", 'Bearer realm="x"'),
         ('realm="orphan"', None),
     ],
 )
