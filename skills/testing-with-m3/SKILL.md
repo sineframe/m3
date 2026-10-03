@@ -50,10 +50,10 @@ reference before writing code instead of relying on memory, and use
 - If `m3 doctor` reports that the command and the project SDK do not match,
   run `m3 setup`. Do not work around the mismatch.
 - Use the M3 APIs the references teach first: `MCPTestKit`, `kit.direct(...)`
-  and its client methods, `kit.agents(...)` or the pytest `agent` fixture,
-  `expect(...)`, and evaluators. Lower-level types such as `DirectSpec`
-  exist for advanced use. Use them only when the project's existing tests
-  already do, and read their reference before writing code.
+  and its client methods, the pytest `agent` fixture, `expect(...)`, and
+  evaluators. Lower-level types such as `DirectSpec` exist for advanced use.
+  Use them only when the project's existing tests already do, and read
+  their reference before writing code.
 - Results are read-only: nested lists come back as tuples and nested objects
   as read-only mappings. Write expected values with tuples, or convert with
   `list(...)` and `dict(...)` at each level you compare.
@@ -212,20 +212,6 @@ schemas, representative valid and boundary inputs, expected errors, and any
 state, resource, or prompt behavior the project exposes. Keep each expected
 failure in its own test so its reason stays visible.
 
-For any agent test:
-
-- Choose where the harness is selected. `kit.agents([...])` selects it in
-  the test, so plain pytest runs the test with no extra flags; the
-  [first agent test](references/guides-agents-first-test.md) works this way.
-  The `agent` fixture takes the harness and model from
-  `m3 test --harness KIND=MODEL` or from `pytest.mark.m3(agents=[...])`, which
-  lets one test run against several harnesses or models.
-- A test that requests `agent` with neither of those fails at collection with
-  `agent test requires --harness or m3(agents=[...])`. `-k` does not get
-  around it, because the error comes before deselection. Keep agent tests in
-  their own file so the direct tests can still run by path without a
-  harness.
-
 For agent tool-choice tests:
 
 - Keep realistic alternative tools available. A policy that exposes only one
@@ -265,7 +251,7 @@ Check in this order and read the matching page:
 
 1. Collection and environment: [Install problems](references/troubleshooting-install.md)
 2. Server startup or connection: [Server problems](references/troubleshooting-servers.md)
-3. Harness and provider setup: [Agent problems](references/troubleshooting-agents.md)
+3. Harness selection, setup, and provider: [Agent problems](references/troubleshooting-agents.md)
 4. The test's own assertions
 5. Evaluator status: [Evaluations API](references/reference-python-m3-evaluations.md)
 6. Saved results and traces: [Result problems](references/troubleshooting-results.md)

@@ -153,7 +153,7 @@ python -m pytest -q test_agent.py
 
 The test should pass after any required Codex approval. The matcher checks the tool name, server alias, arguments, successful result, and call count in this turn. If the agent completes without that call, the assertion fails even if its reply claims it used the tool.
 
-This test selects Codex with `kit.agents(...)`, so it runs under plain pytest. To pass the harness and model on the command line instead, request the pytest `agent` fixture and run `m3 test --harness codex=MODEL`; see [the pytest plugin reference](../../reference/pytest.md). A test that requests `agent` fails at collection when no harness is selected, and `-k` does not prevent that, so keep these tests in a separate file from your direct tests.
+This test selects Codex with `kit.agents(...)`, so it runs under plain pytest. To pass the harness and model on the command line instead, request the pytest `agent` fixture and run `m3 test --harness codex=MODEL`. Read [agent troubleshooting](../../troubleshooting/agents.md) before you mix fixture-based agent tests with direct tests.
 
 To test a different server, change the `StdioServer` command and arguments, then update the alias, allowed tool, prompt, and expected call together. Keep `arguments` explicit in the matcher when argument selection is part of the behavior under test.
 
