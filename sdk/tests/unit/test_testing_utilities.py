@@ -24,7 +24,6 @@ from m3.async_api import (
 from m3.errors import (
     ModelValidationError,
     OperationCancelled,
-    OperationTimeout,
     ProtocolError,
     TransportError,
 )
@@ -514,14 +513,24 @@ def test_sync_literal_wire_invalid_structured_result_has_same_contract() -> None
 @pytest.mark.asyncio
 @pytest.mark.process_lifecycle
 async def test_stdio_fixture_emits_literal_faults_and_bounds_raw_payloads() -> None:
-    for configure in ("partial_frame", "malformed", "process_crash"):
+    # A long timeout keeps a hung fixture distinguishable: it would surface as
+    # OperationTimeout, while a process that really exits ends the call at once.
+    for configure in ("partial_frame", "malformed", "disconnect", "process_crash"):
         faults = FaultInjector()
         getattr(faults, configure)("tools/call")
         async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
             async with kit.direct(faults.stdio_server()) as client:
-                with pytest.raises((OperationTimeout, TransportError)) as failure:
-                    await client.call_tool("echo", {"text": "wire-secret"}, timeout=2)
+                with pytest.raises(TransportError) as failure:
+                    await client.call_tool("echo", {"text": "wire-secret"}, timeout=30)
                 assert "wire-secret" not in str(failure.value)
+
+    for configure in ("malformed", "process_crash"):
+        faults = FaultInjector()
+        getattr(faults, configure)("initialize")
+        async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
+            with pytest.raises(TransportError):
+                async with kit.direct(faults.stdio_server(), timeout=30):
+                    pass
 
     faults = FaultInjector().oversized("tools/call", 256)
     async with AsyncMCPTestKit(env={}, cwd="/tmp/m3-no-project") as kit:
@@ -538,8 +547,8 @@ def test_stdio_fixture_is_usable_through_sync_client() -> None:
     client = kit.direct(faults.stdio_server())
     try:
         with client:
-            with pytest.raises((OperationTimeout, TransportError)):
-                client.call_tool("echo", {"text": "sync-wire-secret"}, timeout=2)
+            with pytest.raises(TransportError):
+                client.call_tool("echo", {"text": "sync-wire-secret"}, timeout=30)
     finally:
         kit.close()
 
