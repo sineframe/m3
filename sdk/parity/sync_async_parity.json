@@ -9,6 +9,10 @@
       [
         "ExecutionHandle",
         "AsyncExecutionHandle"
+      ],
+      [
+        "Subscription",
+        "AsyncSubscription"
       ]
     ],
     "aliases": [
@@ -72,6 +76,18 @@
     {
       "sync": "DirectClient",
       "async": "AsyncDirectClient",
+      "renamed": [
+        [
+          "close",
+          "aclose"
+        ]
+      ],
+      "async_only": [],
+      "sync_only": []
+    },
+    {
+      "sync": "Subscription",
+      "async": "AsyncSubscription",
       "renamed": [
         [
           "close",

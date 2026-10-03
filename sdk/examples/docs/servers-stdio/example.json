@@ -13,17 +13,20 @@
   "dependencies": ["sf-m3-cli", "sf-m3[pytest]", "mcp (installed with sf-m3)"],
   "files": [
     "shipping_server.py",
+    "catalog_server.py",
     "tests/test_tools.py",
     "tests/test_resources_prompts.py",
     "tests/test_errors_schemas.py",
-    "tests/test_stateful.py"
+    "tests/test_stateful.py",
+    "tests/test_list_changed.py"
   ],
   "displayed_blocks": [
     {"page": "guides-servers-stdio", "label": "stdio tool test", "source": "tests/test_tools.py", "kind": "file"},
     {"page": "guides-servers-tools", "label": "shipping tool test", "source": "tests/test_tools.py", "kind": "file"},
     {"page": "guides-servers-resources-prompts", "label": "resource and prompt tests", "source": "tests/test_resources_prompts.py", "kind": "file"},
     {"page": "guides-servers-errors-schemas", "label": "tool error and schema tests", "source": "tests/test_errors_schemas.py", "kind": "file"},
-    {"page": "guides-servers-stateful-tests", "label": "stateful order test", "source": "tests/test_stateful.py", "kind": "file"}
+    {"page": "guides-servers-stateful-tests", "label": "stateful order test", "source": "tests/test_stateful.py", "kind": "file"},
+    {"page": "guides-servers-stateful-tests", "label": "tool list change test", "source": "tests/test_list_changed.py", "kind": "file"}
   ],
   "setup": ["m3 init", "m3 setup"],
   "working_directory": "project root",
@@ -31,7 +34,8 @@
     {"id": "tools", "page": "guides-servers-tools", "command": "m3 test -- tests/test_tools.py", "expected_exit_code": 0, "assertions": ["tool discovery and structured quote match"], "verification": "deterministic"},
     {"id": "resources-prompts", "page": "guides-servers-resources-prompts", "command": "m3 test -- tests/test_resources_prompts.py", "expected_exit_code": 0, "assertions": ["resource content and rendered prompt match"], "verification": "deterministic"},
     {"id": "errors-schemas", "page": "guides-servers-errors-schemas", "command": "m3 test -- tests/test_errors_schemas.py", "expected_exit_code": 0, "assertions": ["tool errors and invalid input are rejected as documented"], "verification": "deterministic"},
-    {"id": "stateful", "page": "guides-servers-stateful-tests", "command": "m3 test -- tests/test_stateful.py", "expected_exit_code": 0, "assertions": ["three calls share one connection and preserve order state"], "verification": "deterministic"}
+    {"id": "stateful", "page": "guides-servers-stateful-tests", "command": "m3 test -- tests/test_stateful.py", "expected_exit_code": 0, "assertions": ["three calls share one connection and preserve order state"], "verification": "deterministic"},
+    {"id": "list-changed", "page": "guides-servers-stateful-tests", "command": "m3 test -- tests/test_list_changed.py", "expected_exit_code": 0, "assertions": ["the 2026-07-28 listen stream and the trace both receive notifications/tools/list_changed"], "verification": "deterministic"}
   ],
   "compatibility": {"transport": "stdio", "minimum_python": "3.10", "credentials": false, "account": false},
   "network": "none after package installation",

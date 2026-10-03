@@ -525,6 +525,18 @@ register_callbacks(
 ) -> _NoReturn
 ```
 
+```python
+listen(
+    self,
+    *,
+    tools_list_changed: bool = False,
+    prompts_list_changed: bool = False,
+    resources_list_changed: bool = False,
+    resource_subscriptions: _Sequence[str] = (),
+) -> Subscription
+```
+Return a ``subscriptions/listen`` stream; enter it to subscribe.
+
 ## `ExecutionHandle`
 
 ```python
@@ -1284,6 +1296,75 @@ Model fields:
 | `uri_template` | `str` | Yes | — | `min_length=1, max_length=4096` | — |
 | `description` | `str \| None` | No | `None` | — | — |
 | `mime_type` | `str \| None` | No | `None` | — | — |
+
+## `Subscription`
+
+```python
+m3.sync_api.Subscription(
+    client: DirectClient,
+    options: _Mapping[str, _Any],
+) -> None
+```
+
+Blocking twin of :class:`m3.direct_client.AsyncSubscription`.
+
+
+```python
+next(
+    self,
+    *,
+    timeout: float | None = None,
+) -> SubscriptionEvent | None
+```
+Return the next event, or ``None`` once the server closed the stream.
+
+```python
+close(
+    self,
+) -> None
+```
+
+## `SubscriptionEvent`
+
+```python
+m3.sync_api.SubscriptionEvent(
+    *,
+    method: str,
+    uri: str | None = None,
+) -> None
+```
+
+One change notification received on a ``subscriptions/listen`` stream.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `method` | `str` | Yes | — | — | — |
+| `uri` | `str \| None` | No | `None` | — | — |
+
+## `SubscriptionFilter`
+
+```python
+m3.sync_api.SubscriptionFilter(
+    *,
+    tools_list_changed: bool = False,
+    prompts_list_changed: bool = False,
+    resources_list_changed: bool = False,
+    resource_subscriptions: tuple[str, ...] = (),
+) -> None
+```
+
+Change notifications a ``subscriptions/listen`` stream delivers.
+
+Model fields:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `tools_list_changed` | `bool` | No | `False` | — | — |
+| `prompts_list_changed` | `bool` | No | `False` | — | — |
+| `resources_list_changed` | `bool` | No | `False` | — | — |
+| `resource_subscriptions` | `tuple[str, ...]` | No | `()` | — | — |
 
 ## `load_config`
 

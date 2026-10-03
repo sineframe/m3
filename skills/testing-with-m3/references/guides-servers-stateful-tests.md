@@ -71,3 +71,75 @@ keeps one MCP connection open for all three calls, and M3 starts a fresh server
 process for the test. This example's in-memory order does not persist between
 separate test runs. For saved M3 execution history, see [persist test
 results](guides-results-persistence.md).
+
+## Observe a tool-list change
+
+A server that changes its tool list at runtime announces it with
+`notifications/tools/list_changed`. On MCP protocol 2026-07-28 the server
+sends that notification only on a `subscriptions/listen` stream that the
+client opened, so open one with `client.listen(...)` before the call that
+changes the list. Download the example
+[`catalog_server.py`](../examples/servers-stdio/catalog_server.py)
+and save it in the project root. Its `enable_admin_tools` tool advertises a
+new `refund_order` tool.
+
+Save this complete test as `tests/test_list_changed.py`:
+
+```python
+import sys
+from pathlib import Path
+
+import pytest
+
+from m3 import MCPTestKit, StdioServer
+
+pytestmark = pytest.mark.m3(suite_name="catalog-direct")
+
+
+def test_enabling_admin_tools_announces_a_tool_list_change() -> None:
+    root = Path(__file__).parents[1]
+    server = StdioServer(
+        name="catalog",
+        command=sys.executable,
+        args=(str(root / "catalog_server.py"),),
+        cwd=str(root),
+    )
+    with (
+        MCPTestKit(env={}) as kit,
+        kit.direct(server, protocol="2026-07-28") as client,
+        client.listen(tools_list_changed=True) as changes,
+    ):
+        client.call_tool("enable_admin_tools")
+        change = changes.next(timeout=5)
+        tools = [tool.name for tool in client.list_all_tools()]
+
+    assert change is not None
+    assert change.method == "notifications/tools/list_changed"
+    assert "refund_order" in tools
+    notifications = [
+        event.payload["method"]
+        for event in client.final_trace.events
+        if event.kind.value == "mcp.notification"
+    ]
+    assert "notifications/tools/list_changed" in notifications
+```
+
+From the project root, run:
+
+```sh
+m3 test -- tests/test_list_changed.py
+```
+
+`listen(...)` accepts `tools_list_changed`, `prompts_list_changed`,
+`resources_list_changed`, and `resource_subscriptions` (resource URIs whose
+`notifications/resources/updated` events you want). `next(timeout=...)`
+returns a `SubscriptionEvent` with `method` and, for resource updates, `uri`.
+It raises `OperationTimeout` when no event arrives in time, without failing
+the trace, so it can also check that nothing changed. It returns `None` after
+the server ends the stream and raises `OperationCancelled` if the subscription
+or its client closes while it waits. The events are also recorded in
+`final_trace`. The stream closes with its `with` block or with the client.
+
+On earlier protocol versions servers send these notifications on the
+connection itself, so `final_trace` records them without a stream and
+`listen(...)` raises `UnsupportedFeature`.

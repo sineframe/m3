@@ -28,6 +28,13 @@ results are typed; normal MCP tool errors remain `ToolCallResult` values with
 `final_trace` is available after the client closes. Calls that depend on one
 server session must stay in the same client context.
 
+On MCP protocol 2026-07-28, servers deliver `notifications/*/list_changed`
+and `notifications/resources/updated` only on a `subscriptions/listen`
+stream. Open one with `client.listen(...)`; its events are also recorded in
+`final_trace`. Earlier protocol versions deliver these notifications on the
+connection, and `listen(...)` raises `UnsupportedFeature` there. See
+[observe a tool-list change](guides-servers-stateful-tests.md#observe-a-tool-list-change).
+
 `client.initialization` contains initialization evidence.
 `client.transport_evidence` remains available with state `"closed"` after
 exit. Read transport entries with `trace.view().transports`.

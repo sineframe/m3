@@ -22,6 +22,9 @@ from typing import (
     NoReturn as _NoReturn,
 )
 from typing import (
+    TypeVar as _TypeVar,
+)
+from typing import (
     cast as _cast,
 )
 from uuid import uuid4 as _uuid4
@@ -62,6 +65,7 @@ from .configuration import (
 from .direct_client import (
     _ELICITATION_CALLBACK_REMOVED_MESSAGE,
     _REMOVED_ELICITATION_CALLBACK,
+    AsyncSubscription,
     CallToolResult,
     CompletionResult,
     EmptyResult,
@@ -86,6 +90,8 @@ from .direct_client import (
     ResourceTemplate,
     ResourceTemplatePage,
     ResourceTemplatesPage,
+    SubscriptionEvent,
+    SubscriptionFilter,
     TemplateInfo,
     Tool,
     ToolCallResult,
@@ -289,6 +295,7 @@ from .types import (
 
 _CURRENT_MCP_PROTOCOL = _MCP_LATEST_PROTOCOL_VERSION
 _SERVER_FAILURE_SETTLE_TIMEOUT = 0.05
+_T = _TypeVar("_T")
 
 
 def _adapt_callback(callback: _Any) -> _Any:
@@ -578,25 +585,28 @@ class AsyncDirectClient(_CoreAsyncDirectClient):
             return value
 
         async def guarded(*args: _Any, **kwargs: _Any) -> _Any:
-            try:
-                result = await value(*args, **kwargs)
-            except BaseException as exc:
-                self._mark_trace_failure(exc)
-                if isinstance(exc, _ProtocolError):
-                    # An in-process server can publish its original handler
-                    # failure immediately after the official JSON-RPC error.
-                    # Wait for the transport's explicit settlement signal;
-                    # otherwise retain the typed protocol error.
-                    await self._raise_connection_failure(wait_for_failure=True)
-                    raise
-                if isinstance(exc, _ModelValidationError):
-                    raise
-                await self._raise_connection_failure()
-                raise
-            await self._raise_connection_failure()
-            return result
+            return await self._guard(value(*args, **kwargs))
 
         return guarded
+
+    async def _guard(self, operation: _Awaitable[_T]) -> _T:
+        try:
+            result = await operation
+        except BaseException as exc:
+            self._mark_trace_failure(exc)
+            if isinstance(exc, _ProtocolError):
+                # An in-process server can publish its original handler
+                # failure immediately after the official JSON-RPC error.
+                # Wait for the transport's explicit settlement signal;
+                # otherwise retain the typed protocol error.
+                await self._raise_connection_failure(wait_for_failure=True)
+                raise
+            if isinstance(exc, _ModelValidationError):
+                raise
+            await self._raise_connection_failure()
+            raise
+        await self._raise_connection_failure()
+        return result
 
     async def _raise_connection_failure(
         self, *, wait_for_failure: bool = False
@@ -1626,6 +1636,7 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "AsyncDirectClient",
     "AsyncExecutionHandle",
     "AsyncMCPTestKit",
+    "AsyncSubscription",
     "CallToolResult",
     "CompletionResult",
     "ConfigOrigin",
@@ -1661,6 +1672,8 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "ResourceTemplatePage",
     "ResourceTemplatesPage",
     "ResourcesPage",
+    "SubscriptionEvent",
+    "SubscriptionFilter",
     "Tool",
     "ToolCallResult",
     "ToolPage",

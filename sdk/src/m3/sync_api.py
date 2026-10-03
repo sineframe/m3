@@ -21,6 +21,9 @@ from collections.abc import (
 from collections.abc import (
     Mapping as _Mapping,
 )
+from collections.abc import (
+    Sequence as _Sequence,
+)
 from pathlib import Path as _Path
 from threading import Event as _ThreadEvent
 from threading import RLock as _RLock
@@ -88,6 +91,8 @@ from .direct_client import (
     ResourceInfo,
     ResourceReadResult,
     ResourceTemplate,
+    SubscriptionEvent,
+    SubscriptionFilter,
     TemplateInfo,
     Tool,
     ToolCallResult,
@@ -96,6 +101,9 @@ from .direct_client import (
 )
 from .direct_client import (
     AsyncDirectClient as _AsyncDirectClient,
+)
+from .direct_client import (
+    AsyncSubscription as _AsyncSubscription,
 )
 from .elicitation import (
     ElicitationPlan,
@@ -365,6 +373,8 @@ class _PortalRuntime:
         self.closed_sessions: dict[int, _AsyncAgentSession] = {}
         self.executions: dict[int, _AsyncExecutionHandle] = {}
         self.event_iters: dict[int, _Any] = {}
+        self.subscriptions: dict[int, tuple[int, _Any, _AsyncSubscription]] = {}
+        self._next_subscription = 0
         self.closing: set[int] = set()
         self._next_client = 0
         self._next_session = 0
@@ -416,11 +426,48 @@ class _PortalRuntime:
                 ) from None
             raise
 
+    async def open_subscription(
+        self, handle: int, options: _Mapping[str, _Any]
+    ) -> tuple[int, str | int, SubscriptionFilter]:
+        if handle in self.closing:
+            raise _OperationCancelled(
+                "synchronous direct operation cancelled by client close",
+                details={"operation": "subscriptions/listen", "cause": "client_close"},
+            )
+        context = self.client(handle).listen(**dict(options))
+        subscription = await context.__aenter__()
+        identifier = self._next_subscription
+        self._next_subscription += 1
+        self.subscriptions[identifier] = (handle, context, subscription)
+        return identifier, subscription.subscription_id, subscription.honored
+
+    async def next_subscription_event(
+        self, identifier: int, timeout: float | None
+    ) -> SubscriptionEvent | None:
+        entry = self.subscriptions.get(identifier)
+        if entry is None:
+            raise RuntimeError("subscription is closed")
+        handle, _context, subscription = entry
+        if handle in self.closing:
+            raise _OperationCancelled(
+                "synchronous direct operation cancelled by client close",
+                details={"operation": "subscriptions/listen", "cause": "client_close"},
+            )
+        return await subscription.next(timeout=timeout)
+
+    async def close_subscription(self, identifier: int) -> None:
+        entry = self.subscriptions.pop(identifier, None)
+        if entry is not None:
+            await entry[1].__aexit__(None, None, None)
+
     async def close_client(self, handle: int) -> tuple[_Any, _Any, _Any, _Any]:
         client = self.clients.get(handle)
         if client is not None:
             self.closing.add(handle)
             try:
+                for identifier, entry in tuple(self.subscriptions.items()):
+                    if entry[0] == handle:
+                        await self.close_subscription(identifier)
                 await client.aclose()
                 final_trace = client.final_trace
                 if self.kit._record_checks and final_trace is not None:
@@ -522,6 +569,11 @@ class _PortalRuntime:
         return _cast(_TurnResult, await queued.result())
 
     async def close(self) -> dict[int, _ExecutionResult]:
+        for identifier in tuple(self.subscriptions):
+            try:
+                await self.close_subscription(identifier)
+            except Exception:
+                pass
         await self.kit._execution_controller.close()
         for identifier, handle in tuple(self.executions.items()):
             try:
@@ -536,6 +588,7 @@ class _PortalRuntime:
         self.closed_sessions.clear()
         self.executions.clear()
         self.event_iters.clear()
+        self.subscriptions.clear()
         self.closing.clear()
         return dict(self._closed_results)
 
@@ -995,6 +1048,85 @@ class DirectClient:
     def register_callbacks(self, **callbacks: _Any) -> _NoReturn:
         self._invoke("register_callbacks", **callbacks)
         raise AssertionError("callback registration unexpectedly returned")
+
+    def listen(
+        self,
+        *,
+        tools_list_changed: bool = False,
+        prompts_list_changed: bool = False,
+        resources_list_changed: bool = False,
+        resource_subscriptions: _Sequence[str] = (),
+    ) -> Subscription:
+        """Return a ``subscriptions/listen`` stream; enter it to subscribe.
+
+        MCP 2026-07-28 only. See :meth:`AsyncDirectClient.listen`.
+        """
+
+        return Subscription(
+            self,
+            {
+                "tools_list_changed": tools_list_changed,
+                "prompts_list_changed": prompts_list_changed,
+                "resources_list_changed": resources_list_changed,
+                "resource_subscriptions": resource_subscriptions,
+            },
+        )
+
+
+class Subscription:
+    """Blocking twin of :class:`m3.direct_client.AsyncSubscription`."""
+
+    def __init__(self, client: DirectClient, options: _Mapping[str, _Any]) -> None:
+        self._client = client
+        self._options = dict(options)
+        self._identifier: int | None = None
+        self.subscription_id: str | int | None = None
+        self.honored: SubscriptionFilter | None = None
+
+    def __enter__(self) -> Subscription:
+        client = self._client
+        if self._identifier is not None:
+            raise RuntimeError("subscription is already open")
+        with client._state_lock:
+            if client._closed or client._closing:
+                raise RuntimeError("direct client is closed")
+        portal = client._portal
+        self._identifier, self.subscription_id, self.honored = portal.call(
+            portal._runtime.open_subscription, client._handle, self._options
+        )
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self.close()
+
+    def __iter__(self) -> _Iterator[SubscriptionEvent]:
+        return self
+
+    def __next__(self) -> SubscriptionEvent:
+        event = self.next()
+        if event is None:
+            raise StopIteration
+        return event
+
+    def next(self, *, timeout: float | None = None) -> SubscriptionEvent | None:
+        """Return the next event, or ``None`` once the server closed the stream."""
+
+        if self._identifier is None:
+            raise RuntimeError("subscription is not open")
+        portal = self._client._portal
+        return _cast(
+            "SubscriptionEvent | None",
+            portal.call(
+                portal._runtime.next_subscription_event, self._identifier, timeout
+            ),
+        )
+
+    def close(self) -> None:
+        identifier, self._identifier = self._identifier, None
+        if identifier is None or self._client._closed:
+            return
+        portal = self._client._portal
+        portal.call(portal._runtime.close_subscription, identifier)
 
 
 class ExecutionHandle:
@@ -2029,6 +2161,9 @@ __all__ = [  # noqa: RUF022 - public API order is compatibility-checked
     "Tool",
     "Resource",
     "ResourceTemplate",
+    "Subscription",
+    "SubscriptionEvent",
+    "SubscriptionFilter",
     "load_config",
     "AllowedCommands",
     "FilesystemHandler",
